@@ -1,0 +1,13 @@
+[package]
+name = "pandemonium"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-core.workspace = true
+pm-gfx.workspace = true
+pm-text.workspace = true
+pm-ui.workspace = true
+pm-vt.workspace = true
+winit = "0.30.13"

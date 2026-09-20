@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+pm-core = { path = "crates/pm-core" }
+pm-gfx = { path = "crates/pm-gfx" }
+pm-text = { path = "crates/pm-text" }
+pm-ui = { path = "crates/pm-ui" }
+pm-vt = { path = "crates/pm-vt" }
