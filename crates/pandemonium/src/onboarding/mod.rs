@@ -1,12 +1,10 @@
-//! The first screen: pick a theme, a keymap and the agents sessions will run.
+//! The first screen: pick a theme and a keymap, and set the editor's defaults.
 //!
 //! The screen is a function of [`Setup`] and nothing else. Input comes back as
 //! a [`Message`], [`Setup::apply`] folds it in, and the next frame is built
 //! from the result; there is no widget state anywhere in between. One
 //! component to a file, the way the widgets under it are laid out.
 
-mod agent_card;
-mod agent_section;
 mod basics;
 mod header;
 mod keymap_section;

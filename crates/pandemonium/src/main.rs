@@ -5,7 +5,7 @@ mod onboarding;
 use std::sync::Arc;
 
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
-use pm_ui::{Appearance, Theme, Ui};
+use pm_ui::{Appearance, Ui, family};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -72,12 +72,13 @@ impl App {
             return;
         };
 
-        let theme = Theme::for_appearance(self.setup.theme_mode.resolve(
+        let appearance = self.setup.theme_mode.resolve(
             match self.window.as_ref().and_then(|window| window.theme()) {
                 Some(winit::window::Theme::Light) => Appearance::Light,
                 _ => Appearance::Dark,
             },
-        ));
+        );
+        let theme = family(self.setup.theme_family).variant(appearance);
         ui.set_theme(theme);
 
         let size = renderer.size();
@@ -128,7 +129,7 @@ impl ApplicationHandler for App {
         self.window = Some(window);
 
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
-        self.ui = Some(Ui::new(Theme::for_appearance(appearance)));
+        self.ui = Some(Ui::new(family(self.setup.theme_family).variant(appearance)));
         self.list = Some(DrawList::new(Size::zero()));
     }
 

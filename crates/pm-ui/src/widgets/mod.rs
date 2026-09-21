@@ -9,6 +9,7 @@
 mod button;
 mod switch;
 mod switch_field;
+mod theme_preview;
 mod toggle_grid;
 mod toggle_option;
 mod toggle_row;
@@ -16,5 +17,6 @@ mod toggle_row;
 pub use button::{Button, ButtonVariant, button};
 pub use switch::{Switch, switch};
 pub use switch_field::switch_field;
+pub use theme_preview::{ThemePreview, theme_preview};
 pub use toggle_grid::toggle_grid;
 pub use toggle_row::toggle_row;

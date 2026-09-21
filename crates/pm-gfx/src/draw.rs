@@ -13,8 +13,8 @@ pub struct Quad {
     pub bounds: Rect,
     /// Fill colour inside the border.
     pub background: Rgba,
-    /// Radius of all four corners.
-    pub corner_radius: f32,
+    /// Corner radii, clockwise from the top-left corner.
+    pub corner_radii: [f32; 4],
     /// Thickness of the border, drawn inside `bounds`.
     pub border_width: f32,
     /// Colour of the border.
@@ -27,15 +27,24 @@ impl Quad {
         Self {
             bounds,
             background,
-            corner_radius: 0.0,
+            corner_radii: [0.0; 4],
             border_width: 0.0,
             border_color: Rgba::TRANSPARENT,
         }
     }
 
-    /// Returns this quad with rounded corners.
+    /// Returns this quad with every corner rounded by `radius`.
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.corner_radii = [radius; 4];
+        self
+    }
+
+    /// Returns this quad with each corner rounded on its own.
+    ///
+    /// The radii run clockwise from the top-left corner, the way CSS writes
+    /// them, so a shape can be flat where it meets its neighbour.
+    pub fn corner_radii(mut self, radii: [f32; 4]) -> Self {
+        self.corner_radii = radii;
         self
     }
 

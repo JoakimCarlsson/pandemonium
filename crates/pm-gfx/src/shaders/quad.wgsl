@@ -13,8 +13,9 @@ struct Instance {
     @location(1) size: vec2<f32>,
     @location(2) background: vec4<f32>,
     @location(3) border_color: vec4<f32>,
-    @location(4) shape: vec2<f32>,
-    @location(5) clip: vec4<f32>,
+    @location(4) radii: vec4<f32>,
+    @location(5) border: vec2<f32>,
+    @location(6) clip: vec4<f32>,
 }
 
 struct Fragment {
@@ -23,8 +24,17 @@ struct Fragment {
     @location(1) half_size: vec2<f32>,
     @location(2) background: vec4<f32>,
     @location(3) border_color: vec4<f32>,
-    @location(4) shape: vec2<f32>,
-    @location(5) clip: vec4<f32>,
+    @location(4) radii: vec4<f32>,
+    @location(5) border: vec2<f32>,
+    @location(6) clip: vec4<f32>,
+}
+
+// The radius of the corner `point` lies in, with the radii running clockwise
+// from the top-left the way CSS writes them.
+fn corner_radius(radii: vec4<f32>, point: vec2<f32>) -> f32 {
+    let top = select(radii.w, radii.z, point.x > 0.0);
+    let bottom = select(radii.x, radii.y, point.x > 0.0);
+    return select(top, bottom, point.y < 0.0);
 }
 
 fn unit_corner(index: u32) -> vec2<f32> {
@@ -60,7 +70,8 @@ fn vertex(@builtin(vertex_index) index: u32, instance: Instance) -> Fragment {
     out.half_size = instance.size * 0.5;
     out.background = instance.background;
     out.border_color = instance.border_color;
-    out.shape = instance.shape;
+    out.radii = instance.radii;
+    out.border = instance.border;
     out.clip = instance.clip;
     return out;
 }
@@ -72,12 +83,13 @@ fn fragment(in: Fragment) -> @location(0) vec4<f32> {
         discard;
     }
 
-    let radius = min(in.shape.x, min(in.half_size.x, in.half_size.y));
+    let smallest = min(in.half_size.x, in.half_size.y);
+    let radius = min(corner_radius(in.radii, in.local), smallest);
     let coverage = 1.0 - smoothstep(-0.5, 0.5, rounded_box(in.local, in.half_size, radius));
     let background = vec4<f32>(in.background.rgb * in.background.a, in.background.a);
 
     var color = background;
-    let border = in.shape.y;
+    let border = in.border.x;
     if border > 0.0 {
         let inner_half = max(in.half_size - vec2<f32>(border), vec2<f32>(0.0));
         let inner_radius = max(radius - border, 0.0);

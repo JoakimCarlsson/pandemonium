@@ -47,8 +47,10 @@ struct QuadInstance {
     background: [f32; 4],
     /// Border colour in linear light.
     border_color: [f32; 4],
-    /// Corner radius and border width.
-    shape: [f32; 2],
+    /// Corner radii, clockwise from the top-left corner.
+    radii: [f32; 4],
+    /// Border width, and padding to the next attribute.
+    border: [f32; 2],
     /// Clip rectangle as left, top, right, bottom.
     clip: [f32; 4],
 }
@@ -278,8 +280,9 @@ impl Renderer {
                 1 => Float32x2,
                 2 => Float32x4,
                 3 => Float32x4,
-                4 => Float32x2,
-                5 => Float32x4,
+                4 => Float32x4,
+                5 => Float32x2,
+                6 => Float32x4,
             ],
         );
         let glyph_pipeline = build_pipeline(
@@ -423,10 +426,8 @@ impl Renderer {
                 ],
                 background: quad.background.to_linear(),
                 border_color: quad.border_color.to_linear(),
-                shape: [
-                    quad.corner_radius * self.scale,
-                    quad.border_width * self.scale,
-                ],
+                radii: quad.corner_radii.map(|radius| radius * self.scale),
+                border: [quad.border_width * self.scale, 0.0],
                 clip: self.clip(*clip),
             })
             .collect()

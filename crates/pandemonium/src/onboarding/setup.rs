@@ -1,6 +1,6 @@
 //! What the setup screen decides, and the messages that change it.
 
-use pm_ui::Appearance;
+use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES};
 
 /// Keymaps the editor can start from, in the order they are offered.
 pub(super) const KEYMAPS: [&str; 8] = [
@@ -13,9 +13,6 @@ pub(super) const KEYMAPS: [&str; 8] = [
     "Helix",
     "Sublime Text",
 ];
-
-/// Agent CLIs a session can be conducted with, in the order they are offered.
-pub(super) const AGENTS: [&str; 4] = ["Claude Code", "Codex", "Gemini CLI", "Aider"];
 
 /// Which theme the editor draws in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,10 +50,10 @@ impl ThemeMode {
 pub struct Setup {
     /// Which theme the editor draws in.
     pub theme_mode: ThemeMode,
+    /// Index into `pm_ui::FAMILIES` of the theme family the editor draws in.
+    pub theme_family: usize,
     /// Index into [`KEYMAPS`] of the keymap the editor starts from.
     pub keymap: usize,
-    /// Which of [`AGENTS`] are installed, by the same index.
-    pub agents: [bool; AGENTS.len()],
     /// Whether editing starts in vim mode.
     pub vim_mode: bool,
     /// Whether a new session's worktree is trusted without being asked about.
@@ -74,8 +71,8 @@ impl Default for Setup {
     fn default() -> Self {
         Self {
             theme_mode: ThemeMode::System,
+            theme_family: DEFAULT_FAMILY,
             keymap: 0,
-            agents: [false; AGENTS.len()],
             vim_mode: false,
             trust_worktrees: false,
             metrics: true,
@@ -90,10 +87,10 @@ impl Default for Setup {
 pub enum Message {
     /// Draw in this theme mode.
     SetThemeMode(ThemeMode),
+    /// Draw in this theme family, by index into `pm_ui::FAMILIES`.
+    SetThemeFamily(usize),
     /// Start from this keymap, by index into [`KEYMAPS`].
     SetKeymap(usize),
-    /// Install or remove this agent, by index into [`AGENTS`].
-    ToggleAgent(usize),
     /// Turn vim mode on or off.
     ToggleVimMode,
     /// Turn worktree auto-trust on or off.
@@ -113,8 +110,10 @@ impl Setup {
     pub fn apply(&mut self, message: Message) {
         match message {
             Message::SetThemeMode(mode) => self.theme_mode = mode,
+            Message::SetThemeFamily(index) => {
+                self.theme_family = index.min(FAMILIES.len() - 1);
+            }
             Message::SetKeymap(index) => self.keymap = index,
-            Message::ToggleAgent(index) => self.agents[index] = !self.agents[index],
             Message::ToggleVimMode => self.vim_mode = !self.vim_mode,
             Message::ToggleTrustWorktrees => self.trust_worktrees = !self.trust_worktrees,
             Message::ToggleMetrics => self.metrics = !self.metrics,

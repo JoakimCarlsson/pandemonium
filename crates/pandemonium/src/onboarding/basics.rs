@@ -2,7 +2,6 @@
 
 use pm_ui::{Div, Styled, Theme, switch_field, v_flex};
 
-use crate::onboarding::agent_section::agent_section;
 use crate::onboarding::keymap_section::keymap_section;
 use crate::onboarding::rule::rule;
 use crate::onboarding::setup::{Message, Setup};
@@ -13,9 +12,8 @@ pub(super) fn basics(theme: &Theme, setup: &Setup) -> Div<Message> {
     v_flex()
         .w_full()
         .gap_6()
-        .child(theme_section(setup))
+        .child(theme_section(theme, setup))
         .child(keymap_section(theme, setup))
-        .child(agent_section(theme, setup))
         .child(switch_field(
             theme,
             Some("Vim Mode"),
