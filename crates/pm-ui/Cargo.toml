@@ -5,3 +5,4 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pm-gfx = { version = "0.1.0", path = "../pm-gfx" }
