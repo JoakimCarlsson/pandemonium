@@ -5,6 +5,7 @@
 //! implements none of them — every frame is `pm-ui` elements built from that
 //! model, submitted to `pm-gfx` as one draw list.
 
+mod clicks;
 mod input;
 
 use std::sync::{Arc, Mutex};
@@ -14,6 +15,7 @@ use std::collections::BTreeMap;
 
 use pm_core::{FileTree, ProjectId, Projects};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
+use pm_text::Position;
 use pm_ui::{
     Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Ui, family,
 };
@@ -24,13 +26,16 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
+use crate::app::clicks::DoubleClicks;
 use crate::config::{self, Restored, WindowState};
+use crate::desktop;
+use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::onboarding::{self, Message, Setup};
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
-    self, BOTTOM_PANEL_RANGE, Layout, PRIMARY_SIDEBAR_RANGE, Panel, SECONDARY_SIDEBAR_RANGE,
-    SidebarProject,
+    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Pane, Panel, Panes,
+    SECONDARY_SIDEBAR_RANGE, SidebarProject, TabMenu,
 };
 
 /// What the window is woken up for from outside the event loop.
@@ -38,6 +43,8 @@ use crate::workspace::{
 pub enum Wake {
     /// A terminal's child has written something that is waiting to be read.
     Terminal,
+    /// A language server has said something about a file that is open.
+    Language,
 }
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
@@ -84,12 +91,26 @@ pub struct App {
     window_state: WindowState,
     /// Whether the event loop should close after the current event.
     close_requested: bool,
+    /// The files the window has open, and the servers behind them.
+    editor: Files,
+    /// Whether keystrokes go to the editor pane rather than to the window.
+    editor_focused: bool,
+    /// The tab menu that is open over the panes, if one is.
+    menu: Option<TabMenu>,
+    /// The last press in the editor pane, for selecting a word.
+    text_clicks: DoubleClicks<Position>,
+    /// The last press on a row of the file tree, for keeping a file open.
+    tree_clicks: DoubleClicks<pm_core::EntryId>,
+    /// The last press on a tab, for keeping a previewed file open.
+    tab_clicks: DoubleClicks<crate::editor::FileId>,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
     terminal_focused: bool,
     /// How far back the terminal was scrolled when a scrollbar drag began.
     terminal_scroll_origin: Option<usize>,
+    /// How far down the editor was scrolled when a scrollbar drag began.
+    editor_scroll_origin: Option<usize>,
     /// How the reader threads wake the event loop.
     proxy: EventLoopProxy<Wake>,
 }
@@ -148,9 +169,16 @@ impl App {
             secondary_sidebar_open: layout.secondary_sidebar_open,
             window_state: restored.window,
             close_requested: false,
+            editor: Files::default(),
+            editor_focused: false,
+            text_clicks: DoubleClicks::default(),
+            tree_clicks: DoubleClicks::default(),
+            tab_clicks: DoubleClicks::default(),
+            menu: None,
             terminals: Terminals::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
+            editor_scroll_origin: None,
             proxy,
         }
     }
@@ -177,12 +205,108 @@ impl App {
         }
     }
 
-    /// Takes the keyboard away from the terminal, for a click elsewhere.
+    /// Takes the keyboard away from the panes, for a click elsewhere.
     ///
-    /// The click that lands back in the pane brings it straight back, so a
+    /// The click that lands back in a pane brings it straight back, so a
     /// press is free to drop focus without knowing where it landed.
-    pub(super) fn release_terminal_focus(&mut self) {
+    pub(super) fn release_pane_focus(&mut self) {
         self.terminal_focused = false;
+        self.editor_focused = false;
+    }
+
+    /// The file the editor pane is showing, if a project has one open.
+    pub(super) fn active_file(&self) -> Option<editor::OpenFile> {
+        let project = self.open.active()?;
+        self.editor.active(project.id())
+    }
+
+    /// What the focused pane holds, for the keymap's `when` clauses.
+    pub(super) fn focused_pane_kind(&self) -> Option<&'static str> {
+        match (self.editor_focused, self.terminal_focused) {
+            (true, _) => Some("file"),
+            (_, true) => Some("terminal"),
+            _ => None,
+        }
+    }
+
+    /// The file keystrokes are going to, if the pane is focused.
+    pub(super) fn focused_file(&self) -> Option<editor::OpenFile> {
+        self.editor_focused.then(|| self.active_file()).flatten()
+    }
+
+    /// Opens the file the tree entry `id` names in the editor pane.
+    ///
+    /// One click previews the file and two keep it, the way every editor
+    /// with a preview tab behaves: clicking down a tree leaves one tab
+    /// behind, and the file you meant stays when you ask for it twice.
+    fn open_file(&mut self, id: pm_core::EntryId) {
+        let preview = !self.tree_clicks.press(id);
+        let Some(project) = self.open.active() else {
+            return;
+        };
+        let (project, root) = (project.id(), project.root().to_path_buf());
+        let Some(path) = self.files.get(&project).and_then(|tree| {
+            tree.rows()
+                .iter()
+                .find(|row| row.entry.id() == id)
+                .map(|row| row.entry.path().to_path_buf())
+        }) else {
+            return;
+        };
+
+        if self.editor.open(project, &root, &path, preview).is_some() {
+            self.editor_focused = true;
+            self.terminal_focused = false;
+        }
+    }
+
+    /// Places the cursor where a press landed, or selects to where it reached.
+    ///
+    /// A second press in the same place takes the word under it instead,
+    /// which is the one gesture the element tree cannot tell the window
+    /// about on its own.
+    fn select_text(&mut self, anchor: Position, head: Position) {
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return;
+        };
+        self.editor_focused = true;
+        self.terminal_focused = false;
+
+        let twice = anchor == head && self.text_clicks.press(anchor);
+        if anchor != head {
+            self.text_clicks.clear();
+        }
+
+        self.editor
+            .edit(project, |buffer| match (twice, anchor == head) {
+                (true, true) => buffer.select_word(head),
+                (false, true) => buffer.place(head, false),
+                (_, false) => {
+                    buffer.place(anchor, false);
+                    buffer.place(head, true);
+                }
+            });
+    }
+
+    /// Scrolls the editor by a drag on its scrollbar.
+    fn drag_editor_scrollbar(&mut self, event: ResizeEvent, lines_per_pixel: f32) {
+        let Some(file) = self.active_file() else {
+            return;
+        };
+        let mut document = file.borrow_mut();
+        let base = match event.phase {
+            ResizePhase::Started => document.scroll(),
+            _ => self
+                .editor_scroll_origin
+                .unwrap_or_else(|| document.scroll()),
+        };
+        self.editor_scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+
+        let travelled = event.delta(Axis::Vertical) * lines_per_pixel;
+        document.scroll_to((base as f32 + travelled).round().max(0.0) as usize);
     }
 
     /// Starts another shell in the active project's worktree.
@@ -260,6 +384,19 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if let Message::ShowFileMenu(id) = message {
+            self.open_menu(MenuTarget::File(id));
+            return;
+        }
+        if let Message::ShowTerminalMenu(id) = message {
+            self.open_menu(MenuTarget::Terminal(id));
+            return;
+        }
+        self.menu = None;
+        if self.tab_command(message) {
+            self.request_redraw();
+            return;
+        }
         if let Message::ResizeSidebar(event) = message {
             self.sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::End);
@@ -296,6 +433,42 @@ impl App {
         }
         if message == Message::FocusTerminal {
             self.terminal_focused = true;
+            self.editor_focused = false;
+            self.request_redraw();
+            return;
+        }
+        if let Message::OpenFile(id) = message {
+            self.open_file(id);
+            self.request_redraw();
+            return;
+        }
+        if let Message::SelectFile(id) = message {
+            let twice = self.tab_clicks.press(id);
+            if let Some(project) = self.open.active().map(pm_core::Project::id) {
+                self.editor.activate(project, id);
+                if twice {
+                    self.editor.keep(project, id);
+                }
+            }
+            self.editor_focused = true;
+            self.terminal_focused = false;
+            self.request_redraw();
+            return;
+        }
+        if let Message::CloseFile(id) = message {
+            if let Some(project) = self.open.active().map(pm_core::Project::id) {
+                self.editor.close(project, id);
+            }
+            self.request_redraw();
+            return;
+        }
+        if let Message::SelectText(anchor, head) = message {
+            self.select_text(anchor, head);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ScrollEditor(event, lines_per_pixel) = message {
+            self.drag_editor_scrollbar(event, lines_per_pixel);
             self.request_redraw();
             return;
         }
@@ -337,6 +510,13 @@ impl App {
             return;
         }
         if let Message::CloseProject(id) = message {
+            if let Some(root) = self
+                .open
+                .get(id)
+                .map(|project| project.root().to_path_buf())
+            {
+                self.editor.close_project(id, &root);
+            }
             self.open.remove(id);
             self.files.remove(&id);
             self.terminals.close(id);
@@ -385,6 +565,87 @@ impl App {
         }
         self.store();
         self.request_redraw();
+    }
+
+    /// Opens the menu for `target` where the pointer is.
+    ///
+    /// The menu is placed rather than anchored: the pointer is the one place
+    /// every tab, however narrow and however far along the bar, agrees on.
+    fn open_menu(&mut self, target: MenuTarget) {
+        self.menu = self.pointer.map(|at| TabMenu { at, target });
+        self.request_redraw();
+    }
+
+    /// Puts away the menu that is open, saying whether there was one.
+    pub(super) fn dismiss_menu(&mut self) -> bool {
+        self.menu.take().is_some()
+    }
+
+    /// Carries out a command from a tab menu, if `message` is one.
+    ///
+    /// The menu commands are collected here because they are one family:
+    /// every one of them acts on the tabs of the project the window is
+    /// pointed at, and none of them touches the window's own state.
+    fn tab_command(&mut self, message: Message) -> bool {
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return matches!(message, Message::DismissMenu);
+        };
+
+        match message {
+            Message::DismissMenu => {}
+            Message::CloseOtherFiles(id) => self.editor.close_others(project, id),
+            Message::CloseFilesLeft(id) => self.editor.close_left(project, id),
+            Message::CloseFilesRight(id) => self.editor.close_right(project, id),
+            Message::CloseSavedFiles => self.editor.close_saved(project),
+            Message::CloseAllFiles => self.editor.close_all(project),
+            Message::CopyFilePath(id) => {
+                if let Some(path) = self.editor.path(project, id) {
+                    desktop::copy(path.display().to_string());
+                }
+            }
+            Message::CopyFileRelativePath(id) => {
+                if let Some(path) = self.relative_path(project, id) {
+                    desktop::copy(path);
+                }
+            }
+            Message::RevealFile(id) => {
+                if let Some(path) = self.editor.path(project, id) {
+                    desktop::reveal(&path);
+                }
+            }
+            Message::OpenFileInTerminal(id) => self.start_shell_beside(project, id),
+            Message::KeepFileOpen(id) => self.editor.keep(project, id),
+            Message::CloseOtherTerminals(id) => self.terminals.stop_others(project, id),
+            Message::CloseAllTerminals => {
+                self.terminals.stop_all(project);
+                self.close_empty_panel();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// The path of the file `id` names, from the project's worktree down.
+    fn relative_path(&self, project: ProjectId, id: crate::editor::FileId) -> Option<String> {
+        let root = self.open.get(project)?.root().to_path_buf();
+        let path = self.editor.path(project, id)?;
+        let relative = path.strip_prefix(&root).unwrap_or(&path);
+        Some(relative.display().to_string())
+    }
+
+    /// Starts a shell in the directory the file `id` names sits in.
+    fn start_shell_beside(&mut self, project: ProjectId, id: crate::editor::FileId) {
+        let Some(directory) = self
+            .editor
+            .path(project, id)
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        else {
+            return;
+        };
+        self.terminals.start(project, &directory);
+        self.bottom_panel_open = true;
+        self.terminal_focused = true;
+        self.editor_focused = false;
     }
 
     /// Asks for a repository and adds the one that comes back to the window.
@@ -475,6 +736,16 @@ impl App {
         config::save(&self.state());
     }
 
+    /// A handle the threads behind the window wake it with, sending `wake`.
+    fn waker(&self, wake: Wake) -> Arc<dyn Fn() + Send + Sync> {
+        let proxy = Mutex::new(self.proxy.clone());
+        Arc::new(move || {
+            if let Ok(proxy) = proxy.lock() {
+                let _ = proxy.send_event(wake);
+            }
+        })
+    }
+
     /// Asks the platform for another frame.
     fn request_redraw(&self) {
         if let Some(window) = self.window.as_ref() {
@@ -499,6 +770,15 @@ impl App {
             shells,
             focused: self.terminal_focused,
         };
+        let pane = Pane {
+            file: self.active_file(),
+            files: self
+                .open
+                .active()
+                .map(|project| self.editor.list(project.id()))
+                .unwrap_or_default(),
+            focused: self.editor_focused,
+        };
         let files = self.open.active().map(pm_core::Project::id);
         let files = files.and_then(|id| self.files.get(&id));
         let layout = self.layout();
@@ -520,7 +800,18 @@ impl App {
         ));
 
         let page = if self.setup.finished {
-            workspace::workspace(&theme, &self.open, &self.projects, files, layout, panel)
+            workspace::workspace(
+                &theme,
+                &self.open,
+                &self.projects,
+                files,
+                layout,
+                Panes {
+                    editor: pane,
+                    terminal: panel,
+                    menu: self.menu,
+                },
+            )
         } else {
             onboarding::page(&theme, &self.setup)
         };
@@ -544,6 +835,11 @@ impl ApplicationHandler<Wake> for App {
             Wake::Terminal => {
                 if self.terminals.pump() {
                     self.close_empty_panel();
+                    self.request_redraw();
+                }
+            }
+            Wake::Language => {
+                if self.editor.refresh() {
                     self.request_redraw();
                 }
             }
@@ -591,12 +887,8 @@ impl ApplicationHandler<Wake> for App {
         self.window = Some(window);
         self.resolver.set_keymap(self.setup.keymap.keymap());
 
-        let proxy = Mutex::new(self.proxy.clone());
-        self.terminals.set_notify(Arc::new(move || {
-            if let Ok(proxy) = proxy.lock() {
-                let _ = proxy.send_event(Wake::Terminal);
-            }
-        }));
+        self.terminals.set_notify(self.waker(Wake::Terminal));
+        self.editor.set_notify(self.waker(Wake::Language));
 
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
         self.ui = Some(Ui::new(family(self.setup.theme_family).variant(appearance)));
@@ -644,6 +936,11 @@ impl ApplicationHandler<Wake> for App {
                 state,
                 ..
             } => self.pointer_button(state),
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                state: ElementState::Pressed,
+                ..
+            } => self.secondary_pressed(),
             WindowEvent::MouseWheel { delta, .. } => {
                 let delta = match delta {
                     MouseScrollDelta::LineDelta(_, lines) => lines * input::WHEEL_STEP,

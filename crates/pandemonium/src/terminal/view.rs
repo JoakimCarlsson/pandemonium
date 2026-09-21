@@ -1,16 +1,16 @@
 //! The pane that draws one terminal, and tells it how large it is.
 //!
-//! The grid is drawn a cell at a time from the view's own glyph cache: a
-//! terminal produces an unbounded number of distinct lines, so shaping them
-//! as runs would fill the text system's cache with strings that are never
-//! seen twice, while the characters themselves are a hundred-odd shapes that
+//! The grid is drawn a cell at a time from a [`Glyphs`] cache, for the
+//! reason that cache exists: a terminal produces an unbounded number of
+//! distinct lines, and the characters on them are a hundred-odd shapes that
 //! repeat all day.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, ShapedRun, Size};
-use pm_ui::{Axis, Element, LayoutContext, PaintContext, ResizeEvent, Style, Styled, Theme};
+use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, Size};
+use pm_ui::{
+    Axis, Element, Glyphs, LayoutContext, PaintContext, ResizeEvent, Style, Styled, Theme,
+};
 use pm_vt::{Attrs, Cell, Color, Terminal};
 
 use crate::terminal::Shell;
@@ -178,7 +178,7 @@ impl<M> TerminalView<M> {
                 shade(resolve(foreground, theme, theme.colors.text), content.attrs)
             };
             let origin = metrics.cell_at(row, col).origin;
-            let run = glyphs.shape(content.ch, content.attrs, cx);
+            let run = glyphs.shape(content.ch, font(content.attrs), cx);
             cx.text(origin, run, color);
             self.paint_lines(content.attrs, metrics, origin, color, cx);
         }
@@ -331,33 +331,10 @@ impl<M: 'static> TerminalView<M> {
     }
 }
 
-/// The glyphs shaped so far this frame, one per character and style.
-#[derive(Default)]
-struct Glyphs {
-    /// Runs already shaped, keyed by the character, its weight and its slant.
-    runs: HashMap<(char, u16, bool), Arc<ShapedRun>>,
-}
-
-impl Glyphs {
-    /// The shaped run for `ch` in `attrs`, shaping it the first time only.
-    fn shape<M>(
-        &mut self,
-        ch: char,
-        attrs: Attrs,
-        cx: &mut PaintContext<'_, '_, M>,
-    ) -> Arc<ShapedRun> {
-        let weight = if attrs.bold { BOLD } else { FONT.weight };
-        self.runs
-            .entry((ch, weight, attrs.italic))
-            .or_insert_with(|| {
-                let mut font = FONT.weight(weight);
-                if attrs.italic {
-                    font = font.italic();
-                }
-                cx.shape(&ch.to_string(), font)
-            })
-            .clone()
-    }
+/// The type a cell of `attrs` is drawn in.
+fn font(attrs: Attrs) -> FontStyle {
+    let font = FONT.weight(if attrs.bold { BOLD } else { FONT.weight });
+    if attrs.italic { font.italic() } else { font }
 }
 
 /// Where the grid sits on the screen and what one cell of it comes to.

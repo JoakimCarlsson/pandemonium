@@ -45,16 +45,20 @@ pub struct Region<M> {
     pub bounds: Rect,
     /// What it sends when it is clicked or activated.
     pub action: RegionAction<M>,
+    /// What it sends when it is clicked with the secondary button.
+    pub secondary: Option<M>,
 }
 
 /// What an interactive region does with pointer input.
 pub enum RegionAction<M> {
+    /// Answers to the pointer without sending anything.
+    Inert,
     /// Sends one message when a press and release both land in the region.
     Click(M),
     /// Sends messages throughout a captured pointer drag.
     Drag {
-        /// The dimension changed by the drag.
-        axis: crate::Axis,
+        /// The shape the pointer takes over the region.
+        cursor: crate::PointerCursor,
         /// Builds the caller's message for each captured pointer event.
         handler: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
     },
@@ -168,6 +172,16 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         self.list.pop_clip();
     }
 
+    /// Draws later primitives over everything drawn so far.
+    pub fn push_layer(&mut self) {
+        self.list.push_layer();
+    }
+
+    /// Returns to the layer in force before the matching [`Self::push_layer`].
+    pub fn pop_layer(&mut self) {
+        self.list.pop_layer();
+    }
+
     /// The offset the pointer would be at, for an element that shifts content.
     pub fn input(&self) -> Input {
         self.input
@@ -179,10 +193,28 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
     /// press come from the current pointer position, focus from the tab index
     /// this registration takes.
     pub fn interactive(&mut self, bounds: Rect, message: M) -> Interaction {
+        self.clickable(bounds, Some(message), None)
+    }
+
+    /// Registers `bounds` as a target for either mouse button.
+    ///
+    /// A region with only a secondary message is still a region: a tab that
+    /// opens a menu on the right button and does nothing on the left is a
+    /// thing the pointer can be over.
+    pub fn clickable(
+        &mut self,
+        bounds: Rect,
+        on_click: Option<M>,
+        on_secondary: Option<M>,
+    ) -> Interaction {
         let index = self.regions.len();
         self.regions.push(Region {
             bounds,
-            action: RegionAction::Click(message),
+            action: match on_click {
+                Some(message) => RegionAction::Click(message),
+                None => RegionAction::Inert,
+            },
+            secondary: on_secondary,
         });
 
         Interaction {
@@ -192,20 +224,45 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         }
     }
 
-    /// Registers `bounds` as a pointer-drag target handled by `on_resize`.
+    /// The window this frame is being drawn for.
+    pub fn viewport(&self) -> Rect {
+        self.list.viewport()
+    }
+
+    /// Registers `bounds` as an edge dragged along `axis` by `on_resize`.
     pub fn resizable(
         &mut self,
         bounds: Rect,
         axis: crate::Axis,
         on_resize: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
     ) -> Interaction {
+        let cursor = match axis {
+            crate::Axis::Horizontal => crate::PointerCursor::ResizeHorizontal,
+            crate::Axis::Vertical => crate::PointerCursor::ResizeVertical,
+        };
+        self.draggable(bounds, cursor, on_resize)
+    }
+
+    /// Registers `bounds` as a pointer-drag target handled by `on_drag`.
+    ///
+    /// A drag is how a region hears where the pointer is rather than only
+    /// that it was clicked, so a pane that places a cursor and a sash that
+    /// resizes a sidebar are the same kind of region, under two shapes of
+    /// pointer.
+    pub fn draggable(
+        &mut self,
+        bounds: Rect,
+        cursor: crate::PointerCursor,
+        on_drag: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
+    ) -> Interaction {
         let index = self.regions.len();
         self.regions.push(Region {
             bounds,
             action: RegionAction::Drag {
-                axis,
-                handler: on_resize,
+                cursor,
+                handler: on_drag,
             },
+            secondary: None,
         });
 
         Interaction {

@@ -18,6 +18,8 @@ pub enum PointerCursor {
     ResizeHorizontal,
     /// Vertical resizing across a horizontal divider.
     ResizeVertical,
+    /// An I-beam over text that can be selected.
+    Text,
 }
 
 /// Everything that survives between frames: the theme, the pointer and focus.
@@ -103,8 +105,21 @@ impl<M> Ui<M> {
             RegionAction::Click(message) if region.bounds.contains(pressed_at) => {
                 Some(message.clone())
             }
-            RegionAction::Click(_) | RegionAction::Drag { .. } => None,
+            RegionAction::Click(_) | RegionAction::Drag { .. } | RegionAction::Inert => None,
         }
+    }
+
+    /// The message of the region under a press of the secondary button.
+    ///
+    /// A menu opens under the pointer the moment the button goes down, the
+    /// way every other editor opens one, so there is no release to wait for.
+    pub fn secondary_pressed(&self) -> Option<M>
+    where
+        M: Clone,
+    {
+        let pointer = self.input.pointer?;
+        let index = self.region_at(pointer)?;
+        self.regions[index].secondary.clone()
     }
 
     /// Moves focus to the next region in tab order, wrapping around.
@@ -130,7 +145,7 @@ impl<M> Ui<M> {
         let index = self.focus?;
         match &self.regions.get(index)?.action {
             RegionAction::Click(message) => Some(message.clone()),
-            RegionAction::Drag { .. } => None,
+            RegionAction::Drag { .. } | RegionAction::Inert => None,
         }
     }
 
@@ -145,12 +160,13 @@ impl<M> Ui<M> {
                 ..
             }) => PointerCursor::Pointer,
             Some(Region {
-                action: RegionAction::Drag { axis, .. },
+                action: RegionAction::Inert,
                 ..
-            }) => match axis {
-                crate::Axis::Horizontal => PointerCursor::ResizeHorizontal,
-                crate::Axis::Vertical => PointerCursor::ResizeVertical,
-            },
+            }) => PointerCursor::Default,
+            Some(Region {
+                action: RegionAction::Drag { cursor, .. },
+                ..
+            }) => *cursor,
             _ => PointerCursor::Default,
         }
     }
@@ -207,7 +223,7 @@ impl<M> Ui<M> {
                 start,
                 current: pointer,
             })),
-            RegionAction::Click(_) => None,
+            RegionAction::Click(_) | RegionAction::Inert => None,
         }
     }
 

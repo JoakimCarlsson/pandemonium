@@ -117,6 +117,27 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Returns this element as wide as its content, not as its offer.
+    ///
+    /// A container whose children stretch across it is otherwise as wide as
+    /// whatever it was offered, which is the window itself for an overlay.
+    fn w_fit(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().fit_width = true;
+        self
+    }
+
+    /// Returns this element no narrower than `pixels`.
+    fn min_w_px(mut self, pixels: f32) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().min_width = Some(pixels);
+        self
+    }
+
     /// Caps the width at `pixels`, however much the parent offers.
     fn max_w_px(mut self, pixels: f32) -> Self {
         self.style().max_width = Some(pixels);

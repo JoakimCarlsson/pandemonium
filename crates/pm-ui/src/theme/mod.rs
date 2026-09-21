@@ -134,6 +134,10 @@ pub struct Syntax {
     pub comment: Rgba,
     /// Numeric literals.
     pub number: Rgba,
+    /// Types, traits and named constants.
+    pub type_name: Rgba,
+    /// Brackets, delimiters and other punctuation.
+    pub punctuation: Rgba,
 }
 
 /// One resolved theme: the tokens a frame is drawn from.

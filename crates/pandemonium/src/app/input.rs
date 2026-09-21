@@ -15,6 +15,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::ResizeDirection;
 
 use crate::app::App;
+use crate::editor;
 use crate::keymap::{self, Action, Context, Resolution, keys};
 use crate::onboarding::Message;
 use crate::terminal;
@@ -26,11 +27,14 @@ pub(super) const WHEEL_STEP: f32 = 48.0;
 /// into a number of lines to scroll back.
 const TERMINAL_ROW: f32 = 19.6;
 
+/// Logical pixels one line of the editor occupies, for the same reason.
+const EDITOR_ROW: f32 = 21.0;
+
 /// How many notches a page key scrolls.
 const PAGE_NOTCHES: f32 = 4.0;
 
-/// Longest interval treated as a title-bar double click.
-const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+/// Longest interval treated as a double click.
+pub(super) const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Width of the invisible resize target around an undecorated window.
 #[cfg(not(target_os = "macos"))]
@@ -42,6 +46,9 @@ impl App {
         let mut context = Context::new();
         context.flag(keys::SETUP_OPEN, !self.setup.finished);
         context.flag(keys::PROJECT_FOCUSED, self.open.active().is_some());
+        if let Some(kind) = self.focused_pane_kind() {
+            context.set(keys::PANE_KIND, kind);
+        }
         context
     }
 
@@ -55,7 +62,20 @@ impl App {
                     self.apply(Message::CloseProject(id));
                 }
             }
+            Action::Save => {
+                if let Some(project) = self.open.active().map(pm_core::Project::id) {
+                    self.editor.save(project);
+                }
+                self.request_redraw();
+            }
+            Action::SaveAll => {
+                self.editor.save_all();
+                self.request_redraw();
+            }
             Action::Cancel => {
+                if self.dismiss_menu() {
+                    return self.request_redraw();
+                }
                 if let Some(ui) = self.ui.as_mut() {
                     ui.clear_focus();
                 }
@@ -77,7 +97,41 @@ impl App {
                 Resolution::None => {}
             }
         }
+        if self.send_to_editor(event) {
+            return self.request_redraw();
+        }
         self.navigate(event);
+    }
+
+    /// Sends a keypress to the editor pane, when the pane has the keyboard.
+    ///
+    /// The pane takes it after the keymap has had its say, so a chord the
+    /// window binds stays the window's however deep in a file the cursor is.
+    fn send_to_editor(&mut self, event: &KeyEvent) -> bool {
+        if self.is_window_chord() {
+            return false;
+        }
+        let Some(file) = self.focused_file() else {
+            return false;
+        };
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return false;
+        };
+        let rows = file.borrow().rows();
+        let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
+            return false;
+        };
+
+        self.editor.edit(project, |buffer| match edit {
+            editor::Edit::Insert(text) => buffer.insert(&text),
+            editor::Edit::Newline => buffer.insert_newline(),
+            editor::Edit::Indent => buffer.insert_indent(),
+            editor::Edit::Backspace => buffer.backspace(),
+            editor::Edit::Delete => buffer.delete(),
+            editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
+            editor::Edit::SelectAll => buffer.select_all(),
+        });
+        true
     }
 
     /// Sends a keypress to the terminal, when the terminal has the keyboard.
@@ -137,6 +191,22 @@ impl App {
         self.handle(message);
     }
 
+    /// Opens the menu of whatever the secondary button was pressed on.
+    ///
+    /// A press on nothing that answers to the button is how a menu is
+    /// dismissed as well: the sheet under an open menu answers, so the only
+    /// presses that reach here with nothing to open are presses with no menu
+    /// over them.
+    pub(super) fn secondary_pressed(&mut self) {
+        match self.ui.as_ref().and_then(|ui| ui.secondary_pressed()) {
+            Some(message) => self.apply(message),
+            None => {
+                self.dismiss_menu();
+                self.request_redraw();
+            }
+        }
+    }
+
     /// Tells the element tree where the pointer is now.
     pub(super) fn pointer_moved(&mut self, position: Point) {
         self.pointer = Some(position);
@@ -191,7 +261,7 @@ impl App {
         }
 
         if state == ElementState::Pressed {
-            self.release_terminal_focus();
+            self.release_pane_focus();
         }
 
         let message = match (self.ui.as_mut(), state) {
@@ -211,6 +281,12 @@ impl App {
         if let Some(shell) = self.focused_shell() {
             let lines = (delta / TERMINAL_ROW).round() as isize;
             shell.borrow_mut().scroll(lines);
+            self.request_redraw();
+            return;
+        }
+        if let Some(file) = self.focused_file() {
+            let lines = (delta / EDITOR_ROW).round() as isize;
+            file.borrow_mut().scroll_by(-lines);
             self.request_redraw();
             return;
         }
@@ -237,6 +313,7 @@ impl App {
             PointerCursor::Pointer => winit::window::CursorIcon::Pointer,
             PointerCursor::ResizeHorizontal => winit::window::CursorIcon::ColResize,
             PointerCursor::ResizeVertical => winit::window::CursorIcon::RowResize,
+            PointerCursor::Text => winit::window::CursorIcon::Text,
         };
         if let Some(window) = self.window.as_ref() {
             window.set_cursor(icon);

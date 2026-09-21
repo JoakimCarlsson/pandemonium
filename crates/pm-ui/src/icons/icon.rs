@@ -45,6 +45,8 @@ pub enum IconName {
     Plus,
     /// A terminal.
     Terminal,
+    /// Something the editor wants looked at.
+    Warning,
 }
 
 impl IconName {
@@ -61,6 +63,7 @@ impl IconName {
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
             Self::Plus => Svg::new("plus", include_icon!("plus")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
+            Self::Warning => Svg::new("warning", include_icon!("warning")),
         }
     }
 }

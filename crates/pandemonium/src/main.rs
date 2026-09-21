@@ -2,6 +2,8 @@
 
 mod app;
 mod config;
+mod desktop;
+mod editor;
 #[allow(
     dead_code,
     unused_imports,

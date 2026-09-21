@@ -12,7 +12,9 @@
 
 mod div;
 mod element;
+mod glyphs;
 mod icons;
+mod overlay;
 mod resize;
 mod scroll;
 mod style;
@@ -25,7 +27,9 @@ pub use div::{Div, div, h_flex, v_flex};
 pub use element::{
     Element, Input, Interaction, IntoElement, LayoutContext, PaintContext, Region, RegionAction,
 };
+pub use glyphs::Glyphs;
 pub use icons::{Icon, IconName, IconSize, LayoutIcon, LayoutIconButton, icon, layout_icon_button};
+pub use overlay::{Overlay, overlay};
 pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
 pub use scroll::Scroll;
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
@@ -36,6 +40,6 @@ pub use theme::{
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{
-    Button, ButtonVariant, Switch, ThemePreview, button, icon_button, rule, section, switch,
-    switch_field, theme_preview, toggle_grid, toggle_row,
+    Button, ButtonVariant, MenuItem, Switch, ThemePreview, button, icon_button, menu, menu_entry,
+    menu_separator, rule, section, switch, switch_field, theme_preview, toggle_grid, toggle_row,
 };
