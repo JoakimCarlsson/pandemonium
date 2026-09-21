@@ -1,5 +1,11 @@
 //! Application entry point: app state, panes, keymaps and wiring.
 
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "the keymap is a schema in full before the panes that press it exist"
+)]
+mod keymap;
 mod onboarding;
 
 use std::sync::Arc;
@@ -8,11 +14,12 @@ use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
 use pm_ui::{Appearance, Ui, family};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
+use keymap::{Action, Context, Resolution, Resolver, keys};
 use onboarding::{Message, Setup};
 
 /// Logical pixels one notch of a mouse wheel scrolls.
@@ -26,6 +33,7 @@ struct App {
     ui: Option<Ui<Message>>,
     list: Option<DrawList>,
     setup: Setup,
+    resolver: Resolver,
     modifiers: ModifiersState,
     scroll: f32,
     content_height: f32,
@@ -43,7 +51,76 @@ impl App {
     /// Folds a message in and redraws.
     fn apply(&mut self, message: Message) {
         self.setup.apply(message);
+        if let Message::SetKeymap(base) = message {
+            self.resolver.set_keymap(base.keymap());
+        }
         self.request_redraw();
+    }
+
+    /// What is true where a key was pressed, for the `when` clauses to read.
+    fn context(&self) -> Context {
+        let mut context = Context::new();
+        context.flag(keys::SETUP_OPEN, !self.setup.finished);
+        context
+    }
+
+    /// Carries `action` out, ignoring the ones nothing is built behind yet.
+    fn act(&mut self, action: Action) {
+        match action {
+            Action::OpenSettings => self.apply(Message::Reopen),
+            Action::Cancel => {
+                if let Some(ui) = self.ui.as_mut() {
+                    ui.clear_focus();
+                }
+                self.request_redraw();
+            }
+            _ => self.request_redraw(),
+        }
+    }
+
+    /// Resolves a keypress against the keymap, falling back to focus movement.
+    fn key_pressed(&mut self, event: &KeyEvent) {
+        if let Some(chord) = keymap::chord(event, self.modifiers) {
+            match self.resolver.press(chord, &self.context()) {
+                Resolution::Act(action) => return self.act(action),
+                Resolution::Pending => return self.request_redraw(),
+                Resolution::None => {}
+            }
+        }
+        self.navigate(event);
+    }
+
+    /// Moves focus, activates what has it, or scrolls the page.
+    fn navigate(&mut self, event: &KeyEvent) {
+        let Some(ui) = self.ui.as_mut() else {
+            return;
+        };
+
+        let message = match event.logical_key {
+            Key::Named(NamedKey::Tab) if self.modifiers.shift_key() => {
+                ui.focus_previous();
+                None
+            }
+            Key::Named(NamedKey::Tab) => {
+                ui.focus_next();
+                None
+            }
+            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => ui.activate_focused(),
+            Key::Named(NamedKey::PageDown) => {
+                self.scroll_by(-WHEEL_STEP * 4.0);
+                None
+            }
+            Key::Named(NamedKey::PageUp) => {
+                self.scroll_by(WHEEL_STEP * 4.0);
+                None
+            }
+            _ => None,
+        };
+
+        match message {
+            Some(message) => self.apply(message),
+            None => self.request_redraw(),
+        }
     }
 
     /// Asks the platform for another frame.
@@ -127,6 +204,7 @@ impl ApplicationHandler for App {
             scale,
         ));
         self.window = Some(window);
+        self.resolver.set_keymap(self.setup.keymap.keymap());
 
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
         self.ui = Some(Ui::new(family(self.setup.theme_family).variant(appearance)));
@@ -200,43 +278,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state != ElementState::Pressed {
-                    return;
-                }
-                let Some(ui) = self.ui.as_mut() else {
-                    return;
-                };
-
-                let message = match event.logical_key {
-                    Key::Named(NamedKey::Tab) if self.modifiers.shift_key() => {
-                        ui.focus_previous();
-                        None
-                    }
-                    Key::Named(NamedKey::Tab) => {
-                        ui.focus_next();
-                        None
-                    }
-                    Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
-                        ui.activate_focused()
-                    }
-                    Key::Named(NamedKey::Escape) => {
-                        ui.clear_focus();
-                        None
-                    }
-                    Key::Named(NamedKey::PageDown) => {
-                        self.scroll_by(-WHEEL_STEP * 4.0);
-                        None
-                    }
-                    Key::Named(NamedKey::PageUp) => {
-                        self.scroll_by(WHEEL_STEP * 4.0);
-                        None
-                    }
-                    _ => None,
-                };
-
-                match message {
-                    Some(message) => self.apply(message),
-                    None => self.request_redraw(),
+                if event.state == ElementState::Pressed {
+                    self.key_pressed(&event);
                 }
             }
             WindowEvent::RedrawRequested => self.draw(),

@@ -2,7 +2,7 @@
 
 use pm_ui::{Div, Styled, Theme, text, v_flex};
 
-use crate::onboarding::setup::{KEYMAPS, Message, Setup};
+use crate::onboarding::setup::{Message, Setup};
 
 /// The page setup leaves behind: what was chosen, and the way back.
 pub(super) fn ready(theme: &Theme, setup: &Setup) -> Div<Message> {
@@ -17,7 +17,7 @@ pub(super) fn ready(theme: &Theme, setup: &Setup) -> Div<Message> {
         .child(
             text(format!(
                 "{} keymap · {}",
-                KEYMAPS[setup.keymap],
+                setup.keymap.label(),
                 if setup.vim_mode {
                     "vim mode on"
                 } else {

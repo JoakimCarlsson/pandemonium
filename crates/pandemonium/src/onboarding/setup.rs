@@ -2,17 +2,7 @@
 
 use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES};
 
-/// Keymaps the editor can start from, in the order they are offered.
-pub(super) const KEYMAPS: [&str; 8] = [
-    "Pandemonium",
-    "VS Code",
-    "Zed",
-    "JetBrains",
-    "Vim",
-    "Emacs",
-    "Helix",
-    "Sublime Text",
-];
+use crate::keymap::BaseKeymap;
 
 /// Which theme the editor draws in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,8 +42,8 @@ pub struct Setup {
     pub theme_mode: ThemeMode,
     /// Index into `pm_ui::FAMILIES` of the theme family the editor draws in.
     pub theme_family: usize,
-    /// Index into [`KEYMAPS`] of the keymap the editor starts from.
-    pub keymap: usize,
+    /// The keymap the editor starts from.
+    pub keymap: BaseKeymap,
     /// Whether editing starts in vim mode.
     pub vim_mode: bool,
     /// Whether a new session's worktree is trusted without being asked about.
@@ -72,7 +62,7 @@ impl Default for Setup {
         Self {
             theme_mode: ThemeMode::System,
             theme_family: DEFAULT_FAMILY,
-            keymap: 0,
+            keymap: BaseKeymap::default(),
             vim_mode: false,
             trust_worktrees: false,
             metrics: true,
@@ -89,8 +79,8 @@ pub enum Message {
     SetThemeMode(ThemeMode),
     /// Draw in this theme family, by index into `pm_ui::FAMILIES`.
     SetThemeFamily(usize),
-    /// Start from this keymap, by index into [`KEYMAPS`].
-    SetKeymap(usize),
+    /// Start from this keymap.
+    SetKeymap(BaseKeymap),
     /// Turn vim mode on or off.
     ToggleVimMode,
     /// Turn worktree auto-trust on or off.
@@ -113,7 +103,7 @@ impl Setup {
             Message::SetThemeFamily(index) => {
                 self.theme_family = index.min(FAMILIES.len() - 1);
             }
-            Message::SetKeymap(index) => self.keymap = index,
+            Message::SetKeymap(keymap) => self.keymap = keymap,
             Message::ToggleVimMode => self.vim_mode = !self.vim_mode,
             Message::ToggleTrustWorktrees => self.trust_worktrees = !self.trust_worktrees,
             Message::ToggleMetrics => self.metrics = !self.metrics,
