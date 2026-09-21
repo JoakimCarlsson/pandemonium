@@ -107,7 +107,6 @@ impl Terminals {
             .is_none_or(|shells| shells.running.is_empty())
         {
             self.start(project, root);
-            self.start(project, root);
         }
         self.active(project)
     }
