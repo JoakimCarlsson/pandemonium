@@ -520,14 +520,7 @@ impl App {
         ));
 
         let page = if self.setup.finished {
-            workspace::workspace(
-                &theme,
-                &self.open,
-                &self.projects,
-                files,
-                layout,
-                panel,
-            )
+            workspace::workspace(&theme, &self.open, &self.projects, files, layout, panel)
         } else {
             onboarding::page(&theme, &self.setup)
         };

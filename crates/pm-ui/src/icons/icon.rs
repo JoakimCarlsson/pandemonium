@@ -33,6 +33,10 @@ pub enum IconName {
     Close,
     /// A file.
     File,
+    /// The branch a worktree is on.
+    GitBranch,
+    /// A worktree branched off another.
+    GitFork,
     /// A directory.
     Folder,
     /// A directory that is open.
@@ -51,6 +55,8 @@ impl IconName {
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),
             Self::Close => Svg::new("close", include_icon!("close")),
             Self::File => Svg::new("file", include_icon!("file")),
+            Self::GitBranch => Svg::new("git_branch", include_icon!("git_branch")),
+            Self::GitFork => Svg::new("git_fork", include_icon!("git_fork")),
             Self::Folder => Svg::new("folder", include_icon!("folder")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
             Self::Plus => Svg::new("plus", include_icon!("plus")),

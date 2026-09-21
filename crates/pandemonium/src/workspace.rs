@@ -18,6 +18,9 @@ pub const TITLEBAR_HEIGHT: f32 = 40.0;
 /// Height of a bar of tabs, hairline included.
 const TAB_BAR_HEIGHT: f32 = 32.0;
 
+/// Height of the status bar, hairline excluded.
+const STATUS_BAR_HEIGHT: f32 = 24.0;
+
 /// Longest name a tab shows before it is cut short.
 const TAB_NAME_CHARS: usize = 20;
 
@@ -136,6 +139,8 @@ pub fn workspace(
     layout: Layout,
     panel: Panel,
 ) -> Div<Message> {
+    let status = Status::of(open, sessions, &panel, layout);
+
     v_flex()
         .w_full()
         .h_full()
@@ -160,6 +165,139 @@ pub fn workspace(
                         .child(files_sidebar(theme, files, layout.secondary_sidebar_width))
                 }),
         )
+        .child(rule(theme))
+        .child(status_bar(theme, status))
+}
+
+/// What the status bar reports about the window as it stands.
+///
+/// The bar states the window's own situation — which worktree it is pointed
+/// at and what is running in it — so it is read off the same model the rest
+/// of the screen is drawn from rather than kept alongside it.
+struct Status {
+    /// Name of the active project, when the window has one.
+    project: Option<String>,
+    /// Branch the active project's worktree is on.
+    branch: Option<String>,
+    /// How many sessions that project has.
+    sessions: usize,
+    /// How many shells are running in the worktree.
+    shells: usize,
+    /// Whether the panel those shells are shown in is open.
+    panel_open: bool,
+}
+
+impl Status {
+    /// Reads the status of the window out of what the screen was given.
+    fn of(open: &Projects, sessions: &[SidebarProject], panel: &Panel, layout: Layout) -> Self {
+        let active = open.active();
+
+        Self {
+            project: active.map(|project| project.name().to_owned()),
+            branch: active.map(|project| project.branch().to_owned()),
+            sessions: active.map_or(0, |project| sessions_of(project, sessions).len()),
+            shells: panel.shells.len(),
+            panel_open: layout.bottom_panel_open,
+        }
+    }
+}
+
+/// Builds the bar along the bottom of the window.
+///
+/// The bar spans everything — sidebars, panel and panes alike — because what
+/// it states is the window's, not one region's: the worktree the window is
+/// pointed at on the left, what is running in it on the right.
+fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
+    let Status {
+        project,
+        branch,
+        sessions,
+        shells,
+        panel_open,
+    } = status;
+
+    h_flex()
+        .w_full()
+        .h_px(STATUS_BAR_HEIGHT)
+        .px(0.5)
+        .gap(0.5)
+        .items_center()
+        .overflow_hidden()
+        .bg(theme.colors.surface)
+        .when(project.is_none(), |bar| {
+            bar.child(status_item(
+                theme,
+                IconName::Folder,
+                "No project open",
+                None,
+                false,
+            ))
+        })
+        .when_some(project, |bar, name| {
+            bar.child(status_item(theme, IconName::Folder, name, None, false))
+        })
+        .when_some(branch, |bar, branch| {
+            bar.child(status_item(theme, IconName::GitBranch, branch, None, false))
+        })
+        .when(sessions > 0, |bar| {
+            bar.child(status_item(
+                theme,
+                IconName::GitFork,
+                counted(sessions, "session"),
+                None,
+                false,
+            ))
+        })
+        .child(h_flex().flex_1())
+        .child(status_item(
+            theme,
+            IconName::Terminal,
+            counted(shells, "shell"),
+            Some(Message::ToggleBottomPanel),
+            panel_open,
+        ))
+}
+
+/// Builds one reading in the status bar: its icon, its text, its action.
+///
+/// An item that carries a `message` is a control and lights under the
+/// pointer; one without is a reading and stays where the eye left it.
+fn status_item(
+    theme: &Theme,
+    glyph: IconName,
+    label: impl Into<String>,
+    message: Option<Message>,
+    active: bool,
+) -> Div<Message> {
+    let color = if active {
+        theme.colors.text
+    } else {
+        theme.colors.text_muted
+    };
+
+    h_flex()
+        .h_px(STATUS_BAR_HEIGHT - 4.0)
+        .px(1)
+        .gap(0.75)
+        .items_center()
+        .overflow_hidden()
+        .rounded(theme.radius.md)
+        .when_some(message, |item, message| {
+            item.hover_bg(theme.colors.surface_hover)
+                .active_bg(theme.colors.surface_active)
+                .on_click(message)
+        })
+        .child(icon(glyph).size(IconSize::XSmall).color(color))
+        .child(text(label.into()).text_xs().font_light().color(color))
+}
+
+/// `count` written out with `noun`, pluralized the way English does it.
+fn counted(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("{count} {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
 }
 
 /// Builds the window bar above every project and pane.
