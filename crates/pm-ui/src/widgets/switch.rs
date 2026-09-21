@@ -14,9 +14,6 @@ const TRACK_HEIGHT: f32 = 20.0;
 /// Space between the knob and the track on every side.
 const KNOB_INSET: f32 = 3.0;
 
-/// How far an on track is lifted towards the text colour under the pointer.
-const HOVER_LIFT: f32 = 0.16;
-
 /// A two-state track and knob that sends `message` when it is flipped.
 pub struct Switch<M> {
     /// Whether the switch is on.
@@ -60,7 +57,10 @@ impl<M: Clone> Element<M> for Switch<M> {
         let theme = *cx.theme();
 
         let track = match (self.on, interaction.hovered) {
-            (true, true) => theme.colors.success.mix(theme.colors.text, HOVER_LIFT),
+            (true, true) => theme
+                .colors
+                .success
+                .mix(theme.colors.text, theme.emphasis.hover_lift),
             (true, false) => theme.colors.success,
             (false, true) => theme.colors.surface_hover,
             (false, false) => theme.colors.surface,

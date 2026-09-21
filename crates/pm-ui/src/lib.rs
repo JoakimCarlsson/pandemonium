@@ -39,12 +39,12 @@ pub use split::{Split, split};
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
 pub use text::{Text, text};
 pub use theme::{
-    Appearance, Colors, DEFAULT_FAMILY, FAMILIES, Radii, Syntax, Terminal, TextScale, Theme,
-    ThemeFamily, family,
+    Appearance, Colors, DEFAULT_FAMILY, Emphasis, FAMILIES, Font, Radii, Sizes, Syntax, Terminal,
+    TextScale, TextSize, Theme, ThemeFamily, family,
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{
-    Button, ButtonVariant, MenuItem, Switch, TAB_BAR_HEIGHT, Tab, ThemePreview, button,
-    icon_button, menu, menu_entry, menu_separator, rule, section, switch, switch_field, tab,
-    tab_bar, theme_preview, toggle_grid, toggle_row,
+    Button, ButtonVariant, MenuItem, Switch, Tab, ThemePreview, button, icon_button, menu,
+    menu_entry, menu_separator, rule, section, switch, switch_field, tab, tab_bar, theme_preview,
+    toggle_grid, toggle_row,
 };

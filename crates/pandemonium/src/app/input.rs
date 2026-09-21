@@ -25,13 +25,6 @@ use crate::terminal;
 /// Logical pixels one notch of a mouse wheel scrolls.
 pub(super) const WHEEL_STEP: f32 = 48.0;
 
-/// Logical pixels one row of a terminal occupies, for turning a wheel notch
-/// into a number of lines to scroll back.
-const TERMINAL_ROW: f32 = 19.6;
-
-/// Logical pixels one line of the editor occupies, for the same reason.
-const EDITOR_ROW: f32 = 21.0;
-
 /// How many notches a page key scrolls.
 const PAGE_NOTCHES: f32 = 4.0;
 
@@ -278,7 +271,7 @@ impl App {
             && self.setup.finished
             && self
                 .pointer
-                .is_some_and(|pointer| pointer.y < crate::workspace::TITLEBAR_HEIGHT)
+                .is_some_and(|pointer| pointer.y < self.theme().size.titlebar)
             && !self.ui.as_ref().is_some_and(|ui| ui.pointer_over_region())
         {
             if let Some(window) = self.window.as_ref() {
@@ -318,14 +311,15 @@ impl App {
     /// A focused terminal scrolls its own scrollback instead: the page behind
     /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
+        let text = self.theme().text;
         if let Some(shell) = self.focused_shell() {
-            let lines = (delta / TERMINAL_ROW).round() as isize;
+            let lines = (delta / text.terminal.line_height).round() as isize;
             shell.borrow_mut().scroll(lines);
             self.request_redraw();
             return;
         }
         if let Some(file) = self.focused_file() {
-            let lines = (delta / EDITOR_ROW).round() as isize;
+            let lines = (delta / text.code.line_height).round() as isize;
             file.borrow_mut().scroll_by(-lines);
             self.request_redraw();
             return;

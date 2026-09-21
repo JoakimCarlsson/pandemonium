@@ -15,17 +15,8 @@ use pm_vt::{Attrs, Cell, Color, Terminal};
 
 use crate::terminal::Shell;
 
-/// The type the grid is drawn in.
-const FONT: FontStyle = FontStyle::new(14.0).mono().line_height(14.0 * LEADING);
-
-/// How far apart the rows sit, as a multiple of the type size.
-const LEADING: f32 = 1.4;
-
 /// The weight a bold cell is drawn at.
 const BOLD: u16 = 700;
-
-/// How much of its colour a dim cell keeps.
-const DIM: f32 = 0.6;
 
 /// Thickness of the cursor's outline while the pane is not focused.
 const CURSOR_OUTLINE: f32 = 1.0;
@@ -41,12 +32,6 @@ const SCROLLBAR_PADDING: f32 = 4.0;
 
 /// Shortest the bar's thumb is drawn, however long the scrollback is.
 const SCROLLBAR_MIN_THUMB: f32 = 25.0;
-
-/// How much of its colour the thumb carries when it is not being used.
-const THUMB_STRENGTH: f32 = 0.35;
-
-/// How much of its colour the thumb carries under the pointer.
-const THUMB_STRENGTH_ACTIVE: f32 = 0.6;
 
 /// A pane showing one terminal's grid.
 pub struct TerminalView<M> {
@@ -110,7 +95,8 @@ impl<M: 'static> Element<M> for TerminalView<M> {
     /// whole number of rows, and the leftover belongs above the text, so the
     /// line the shell is writing stays against the foot of the pane.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let cell = Size::new(cx.measure("M", FONT).width.max(1.0), FONT.line_height);
+        let font = cx.theme().text.terminal;
+        let cell = Size::new(cx.measure("M", font).width.max(1.0), font.line_height);
         let cols = ((bounds.size.width - cell.width) / cell.width)
             .floor()
             .max(1.0) as usize;
@@ -175,10 +161,14 @@ impl<M> TerminalView<M> {
             let color = if cursor == Some(col) {
                 resolve(background, theme, theme.colors.background)
             } else {
-                shade(resolve(foreground, theme, theme.colors.text), content.attrs)
+                shade(
+                    resolve(foreground, theme, theme.colors.text),
+                    content.attrs,
+                    theme,
+                )
             };
             let origin = metrics.cell_at(row, col).origin;
-            let run = glyphs.shape(content.ch, font(content.attrs), cx);
+            let run = glyphs.shape(content.ch, font(content.attrs, theme), cx);
             cx.text(origin, run, color);
             self.paint_lines(content.attrs, metrics, origin, color, cx);
         }
@@ -320,20 +310,21 @@ impl<M: 'static> TerminalView<M> {
         };
 
         let strength = if interaction.hovered || interaction.pressed {
-            THUMB_STRENGTH_ACTIVE
+            theme.emphasis.scrollbar_active
         } else {
-            THUMB_STRENGTH
+            theme.emphasis.scrollbar
         };
         cx.quad(
             Quad::filled(thumb, theme.colors.text_subtle.alpha(strength))
-                .corner_radius(SCROLLBAR_WIDTH / 2.0),
+                .corner_radius(theme.radius.full),
         );
     }
 }
 
-/// The type a cell of `attrs` is drawn in.
-fn font(attrs: Attrs) -> FontStyle {
-    let font = FONT.weight(if attrs.bold { BOLD } else { FONT.weight });
+/// The type a cell of `attrs` is drawn in, from `theme`'s terminal step.
+fn font(attrs: Attrs, theme: &Theme) -> FontStyle {
+    let grid = theme.text.terminal;
+    let font = grid.weight(if attrs.bold { BOLD } else { grid.weight });
     if attrs.italic { font.italic() } else { font }
 }
 
@@ -397,12 +388,12 @@ fn resolve(color: Color, theme: &Theme, default: Rgba) -> Rgba {
 }
 
 /// The colour a dim or hidden cell is actually drawn in.
-fn shade(color: Rgba, attrs: Attrs) -> Rgba {
+fn shade(color: Rgba, attrs: Attrs, theme: &Theme) -> Rgba {
     if attrs.hidden {
         return Rgba::TRANSPARENT;
     }
     if attrs.dim {
-        return color.alpha(DIM);
+        return color.alpha(theme.emphasis.dim);
     }
     color
 }

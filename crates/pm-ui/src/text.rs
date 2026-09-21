@@ -4,14 +4,14 @@ use pm_gfx::{Point, Quad, Rect, Rgba, Size};
 
 use crate::element::{Element, LayoutContext, PaintContext};
 use crate::style::{Length, Style, Styled};
-use crate::theme::TextScale;
+use crate::theme::{Font, TextSize};
 
 /// A run of text, sized from the type scale and coloured from the theme.
 pub struct Text {
     /// The characters to draw.
     content: String,
-    /// Size, leading, weight and slant.
-    font: pm_gfx::FontStyle,
+    /// The step of the scale to draw at, and the variations on it.
+    font: Font,
     /// The colour to draw in, or the theme's body colour when unset.
     color: Option<Rgba>,
     /// How the run is sized and padded.
@@ -22,7 +22,7 @@ pub struct Text {
 pub fn text(content: impl Into<String>) -> Text {
     Text {
         content: content.into(),
-        font: TextScale::DEFAULT.base,
+        font: Font::default(),
         color: None,
         style: Style::default(),
     }
@@ -41,39 +41,39 @@ impl Text {
         self
     }
 
-    /// Returns this run at 11px, for badges and the smallest captions.
+    /// Returns this run at the smallest step, for badges and captions.
     pub fn text_xs(mut self) -> Self {
-        self.font = TextScale::DEFAULT.xs;
+        self.font = self.font.size(TextSize::Xs);
         self
     }
 
-    /// Returns this run at 12px, for secondary labels.
+    /// Returns this run at the secondary-label step.
     pub fn text_sm(mut self) -> Self {
-        self.font = TextScale::DEFAULT.sm;
+        self.font = self.font.size(TextSize::Sm);
         self
     }
 
-    /// Returns this run at 14px, the body size.
+    /// Returns this run at the body step.
     pub fn text_base(mut self) -> Self {
-        self.font = TextScale::DEFAULT.base;
+        self.font = self.font.size(TextSize::Base);
         self
     }
 
-    /// Returns this run at 16px, for section titles.
+    /// Returns this run at the section-title step.
     pub fn text_lg(mut self) -> Self {
-        self.font = TextScale::DEFAULT.lg;
+        self.font = self.font.size(TextSize::Lg);
         self
     }
 
-    /// Returns this run at 20px, for page headings.
+    /// Returns this run at the page-heading step.
     pub fn text_xl(mut self) -> Self {
-        self.font = TextScale::DEFAULT.xl;
+        self.font = self.font.size(TextSize::Xl);
         self
     }
 
-    /// Returns this run at 26px, for the heading at the top of a screen.
+    /// Returns this run at the step the heading of a screen is drawn at.
     pub fn text_xxl(mut self) -> Self {
-        self.font = TextScale::DEFAULT.xxl;
+        self.font = self.font.size(TextSize::Xxl);
         self
     }
 
@@ -109,7 +109,7 @@ impl Text {
 
     /// Returns this run with `pixels` between baselines.
     pub fn leading(mut self, pixels: f32) -> Self {
-        self.font = self.font.line_height(pixels);
+        self.font = self.font.leading(pixels);
         self
     }
 }
@@ -129,7 +129,8 @@ impl<M> Element<M> for Text {
 
     /// Shapes the run and reports the line box it occupies.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
-        let run = cx.measure(&self.content, self.font);
+        let font = self.font.resolve(&cx.theme.text);
+        let run = cx.measure(&self.content, font);
         let width = match self.style.width {
             Length::Px(pixels) => pixels,
             Length::Full => available.width,
@@ -153,7 +154,8 @@ impl<M> Element<M> for Text {
         );
 
         let color = self.color.unwrap_or(cx.theme().colors.text);
-        let run = cx.shape(&self.content, self.font);
+        let font = self.font.resolve(&cx.theme().text);
+        let run = cx.shape(&self.content, font);
         let origin = Point::new(
             bounds.left() + self.style.padding.left,
             bounds.top() + self.style.padding.top,

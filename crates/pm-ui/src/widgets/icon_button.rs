@@ -5,13 +5,10 @@ use crate::icons::{IconName, IconSize, icon};
 use crate::style::Styled;
 use crate::theme::Theme;
 
-/// The side of the control an icon sits in.
-const BUTTON_SIZE: f32 = 20.0;
-
 /// A control of `name` that sends `message` when it is clicked.
 pub fn icon_button<M>(theme: &Theme, name: IconName, message: M) -> Div<M> {
     v_flex()
-        .size_px(BUTTON_SIZE)
+        .size_px(theme.size.icon_control)
         .items_center()
         .justify_center()
         .rounded(theme.radius.md)

@@ -19,7 +19,7 @@ use pm_core::{FileTree, ProjectId, Projects};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
 use pm_text::Position;
 use pm_ui::{
-    Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Ui, family,
+    Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Theme, Ui, family,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -383,6 +383,13 @@ impl App {
         }
         let project = self.open.active()?;
         self.terminals.active(project.id())
+    }
+
+    /// The theme this frame is drawn from: the chosen family, in whichever
+    /// appearance the theme mode resolves to.
+    pub(super) fn theme(&self) -> Theme {
+        let appearance = self.setup.theme_mode.resolve(self.system_appearance());
+        family(self.setup.theme_family).variant(appearance)
     }
 
     /// The appearance the desktop asks for, defaulting to dark.
@@ -821,7 +828,6 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
-        let appearance = self.setup.theme_mode.resolve(self.system_appearance());
         let shell = self
             .bottom_panel_open
             .then(|| self.active_shell())
@@ -840,7 +846,7 @@ impl App {
         let drop = self.drop_highlight();
         let carried = self.carried_tab();
         let layout = self.layout();
-        let theme = family(self.setup.theme_family).variant(appearance);
+        let theme = self.theme();
         let editor = self.pane_view(&theme);
         let menu = self.menu_items();
         let files = self.open.active().map(pm_core::Project::id);
@@ -958,8 +964,7 @@ impl ApplicationHandler<Wake> for App {
         let saved = std::mem::take(&mut self.saved);
         self.restore_panes(&saved);
 
-        let appearance = self.setup.theme_mode.resolve(self.system_appearance());
-        self.ui = Some(Ui::new(family(self.setup.theme_family).variant(appearance)));
+        self.ui = Some(Ui::new(self.theme()));
         self.list = Some(DrawList::new(Size::zero()));
     }
 

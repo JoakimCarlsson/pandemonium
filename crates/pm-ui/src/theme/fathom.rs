@@ -3,7 +3,9 @@
 
 use pm_gfx::Rgba;
 
-use crate::theme::{Appearance, Colors, Radii, Syntax, Terminal, TextScale, Theme, ThemeFamily};
+use crate::theme::{
+    Appearance, Colors, Emphasis, Radii, Sizes, Syntax, Terminal, TextScale, Theme, ThemeFamily,
+};
 
 /// The family, in both appearances.
 pub const fn family() -> ThemeFamily {
@@ -52,7 +54,9 @@ pub const fn dark() -> Theme {
         },
         terminal: Terminal::DARK,
         text: TextScale::DEFAULT,
+        size: Sizes::DEFAULT,
         radius: Radii::DEFAULT,
+        emphasis: Emphasis::DEFAULT,
     }
 }
 
@@ -94,6 +98,8 @@ pub const fn light() -> Theme {
         },
         terminal: Terminal::LIGHT,
         text: TextScale::DEFAULT,
+        size: Sizes::DEFAULT,
         radius: Radii::DEFAULT,
+        emphasis: Emphasis::DEFAULT,
     }
 }

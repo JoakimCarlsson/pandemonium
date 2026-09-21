@@ -11,9 +11,6 @@ use crate::style::Styled;
 use crate::text::text;
 use crate::theme::Theme;
 
-/// Height of one entry.
-const ENTRY_HEIGHT: f32 = 26.0;
-
 /// Narrowest a menu is drawn, however short its entries are.
 const MIN_WIDTH: f32 = 190.0;
 
@@ -71,7 +68,7 @@ fn entry<M: Clone + 'static>(theme: &Theme, item: MenuItem<M>) -> Div<M> {
     };
 
     h_flex()
-        .h_px(ENTRY_HEIGHT)
+        .h_px(theme.size.row)
         .px(2)
         .items_center()
         .when_some(message, |entry, message| {

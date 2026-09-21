@@ -4,10 +4,10 @@ use pm_gfx::{Point, Quad, Rect, Rgba, Size};
 
 use crate::element::{Element, Interaction, LayoutContext, PaintContext};
 use crate::style::{Length, Style, Styled, space};
-use crate::theme::{TextScale, Theme};
+use crate::theme::{Font, TextSize, Theme};
 
-/// Height of a button unless its style says otherwise.
-const HEIGHT: f32 = 28.0;
+/// The type a button's label is set in.
+const LABEL: Font = Font::new(TextSize::Base).weight(500);
 
 /// How much of the theme's accent a button carries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,7 +112,8 @@ impl<M: Clone> Element<M> for Button<M> {
 
     /// Sizes the box around its label.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
-        let label = cx.measure(&self.label, TextScale::DEFAULT.base.weight(500));
+        let font = LABEL.resolve(&cx.theme.text);
+        let label = cx.measure(&self.label, font);
         let width = match self.style.width {
             Length::Px(pixels) => pixels,
             Length::Full => available.width,
@@ -121,7 +122,7 @@ impl<M: Clone> Element<M> for Button<M> {
         let height = match self.style.height {
             Length::Px(pixels) => pixels,
             Length::Full => available.height,
-            Length::Auto => HEIGHT,
+            Length::Auto => cx.theme.size.control,
         };
 
         Size::new(width, height)
@@ -139,8 +140,7 @@ impl<M: Clone> Element<M> for Button<M> {
                 .border(border_width, border_color),
         );
 
-        let font = TextScale::DEFAULT.base.weight(500);
-        let run = cx.shape(&self.label, font);
+        let run = cx.shape(&self.label, LABEL.resolve(&theme.text));
         let origin = Point::new(
             (bounds.left() + (bounds.size.width - run.width) / 2.0).round(),
             (bounds.top() + (bounds.size.height - run.height) / 2.0).round(),

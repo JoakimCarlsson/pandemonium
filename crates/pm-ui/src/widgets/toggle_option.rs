@@ -4,10 +4,10 @@ use pm_gfx::{Point, Quad, Rect, Size};
 
 use crate::element::{Element, LayoutContext, PaintContext};
 use crate::style::{Length, Style, space};
-use crate::theme::TextScale;
+use crate::theme::{Font, TextSize};
 
-/// Height of one option in a group.
-pub(crate) const HEIGHT: f32 = 32.0;
+/// The type an option's label is set in.
+const LABEL: Font = Font::new(TextSize::Base);
 
 /// One option of a toggle group.
 pub(crate) struct ToggleOption<M> {
@@ -32,14 +32,15 @@ impl<M: Clone> Element<M> for ToggleOption<M> {
 
     /// Sizes the option around its label.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
-        let label = cx.measure(&self.label, TextScale::DEFAULT.base);
+        let font = LABEL.resolve(&cx.theme.text);
+        let label = cx.measure(&self.label, font);
         let width = match self.style.width {
             Length::Px(pixels) => pixels,
             Length::Full => available.width,
             Length::Auto => label.width + space(3.0) * 2.0,
         };
 
-        Size::new(width, HEIGHT)
+        Size::new(width, cx.theme.size.field)
     }
 
     /// Registers the press target, then paints the option and its label.
@@ -67,8 +68,7 @@ impl<M: Clone> Element<M> for ToggleOption<M> {
                 .border(1.0, border),
         );
 
-        let font = TextScale::DEFAULT.base;
-        let run = cx.shape(&self.label, font);
+        let run = cx.shape(&self.label, LABEL.resolve(&theme.text));
         let color = if self.selected {
             theme.colors.text
         } else {

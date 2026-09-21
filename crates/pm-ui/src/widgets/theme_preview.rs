@@ -4,7 +4,10 @@ use pm_gfx::{Point, Quad, Rect, Rgba, Size};
 
 use crate::element::{Element, LayoutContext, PaintContext};
 use crate::style::{Length, Style, Styled};
-use crate::theme::{Appearance, TextScale, Theme, ThemeFamily};
+use crate::theme::{Appearance, Font, TextSize, Theme, ThemeFamily};
+
+/// The type a tile's label is set in.
+const LABEL: Font = Font::new(TextSize::Xs);
 
 /// Height of the tile, before the label under it.
 const TILE_HEIGHT: f32 = 104.0;
@@ -175,7 +178,8 @@ impl<M: Clone> Element<M> for ThemePreview<M> {
 
     /// Sizes the tile, plus the label under it.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
-        let label = cx.measure(self.family.name, TextScale::DEFAULT.xs);
+        let font = LABEL.resolve(&cx.theme.text);
+        let label = cx.measure(self.family.name, font);
         let width = match self.style.width {
             Length::Px(pixels) => pixels,
             Length::Full => available.width,
@@ -226,7 +230,7 @@ impl<M: Clone> Element<M> for ThemePreview<M> {
                 .border(border_width, border_color),
         );
 
-        let run = cx.shape(self.family.name, TextScale::DEFAULT.xs);
+        let run = cx.shape(self.family.name, LABEL.resolve(&ambient.text));
         let color = if self.selected {
             ambient.colors.text
         } else {

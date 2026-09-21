@@ -1,18 +1,32 @@
-//! Design tokens: the named colours, type scale and radii every element reads.
+//! Design tokens: the named colours, type scale, sizes and radii every element
+//! reads.
 //!
 //! Tokens are values, not lookups into a global. A window owns one [`Theme`]
 //! and hands it to the layout and paint passes, so swapping the theme is a
-//! swap of one struct and the next frame is drawn in it.
+//! swap of one struct and the next frame is drawn in it. An element names the
+//! token it wants — the body step of the scale, the height of a control, the
+//! wash a selection is drawn at — and resolves it against the theme in hand,
+//! never against a value baked in when the element was built.
 
+mod colors;
 mod ember;
+mod emphasis;
 mod fathom;
 mod pandemonium;
+mod radii;
+mod sizes;
+mod syntax;
 mod terminal;
+mod text;
 mod verdant;
 
-use pm_gfx::{FontStyle, Rgba};
-
+pub use colors::Colors;
+pub use emphasis::Emphasis;
+pub use radii::Radii;
+pub use sizes::Sizes;
+pub use syntax::Syntax;
 pub use terminal::Terminal;
+pub use text::{Font, TextScale, TextSize};
 
 /// Whether a theme is a light or a dark one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,129 +35,6 @@ pub enum Appearance {
     Dark,
     /// Light surfaces, dark text.
     Light,
-}
-
-/// The semantic colours elements are painted in.
-#[derive(Clone, Copy, Debug)]
-pub struct Colors {
-    /// The window behind everything.
-    pub background: Rgba,
-    /// A panel or card sitting on the background.
-    pub surface: Rgba,
-    /// A surface under the pointer.
-    pub surface_hover: Rgba,
-    /// A surface being pressed.
-    pub surface_active: Rgba,
-    /// A surface that is the selected one of a set.
-    pub surface_selected: Rgba,
-    /// The ordinary divider and outline colour.
-    pub border: Rgba,
-    /// A quieter divider, for rules inside a panel.
-    pub border_variant: Rgba,
-    /// The outline of the element holding keyboard focus.
-    pub border_focused: Rgba,
-    /// The outline of a selected element.
-    pub border_selected: Rgba,
-    /// The wash over where something being carried would land if let go of.
-    ///
-    /// A drop target is read against whatever it covers — a pane of text, a
-    /// bar of tabs, an empty pane — so it is a translucent neutral rather
-    /// than the accent, which a theme is free to make as quiet as it likes.
-    pub drop_target: Rgba,
-    /// Body text.
-    pub text: Rgba,
-    /// Secondary text: descriptions and captions.
-    pub text_muted: Rgba,
-    /// Text that is barely there: hints and disabled labels.
-    pub text_subtle: Rgba,
-    /// Text drawn on top of `accent`.
-    pub text_on_accent: Rgba,
-    /// The one colour that means "this is the action".
-    pub accent: Rgba,
-    /// The accent under the pointer.
-    pub accent_hover: Rgba,
-    /// The accent being pressed.
-    pub accent_active: Rgba,
-    /// Something finished or is healthy.
-    pub success: Rgba,
-    /// Something needs attention.
-    pub warning: Rgba,
-    /// Something failed or is destructive.
-    pub danger: Rgba,
-}
-
-/// The type scale, in the Tailwind naming: `xs` through `xxl`.
-#[derive(Clone, Copy, Debug)]
-pub struct TextScale {
-    /// 11px: badges and the smallest captions.
-    pub xs: FontStyle,
-    /// 12px: secondary labels.
-    pub sm: FontStyle,
-    /// 14px: body text and the default for anything unstated.
-    pub base: FontStyle,
-    /// 16px: section titles.
-    pub lg: FontStyle,
-    /// 20px: page headings.
-    pub xl: FontStyle,
-    /// 26px: the one heading at the top of a screen.
-    pub xxl: FontStyle,
-}
-
-impl TextScale {
-    /// The scale every theme uses, tuned for a 1.4 line height.
-    pub const DEFAULT: Self = Self {
-        xs: FontStyle::new(11.0),
-        sm: FontStyle::new(12.0),
-        base: FontStyle::new(14.0),
-        lg: FontStyle::new(16.0),
-        xl: FontStyle::new(20.0),
-        xxl: FontStyle::new(26.0),
-    };
-}
-
-/// Corner radii, in the Tailwind naming.
-#[derive(Clone, Copy, Debug)]
-pub struct Radii {
-    /// 2px.
-    pub sm: f32,
-    /// 4px.
-    pub md: f32,
-    /// 6px.
-    pub lg: f32,
-    /// 10px.
-    pub xl: f32,
-    /// Large enough to round any bar into a pill.
-    pub full: f32,
-}
-
-impl Radii {
-    /// The radii every theme uses.
-    pub const DEFAULT: Self = Self {
-        sm: 2.0,
-        md: 4.0,
-        lg: 6.0,
-        xl: 10.0,
-        full: 9999.0,
-    };
-}
-
-/// The colours code is highlighted in.
-#[derive(Clone, Copy, Debug)]
-pub struct Syntax {
-    /// Keywords and operators.
-    pub keyword: Rgba,
-    /// String and character literals.
-    pub string: Rgba,
-    /// Function and method names.
-    pub function: Rgba,
-    /// Comments and documentation.
-    pub comment: Rgba,
-    /// Numeric literals.
-    pub number: Rgba,
-    /// Types, traits and named constants.
-    pub type_name: Rgba,
-    /// Brackets, delimiters and other punctuation.
-    pub punctuation: Rgba,
 }
 
 /// One resolved theme: the tokens a frame is drawn from.
@@ -161,8 +52,12 @@ pub struct Theme {
     pub terminal: Terminal,
     /// The type scale.
     pub text: TextScale,
+    /// The heights controls and bars are drawn at.
+    pub size: Sizes,
     /// The corner radii.
     pub radius: Radii,
+    /// The alphas the translucent parts of the window are drawn at.
+    pub emphasis: Emphasis,
 }
 
 /// A theme in both appearances: what the theme picker offers as one choice.

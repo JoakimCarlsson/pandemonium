@@ -6,9 +6,9 @@ use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
 use pm_ui::button;
 use pm_ui::{
-    Axis, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, TAB_BAR_HEIGHT, Theme,
-    h_flex, icon, icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule,
-    sash, tab, tab_bar, text, v_flex,
+    Axis, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Theme, h_flex, icon,
+    icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule, sash, tab,
+    tab_bar, text, v_flex,
 };
 
 use crate::editor::{FileId, OpenFile};
@@ -16,17 +16,14 @@ use crate::onboarding::Message;
 use crate::panes::PaneId;
 use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
 
-/// Height of the content-backed window title bar.
-pub const TITLEBAR_HEIGHT: f32 = 40.0;
-
 /// How far the tab under the pointer sits from the pointer itself.
 const CARRIED_OFFSET: f32 = 8.0;
 
-/// Height of the status bar, hairline excluded.
-const STATUS_BAR_HEIGHT: f32 = 24.0;
+/// How much shorter than its bar a control sitting inside one is drawn.
+const BAR_INSET: f32 = 4.0;
 
-/// Height of one line of the file tree.
-const FILE_ROW_HEIGHT: f32 = 26.0;
+/// Height of the line naming a project above its sessions.
+const PROJECT_HEADER_HEIGHT: f32 = 30.0;
 
 /// How far the first level of the file tree sits from the edge.
 const FILE_INSET: f32 = 6.0;
@@ -39,9 +36,6 @@ const DOT_SIZE: f32 = 7.0;
 
 /// How far the halo around a lit dot reaches past it.
 const DOT_HALO: f32 = 3.0;
-
-/// How much of its colour the halo around a lit dot carries.
-const HALO_STRENGTH: f32 = 0.22;
 
 /// Width the primary sidebar opens at, and the range it resizes within.
 pub const PRIMARY_SIDEBAR_WIDTH: f32 = 252.0;
@@ -251,7 +245,7 @@ fn drop_area(theme: &Theme, area: Rect) -> Div<Message> {
 fn carried_tab(theme: &Theme, name: String) -> Div<Message> {
     h_flex()
         .px(1.5)
-        .h_px(TAB_BAR_HEIGHT - 4.0)
+        .h_px(theme.size.tab_bar - BAR_INSET)
         .items_center()
         .gap(1)
         .rounded(theme.radius.md)
@@ -375,7 +369,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
 
     h_flex()
         .w_full()
-        .h_px(STATUS_BAR_HEIGHT)
+        .h_px(theme.size.bar)
         .px(0.5)
         .gap(0.5)
         .items_center()
@@ -468,7 +462,7 @@ fn status_item(
     };
 
     h_flex()
-        .h_px(STATUS_BAR_HEIGHT - 4.0)
+        .h_px(theme.size.bar - BAR_INSET)
         .px(1)
         .gap(0.75)
         .items_center()
@@ -498,7 +492,7 @@ fn counted(count: usize, noun: &str) -> String {
 fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(TITLEBAR_HEIGHT)
+        .h_px(theme.size.titlebar)
         .items_center()
         .bg(theme.colors.surface)
         .border_1(theme.colors.border)
@@ -523,7 +517,7 @@ fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
                     Message::ToggleSecondarySidebar,
                 )),
         )
-        .child(v_flex().w_px(10.0))
+        .child(v_flex().w(2.5))
         .child(window_controls())
 }
 
@@ -616,24 +610,14 @@ fn terminal_tabs(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
 fn window_controls() -> Div<Message> {
     h_flex()
         .h_full()
-        .child(
-            button("—", Message::MinimizeWindow)
-                .ghost()
-                .w_px(40.0)
-                .h_full(),
-        )
+        .child(button("—", Message::MinimizeWindow).ghost().w(10).h_full())
         .child(
             button("□", Message::ToggleMaximizedWindow)
                 .ghost()
-                .w_px(40.0)
+                .w(10)
                 .h_full(),
         )
-        .child(
-            button("×", Message::CloseWindow)
-                .ghost()
-                .w_px(40.0)
-                .h_full(),
-        )
+        .child(button("×", Message::CloseWindow).ghost().w(10).h_full())
 }
 
 /// Leaves window controls to macOS traffic lights.
@@ -669,7 +653,7 @@ fn files_sidebar(theme: &Theme, files: Option<&FileTree>, width: f32) -> Div<Mes
 fn tree_root(theme: &Theme, files: &FileTree) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(26.0)
+        .h_px(theme.size.row)
         .px(1.5)
         .items_center()
         .overflow_hidden()
@@ -712,7 +696,7 @@ fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
 
     h_flex()
         .w_full()
-        .h_px(FILE_ROW_HEIGHT)
+        .h_px(theme.size.row)
         .overflow_hidden()
         .gap(0.5)
         .items_center()
@@ -741,7 +725,7 @@ fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
                 .size(IconSize::Small)
                 .color(theme.colors.text_subtle),
         )
-        .child(v_flex().w_px(4.0))
+        .child(v_flex().w(1))
         .child(if directory {
             text(entry.name().to_owned())
         } else {
@@ -806,7 +790,7 @@ fn projects_sidebar(
 /// Builds the control that asks for another repository to open.
 fn add_project(theme: &Theme) -> Div<Message> {
     v_flex()
-        .size_px(20.0)
+        .size_px(theme.size.icon_control)
         .items_center()
         .justify_center()
         .rounded(theme.radius.md)
@@ -845,7 +829,7 @@ fn project_rows(
         .child(
             h_flex()
                 .w_full()
-                .h_px(30.0)
+                .h_px(PROJECT_HEADER_HEIGHT)
                 .pl(3)
                 .pr(1.5)
                 .items_center()
@@ -863,7 +847,7 @@ fn project_rows(
 /// where it belongs, and it will send the same message when it is.
 fn project_menu(theme: &Theme, project: &Project) -> Div<Message> {
     v_flex()
-        .size_px(20.0)
+        .size_px(theme.size.icon_control)
         .items_center()
         .justify_center()
         .rounded(theme.radius.md)
@@ -882,7 +866,7 @@ fn project_menu(theme: &Theme, project: &Project) -> Div<Message> {
 fn checkout_row(theme: &Theme, project: &Project, active: bool) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(32.0)
+        .h_px(theme.size.field)
         .overflow_hidden()
         .px(3)
         .gap(2)
@@ -890,12 +874,15 @@ fn checkout_row(theme: &Theme, project: &Project, active: bool) -> Div<Message> 
         .when(active, |row| row.bg(theme.colors.surface_selected))
         .hover_bg(theme.colors.surface_hover)
         .on_click(Message::ActivateProject(project.id()))
-        .child(v_flex().w_px(12.0))
-        .child(state_dot(if active {
-            theme.colors.success
-        } else {
-            theme.colors.text_subtle
-        }))
+        .child(v_flex().w(3))
+        .child(state_dot(
+            theme,
+            if active {
+                theme.colors.success
+            } else {
+                theme.colors.text_subtle
+            },
+        ))
         .child(text(project.branch().to_owned()).text_sm().font_light())
         .child(h_flex().flex_1())
         .child(
@@ -910,7 +897,7 @@ fn checkout_row(theme: &Theme, project: &Project, active: bool) -> Div<Message> 
 fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(32.0)
+        .h_px(theme.size.field)
         .overflow_hidden()
         .px(3)
         .gap(2)
@@ -918,8 +905,8 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
         .when(session.selected, |row| {
             row.bg(theme.colors.surface_selected)
         })
-        .child(v_flex().w_px(12.0))
-        .child(state_dot(session.status_color))
+        .child(v_flex().w(3))
+        .child(state_dot(theme, session.status_color))
         .child(text(session.name.clone()).text_sm().font_light())
         .child(h_flex().flex_1())
         .child(
@@ -934,12 +921,17 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
 ///
 /// The halo is the artifact's: a ring of the same colour at a fifth of its
 /// strength, which is what makes a live state read as lit rather than printed.
-fn state_dot(color: Rgba) -> Div<Message> {
+fn state_dot(theme: &Theme, color: Rgba) -> Div<Message> {
     v_flex()
         .size_px(DOT_SIZE + DOT_HALO * 2.0)
         .items_center()
         .justify_center()
-        .rounded(DOT_SIZE / 2.0 + DOT_HALO)
-        .bg(color.alpha(HALO_STRENGTH))
-        .child(v_flex().size_px(DOT_SIZE).rounded(DOT_SIZE / 2.0).bg(color))
+        .rounded(theme.radius.full)
+        .bg(color.alpha(theme.emphasis.halo))
+        .child(
+            v_flex()
+                .size_px(DOT_SIZE)
+                .rounded(theme.radius.full)
+                .bg(color),
+        )
 }

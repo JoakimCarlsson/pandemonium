@@ -4,6 +4,15 @@ use pm_gfx::{Quad, Rect, Rgba, Size};
 
 use crate::{Element, LayoutContext, PaintContext, Style};
 
+/// Width of the outline the icon is drawn as.
+const GLYPH_WIDTH: f32 = 16.0;
+
+/// Height of that outline.
+const GLYPH_HEIGHT: f32 = 12.0;
+
+/// Space between the outline and the edge of the control.
+const PADDING: f32 = 7.0;
+
 /// Which edge an editor layout icon emphasizes.
 #[derive(Clone, Copy)]
 pub enum LayoutIcon {
@@ -47,8 +56,8 @@ impl<M: Clone> Element<M> for LayoutIconButton<M> {
     }
 
     /// Takes the fixed size established by the control style.
-    fn measure(&mut self, _available: Size, _cx: &mut LayoutContext<'_>) -> Size {
-        Size::new(30.0, 28.0)
+    fn measure(&mut self, _available: Size, cx: &mut LayoutContext<'_>) -> Size {
+        Size::new(GLYPH_WIDTH + PADDING * 2.0, cx.theme.size.control)
     }
 
     /// Paints the interaction state and the editor-layout outline.
@@ -65,15 +74,15 @@ impl<M: Clone> Element<M> for LayoutIconButton<M> {
         cx.quad(Quad::filled(bounds, background).corner_radius(theme.radius.md));
 
         let icon = Rect::from_xywh(
-            bounds.left() + (bounds.size.width - 16.0) / 2.0,
-            bounds.top() + (bounds.size.height - 12.0) / 2.0,
-            16.0,
-            12.0,
+            bounds.left() + (bounds.size.width - GLYPH_WIDTH) / 2.0,
+            bounds.top() + (bounds.size.height - GLYPH_HEIGHT) / 2.0,
+            GLYPH_WIDTH,
+            GLYPH_HEIGHT,
         );
         let color = theme.colors.text_subtle;
         cx.quad(
             Quad::filled(icon, Rgba::TRANSPARENT)
-                .corner_radius(2.0)
+                .corner_radius(theme.radius.sm)
                 .border(1.0, color),
         );
 

@@ -19,9 +19,6 @@ use crate::theme::Theme;
 use crate::widgets::icon_button;
 use crate::widgets::rule;
 
-/// Height of a bar of tabs, hairline included.
-pub const TAB_BAR_HEIGHT: f32 = 32.0;
-
 /// Longest name a tab shows before it is cut short.
 const NAME_CHARS: usize = 20;
 
@@ -110,7 +107,7 @@ impl<M> Tab<M> {
 pub fn tab_bar<M: Clone + 'static>(theme: &Theme, tabs: Vec<Tab<M>>, actions: Div<M>) -> Div<M> {
     v_flex()
         .w_full()
-        .h_px(TAB_BAR_HEIGHT)
+        .h_px(theme.size.tab_bar)
         .child(
             h_flex()
                 .w_full()
@@ -165,7 +162,7 @@ fn pane_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>) -> Div<M> {
                 .color(theme.colors.text_subtle),
         )
         .child(name)
-        .when(tab.dirty, |row| row.child(unsaved_dot(color)))
+        .when(tab.dirty, |row| row.child(unsaved_dot(theme, color)))
         .child(icon_button(theme, IconName::Close, tab.close))
 }
 
@@ -174,8 +171,11 @@ fn pane_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>) -> Div<M> {
 /// The mark is drawn in the tab's own text colour: it says something about
 /// the name beside it, and it dims with that name when the tab is not the
 /// one in front.
-fn unsaved_dot<M>(color: Rgba) -> Div<M> {
-    v_flex().size_px(DOT_SIZE).rounded(DOT_SIZE / 2.0).bg(color)
+fn unsaved_dot<M>(theme: &Theme, color: Rgba) -> Div<M> {
+    v_flex()
+        .size_px(DOT_SIZE)
+        .rounded(theme.radius.full)
+        .bg(color)
 }
 
 /// `name` cut to `chars` characters, ending in an ellipsis when it was cut.

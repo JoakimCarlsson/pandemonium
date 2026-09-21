@@ -17,12 +17,6 @@ use pm_ui::{
 
 use crate::editor::OpenFile;
 
-/// The type a buffer is drawn in.
-const FONT: FontStyle = FontStyle::new(14.0).mono().line_height(14.0 * LEADING);
-
-/// How far apart the lines sit, as a multiple of the type size.
-const LEADING: f32 = 1.5;
-
 /// How far the gutter's numbers sit from the text.
 const GUTTER_GAP: f32 = 16.0;
 
@@ -35,12 +29,6 @@ const GUTTER_DIGITS: usize = 2;
 /// Width of the cursor while the pane is focused.
 const CURSOR_WIDTH: f32 = 2.0;
 
-/// How much of its colour a selection carries.
-const SELECTION_STRENGTH: f32 = 0.3;
-
-/// How much of its colour the line the cursor is on carries.
-const CURRENT_LINE_STRENGTH: f32 = 0.05;
-
 /// Thickness of the line under a diagnostic.
 const SQUIGGLE_WIDTH: f32 = 1.5;
 
@@ -52,12 +40,6 @@ const SCROLLBAR_PADDING: f32 = 4.0;
 
 /// Shortest the bar's thumb is drawn, however long the file is.
 const SCROLLBAR_MIN_THUMB: f32 = 25.0;
-
-/// How much of its colour the thumb carries when it is not being used.
-const THUMB_STRENGTH: f32 = 0.35;
-
-/// How much of its colour the thumb carries under the pointer.
-const THUMB_STRENGTH_ACTIVE: f32 = 0.6;
 
 /// A pane showing one open file.
 pub struct BufferView<M> {
@@ -124,7 +106,8 @@ impl<M: 'static> Element<M> for BufferView<M> {
 
     /// Tells the document how much room it has, then draws what fits.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let cell = Size::new(cx.measure("M", FONT).width.max(1.0), FONT.line_height);
+        let font = cx.theme().text.code;
+        let cell = Size::new(cx.measure("M", font).width.max(1.0), font.line_height);
         let rows = (bounds.size.height / cell.height).floor().max(1.0) as usize;
 
         let file = self.file.clone();
@@ -146,6 +129,7 @@ impl<M: 'static> Element<M> for BufferView<M> {
         let highlights = document.buffer_mut().highlights(first..last);
         let painting = Painting {
             metrics,
+            font,
             theme: &theme,
             selection,
             highlights: &highlights,
@@ -183,7 +167,11 @@ impl<M> BufferView<M> {
                 metrics.bounds.size.width,
                 metrics.cell.height,
             ),
-            painting.theme.colors.text.alpha(CURRENT_LINE_STRENGTH),
+            painting
+                .theme
+                .colors
+                .text
+                .alpha(painting.theme.emphasis.current_line),
         ));
     }
 
@@ -214,7 +202,7 @@ impl<M> BufferView<M> {
                 Some(highlight) => tint(highlight, painting.theme),
                 None => painting.theme.colors.text,
             };
-            let run = glyphs.shape(ch, FONT, cx);
+            let run = glyphs.shape(ch, painting.font, cx);
             cx.text(Point::new(metrics.column_at(column), top), run, color);
         }
 
@@ -253,7 +241,11 @@ impl<M> BufferView<M> {
                 to.saturating_sub(from) as f32 * metrics.cell.width,
                 metrics.cell.height,
             ),
-            painting.theme.colors.accent.alpha(SELECTION_STRENGTH),
+            painting
+                .theme
+                .colors
+                .accent
+                .alpha(painting.theme.emphasis.selection),
         ));
     }
 
@@ -278,7 +270,7 @@ impl<M> BufferView<M> {
         let right = metrics.bounds.left() + metrics.gutter - GUTTER_GAP;
 
         for (index, digit) in number.chars().rev().enumerate() {
-            let run = glyphs.shape(digit, FONT, cx);
+            let run = glyphs.shape(digit, painting.font, cx);
             let x = right - (index + 1) as f32 * metrics.cell.width;
             cx.text(Point::new(x, top), run, color);
         }
@@ -412,13 +404,13 @@ impl<M: 'static> BufferView<M> {
         };
 
         let strength = if interaction.hovered || interaction.pressed {
-            THUMB_STRENGTH_ACTIVE
+            theme.emphasis.scrollbar_active
         } else {
-            THUMB_STRENGTH
+            theme.emphasis.scrollbar
         };
         cx.quad(
             Quad::filled(thumb, theme.colors.text_subtle.alpha(strength))
-                .corner_radius(SCROLLBAR_WIDTH / 2.0),
+                .corner_radius(theme.radius.full),
         );
     }
 }
@@ -427,6 +419,8 @@ impl<M: 'static> BufferView<M> {
 struct Painting<'a> {
     /// Where the text sits and what one character comes to.
     metrics: Metrics,
+    /// The type the buffer is set in.
+    font: FontStyle,
     /// The tokens the frame is drawn from.
     theme: &'a Theme,
     /// What is selected, and where the cursor is.
