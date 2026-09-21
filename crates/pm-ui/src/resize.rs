@@ -12,15 +12,6 @@ const SASH_SIZE: f32 = 12.0;
 /// Thickness of the line through the middle of the sash.
 const LINE_SIZE: f32 = 1.0;
 
-/// Length of the grip along the sash.
-const GRIP_LENGTH: f32 = 16.0;
-
-/// Width of the compact grip across the sash.
-const GRIP_WIDTH: f32 = 12.0;
-
-/// Diameter of each grip dot.
-const DOT_SIZE: f32 = 1.5;
-
 /// The stage of a resize gesture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResizePhase {
@@ -139,36 +130,12 @@ impl<M> Sash<M> {
     /// Returns the one-pixel line centred inside `bounds`.
     fn line_bounds(&self, bounds: Rect) -> Rect {
         match self.axis {
-            Axis::Horizontal => Rect::from_xywh(
-                bounds.left() + (bounds.size.width - LINE_SIZE) / 2.0,
-                bounds.top(),
-                LINE_SIZE,
-                bounds.size.height,
-            ),
-            Axis::Vertical => Rect::from_xywh(
-                bounds.left(),
-                bounds.top() + (bounds.size.height - LINE_SIZE) / 2.0,
-                bounds.size.width,
-                LINE_SIZE,
-            ),
-        }
-    }
-
-    /// Returns the centred grip background inside `bounds`.
-    fn grip_bounds(&self, bounds: Rect) -> Rect {
-        match self.axis {
-            Axis::Horizontal => Rect::from_xywh(
-                bounds.left() + (bounds.size.width - GRIP_WIDTH) / 2.0,
-                bounds.top() + (bounds.size.height - GRIP_LENGTH) / 2.0,
-                GRIP_WIDTH,
-                GRIP_LENGTH,
-            ),
-            Axis::Vertical => Rect::from_xywh(
-                bounds.left() + (bounds.size.width - GRIP_LENGTH) / 2.0,
-                bounds.top() + (bounds.size.height - GRIP_WIDTH) / 2.0,
-                GRIP_LENGTH,
-                GRIP_WIDTH,
-            ),
+            Axis::Horizontal => {
+                Rect::from_xywh(bounds.left(), bounds.top(), LINE_SIZE, bounds.size.height)
+            }
+            Axis::Vertical => {
+                Rect::from_xywh(bounds.left(), bounds.top(), bounds.size.width, LINE_SIZE)
+            }
         }
     }
 
@@ -178,32 +145,6 @@ impl<M> Sash<M> {
             cx.theme().colors.border_focused
         } else {
             cx.theme().colors.border
-        }
-    }
-
-    /// Paints the shadcn-style six-dot grip centered on the sash.
-    fn paint_grip(&self, bounds: Rect, interaction: Interaction, cx: &mut PaintContext<'_, '_, M>) {
-        let grip = self.grip_bounds(bounds);
-        let fill = Self::line_color(interaction, cx);
-        cx.quad(Quad::filled(grip, fill).corner_radius(cx.theme().radius.sm));
-        for primary in [-3.0, 0.0, 3.0] {
-            for secondary in [-2.0, 2.0] {
-                let dot = match self.axis {
-                    Axis::Horizontal => Rect::from_xywh(
-                        grip.left() + grip.size.width / 2.0 + secondary - DOT_SIZE / 2.0,
-                        grip.top() + grip.size.height / 2.0 + primary - DOT_SIZE / 2.0,
-                        DOT_SIZE,
-                        DOT_SIZE,
-                    ),
-                    Axis::Vertical => Rect::from_xywh(
-                        grip.left() + grip.size.width / 2.0 + primary - DOT_SIZE / 2.0,
-                        grip.top() + grip.size.height / 2.0 + secondary - DOT_SIZE / 2.0,
-                        DOT_SIZE,
-                        DOT_SIZE,
-                    ),
-                };
-                cx.quad(Quad::filled(dot, cx.theme().colors.surface).corner_radius(DOT_SIZE / 2.0));
-            }
         }
     }
 }
@@ -236,11 +177,9 @@ impl<M> Element<M> for Sash<M> {
     /// Registers the hit area and paints the divider.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         let interaction = cx.resizable(bounds, self.axis, self.on_resize.clone());
-        cx.quad(Quad::filled(bounds, cx.theme().colors.surface));
         cx.quad(Quad::filled(
             self.line_bounds(bounds),
             Self::line_color(interaction, cx),
         ));
-        self.paint_grip(bounds, interaction, cx);
     }
 }

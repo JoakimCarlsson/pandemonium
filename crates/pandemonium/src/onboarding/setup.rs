@@ -1,6 +1,6 @@
 //! What the setup screen decides, and the messages that change it.
 
-use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES};
+use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES, ResizeEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::keymap::BaseKeymap;
@@ -74,7 +74,7 @@ impl Default for Setup {
 }
 
 /// One thing the screen can be told to change.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
     /// Draw in this theme mode.
     SetThemeMode(ThemeMode),
@@ -94,6 +94,8 @@ pub enum Message {
     Finish,
     /// Come back to the setup flow.
     Reopen,
+    /// Resize the sessions sidebar.
+    ResizeSidebar(ResizeEvent),
 }
 
 impl Setup {
@@ -111,6 +113,7 @@ impl Setup {
             Message::ToggleCrashReports => self.crash_reports = !self.crash_reports,
             Message::Finish => self.finished = true,
             Message::Reopen => self.finished = false,
+            Message::ResizeSidebar(_) => {}
         }
     }
 }

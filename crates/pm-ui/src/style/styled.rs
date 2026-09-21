@@ -190,4 +190,10 @@ pub trait Styled: Sized {
         self.style().corner_radius = radius;
         self
     }
+
+    /// Clips descendants to this element's bounds.
+    fn overflow_hidden(mut self) -> Self {
+        self.style().overflow_hidden = true;
+        self
+    }
 }

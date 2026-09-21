@@ -44,6 +44,8 @@ pub struct Style {
     pub border_color: Rgba,
     /// Corner radius of the background and border.
     pub corner_radius: f32,
+    /// Whether descendants are clipped to this element's bounds.
+    pub overflow_hidden: bool,
 }
 
 impl Style {
@@ -108,6 +110,7 @@ impl Default for Style {
             border_width: 0.0,
             border_color: Rgba::TRANSPARENT,
             corner_radius: 0.0,
+            overflow_hidden: false,
         }
     }
 }

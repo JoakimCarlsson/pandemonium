@@ -213,6 +213,10 @@ impl<M> Element<M> for Div<M> {
             (bounds.size.height - padding.vertical()).max(0.0),
         );
 
+        if self.style.overflow_hidden {
+            cx.push_clip(bounds);
+        }
+
         let sizes = self.measure_children(content.size, &mut cx.layout);
         let axis = self.style.axis;
         let gap = self.style.gap;
@@ -252,6 +256,10 @@ impl<M> Element<M> for Div<M> {
             );
 
             main += main_of(size, axis) + gap + spread;
+        }
+
+        if self.style.overflow_hidden {
+            cx.pop_clip();
         }
     }
 }

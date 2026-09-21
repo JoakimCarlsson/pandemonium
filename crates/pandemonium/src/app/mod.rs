@@ -10,7 +10,7 @@ mod input;
 use std::sync::Arc;
 
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
-use pm_ui::{Appearance, Scroll, Ui, family};
+use pm_ui::{Appearance, Axis, ResizeEdge, ResizeState, Scroll, Ui, family};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -21,6 +21,7 @@ use winit::window::{Window, WindowId};
 use crate::config;
 use crate::keymap::Resolver;
 use crate::onboarding::{self, Message, Setup};
+use crate::workspace::{self, SidebarProject};
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
 #[derive(Default)]
@@ -41,6 +42,10 @@ pub struct App {
     modifiers: ModifiersState,
     /// How far the page is scrolled.
     scroll: Scroll,
+    /// Projects and sessions presented by the workspace.
+    projects: Vec<SidebarProject>,
+    /// Current width and drag state of the sessions sidebar.
+    sidebar: ResizeState,
 }
 
 impl App {
@@ -48,6 +53,7 @@ impl App {
     pub fn restored() -> Self {
         Self {
             setup: config::load(),
+            sidebar: ResizeState::new(252.0, 160.0, 480.0),
             ..Self::default()
         }
     }
@@ -62,6 +68,12 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if let Message::ResizeSidebar(event) = message {
+            self.sidebar
+                .resize(event, Axis::Horizontal, ResizeEdge::End);
+            self.request_redraw();
+            return;
+        }
         self.setup.apply(message);
         if let Message::SetKeymap(base) = message {
             self.resolver.set_keymap(base.keymap());
@@ -97,7 +109,11 @@ impl App {
             theme.colors.background,
         ));
 
-        let page = onboarding::page(&theme, &self.setup);
+        let page = if self.setup.finished {
+            workspace::workspace(&theme, &self.projects, self.sidebar.extent())
+        } else {
+            onboarding::page(&theme, &self.setup)
+        };
         let painted = ui.draw(
             renderer.text(),
             list,

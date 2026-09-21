@@ -13,12 +13,6 @@ const FINISH_WIDTH: f32 = 200.0;
 
 /// Builds the page for `setup`, drawn in `theme`.
 pub fn page(theme: &Theme, setup: &Setup) -> Div<Message> {
-    let body = if setup.finished {
-        ready(theme, setup)
-    } else {
-        basics(theme, setup)
-    };
-
     v_flex().w_full().child(
         v_flex()
             .w_full()
@@ -28,7 +22,7 @@ pub fn page(theme: &Theme, setup: &Setup) -> Div<Message> {
             .gap(6)
             .child(header(theme, setup))
             .child(rule(theme))
-            .child(body),
+            .child(basics(theme, setup)),
     )
 }
 
@@ -78,35 +72,5 @@ fn mark(theme: &Theme) -> Div<Message> {
                 .text_xl()
                 .font_bold()
                 .color(theme.colors.text_on_accent),
-        )
-}
-
-/// The page setup leaves behind: what was chosen, and the way back.
-fn ready(theme: &Theme, setup: &Setup) -> Div<Message> {
-    v_flex()
-        .w_full()
-        .gap(2)
-        .p(4)
-        .rounded(theme.radius.lg)
-        .bg(theme.colors.surface)
-        .border_1(theme.colors.border)
-        .child(text("Setup finished").font_medium())
-        .child(
-            text(format!(
-                "{} keymap · {}",
-                setup.keymap.label(),
-                if setup.vim_mode {
-                    "vim mode on"
-                } else {
-                    "vim mode off"
-                },
-            ))
-            .text_sm()
-            .color(theme.colors.text_muted),
-        )
-        .child(
-            text("Projects and sessions land here next.")
-                .text_sm()
-                .color(theme.colors.text_subtle),
         )
 }

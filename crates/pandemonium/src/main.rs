@@ -9,6 +9,7 @@ mod config;
 )]
 mod keymap;
 mod onboarding;
+mod workspace;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
