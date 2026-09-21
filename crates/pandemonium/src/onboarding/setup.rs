@@ -1,5 +1,6 @@
 //! What the setup screen decides, and the messages that change it.
 
+use pm_core::{EntryId, ProjectId};
 use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES, ResizeEvent};
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +95,16 @@ pub enum Message {
     Finish,
     /// Come back to the setup flow.
     Reopen,
+    /// Ask for a repository and add it to the window as a project.
+    OpenProject,
+    /// Take this project out of the window.
+    CloseProject(ProjectId),
+    /// Make this the project the window's files and commands apply to.
+    ActivateProject(ProjectId),
+    /// Open the menu of things that can be done to this project.
+    ProjectMenu(ProjectId),
+    /// Show or hide what this directory of the file tree holds.
+    ToggleEntry(EntryId),
     /// Resize the sessions sidebar.
     ResizeSidebar(ResizeEvent),
     /// Minimize the application window.
@@ -129,6 +140,11 @@ impl Setup {
             Message::ToggleCrashReports => self.crash_reports = !self.crash_reports,
             Message::Finish => self.finished = true,
             Message::Reopen => self.finished = false,
+            Message::OpenProject
+            | Message::CloseProject(_)
+            | Message::ActivateProject(_)
+            | Message::ProjectMenu(_)
+            | Message::ToggleEntry(_) => {}
             Message::ResizeSidebar(_) => {}
             Message::MinimizeWindow | Message::ToggleMaximizedWindow | Message::CloseWindow => {}
             Message::TogglePrimarySidebar

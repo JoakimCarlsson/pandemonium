@@ -19,4 +19,4 @@ pub use color::Rgba;
 pub use draw::{DrawList, Quad, TextRun};
 pub use geometry::{Point, Rect, Size};
 pub use renderer::Renderer;
-pub use text::{FontStyle, ShapedRun, TextSystem};
+pub use text::{FontFamily, FontStyle, ShapedRun, TextSystem};

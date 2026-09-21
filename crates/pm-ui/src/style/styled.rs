@@ -32,6 +32,18 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets left padding in spacing-scale steps.
+    fn pl(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_padding_left(space(steps.into() as f32));
+        self
+    }
+
+    /// Sets right padding in spacing-scale steps.
+    fn pr(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_padding_right(space(steps.into() as f32));
+        self
+    }
+
     /// Sets top padding in spacing-scale steps.
     fn pt(mut self, steps: impl Into<f64>) -> Self {
         self.style().set_padding_top(space(steps.into() as f32));
@@ -168,6 +180,18 @@ pub trait Styled: Sized {
     /// Fills the element with `color`.
     fn bg(mut self, color: Rgba) -> Self {
         self.style().background = color;
+        self
+    }
+
+    /// Fills the element with `color` while the pointer is over it.
+    fn hover_bg(mut self, color: Rgba) -> Self {
+        self.style().background_hovered = Some(color);
+        self
+    }
+
+    /// Fills the element with `color` while the pointer is held on it.
+    fn active_bg(mut self, color: Rgba) -> Self {
+        self.style().background_active = Some(color);
         self
     }
 

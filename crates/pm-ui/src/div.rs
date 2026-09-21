@@ -1,8 +1,8 @@
 //! The one container: a flex box that stacks children along an axis.
 
-use pm_gfx::{Quad, Rect, Size};
+use pm_gfx::{Quad, Rect, Rgba, Size};
 
-use crate::element::{Element, IntoElement, LayoutContext, PaintContext};
+use crate::element::{Element, Interaction, IntoElement, LayoutContext, PaintContext};
 use crate::style::{Align, Axis, Justify, Length, Style, Styled};
 
 /// A container that measures its children, stacks them and paints a background.
@@ -11,6 +11,8 @@ pub struct Div<M> {
     style: Style,
     /// The children, in stacking order.
     children: Vec<Box<dyn Element<M>>>,
+    /// What a click on this container sends, when it answers to one at all.
+    on_click: Option<M>,
 }
 
 /// An empty container stacking children top to bottom.
@@ -18,6 +20,7 @@ pub fn div<M>() -> Div<M> {
     Div {
         style: Style::default(),
         children: Vec::new(),
+        on_click: None,
     }
 }
 
@@ -49,9 +52,36 @@ impl<M> Div<M> {
         self
     }
 
+    /// Makes this container answer to a click by sending `message`.
+    pub fn on_click(mut self, message: M) -> Self {
+        self.on_click = Some(message);
+        self
+    }
+
+    /// The fill for this container in `interaction`.
+    fn background(&self, interaction: Interaction) -> Rgba {
+        let style = &self.style;
+        match (interaction.pressed, interaction.hovered) {
+            (true, _) => style
+                .background_active
+                .or(style.background_hovered)
+                .unwrap_or(style.background),
+            (_, true) => style.background_hovered.unwrap_or(style.background),
+            _ => style.background,
+        }
+    }
+
     /// Applies `build` only when `condition` holds.
     pub fn when(self, condition: bool, build: impl FnOnce(Self) -> Self) -> Self {
         if condition { build(self) } else { self }
+    }
+
+    /// Applies `build` with the value only when there is one.
+    pub fn when_some<T>(self, value: Option<T>, build: impl FnOnce(Self, T) -> Self) -> Self {
+        match value {
+            Some(value) => build(self, value),
+            None => self,
+        }
     }
 
     /// Measures every child against the space inside the padding.
@@ -158,7 +188,7 @@ impl<M> Styled for Div<M> {
     }
 }
 
-impl<M> Element<M> for Div<M> {
+impl<M: Clone> Element<M> for Div<M> {
     /// How this container is sized, spaced and filled.
     fn layout_style(&self) -> Style {
         self.style
@@ -199,8 +229,13 @@ impl<M> Element<M> for Div<M> {
 
     /// Paints the background, then places and paints every child.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
+        let interaction = match self.on_click.clone() {
+            Some(message) => cx.interactive(bounds, message),
+            None => Interaction::default(),
+        };
+
         cx.quad(
-            Quad::filled(bounds, self.style.background)
+            Quad::filled(bounds, self.background(interaction))
                 .corner_radius(self.style.corner_radius)
                 .border(self.style.border_width, self.style.border_color),
         );

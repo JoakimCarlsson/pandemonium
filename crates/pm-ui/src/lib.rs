@@ -25,7 +25,10 @@ pub use div::{Div, div, h_flex, v_flex};
 pub use element::{
     Element, Input, Interaction, IntoElement, LayoutContext, PaintContext, Region, RegionAction,
 };
-pub use icons::{LayoutIcon, LayoutIconButton, layout_icon_button};
+pub use icons::{
+    ICON_SIZE, LayoutIcon, LayoutIconButton, TreeIcon, TreeIconElement, layout_icon_button,
+    tree_icon,
+};
 pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
 pub use scroll::Scroll;
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};

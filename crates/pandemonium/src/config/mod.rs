@@ -11,25 +11,35 @@ mod paths;
 mod stored;
 
 use std::fs;
+use std::path::PathBuf;
 
 use crate::onboarding::Setup;
 use stored::Stored;
 
-/// The preferences the last launch left behind, or a first launch's defaults.
-pub fn load() -> Setup {
+/// Everything a launch picks up where the one before it left off.
+#[derive(Debug, Default)]
+pub struct Restored {
+    /// The preferences the editor draws and behaves by.
+    pub setup: Setup,
+    /// The roots of the projects the window had open.
+    pub projects: Vec<PathBuf>,
+}
+
+/// What the last launch left behind, or a first launch's defaults.
+pub fn load() -> Restored {
     paths::settings()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_norway::from_str::<Stored>(&text).ok())
-        .map(Stored::into_setup)
+        .map(Stored::into_restored)
         .unwrap_or_default()
 }
 
-/// Writes `setup` down, ignoring a file system that will not have it.
-pub fn save(setup: &Setup) {
+/// Writes the window down, ignoring a file system that will not have it.
+pub fn save(setup: &Setup, projects: &[PathBuf]) {
     let Some(path) = paths::settings() else {
         return;
     };
-    let Ok(text) = serde_norway::to_string(&Stored::from(setup)) else {
+    let Ok(text) = serde_norway::to_string(&Stored::of(setup, projects)) else {
         return;
     };
     if let Some(directory) = path.parent()

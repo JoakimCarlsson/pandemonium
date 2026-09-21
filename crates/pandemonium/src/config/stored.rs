@@ -4,9 +4,12 @@
 //! the theme family is stored by name rather than by its index into
 //! [`FAMILIES`], and every field is optional so an older file still loads.
 
+use std::path::PathBuf;
+
 use pm_ui::FAMILIES;
 use serde::{Deserialize, Serialize};
 
+use crate::config::Restored;
 use crate::keymap::BaseKeymap;
 use crate::onboarding::{Setup, ThemeMode};
 
@@ -30,11 +33,22 @@ pub(super) struct Stored {
     crash_reports: Option<bool>,
     /// Whether setup has been finished, which swaps the page.
     finished: Option<bool>,
+    /// The roots of the projects the window had open.
+    projects: Option<Vec<PathBuf>>,
 }
 
 impl Stored {
+    /// What this file stands for, defaulting anything it leaves out.
+    pub(super) fn into_restored(self) -> Restored {
+        let projects = self.projects.clone().unwrap_or_default();
+        Restored {
+            setup: self.into_setup(),
+            projects,
+        }
+    }
+
     /// The preferences this file stands for, defaulting anything it leaves out.
-    pub(super) fn into_setup(self) -> Setup {
+    fn into_setup(self) -> Setup {
         let defaults = Setup::default();
         Setup {
             theme_mode: self.theme_mode.unwrap_or(defaults.theme_mode),
@@ -53,9 +67,9 @@ impl Stored {
     }
 }
 
-impl From<&Setup> for Stored {
-    /// The file to write for these preferences.
-    fn from(setup: &Setup) -> Self {
+impl Stored {
+    /// The file to write for these preferences and these open projects.
+    pub(super) fn of(setup: &Setup, projects: &[PathBuf]) -> Self {
         Self {
             theme_mode: Some(setup.theme_mode),
             theme_family: Some(pm_ui::family(setup.theme_family).name.to_owned()),
@@ -65,6 +79,7 @@ impl From<&Setup> for Stored {
             metrics: Some(setup.metrics),
             crash_reports: Some(setup.crash_reports),
             finished: Some(setup.finished),
+            projects: Some(projects.to_vec()),
         }
     }
 }

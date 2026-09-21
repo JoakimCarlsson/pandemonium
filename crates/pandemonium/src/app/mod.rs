@@ -10,6 +10,9 @@ mod input;
 use std::sync::Arc;
 use std::time::Instant;
 
+use std::collections::BTreeMap;
+
+use pm_core::{FileTree, ProjectId, Projects};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
 use pm_ui::{Appearance, Axis, ResizeEdge, ResizeState, Scroll, Ui, family};
 use winit::application::ApplicationHandler;
@@ -49,6 +52,10 @@ pub struct App {
     scroll: Scroll,
     /// Projects and sessions presented by the workspace.
     projects: Vec<SidebarProject>,
+    /// The projects this window holds open.
+    open: Projects,
+    /// One file tree per open project, so each keeps what it has expanded.
+    files: BTreeMap<ProjectId, FileTree>,
     /// Current width and drag state of the sessions sidebar.
     sidebar: ResizeState,
     /// Current height and drag state of the bottom panel.
@@ -68,12 +75,27 @@ pub struct App {
 impl App {
     /// The app as the last launch left it.
     pub fn restored() -> Self {
+        let restored = config::load();
+        let mut open = Projects::new();
+        for root in &restored.projects {
+            let _ = open.find_or_open(root);
+        }
+        open.activate_first();
+
+        let files = open
+            .iter()
+            .map(|project| (project.id(), FileTree::new(project.root())))
+            .collect();
+
         Self {
-            setup: config::load(),
+            setup: restored.setup,
+            open,
+            files,
             sidebar: ResizeState::new(252.0, 160.0, 480.0),
             bottom_panel: ResizeState::new(220.0, 120.0, 600.0),
             secondary_sidebar: ResizeState::new(252.0, 160.0, 480.0),
             primary_sidebar_open: true,
+            secondary_sidebar_open: true,
             ..Self::default()
         }
     }
@@ -121,6 +143,38 @@ impl App {
             self.request_redraw();
             return;
         }
+        if message == Message::OpenProject {
+            self.open_project();
+            self.read_new_worktrees();
+            self.store();
+            self.request_redraw();
+            return;
+        }
+        if let Message::CloseProject(id) = message {
+            self.open.remove(id);
+            self.files.remove(&id);
+            self.store();
+            self.request_redraw();
+            return;
+        }
+        if let Message::ActivateProject(id) = message {
+            self.open.activate(id);
+            self.request_redraw();
+            return;
+        }
+        if matches!(message, Message::ProjectMenu(_)) {
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleEntry(id) = message {
+            if let Some(project) = self.open.active().map(pm_core::Project::id)
+                && let Some(files) = self.files.get_mut(&project)
+            {
+                files.toggle(id);
+            }
+            self.request_redraw();
+            return;
+        }
         if message == Message::MinimizeWindow {
             if let Some(window) = self.window.as_ref() {
                 window.set_minimized(true);
@@ -141,8 +195,41 @@ impl App {
         if let Message::SetKeymap(base) = message {
             self.resolver.set_keymap(base.keymap());
         }
-        config::save(&self.setup);
+        self.store();
         self.request_redraw();
+    }
+
+    /// Asks for a repository and adds the one that comes back to the window.
+    ///
+    /// The picker is the platform's own, so there is nothing to do when it is
+    /// dismissed, and nothing to say when the folder it answers with is not in
+    /// a repository — the set of open projects simply does not change.
+    fn open_project(&mut self) {
+        let Some(root) = rfd::FileDialog::new()
+            .set_title("Open a repository")
+            .pick_folder()
+        else {
+            return;
+        };
+        let _ = self.open.find_or_open(root);
+    }
+
+    /// Reads the worktree of any project that does not have a tree yet.
+    fn read_new_worktrees(&mut self) {
+        let missing = self
+            .open
+            .iter()
+            .filter(|project| !self.files.contains_key(&project.id()))
+            .map(|project| (project.id(), project.root().to_path_buf()))
+            .collect::<Vec<_>>();
+        for (id, root) in missing {
+            self.files.insert(id, FileTree::new(root));
+        }
+    }
+
+    /// Writes the window's preferences and open projects down.
+    fn store(&self) {
+        config::save(&self.setup, &self.open.roots());
     }
 
     /// Asks the platform for another frame.
@@ -155,6 +242,8 @@ impl App {
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
+        let files = self.open.active().map(pm_core::Project::id);
+        let files = files.and_then(|id| self.files.get(&id));
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
         else {
@@ -175,7 +264,9 @@ impl App {
         let page = if self.setup.finished {
             workspace::workspace(
                 &theme,
+                &self.open,
                 &self.projects,
+                files,
                 workspace::Layout {
                     primary_sidebar_open: self.primary_sidebar_open,
                     primary_sidebar_width: self.sidebar.extent(),

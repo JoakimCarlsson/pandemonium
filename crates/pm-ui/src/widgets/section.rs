@@ -7,7 +7,7 @@ use crate::text::text;
 use crate::theme::Theme;
 
 /// A titled block: the title, an optional description and one control.
-pub fn section<M: 'static>(
+pub fn section<M: Clone + 'static>(
     theme: &Theme,
     title: &str,
     description: Option<&str>,

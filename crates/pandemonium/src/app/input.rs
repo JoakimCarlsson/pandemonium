@@ -36,6 +36,7 @@ impl App {
     fn context(&self) -> Context {
         let mut context = Context::new();
         context.flag(keys::SETUP_OPEN, !self.setup.finished);
+        context.flag(keys::PROJECT_FOCUSED, self.open.active().is_some());
         context
     }
 
@@ -43,6 +44,12 @@ impl App {
     fn act(&mut self, action: Action) {
         match action {
             Action::OpenSettings => self.apply(Message::Reopen),
+            Action::AddProject => self.apply(Message::OpenProject),
+            Action::RemoveProject => {
+                if let Some(id) = self.open.active().map(pm_core::Project::id) {
+                    self.apply(Message::CloseProject(id));
+                }
+            }
             Action::Cancel => {
                 if let Some(ui) = self.ui.as_mut() {
                     ui.clear_focus();

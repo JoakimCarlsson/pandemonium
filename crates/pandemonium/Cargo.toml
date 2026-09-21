@@ -10,6 +10,7 @@ pm-gfx.workspace = true
 pm-text.workspace = true
 pm-ui.workspace = true
 pm-vt.workspace = true
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_norway = "0.9.42"
 winit = "0.30.13"

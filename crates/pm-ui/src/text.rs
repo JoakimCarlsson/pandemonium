@@ -35,6 +35,12 @@ impl Text {
         self
     }
 
+    /// Returns this run in the monospaced family.
+    pub fn font_mono(mut self) -> Self {
+        self.font = self.font.mono();
+        self
+    }
+
     /// Returns this run at 11px, for badges and the smallest captions.
     pub fn text_xs(mut self) -> Self {
         self.font = TextScale::DEFAULT.xs;

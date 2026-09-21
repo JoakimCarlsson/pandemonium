@@ -38,6 +38,10 @@ pub struct Style {
     pub center_horizontally: bool,
     /// Fill colour behind the children.
     pub background: Rgba,
+    /// Fill colour while the pointer is over an element that answers to one.
+    pub background_hovered: Option<Rgba>,
+    /// Fill colour while the pointer is held on it.
+    pub background_active: Option<Rgba>,
     /// Border thickness, drawn inside the element's bounds.
     pub border_width: f32,
     /// Border colour.
@@ -64,6 +68,16 @@ impl Style {
     pub fn set_padding_y(&mut self, amount: f32) {
         self.padding.top = amount;
         self.padding.bottom = amount;
+    }
+
+    /// Sets padding on the left edge.
+    pub fn set_padding_left(&mut self, amount: f32) {
+        self.padding.left = amount;
+    }
+
+    /// Sets padding on the right edge.
+    pub fn set_padding_right(&mut self, amount: f32) {
+        self.padding.right = amount;
     }
 
     /// Sets padding on the top edge.
@@ -107,6 +121,8 @@ impl Default for Style {
             justify: Justify::Start,
             center_horizontally: false,
             background: Rgba::TRANSPARENT,
+            background_hovered: None,
+            background_active: None,
             border_width: 0.0,
             border_color: Rgba::TRANSPARENT,
             corner_radius: 0.0,

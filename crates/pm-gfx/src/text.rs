@@ -9,13 +9,36 @@ use cosmic_text::{Attrs, Buffer, Family, FamilyOwned, FontSystem, LayoutGlyph, M
 use crate::geometry::Size;
 
 /// Families tried in order before falling back to the platform sans-serif.
-const PREFERRED_FAMILIES: [&str; 5] = [
+const PREFERRED_SANS: [&str; 5] = [
     "Inter",
     "Inter Display",
     "SF Pro Text",
     "Noto Sans",
     "DejaVu Sans",
 ];
+
+/// Families tried in order before falling back to the platform monospace.
+const PREFERRED_MONO: [&str; 5] = [
+    "IBM Plex Mono",
+    "JetBrains Mono",
+    "SF Mono",
+    "Menlo",
+    "DejaVu Sans Mono",
+];
+
+/// Which of the two families a run is shaped with.
+///
+/// The editor draws in two: prose in the UI family, and anything that names a
+/// place on disk — a path, a branch, a line of code — in the monospaced one,
+/// where columns line up and a name cannot be mistaken for a label.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum FontFamily {
+    /// The UI family, for prose and labels.
+    #[default]
+    Sans,
+    /// The monospaced family, for paths, branches and code.
+    Mono,
+}
 
 /// How a run of text is drawn: size, leading, weight and slant.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,6 +51,8 @@ pub struct FontStyle {
     pub weight: u16,
     /// Whether the run is slanted.
     pub italic: bool,
+    /// Which family the run is shaped with.
+    pub family: FontFamily,
 }
 
 impl FontStyle {
@@ -38,7 +63,14 @@ impl FontStyle {
             line_height: size * 1.4,
             weight: 400,
             italic: false,
+            family: FontFamily::Sans,
         }
+    }
+
+    /// Returns this style shaped with the monospaced family.
+    pub const fn mono(mut self) -> Self {
+        self.family = FontFamily::Mono;
+        self
     }
 
     /// Returns this style at `weight` on the usual 100..=900 scale.
@@ -92,6 +124,8 @@ struct RunKey {
     weight: u16,
     /// Whether the run is slanted.
     italic: bool,
+    /// Which family the run was shaped with.
+    family: FontFamily,
 }
 
 impl RunKey {
@@ -103,6 +137,7 @@ impl RunKey {
             line_height: style.line_height.to_bits(),
             weight: style.weight,
             italic: style.italic,
+            family: style.family,
         }
     }
 }
@@ -111,8 +146,10 @@ impl RunKey {
 pub struct TextSystem {
     /// The font database and shaping engine.
     fonts: FontSystem,
-    /// The family every run is shaped with.
-    family: FamilyOwned,
+    /// The family prose is shaped with.
+    sans: FamilyOwned,
+    /// The family paths, branches and code are shaped with.
+    mono: FamilyOwned,
     /// Runs already shaped, keyed by their text and style.
     runs: HashMap<RunKey, Arc<ShapedRun>>,
 }
@@ -121,10 +158,12 @@ impl TextSystem {
     /// Loads the system fonts and picks the UI family.
     pub fn new() -> Self {
         let fonts = FontSystem::new();
-        let family = choose_family(&fonts);
+        let sans = choose_family(&fonts, PREFERRED_SANS, Family::SansSerif);
+        let mono = choose_family(&fonts, PREFERRED_MONO, Family::Monospace);
         Self {
             fonts,
-            family,
+            sans,
+            mono,
             runs: HashMap::new(),
         }
     }
@@ -154,9 +193,13 @@ impl TextSystem {
     /// Lays a single unwrapped line out and collects its glyphs.
     fn shape_uncached(&mut self, text: &str, style: FontStyle) -> ShapedRun {
         let metrics = Metrics::new(style.size, style.line_height);
+        let family = match style.family {
+            FontFamily::Sans => self.sans.clone(),
+            FontFamily::Mono => self.mono.clone(),
+        };
         let mut buffer = Buffer::new(&mut self.fonts, metrics);
         let attrs = Attrs::new()
-            .family(self.family.as_family())
+            .family(family.as_family())
             .weight(Weight(style.weight))
             .style(if style.italic {
                 cosmic_text::Style::Italic
@@ -193,9 +236,9 @@ impl Default for TextSystem {
     }
 }
 
-/// Picks the first installed family from [`PREFERRED_FAMILIES`].
-fn choose_family(fonts: &FontSystem) -> FamilyOwned {
-    for wanted in PREFERRED_FAMILIES {
+/// Picks the first installed family of `preferred`, else `fallback`.
+fn choose_family(fonts: &FontSystem, preferred: [&str; 5], fallback: Family<'_>) -> FamilyOwned {
+    for wanted in preferred {
         let installed = fonts
             .db()
             .faces()
@@ -205,5 +248,5 @@ fn choose_family(fonts: &FontSystem) -> FamilyOwned {
             return FamilyOwned::new(Family::Name(wanted));
         }
     }
-    FamilyOwned::new(Family::SansSerif)
+    FamilyOwned::new(fallback)
 }
