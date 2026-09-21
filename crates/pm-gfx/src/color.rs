@@ -58,22 +58,14 @@ impl Rgba {
         self.a <= f32::EPSILON
     }
 
-    /// Converts to the linear-light channels the shaders blend in.
-    pub fn to_linear(self) -> [f32; 4] {
-        [
-            srgb_to_linear(self.r),
-            srgb_to_linear(self.g),
-            srgb_to_linear(self.b),
-            self.a,
-        ]
-    }
-}
-
-/// Converts one sRGB-encoded channel to linear light.
-fn srgb_to_linear(channel: f32) -> f32 {
-    if channel <= 0.04045 {
-        channel / 12.92
-    } else {
-        ((channel + 0.055) / 1.055).powf(2.4)
+    /// The channels as the shaders take them, in the order they are declared.
+    ///
+    /// The values stay sRGB-encoded: the surface is a plain `Unorm` one, so
+    /// blending happens in the same gamma space the colours were written in.
+    /// That is what keeps antialiased text the weight the font intends —
+    /// blending coverage in linear light thins dark text on a light surface
+    /// until it looks ragged.
+    pub fn to_array(self) -> [f32; 4] {
+        [self.r, self.g, self.b, self.a]
     }
 }

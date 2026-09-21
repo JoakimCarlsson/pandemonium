@@ -43,9 +43,9 @@ struct QuadInstance {
     origin: [f32; 2],
     /// Extent from the origin.
     size: [f32; 2],
-    /// Fill colour in linear light.
+    /// Fill colour, sRGB-encoded.
     background: [f32; 4],
-    /// Border colour in linear light.
+    /// Border colour, sRGB-encoded.
     border_color: [f32; 4],
     /// Corner radii, clockwise from the top-left corner.
     radii: [f32; 4],
@@ -67,7 +67,7 @@ struct GlyphInstance {
     uv_origin: [f32; 2],
     /// Extent in atlas texture coordinates.
     uv_size: [f32; 2],
-    /// Tint in linear light.
+    /// Tint, sRGB-encoded.
     color: [f32; 4],
     /// Clip rectangle as left, top, right, bottom.
     clip: [f32; 4],
@@ -183,7 +183,7 @@ impl Renderer {
             .formats
             .iter()
             .copied()
-            .find(wgpu::TextureFormat::is_srgb)
+            .find(|format| !format.is_srgb())
             .unwrap_or(capabilities.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
@@ -424,8 +424,8 @@ impl Renderer {
                     quad.bounds.size.width * self.scale,
                     quad.bounds.size.height * self.scale,
                 ],
-                background: quad.background.to_linear(),
-                border_color: quad.border_color.to_linear(),
+                background: quad.background.to_array(),
+                border_color: quad.border_color.to_array(),
                 radii: quad.corner_radii.map(|radius| radius * self.scale),
                 border: [quad.border_width * self.scale, 0.0],
                 clip: self.clip(*clip),
@@ -441,7 +441,7 @@ impl Renderer {
 
         for (text, clip) in list.texts() {
             let clip = self.clip(*clip);
-            let color = text.color.to_linear();
+            let color = text.color.to_array();
             let offset = (
                 (text.origin.x * scale).round(),
                 ((text.origin.y + text.run.baseline) * scale).round(),
