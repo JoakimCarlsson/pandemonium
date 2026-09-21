@@ -32,8 +32,12 @@ const PAGE_NOTCHES: f32 = 4.0;
 pub(super) const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Width of the invisible resize target around an undecorated window.
+///
+/// An undecorated window has no frame outside itself to grab, so the whole
+/// target is inside the window and has to be wide enough to find without
+/// aiming: a decorated window gets about this much, plus its own border.
 #[cfg(not(target_os = "macos"))]
-const WINDOW_RESIZE_EDGE: f32 = 5.0;
+const WINDOW_RESIZE_EDGE: f32 = 8.0;
 
 impl App {
     /// What is true where a key was pressed, for the `when` clauses to read.
@@ -261,6 +265,7 @@ impl App {
         if state == ElementState::Pressed
             && let (Some(pointer), Some(renderer), Some(window)) =
                 (self.pointer, self.renderer.as_ref(), self.window.as_ref())
+            && !window.is_maximized()
             && let Some(direction) = window_resize_direction(pointer, renderer.size())
         {
             let _ = window.drag_resize_window(direction);
@@ -338,20 +343,56 @@ impl App {
 
     /// Applies the cursor requested by the current hover or drag target.
     fn update_pointer_cursor(&self) {
-        let cursor = self
-            .ui
-            .as_ref()
-            .map_or(PointerCursor::Default, |ui| ui.pointer_cursor());
-        let icon = match cursor {
-            PointerCursor::Default => winit::window::CursorIcon::Default,
-            PointerCursor::Pointer => winit::window::CursorIcon::Pointer,
-            PointerCursor::ResizeHorizontal => winit::window::CursorIcon::ColResize,
-            PointerCursor::ResizeVertical => winit::window::CursorIcon::RowResize,
-            PointerCursor::Text => winit::window::CursorIcon::Text,
-        };
+        let icon = self.window_resize_cursor().unwrap_or_else(|| {
+            let cursor = self
+                .ui
+                .as_ref()
+                .map_or(PointerCursor::Default, |ui| ui.pointer_cursor());
+            match cursor {
+                PointerCursor::Default => winit::window::CursorIcon::Default,
+                PointerCursor::Pointer => winit::window::CursorIcon::Pointer,
+                PointerCursor::ResizeHorizontal => winit::window::CursorIcon::ColResize,
+                PointerCursor::ResizeVertical => winit::window::CursorIcon::RowResize,
+                PointerCursor::Text => winit::window::CursorIcon::Text,
+            }
+        });
         if let Some(window) = self.window.as_ref() {
             window.set_cursor(icon);
         }
+    }
+
+    /// The shape the pointer takes along an undecorated window's own edges.
+    ///
+    /// The edge is invisible, so the cursor is the only thing that says it is
+    /// there: without it a window that resizes perfectly well reads as one
+    /// that does not resize at all.
+    #[cfg(not(target_os = "macos"))]
+    fn window_resize_cursor(&self) -> Option<winit::window::CursorIcon> {
+        if self
+            .window
+            .as_ref()
+            .is_some_and(|window| window.is_maximized())
+        {
+            return None;
+        }
+        let pointer = self.pointer?;
+        let size = self.renderer.as_ref()?.size();
+        window_resize_direction(pointer, size).map(|direction| match direction {
+            ResizeDirection::North | ResizeDirection::South => winit::window::CursorIcon::NsResize,
+            ResizeDirection::East | ResizeDirection::West => winit::window::CursorIcon::EwResize,
+            ResizeDirection::NorthWest | ResizeDirection::SouthEast => {
+                winit::window::CursorIcon::NwseResize
+            }
+            ResizeDirection::NorthEast | ResizeDirection::SouthWest => {
+                winit::window::CursorIcon::NeswResize
+            }
+        })
+    }
+
+    /// A decorated window resizes from its own frame, which macOS draws.
+    #[cfg(target_os = "macos")]
+    fn window_resize_cursor(&self) -> Option<winit::window::CursorIcon> {
+        None
     }
 }
 
