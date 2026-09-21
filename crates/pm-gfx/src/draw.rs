@@ -86,21 +86,34 @@ pub struct IconRun {
     pub color: Rgba,
 }
 
+/// Where a primitive sits in the stack of things drawn over each other.
+///
+/// Within one layer quads are drawn before text, which is what a background
+/// behind a label wants. Between layers nothing of a lower one is drawn over
+/// anything of a higher one, which is what a menu over a screen wants.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Layer(pub u32);
+
 /// One frame's worth of primitives, in submission order.
 ///
-/// Quads are drawn before text, so a quad pushed after a run still sits behind
-/// it. Backgrounds are therefore free to be pushed in any order; overlaying a
-/// quad *on top of* text is not expressible and is a second pass if it is ever
-/// wanted.
+/// A primitive is drawn over the ones pushed before it in its own layer, and
+/// over everything in every layer below it. Within a layer quads come before
+/// text; drawing a quad over text means opening a layer for it.
 pub struct DrawList {
-    /// Quads with the clip rectangle in force when each was pushed.
-    quads: Vec<(Quad, Rect)>,
-    /// Text runs with the clip rectangle in force when each was pushed.
-    texts: Vec<(TextRun, Rect)>,
-    /// Icons with the clip rectangle in force when each was pushed.
-    icons: Vec<(IconRun, Rect)>,
+    /// Quads with the clip and layer in force when each was pushed.
+    quads: Vec<(Quad, Rect, Layer)>,
+    /// Text runs with the clip and layer in force when each was pushed.
+    texts: Vec<(TextRun, Rect, Layer)>,
+    /// Icons with the clip and layer in force when each was pushed.
+    icons: Vec<(IconRun, Rect, Layer)>,
     /// The clip stack, never empty; the last entry is in force.
     clips: Vec<Rect>,
+    /// The layer primitives are going into.
+    layer: Layer,
+    /// The layers to come back to, innermost last.
+    layers: Vec<Layer>,
+    /// The highest layer opened this frame.
+    opened: Layer,
 }
 
 impl DrawList {
@@ -111,6 +124,9 @@ impl DrawList {
             texts: Vec::new(),
             icons: Vec::new(),
             clips: vec![Rect::new(Point::default(), size)],
+            layer: Layer::default(),
+            layers: Vec::new(),
+            opened: Layer::default(),
         }
     }
 
@@ -121,6 +137,14 @@ impl DrawList {
         self.icons.clear();
         self.clips.clear();
         self.clips.push(Rect::new(Point::default(), size));
+        self.layer = Layer::default();
+        self.layers.clear();
+        self.opened = Layer::default();
+    }
+
+    /// The window the list is drawn for.
+    pub fn viewport(&self) -> Rect {
+        *self.clips.first().expect("clip stack is never empty")
     }
 
     /// The clip rectangle primitives are currently confined to.
@@ -141,13 +165,25 @@ impl DrawList {
         }
     }
 
+    /// Opens a layer over everything drawn so far, for an overlay.
+    pub fn push_layer(&mut self) {
+        self.opened = Layer(self.opened.0 + 1);
+        self.layers.push(self.layer);
+        self.layer = self.opened;
+    }
+
+    /// Returns to the layer in force before the matching [`Self::push_layer`].
+    pub fn pop_layer(&mut self) {
+        self.layer = self.layers.pop().unwrap_or_default();
+    }
+
     /// Adds a quad, skipping it when it would draw nothing.
     pub fn quad(&mut self, quad: Quad) {
         if quad.is_invisible() {
             return;
         }
         let clip = self.clip();
-        self.quads.push((quad, clip));
+        self.quads.push((quad, clip, self.layer));
     }
 
     /// Adds a shaped run at `origin` in `color`.
@@ -156,7 +192,8 @@ impl DrawList {
             return;
         }
         let clip = self.clip();
-        self.texts.push((TextRun { origin, run, color }, clip));
+        self.texts
+            .push((TextRun { origin, run, color }, clip, self.layer));
     }
 
     /// Adds `svg` drawn inside `bounds` in `color`.
@@ -165,21 +202,27 @@ impl DrawList {
             return;
         }
         let clip = self.clip();
-        self.icons.push((IconRun { bounds, svg, color }, clip));
+        self.icons
+            .push((IconRun { bounds, svg, color }, clip, self.layer));
     }
 
-    /// The quads to draw, each with its clip rectangle.
-    pub(crate) fn quads(&self) -> &[(Quad, Rect)] {
+    /// The quads to draw, each with its clip rectangle and layer.
+    pub(crate) fn quads(&self) -> &[(Quad, Rect, Layer)] {
         &self.quads
     }
 
-    /// The text runs to draw, each with its clip rectangle.
-    pub(crate) fn texts(&self) -> &[(TextRun, Rect)] {
+    /// The text runs to draw, each with its clip rectangle and layer.
+    pub(crate) fn texts(&self) -> &[(TextRun, Rect, Layer)] {
         &self.texts
     }
 
+    /// The layers this frame has anything in, lowest first.
+    pub(crate) fn layers(&self) -> std::ops::RangeInclusive<u32> {
+        0..=self.opened.0
+    }
+
     /// The icons to draw, each with its clip rectangle.
-    pub(crate) fn icons(&self) -> &[(IconRun, Rect)] {
+    pub(crate) fn icons(&self) -> &[(IconRun, Rect, Layer)] {
         &self.icons
     }
 }

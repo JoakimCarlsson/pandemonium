@@ -4,8 +4,11 @@
 //! Callers hand it a [`DrawList`] in logical pixels; scaling to physical
 //! pixels, rasterizing glyphs and submitting the pass happen in here.
 
+use std::collections::HashMap;
+use std::ops::Range;
+
 use crate::atlas::GlyphAtlas;
-use crate::draw::DrawList;
+use crate::draw::{DrawList, Layer};
 use crate::geometry::{Rect, Size};
 use crate::pipeline::{GlyphInstance, InstanceBuffer, QuadInstance, Viewport, build_pipeline};
 use crate::text::TextSystem;
@@ -245,9 +248,10 @@ impl Renderer {
             }),
         );
 
-        let quads = self.build_quads(list);
+        let (quads, quad_layers) = sorted(self.build_quads(list));
         let mut glyphs = self.build_glyphs(list);
         glyphs.extend(self.build_icons(list));
+        let (glyphs, glyph_layers) = sorted(glyphs);
         self.quad_instances
             .upload(&self.device, &self.queue, bytemuck::cast_slice(&quads));
         self.glyph_instances
@@ -279,16 +283,22 @@ impl Renderer {
             });
 
             pass.set_bind_group(0, &self.viewport_group, &[]);
-            if let Some(buffer) = self.quad_instances.buffer().filter(|_| !quads.is_empty()) {
-                pass.set_pipeline(&self.quad_pipeline);
-                pass.set_vertex_buffer(0, buffer.slice(..));
-                pass.draw(0..6, 0..quads.len() as u32);
-            }
-            if let Some(buffer) = self.glyph_instances.buffer().filter(|_| !glyphs.is_empty()) {
-                pass.set_pipeline(&self.glyph_pipeline);
-                pass.set_bind_group(1, &self.atlas_group, &[]);
-                pass.set_vertex_buffer(0, buffer.slice(..));
-                pass.draw(0..6, 0..glyphs.len() as u32);
+            for layer in list.layers() {
+                if let Some(buffer) = self.quad_instances.buffer()
+                    && let Some(range) = quad_layers.get(&layer)
+                {
+                    pass.set_pipeline(&self.quad_pipeline);
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..6, range.clone());
+                }
+                if let Some(buffer) = self.glyph_instances.buffer()
+                    && let Some(range) = glyph_layers.get(&layer)
+                {
+                    pass.set_pipeline(&self.glyph_pipeline);
+                    pass.set_bind_group(1, &self.atlas_group, &[]);
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..6, range.clone());
+                }
             }
         }
 
@@ -297,34 +307,39 @@ impl Renderer {
     }
 
     /// Converts the list's quads to physical-pixel instances.
-    fn build_quads(&self, list: &DrawList) -> Vec<QuadInstance> {
+    fn build_quads(&self, list: &DrawList) -> Vec<(Layer, QuadInstance)> {
         list.quads()
             .iter()
-            .map(|(quad, clip)| QuadInstance {
-                origin: [
-                    quad.bounds.left() * self.scale,
-                    quad.bounds.top() * self.scale,
-                ],
-                size: [
-                    quad.bounds.size.width * self.scale,
-                    quad.bounds.size.height * self.scale,
-                ],
-                background: quad.background.to_array(),
-                border_color: quad.border_color.to_array(),
-                radii: quad.corner_radii.map(|radius| radius * self.scale),
-                border: [quad.border_width * self.scale, 0.0],
-                clip: self.clip(*clip),
+            .map(|(quad, clip, layer)| {
+                (
+                    *layer,
+                    QuadInstance {
+                        origin: [
+                            quad.bounds.left() * self.scale,
+                            quad.bounds.top() * self.scale,
+                        ],
+                        size: [
+                            quad.bounds.size.width * self.scale,
+                            quad.bounds.size.height * self.scale,
+                        ],
+                        background: quad.background.to_array(),
+                        border_color: quad.border_color.to_array(),
+                        radii: quad.corner_radii.map(|radius| radius * self.scale),
+                        border: [quad.border_width * self.scale, 0.0],
+                        clip: self.clip(*clip),
+                    },
+                )
             })
             .collect()
     }
 
     /// Rasterizes the list's text and converts it to glyph instances.
-    fn build_glyphs(&mut self, list: &DrawList) -> Vec<GlyphInstance> {
+    fn build_glyphs(&mut self, list: &DrawList) -> Vec<(Layer, GlyphInstance)> {
         let scale = self.scale;
         let atlas_size = self.atlas.size();
         let mut instances = Vec::new();
 
-        for (text, clip) in list.texts() {
+        for (text, clip, layer) in list.texts() {
             let clip = self.clip(*clip);
             let color = text.color.to_array();
             let offset = (
@@ -341,20 +356,23 @@ impl Renderer {
                     continue;
                 };
 
-                instances.push(GlyphInstance {
-                    origin: [
-                        (physical.x + slot.left) as f32,
-                        (physical.y - slot.top) as f32,
-                    ],
-                    size: [slot.width as f32, slot.height as f32],
-                    uv_origin: [slot.x as f32 / atlas_size, slot.y as f32 / atlas_size],
-                    uv_size: [
-                        slot.width as f32 / atlas_size,
-                        slot.height as f32 / atlas_size,
-                    ],
-                    color,
-                    clip,
-                });
+                instances.push((
+                    *layer,
+                    GlyphInstance {
+                        origin: [
+                            (physical.x + slot.left) as f32,
+                            (physical.y - slot.top) as f32,
+                        ],
+                        size: [slot.width as f32, slot.height as f32],
+                        uv_origin: [slot.x as f32 / atlas_size, slot.y as f32 / atlas_size],
+                        uv_size: [
+                            slot.width as f32 / atlas_size,
+                            slot.height as f32 / atlas_size,
+                        ],
+                        color,
+                        clip,
+                    },
+                ));
             }
         }
 
@@ -366,31 +384,34 @@ impl Renderer {
     /// An icon is a glyph as far as the GPU is concerned: the same atlas, the
     /// same pipeline, the same tint. What differs is only where the coverage
     /// came from, which the atlas has already forgotten by this point.
-    fn build_icons(&mut self, list: &DrawList) -> Vec<GlyphInstance> {
+    fn build_icons(&mut self, list: &DrawList) -> Vec<(Layer, GlyphInstance)> {
         let scale = self.scale;
         let atlas_size = self.atlas.size();
         let mut instances = Vec::new();
 
-        for (icon, clip) in list.icons() {
+        for (icon, clip, layer) in list.icons() {
             let side = (icon.bounds.size.width.min(icon.bounds.size.height) * scale).round();
             let Some(slot) = self.atlas.icon_slot(&self.queue, icon.svg, side as u32) else {
                 continue;
             };
 
-            instances.push(GlyphInstance {
-                origin: [
-                    (icon.bounds.left() * scale).round(),
-                    (icon.bounds.top() * scale).round(),
-                ],
-                size: [slot.width as f32, slot.height as f32],
-                uv_origin: [slot.x as f32 / atlas_size, slot.y as f32 / atlas_size],
-                uv_size: [
-                    slot.width as f32 / atlas_size,
-                    slot.height as f32 / atlas_size,
-                ],
-                color: icon.color.to_array(),
-                clip: self.clip(*clip),
-            });
+            instances.push((
+                *layer,
+                GlyphInstance {
+                    origin: [
+                        (icon.bounds.left() * scale).round(),
+                        (icon.bounds.top() * scale).round(),
+                    ],
+                    size: [slot.width as f32, slot.height as f32],
+                    uv_origin: [slot.x as f32 / atlas_size, slot.y as f32 / atlas_size],
+                    uv_size: [
+                        slot.width as f32 / atlas_size,
+                        slot.height as f32 / atlas_size,
+                    ],
+                    color: icon.color.to_array(),
+                    clip: self.clip(*clip),
+                },
+            ));
         }
 
         instances
@@ -405,4 +426,31 @@ impl Renderer {
             clip.bottom() * self.scale,
         ]
     }
+}
+
+/// Orders `instances` by layer and says which range of them each layer is.
+///
+/// The instances of one layer end up next to each other, so a layer is one
+/// draw call rather than one per primitive, and the layers are drawn lowest
+/// first because that is what being over something means.
+fn sorted<T>(instances: Vec<(Layer, T)>) -> (Vec<T>, HashMap<u32, Range<u32>>) {
+    let mut instances = instances;
+    instances.sort_by_key(|(layer, _)| *layer);
+
+    let mut ranges: HashMap<u32, Range<u32>> = HashMap::new();
+    for (index, (layer, _)) in instances.iter().enumerate() {
+        let index = index as u32;
+        ranges
+            .entry(layer.0)
+            .and_modify(|range| range.end = index + 1)
+            .or_insert(index..index + 1);
+    }
+
+    (
+        instances
+            .into_iter()
+            .map(|(_, instance)| instance)
+            .collect(),
+        ranges,
+    )
 }

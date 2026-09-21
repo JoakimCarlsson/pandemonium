@@ -27,13 +27,14 @@ use winit::window::{Window, WindowId};
 
 use crate::app::input::DOUBLE_CLICK_INTERVAL;
 use crate::config::{self, Restored, WindowState};
+use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::onboarding::{self, Message, Setup};
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
-    self, BOTTOM_PANEL_RANGE, Layout, PRIMARY_SIDEBAR_RANGE, Pane, Panel, SECONDARY_SIDEBAR_RANGE,
-    SidebarProject,
+    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Pane, Panel, Panes,
+    SECONDARY_SIDEBAR_RANGE, SidebarProject, TabMenu,
 };
 
 /// What the window is woken up for from outside the event loop.
@@ -93,6 +94,8 @@ pub struct App {
     editor: Files,
     /// Whether keystrokes go to the editor pane rather than to the window.
     editor_focused: bool,
+    /// The tab menu that is open over the panes, if one is.
+    menu: Option<TabMenu>,
     /// Time and place of the last press in the editor pane.
     last_editor_click: Option<(Instant, Position)>,
     /// The shells the window is running, one per project.
@@ -163,6 +166,7 @@ impl App {
             close_requested: false,
             editor: Files::default(),
             editor_focused: false,
+            menu: None,
             last_editor_click: None,
             terminals: Terminals::default(),
             terminal_focused: false,
@@ -369,6 +373,19 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if let Message::ShowFileMenu(id) = message {
+            self.open_menu(MenuTarget::File(id));
+            return;
+        }
+        if let Message::ShowTerminalMenu(id) = message {
+            self.open_menu(MenuTarget::Terminal(id));
+            return;
+        }
+        self.menu = None;
+        if self.tab_command(message) {
+            self.request_redraw();
+            return;
+        }
         if let Message::ResizeSidebar(event) = message {
             self.sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::End);
@@ -535,6 +552,86 @@ impl App {
         self.request_redraw();
     }
 
+    /// Opens the menu for `target` where the pointer is.
+    ///
+    /// The menu is placed rather than anchored: the pointer is the one place
+    /// every tab, however narrow and however far along the bar, agrees on.
+    fn open_menu(&mut self, target: MenuTarget) {
+        self.menu = self.pointer.map(|at| TabMenu { at, target });
+        self.request_redraw();
+    }
+
+    /// Puts away the menu that is open, saying whether there was one.
+    pub(super) fn dismiss_menu(&mut self) -> bool {
+        self.menu.take().is_some()
+    }
+
+    /// Carries out a command from a tab menu, if `message` is one.
+    ///
+    /// The menu commands are collected here because they are one family:
+    /// every one of them acts on the tabs of the project the window is
+    /// pointed at, and none of them touches the window's own state.
+    fn tab_command(&mut self, message: Message) -> bool {
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return matches!(message, Message::DismissMenu);
+        };
+
+        match message {
+            Message::DismissMenu => {}
+            Message::CloseOtherFiles(id) => self.editor.close_others(project, id),
+            Message::CloseFilesLeft(id) => self.editor.close_left(project, id),
+            Message::CloseFilesRight(id) => self.editor.close_right(project, id),
+            Message::CloseSavedFiles => self.editor.close_saved(project),
+            Message::CloseAllFiles => self.editor.close_all(project),
+            Message::CopyFilePath(id) => {
+                if let Some(path) = self.editor.path(project, id) {
+                    desktop::copy(path.display().to_string());
+                }
+            }
+            Message::CopyFileRelativePath(id) => {
+                if let Some(path) = self.relative_path(project, id) {
+                    desktop::copy(path);
+                }
+            }
+            Message::RevealFile(id) => {
+                if let Some(path) = self.editor.path(project, id) {
+                    desktop::reveal(&path);
+                }
+            }
+            Message::OpenFileInTerminal(id) => self.start_shell_beside(project, id),
+            Message::CloseOtherTerminals(id) => self.terminals.stop_others(project, id),
+            Message::CloseAllTerminals => {
+                self.terminals.stop_all(project);
+                self.close_empty_panel();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// The path of the file `id` names, from the project's worktree down.
+    fn relative_path(&self, project: ProjectId, id: crate::editor::FileId) -> Option<String> {
+        let root = self.open.get(project)?.root().to_path_buf();
+        let path = self.editor.path(project, id)?;
+        let relative = path.strip_prefix(&root).unwrap_or(&path);
+        Some(relative.display().to_string())
+    }
+
+    /// Starts a shell in the directory the file `id` names sits in.
+    fn start_shell_beside(&mut self, project: ProjectId, id: crate::editor::FileId) {
+        let Some(directory) = self
+            .editor
+            .path(project, id)
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        else {
+            return;
+        };
+        self.terminals.start(project, &directory);
+        self.bottom_panel_open = true;
+        self.terminal_focused = true;
+        self.editor_focused = false;
+    }
+
     /// Asks for a repository and adds the one that comes back to the window.
     ///
     /// The picker is the platform's own, so there is nothing to do when it is
@@ -693,8 +790,11 @@ impl App {
                 &self.projects,
                 files,
                 layout,
-                panel,
-                pane,
+                Panes {
+                    editor: pane,
+                    terminal: panel,
+                    menu: self.menu,
+                },
             )
         } else {
             onboarding::page(&theme, &self.setup)
@@ -820,6 +920,11 @@ impl ApplicationHandler<Wake> for App {
                 state,
                 ..
             } => self.pointer_button(state),
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                state: ElementState::Pressed,
+                ..
+            } => self.secondary_pressed(),
             WindowEvent::MouseWheel { delta, .. } => {
                 let delta = match delta {
                     MouseScrollDelta::LineDelta(_, lines) => lines * input::WHEEL_STEP,

@@ -24,6 +24,10 @@ pub struct Style {
     pub height: Length,
     /// Upper bound on width, applied after `width`.
     pub max_width: Option<f32>,
+    /// Narrowest the element is drawn, whatever its content comes to.
+    pub min_width: Option<f32>,
+    /// Whether the element is as wide as its content rather than its offer.
+    pub fit_width: bool,
     /// Share of the leftover space on the parent's stacking axis.
     pub flex_grow: f32,
     /// Space between the element's border and its children.
@@ -114,6 +118,8 @@ impl Default for Style {
             width: Length::Auto,
             height: Length::Auto,
             max_width: None,
+            min_width: None,
+            fit_width: false,
             flex_grow: 0.0,
             padding: Edges::default(),
             gap: 0.0,

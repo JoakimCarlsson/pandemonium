@@ -179,6 +179,23 @@ impl Terminals {
         }
     }
 
+    /// Stops every shell of `project` but the one `id` names.
+    pub fn stop_others(&mut self, project: ProjectId, id: ShellId) {
+        let Some(shells) = self.projects.get_mut(&project) else {
+            return;
+        };
+        shells.running.retain(|(running, _)| *running == id);
+        shells.active = Some(id);
+    }
+
+    /// Stops every shell of `project`, leaving the project open.
+    pub fn stop_all(&mut self, project: ProjectId) {
+        if let Some(shells) = self.projects.get_mut(&project) {
+            shells.running.clear();
+            shells.active = None;
+        }
+    }
+
     /// Stops every shell of `project`, for a project leaving the window.
     pub fn close(&mut self, project: ProjectId) {
         self.projects.remove(&project);

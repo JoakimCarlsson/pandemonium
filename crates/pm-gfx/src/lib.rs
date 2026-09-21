@@ -17,7 +17,7 @@ mod svg;
 mod text;
 
 pub use color::Rgba;
-pub use draw::{DrawList, IconRun, Quad, TextRun};
+pub use draw::{DrawList, IconRun, Layer, Quad, TextRun};
 pub use geometry::{Point, Rect, Size};
 pub use renderer::Renderer;
 pub use svg::Svg;

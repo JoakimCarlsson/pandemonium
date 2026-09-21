@@ -8,6 +8,7 @@
 
 mod button;
 mod icon_button;
+mod menu;
 mod rule;
 mod section;
 mod switch;
@@ -19,6 +20,7 @@ mod toggle_row;
 
 pub use button::{Button, ButtonVariant, button};
 pub use icon_button::icon_button;
+pub use menu::{MenuItem, menu, menu_entry, menu_separator};
 pub use rule::rule;
 pub use section::section;
 pub use switch::{Switch, switch};

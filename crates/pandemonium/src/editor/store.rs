@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -188,6 +188,13 @@ impl ProjectFiles {
     fn active(&self) -> Option<OpenFile> {
         self.active.and_then(|id| self.get(id))
     }
+
+    /// Shows another file when the one that was showing has been closed.
+    fn settle(&mut self) {
+        if self.active().is_none() {
+            self.active = self.open.last().map(|(id, _)| *id);
+        }
+    }
 }
 
 /// Every file the window has open, and the servers behind them.
@@ -290,15 +297,88 @@ impl Files {
         }
     }
 
+    /// Where the file `id` names lives, if it is open at all.
+    pub fn path(&self, project: ProjectId, id: FileId) -> Option<PathBuf> {
+        let file = self.projects.get(&project)?.get(id)?;
+        let path = file.borrow().buffer().path().to_path_buf();
+        Some(path)
+    }
+
+    /// Closes every file of `project` but the one `id` names.
+    pub fn close_others(&mut self, project: ProjectId, id: FileId) {
+        self.retain(project, |open| open == id);
+    }
+
+    /// Closes the files of `project` opened before the one `id` names.
+    pub fn close_left(&mut self, project: ProjectId, id: FileId) {
+        let Some(index) = self.index_of(project, id) else {
+            return;
+        };
+        let mut seen = 0;
+        self.retain(project, |_| {
+            let keep = seen >= index;
+            seen += 1;
+            keep
+        });
+    }
+
+    /// Closes the files of `project` opened after the one `id` names.
+    pub fn close_right(&mut self, project: ProjectId, id: FileId) {
+        let Some(index) = self.index_of(project, id) else {
+            return;
+        };
+        let mut seen = 0;
+        self.retain(project, |_| {
+            let keep = seen <= index;
+            seen += 1;
+            keep
+        });
+    }
+
+    /// Closes the files of `project` that are the same as they are on disk.
+    pub fn close_saved(&mut self, project: ProjectId) {
+        self.retain_files(project, |file| file.borrow().buffer().is_dirty());
+    }
+
+    /// Closes every file of `project`.
+    pub fn close_all(&mut self, project: ProjectId) {
+        self.retain(project, |_| false);
+    }
+
+    /// Where the file `id` names sits in the project's list of open files.
+    fn index_of(&self, project: ProjectId, id: FileId) -> Option<usize> {
+        self.projects
+            .get(&project)?
+            .open
+            .iter()
+            .position(|(open, _)| *open == id)
+    }
+
+    /// Keeps the files of `project` whose id `keep` accepts.
+    fn retain(&mut self, project: ProjectId, mut keep: impl FnMut(FileId) -> bool) {
+        let Some(files) = self.projects.get_mut(&project) else {
+            return;
+        };
+        files.open.retain(|(id, _)| keep(*id));
+        files.settle();
+    }
+
+    /// Keeps the files of `project` that `keep` accepts.
+    fn retain_files(&mut self, project: ProjectId, mut keep: impl FnMut(&OpenFile) -> bool) {
+        let Some(files) = self.projects.get_mut(&project) else {
+            return;
+        };
+        files.open.retain(|(_, file)| keep(file));
+        files.settle();
+    }
+
     /// Closes the file `id` names, showing another of the project's instead.
     pub fn close(&mut self, project: ProjectId, id: FileId) {
         let Some(files) = self.projects.get_mut(&project) else {
             return;
         };
         files.open.retain(|(open, _)| *open != id);
-        if files.active == Some(id) {
-            files.active = files.open.last().map(|(id, _)| *id);
-        }
+        files.settle();
     }
 
     /// Closes every file of `project` and ends the servers over `root`.

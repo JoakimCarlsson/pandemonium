@@ -13,6 +13,8 @@ pub struct Div<M> {
     children: Vec<Box<dyn Element<M>>>,
     /// What a click on this container sends, when it answers to one at all.
     on_click: Option<M>,
+    /// What a secondary click on it sends, when it answers to one at all.
+    on_secondary_click: Option<M>,
 }
 
 /// An empty container stacking children top to bottom.
@@ -21,6 +23,7 @@ pub fn div<M>() -> Div<M> {
         style: Style::default(),
         children: Vec::new(),
         on_click: None,
+        on_secondary_click: None,
     }
 }
 
@@ -58,6 +61,12 @@ impl<M> Div<M> {
         self
     }
 
+    /// Makes this container answer to a secondary click by sending `message`.
+    pub fn on_secondary_click(mut self, message: M) -> Self {
+        self.on_secondary_click = Some(message);
+        self
+    }
+
     /// The fill for this container in `interaction`.
     fn background(&self, interaction: Interaction) -> Rgba {
         let style = &self.style;
@@ -92,7 +101,12 @@ impl<M> Div<M> {
     /// `Full` or a non-zero `flex_grow` — and each of those is measured
     /// against its own share, so a child that fills its parent's width cannot
     /// widen the parent it is being fitted into.
-    fn measure_children(&mut self, content: Size, cx: &mut LayoutContext<'_>) -> Vec<Size> {
+    fn measure_children(
+        &mut self,
+        content: Size,
+        stretch: bool,
+        cx: &mut LayoutContext<'_>,
+    ) -> Vec<Size> {
         let axis = self.style.axis;
         let align = self.style.align;
         let gaps = self.style.gap * self.children.len().saturating_sub(1) as f32;
@@ -146,7 +160,7 @@ impl<M> Div<M> {
             let cross = match cross_length(&style, axis) {
                 Length::Px(pixels) => pixels,
                 Length::Full => cross_of(content, axis),
-                Length::Auto if align == Align::Stretch => cross_of(content, axis),
+                Length::Auto if align == Align::Stretch && stretch => cross_of(content, axis),
                 Length::Auto => cross_of(*size, axis).min(cross_of(content, axis)),
             };
             set_cross(size, axis, cap_width(&style, axis, cross));
@@ -172,10 +186,14 @@ impl<M> Div<M> {
         )
     }
 
-    /// Applies `max_width` to a width offer.
+    /// Applies `min_width` and `max_width` to a width.
     fn capped_width(&self, width: f32) -> f32 {
-        match self.style.max_width {
+        let width = match self.style.max_width {
             Some(max) => width.min(max),
+            None => width,
+        };
+        match self.style.min_width {
+            Some(min) => width.max(min),
             None => width,
         }
     }
@@ -197,7 +215,7 @@ impl<M: Clone> Element<M> for Div<M> {
     /// Measures the children, then this container around them.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
         let content = self.content_offer(available);
-        let sizes = self.measure_children(content, cx);
+        let sizes = self.measure_children(content, !self.style.fit_width, cx);
         let axis = self.style.axis;
 
         let gaps = self.style.gap * sizes.len().saturating_sub(1) as f32;
@@ -229,9 +247,9 @@ impl<M: Clone> Element<M> for Div<M> {
 
     /// Paints the background, then places and paints every child.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let interaction = match self.on_click.clone() {
-            Some(message) => cx.interactive(bounds, message),
-            None => Interaction::default(),
+        let interaction = match (self.on_click.clone(), self.on_secondary_click.clone()) {
+            (None, None) => Interaction::default(),
+            (on_click, on_secondary) => cx.clickable(bounds, on_click, on_secondary),
         };
 
         cx.quad(
@@ -252,7 +270,7 @@ impl<M: Clone> Element<M> for Div<M> {
             cx.push_clip(bounds);
         }
 
-        let sizes = self.measure_children(content.size, &mut cx.layout);
+        let sizes = self.measure_children(content.size, true, &mut cx.layout);
         let axis = self.style.axis;
         let gap = self.style.gap;
         let gaps = gap * sizes.len().saturating_sub(1) as f32;

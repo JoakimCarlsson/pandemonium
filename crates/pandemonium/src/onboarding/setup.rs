@@ -146,6 +146,34 @@ pub enum Message {
     SelectText(Position, Position),
     /// Drag the editor's scrollbar, so many lines to a pixel of travel.
     ScrollEditor(ResizeEvent, f32),
+    /// Open the menu of things that can be done to this file's tab.
+    ShowFileMenu(FileId),
+    /// Open the menu of things that can be done to this shell's tab.
+    ShowTerminalMenu(ShellId),
+    /// Put away whatever menu is open.
+    DismissMenu,
+    /// Close every open file but this one.
+    CloseOtherFiles(FileId),
+    /// Close the files opened before this one.
+    CloseFilesLeft(FileId),
+    /// Close the files opened after this one.
+    CloseFilesRight(FileId),
+    /// Close the files that are the same as they are on disk.
+    CloseSavedFiles,
+    /// Close every open file.
+    CloseAllFiles,
+    /// Put this file's path on the clipboard.
+    CopyFilePath(FileId),
+    /// Put this file's path, from the worktree down, on the clipboard.
+    CopyFileRelativePath(FileId),
+    /// Show this file in the desktop's file manager.
+    RevealFile(FileId),
+    /// Start a shell in the directory this file is in.
+    OpenFileInTerminal(FileId),
+    /// End every shell but this one.
+    CloseOtherTerminals(ShellId),
+    /// End every shell of the project.
+    CloseAllTerminals,
 }
 
 impl Setup {
@@ -185,6 +213,20 @@ impl Setup {
             | Message::CloseFile(_)
             | Message::SelectText(_, _)
             | Message::ScrollEditor(_, _) => {}
+            Message::ShowFileMenu(_)
+            | Message::ShowTerminalMenu(_)
+            | Message::DismissMenu
+            | Message::CloseOtherFiles(_)
+            | Message::CloseFilesLeft(_)
+            | Message::CloseFilesRight(_)
+            | Message::CloseSavedFiles
+            | Message::CloseAllFiles
+            | Message::CopyFilePath(_)
+            | Message::CopyFileRelativePath(_)
+            | Message::RevealFile(_)
+            | Message::OpenFileInTerminal(_)
+            | Message::CloseOtherTerminals(_)
+            | Message::CloseAllTerminals => {}
         }
     }
 }

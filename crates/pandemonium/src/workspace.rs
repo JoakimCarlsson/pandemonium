@@ -1,18 +1,18 @@
 //! The editor workspace shown after onboarding has finished.
 
 use pm_core::{FileTree, Project, ProjectId, Projects, Row};
-use pm_gfx::Rgba;
+use pm_gfx::{Point, Rgba};
 use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
 use pm_ui::button;
 use pm_ui::{
-    Axis, Div, IconName, IconSize, LayoutIcon, Styled, Theme, h_flex, icon, icon_button,
-    layout_icon_button, rule, sash, text, v_flex,
+    Axis, Div, IconName, IconSize, LayoutIcon, MenuItem, Styled, Theme, h_flex, icon, icon_button,
+    layout_icon_button, menu, menu_entry, menu_separator, overlay, rule, sash, text, v_flex,
 };
 
-use crate::editor::{FileEntry, OpenFile, buffer_view};
+use crate::editor::{FileEntry, FileId, OpenFile, buffer_view};
 use crate::onboarding::Message;
-use crate::terminal::{Shell, ShellEntry, terminal_view};
+use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
 
 /// Height of the content-backed window title bar.
 pub const TITLEBAR_HEIGHT: f32 = 40.0;
@@ -146,6 +146,38 @@ pub struct Pane {
     pub focused: bool,
 }
 
+/// What the window's panes are showing, and what is open over them.
+///
+/// The panes travel together because the screen is one arrangement of them,
+/// and the menu travels with them because it is opened from one of their
+/// tabs and drawn over all of them.
+pub struct Panes {
+    /// The editor pane and the files open in it.
+    pub editor: Pane,
+    /// The terminal panel and the shells running in it.
+    pub terminal: Panel,
+    /// The tab menu that is open, if one is.
+    pub menu: Option<TabMenu>,
+}
+
+/// A menu of what can be done to one tab, open at a point of the window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TabMenu {
+    /// Where the pointer was when it was asked for.
+    pub at: Point,
+    /// Which tab it was asked for.
+    pub target: MenuTarget,
+}
+
+/// The tab a menu was opened from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MenuTarget {
+    /// A file open in the editor pane.
+    File(FileId),
+    /// A shell running in the terminal panel.
+    Terminal(ShellId),
+}
+
 /// Builds the workspace with its resizable sessions sidebar.
 pub fn workspace(
     theme: &Theme,
@@ -153,10 +185,15 @@ pub fn workspace(
     sessions: &[SidebarProject],
     files: Option<&FileTree>,
     layout: Layout,
-    panel: Panel,
-    pane: Pane,
+    panes: Panes,
 ) -> Div<Message> {
-    let status = Status::of(open, sessions, &panel, &pane, layout);
+    let status = Status::of(open, sessions, &panes, layout);
+    let open_menu = panes.menu.map(|menu| (menu, entries(&panes, menu)));
+    let Panes {
+        editor: pane,
+        terminal: panel,
+        ..
+    } = panes;
 
     v_flex()
         .w_full()
@@ -184,6 +221,83 @@ pub fn workspace(
         )
         .child(rule(theme))
         .child(status_bar(theme, status))
+        .when_some(open_menu, |screen, (open, entries)| {
+            screen
+                .child(overlay(Point::new(0.0, 0.0), backdrop()))
+                .child(overlay(open.at, menu(theme, entries)))
+        })
+}
+
+/// Builds the sheet under an open menu, which puts it away when clicked.
+///
+/// The sheet is what makes a menu modal: it covers the window, so the click
+/// that dismisses the menu is not also the click that pressed whatever was
+/// underneath it.
+fn backdrop() -> Div<Message> {
+    v_flex()
+        .w_full()
+        .h_full()
+        .on_click(Message::DismissMenu)
+        .on_secondary_click(Message::DismissMenu)
+}
+
+/// The entries of the menu open over the panes.
+fn entries(panes: &Panes, menu: TabMenu) -> Vec<MenuItem<Message>> {
+    match menu.target {
+        MenuTarget::File(id) => file_entries(&panes.editor.files, id),
+        MenuTarget::Terminal(id) => terminal_entries(&panes.terminal.shells, id),
+    }
+}
+
+/// The things that can be done to one file's tab, given what else is open.
+///
+/// An entry that does not apply — closing what is to the left of the first
+/// tab, closing others when there are none — is greyed rather than left
+/// out, so the menu keeps its shape wherever it is opened.
+fn file_entries(files: &[FileEntry], id: FileId) -> Vec<MenuItem<Message>> {
+    let index = files.iter().position(|file| file.id == id);
+    let others = files.len() > 1;
+    let left = index.is_some_and(|index| index > 0);
+    let right = index.is_some_and(|index| index + 1 < files.len());
+    let saved = files.iter().any(|file| !file.dirty);
+
+    vec![
+        menu_entry("Close", Some(Message::CloseFile(id))),
+        menu_entry(
+            "Close Others",
+            others.then_some(Message::CloseOtherFiles(id)),
+        ),
+        menu_separator(),
+        menu_entry("Close Left", left.then_some(Message::CloseFilesLeft(id))),
+        menu_entry("Close Right", right.then_some(Message::CloseFilesRight(id))),
+        menu_separator(),
+        menu_entry("Close Saved", saved.then_some(Message::CloseSavedFiles)),
+        menu_entry("Close All", Some(Message::CloseAllFiles)),
+        menu_separator(),
+        menu_entry("Copy Path", Some(Message::CopyFilePath(id))),
+        menu_entry(
+            "Copy Relative Path",
+            Some(Message::CopyFileRelativePath(id)),
+        ),
+        menu_separator(),
+        menu_entry("Reveal in File Manager", Some(Message::RevealFile(id))),
+        menu_entry("Open in Terminal", Some(Message::OpenFileInTerminal(id))),
+    ]
+}
+
+/// The things that can be done to one shell's tab.
+fn terminal_entries(shells: &[ShellEntry], id: ShellId) -> Vec<MenuItem<Message>> {
+    let others = shells.len() > 1;
+
+    vec![
+        menu_entry("Close", Some(Message::CloseTerminal(id))),
+        menu_entry(
+            "Close Others",
+            others.then_some(Message::CloseOtherTerminals(id)),
+        ),
+        menu_separator(),
+        menu_entry("Close All", Some(Message::CloseAllTerminals)),
+    ]
 }
 
 /// What the status bar reports about the window as it stands.
@@ -212,22 +326,16 @@ struct Status {
 
 impl Status {
     /// Reads the status of the window out of what the screen was given.
-    fn of(
-        open: &Projects,
-        sessions: &[SidebarProject],
-        panel: &Panel,
-        pane: &Pane,
-        layout: Layout,
-    ) -> Self {
+    fn of(open: &Projects, sessions: &[SidebarProject], panes: &Panes, layout: Layout) -> Self {
         let active = open.active();
-        let showing = pane.file.as_ref().map(|file| file.borrow());
+        let showing = panes.editor.file.as_ref().map(|file| file.borrow());
         let buffer = showing.as_ref().map(|document| document.buffer());
 
         Self {
             project: active.map(|project| project.name().to_owned()),
             branch: active.map(|project| project.branch().to_owned()),
             sessions: active.map_or(0, |project| sessions_of(project, sessions).len()),
-            shells: panel.shells.len(),
+            shells: panes.terminal.shells.len(),
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
@@ -486,6 +594,7 @@ fn terminal_tabs(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
             dirty: false,
             select: Message::SelectTerminal(shell.id),
             close: Message::CloseTerminal(shell.id),
+            menu: Message::ShowTerminalMenu(shell.id),
         })
         .collect();
     let actions = h_flex()
@@ -520,6 +629,7 @@ fn editor_pane(theme: &Theme, pane: Pane) -> Div<Message> {
             dirty: file.dirty,
             select: Message::SelectFile(file.id),
             close: Message::CloseFile(file.id),
+            menu: Message::ShowFileMenu(file.id),
         })
         .collect::<Vec<_>>();
 
@@ -569,6 +679,8 @@ struct Tab {
     select: Message,
     /// What closing the tab sends.
     close: Message,
+    /// What clicking it with the secondary button sends.
+    menu: Message,
 }
 
 /// Builds a pane's bar: one tab per thing open in it, then its own actions.
@@ -607,6 +719,7 @@ fn pane_tab(theme: &Theme, tab: Tab) -> Div<Message> {
         .bg(background)
         .when(!tab.active, |tab| tab.hover_bg(theme.colors.surface_hover))
         .on_click(tab.select)
+        .on_secondary_click(tab.menu)
         .child(
             icon(tab.icon)
                 .size(IconSize::XSmall)

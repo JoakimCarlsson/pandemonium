@@ -73,6 +73,9 @@ impl App {
                 self.request_redraw();
             }
             Action::Cancel => {
+                if self.dismiss_menu() {
+                    return self.request_redraw();
+                }
                 if let Some(ui) = self.ui.as_mut() {
                     ui.clear_focus();
                 }
@@ -186,6 +189,22 @@ impl App {
         };
 
         self.handle(message);
+    }
+
+    /// Opens the menu of whatever the secondary button was pressed on.
+    ///
+    /// A press on nothing that answers to the button is how a menu is
+    /// dismissed as well: the sheet under an open menu answers, so the only
+    /// presses that reach here with nothing to open are presses with no menu
+    /// over them.
+    pub(super) fn secondary_pressed(&mut self) {
+        match self.ui.as_ref().and_then(|ui| ui.secondary_pressed()) {
+            Some(message) => self.apply(message),
+            None => {
+                self.dismiss_menu();
+                self.request_redraw();
+            }
+        }
     }
 
     /// Tells the element tree where the pointer is now.
