@@ -12,6 +12,7 @@
 
 mod div;
 mod element;
+mod scroll;
 mod style;
 mod text;
 mod theme;
@@ -20,6 +21,7 @@ mod widgets;
 
 pub use div::{Div, div, h_flex, v_flex};
 pub use element::{Element, Input, Interaction, IntoElement, LayoutContext, PaintContext, Region};
+pub use scroll::Scroll;
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
 pub use text::{Text, text};
 pub use theme::{
@@ -28,6 +30,6 @@ pub use theme::{
 };
 pub use ui::Ui;
 pub use widgets::{
-    Button, ButtonVariant, Switch, ThemePreview, button, switch, switch_field, theme_preview,
-    toggle_grid, toggle_row,
+    Button, ButtonVariant, Switch, ThemePreview, button, rule, section, switch, switch_field,
+    theme_preview, toggle_grid, toggle_row,
 };

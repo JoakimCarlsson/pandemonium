@@ -44,6 +44,28 @@ the domain; nothing in it knows that a UI exists.
 - `pandemonium` — the binary: the winit event loop, the window, the pane tree
   and the keymap. Wires the layers; implements none of them.
 
+### Inside a crate
+
+The same rule one level down: a module per concern, and a root that only says
+which of them callers may name.
+
+- **A crate root is a facade.** `lib.rs` holds the module declarations, the
+  public re-exports and the crate's `//!` doc. A type declared in a crate root
+  is a type that has not been given its module yet.
+- **A module directory is its own facade.** `mod.rs` re-exports and holds the
+  shape the submodules are variations of; the submodules hold the rest.
+- **Files are cut along concerns, not along line counts.** Split when a file
+  holds two jobs, not when it grows: eleven files of forty lines each, one per
+  function, hide the screen as thoroughly as one file of a thousand. A handful
+  of files at the top of a crate is the vocabulary of that layer, not clutter.
+- **A screen keeps its parts.** The page, its header and the block it leaves
+  behind are one screen and live in one file. A part that a second screen
+  reaches for stops being part of the screen: it moves to `pm-ui`'s widgets,
+  generic over the message type, and both screens call it there.
+- **Names are reserved for the thing they mean.** `settings` is the surface
+  that edits preferences, not the code that writes them down; that is
+  `config`. Nothing is named for the first feature that happened to need it.
+
 ## Hard rules
 
 - **A project is not a window.** Projects are peers inside one window, each with
@@ -61,13 +83,20 @@ the domain; nothing in it knows that a UI exists.
 - **One seam, one place.** Creating a session, resolving a project, tearing a
   worktree down: each has exactly one implementation, and every caller — the
   palette, a keybinding, a pane — goes through it.
+- **State is read from one place and written through one seam.** Preferences
+  live in one file under the editor's home, `config` is the only code that
+  reads or writes it, and onboarding and a later settings pane are two editors
+  of that one file, never two stores.
 - Document every item in rustdoc (`///`, `//!` for a module), including private
   ones. Function bodies hold code only; the explanation lives in the name, the
   structure and the doc comment.
 
 ## Rendering
 
-`pm-gfx` owns one surface per window and presents one frame per redraw. Text is
+`pm-gfx` owns one surface per window and presents one frame per redraw. The
+device, the surface and the frame are `renderer`; the instance layouts and the
+pipelines that consume them are `pipeline`; a third kind of thing to draw is an
+instance struct and a shader there, never a render pass in a caller. Text is
 shaped once and cached; glyphs are rasterized into a shared atlas and drawn as
 instanced quads. A frame is a draw list the UI builds and submits — adding a
 second render pass or a bespoke pipeline for one widget is a `pm-gfx` change, not
