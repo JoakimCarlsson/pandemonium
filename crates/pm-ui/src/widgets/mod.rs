@@ -7,6 +7,7 @@
 //! [`Div`]: crate::div::Div
 
 mod button;
+mod icon_button;
 mod rule;
 mod section;
 mod switch;
@@ -17,6 +18,7 @@ mod toggle_option;
 mod toggle_row;
 
 pub use button::{Button, ButtonVariant, button};
+pub use icon_button::icon_button;
 pub use rule::rule;
 pub use section::section;
 pub use switch::{Switch, switch};

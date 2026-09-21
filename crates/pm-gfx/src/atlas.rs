@@ -1,15 +1,28 @@
-//! The shared glyph atlas: one grayscale texture every run draws from.
+//! The shared coverage atlas: one grayscale texture every run draws from.
+//!
+//! Glyphs and icons live in it side by side, because they are drawn the same
+//! way: a bitmap of coverage, tinted by the instance that samples it.
 
 use std::collections::HashMap;
 
 use cosmic_text::{CacheKey, SwashCache, SwashContent};
 
+use crate::svg::{self, Svg};
 use crate::text::TextSystem;
 
 /// Side length of the atlas texture in texels.
 const ATLAS_SIZE: u32 = 2048;
 
-/// Where one rasterized glyph landed in the atlas.
+/// What a packed bitmap was rasterized from.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum SlotKey {
+    /// One glyph at one size, as the shaper identified it.
+    Glyph(CacheKey),
+    /// One icon at one square size in texels.
+    Icon(&'static str, u32),
+}
+
+/// Where one rasterized bitmap landed in the atlas.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GlyphSlot {
     /// Column of the glyph's left edge in the atlas.
@@ -44,8 +57,8 @@ pub(crate) struct GlyphAtlas {
     shelf_height: u32,
     /// Column the next glyph in this shelf is written at.
     next_x: u32,
-    /// Slots already packed, and the glyphs found to have no bitmap at all.
-    slots: HashMap<CacheKey, Option<GlyphSlot>>,
+    /// Slots already packed, and the artwork found to have no bitmap at all.
+    slots: HashMap<SlotKey, Option<GlyphSlot>>,
 }
 
 impl GlyphAtlas {
@@ -95,13 +108,46 @@ impl GlyphAtlas {
         queue: &wgpu::Queue,
         key: CacheKey,
     ) -> Option<GlyphSlot> {
-        if let Some(slot) = self.slots.get(&key) {
+        if let Some(slot) = self.slots.get(&SlotKey::Glyph(key)) {
             return *slot;
         }
 
         let slot = self.rasterize(text, queue, key);
+        self.slots.insert(SlotKey::Glyph(key), slot);
+        slot
+    }
+
+    /// Returns the slot for `svg` at `size` texels, rasterizing it once.
+    pub(crate) fn icon_slot(
+        &mut self,
+        queue: &wgpu::Queue,
+        svg: Svg,
+        size: u32,
+    ) -> Option<GlyphSlot> {
+        let key = SlotKey::Icon(svg.name, size);
+        if let Some(slot) = self.slots.get(&key) {
+            return *slot;
+        }
+
+        let slot = self.rasterize_icon(queue, svg, size);
         self.slots.insert(key, slot);
         slot
+    }
+
+    /// Rasterizes one icon and uploads its coverage bitmap.
+    fn rasterize_icon(&mut self, queue: &wgpu::Queue, svg: Svg, size: u32) -> Option<GlyphSlot> {
+        let coverage = svg::rasterize(svg, size)?;
+        let (x, y) = self.allocate(size, size)?;
+        self.upload(queue, &coverage, x, y, size, size);
+
+        Some(GlyphSlot {
+            x,
+            y,
+            width: size,
+            height: size,
+            left: 0,
+            top: 0,
+        })
     }
 
     /// Rasterizes one glyph and uploads its coverage bitmap.
@@ -133,6 +179,28 @@ impl GlyphAtlas {
         }
 
         let (x, y) = self.allocate(width, height)?;
+        self.upload(queue, &coverage, x, y, width, height);
+
+        Some(GlyphSlot {
+            x,
+            y,
+            width,
+            height,
+            left: image.placement.left,
+            top: image.placement.top,
+        })
+    }
+
+    /// Writes one coverage bitmap into the region reserved for it.
+    fn upload(
+        &self,
+        queue: &wgpu::Queue,
+        coverage: &[u8],
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) {
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -140,7 +208,7 @@ impl GlyphAtlas {
                 origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
-            &coverage,
+            coverage,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width),
@@ -152,15 +220,6 @@ impl GlyphAtlas {
                 depth_or_array_layers: 1,
             },
         );
-
-        Some(GlyphSlot {
-            x,
-            y,
-            width,
-            height,
-            left: image.placement.left,
-            top: image.placement.top,
-        })
     }
 
     /// Reserves a `width` by `height` region, opening a new shelf when needed.

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::color::Rgba;
 use crate::geometry::{Point, Rect, Size};
+use crate::svg::Svg;
 use crate::text::ShapedRun;
 
 /// A rounded, optionally bordered rectangle.
@@ -74,6 +75,17 @@ pub struct TextRun {
     pub color: Rgba,
 }
 
+/// One icon placed on the screen in one colour.
+#[derive(Clone, Copy)]
+pub struct IconRun {
+    /// The square the icon is drawn inside.
+    pub bounds: Rect,
+    /// The artwork to draw.
+    pub svg: Svg,
+    /// Colour the artwork's coverage is tinted with.
+    pub color: Rgba,
+}
+
 /// One frame's worth of primitives, in submission order.
 ///
 /// Quads are drawn before text, so a quad pushed after a run still sits behind
@@ -85,6 +97,8 @@ pub struct DrawList {
     quads: Vec<(Quad, Rect)>,
     /// Text runs with the clip rectangle in force when each was pushed.
     texts: Vec<(TextRun, Rect)>,
+    /// Icons with the clip rectangle in force when each was pushed.
+    icons: Vec<(IconRun, Rect)>,
     /// The clip stack, never empty; the last entry is in force.
     clips: Vec<Rect>,
 }
@@ -95,6 +109,7 @@ impl DrawList {
         Self {
             quads: Vec::new(),
             texts: Vec::new(),
+            icons: Vec::new(),
             clips: vec![Rect::new(Point::default(), size)],
         }
     }
@@ -103,6 +118,7 @@ impl DrawList {
     pub fn reset(&mut self, size: Size) {
         self.quads.clear();
         self.texts.clear();
+        self.icons.clear();
         self.clips.clear();
         self.clips.push(Rect::new(Point::default(), size));
     }
@@ -143,6 +159,15 @@ impl DrawList {
         self.texts.push((TextRun { origin, run, color }, clip));
     }
 
+    /// Adds `svg` drawn inside `bounds` in `color`.
+    pub fn icon(&mut self, bounds: Rect, svg: Svg, color: Rgba) {
+        if color.is_transparent() || bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+            return;
+        }
+        let clip = self.clip();
+        self.icons.push((IconRun { bounds, svg, color }, clip));
+    }
+
     /// The quads to draw, each with its clip rectangle.
     pub(crate) fn quads(&self) -> &[(Quad, Rect)] {
         &self.quads
@@ -151,5 +176,10 @@ impl DrawList {
     /// The text runs to draw, each with its clip rectangle.
     pub(crate) fn texts(&self) -> &[(TextRun, Rect)] {
         &self.texts
+    }
+
+    /// The icons to draw, each with its clip rectangle.
+    pub(crate) fn icons(&self) -> &[(IconRun, Rect)] {
+        &self.icons
     }
 }

@@ -5,6 +5,7 @@ use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES, ResizeEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::keymap::BaseKeymap;
+use crate::terminal::ShellId;
 
 /// Which theme the editor draws in.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -117,6 +118,16 @@ pub enum Message {
     TogglePrimarySidebar,
     /// Toggle the bottom panel.
     ToggleBottomPanel,
+    /// Send later keystrokes to the terminal.
+    FocusTerminal,
+    /// Start another shell in the active project's worktree.
+    NewTerminal,
+    /// Show this shell in the terminal pane.
+    SelectTerminal(ShellId),
+    /// End this shell.
+    CloseTerminal(ShellId),
+    /// Drag the terminal's scrollbar, so many lines to a pixel of travel.
+    ScrollTerminal(ResizeEvent, f32),
     /// Toggle the secondary sidebar.
     ToggleSecondarySidebar,
     /// Resize the bottom panel.
@@ -149,6 +160,11 @@ impl Setup {
             Message::MinimizeWindow | Message::ToggleMaximizedWindow | Message::CloseWindow => {}
             Message::TogglePrimarySidebar
             | Message::ToggleBottomPanel
+            | Message::FocusTerminal
+            | Message::NewTerminal
+            | Message::SelectTerminal(_)
+            | Message::CloseTerminal(_)
+            | Message::ScrollTerminal(_, _)
             | Message::ToggleSecondarySidebar
             | Message::ResizeBottomPanel(_)
             | Message::ResizeSecondarySidebar(_) => {}

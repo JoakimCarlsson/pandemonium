@@ -246,7 +246,8 @@ impl Renderer {
         );
 
         let quads = self.build_quads(list);
-        let glyphs = self.build_glyphs(list);
+        let mut glyphs = self.build_glyphs(list);
+        glyphs.extend(self.build_icons(list));
         self.quad_instances
             .upload(&self.device, &self.queue, bytemuck::cast_slice(&quads));
         self.glyph_instances
@@ -355,6 +356,41 @@ impl Renderer {
                     clip,
                 });
             }
+        }
+
+        instances
+    }
+
+    /// Rasterizes the list's icons and converts them to glyph instances.
+    ///
+    /// An icon is a glyph as far as the GPU is concerned: the same atlas, the
+    /// same pipeline, the same tint. What differs is only where the coverage
+    /// came from, which the atlas has already forgotten by this point.
+    fn build_icons(&mut self, list: &DrawList) -> Vec<GlyphInstance> {
+        let scale = self.scale;
+        let atlas_size = self.atlas.size();
+        let mut instances = Vec::new();
+
+        for (icon, clip) in list.icons() {
+            let side = (icon.bounds.size.width.min(icon.bounds.size.height) * scale).round();
+            let Some(slot) = self.atlas.icon_slot(&self.queue, icon.svg, side as u32) else {
+                continue;
+            };
+
+            instances.push(GlyphInstance {
+                origin: [
+                    (icon.bounds.left() * scale).round(),
+                    (icon.bounds.top() * scale).round(),
+                ],
+                size: [slot.width as f32, slot.height as f32],
+                uv_origin: [slot.x as f32 / atlas_size, slot.y as f32 / atlas_size],
+                uv_size: [
+                    slot.width as f32 / atlas_size,
+                    slot.height as f32 / atlas_size,
+                ],
+                color: icon.color.to_array(),
+                clip: self.clip(*clip),
+            });
         }
 
         instances

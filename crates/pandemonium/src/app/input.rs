@@ -17,9 +17,14 @@ use winit::window::ResizeDirection;
 use crate::app::App;
 use crate::keymap::{self, Action, Context, Resolution, keys};
 use crate::onboarding::Message;
+use crate::terminal;
 
 /// Logical pixels one notch of a mouse wheel scrolls.
 pub(super) const WHEEL_STEP: f32 = 48.0;
+
+/// Logical pixels one row of a terminal occupies, for turning a wheel notch
+/// into a number of lines to scroll back.
+const TERMINAL_ROW: f32 = 19.6;
 
 /// How many notches a page key scrolls.
 const PAGE_NOTCHES: f32 = 4.0;
@@ -62,6 +67,9 @@ impl App {
 
     /// Resolves a keypress against the keymap, falling back to focus movement.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
+        if self.send_to_terminal(event) {
+            return self.request_redraw();
+        }
         if let Some(chord) = keymap::chord(event, self.modifiers) {
             match self.resolver.press(chord, &self.context()) {
                 Resolution::Act(action) => return self.act(action),
@@ -70,6 +78,33 @@ impl App {
             }
         }
         self.navigate(event);
+    }
+
+    /// Sends a keypress to the terminal, when the terminal has the keyboard.
+    ///
+    /// A focused terminal takes almost every key: Escape, Tab and Ctrl-C
+    /// belong to the program running in it rather than to the window. What it
+    /// does not take are the window's own chords — the ones on the platform
+    /// key or on Ctrl-Shift — so the panel can still be closed from the
+    /// keyboard while a program is running in it.
+    fn send_to_terminal(&mut self, event: &KeyEvent) -> bool {
+        if self.is_window_chord() {
+            return false;
+        }
+        let Some(shell) = self.focused_shell() else {
+            return false;
+        };
+        let Some(key) = terminal::key(&event.logical_key) else {
+            return false;
+        };
+        shell
+            .borrow_mut()
+            .press(key, terminal::modifiers(self.modifiers))
+    }
+
+    /// Whether the modifiers held mark this keypress as the window's own.
+    fn is_window_chord(&self) -> bool {
+        self.modifiers.super_key() || (self.modifiers.control_key() && self.modifiers.shift_key())
     }
 
     /// Moves focus, activates what has it, or scrolls the page.
@@ -155,6 +190,10 @@ impl App {
             return;
         }
 
+        if state == ElementState::Pressed {
+            self.release_terminal_focus();
+        }
+
         let message = match (self.ui.as_mut(), state) {
             (Some(ui), ElementState::Pressed) => ui.pointer_pressed(),
             (Some(ui), ElementState::Released) => ui.pointer_released(),
@@ -165,7 +204,16 @@ impl App {
     }
 
     /// Scrolls the page by `delta` logical pixels and redraws.
+    ///
+    /// A focused terminal scrolls its own scrollback instead: the page behind
+    /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
+        if let Some(shell) = self.focused_shell() {
+            let lines = (delta / TERMINAL_ROW).round() as isize;
+            shell.borrow_mut().scroll(lines);
+            self.request_redraw();
+            return;
+        }
         self.scroll.by(delta);
         self.request_redraw();
     }

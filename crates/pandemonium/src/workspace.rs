@@ -5,14 +5,21 @@ use pm_gfx::Rgba;
 #[cfg(not(target_os = "macos"))]
 use pm_ui::button;
 use pm_ui::{
-    Axis, Div, LayoutIcon, Styled, Theme, TreeIcon, h_flex, layout_icon_button, sash, text,
-    tree_icon, v_flex,
+    Axis, Div, IconName, IconSize, LayoutIcon, Styled, Theme, h_flex, icon, icon_button,
+    layout_icon_button, rule, sash, text, v_flex,
 };
 
 use crate::onboarding::Message;
+use crate::terminal::{Shell, ShellEntry, terminal_view};
 
 /// Height of the content-backed window title bar.
 pub const TITLEBAR_HEIGHT: f32 = 40.0;
+
+/// Height of a bar of tabs, hairline included.
+const TAB_BAR_HEIGHT: f32 = 32.0;
+
+/// Longest name a tab shows before it is cut short.
+const TAB_NAME_CHARS: usize = 20;
 
 /// Height of one line of the file tree.
 const FILE_ROW_HEIGHT: f32 = 26.0;
@@ -72,6 +79,19 @@ pub struct SidebarSession {
     pub selected: bool,
 }
 
+/// What the terminal panel is showing.
+///
+/// The panel is one pane and a list of what else could be in it, which is one
+/// thing to pass around rather than three.
+pub struct Panel {
+    /// The shell the pane draws, when the project has one running.
+    pub shell: Option<Shell>,
+    /// Every shell of the project, for the list beside the pane.
+    pub shells: Vec<ShellEntry>,
+    /// Whether keystrokes are going to the pane.
+    pub focused: bool,
+}
+
 /// Builds the workspace with its resizable sessions sidebar.
 pub fn workspace(
     theme: &Theme,
@@ -79,6 +99,7 @@ pub fn workspace(
     sessions: &[SidebarProject],
     files: Option<&FileTree>,
     layout: Layout,
+    panel: Panel,
 ) -> Div<Message> {
     v_flex()
         .w_full()
@@ -98,7 +119,7 @@ pub fn workspace(
                     ))
                     .child(sash(Axis::Horizontal, Message::ResizeSidebar))
                 })
-                .child(main_area(theme, layout))
+                .child(main_area(theme, layout, panel))
                 .when(layout.secondary_sidebar_open, |body| {
                     body.child(sash(Axis::Horizontal, Message::ResizeSecondarySidebar))
                         .child(files_sidebar(theme, files, layout.secondary_sidebar_width))
@@ -140,20 +161,131 @@ fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
 }
 
 /// Builds the central pane area and optional bottom panel.
-fn main_area(theme: &Theme, layout: Layout) -> Div<Message> {
+fn main_area(theme: &Theme, layout: Layout, panel: Panel) -> Div<Message> {
     v_flex()
         .flex_1()
         .h_full()
         .child(v_flex().w_full().flex_1().bg(theme.colors.background))
         .when(layout.bottom_panel_open, |main| {
             main.child(sash(Axis::Vertical, Message::ResizeBottomPanel))
-                .child(
-                    v_flex()
-                        .w_full()
-                        .h_px(layout.bottom_panel_height)
-                        .bg(theme.colors.surface),
-                )
+                .child(terminal_panel(theme, layout.bottom_panel_height, panel))
         })
+}
+
+/// Builds the bottom panel: the shells of the worktree the window is pointed at.
+///
+/// A terminal is a tab in a bar of tabs with the pane beneath it, which is
+/// what every other pane in the window will look like: the panel is where
+/// terminals happen to live today, not a dock of its own with its own rules.
+fn terminal_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
+    let Panel {
+        shell,
+        shells,
+        focused,
+    } = panel;
+    let missing = shell.is_none();
+
+    v_flex()
+        .w_full()
+        .h_px(height)
+        .overflow_hidden()
+        .bg(theme.colors.background)
+        .child(tab_bar(theme, &shells))
+        .when_some(shell, |panel, shell| {
+            panel.child(
+                terminal_view(shell, focused, Message::FocusTerminal)
+                    .on_scroll(Message::ScrollTerminal),
+            )
+        })
+        .when(missing, |panel| {
+            panel.child(
+                text("No shell is running in this worktree")
+                    .text_sm()
+                    .font_light()
+                    .color(theme.colors.text_subtle)
+                    .px(2)
+                    .py(1.5),
+            )
+        })
+}
+
+/// Builds the panel's bar: one tab per shell, and the panel's own actions.
+fn tab_bar(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .h_px(TAB_BAR_HEIGHT)
+        .child(
+            h_flex()
+                .w_full()
+                .flex_1()
+                .items_stretch()
+                .overflow_hidden()
+                .bg(theme.colors.surface)
+                .children(shells.iter().map(|shell| terminal_tab(theme, shell)))
+                .child(h_flex().flex_1())
+                .child(
+                    h_flex()
+                        .h_full()
+                        .px(1.5)
+                        .gap(1)
+                        .items_center()
+                        .child(icon_button(theme, IconName::Plus, Message::NewTerminal))
+                        .child(icon_button(
+                            theme,
+                            IconName::Close,
+                            Message::ToggleBottomPanel,
+                        )),
+                ),
+        )
+        .child(rule(theme))
+}
+
+/// Builds one tab: which shell it is, and the control that ends it.
+fn terminal_tab(theme: &Theme, shell: &ShellEntry) -> Div<Message> {
+    let (background, color) = if shell.active {
+        (theme.colors.background, theme.colors.text)
+    } else {
+        (theme.colors.surface, theme.colors.text_muted)
+    };
+
+    h_flex()
+        .h_full()
+        .px(1)
+        .gap(1)
+        .items_center()
+        .overflow_hidden()
+        .bg(background)
+        .when(!shell.active, |tab| {
+            tab.hover_bg(theme.colors.surface_hover)
+        })
+        .on_click(Message::SelectTerminal(shell.id))
+        .child(
+            icon(IconName::Terminal)
+                .size(IconSize::XSmall)
+                .color(theme.colors.text_subtle),
+        )
+        .child(
+            text(truncated(&shell.name, TAB_NAME_CHARS))
+                .text_sm()
+                .font_light()
+                .color(color),
+        )
+        .child(icon_button(
+            theme,
+            IconName::Close,
+            Message::CloseTerminal(shell.id),
+        ))
+}
+
+/// `name` cut to `chars` characters, ending in an ellipsis when it was cut.
+fn truncated(name: &str, chars: usize) -> String {
+    if name.chars().count() <= chars {
+        return name.to_owned();
+    }
+    name.chars()
+        .take(chars.saturating_sub(1))
+        .collect::<String>()
+        + "…"
 }
 
 /// Builds native-style controls for undecorated Linux and Windows windows.
@@ -228,7 +360,12 @@ fn tree_root(theme: &Theme, files: &FileTree) -> Div<Message> {
 
 /// The worktree's path, shortened against the home directory.
 fn root_label(files: &FileTree) -> String {
-    let path = files.root().display().to_string();
+    shortened(files.root())
+}
+
+/// `path` written the way a prompt writes it, against the home directory.
+fn shortened(path: &std::path::Path) -> String {
+    let path = path.display().to_string();
     match std::env::var("HOME") {
         Ok(home) if !home.is_empty() => path.replacen(&home, "~", 1),
         _ => path,
@@ -240,14 +377,14 @@ fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
     let entry = row.entry;
     let directory = entry.is_directory();
     let chevron = match (directory, row.expanded) {
-        (false, _) => TreeIcon::Blank,
-        (true, true) => TreeIcon::Expanded,
-        (true, false) => TreeIcon::Collapsed,
+        (false, _) => None,
+        (true, true) => Some(IconName::ChevronDown),
+        (true, false) => Some(IconName::ChevronRight),
     };
-    let glyph = if directory {
-        TreeIcon::Folder { open: row.expanded }
-    } else {
-        TreeIcon::File
+    let glyph = match (directory, row.expanded) {
+        (false, _) => IconName::File,
+        (true, true) => IconName::FolderOpen,
+        (true, false) => IconName::Folder,
     };
 
     h_flex()
@@ -259,8 +396,24 @@ fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
         .hover_bg(theme.colors.surface_hover)
         .on_click(Message::ToggleEntry(entry.id()))
         .child(v_flex().w_px(FILE_INSET + row.depth as f32 * FILE_INDENT))
-        .child(tree_icon(chevron, theme.colors.text_subtle))
-        .child(tree_icon(glyph, theme.colors.text_subtle))
+        .child(
+            h_flex()
+                .w_px(IconSize::XSmall.pixels())
+                .items_center()
+                .justify_center()
+                .when_some(chevron, |slot, chevron| {
+                    slot.child(
+                        icon(chevron)
+                            .size(IconSize::XSmall)
+                            .color(theme.colors.text_subtle),
+                    )
+                }),
+        )
+        .child(
+            icon(glyph)
+                .size(IconSize::Small)
+                .color(theme.colors.text_subtle),
+        )
         .child(v_flex().w_px(4.0))
         .child(if directory {
             text(entry.name().to_owned())

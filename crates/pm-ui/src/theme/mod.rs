@@ -7,9 +7,12 @@
 mod ember;
 mod fathom;
 mod pandemonium;
+mod terminal;
 mod verdant;
 
 use pm_gfx::{FontStyle, Rgba};
+
+pub use terminal::Terminal;
 
 /// Whether a theme is a light or a dark one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,6 +147,8 @@ pub struct Theme {
     pub colors: Colors,
     /// The colours code is highlighted in.
     pub syntax: Syntax,
+    /// The colours a terminal grid is drawn in.
+    pub terminal: Terminal,
     /// The type scale.
     pub text: TextScale,
     /// The corner radii.

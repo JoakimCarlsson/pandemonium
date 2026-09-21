@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use pm_gfx::{DrawList, FontStyle, Point, Quad, Rect, Rgba, ShapedRun, Size, TextSystem};
+use pm_gfx::{DrawList, FontStyle, Point, Quad, Rect, Rgba, ShapedRun, Size, Svg, TextSystem};
 
 use crate::style::Style;
 use crate::theme::Theme;
@@ -151,6 +151,11 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
     /// Draws a shaped run with its line box starting at `origin`.
     pub fn text(&mut self, origin: Point, run: Arc<ShapedRun>, color: Rgba) {
         self.list.text(origin, run, color);
+    }
+
+    /// Draws `svg` inside `bounds`, tinted `color`.
+    pub fn icon(&mut self, bounds: Rect, svg: Svg, color: Rgba) {
+        self.list.icon(bounds, svg, color);
     }
 
     /// Confines later primitives to `bounds` as well as the current clip.

@@ -13,10 +13,12 @@ mod draw;
 mod geometry;
 mod pipeline;
 mod renderer;
+mod svg;
 mod text;
 
 pub use color::Rgba;
-pub use draw::{DrawList, Quad, TextRun};
+pub use draw::{DrawList, IconRun, Quad, TextRun};
 pub use geometry::{Point, Rect, Size};
 pub use renderer::Renderer;
+pub use svg::Svg;
 pub use text::{FontFamily, FontStyle, ShapedRun, TextSystem};

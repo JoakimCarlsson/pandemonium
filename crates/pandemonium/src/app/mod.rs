@@ -7,28 +7,37 @@
 
 mod input;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use std::collections::BTreeMap;
 
 use pm_core::{FileTree, ProjectId, Projects};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
-use pm_ui::{Appearance, Axis, ResizeEdge, ResizeState, Scroll, Ui, family};
+use pm_ui::{
+    Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Ui, family,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
 use crate::config;
 use crate::keymap::Resolver;
 use crate::onboarding::{self, Message, Setup};
-use crate::workspace::{self, SidebarProject};
+use crate::terminal::{Shell, Terminals};
+use crate::workspace::{self, Panel, SidebarProject};
+
+/// What the window is woken up for from outside the event loop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Wake {
+    /// A terminal's child has written something that is waiting to be read.
+    Terminal,
+}
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
-#[derive(Default)]
 pub struct App {
     /// The platform window, once the event loop has opened one.
     window: Option<Arc<Window>>,
@@ -70,11 +79,19 @@ pub struct App {
     secondary_sidebar_open: bool,
     /// Whether the event loop should close after the current event.
     close_requested: bool,
+    /// The shells the window is running, one per project.
+    terminals: Terminals,
+    /// Whether keystrokes go to the terminal rather than to the window.
+    terminal_focused: bool,
+    /// How far back the terminal was scrolled when a scrollbar drag began.
+    terminal_scroll_origin: Option<usize>,
+    /// How the reader threads wake the event loop.
+    proxy: EventLoopProxy<Wake>,
 }
 
 impl App {
-    /// The app as the last launch left it.
-    pub fn restored() -> Self {
+    /// The app as the last launch left it, woken through `proxy`.
+    pub fn restored(proxy: EventLoopProxy<Wake>) -> Self {
         let restored = config::load();
         let mut open = Projects::new();
         for root in &restored.projects {
@@ -88,16 +105,126 @@ impl App {
             .collect();
 
         Self {
+            window: None,
+            renderer: None,
+            ui: None,
+            list: None,
             setup: restored.setup,
+            resolver: Resolver::default(),
+            modifiers: ModifiersState::default(),
+            pointer: None,
+            last_titlebar_click: None,
+            scroll: Scroll::default(),
+            projects: Vec::new(),
             open,
             files,
             sidebar: ResizeState::new(252.0, 160.0, 480.0),
             bottom_panel: ResizeState::new(220.0, 120.0, 600.0),
             secondary_sidebar: ResizeState::new(252.0, 160.0, 480.0),
             primary_sidebar_open: true,
+            bottom_panel_open: false,
             secondary_sidebar_open: true,
-            ..Self::default()
+            close_requested: false,
+            terminals: Terminals::default(),
+            terminal_focused: false,
+            terminal_scroll_origin: None,
+            proxy,
         }
+    }
+
+    /// The shell of the active project, started in its worktree if need be.
+    ///
+    /// A shell belongs to the worktree the window is pointed at, the same one
+    /// the file tree lists, and it is started the first time its pane is
+    /// drawn rather than when the project is opened.
+    fn active_shell(&mut self) -> Option<Shell> {
+        let project = self.open.active()?;
+        let (id, root) = (project.id(), project.root().to_path_buf());
+        self.terminals.open(id, &root)
+    }
+
+    /// Closes the panel once the worktree's last shell has exited.
+    fn close_empty_panel(&mut self) {
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return;
+        };
+        if self.bottom_panel_open && self.terminals.count(project) == 0 {
+            self.bottom_panel_open = false;
+            self.terminal_focused = false;
+        }
+    }
+
+    /// Takes the keyboard away from the terminal, for a click elsewhere.
+    ///
+    /// The click that lands back in the pane brings it straight back, so a
+    /// press is free to drop focus without knowing where it landed.
+    pub(super) fn release_terminal_focus(&mut self) {
+        self.terminal_focused = false;
+    }
+
+    /// Starts another shell in the active project's worktree.
+    fn start_shell(&mut self) {
+        let Some(project) = self.open.active() else {
+            return;
+        };
+        let (id, root) = (project.id(), project.root().to_path_buf());
+        self.terminals.start(id, &root);
+        self.bottom_panel_open = true;
+    }
+
+    /// Ends one shell, closing the panel when it was the worktree's last.
+    ///
+    /// An empty panel is a panel with nothing to show, so it goes away the
+    /// way it would have if the shell had exited on its own.
+    fn stop_shell(&mut self, shell: crate::terminal::ShellId) {
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return;
+        };
+        self.terminals.stop(project, shell);
+        if self.terminals.count(project) == 0 {
+            self.bottom_panel_open = false;
+            self.terminal_focused = false;
+        }
+    }
+
+    /// Scrolls the terminal by a drag on its scrollbar.
+    ///
+    /// The offset the drag started from is remembered, because every frame
+    /// of the drag reports travel from the same press: adding the travel to
+    /// where the view has already moved would run away from the pointer.
+    fn drag_terminal_scrollbar(&mut self, event: ResizeEvent, lines_per_pixel: f32) {
+        let Some(shell) = self
+            .open
+            .active()
+            .and_then(|project| self.terminals.active(project.id()))
+        else {
+            return;
+        };
+
+        let mut shell = shell.borrow_mut();
+        let base = match event.phase {
+            ResizePhase::Started => shell.grid().offset(),
+            _ => self
+                .terminal_scroll_origin
+                .unwrap_or_else(|| shell.grid().offset()),
+        };
+        self.terminal_scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+
+        let travelled = event.delta(Axis::Vertical) * lines_per_pixel;
+        let offset = (base as f32 - travelled).round().max(0.0) as usize;
+        shell.scroll_to(offset);
+    }
+
+    /// The shell keystrokes are going to, if any is focused.
+    pub(super) fn focused_shell(&self) -> Option<Shell> {
+        if !self.terminal_focused || !self.bottom_panel_open {
+            return None;
+        }
+        let project = self.open.active()?;
+        self.terminals.active(project.id())
     }
 
     /// The appearance the desktop asks for, defaulting to dark.
@@ -135,6 +262,36 @@ impl App {
         }
         if message == Message::ToggleBottomPanel {
             self.bottom_panel_open = !self.bottom_panel_open;
+            self.terminal_focused = self.bottom_panel_open;
+            self.request_redraw();
+            return;
+        }
+        if message == Message::FocusTerminal {
+            self.terminal_focused = true;
+            self.request_redraw();
+            return;
+        }
+        if message == Message::NewTerminal {
+            self.start_shell();
+            self.terminal_focused = true;
+            self.request_redraw();
+            return;
+        }
+        if let Message::SelectTerminal(id) = message {
+            if let Some(project) = self.open.active().map(pm_core::Project::id) {
+                self.terminals.activate(project, id);
+            }
+            self.terminal_focused = true;
+            self.request_redraw();
+            return;
+        }
+        if let Message::ScrollTerminal(event, lines_per_pixel) = message {
+            self.drag_terminal_scrollbar(event, lines_per_pixel);
+            self.request_redraw();
+            return;
+        }
+        if let Message::CloseTerminal(id) = message {
+            self.stop_shell(id);
             self.request_redraw();
             return;
         }
@@ -153,6 +310,7 @@ impl App {
         if let Message::CloseProject(id) = message {
             self.open.remove(id);
             self.files.remove(&id);
+            self.terminals.close(id);
             self.store();
             self.request_redraw();
             return;
@@ -242,6 +400,20 @@ impl App {
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
+        let shell = self
+            .bottom_panel_open
+            .then(|| self.active_shell())
+            .flatten();
+        let shells = self
+            .open
+            .active()
+            .map(|project| self.terminals.list(project.id()))
+            .unwrap_or_default();
+        let panel = Panel {
+            shell,
+            shells,
+            focused: self.terminal_focused,
+        };
         let files = self.open.active().map(pm_core::Project::id);
         let files = files.and_then(|id| self.files.get(&id));
         let (Some(renderer), Some(ui), Some(list)) =
@@ -275,6 +447,7 @@ impl App {
                     secondary_sidebar_open: self.secondary_sidebar_open,
                     secondary_sidebar_width: self.secondary_sidebar.extent(),
                 },
+                panel,
             )
         } else {
             onboarding::page(&theme, &self.setup)
@@ -292,7 +465,19 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<Wake> for App {
+    /// Applies what the shells have written and draws the result.
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
+        match event {
+            Wake::Terminal => {
+                if self.terminals.pump() {
+                    self.close_empty_panel();
+                    self.request_redraw();
+                }
+            }
+        }
+    }
+
     /// Opens the window and builds its renderer once the platform is ready.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -329,6 +514,13 @@ impl ApplicationHandler for App {
         ));
         self.window = Some(window);
         self.resolver.set_keymap(self.setup.keymap.keymap());
+
+        let proxy = Mutex::new(self.proxy.clone());
+        self.terminals.set_notify(Arc::new(move || {
+            if let Ok(proxy) = proxy.lock() {
+                let _ = proxy.send_event(Wake::Terminal);
+            }
+        }));
 
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
         self.ui = Some(Ui::new(family(self.setup.theme_family).variant(appearance)));

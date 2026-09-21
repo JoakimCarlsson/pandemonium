@@ -9,17 +9,21 @@ mod config;
 )]
 mod keymap;
 mod onboarding;
+mod terminal;
 mod workspace;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
-use app::App;
+use app::{App, Wake};
 
 /// Starts the conductor window from the preferences the last launch left.
 fn main() {
-    let event_loop = EventLoop::new().expect("event loop creation failed");
+    let event_loop = EventLoop::<Wake>::with_user_event()
+        .build()
+        .expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Wait);
+    let proxy = event_loop.create_proxy();
     event_loop
-        .run_app(&mut App::restored())
+        .run_app(&mut App::restored(proxy))
         .expect("event loop failed");
 }
