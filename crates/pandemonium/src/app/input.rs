@@ -6,6 +6,7 @@
 //! redraw, never with a widget reaching into the state behind its back.
 
 use pm_gfx::Point;
+use pm_ui::PointerCursor;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, NamedKey};
 
@@ -85,10 +86,9 @@ impl App {
 
     /// Tells the element tree where the pointer is now.
     pub(super) fn pointer_moved(&mut self, position: Point) {
-        if let Some(ui) = self.ui.as_mut() {
-            ui.pointer_moved(position);
-        }
-        self.request_redraw();
+        let message = self.ui.as_mut().and_then(|ui| ui.pointer_moved(position));
+        self.update_pointer_cursor();
+        self.handle(message);
     }
 
     /// Tells the element tree the pointer has left the window.
@@ -96,19 +96,18 @@ impl App {
         if let Some(ui) = self.ui.as_mut() {
             ui.pointer_left();
         }
+        self.update_pointer_cursor();
         self.request_redraw();
     }
 
     /// Presses or releases the primary button, applying what it activated.
     pub(super) fn pointer_button(&mut self, state: ElementState) {
         let message = match (self.ui.as_mut(), state) {
-            (Some(ui), ElementState::Pressed) => {
-                ui.pointer_pressed();
-                None
-            }
+            (Some(ui), ElementState::Pressed) => ui.pointer_pressed(),
             (Some(ui), ElementState::Released) => ui.pointer_released(),
             (None, _) => None,
         };
+        self.update_pointer_cursor();
         self.handle(message);
     }
 
@@ -123,6 +122,22 @@ impl App {
         match message {
             Some(message) => self.apply(message),
             None => self.request_redraw(),
+        }
+    }
+
+    /// Applies the cursor requested by the current hover or drag target.
+    fn update_pointer_cursor(&self) {
+        let cursor = self
+            .ui
+            .as_ref()
+            .map_or(PointerCursor::Default, |ui| ui.pointer_cursor());
+        let icon = match cursor {
+            PointerCursor::Default => winit::window::CursorIcon::Default,
+            PointerCursor::ResizeHorizontal => winit::window::CursorIcon::ColResize,
+            PointerCursor::ResizeVertical => winit::window::CursorIcon::RowResize,
+        };
+        if let Some(window) = self.window.as_ref() {
+            window.set_cursor(icon);
         }
     }
 }

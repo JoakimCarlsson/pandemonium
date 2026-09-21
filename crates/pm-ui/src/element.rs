@@ -44,7 +44,20 @@ pub struct Region<M> {
     /// Where the region is.
     pub bounds: Rect,
     /// What it sends when it is clicked or activated.
-    pub message: M,
+    pub action: RegionAction<M>,
+}
+
+/// What an interactive region does with pointer input.
+pub enum RegionAction<M> {
+    /// Sends one message when a press and release both land in the region.
+    Click(M),
+    /// Sends messages throughout a captured pointer drag.
+    Drag {
+        /// The dimension changed by the drag.
+        axis: crate::Axis,
+        /// Builds the caller's message for each captured pointer event.
+        handler: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
+    },
 }
 
 /// What an interactive element needs to know to paint itself.
@@ -162,7 +175,33 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
     /// this registration takes.
     pub fn interactive(&mut self, bounds: Rect, message: M) -> Interaction {
         let index = self.regions.len();
-        self.regions.push(Region { bounds, message });
+        self.regions.push(Region {
+            bounds,
+            action: RegionAction::Click(message),
+        });
+
+        Interaction {
+            hovered: self.input.is_over(bounds),
+            pressed: self.input.is_pressing(bounds),
+            focused: self.focused == Some(index),
+        }
+    }
+
+    /// Registers `bounds` as a pointer-drag target handled by `on_resize`.
+    pub fn resizable(
+        &mut self,
+        bounds: Rect,
+        axis: crate::Axis,
+        on_resize: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
+    ) -> Interaction {
+        let index = self.regions.len();
+        self.regions.push(Region {
+            bounds,
+            action: RegionAction::Drag {
+                axis,
+                handler: on_resize,
+            },
+        });
 
         Interaction {
             hovered: self.input.is_over(bounds),

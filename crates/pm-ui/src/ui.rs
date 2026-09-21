@@ -2,8 +2,21 @@
 
 use pm_gfx::{DrawList, Point, Rect, Size, TextSystem};
 
-use crate::element::{Element, Input, LayoutContext, PaintContext, Region};
+use crate::element::{Element, Input, LayoutContext, PaintContext, Region, RegionAction};
+use crate::resize::{ResizeEvent, ResizePhase};
 use crate::theme::Theme;
+
+/// The cursor shape requested by the element under the pointer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PointerCursor {
+    /// The platform's ordinary pointer.
+    #[default]
+    Default,
+    /// Horizontal resizing across a vertical divider.
+    ResizeHorizontal,
+    /// Vertical resizing across a horizontal divider.
+    ResizeVertical,
+}
 
 /// Everything that survives between frames: the theme, the pointer and focus.
 ///
@@ -20,6 +33,8 @@ pub struct Ui<M> {
     focus: Option<usize>,
     /// The regions painted by the last frame, in paint order.
     regions: Vec<Region<M>>,
+    /// The drag target captured by the current pointer press.
+    drag: Option<usize>,
 }
 
 impl<M> Ui<M> {
@@ -30,6 +45,7 @@ impl<M> Ui<M> {
             input: Input::default(),
             focus: None,
             regions: Vec::new(),
+            drag: None,
         }
     }
 
@@ -44,22 +60,27 @@ impl<M> Ui<M> {
     }
 
     /// Records the pointer at `pointer`.
-    pub fn pointer_moved(&mut self, pointer: Point) {
+    pub fn pointer_moved(&mut self, pointer: Point) -> Option<M> {
         self.input.pointer = Some(pointer);
+        self.drag_message(pointer, ResizePhase::Moved)
     }
 
     /// Records the pointer having left the window.
     pub fn pointer_left(&mut self) {
         self.input.pointer = None;
         self.input.pressed_at = None;
+        self.drag = None;
     }
 
     /// Records a press, which also moves focus to whatever is under it.
-    pub fn pointer_pressed(&mut self) {
+    pub fn pointer_pressed(&mut self) -> Option<M> {
         self.input.pressed_at = self.input.pointer;
-        if let Some(pointer) = self.input.pointer {
-            self.focus = self.region_at(pointer);
-        }
+        let pointer = self.input.pointer?;
+        let index = self.region_at(pointer);
+        self.focus = index;
+        self.drag =
+            index.filter(|index| matches!(self.regions[*index].action, RegionAction::Drag { .. }));
+        self.drag_message(pointer, ResizePhase::Started)
     }
 
     /// Records a release, returning the message of the region it completed on.
@@ -69,12 +90,19 @@ impl<M> Ui<M> {
     {
         let pressed_at = self.input.pressed_at.take()?;
         let pointer = self.input.pointer?;
+        if self.drag.is_some() {
+            let message = self.drag_message(pointer, ResizePhase::Ended);
+            self.drag = None;
+            return message;
+        }
         let index = self.region_at(pointer)?;
         let region = &self.regions[index];
-        region
-            .bounds
-            .contains(pressed_at)
-            .then(|| region.message.clone())
+        match &region.action {
+            RegionAction::Click(message) if region.bounds.contains(pressed_at) => {
+                Some(message.clone())
+            }
+            RegionAction::Click(_) | RegionAction::Drag { .. } => None,
+        }
     }
 
     /// Moves focus to the next region in tab order, wrapping around.
@@ -98,7 +126,27 @@ impl<M> Ui<M> {
         M: Clone,
     {
         let index = self.focus?;
-        self.regions.get(index).map(|region| region.message.clone())
+        match &self.regions.get(index)?.action {
+            RegionAction::Click(message) => Some(message.clone()),
+            RegionAction::Drag { .. } => None,
+        }
+    }
+
+    /// Returns the cursor requested by the captured or hovered region.
+    pub fn pointer_cursor(&self) -> PointerCursor {
+        let index = self
+            .drag
+            .or_else(|| self.input.pointer.and_then(|point| self.region_at(point)));
+        match index.and_then(|index| self.regions.get(index)) {
+            Some(Region {
+                action: RegionAction::Drag { axis, .. },
+                ..
+            }) => match axis {
+                crate::Axis::Horizontal => PointerCursor::ResizeHorizontal,
+                crate::Axis::Vertical => PointerCursor::ResizeVertical,
+            },
+            _ => PointerCursor::Default,
+        }
     }
 
     /// Measures `root` against `offer`, paints it at `origin` and reports its size.
@@ -134,6 +182,20 @@ impl<M> Ui<M> {
         self.regions
             .iter()
             .rposition(|region| region.bounds.contains(point))
+    }
+
+    /// Builds the message for the captured drag at `pointer`.
+    fn drag_message(&self, pointer: Point, phase: ResizePhase) -> Option<M> {
+        let start = self.input.pressed_at?;
+        let region = self.regions.get(self.drag?)?;
+        match &region.action {
+            RegionAction::Drag { handler, .. } => Some(handler(ResizeEvent {
+                phase,
+                start,
+                current: pointer,
+            })),
+            RegionAction::Click(_) => None,
+        }
     }
 
     /// Focus moved by `step` places in tab order, wrapping around.

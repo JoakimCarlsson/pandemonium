@@ -12,6 +12,7 @@
 
 mod div;
 mod element;
+mod resize;
 mod scroll;
 mod style;
 mod text;
@@ -20,7 +21,10 @@ mod ui;
 mod widgets;
 
 pub use div::{Div, div, h_flex, v_flex};
-pub use element::{Element, Input, Interaction, IntoElement, LayoutContext, PaintContext, Region};
+pub use element::{
+    Element, Input, Interaction, IntoElement, LayoutContext, PaintContext, Region, RegionAction,
+};
+pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
 pub use scroll::Scroll;
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
 pub use text::{Text, text};
@@ -28,7 +32,7 @@ pub use theme::{
     Appearance, Colors, DEFAULT_FAMILY, FAMILIES, Radii, Syntax, TextScale, Theme, ThemeFamily,
     family,
 };
-pub use ui::Ui;
+pub use ui::{PointerCursor, Ui};
 pub use widgets::{
     Button, ButtonVariant, Switch, ThemePreview, button, rule, section, switch, switch_field,
     theme_preview, toggle_grid, toggle_row,
