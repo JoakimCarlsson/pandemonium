@@ -35,7 +35,7 @@ use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::onboarding::{self, Message, Setup};
-use crate::panes::PaneTree;
+use crate::panes::{PaneTree, Saved};
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
     self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panel, Panes,
@@ -99,6 +99,8 @@ pub struct App {
     editor: Files,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
+    /// The panes the last launch left, until the window is ready to open them.
+    saved: Saved,
     /// Where those panes and their tabs came out in the last frame.
     geometry: Geometry,
     /// The tab the pointer is carrying, if it is carrying one.
@@ -139,6 +141,7 @@ impl App {
         }
 
         let layout = restored.layout;
+        let saved = restored.panes;
 
         let files = open
             .iter()
@@ -181,6 +184,7 @@ impl App {
             close_requested: false,
             editor: Files::default(),
             panes: PaneTree::default(),
+            saved,
             geometry: Geometry::default(),
             drag: None,
             editor_focused: false,
@@ -493,6 +497,7 @@ impl App {
                 self.panes
                     .resize(split, divider, event.delta(axis) * scale, event.phase);
             }
+            self.store_settled(event);
             self.request_redraw();
             return;
         }
@@ -746,6 +751,7 @@ impl App {
                 .active()
                 .map(|project| project.root().to_path_buf()),
             layout: self.layout(),
+            panes: self.saved_panes(),
             window: self.window_state,
         }
     }
@@ -948,6 +954,9 @@ impl ApplicationHandler<Wake> for App {
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.editor.set_notify(self.waker(Wake::Language));
+
+        let saved = std::mem::take(&mut self.saved);
+        self.restore_panes(&saved);
 
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
         self.ui = Some(Ui::new(family(self.setup.theme_family).variant(appearance)));

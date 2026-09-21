@@ -5,8 +5,10 @@
 //! here holds a document: a pane names the files open in it, and
 //! [`crate::editor::Files`] is where those files live.
 
+mod saved;
 mod tree;
 mod view;
 
+pub use saved::{Saved, SavedTab};
 pub use tree::{Pane, PaneId, PaneTree, SplitDirection, SplitId};
 pub use view::{Contents, file_menu, pane_menu, pane_tree};

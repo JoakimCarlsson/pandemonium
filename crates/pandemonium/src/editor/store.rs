@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pm_core::ProjectId;
-use pm_text::{Buffer, Client, Servers};
+use pm_text::{Buffer, Client, Position, Servers};
 
 /// One open file, shared between the window and the pane drawing it.
 ///
@@ -116,6 +116,16 @@ impl Document {
         } else if rows > 0 && head >= self.scroll + rows {
             self.scroll = head + 1 - rows;
         }
+    }
+
+    /// Puts the cursor and the view back where a launch left them.
+    ///
+    /// Where the pane was looking is as much a part of an open file as the
+    /// text is: a window that comes back with every file scrolled to the top
+    /// has not come back.
+    pub fn restore(&mut self, line: usize, column: usize, scroll: usize) {
+        self.buffer.place(Position::new(line, column), false);
+        self.scroll_to(scroll);
     }
 
     /// Whether the file is only being looked at, not kept open.

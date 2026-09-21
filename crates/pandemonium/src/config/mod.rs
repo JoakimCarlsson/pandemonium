@@ -14,6 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::onboarding::Setup;
+use crate::panes::Saved;
 use crate::workspace::Layout;
 use stored::Stored;
 
@@ -50,6 +51,8 @@ pub struct Restored {
     pub active: Option<PathBuf>,
     /// Which regions the window showed, and how large they were.
     pub layout: Layout,
+    /// How the window was divided into panes, and what was open in them.
+    pub panes: Saved,
     /// The size and state of the window itself.
     pub window: WindowState,
 }

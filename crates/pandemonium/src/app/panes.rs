@@ -15,7 +15,7 @@ use crate::app::App;
 use crate::app::drag::{DropPlace, TabDrag, highlight, unmeasured};
 use crate::editor::{FileId, OpenFile};
 use crate::onboarding::Message;
-use crate::panes::{self, Contents, PaneId, SplitDirection};
+use crate::panes::{self, Contents, PaneId, Saved, SavedTab, SplitDirection};
 use crate::workspace::{MenuTarget, TabMenu};
 
 impl App {
@@ -51,6 +51,7 @@ impl App {
         }
         self.focus_pane(pane);
         self.sweep();
+        self.store();
     }
 
     /// Closes whatever `pane` is previewing, other than `keep`.
@@ -93,6 +94,7 @@ impl App {
         }
         self.editor_focused = true;
         self.terminal_focused = false;
+        self.store();
     }
 
     /// Closes `pane`, leaving the window as it was when it has only the one.
@@ -101,6 +103,7 @@ impl App {
             self.editor_focused = true;
             self.terminal_focused = false;
             self.sweep();
+            self.store();
         }
     }
 
@@ -133,6 +136,55 @@ impl App {
             close(pane);
         }
         self.panes.close_empty();
+        self.sweep();
+    }
+
+    /// The panes as they stand, in the shape a launch restores them from.
+    ///
+    /// A pane names its files by where they live rather than by the id this
+    /// run gave them, which is the only thing the next launch can act on.
+    pub(super) fn saved_panes(&self) -> Saved {
+        self.panes.save(&|file| {
+            let project = self.editor.project_of(file)?;
+            let root = self.open.get(project)?.root().to_path_buf();
+            let document = self.editor.get(file)?;
+            let document = document.borrow();
+            let head = document.buffer().selection().head;
+            Some(SavedTab {
+                project: root,
+                path: document.buffer().path().to_path_buf(),
+                preview: document.is_preview(),
+                scroll: document.scroll(),
+                line: head.line,
+                column: head.column,
+            })
+        })
+    }
+
+    /// Opens again everything the last launch had open, where it had it.
+    ///
+    /// A file whose project is no longer open, or which is no longer on
+    /// disk, is left behind: the window comes back as much like itself as
+    /// what is still there allows.
+    pub(super) fn restore_panes(&mut self, saved: &Saved) {
+        let roots = self
+            .open
+            .iter()
+            .map(|project| (project.root().to_path_buf(), project.id()))
+            .collect::<Vec<_>>();
+        let editor = &mut self.editor;
+        self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
+            let (root, project) = roots
+                .iter()
+                .find(|(root, _)| *root == tab.project)
+                .cloned()?;
+            let file = editor.open(project, &root, &tab.path, tab.preview)?;
+            if let Some(document) = editor.get(file) {
+                let mut document = document.borrow_mut();
+                document.restore(tab.line, tab.column, tab.scroll);
+            }
+            Some(file)
+        });
         self.sweep();
     }
 
@@ -209,6 +261,7 @@ impl App {
             pane.activate(file);
         }
         self.focus_pane(pane);
+        self.store();
     }
 
     /// Lets go of a carried tab where the pointer has reached.
@@ -247,6 +300,7 @@ impl App {
         self.panes.close_empty();
         self.focus_pane(landed);
         self.sweep();
+        self.store();
     }
 
     /// The files open in `pane`, in the order its tabs are drawn.

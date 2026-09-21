@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use pm_ui::{Axis, ResizePhase};
 
 use crate::editor::FileId;
+use crate::panes::saved::{Saved, SavedNode, SavedTab};
 
 /// Smallest share of a split one pane can be dragged down to.
 const MIN_SHARE: f32 = 0.05;
@@ -405,6 +406,47 @@ impl PaneTree {
         self.pane_mut(self.focus)
     }
 
+    /// The window as it stands, in the shape a launch restores it from.
+    ///
+    /// A tab whose file `tab` cannot name is left out — it is one the next
+    /// launch has no way of opening again — and a pane left empty by that
+    /// comes back empty rather than not at all.
+    pub fn save(&self, tab: &dyn Fn(FileId) -> Option<SavedTab>) -> Saved {
+        Saved {
+            focus: self
+                .panes()
+                .iter()
+                .position(|pane| *pane == self.focus)
+                .unwrap_or(0),
+            root: written(&self.root, tab),
+        }
+    }
+
+    /// The window the last launch left, with `open` opening each file again.
+    ///
+    /// Panes are given fresh ids as they are read: what was written down is
+    /// the shape of the division and what was in it, and the identities this
+    /// launch hands out are its own.
+    pub fn restored(saved: &Saved, open: &mut dyn FnMut(&SavedTab) -> Option<FileId>) -> Self {
+        let mut panes = 0;
+        let mut splits = 0;
+        let root = read(&saved.root, &mut panes, &mut splits, open);
+        let mut tree = Self {
+            root,
+            focus: PaneId(0),
+            next_pane: panes,
+            next_split: splits,
+        };
+        tree.close_empty();
+        let panes = tree.panes();
+        tree.focus = panes
+            .get(saved.focus)
+            .or_else(|| panes.first())
+            .copied()
+            .unwrap_or_default();
+        tree
+    }
+
     /// Every pane of the window, in the order they are drawn.
     pub fn panes(&self) -> Vec<PaneId> {
         let mut panes = Vec::new();
@@ -652,5 +694,91 @@ impl PaneTree {
             node = split.children.get_mut(*index)?;
         }
         Some(node)
+    }
+}
+
+/// One node of the tree, in the shape it is written down in.
+fn written(node: &Node, tab: &dyn Fn(FileId) -> Option<SavedTab>) -> SavedNode {
+    match node {
+        Node::Pane(pane) => {
+            let tabs = pane
+                .tabs()
+                .iter()
+                .filter_map(|file| tab(*file).map(|saved| (*file, saved)))
+                .collect::<Vec<_>>();
+            let active = pane
+                .active()
+                .and_then(|active| tabs.iter().position(|(file, _)| *file == active));
+            SavedNode::Pane {
+                tabs: tabs.into_iter().map(|(_, saved)| saved).collect(),
+                active,
+            }
+        }
+        Node::Split(split) => SavedNode::Split {
+            axis: split.axis().into(),
+            shares: split.shares().to_vec(),
+            children: split
+                .children()
+                .iter()
+                .map(|child| written(child, tab))
+                .collect(),
+        },
+    }
+}
+
+/// One node of the tree, read back out of the shape it was written in.
+///
+/// A division of fewer than two children is no division, so it is read as
+/// whatever it held; a file that says it divides into three panes but only
+/// gives two shares is given the shares it is missing, because a tree the
+/// window cannot draw is worse than one it draws evenly.
+fn read(
+    node: &SavedNode,
+    panes: &mut u64,
+    splits: &mut u64,
+    open: &mut dyn FnMut(&SavedTab) -> Option<FileId>,
+) -> Node {
+    match node {
+        SavedNode::Pane { tabs, active } => {
+            let id = PaneId(*panes);
+            *panes += 1;
+            let mut pane = Pane::new(id);
+            let files = tabs.iter().map(&mut *open).collect::<Vec<_>>();
+            for file in files.iter().flatten() {
+                pane.open(*file);
+            }
+            pane.active = active
+                .and_then(|active| files.get(active).copied().flatten())
+                .or_else(|| pane.tabs.first().copied());
+            Node::Pane(pane)
+        }
+        SavedNode::Split {
+            axis,
+            shares,
+            children,
+        } => {
+            let mut read = children
+                .iter()
+                .map(|child| self::read(child, panes, splits, open))
+                .collect::<Vec<_>>();
+            if read.len() < 2 {
+                return read.pop().unwrap_or_else(|| {
+                    let id = PaneId(*panes);
+                    *panes += 1;
+                    Node::Pane(Pane::new(id))
+                });
+            }
+            let id = SplitId(*splits);
+            *splits += 1;
+            let mut shares = shares.clone();
+            shares.resize(read.len(), 1.0);
+            Node::Split(Split {
+                id,
+                axis: (*axis).into(),
+                children: read,
+                shares,
+                dragging: None,
+            })
+        }
     }
 }

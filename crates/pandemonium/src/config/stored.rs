@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{Restored, WindowState};
 use crate::keymap::BaseKeymap;
 use crate::onboarding::{Setup, ThemeMode};
+use crate::panes::Saved;
 use crate::workspace::Layout;
 
 /// The preferences as they are written down.
@@ -38,6 +39,8 @@ pub(super) struct Stored {
     projects: Option<Vec<PathBuf>>,
     /// The root of the project the window was pointed at.
     active_project: Option<PathBuf>,
+    /// How the window was divided into panes, and what was open in them.
+    panes: Option<Saved>,
     /// Whether the primary sidebar was visible.
     primary_sidebar_open: Option<bool>,
     /// Width of the primary sidebar.
@@ -66,6 +69,7 @@ impl Stored {
             active: self.active_project.clone(),
             layout: self.layout(),
             window: self.window(),
+            panes: self.panes.clone().unwrap_or_default(),
             setup: self.into_setup(),
         }
     }
@@ -131,6 +135,7 @@ impl Stored {
             projects,
             active,
             layout,
+            panes,
             window,
         } = restored;
 
@@ -145,6 +150,7 @@ impl Stored {
             finished: Some(setup.finished),
             projects: Some(projects.clone()),
             active_project: active.clone(),
+            panes: Some(panes.clone()),
             primary_sidebar_open: Some(layout.primary_sidebar_open),
             primary_sidebar_width: Some(layout.primary_sidebar_width),
             bottom_panel_open: Some(layout.bottom_panel_open),

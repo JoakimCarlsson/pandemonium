@@ -93,6 +93,7 @@ impl App {
                         _ => pane.previous_tab(),
                     }
                 }
+                self.store();
                 self.request_redraw();
             }
             Action::FocusLeft => self.move_focus(Axis::Horizontal, false),
