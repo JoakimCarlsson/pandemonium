@@ -170,6 +170,8 @@ pub enum Message {
     RevealFile(FileId),
     /// Start a shell in the directory this file is in.
     OpenFileInTerminal(FileId),
+    /// Keep this previewed file open, so nothing takes its tab.
+    KeepFileOpen(FileId),
     /// End every shell but this one.
     CloseOtherTerminals(ShellId),
     /// End every shell of the project.
@@ -225,6 +227,7 @@ impl Setup {
             | Message::CopyFileRelativePath(_)
             | Message::RevealFile(_)
             | Message::OpenFileInTerminal(_)
+            | Message::KeepFileOpen(_)
             | Message::CloseOtherTerminals(_)
             | Message::CloseAllTerminals => {}
         }

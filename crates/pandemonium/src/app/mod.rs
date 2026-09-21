@@ -5,6 +5,7 @@
 //! implements none of them — every frame is `pm-ui` elements built from that
 //! model, submitted to `pm-gfx` as one draw list.
 
+mod clicks;
 mod input;
 
 use std::sync::{Arc, Mutex};
@@ -25,7 +26,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
-use crate::app::input::DOUBLE_CLICK_INTERVAL;
+use crate::app::clicks::DoubleClicks;
 use crate::config::{self, Restored, WindowState};
 use crate::desktop;
 use crate::editor::{self, Files};
@@ -96,8 +97,12 @@ pub struct App {
     editor_focused: bool,
     /// The tab menu that is open over the panes, if one is.
     menu: Option<TabMenu>,
-    /// Time and place of the last press in the editor pane.
-    last_editor_click: Option<(Instant, Position)>,
+    /// The last press in the editor pane, for selecting a word.
+    text_clicks: DoubleClicks<Position>,
+    /// The last press on a row of the file tree, for keeping a file open.
+    tree_clicks: DoubleClicks<pm_core::EntryId>,
+    /// The last press on a tab, for keeping a previewed file open.
+    tab_clicks: DoubleClicks<crate::editor::FileId>,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -166,8 +171,10 @@ impl App {
             close_requested: false,
             editor: Files::default(),
             editor_focused: false,
+            text_clicks: DoubleClicks::default(),
+            tree_clicks: DoubleClicks::default(),
+            tab_clicks: DoubleClicks::default(),
             menu: None,
-            last_editor_click: None,
             terminals: Terminals::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
@@ -228,7 +235,12 @@ impl App {
     }
 
     /// Opens the file the tree entry `id` names in the editor pane.
+    ///
+    /// One click previews the file and two keep it, the way every editor
+    /// with a preview tab behaves: clicking down a tree leaves one tab
+    /// behind, and the file you meant stays when you ask for it twice.
     fn open_file(&mut self, id: pm_core::EntryId) {
+        let preview = !self.tree_clicks.press(id);
         let Some(project) = self.open.active() else {
             return;
         };
@@ -242,7 +254,7 @@ impl App {
             return;
         };
 
-        if self.editor.open(project, &root, &path).is_some() {
+        if self.editor.open(project, &root, &path, preview).is_some() {
             self.editor_focused = true;
             self.terminal_focused = false;
         }
@@ -250,9 +262,9 @@ impl App {
 
     /// Places the cursor where a press landed, or selects to where it reached.
     ///
-    /// A second press in the same place within the double-click interval
-    /// takes the word under it instead, which is the one gesture the element
-    /// tree cannot tell the window about on its own.
+    /// A second press in the same place takes the word under it instead,
+    /// which is the one gesture the element tree cannot tell the window
+    /// about on its own.
     fn select_text(&mut self, anchor: Position, head: Position) {
         let Some(project) = self.open.active().map(pm_core::Project::id) else {
             return;
@@ -260,11 +272,10 @@ impl App {
         self.editor_focused = true;
         self.terminal_focused = false;
 
-        let now = Instant::now();
-        let twice = self.last_editor_click.is_some_and(|(at, place)| {
-            place == anchor && now.duration_since(at) <= DOUBLE_CLICK_INTERVAL
-        });
-        self.last_editor_click = (anchor == head).then_some((now, anchor));
+        let twice = anchor == head && self.text_clicks.press(anchor);
+        if anchor != head {
+            self.text_clicks.clear();
+        }
 
         self.editor
             .edit(project, |buffer| match (twice, anchor == head) {
@@ -432,8 +443,12 @@ impl App {
             return;
         }
         if let Message::SelectFile(id) = message {
+            let twice = self.tab_clicks.press(id);
             if let Some(project) = self.open.active().map(pm_core::Project::id) {
                 self.editor.activate(project, id);
+                if twice {
+                    self.editor.keep(project, id);
+                }
             }
             self.editor_focused = true;
             self.terminal_focused = false;
@@ -599,6 +614,7 @@ impl App {
                 }
             }
             Message::OpenFileInTerminal(id) => self.start_shell_beside(project, id),
+            Message::KeepFileOpen(id) => self.editor.keep(project, id),
             Message::CloseOtherTerminals(id) => self.terminals.stop_others(project, id),
             Message::CloseAllTerminals => {
                 self.terminals.stop_all(project);

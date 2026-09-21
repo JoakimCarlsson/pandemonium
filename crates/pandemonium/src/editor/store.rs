@@ -35,6 +35,8 @@ pub struct FileEntry {
     pub dirty: bool,
     /// Whether this is the file the pane is showing.
     pub active: bool,
+    /// Whether it is only being previewed, and will give its tab up.
+    pub preview: bool,
 }
 
 /// One open file: its buffer, where the pane is looking, and who serves it.
@@ -45,13 +47,19 @@ pub struct Document {
     scroll: usize,
     /// How many lines the pane last had room for.
     rows: usize,
+    /// Whether the file is only being looked at, not kept open.
+    ///
+    /// A previewed file holds the one preview tab of its project and gives
+    /// it up to the next file previewed. Editing it, or asking for it a
+    /// second time, is what keeps it.
+    preview: bool,
     /// The language server this file is open in, when it has one.
     server: Option<Arc<Client>>,
 }
 
 impl Document {
     /// Opens `buffer`, telling `server` that it is open.
-    fn new(buffer: Buffer, server: Option<Arc<Client>>) -> Self {
+    fn new(buffer: Buffer, preview: bool, server: Option<Arc<Client>>) -> Self {
         if let Some(server) = server.as_ref() {
             server.did_open(buffer.path(), buffer.version(), &buffer.contents());
         }
@@ -60,6 +68,7 @@ impl Document {
             buffer,
             scroll: 0,
             rows: 0,
+            preview,
             server,
         }
     }
@@ -110,17 +119,30 @@ impl Document {
         }
     }
 
+    /// Whether the file is only being looked at, not kept open.
+    pub fn is_preview(&self) -> bool {
+        self.preview
+    }
+
+    /// Keeps the file open, whether it was being previewed or not.
+    pub fn keep(&mut self) {
+        self.preview = false;
+    }
+
     /// Applies `edit` to the buffer and tells the server what it now holds.
     ///
     /// A keypress that only moves the cursor is an edit as far as the pane
     /// is concerned and none at all as far as the server is: the version is
-    /// what says which of the two happened.
+    /// what says which of the two happened. A keypress that does change the
+    /// text also keeps the file: what has been written in is not something
+    /// the next file previewed may close.
     pub fn edit(&mut self, edit: impl FnOnce(&mut Buffer)) {
         let version = self.buffer.version();
         edit(&mut self.buffer);
         if version == self.buffer.version() {
             return;
         }
+        self.preview = false;
         if let Some(server) = self.server.as_ref() {
             server.did_change(
                 self.buffer.path(),
@@ -216,12 +238,26 @@ impl Files {
 
     /// Opens `path` in `project`, or shows it if it is already open.
     ///
+    /// A file opened for preview takes the project's one preview tab from
+    /// whatever held it, which is what makes clicking through a tree leave
+    /// one tab behind rather than twenty. Opening the same file again
+    /// without `preview` keeps it where it is.
+    ///
     /// A file that cannot be read does not open and does not complain: the
     /// tree lists what is on disk, and a directory entry that turns out not
     /// to be a readable file is the tree's business, not the pane's.
-    pub fn open(&mut self, project: ProjectId, root: &Path, path: &Path) -> Option<FileId> {
+    pub fn open(
+        &mut self,
+        project: ProjectId,
+        root: &Path,
+        path: &Path,
+        preview: bool,
+    ) -> Option<FileId> {
         if let Some(id) = self.projects.get(&project).and_then(|open| open.find(path)) {
             self.activate(project, id);
+            if !preview {
+                self.keep(project, id);
+            }
             return Some(id);
         }
 
@@ -230,14 +266,31 @@ impl Files {
             .language()
             .and_then(|language| self.servers.open(root, language));
 
+        if preview {
+            self.close_preview(project);
+        }
+
         let id = self.next;
         self.next = FileId(id.0 + 1);
         let files = self.projects.entry(project).or_default();
-        files
-            .open
-            .push((id, Rc::new(RefCell::new(Document::new(buffer, server)))));
+        files.open.push((
+            id,
+            Rc::new(RefCell::new(Document::new(buffer, preview, server))),
+        ));
         files.active = Some(id);
         Some(id)
+    }
+
+    /// Keeps the file `id` names open, so nothing else takes its tab.
+    pub fn keep(&mut self, project: ProjectId, id: FileId) {
+        if let Some(file) = self.projects.get(&project).and_then(|files| files.get(id)) {
+            file.borrow_mut().keep();
+        }
+    }
+
+    /// Closes the file `project` is previewing, if it is previewing one.
+    fn close_preview(&mut self, project: ProjectId) {
+        self.retain_files(project, |file| !file.borrow().is_preview());
     }
 
     /// The file `project` is showing, if it has one.
@@ -269,6 +322,7 @@ impl Files {
                     name: document.buffer().name(),
                     dirty: document.buffer().is_dirty(),
                     active: files.active == Some(*id),
+                    preview: document.is_preview(),
                 }
             })
             .collect()

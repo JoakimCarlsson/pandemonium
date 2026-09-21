@@ -260,8 +260,11 @@ fn file_entries(files: &[FileEntry], id: FileId) -> Vec<MenuItem<Message>> {
     let left = index.is_some_and(|index| index > 0);
     let right = index.is_some_and(|index| index + 1 < files.len());
     let saved = files.iter().any(|file| !file.dirty);
+    let preview = files.iter().any(|file| file.id == id && file.preview);
 
     vec![
+        menu_entry("Keep Open", preview.then_some(Message::KeepFileOpen(id))),
+        menu_separator(),
         menu_entry("Close", Some(Message::CloseFile(id))),
         menu_entry(
             "Close Others",
@@ -592,6 +595,7 @@ fn terminal_tabs(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
             name: shell.name.clone(),
             active: shell.active,
             dirty: false,
+            preview: false,
             select: Message::SelectTerminal(shell.id),
             close: Message::CloseTerminal(shell.id),
             menu: Message::ShowTerminalMenu(shell.id),
@@ -627,6 +631,7 @@ fn editor_pane(theme: &Theme, pane: Pane) -> Div<Message> {
             name: file.name.clone(),
             active: file.active,
             dirty: file.dirty,
+            preview: file.preview,
             select: Message::SelectFile(file.id),
             close: Message::CloseFile(file.id),
             menu: Message::ShowFileMenu(file.id),
@@ -675,6 +680,8 @@ struct Tab {
     active: bool,
     /// Whether what is in it has changes that are not on disk.
     dirty: bool,
+    /// Whether it holds something that is only being previewed.
+    preview: bool,
     /// What clicking the tab sends.
     select: Message,
     /// What closing the tab sends.
@@ -709,6 +716,11 @@ fn pane_tab(theme: &Theme, tab: Tab) -> Div<Message> {
     } else {
         (theme.colors.surface, theme.colors.text_muted)
     };
+    let name = text(truncated(&tab.name, TAB_NAME_CHARS))
+        .text_sm()
+        .font_light()
+        .color(color);
+    let name = if tab.preview { name.italic() } else { name };
 
     h_flex()
         .h_full()
@@ -725,22 +737,21 @@ fn pane_tab(theme: &Theme, tab: Tab) -> Div<Message> {
                 .size(IconSize::XSmall)
                 .color(theme.colors.text_subtle),
         )
-        .child(
-            text(truncated(&tab.name, TAB_NAME_CHARS))
-                .text_sm()
-                .font_light()
-                .color(color),
-        )
-        .when(tab.dirty, |row| row.child(unsaved_dot(theme)))
+        .child(name)
+        .when(tab.dirty, |row| row.child(unsaved_dot(color)))
         .child(icon_button(theme, IconName::Close, tab.close))
 }
 
 /// Builds the mark a tab carries while its file is not on disk.
-fn unsaved_dot(theme: &Theme) -> Div<Message> {
+///
+/// The mark is drawn in the tab's own text colour: it says something about
+/// the name beside it, and it dims with that name when the tab is not the
+/// one in front.
+fn unsaved_dot(color: Rgba) -> Div<Message> {
     v_flex()
         .size_px(DOT_SIZE)
         .rounded(DOT_SIZE / 2.0)
-        .bg(theme.colors.accent)
+        .bg(color)
 }
 
 /// `name` cut to `chars` characters, ending in an ellipsis when it was cut.
