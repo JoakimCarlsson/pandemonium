@@ -14,7 +14,7 @@ pub fn switch_field<M: Clone + 'static>(
     on: bool,
     message: M,
 ) -> Div<M> {
-    let mut labels = v_flex().gap_0p5().flex_1();
+    let mut labels = v_flex().gap(0.5).flex_1();
     if let Some(title) = title {
         labels = labels.child(text(title).font_medium());
     }
@@ -22,7 +22,7 @@ pub fn switch_field<M: Clone + 'static>(
 
     h_flex()
         .w_full()
-        .gap_4()
+        .gap(4)
         .items_center()
         .justify_between()
         .child(labels)

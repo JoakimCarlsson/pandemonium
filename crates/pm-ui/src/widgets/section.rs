@@ -13,10 +13,10 @@ pub fn section<M: 'static>(
     description: Option<&str>,
     control: impl IntoElement<M>,
 ) -> Div<M> {
-    let mut heading = v_flex().gap_0p5().child(text(title).font_medium());
+    let mut heading = v_flex().gap(0.5).child(text(title).font_medium());
     if let Some(description) = description {
         heading = heading.child(text(description).text_sm().color(theme.colors.text_muted));
     }
 
-    v_flex().w_full().gap_2().child(heading).child(control)
+    v_flex().w_full().gap(2).child(heading).child(control)
 }

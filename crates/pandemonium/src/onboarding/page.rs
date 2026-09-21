@@ -24,8 +24,8 @@ pub fn page(theme: &Theme, setup: &Setup) -> Div<Message> {
             .w_full()
             .max_w_px(PAGE_WIDTH)
             .mx_auto()
-            .p_12()
-            .gap_6()
+            .p(12)
+            .gap(6)
             .child(header(theme, setup))
             .child(rule(theme))
             .child(body),
@@ -46,13 +46,13 @@ fn header(theme: &Theme, setup: &Setup) -> Div<Message> {
 
     h_flex()
         .w_full()
-        .gap_4()
+        .gap(4)
         .items_center()
         .justify_between()
         .child(
-            h_flex().gap_4().items_center().child(mark(theme)).child(
+            h_flex().gap(4).items_center().child(mark(theme)).child(
                 v_flex()
-                    .gap_0p5()
+                    .gap(0.5)
                     .child(text("Welcome to Pandemonium").text_xxl().font_semibold())
                     .child(
                         text("Conduct agents where the code is")
@@ -85,8 +85,8 @@ fn mark(theme: &Theme) -> Div<Message> {
 fn ready(theme: &Theme, setup: &Setup) -> Div<Message> {
     v_flex()
         .w_full()
-        .gap_2()
-        .p_4()
+        .gap(2)
+        .p(4)
         .rounded(theme.radius.lg)
         .bg(theme.colors.surface)
         .border_1(theme.colors.border)

@@ -10,7 +10,7 @@ where
     M: Clone + 'static,
     I: IntoIterator<Item = (String, M)>,
 {
-    h_flex().gap_1().children(
+    h_flex().gap(1).children(
         options
             .into_iter()
             .enumerate()

@@ -1,9 +1,9 @@
 //! The style a layout reads, and the utility setters elements are built with.
 //!
-//! The vocabulary is Tailwind's: a fixed spacing scale, one step per setter,
-//! and a chain of setters instead of a style object filled in by hand. [`Style`]
-//! is what the layout and paint passes read; [`Styled`] is how a caller writes
-//! it, and an element joins that vocabulary by handing over one field.
+//! The vocabulary follows Tailwind's spacing scale through parameterized,
+//! chainable setters instead of a style object filled in by hand. [`Style`] is
+//! what the layout and paint passes read; [`Styled`] is how a caller writes it,
+//! and an element joins that vocabulary by handing over one field.
 
 mod styled;
 mod units;

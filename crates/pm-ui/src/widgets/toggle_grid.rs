@@ -11,11 +11,11 @@ where
     I: IntoIterator<Item = (String, M)>,
 {
     let options: Vec<_> = options.into_iter().collect();
-    let mut rows = v_flex().gap_1().w_full();
+    let mut rows = v_flex().gap(1).w_full();
     let mut offset = 0;
 
     for row in options.chunks(columns.max(1)) {
-        let mut line = h_flex().gap_1().w_full();
+        let mut line = h_flex().gap(1).w_full();
         for (index, (label, message)) in row.iter().enumerate() {
             line = line.child(ToggleOption {
                 label: label.clone(),

@@ -1,22 +1,9 @@
-//! The utility setters, one per step of the scale, in one trait.
+//! Chainable utility setters expressed in spacing-scale steps.
 
 use pm_gfx::Rgba;
 
 use crate::style::Style;
 use crate::style::units::{Align, Axis, Justify, Length, space};
-
-/// Declares one setter per step of the spacing scale.
-macro_rules! scale_setters {
-    ($property:expr, $apply:ident, [$(($name:ident, $steps:expr)),* $(,)?]) => {
-        $(
-            #[doc = concat!("Sets ", $property, " to ", stringify!($steps), " steps of the spacing scale.")]
-            fn $name(mut self) -> Self {
-                self.style().$apply(space($steps));
-                self
-            }
-        )*
-    };
-}
 
 /// The utility setters every element is styled with.
 ///
@@ -27,102 +14,53 @@ pub trait Styled: Sized {
     /// The style this element is laid out and painted from.
     fn style(&mut self) -> &mut Style;
 
-    scale_setters!(
-        "padding on every edge",
-        set_padding,
-        [
-            (p_0, 0.0),
-            (p_1, 1.0),
-            (p_2, 2.0),
-            (p_3, 3.0),
-            (p_4, 4.0),
-            (p_5, 5.0),
-            (p_6, 6.0),
-            (p_8, 8.0),
-            (p_10, 10.0),
-            (p_12, 12.0),
-        ]
-    );
+    /// Sets padding on every edge in spacing-scale steps.
+    fn p(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_padding(space(steps.into() as f32));
+        self
+    }
 
-    scale_setters!(
-        "horizontal padding",
-        set_padding_x,
-        [
-            (px_1, 1.0),
-            (px_2, 2.0),
-            (px_3, 3.0),
-            (px_4, 4.0),
-            (px_5, 5.0),
-            (px_6, 6.0),
-            (px_8, 8.0),
-        ]
-    );
+    /// Sets horizontal padding in spacing-scale steps.
+    fn px(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_padding_x(space(steps.into() as f32));
+        self
+    }
 
-    scale_setters!(
-        "vertical padding",
-        set_padding_y,
-        [
-            (py_0, 0.0),
-            (py_1, 1.0),
-            (py_2, 2.0),
-            (py_3, 3.0),
-            (py_4, 4.0),
-            (py_6, 6.0),
-            (py_8, 8.0),
-        ]
-    );
+    /// Sets vertical padding in spacing-scale steps.
+    fn py(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_padding_y(space(steps.into() as f32));
+        self
+    }
 
-    scale_setters!(
-        "top padding",
-        set_padding_top,
-        [(pt_1, 1.0), (pt_2, 2.0), (pt_4, 4.0), (pt_6, 6.0)]
-    );
+    /// Sets top padding in spacing-scale steps.
+    fn pt(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_padding_top(space(steps.into() as f32));
+        self
+    }
 
-    scale_setters!(
-        "bottom padding",
-        set_padding_bottom,
-        [(pb_1, 1.0), (pb_2, 2.0), (pb_4, 4.0), (pb_6, 6.0)]
-    );
+    /// Sets bottom padding in spacing-scale steps.
+    fn pb(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_padding_bottom(space(steps.into() as f32));
+        self
+    }
 
-    scale_setters!(
-        "the gap between children",
-        set_gap,
-        [
-            (gap_0p5, 0.5),
-            (gap_1, 1.0),
-            (gap_1p5, 1.5),
-            (gap_2, 2.0),
-            (gap_3, 3.0),
-            (gap_4, 4.0),
-            (gap_6, 6.0),
-            (gap_8, 8.0),
-        ]
-    );
+    /// Sets the gap between children in spacing-scale steps.
+    fn gap(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_gap(space(steps.into() as f32));
+        self
+    }
 
-    scale_setters!(
-        "width",
-        set_width,
-        [
-            (w_4, 4.0),
-            (w_6, 6.0),
-            (w_8, 8.0),
-            (w_10, 10.0),
-            (w_12, 12.0)
-        ]
-    );
+    /// Sets width in spacing-scale steps.
+    fn w(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_width(space(steps.into() as f32));
+        self
+    }
 
-    scale_setters!(
-        "height",
-        set_height,
-        [
-            (h_4, 4.0),
-            (h_5, 5.0),
-            (h_6, 6.0),
-            (h_8, 8.0),
-            (h_10, 10.0),
-            (h_12, 12.0)
-        ]
-    );
+    /// Sets height in spacing-scale steps.
+    fn h(mut self, steps: impl Into<f64>) -> Self {
+        self.style().set_height(space(steps.into() as f32));
+        self
+    }
 
     /// Stacks children left to right instead of top to bottom.
     fn row(mut self) -> Self {

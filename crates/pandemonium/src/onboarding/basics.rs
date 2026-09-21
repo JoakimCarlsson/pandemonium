@@ -12,7 +12,7 @@ use crate::onboarding::setup::{Message, Setup, ThemeMode};
 pub(super) fn basics(theme: &Theme, setup: &Setup) -> Div<Message> {
     v_flex()
         .w_full()
-        .gap_6()
+        .gap(6)
         .child(theme_section(theme, setup))
         .child(keymap_section(theme, setup))
         .child(switch_field(
@@ -74,17 +74,17 @@ fn theme_section(theme: &Theme, setup: &Setup) -> Div<Message> {
 
     v_flex()
         .w_full()
-        .gap_3()
+        .gap(3)
         .child(
             h_flex()
                 .w_full()
-                .gap_4()
+                .gap(4)
                 .items_center()
                 .justify_between()
                 .child(text("Theme").font_medium())
                 .child(toggle_row(options, selected).w_px(space(48.0))),
         )
-        .child(h_flex().w_full().gap_2().children(previews))
+        .child(h_flex().w_full().gap(2).children(previews))
 }
 
 /// The keymap grid.

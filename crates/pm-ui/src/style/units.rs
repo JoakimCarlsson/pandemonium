@@ -2,7 +2,7 @@
 //!
 //! Every measurement in the UI is a step of one scale, so a gap and a padding
 //! chosen independently still line up. Four logical pixels a step, as Tailwind
-//! has it: `p_4` is sixteen pixels, exactly as `p-4` is there.
+//! has it: `p(4)` is sixteen pixels, exactly as `p-4` is there.
 
 /// Logical pixels in one step of the spacing scale.
 pub const STEP: f32 = 4.0;
