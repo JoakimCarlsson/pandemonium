@@ -133,6 +133,7 @@ impl App {
             .map_or(PointerCursor::Default, |ui| ui.pointer_cursor());
         let icon = match cursor {
             PointerCursor::Default => winit::window::CursorIcon::Default,
+            PointerCursor::Pointer => winit::window::CursorIcon::Pointer,
             PointerCursor::ResizeHorizontal => winit::window::CursorIcon::ColResize,
             PointerCursor::ResizeVertical => winit::window::CursorIcon::RowResize,
         };

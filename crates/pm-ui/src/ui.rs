@@ -12,6 +12,8 @@ pub enum PointerCursor {
     /// The platform's ordinary pointer.
     #[default]
     Default,
+    /// A hand indicating that the region can be activated.
+    Pointer,
     /// Horizontal resizing across a vertical divider.
     ResizeHorizontal,
     /// Vertical resizing across a horizontal divider.
@@ -72,12 +74,12 @@ impl<M> Ui<M> {
         self.drag = None;
     }
 
-    /// Records a press, which also moves focus to whatever is under it.
+    /// Records a press and leaves keyboard focus to keyboard navigation.
     pub fn pointer_pressed(&mut self) -> Option<M> {
         self.input.pressed_at = self.input.pointer;
         let pointer = self.input.pointer?;
         let index = self.region_at(pointer);
-        self.focus = index;
+        self.focus = None;
         self.drag =
             index.filter(|index| matches!(self.regions[*index].action, RegionAction::Drag { .. }));
         self.drag_message(pointer, ResizePhase::Started)
@@ -138,6 +140,10 @@ impl<M> Ui<M> {
             .drag
             .or_else(|| self.input.pointer.and_then(|point| self.region_at(point)));
         match index.and_then(|index| self.regions.get(index)) {
+            Some(Region {
+                action: RegionAction::Click(_),
+                ..
+            }) => PointerCursor::Pointer,
             Some(Region {
                 action: RegionAction::Drag { axis, .. },
                 ..
