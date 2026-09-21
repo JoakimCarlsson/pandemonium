@@ -2,6 +2,7 @@
 
 mod app;
 mod config;
+mod editor;
 #[allow(
     dead_code,
     unused_imports,

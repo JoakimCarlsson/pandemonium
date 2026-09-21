@@ -53,8 +53,8 @@ pub enum RegionAction<M> {
     Click(M),
     /// Sends messages throughout a captured pointer drag.
     Drag {
-        /// The dimension changed by the drag.
-        axis: crate::Axis,
+        /// The shape the pointer takes over the region.
+        cursor: crate::PointerCursor,
         /// Builds the caller's message for each captured pointer event.
         handler: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
     },
@@ -192,19 +192,38 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         }
     }
 
-    /// Registers `bounds` as a pointer-drag target handled by `on_resize`.
+    /// Registers `bounds` as an edge dragged along `axis` by `on_resize`.
     pub fn resizable(
         &mut self,
         bounds: Rect,
         axis: crate::Axis,
         on_resize: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
     ) -> Interaction {
+        let cursor = match axis {
+            crate::Axis::Horizontal => crate::PointerCursor::ResizeHorizontal,
+            crate::Axis::Vertical => crate::PointerCursor::ResizeVertical,
+        };
+        self.draggable(bounds, cursor, on_resize)
+    }
+
+    /// Registers `bounds` as a pointer-drag target handled by `on_drag`.
+    ///
+    /// A drag is how a region hears where the pointer is rather than only
+    /// that it was clicked, so a pane that places a cursor and a sash that
+    /// resizes a sidebar are the same kind of region, under two shapes of
+    /// pointer.
+    pub fn draggable(
+        &mut self,
+        bounds: Rect,
+        cursor: crate::PointerCursor,
+        on_drag: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
+    ) -> Interaction {
         let index = self.regions.len();
         self.regions.push(Region {
             bounds,
             action: RegionAction::Drag {
-                axis,
-                handler: on_resize,
+                cursor,
+                handler: on_drag,
             },
         });
 

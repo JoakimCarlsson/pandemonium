@@ -18,6 +18,8 @@ pub enum PointerCursor {
     ResizeHorizontal,
     /// Vertical resizing across a horizontal divider.
     ResizeVertical,
+    /// An I-beam over text that can be selected.
+    Text,
 }
 
 /// Everything that survives between frames: the theme, the pointer and focus.
@@ -145,12 +147,9 @@ impl<M> Ui<M> {
                 ..
             }) => PointerCursor::Pointer,
             Some(Region {
-                action: RegionAction::Drag { axis, .. },
+                action: RegionAction::Drag { cursor, .. },
                 ..
-            }) => match axis {
-                crate::Axis::Horizontal => PointerCursor::ResizeHorizontal,
-                crate::Axis::Vertical => PointerCursor::ResizeVertical,
-            },
+            }) => *cursor,
             _ => PointerCursor::Default,
         }
     }

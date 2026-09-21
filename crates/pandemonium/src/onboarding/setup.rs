@@ -1,9 +1,11 @@
 //! What the setup screen decides, and the messages that change it.
 
 use pm_core::{EntryId, ProjectId};
+use pm_text::Position;
 use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES, ResizeEvent};
 use serde::{Deserialize, Serialize};
 
+use crate::editor::FileId;
 use crate::keymap::BaseKeymap;
 use crate::terminal::ShellId;
 
@@ -134,6 +136,16 @@ pub enum Message {
     ResizeBottomPanel(ResizeEvent),
     /// Resize the secondary sidebar.
     ResizeSecondarySidebar(ResizeEvent),
+    /// Open this entry of the file tree in the editor pane.
+    OpenFile(EntryId),
+    /// Show this open file in the editor pane.
+    SelectFile(FileId),
+    /// Close this open file.
+    CloseFile(FileId),
+    /// Put the cursor where a press landed, selecting to where it reached.
+    SelectText(Position, Position),
+    /// Drag the editor's scrollbar, so many lines to a pixel of travel.
+    ScrollEditor(ResizeEvent, f32),
 }
 
 impl Setup {
@@ -168,6 +180,11 @@ impl Setup {
             | Message::ToggleSecondarySidebar
             | Message::ResizeBottomPanel(_)
             | Message::ResizeSecondarySidebar(_) => {}
+            Message::OpenFile(_)
+            | Message::SelectFile(_)
+            | Message::CloseFile(_)
+            | Message::SelectText(_, _)
+            | Message::ScrollEditor(_, _) => {}
         }
     }
 }

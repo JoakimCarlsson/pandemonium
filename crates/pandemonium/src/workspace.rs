@@ -2,6 +2,7 @@
 
 use pm_core::{FileTree, Project, ProjectId, Projects, Row};
 use pm_gfx::Rgba;
+use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
 use pm_ui::button;
 use pm_ui::{
@@ -9,6 +10,7 @@ use pm_ui::{
     layout_icon_button, rule, sash, text, v_flex,
 };
 
+use crate::editor::{FileEntry, OpenFile, buffer_view};
 use crate::onboarding::Message;
 use crate::terminal::{Shell, ShellEntry, terminal_view};
 
@@ -130,6 +132,20 @@ pub struct Panel {
     pub focused: bool,
 }
 
+/// What the editor pane is showing.
+///
+/// The pane is one open file and the list of what else is open in the same
+/// project, which is the same shape the terminal panel has: a bar of tabs
+/// over whichever of them is in front.
+pub struct Pane {
+    /// The file the pane draws, when the project has one open.
+    pub file: Option<OpenFile>,
+    /// Every file open in the project, for the bar of tabs above it.
+    pub files: Vec<FileEntry>,
+    /// Whether keystrokes are going to the pane.
+    pub focused: bool,
+}
+
 /// Builds the workspace with its resizable sessions sidebar.
 pub fn workspace(
     theme: &Theme,
@@ -138,8 +154,9 @@ pub fn workspace(
     files: Option<&FileTree>,
     layout: Layout,
     panel: Panel,
+    pane: Pane,
 ) -> Div<Message> {
-    let status = Status::of(open, sessions, &panel, layout);
+    let status = Status::of(open, sessions, &panel, &pane, layout);
 
     v_flex()
         .w_full()
@@ -159,7 +176,7 @@ pub fn workspace(
                     ))
                     .child(sash(Axis::Horizontal, Message::ResizeSidebar))
                 })
-                .child(main_area(theme, layout, panel))
+                .child(main_area(theme, layout, panel, pane))
                 .when(layout.secondary_sidebar_open, |body| {
                     body.child(sash(Axis::Horizontal, Message::ResizeSecondarySidebar))
                         .child(files_sidebar(theme, files, layout.secondary_sidebar_width))
@@ -185,12 +202,26 @@ struct Status {
     shells: usize,
     /// Whether the panel those shells are shown in is open.
     panel_open: bool,
+    /// Where the cursor is in the file the pane is showing.
+    cursor: Option<(usize, usize)>,
+    /// What that file is written in.
+    language: Option<&'static str>,
+    /// How many errors and warnings a server has reported in it.
+    problems: (usize, usize),
 }
 
 impl Status {
     /// Reads the status of the window out of what the screen was given.
-    fn of(open: &Projects, sessions: &[SidebarProject], panel: &Panel, layout: Layout) -> Self {
+    fn of(
+        open: &Projects,
+        sessions: &[SidebarProject],
+        panel: &Panel,
+        pane: &Pane,
+        layout: Layout,
+    ) -> Self {
         let active = open.active();
+        let showing = pane.file.as_ref().map(|file| file.borrow());
+        let buffer = showing.as_ref().map(|document| document.buffer());
 
         Self {
             project: active.map(|project| project.name().to_owned()),
@@ -198,6 +229,28 @@ impl Status {
             sessions: active.map_or(0, |project| sessions_of(project, sessions).len()),
             shells: panel.shells.len(),
             panel_open: layout.bottom_panel_open,
+            cursor: buffer.map(|buffer| {
+                let head = buffer.selection().head;
+                (head.line + 1, head.column + 1)
+            }),
+            language: buffer.map(|buffer| {
+                buffer
+                    .language()
+                    .map_or("Plain Text", pm_text::Language::name)
+            }),
+            problems: buffer.map_or((0, 0), |buffer| {
+                let errors = buffer
+                    .diagnostics()
+                    .iter()
+                    .filter(|found| found.severity == Severity::Error)
+                    .count();
+                let warnings = buffer
+                    .diagnostics()
+                    .iter()
+                    .filter(|found| found.severity == Severity::Warning)
+                    .count();
+                (errors, warnings)
+            }),
         }
     }
 }
@@ -214,6 +267,9 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         sessions,
         shells,
         panel_open,
+        cursor,
+        language,
+        problems,
     } = status;
 
     h_flex()
@@ -227,31 +283,64 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         .when(project.is_none(), |bar| {
             bar.child(status_item(
                 theme,
-                IconName::Folder,
+                Some(IconName::Folder),
                 "No project open",
                 None,
                 false,
             ))
         })
         .when_some(project, |bar, name| {
-            bar.child(status_item(theme, IconName::Folder, name, None, false))
+            bar.child(status_item(
+                theme,
+                Some(IconName::Folder),
+                name,
+                None,
+                false,
+            ))
         })
         .when_some(branch, |bar, branch| {
-            bar.child(status_item(theme, IconName::GitBranch, branch, None, false))
+            bar.child(status_item(
+                theme,
+                Some(IconName::GitBranch),
+                branch,
+                None,
+                false,
+            ))
         })
         .when(sessions > 0, |bar| {
             bar.child(status_item(
                 theme,
-                IconName::GitFork,
+                Some(IconName::GitFork),
                 counted(sessions, "session"),
                 None,
                 false,
             ))
         })
+        .when(problems != (0, 0), |bar| {
+            bar.child(status_item(
+                theme,
+                Some(IconName::Warning),
+                format!("{} · {}", problems.0, problems.1),
+                None,
+                false,
+            ))
+        })
         .child(h_flex().flex_1())
+        .when_some(cursor, |bar, (line, column)| {
+            bar.child(status_item(
+                theme,
+                None,
+                format!("Ln {line}, Col {column}"),
+                None,
+                false,
+            ))
+        })
+        .when_some(language, |bar, language| {
+            bar.child(status_item(theme, None, language, None, false))
+        })
         .child(status_item(
             theme,
-            IconName::Terminal,
+            Some(IconName::Terminal),
             counted(shells, "shell"),
             Some(Message::ToggleBottomPanel),
             panel_open,
@@ -261,10 +350,12 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
 /// Builds one reading in the status bar: its icon, its text, its action.
 ///
 /// An item that carries a `message` is a control and lights under the
-/// pointer; one without is a reading and stays where the eye left it.
+/// pointer; one without is a reading and stays where the eye left it. The
+/// icon is as optional as the action: a line and column number is already
+/// named by the numbers themselves.
 fn status_item(
     theme: &Theme,
-    glyph: IconName,
+    glyph: Option<IconName>,
     label: impl Into<String>,
     message: Option<Message>,
     active: bool,
@@ -287,7 +378,9 @@ fn status_item(
                 .active_bg(theme.colors.surface_active)
                 .on_click(message)
         })
-        .child(icon(glyph).size(IconSize::XSmall).color(color))
+        .when_some(glyph, |item, glyph| {
+            item.child(icon(glyph).size(IconSize::XSmall).color(color))
+        })
         .child(text(label.into()).text_xs().font_light().color(color))
 }
 
@@ -334,11 +427,11 @@ fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
 }
 
 /// Builds the central pane area and optional bottom panel.
-fn main_area(theme: &Theme, layout: Layout, panel: Panel) -> Div<Message> {
+fn main_area(theme: &Theme, layout: Layout, panel: Panel, pane: Pane) -> Div<Message> {
     v_flex()
         .flex_1()
         .h_full()
-        .child(v_flex().w_full().flex_1().bg(theme.colors.background))
+        .child(editor_pane(theme, pane))
         .when(layout.bottom_panel_open, |main| {
             main.child(sash(Axis::Vertical, Message::ResizeBottomPanel))
                 .child(terminal_panel(theme, layout.bottom_panel_height, panel))
@@ -363,7 +456,7 @@ fn terminal_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
         .h_px(height)
         .overflow_hidden()
         .bg(theme.colors.background)
-        .child(tab_bar(theme, &shells))
+        .child(terminal_tabs(theme, &shells))
         .when_some(shell, |panel, shell| {
             panel.child(
                 terminal_view(shell, focused, Message::FocusTerminal)
@@ -382,8 +475,104 @@ fn terminal_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
         })
 }
 
-/// Builds the panel's bar: one tab per shell, and the panel's own actions.
-fn tab_bar(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
+/// Builds the terminal panel's bar of tabs and its own actions.
+fn terminal_tabs(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
+    let tabs = shells
+        .iter()
+        .map(|shell| Tab {
+            icon: IconName::Terminal,
+            name: shell.name.clone(),
+            active: shell.active,
+            dirty: false,
+            select: Message::SelectTerminal(shell.id),
+            close: Message::CloseTerminal(shell.id),
+        })
+        .collect();
+    let actions = h_flex()
+        .h_full()
+        .px(1.5)
+        .gap(1)
+        .items_center()
+        .child(icon_button(theme, IconName::Plus, Message::NewTerminal))
+        .child(icon_button(
+            theme,
+            IconName::Close,
+            Message::ToggleBottomPanel,
+        ));
+
+    tab_bar(theme, tabs, actions)
+}
+
+/// Builds the editor pane: the files open in the project, one in front.
+fn editor_pane(theme: &Theme, pane: Pane) -> Div<Message> {
+    let Pane {
+        file,
+        files,
+        focused,
+    } = pane;
+    let missing = file.is_none();
+    let tabs = files
+        .iter()
+        .map(|file| Tab {
+            icon: IconName::File,
+            name: file.name.clone(),
+            active: file.active,
+            dirty: file.dirty,
+            select: Message::SelectFile(file.id),
+            close: Message::CloseFile(file.id),
+        })
+        .collect::<Vec<_>>();
+
+    v_flex()
+        .w_full()
+        .flex_1()
+        .overflow_hidden()
+        .bg(theme.colors.background)
+        .when(!tabs.is_empty(), |pane| {
+            pane.child(tab_bar(theme, tabs, h_flex()))
+        })
+        .when_some(file, |pane, file| {
+            pane.child(
+                buffer_view(file, focused)
+                    .on_select(Message::SelectText)
+                    .on_scroll(Message::ScrollEditor),
+            )
+        })
+        .when(missing, |pane| {
+            pane.child(
+                v_flex()
+                    .w_full()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        text("Open a file from the tree")
+                            .text_sm()
+                            .font_light()
+                            .color(theme.colors.text_subtle),
+                    ),
+            )
+        })
+}
+
+/// One tab in a pane's bar of them, whichever kind of pane it is.
+struct Tab {
+    /// What the tab shows before its name.
+    icon: IconName,
+    /// What the tab calls what is in it.
+    name: String,
+    /// Whether this is the one the pane is showing.
+    active: bool,
+    /// Whether what is in it has changes that are not on disk.
+    dirty: bool,
+    /// What clicking the tab sends.
+    select: Message,
+    /// What closing the tab sends.
+    close: Message,
+}
+
+/// Builds a pane's bar: one tab per thing open in it, then its own actions.
+fn tab_bar(theme: &Theme, tabs: Vec<Tab>, actions: Div<Message>) -> Div<Message> {
     v_flex()
         .w_full()
         .h_px(TAB_BAR_HEIGHT)
@@ -394,28 +583,16 @@ fn tab_bar(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
                 .items_stretch()
                 .overflow_hidden()
                 .bg(theme.colors.surface)
-                .children(shells.iter().map(|shell| terminal_tab(theme, shell)))
+                .children(tabs.into_iter().map(|tab| pane_tab(theme, tab)))
                 .child(h_flex().flex_1())
-                .child(
-                    h_flex()
-                        .h_full()
-                        .px(1.5)
-                        .gap(1)
-                        .items_center()
-                        .child(icon_button(theme, IconName::Plus, Message::NewTerminal))
-                        .child(icon_button(
-                            theme,
-                            IconName::Close,
-                            Message::ToggleBottomPanel,
-                        )),
-                ),
+                .child(actions),
         )
         .child(rule(theme))
 }
 
-/// Builds one tab: which shell it is, and the control that ends it.
-fn terminal_tab(theme: &Theme, shell: &ShellEntry) -> Div<Message> {
-    let (background, color) = if shell.active {
+/// Builds one tab: what it holds, and the control that closes it.
+fn pane_tab(theme: &Theme, tab: Tab) -> Div<Message> {
+    let (background, color) = if tab.active {
         (theme.colors.background, theme.colors.text)
     } else {
         (theme.colors.surface, theme.colors.text_muted)
@@ -428,26 +605,29 @@ fn terminal_tab(theme: &Theme, shell: &ShellEntry) -> Div<Message> {
         .items_center()
         .overflow_hidden()
         .bg(background)
-        .when(!shell.active, |tab| {
-            tab.hover_bg(theme.colors.surface_hover)
-        })
-        .on_click(Message::SelectTerminal(shell.id))
+        .when(!tab.active, |tab| tab.hover_bg(theme.colors.surface_hover))
+        .on_click(tab.select)
         .child(
-            icon(IconName::Terminal)
+            icon(tab.icon)
                 .size(IconSize::XSmall)
                 .color(theme.colors.text_subtle),
         )
         .child(
-            text(truncated(&shell.name, TAB_NAME_CHARS))
+            text(truncated(&tab.name, TAB_NAME_CHARS))
                 .text_sm()
                 .font_light()
                 .color(color),
         )
-        .child(icon_button(
-            theme,
-            IconName::Close,
-            Message::CloseTerminal(shell.id),
-        ))
+        .when(tab.dirty, |row| row.child(unsaved_dot(theme)))
+        .child(icon_button(theme, IconName::Close, tab.close))
+}
+
+/// Builds the mark a tab carries while its file is not on disk.
+fn unsaved_dot(theme: &Theme) -> Div<Message> {
+    v_flex()
+        .size_px(DOT_SIZE)
+        .rounded(DOT_SIZE / 2.0)
+        .bg(theme.colors.accent)
 }
 
 /// `name` cut to `chars` characters, ending in an ellipsis when it was cut.
@@ -567,7 +747,11 @@ fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
         .gap(0.5)
         .items_center()
         .hover_bg(theme.colors.surface_hover)
-        .on_click(Message::ToggleEntry(entry.id()))
+        .on_click(if directory {
+            Message::ToggleEntry(entry.id())
+        } else {
+            Message::OpenFile(entry.id())
+        })
         .child(v_flex().w_px(FILE_INSET + row.depth as f32 * FILE_INDENT))
         .child(
             h_flex()
