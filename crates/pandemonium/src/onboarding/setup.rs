@@ -96,6 +96,22 @@ pub enum Message {
     Reopen,
     /// Resize the sessions sidebar.
     ResizeSidebar(ResizeEvent),
+    /// Minimize the application window.
+    MinimizeWindow,
+    /// Toggle whether the application window is maximized.
+    ToggleMaximizedWindow,
+    /// Close the application window.
+    CloseWindow,
+    /// Toggle the primary sidebar.
+    TogglePrimarySidebar,
+    /// Toggle the bottom panel.
+    ToggleBottomPanel,
+    /// Toggle the secondary sidebar.
+    ToggleSecondarySidebar,
+    /// Resize the bottom panel.
+    ResizeBottomPanel(ResizeEvent),
+    /// Resize the secondary sidebar.
+    ResizeSecondarySidebar(ResizeEvent),
 }
 
 impl Setup {
@@ -114,6 +130,12 @@ impl Setup {
             Message::Finish => self.finished = true,
             Message::Reopen => self.finished = false,
             Message::ResizeSidebar(_) => {}
+            Message::MinimizeWindow | Message::ToggleMaximizedWindow | Message::CloseWindow => {}
+            Message::TogglePrimarySidebar
+            | Message::ToggleBottomPanel
+            | Message::ToggleSecondarySidebar
+            | Message::ResizeBottomPanel(_)
+            | Message::ResizeSecondarySidebar(_) => {}
         }
     }
 }

@@ -6,9 +6,13 @@
 //! redraw, never with a widget reaching into the state behind its back.
 
 use pm_gfx::Point;
+#[cfg(not(target_os = "macos"))]
+use pm_gfx::Size;
 use pm_ui::PointerCursor;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, NamedKey};
+#[cfg(not(target_os = "macos"))]
+use winit::window::ResizeDirection;
 
 use crate::app::App;
 use crate::keymap::{self, Action, Context, Resolution, keys};
@@ -19,6 +23,13 @@ pub(super) const WHEEL_STEP: f32 = 48.0;
 
 /// How many notches a page key scrolls.
 const PAGE_NOTCHES: f32 = 4.0;
+
+/// Longest interval treated as a title-bar double click.
+const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Width of the invisible resize target around an undecorated window.
+#[cfg(not(target_os = "macos"))]
+const WINDOW_RESIZE_EDGE: f32 = 5.0;
 
 impl App {
     /// What is true where a key was pressed, for the `when` clauses to read.
@@ -86,6 +97,7 @@ impl App {
 
     /// Tells the element tree where the pointer is now.
     pub(super) fn pointer_moved(&mut self, position: Point) {
+        self.pointer = Some(position);
         let message = self.ui.as_mut().and_then(|ui| ui.pointer_moved(position));
         self.update_pointer_cursor();
         self.handle(message);
@@ -93,6 +105,7 @@ impl App {
 
     /// Tells the element tree the pointer has left the window.
     pub(super) fn pointer_left(&mut self) {
+        self.pointer = None;
         if let Some(ui) = self.ui.as_mut() {
             ui.pointer_left();
         }
@@ -102,6 +115,39 @@ impl App {
 
     /// Presses or releases the primary button, applying what it activated.
     pub(super) fn pointer_button(&mut self, state: ElementState) {
+        #[cfg(not(target_os = "macos"))]
+        if state == ElementState::Pressed
+            && let (Some(pointer), Some(renderer), Some(window)) =
+                (self.pointer, self.renderer.as_ref(), self.window.as_ref())
+            && let Some(direction) = window_resize_direction(pointer, renderer.size())
+        {
+            let _ = window.drag_resize_window(direction);
+            return;
+        }
+
+        if state == ElementState::Pressed
+            && self.setup.finished
+            && self
+                .pointer
+                .is_some_and(|pointer| pointer.y < crate::workspace::TITLEBAR_HEIGHT)
+            && !self.ui.as_ref().is_some_and(|ui| ui.pointer_over_region())
+        {
+            if let Some(window) = self.window.as_ref() {
+                let now = std::time::Instant::now();
+                if self
+                    .last_titlebar_click
+                    .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK_INTERVAL)
+                {
+                    self.last_titlebar_click = None;
+                    window.set_maximized(!window.is_maximized());
+                    return;
+                }
+                self.last_titlebar_click = Some(now);
+                let _ = window.drag_window();
+            }
+            return;
+        }
+
         let message = match (self.ui.as_mut(), state) {
             (Some(ui), ElementState::Pressed) => ui.pointer_pressed(),
             (Some(ui), ElementState::Released) => ui.pointer_released(),
@@ -140,5 +186,26 @@ impl App {
         if let Some(window) = self.window.as_ref() {
             window.set_cursor(icon);
         }
+    }
+}
+
+/// Returns the native resize direction for a pointer along a window edge.
+#[cfg(not(target_os = "macos"))]
+fn window_resize_direction(pointer: Point, size: Size) -> Option<ResizeDirection> {
+    let left = pointer.x <= WINDOW_RESIZE_EDGE;
+    let right = pointer.x >= size.width - WINDOW_RESIZE_EDGE;
+    let top = pointer.y <= WINDOW_RESIZE_EDGE;
+    let bottom = pointer.y >= size.height - WINDOW_RESIZE_EDGE;
+
+    match (left, right, top, bottom) {
+        (true, _, true, _) => Some(ResizeDirection::NorthWest),
+        (_, true, true, _) => Some(ResizeDirection::NorthEast),
+        (true, _, _, true) => Some(ResizeDirection::SouthWest),
+        (_, true, _, true) => Some(ResizeDirection::SouthEast),
+        (true, _, _, _) => Some(ResizeDirection::West),
+        (_, true, _, _) => Some(ResizeDirection::East),
+        (_, _, true, _) => Some(ResizeDirection::North),
+        (_, _, _, true) => Some(ResizeDirection::South),
+        _ => None,
     }
 }

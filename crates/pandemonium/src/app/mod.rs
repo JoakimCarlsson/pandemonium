@@ -8,6 +8,7 @@
 mod input;
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
 use pm_ui::{Appearance, Axis, ResizeEdge, ResizeState, Scroll, Ui, family};
@@ -40,12 +41,28 @@ pub struct App {
     resolver: Resolver,
     /// The modifiers held down right now.
     modifiers: ModifiersState,
+    /// Last pointer position in logical window coordinates.
+    pointer: Option<Point>,
+    /// Time of the last press on empty title-bar space.
+    last_titlebar_click: Option<Instant>,
     /// How far the page is scrolled.
     scroll: Scroll,
     /// Projects and sessions presented by the workspace.
     projects: Vec<SidebarProject>,
     /// Current width and drag state of the sessions sidebar.
     sidebar: ResizeState,
+    /// Current height and drag state of the bottom panel.
+    bottom_panel: ResizeState,
+    /// Current width and drag state of the secondary sidebar.
+    secondary_sidebar: ResizeState,
+    /// Whether the primary sidebar is visible.
+    primary_sidebar_open: bool,
+    /// Whether the bottom panel is visible.
+    bottom_panel_open: bool,
+    /// Whether the secondary sidebar is visible.
+    secondary_sidebar_open: bool,
+    /// Whether the event loop should close after the current event.
+    close_requested: bool,
 }
 
 impl App {
@@ -54,6 +71,9 @@ impl App {
         Self {
             setup: config::load(),
             sidebar: ResizeState::new(252.0, 160.0, 480.0),
+            bottom_panel: ResizeState::new(220.0, 120.0, 600.0),
+            secondary_sidebar: ResizeState::new(252.0, 160.0, 480.0),
+            primary_sidebar_open: true,
             ..Self::default()
         }
     }
@@ -72,6 +92,49 @@ impl App {
             self.sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::End);
             self.request_redraw();
+            return;
+        }
+        if let Message::ResizeBottomPanel(event) = message {
+            self.bottom_panel
+                .resize(event, Axis::Vertical, ResizeEdge::Start);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ResizeSecondarySidebar(event) = message {
+            self.secondary_sidebar
+                .resize(event, Axis::Horizontal, ResizeEdge::Start);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::TogglePrimarySidebar {
+            self.primary_sidebar_open = !self.primary_sidebar_open;
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ToggleBottomPanel {
+            self.bottom_panel_open = !self.bottom_panel_open;
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ToggleSecondarySidebar {
+            self.secondary_sidebar_open = !self.secondary_sidebar_open;
+            self.request_redraw();
+            return;
+        }
+        if message == Message::MinimizeWindow {
+            if let Some(window) = self.window.as_ref() {
+                window.set_minimized(true);
+            }
+            return;
+        }
+        if message == Message::ToggleMaximizedWindow {
+            if let Some(window) = self.window.as_ref() {
+                window.set_maximized(!window.is_maximized());
+            }
+            return;
+        }
+        if message == Message::CloseWindow {
+            self.close_requested = true;
             return;
         }
         self.setup.apply(message);
@@ -110,7 +173,18 @@ impl App {
         ));
 
         let page = if self.setup.finished {
-            workspace::workspace(&theme, &self.projects, self.sidebar.extent())
+            workspace::workspace(
+                &theme,
+                &self.projects,
+                workspace::Layout {
+                    primary_sidebar_open: self.primary_sidebar_open,
+                    primary_sidebar_width: self.sidebar.extent(),
+                    bottom_panel_open: self.bottom_panel_open,
+                    bottom_panel_height: self.bottom_panel.extent(),
+                    secondary_sidebar_open: self.secondary_sidebar_open,
+                    secondary_sidebar_width: self.secondary_sidebar.extent(),
+                },
+            )
         } else {
             onboarding::page(&theme, &self.setup)
         };
@@ -137,6 +211,17 @@ impl ApplicationHandler for App {
         let attributes = Window::default_attributes()
             .with_title("Pandemonium")
             .with_inner_size(LogicalSize::new(1440.0, 900.0));
+        #[cfg(target_os = "macos")]
+        let attributes = {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+
+            attributes
+                .with_titlebar_transparent(true)
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true)
+        };
+        #[cfg(not(target_os = "macos"))]
+        let attributes = attributes.with_decorations(false);
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -211,6 +296,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}
+        }
+
+        if self.close_requested {
+            event_loop.exit();
         }
     }
 }

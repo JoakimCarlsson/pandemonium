@@ -71,6 +71,12 @@ impl Text {
         self
     }
 
+    /// Returns this run at weight 300.
+    pub fn font_light(mut self) -> Self {
+        self.font = self.font.weight(300);
+        self
+    }
+
     /// Returns this run at weight 500.
     pub fn font_medium(mut self) -> Self {
         self.font = self.font.weight(500);

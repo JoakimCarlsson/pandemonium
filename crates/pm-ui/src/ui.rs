@@ -155,6 +155,13 @@ impl<M> Ui<M> {
         }
     }
 
+    /// Whether the pointer is over an interactive region from the last frame.
+    pub fn pointer_over_region(&self) -> bool {
+        self.input
+            .pointer
+            .is_some_and(|pointer| self.region_at(pointer).is_some())
+    }
+
     /// Measures `root` against `offer`, paints it at `origin` and reports its size.
     ///
     /// The size comes back because it is what the caller needs to clamp a
