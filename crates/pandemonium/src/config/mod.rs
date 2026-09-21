@@ -14,7 +14,30 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::onboarding::Setup;
+use crate::workspace::Layout;
 use stored::Stored;
+
+/// The window's own size and state, as a launch leaves it.
+#[derive(Clone, Copy, Debug)]
+pub struct WindowState {
+    /// Logical width of the window when it is not maximized.
+    pub width: f32,
+    /// Logical height of the window when it is not maximized.
+    pub height: f32,
+    /// Whether the window fills the screen it is on.
+    pub maximized: bool,
+}
+
+impl Default for WindowState {
+    /// The window a first launch opens.
+    fn default() -> Self {
+        Self {
+            width: 1440.0,
+            height: 900.0,
+            maximized: false,
+        }
+    }
+}
 
 /// Everything a launch picks up where the one before it left off.
 #[derive(Debug, Default)]
@@ -23,6 +46,12 @@ pub struct Restored {
     pub setup: Setup,
     /// The roots of the projects the window had open.
     pub projects: Vec<PathBuf>,
+    /// The root of the project the window was pointed at.
+    pub active: Option<PathBuf>,
+    /// Which regions the window showed, and how large they were.
+    pub layout: Layout,
+    /// The size and state of the window itself.
+    pub window: WindowState,
 }
 
 /// What the last launch left behind, or a first launch's defaults.
@@ -35,11 +64,11 @@ pub fn load() -> Restored {
 }
 
 /// Writes the window down, ignoring a file system that will not have it.
-pub fn save(setup: &Setup, projects: &[PathBuf]) {
+pub fn save(restored: &Restored) {
     let Some(path) = paths::settings() else {
         return;
     };
-    let Ok(text) = serde_norway::to_string(&Stored::of(setup, projects)) else {
+    let Ok(text) = serde_norway::to_string(&Stored::of(restored)) else {
         return;
     };
     if let Some(directory) = path.parent()

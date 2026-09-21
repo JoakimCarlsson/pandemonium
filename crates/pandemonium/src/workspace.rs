@@ -39,8 +39,29 @@ const DOT_HALO: f32 = 3.0;
 /// How much of its colour the halo around a lit dot carries.
 const HALO_STRENGTH: f32 = 0.22;
 
+/// Width the primary sidebar opens at, and the range it resizes within.
+pub const PRIMARY_SIDEBAR_WIDTH: f32 = 252.0;
+
+/// Smallest and largest width the primary sidebar resizes to.
+pub const PRIMARY_SIDEBAR_RANGE: (f32, f32) = (160.0, 480.0);
+
+/// Height the bottom panel opens at.
+pub const BOTTOM_PANEL_HEIGHT: f32 = 220.0;
+
+/// Smallest and largest height the bottom panel resizes to.
+pub const BOTTOM_PANEL_RANGE: (f32, f32) = (120.0, 600.0);
+
+/// Width the secondary sidebar opens at.
+pub const SECONDARY_SIDEBAR_WIDTH: f32 = 252.0;
+
+/// Smallest and largest width the secondary sidebar resizes to.
+pub const SECONDARY_SIDEBAR_RANGE: (f32, f32) = (160.0, 480.0);
+
 /// Which workspace regions are visible and how large they are.
-#[derive(Clone, Copy)]
+///
+/// This is what the window remembers of itself between launches, so it is
+/// both what a frame is drawn from and what [`crate::config`] writes down.
+#[derive(Clone, Copy, Debug)]
 pub struct Layout {
     /// Whether the primary sidebar is visible.
     pub primary_sidebar_open: bool,
@@ -54,6 +75,20 @@ pub struct Layout {
     pub secondary_sidebar_open: bool,
     /// Width of the secondary sidebar.
     pub secondary_sidebar_width: f32,
+}
+
+impl Default for Layout {
+    /// The regions a first launch opens with.
+    fn default() -> Self {
+        Self {
+            primary_sidebar_open: true,
+            primary_sidebar_width: PRIMARY_SIDEBAR_WIDTH,
+            bottom_panel_open: false,
+            bottom_panel_height: BOTTOM_PANEL_HEIGHT,
+            secondary_sidebar_open: true,
+            secondary_sidebar_width: SECONDARY_SIDEBAR_WIDTH,
+        }
+    }
 }
 
 /// The sessions belonging to one open project.

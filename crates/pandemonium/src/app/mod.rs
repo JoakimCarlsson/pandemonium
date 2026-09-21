@@ -24,11 +24,14 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
-use crate::config;
+use crate::config::{self, Restored, WindowState};
 use crate::keymap::Resolver;
 use crate::onboarding::{self, Message, Setup};
 use crate::terminal::{Shell, Terminals};
-use crate::workspace::{self, Panel, SidebarProject};
+use crate::workspace::{
+    self, BOTTOM_PANEL_RANGE, Layout, PRIMARY_SIDEBAR_RANGE, Panel, SECONDARY_SIDEBAR_RANGE,
+    SidebarProject,
+};
 
 /// What the window is woken up for from outside the event loop.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,6 +80,8 @@ pub struct App {
     bottom_panel_open: bool,
     /// Whether the secondary sidebar is visible.
     secondary_sidebar_open: bool,
+    /// The size and state the window is written down with.
+    window_state: WindowState,
     /// Whether the event loop should close after the current event.
     close_requested: bool,
     /// The shells the window is running, one per project.
@@ -98,6 +103,11 @@ impl App {
             let _ = open.find_or_open(root);
         }
         open.activate_first();
+        if let Some(active) = restored.active.as_ref() {
+            let _ = open.find_or_open(active);
+        }
+
+        let layout = restored.layout;
 
         let files = open
             .iter()
@@ -118,12 +128,25 @@ impl App {
             projects: Vec::new(),
             open,
             files,
-            sidebar: ResizeState::new(252.0, 160.0, 480.0),
-            bottom_panel: ResizeState::new(220.0, 120.0, 600.0),
-            secondary_sidebar: ResizeState::new(252.0, 160.0, 480.0),
-            primary_sidebar_open: true,
-            bottom_panel_open: false,
-            secondary_sidebar_open: true,
+            sidebar: ResizeState::new(
+                layout.primary_sidebar_width,
+                PRIMARY_SIDEBAR_RANGE.0,
+                PRIMARY_SIDEBAR_RANGE.1,
+            ),
+            bottom_panel: ResizeState::new(
+                layout.bottom_panel_height,
+                BOTTOM_PANEL_RANGE.0,
+                BOTTOM_PANEL_RANGE.1,
+            ),
+            secondary_sidebar: ResizeState::new(
+                layout.secondary_sidebar_width,
+                SECONDARY_SIDEBAR_RANGE.0,
+                SECONDARY_SIDEBAR_RANGE.1,
+            ),
+            primary_sidebar_open: layout.primary_sidebar_open,
+            bottom_panel_open: layout.bottom_panel_open,
+            secondary_sidebar_open: layout.secondary_sidebar_open,
+            window_state: restored.window,
             close_requested: false,
             terminals: Terminals::default(),
             terminal_focused: false,
@@ -240,29 +263,34 @@ impl App {
         if let Message::ResizeSidebar(event) = message {
             self.sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::End);
+            self.store_settled(event);
             self.request_redraw();
             return;
         }
         if let Message::ResizeBottomPanel(event) = message {
             self.bottom_panel
                 .resize(event, Axis::Vertical, ResizeEdge::Start);
+            self.store_settled(event);
             self.request_redraw();
             return;
         }
         if let Message::ResizeSecondarySidebar(event) = message {
             self.secondary_sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::Start);
+            self.store_settled(event);
             self.request_redraw();
             return;
         }
         if message == Message::TogglePrimarySidebar {
             self.primary_sidebar_open = !self.primary_sidebar_open;
+            self.store();
             self.request_redraw();
             return;
         }
         if message == Message::ToggleBottomPanel {
             self.bottom_panel_open = !self.bottom_panel_open;
             self.terminal_focused = self.bottom_panel_open;
+            self.store();
             self.request_redraw();
             return;
         }
@@ -297,6 +325,7 @@ impl App {
         }
         if message == Message::ToggleSecondarySidebar {
             self.secondary_sidebar_open = !self.secondary_sidebar_open;
+            self.store();
             self.request_redraw();
             return;
         }
@@ -317,6 +346,7 @@ impl App {
         }
         if let Message::ActivateProject(id) = message {
             self.open.activate(id);
+            self.store();
             self.request_redraw();
             return;
         }
@@ -385,9 +415,64 @@ impl App {
         }
     }
 
-    /// Writes the window's preferences and open projects down.
-    fn store(&self) {
-        config::save(&self.setup, &self.open.roots());
+    /// The window as it stands, in the shape a launch restores it from.
+    fn state(&self) -> Restored {
+        Restored {
+            setup: self.setup.clone(),
+            projects: self.open.roots(),
+            active: self
+                .open
+                .active()
+                .map(|project| project.root().to_path_buf()),
+            layout: self.layout(),
+            window: self.window_state,
+        }
+    }
+
+    /// Which regions are showing right now, and how large they are.
+    fn layout(&self) -> Layout {
+        Layout {
+            primary_sidebar_open: self.primary_sidebar_open,
+            primary_sidebar_width: self.sidebar.extent(),
+            bottom_panel_open: self.bottom_panel_open,
+            bottom_panel_height: self.bottom_panel.extent(),
+            secondary_sidebar_open: self.secondary_sidebar_open,
+            secondary_sidebar_width: self.secondary_sidebar.extent(),
+        }
+    }
+
+    /// Takes down the window's size, keeping the size it un-maximizes to.
+    ///
+    /// A maximized window's size is the screen's, not the one the next launch
+    /// should open at, so only its state is taken down while it is maximized.
+    fn remember_window(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let maximized = window.is_maximized();
+        if !maximized {
+            let scale = window.scale_factor() as f32;
+            let size = window.inner_size();
+            self.window_state.width = size.width as f32 / scale;
+            self.window_state.height = size.height as f32 / scale;
+        }
+        self.window_state.maximized = maximized;
+    }
+
+    /// Writes the window down once a resize gesture has come to rest.
+    ///
+    /// A drag reports every pointer move; the file is only interested in
+    /// where the edge was let go of.
+    fn store_settled(&mut self, event: ResizeEvent) {
+        if event.phase == ResizePhase::Ended {
+            self.store();
+        }
+    }
+
+    /// Writes the window's preferences, projects and layout down.
+    fn store(&mut self) {
+        self.remember_window();
+        config::save(&self.state());
     }
 
     /// Asks the platform for another frame.
@@ -416,6 +501,7 @@ impl App {
         };
         let files = self.open.active().map(pm_core::Project::id);
         let files = files.and_then(|id| self.files.get(&id));
+        let layout = self.layout();
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
         else {
@@ -439,14 +525,7 @@ impl App {
                 &self.open,
                 &self.projects,
                 files,
-                workspace::Layout {
-                    primary_sidebar_open: self.primary_sidebar_open,
-                    primary_sidebar_width: self.sidebar.extent(),
-                    bottom_panel_open: self.bottom_panel_open,
-                    bottom_panel_height: self.bottom_panel.extent(),
-                    secondary_sidebar_open: self.secondary_sidebar_open,
-                    secondary_sidebar_width: self.secondary_sidebar.extent(),
-                },
+                layout,
                 panel,
             )
         } else {
@@ -486,7 +565,11 @@ impl ApplicationHandler<Wake> for App {
 
         let attributes = Window::default_attributes()
             .with_title("Pandemonium")
-            .with_inner_size(LogicalSize::new(1440.0, 900.0));
+            .with_inner_size(LogicalSize::new(
+                self.window_state.width,
+                self.window_state.height,
+            ))
+            .with_maximized(self.window_state.maximized);
         #[cfg(target_os = "macos")]
         let attributes = {
             use winit::platform::macos::WindowAttributesExtMacOS;
@@ -535,11 +618,15 @@ impl ApplicationHandler<Wake> for App {
             .map_or(1.0, |window| window.scale_factor() as f32);
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.store();
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height, scale);
                 }
+                self.remember_window();
                 self.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -582,6 +669,7 @@ impl ApplicationHandler<Wake> for App {
         }
 
         if self.close_requested {
+            self.store();
             event_loop.exit();
         }
     }
