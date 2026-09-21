@@ -1,9 +1,13 @@
 //! The one container: a flex box that stacks children along an axis.
 
+use std::sync::Arc;
+
 use pm_gfx::{Quad, Rect, Rgba, Size};
 
 use crate::element::{Element, Interaction, IntoElement, LayoutContext, PaintContext};
+use crate::resize::ResizeEvent;
 use crate::style::{Align, Axis, Justify, Length, Style, Styled};
+use crate::ui::PointerCursor;
 
 /// A container that measures its children, stacks them and paints a background.
 pub struct Div<M> {
@@ -15,6 +19,8 @@ pub struct Div<M> {
     on_click: Option<M>,
     /// What a secondary click on it sends, when it answers to one at all.
     on_secondary_click: Option<M>,
+    /// What dragging it sends, when it is something that can be carried.
+    on_drag: Option<Arc<dyn Fn(ResizeEvent) -> M>>,
 }
 
 /// An empty container stacking children top to bottom.
@@ -24,6 +30,7 @@ pub fn div<M>() -> Div<M> {
         children: Vec::new(),
         on_click: None,
         on_secondary_click: None,
+        on_drag: None,
     }
 }
 
@@ -52,6 +59,18 @@ impl<M> Div<M> {
     {
         self.children
             .extend(children.into_iter().map(IntoElement::into_element));
+        self
+    }
+
+    /// Makes this container something the pointer carries, through `on_drag`.
+    ///
+    /// A container that is dragged is no longer clicked: every press on it
+    /// is a drag, and a press that travels nowhere before it is let go is
+    /// what the caller reads as a click. That is the caller's to decide,
+    /// because only it knows how far a tab may slip and still have been
+    /// tapped rather than carried.
+    pub fn on_drag(mut self, on_drag: impl Fn(ResizeEvent) -> M + 'static) -> Self {
+        self.on_drag = Some(Arc::new(on_drag));
         self
     }
 
@@ -127,15 +146,15 @@ impl<M> Div<M> {
             sizes[index] = match main_length(&style, axis) {
                 Length::Px(pixels) => {
                     let mut offer = content;
-                    set_main(&mut offer, axis, pixels);
+                    axis.set_main(&mut offer, pixels);
                     child.measure(offer, cx)
                 }
                 _ => child.measure(content, cx),
             };
         }
 
-        let used: f32 = sizes.iter().map(|size| main_of(*size, axis)).sum();
-        let leftover = (main_of(content, axis) - used - gaps).max(0.0);
+        let used: f32 = sizes.iter().map(|size| axis.main_of(*size)).sum();
+        let leftover = (axis.main_of(content) - used - gaps).max(0.0);
         let total_weight: f32 = weights.iter().sum();
 
         for (index, child) in self.children.iter_mut().enumerate() {
@@ -149,9 +168,9 @@ impl<M> Div<M> {
                 0.0
             };
             let mut offer = content;
-            set_main(&mut offer, axis, share);
+            axis.set_main(&mut offer, share);
             let mut size = child.measure(offer, cx);
-            set_main(&mut size, axis, share);
+            axis.set_main(&mut size, share);
             sizes[index] = size;
         }
 
@@ -159,11 +178,11 @@ impl<M> Div<M> {
             let style = self.children[index].layout_style();
             let cross = match cross_length(&style, axis) {
                 Length::Px(pixels) => pixels,
-                Length::Full => cross_of(content, axis),
-                Length::Auto if align == Align::Stretch && stretch => cross_of(content, axis),
-                Length::Auto => cross_of(*size, axis).min(cross_of(content, axis)),
+                Length::Full => axis.cross_of(content),
+                Length::Auto if align == Align::Stretch && stretch => axis.cross_of(content),
+                Length::Auto => axis.cross_of(*size).min(axis.cross_of(content)),
             };
-            set_cross(size, axis, cap_width(&style, axis, cross));
+            axis.set_cross(size, cap_width(&style, axis, cross));
         }
 
         sizes
@@ -219,15 +238,15 @@ impl<M: Clone> Element<M> for Div<M> {
         let axis = self.style.axis;
 
         let gaps = self.style.gap * sizes.len().saturating_sub(1) as f32;
-        let main: f32 = sizes.iter().map(|size| main_of(*size, axis)).sum::<f32>() + gaps;
+        let main: f32 = sizes.iter().map(|size| axis.main_of(*size)).sum::<f32>() + gaps;
         let cross = sizes
             .iter()
-            .map(|size| cross_of(*size, axis))
+            .map(|size| axis.cross_of(*size))
             .fold(0.0, f32::max);
 
         let mut intrinsic = Size::zero();
-        set_main(&mut intrinsic, axis, main);
-        set_cross(&mut intrinsic, axis, cross);
+        axis.set_main(&mut intrinsic, main);
+        axis.set_cross(&mut intrinsic, cross);
 
         let width = match self.style.width {
             Length::Px(pixels) => pixels,
@@ -247,9 +266,16 @@ impl<M: Clone> Element<M> for Div<M> {
 
     /// Paints the background, then places and paints every child.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let interaction = match (self.on_click.clone(), self.on_secondary_click.clone()) {
-            (None, None) => Interaction::default(),
-            (on_click, on_secondary) => cx.clickable(bounds, on_click, on_secondary),
+        let interaction = match (
+            self.on_drag.clone(),
+            self.on_click.clone(),
+            self.on_secondary_click.clone(),
+        ) {
+            (Some(on_drag), _, on_secondary) => {
+                cx.draggable(bounds, PointerCursor::Pointer, on_drag, on_secondary)
+            }
+            (None, None, None) => Interaction::default(),
+            (None, on_click, on_secondary) => cx.clickable(bounds, on_click, on_secondary),
         };
 
         cx.quad(
@@ -274,8 +300,8 @@ impl<M: Clone> Element<M> for Div<M> {
         let axis = self.style.axis;
         let gap = self.style.gap;
         let gaps = gap * sizes.len().saturating_sub(1) as f32;
-        let used: f32 = sizes.iter().map(|size| main_of(*size, axis)).sum::<f32>() + gaps;
-        let leftover = (main_of(content.size, axis) - used).max(0.0);
+        let used: f32 = sizes.iter().map(|size| axis.main_of(*size)).sum::<f32>() + gaps;
+        let leftover = (axis.main_of(content.size) - used).max(0.0);
 
         let mut main = match self.style.justify {
             Justify::Start | Justify::Between => 0.0,
@@ -288,7 +314,7 @@ impl<M: Clone> Element<M> for Div<M> {
         };
 
         for (child, size) in self.children.iter_mut().zip(sizes) {
-            let room = cross_of(content.size, axis) - cross_of(size, axis);
+            let room = axis.cross_of(content.size) - axis.cross_of(size);
             let cross = if child.layout_style().center_horizontally {
                 (room / 2.0).max(0.0)
             } else {
@@ -308,7 +334,7 @@ impl<M: Clone> Element<M> for Div<M> {
                 cx,
             );
 
-            main += main_of(size, axis) + gap + spread;
+            main += axis.main_of(size) + gap + spread;
         }
 
         if self.style.overflow_hidden {
@@ -338,37 +364,5 @@ fn cross_length(style: &Style, axis: Axis) -> Length {
     match axis {
         Axis::Horizontal => style.height,
         Axis::Vertical => style.width,
-    }
-}
-
-/// The extent of `size` along `axis`.
-fn main_of(size: Size, axis: Axis) -> f32 {
-    match axis {
-        Axis::Horizontal => size.width,
-        Axis::Vertical => size.height,
-    }
-}
-
-/// The extent of `size` across `axis`.
-fn cross_of(size: Size, axis: Axis) -> f32 {
-    match axis {
-        Axis::Horizontal => size.height,
-        Axis::Vertical => size.width,
-    }
-}
-
-/// Sets the extent of `size` along `axis`.
-fn set_main(size: &mut Size, axis: Axis, extent: f32) {
-    match axis {
-        Axis::Horizontal => size.width = extent,
-        Axis::Vertical => size.height = extent,
-    }
-}
-
-/// Sets the extent of `size` across `axis`.
-fn set_cross(size: &mut Size, axis: Axis, extent: f32) {
-    match axis {
-        Axis::Horizontal => size.height = extent,
-        Axis::Vertical => size.width = extent,
     }
 }

@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use pm_gfx::{Point, Quad, Rect, Size};
 
-use crate::{Axis, Element, Interaction, LayoutContext, PaintContext, Style};
+use crate::{Axis, Element, LayoutContext, PaintContext, Style};
 
 /// Logical pixels occupied by the visible sash.
-const SASH_SIZE: f32 = 1.0;
+pub(crate) const SASH_SIZE: f32 = 1.0;
 
 /// Logical pixels accepting input around the visible sash.
 const SASH_HIT_SIZE: f32 = 12.0;
@@ -129,47 +129,6 @@ pub fn sash<M>(axis: Axis, on_resize: impl Fn(ResizeEvent) -> M + 'static) -> Sa
     }
 }
 
-impl<M> Sash<M> {
-    /// Returns the one-pixel line centred inside `bounds`.
-    fn line_bounds(&self, bounds: Rect) -> Rect {
-        match self.axis {
-            Axis::Horizontal => {
-                Rect::from_xywh(bounds.left(), bounds.top(), LINE_SIZE, bounds.size.height)
-            }
-            Axis::Vertical => {
-                Rect::from_xywh(bounds.left(), bounds.top(), bounds.size.width, LINE_SIZE)
-            }
-        }
-    }
-
-    /// Returns the wider invisible pointer target centered on the sash.
-    fn hit_bounds(&self, bounds: Rect) -> Rect {
-        match self.axis {
-            Axis::Horizontal => Rect::from_xywh(
-                bounds.left() - (SASH_HIT_SIZE - bounds.size.width) / 2.0,
-                bounds.top(),
-                SASH_HIT_SIZE,
-                bounds.size.height,
-            ),
-            Axis::Vertical => Rect::from_xywh(
-                bounds.left(),
-                bounds.top() - (SASH_HIT_SIZE - bounds.size.height) / 2.0,
-                bounds.size.width,
-                SASH_HIT_SIZE,
-            ),
-        }
-    }
-
-    /// Chooses the visible divider colour for `interaction`.
-    fn line_color<M2>(interaction: Interaction, cx: &PaintContext<'_, '_, M2>) -> pm_gfx::Rgba {
-        if interaction.pressed || interaction.hovered {
-            cx.theme().colors.border_focused
-        } else {
-            cx.theme().colors.border
-        }
-    }
-}
-
 impl<M> Element<M> for Sash<M> {
     /// Sizes the sash to contain its grip while keeping the divider itself thin.
     fn layout_style(&self) -> Style {
@@ -197,10 +156,57 @@ impl<M> Element<M> for Sash<M> {
 
     /// Registers the hit area and paints the divider.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let interaction = cx.resizable(self.hit_bounds(bounds), self.axis, self.on_resize.clone());
-        cx.quad(Quad::filled(
-            self.line_bounds(bounds),
-            Self::line_color(interaction, cx),
-        ));
+        divider(cx, bounds, self.axis, self.on_resize.clone());
+    }
+}
+
+/// Paints the divider filling `bounds` and registers the drag that moves it.
+///
+/// Every edge the pointer moves is drawn and hit the same way, whether it
+/// divides two regions of the window or two panes of a split, so the line,
+/// the colour it lights up in and the forgiving target around it live here
+/// rather than once per caller.
+pub(crate) fn divider<M>(
+    cx: &mut PaintContext<'_, '_, M>,
+    bounds: Rect,
+    axis: Axis,
+    on_resize: Arc<dyn Fn(ResizeEvent) -> M>,
+) {
+    let interaction = cx.resizable(hit_bounds(bounds, axis), axis, on_resize);
+    let color = if interaction.pressed || interaction.hovered {
+        cx.theme().colors.border_focused
+    } else {
+        cx.theme().colors.border
+    };
+    cx.quad(Quad::filled(line_bounds(bounds, axis), color));
+}
+
+/// The one-pixel line centred inside `bounds`.
+fn line_bounds(bounds: Rect, axis: Axis) -> Rect {
+    match axis {
+        Axis::Horizontal => {
+            Rect::from_xywh(bounds.left(), bounds.top(), LINE_SIZE, bounds.size.height)
+        }
+        Axis::Vertical => {
+            Rect::from_xywh(bounds.left(), bounds.top(), bounds.size.width, LINE_SIZE)
+        }
+    }
+}
+
+/// The wider invisible pointer target centred on the divider.
+fn hit_bounds(bounds: Rect, axis: Axis) -> Rect {
+    match axis {
+        Axis::Horizontal => Rect::from_xywh(
+            bounds.left() - (SASH_HIT_SIZE - bounds.size.width) / 2.0,
+            bounds.top(),
+            SASH_HIT_SIZE,
+            bounds.size.height,
+        ),
+        Axis::Vertical => Rect::from_xywh(
+            bounds.left(),
+            bounds.top() - (SASH_HIT_SIZE - bounds.size.height) / 2.0,
+            bounds.size.width,
+            SASH_HIT_SIZE,
+        ),
     }
 }

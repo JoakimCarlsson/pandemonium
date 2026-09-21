@@ -11,6 +11,7 @@ mod editor;
 )]
 mod keymap;
 mod onboarding;
+mod panes;
 mod terminal;
 mod workspace;
 

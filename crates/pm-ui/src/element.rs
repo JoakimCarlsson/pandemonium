@@ -240,20 +240,22 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
             crate::Axis::Horizontal => crate::PointerCursor::ResizeHorizontal,
             crate::Axis::Vertical => crate::PointerCursor::ResizeVertical,
         };
-        self.draggable(bounds, cursor, on_resize)
+        self.draggable(bounds, cursor, on_resize, None)
     }
 
     /// Registers `bounds` as a pointer-drag target handled by `on_drag`.
     ///
     /// A drag is how a region hears where the pointer is rather than only
-    /// that it was clicked, so a pane that places a cursor and a sash that
-    /// resizes a sidebar are the same kind of region, under two shapes of
-    /// pointer.
+    /// that it was clicked, so a pane that places a cursor, a sash that
+    /// resizes a sidebar and a tab carried to another pane are the same kind
+    /// of region, under three shapes of pointer. A region that is dragged
+    /// may still have a menu on the secondary button.
     pub fn draggable(
         &mut self,
         bounds: Rect,
         cursor: crate::PointerCursor,
         on_drag: Arc<dyn Fn(crate::resize::ResizeEvent) -> M>,
+        on_secondary: Option<M>,
     ) -> Interaction {
         let index = self.regions.len();
         self.regions.push(Region {
@@ -262,7 +264,7 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
                 cursor,
                 handler: on_drag,
             },
-            secondary: None,
+            secondary: on_secondary,
         });
 
         Interaction {

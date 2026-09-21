@@ -1,30 +1,29 @@
 //! The editor workspace shown after onboarding has finished.
 
 use pm_core::{FileTree, Project, ProjectId, Projects, Row};
-use pm_gfx::{Point, Rgba};
+use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
 use pm_ui::button;
 use pm_ui::{
-    Axis, Div, IconName, IconSize, LayoutIcon, MenuItem, Styled, Theme, h_flex, icon, icon_button,
-    layout_icon_button, menu, menu_entry, menu_separator, overlay, rule, sash, text, v_flex,
+    Axis, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, TAB_BAR_HEIGHT, Theme,
+    h_flex, icon, icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule,
+    sash, tab, tab_bar, text, v_flex,
 };
 
-use crate::editor::{FileEntry, FileId, OpenFile, buffer_view};
+use crate::editor::{FileId, OpenFile};
 use crate::onboarding::Message;
+use crate::panes::PaneId;
 use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
 
 /// Height of the content-backed window title bar.
 pub const TITLEBAR_HEIGHT: f32 = 40.0;
 
-/// Height of a bar of tabs, hairline included.
-const TAB_BAR_HEIGHT: f32 = 32.0;
+/// How far the tab under the pointer sits from the pointer itself.
+const CARRIED_OFFSET: f32 = 8.0;
 
 /// Height of the status bar, hairline excluded.
 const STATUS_BAR_HEIGHT: f32 = 24.0;
-
-/// Longest name a tab shows before it is cut short.
-const TAB_NAME_CHARS: usize = 20;
 
 /// Height of one line of the file tree.
 const FILE_ROW_HEIGHT: f32 = 26.0;
@@ -132,32 +131,26 @@ pub struct Panel {
     pub focused: bool,
 }
 
-/// What the editor pane is showing.
-///
-/// The pane is one open file and the list of what else is open in the same
-/// project, which is the same shape the terminal panel has: a bar of tabs
-/// over whichever of them is in front.
-pub struct Pane {
-    /// The file the pane draws, when the project has one open.
-    pub file: Option<OpenFile>,
-    /// Every file open in the project, for the bar of tabs above it.
-    pub files: Vec<FileEntry>,
-    /// Whether keystrokes are going to the pane.
-    pub focused: bool,
-}
-
 /// What the window's panes are showing, and what is open over them.
 ///
 /// The panes travel together because the screen is one arrangement of them,
 /// and the menu travels with them because it is opened from one of their
-/// tabs and drawn over all of them.
+/// tabs and drawn over all of them. The tree of editor panes arrives built:
+/// what is in a pane and which of them has the keyboard is the window's to
+/// say, not the screen's.
 pub struct Panes {
-    /// The editor pane and the files open in it.
-    pub editor: Pane,
+    /// The tree of editor panes, as the window has divided it.
+    pub editor: Box<dyn Element<Message>>,
+    /// The file the focused pane is showing, for the status bar to read.
+    pub showing: Option<OpenFile>,
+    /// The part of the window a tab being carried would take over.
+    pub drop: Option<Rect>,
+    /// The tab the pointer is carrying, where it is and what it is called.
+    pub carried: Option<(Point, String)>,
     /// The terminal panel and the shells running in it.
     pub terminal: Panel,
-    /// The tab menu that is open, if one is.
-    pub menu: Option<TabMenu>,
+    /// The tab menu that is open, and what it holds.
+    pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
 }
 
 /// A menu of what can be done to one tab, open at a point of the window.
@@ -172,8 +165,10 @@ pub struct TabMenu {
 /// The tab a menu was opened from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuTarget {
-    /// A file open in the editor pane.
-    File(FileId),
+    /// A file open in one of the editor panes.
+    File(PaneId, FileId),
+    /// One of the editor panes itself.
+    Pane(PaneId),
     /// A shell running in the terminal panel.
     Terminal(ShellId),
 }
@@ -188,10 +183,12 @@ pub fn workspace(
     panes: Panes,
 ) -> Div<Message> {
     let status = Status::of(open, sessions, &panes, layout);
-    let open_menu = panes.menu.map(|menu| (menu, entries(&panes, menu)));
     let Panes {
-        editor: pane,
+        editor,
+        drop,
+        carried,
         terminal: panel,
+        menu: open_menu,
         ..
     } = panes;
 
@@ -213,7 +210,7 @@ pub fn workspace(
                     ))
                     .child(sash(Axis::Horizontal, Message::ResizeSidebar))
                 })
-                .child(main_area(theme, layout, panel, pane))
+                .child(main_area(theme, layout, panel, editor))
                 .when(layout.secondary_sidebar_open, |body| {
                     body.child(sash(Axis::Horizontal, Message::ResizeSecondarySidebar))
                         .child(files_sidebar(theme, files, layout.secondary_sidebar_width))
@@ -221,11 +218,51 @@ pub fn workspace(
         )
         .child(rule(theme))
         .child(status_bar(theme, status))
-        .when_some(open_menu, |screen, (open, entries)| {
+        .when_some(drop, |screen, area| {
+            screen.child(overlay(area.origin, drop_area(theme, area)))
+        })
+        .when_some(carried, |screen, (at, name)| {
+            screen.child(overlay(
+                Point::new(at.x + CARRIED_OFFSET, at.y + CARRIED_OFFSET),
+                carried_tab(theme, name),
+            ))
+        })
+        .when_some(open_menu, |screen, (open, items)| {
             screen
                 .child(overlay(Point::new(0.0, 0.0), backdrop()))
-                .child(overlay(open.at, menu(theme, entries)))
+                .child(overlay(open.at, menu(theme, items)))
         })
+}
+
+/// Builds the wash over the part of the window a carried tab would take.
+///
+/// The wash is the answer to "where would this land": the whole of a pane it
+/// would join, the half it would divide off, or the hairline between two tabs
+/// it would be dropped between.
+fn drop_area(theme: &Theme, area: Rect) -> Div<Message> {
+    v_flex()
+        .w_px(area.size.width)
+        .h_px(area.size.height)
+        .bg(theme.colors.drop_target)
+        .border_2(theme.colors.text_muted)
+}
+
+/// Builds the tab drawn under the pointer while it carries one.
+fn carried_tab(theme: &Theme, name: String) -> Div<Message> {
+    h_flex()
+        .px(1.5)
+        .h_px(TAB_BAR_HEIGHT - 4.0)
+        .items_center()
+        .gap(1)
+        .rounded(theme.radius.md)
+        .bg(theme.colors.surface)
+        .border_1(theme.colors.border_focused)
+        .child(
+            icon(IconName::File)
+                .size(IconSize::XSmall)
+                .color(theme.colors.text_subtle),
+        )
+        .child(text(name).text_sm().font_light())
 }
 
 /// Builds the sheet under an open menu, which puts it away when clicked.
@@ -241,55 +278,8 @@ fn backdrop() -> Div<Message> {
         .on_secondary_click(Message::DismissMenu)
 }
 
-/// The entries of the menu open over the panes.
-fn entries(panes: &Panes, menu: TabMenu) -> Vec<MenuItem<Message>> {
-    match menu.target {
-        MenuTarget::File(id) => file_entries(&panes.editor.files, id),
-        MenuTarget::Terminal(id) => terminal_entries(&panes.terminal.shells, id),
-    }
-}
-
-/// The things that can be done to one file's tab, given what else is open.
-///
-/// An entry that does not apply — closing what is to the left of the first
-/// tab, closing others when there are none — is greyed rather than left
-/// out, so the menu keeps its shape wherever it is opened.
-fn file_entries(files: &[FileEntry], id: FileId) -> Vec<MenuItem<Message>> {
-    let index = files.iter().position(|file| file.id == id);
-    let others = files.len() > 1;
-    let left = index.is_some_and(|index| index > 0);
-    let right = index.is_some_and(|index| index + 1 < files.len());
-    let saved = files.iter().any(|file| !file.dirty);
-    let preview = files.iter().any(|file| file.id == id && file.preview);
-
-    vec![
-        menu_entry("Keep Open", preview.then_some(Message::KeepFileOpen(id))),
-        menu_separator(),
-        menu_entry("Close", Some(Message::CloseFile(id))),
-        menu_entry(
-            "Close Others",
-            others.then_some(Message::CloseOtherFiles(id)),
-        ),
-        menu_separator(),
-        menu_entry("Close Left", left.then_some(Message::CloseFilesLeft(id))),
-        menu_entry("Close Right", right.then_some(Message::CloseFilesRight(id))),
-        menu_separator(),
-        menu_entry("Close Saved", saved.then_some(Message::CloseSavedFiles)),
-        menu_entry("Close All", Some(Message::CloseAllFiles)),
-        menu_separator(),
-        menu_entry("Copy Path", Some(Message::CopyFilePath(id))),
-        menu_entry(
-            "Copy Relative Path",
-            Some(Message::CopyFileRelativePath(id)),
-        ),
-        menu_separator(),
-        menu_entry("Reveal in File Manager", Some(Message::RevealFile(id))),
-        menu_entry("Open in Terminal", Some(Message::OpenFileInTerminal(id))),
-    ]
-}
-
 /// The things that can be done to one shell's tab.
-fn terminal_entries(shells: &[ShellEntry], id: ShellId) -> Vec<MenuItem<Message>> {
+pub fn terminal_menu(shells: &[ShellEntry], id: ShellId) -> Vec<MenuItem<Message>> {
     let others = shells.len() > 1;
 
     vec![
@@ -331,7 +321,7 @@ impl Status {
     /// Reads the status of the window out of what the screen was given.
     fn of(open: &Projects, sessions: &[SidebarProject], panes: &Panes, layout: Layout) -> Self {
         let active = open.active();
-        let showing = panes.editor.file.as_ref().map(|file| file.borrow());
+        let showing = panes.showing.as_ref().map(|file| file.borrow());
         let buffer = showing.as_ref().map(|document| document.buffer());
 
         Self {
@@ -538,11 +528,16 @@ fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
 }
 
 /// Builds the central pane area and optional bottom panel.
-fn main_area(theme: &Theme, layout: Layout, panel: Panel, pane: Pane) -> Div<Message> {
+fn main_area(
+    theme: &Theme,
+    layout: Layout,
+    panel: Panel,
+    editor: Box<dyn Element<Message>>,
+) -> Div<Message> {
     v_flex()
         .flex_1()
         .h_full()
-        .child(editor_pane(theme, pane))
+        .child(v_flex().w_full().flex_1().overflow_hidden().child(editor))
         .when(layout.bottom_panel_open, |main| {
             main.child(sash(Axis::Vertical, Message::ResizeBottomPanel))
                 .child(terminal_panel(theme, layout.bottom_panel_height, panel))
@@ -590,15 +585,15 @@ fn terminal_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
 fn terminal_tabs(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
     let tabs = shells
         .iter()
-        .map(|shell| Tab {
-            icon: IconName::Terminal,
-            name: shell.name.clone(),
-            active: shell.active,
-            dirty: false,
-            preview: false,
-            select: Message::SelectTerminal(shell.id),
-            close: Message::CloseTerminal(shell.id),
-            menu: Message::ShowTerminalMenu(shell.id),
+        .map(|shell| {
+            tab(
+                IconName::Terminal,
+                shell.name.clone(),
+                Message::SelectTerminal(shell.id),
+                Message::CloseTerminal(shell.id),
+                Message::ShowTerminalMenu(shell.id),
+            )
+            .active(shell.active)
         })
         .collect();
     let actions = h_flex()
@@ -614,155 +609,6 @@ fn terminal_tabs(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
         ));
 
     tab_bar(theme, tabs, actions)
-}
-
-/// Builds the editor pane: the files open in the project, one in front.
-fn editor_pane(theme: &Theme, pane: Pane) -> Div<Message> {
-    let Pane {
-        file,
-        files,
-        focused,
-    } = pane;
-    let missing = file.is_none();
-    let tabs = files
-        .iter()
-        .map(|file| Tab {
-            icon: IconName::File,
-            name: file.name.clone(),
-            active: file.active,
-            dirty: file.dirty,
-            preview: file.preview,
-            select: Message::SelectFile(file.id),
-            close: Message::CloseFile(file.id),
-            menu: Message::ShowFileMenu(file.id),
-        })
-        .collect::<Vec<_>>();
-
-    v_flex()
-        .w_full()
-        .flex_1()
-        .overflow_hidden()
-        .bg(theme.colors.background)
-        .when(!tabs.is_empty(), |pane| {
-            pane.child(tab_bar(theme, tabs, h_flex()))
-        })
-        .when_some(file, |pane, file| {
-            pane.child(
-                buffer_view(file, focused)
-                    .on_select(Message::SelectText)
-                    .on_scroll(Message::ScrollEditor),
-            )
-        })
-        .when(missing, |pane| {
-            pane.child(
-                v_flex()
-                    .w_full()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        text("Open a file from the tree")
-                            .text_sm()
-                            .font_light()
-                            .color(theme.colors.text_subtle),
-                    ),
-            )
-        })
-}
-
-/// One tab in a pane's bar of them, whichever kind of pane it is.
-struct Tab {
-    /// What the tab shows before its name.
-    icon: IconName,
-    /// What the tab calls what is in it.
-    name: String,
-    /// Whether this is the one the pane is showing.
-    active: bool,
-    /// Whether what is in it has changes that are not on disk.
-    dirty: bool,
-    /// Whether it holds something that is only being previewed.
-    preview: bool,
-    /// What clicking the tab sends.
-    select: Message,
-    /// What closing the tab sends.
-    close: Message,
-    /// What clicking it with the secondary button sends.
-    menu: Message,
-}
-
-/// Builds a pane's bar: one tab per thing open in it, then its own actions.
-fn tab_bar(theme: &Theme, tabs: Vec<Tab>, actions: Div<Message>) -> Div<Message> {
-    v_flex()
-        .w_full()
-        .h_px(TAB_BAR_HEIGHT)
-        .child(
-            h_flex()
-                .w_full()
-                .flex_1()
-                .items_stretch()
-                .overflow_hidden()
-                .bg(theme.colors.surface)
-                .children(tabs.into_iter().map(|tab| pane_tab(theme, tab)))
-                .child(h_flex().flex_1())
-                .child(actions),
-        )
-        .child(rule(theme))
-}
-
-/// Builds one tab: what it holds, and the control that closes it.
-fn pane_tab(theme: &Theme, tab: Tab) -> Div<Message> {
-    let (background, color) = if tab.active {
-        (theme.colors.background, theme.colors.text)
-    } else {
-        (theme.colors.surface, theme.colors.text_muted)
-    };
-    let name = text(truncated(&tab.name, TAB_NAME_CHARS))
-        .text_sm()
-        .font_light()
-        .color(color);
-    let name = if tab.preview { name.italic() } else { name };
-
-    h_flex()
-        .h_full()
-        .px(1)
-        .gap(1)
-        .items_center()
-        .overflow_hidden()
-        .bg(background)
-        .when(!tab.active, |tab| tab.hover_bg(theme.colors.surface_hover))
-        .on_click(tab.select)
-        .on_secondary_click(tab.menu)
-        .child(
-            icon(tab.icon)
-                .size(IconSize::XSmall)
-                .color(theme.colors.text_subtle),
-        )
-        .child(name)
-        .when(tab.dirty, |row| row.child(unsaved_dot(color)))
-        .child(icon_button(theme, IconName::Close, tab.close))
-}
-
-/// Builds the mark a tab carries while its file is not on disk.
-///
-/// The mark is drawn in the tab's own text colour: it says something about
-/// the name beside it, and it dims with that name when the tab is not the
-/// one in front.
-fn unsaved_dot(color: Rgba) -> Div<Message> {
-    v_flex()
-        .size_px(DOT_SIZE)
-        .rounded(DOT_SIZE / 2.0)
-        .bg(color)
-}
-
-/// `name` cut to `chars` characters, ending in an ellipsis when it was cut.
-fn truncated(name: &str, chars: usize) -> String {
-    if name.chars().count() <= chars {
-        return name.to_owned();
-    }
-    name.chars()
-        .take(chars.saturating_sub(1))
-        .collect::<String>()
-        + "…"
 }
 
 /// Builds native-style controls for undecorated Linux and Windows windows.

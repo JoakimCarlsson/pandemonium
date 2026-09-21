@@ -66,7 +66,8 @@ impl<M> Ui<M> {
     /// Records the pointer at `pointer`.
     pub fn pointer_moved(&mut self, pointer: Point) -> Option<M> {
         self.input.pointer = Some(pointer);
-        self.drag_message(pointer, ResizePhase::Moved)
+        let start = self.input.pressed_at?;
+        self.drag_message(start, pointer, ResizePhase::Moved)
     }
 
     /// Records the pointer having left the window.
@@ -84,7 +85,7 @@ impl<M> Ui<M> {
         self.focus = None;
         self.drag =
             index.filter(|index| matches!(self.regions[*index].action, RegionAction::Drag { .. }));
-        self.drag_message(pointer, ResizePhase::Started)
+        self.drag_message(pointer, pointer, ResizePhase::Started)
     }
 
     /// Records a release, returning the message of the region it completed on.
@@ -95,7 +96,7 @@ impl<M> Ui<M> {
         let pressed_at = self.input.pressed_at.take()?;
         let pointer = self.input.pointer?;
         if self.drag.is_some() {
-            let message = self.drag_message(pointer, ResizePhase::Ended);
+            let message = self.drag_message(pressed_at, pointer, ResizePhase::Ended);
             self.drag = None;
             return message;
         }
@@ -213,9 +214,12 @@ impl<M> Ui<M> {
             .rposition(|region| region.bounds.contains(point))
     }
 
-    /// Builds the message for the captured drag at `pointer`.
-    fn drag_message(&self, pointer: Point, phase: ResizePhase) -> Option<M> {
-        let start = self.input.pressed_at?;
+    /// Builds the message for the captured drag from `start` to `pointer`.
+    ///
+    /// Where the gesture began is passed in rather than read back out of the
+    /// input, because the release that ends a drag has already let go of the
+    /// press it began with by the time the last event is built.
+    fn drag_message(&self, start: Point, pointer: Point, phase: ResizePhase) -> Option<M> {
         let region = self.regions.get(self.drag?)?;
         match &region.action {
             RegionAction::Drag { handler, .. } => Some(handler(ResizeEvent {

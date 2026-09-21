@@ -364,6 +364,7 @@ impl<M: 'static> BufferView<M> {
                     metrics.position_of(event.current),
                 )
             }),
+            None,
         );
     }
 
@@ -404,6 +405,7 @@ impl<M: 'static> BufferView<M> {
                     thumb,
                     PointerCursor::Default,
                     Arc::new(move |event| on_scroll(event, lines_per_pixel)),
+                    None,
                 )
             }
             None => Default::default(),

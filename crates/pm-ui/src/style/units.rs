@@ -4,6 +4,8 @@
 //! chosen independently still line up. Four logical pixels a step, as Tailwind
 //! has it: `p(4)` is sixteen pixels, exactly as `p-4` is there.
 
+use pm_gfx::Size;
+
 /// Logical pixels in one step of the spacing scale.
 pub const STEP: f32 = 4.0;
 
@@ -19,6 +21,40 @@ pub enum Axis {
     Horizontal,
     /// Children are placed top to bottom.
     Vertical,
+}
+
+impl Axis {
+    /// The extent of `size` along this axis.
+    pub fn main_of(self, size: Size) -> f32 {
+        match self {
+            Self::Horizontal => size.width,
+            Self::Vertical => size.height,
+        }
+    }
+
+    /// The extent of `size` across this axis.
+    pub fn cross_of(self, size: Size) -> f32 {
+        match self {
+            Self::Horizontal => size.height,
+            Self::Vertical => size.width,
+        }
+    }
+
+    /// Sets the extent of `size` along this axis.
+    pub fn set_main(self, size: &mut Size, extent: f32) {
+        match self {
+            Self::Horizontal => size.width = extent,
+            Self::Vertical => size.height = extent,
+        }
+    }
+
+    /// Sets the extent of `size` across this axis.
+    pub fn set_cross(self, size: &mut Size, extent: f32) {
+        match self {
+            Self::Horizontal => size.height = extent,
+            Self::Vertical => size.width = extent,
+        }
+    }
 }
 
 /// How an element is sized along one axis.

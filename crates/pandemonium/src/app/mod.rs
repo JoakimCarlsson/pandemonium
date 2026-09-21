@@ -6,7 +6,9 @@
 //! model, submitted to `pm-gfx` as one draw list.
 
 mod clicks;
+mod drag;
 mod input;
+mod panes;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -27,14 +29,16 @@ use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
 use crate::app::clicks::DoubleClicks;
+use crate::app::drag::{Geometry, TabDrag};
 use crate::config::{self, Restored, WindowState};
 use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::onboarding::{self, Message, Setup};
+use crate::panes::PaneTree;
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
-    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Pane, Panel, Panes,
+    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panel, Panes,
     SECONDARY_SIDEBAR_RANGE, SidebarProject, TabMenu,
 };
 
@@ -93,6 +97,12 @@ pub struct App {
     close_requested: bool,
     /// The files the window has open, and the servers behind them.
     editor: Files,
+    /// How the window is divided into panes, and which of them has the keyboard.
+    panes: PaneTree,
+    /// Where those panes and their tabs came out in the last frame.
+    geometry: Geometry,
+    /// The tab the pointer is carrying, if it is carrying one.
+    drag: Option<TabDrag>,
     /// Whether keystrokes go to the editor pane rather than to the window.
     editor_focused: bool,
     /// The tab menu that is open over the panes, if one is.
@@ -170,6 +180,9 @@ impl App {
             window_state: restored.window,
             close_requested: false,
             editor: Files::default(),
+            panes: PaneTree::default(),
+            geometry: Geometry::default(),
+            drag: None,
             editor_focused: false,
             text_clicks: DoubleClicks::default(),
             tree_clicks: DoubleClicks::default(),
@@ -214,12 +227,6 @@ impl App {
         self.editor_focused = false;
     }
 
-    /// The file the editor pane is showing, if a project has one open.
-    pub(super) fn active_file(&self) -> Option<editor::OpenFile> {
-        let project = self.open.active()?;
-        self.editor.active(project.id())
-    }
-
     /// What the focused pane holds, for the keymap's `when` clauses.
     pub(super) fn focused_pane_kind(&self) -> Option<&'static str> {
         match (self.editor_focused, self.terminal_focused) {
@@ -254,9 +261,8 @@ impl App {
             return;
         };
 
-        if self.editor.open(project, &root, &path, preview).is_some() {
-            self.editor_focused = true;
-            self.terminal_focused = false;
+        if let Some(file) = self.editor.open(project, &root, &path, preview) {
+            self.show_file(self.panes.focus(), file, preview);
         }
     }
 
@@ -265,31 +271,32 @@ impl App {
     /// A second press in the same place takes the word under it instead,
     /// which is the one gesture the element tree cannot tell the window
     /// about on its own.
-    fn select_text(&mut self, anchor: Position, head: Position) {
-        let Some(project) = self.open.active().map(pm_core::Project::id) else {
-            return;
-        };
-        self.editor_focused = true;
-        self.terminal_focused = false;
+    fn select_text(&mut self, pane: crate::panes::PaneId, anchor: Position, head: Position) {
+        self.focus_pane(pane);
 
         let twice = anchor == head && self.text_clicks.press(anchor);
         if anchor != head {
             self.text_clicks.clear();
         }
 
-        self.editor
-            .edit(project, |buffer| match (twice, anchor == head) {
-                (true, true) => buffer.select_word(head),
-                (false, true) => buffer.place(head, false),
-                (_, false) => {
-                    buffer.place(anchor, false);
-                    buffer.place(head, true);
-                }
-            });
+        self.edit_active(|buffer| match (twice, anchor == head) {
+            (true, true) => buffer.select_word(head),
+            (false, true) => buffer.place(head, false),
+            (_, false) => {
+                buffer.place(anchor, false);
+                buffer.place(head, true);
+            }
+        });
     }
 
     /// Scrolls the editor by a drag on its scrollbar.
-    fn drag_editor_scrollbar(&mut self, event: ResizeEvent, lines_per_pixel: f32) {
+    fn drag_editor_scrollbar(
+        &mut self,
+        pane: crate::panes::PaneId,
+        event: ResizeEvent,
+        lines_per_pixel: f32,
+    ) {
+        self.focus_pane(pane);
         let Some(file) = self.active_file() else {
             return;
         };
@@ -384,8 +391,12 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
-        if let Message::ShowFileMenu(id) = message {
-            self.open_menu(MenuTarget::File(id));
+        if let Message::ShowFileMenu(pane, file) = message {
+            self.open_menu(MenuTarget::File(pane, file));
+            return;
+        }
+        if let Message::ShowPaneMenu(pane) = message {
+            self.open_menu(MenuTarget::Pane(pane));
             return;
         }
         if let Message::ShowTerminalMenu(id) = message {
@@ -442,33 +453,56 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::SelectFile(id) = message {
-            let twice = self.tab_clicks.press(id);
-            if let Some(project) = self.open.active().map(pm_core::Project::id) {
-                self.editor.activate(project, id);
-                if twice {
-                    self.editor.keep(project, id);
-                }
+        if let Message::SelectFile(pane, file) = message {
+            self.select_tab(pane, file);
+            self.request_redraw();
+            return;
+        }
+        if let Message::DragTab(pane, file, event) = message {
+            self.drag_tab(pane, file, event);
+            self.request_redraw();
+            return;
+        }
+        if let Message::CloseFile(pane, file) = message {
+            self.close_tabs(pane, |pane| pane.close(file));
+            self.request_redraw();
+            return;
+        }
+        if let Message::FocusPane(pane) = message {
+            self.focus_pane(pane);
+            self.request_redraw();
+            return;
+        }
+        if let Message::SplitPane(pane, direction) = message {
+            self.split_pane(pane, None, direction);
+            self.request_redraw();
+            return;
+        }
+        if let Message::SplitFile(pane, file, direction) = message {
+            self.split_pane(pane, Some(file), direction);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ClosePane(pane) = message {
+            self.close_pane(pane);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ResizeSplit(split, divider, event, scale) = message {
+            if let Some(axis) = self.panes.split_axis(split) {
+                self.panes
+                    .resize(split, divider, event.delta(axis) * scale, event.phase);
             }
-            self.editor_focused = true;
-            self.terminal_focused = false;
             self.request_redraw();
             return;
         }
-        if let Message::CloseFile(id) = message {
-            if let Some(project) = self.open.active().map(pm_core::Project::id) {
-                self.editor.close(project, id);
-            }
+        if let Message::SelectText(pane, anchor, head) = message {
+            self.select_text(pane, anchor, head);
             self.request_redraw();
             return;
         }
-        if let Message::SelectText(anchor, head) = message {
-            self.select_text(anchor, head);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ScrollEditor(event, lines_per_pixel) = message {
-            self.drag_editor_scrollbar(event, lines_per_pixel);
+        if let Message::ScrollEditor(pane, event, lines_per_pixel) = message {
+            self.drag_editor_scrollbar(pane, event, lines_per_pixel);
             self.request_redraw();
             return;
         }
@@ -520,6 +554,7 @@ impl App {
             self.open.remove(id);
             self.files.remove(&id);
             self.terminals.close(id);
+            self.drop_project_tabs(id);
             self.store();
             self.request_redraw();
             return;
@@ -584,40 +619,61 @@ impl App {
     /// Carries out a command from a tab menu, if `message` is one.
     ///
     /// The menu commands are collected here because they are one family:
-    /// every one of them acts on the tabs of the project the window is
-    /// pointed at, and none of them touches the window's own state.
+    /// every one of them acts on the tabs of one pane or on the file behind
+    /// one of them, and none of them touches the window's own state.
     fn tab_command(&mut self, message: Message) -> bool {
-        let Some(project) = self.open.active().map(pm_core::Project::id) else {
-            return matches!(message, Message::DismissMenu);
-        };
-
         match message {
             Message::DismissMenu => {}
-            Message::CloseOtherFiles(id) => self.editor.close_others(project, id),
-            Message::CloseFilesLeft(id) => self.editor.close_left(project, id),
-            Message::CloseFilesRight(id) => self.editor.close_right(project, id),
-            Message::CloseSavedFiles => self.editor.close_saved(project),
-            Message::CloseAllFiles => self.editor.close_all(project),
-            Message::CopyFilePath(id) => {
-                if let Some(path) = self.editor.path(project, id) {
+            Message::CloseOtherFiles(pane, file) => {
+                self.close_tabs(pane, |pane| pane.close_others(file));
+            }
+            Message::CloseFilesLeft(pane, file) => {
+                self.close_tabs(pane, |pane| pane.close_left(file));
+            }
+            Message::CloseFilesRight(pane, file) => {
+                self.close_tabs(pane, |pane| pane.close_right(file));
+            }
+            Message::CloseSavedFiles(pane) => {
+                let saved = self
+                    .panes
+                    .pane(pane)
+                    .map(|pane| {
+                        pane.tabs()
+                            .iter()
+                            .copied()
+                            .filter(|file| !self.editor.is_dirty(*file))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                self.close_tabs(pane, |pane| pane.retain(|file| !saved.contains(&file)));
+            }
+            Message::CloseAllFiles(pane) => self.close_tabs(pane, crate::panes::Pane::close_all),
+            Message::CopyFilePath(file) => {
+                if let Some(path) = self.editor.path(file) {
                     desktop::copy(path.display().to_string());
                 }
             }
-            Message::CopyFileRelativePath(id) => {
-                if let Some(path) = self.relative_path(project, id) {
+            Message::CopyFileRelativePath(file) => {
+                if let Some(path) = self.relative_path(file) {
                     desktop::copy(path);
                 }
             }
-            Message::RevealFile(id) => {
-                if let Some(path) = self.editor.path(project, id) {
+            Message::RevealFile(file) => {
+                if let Some(path) = self.editor.path(file) {
                     desktop::reveal(&path);
                 }
             }
-            Message::OpenFileInTerminal(id) => self.start_shell_beside(project, id),
-            Message::KeepFileOpen(id) => self.editor.keep(project, id),
-            Message::CloseOtherTerminals(id) => self.terminals.stop_others(project, id),
+            Message::OpenFileInTerminal(file) => self.start_shell_beside(file),
+            Message::KeepFileOpen(file) => self.editor.keep(file),
+            Message::CloseOtherTerminals(id) => {
+                if let Some(project) = self.open.active().map(pm_core::Project::id) {
+                    self.terminals.stop_others(project, id);
+                }
+            }
             Message::CloseAllTerminals => {
-                self.terminals.stop_all(project);
+                if let Some(project) = self.open.active().map(pm_core::Project::id) {
+                    self.terminals.stop_all(project);
+                }
                 self.close_empty_panel();
             }
             _ => return false,
@@ -625,19 +681,23 @@ impl App {
         true
     }
 
-    /// The path of the file `id` names, from the project's worktree down.
-    fn relative_path(&self, project: ProjectId, id: crate::editor::FileId) -> Option<String> {
+    /// The path of the file `id` names, from its own worktree down.
+    fn relative_path(&self, id: crate::editor::FileId) -> Option<String> {
+        let project = self.editor.project_of(id)?;
         let root = self.open.get(project)?.root().to_path_buf();
-        let path = self.editor.path(project, id)?;
+        let path = self.editor.path(id)?;
         let relative = path.strip_prefix(&root).unwrap_or(&path);
         Some(relative.display().to_string())
     }
 
     /// Starts a shell in the directory the file `id` names sits in.
-    fn start_shell_beside(&mut self, project: ProjectId, id: crate::editor::FileId) {
+    fn start_shell_beside(&mut self, id: crate::editor::FileId) {
+        let Some(project) = self.editor.project_of(id) else {
+            return;
+        };
         let Some(directory) = self
             .editor
-            .path(project, id)
+            .path(id)
             .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
         else {
             return;
@@ -770,25 +830,21 @@ impl App {
             shells,
             focused: self.terminal_focused,
         };
-        let pane = Pane {
-            file: self.active_file(),
-            files: self
-                .open
-                .active()
-                .map(|project| self.editor.list(project.id()))
-                .unwrap_or_default(),
-            focused: self.editor_focused,
-        };
+        let showing = self.active_file();
+        let drop = self.drop_highlight();
+        let carried = self.carried_tab();
+        let layout = self.layout();
+        let theme = family(self.setup.theme_family).variant(appearance);
+        let editor = self.pane_view(&theme);
+        let menu = self.menu_items();
         let files = self.open.active().map(pm_core::Project::id);
         let files = files.and_then(|id| self.files.get(&id));
-        let layout = self.layout();
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
         else {
             return;
         };
 
-        let theme = family(self.setup.theme_family).variant(appearance);
         ui.set_theme(theme);
 
         let size = renderer.size();
@@ -807,9 +863,12 @@ impl App {
                 files,
                 layout,
                 Panes {
-                    editor: pane,
+                    editor,
+                    showing,
+                    drop,
+                    carried,
                     terminal: panel,
-                    menu: self.menu,
+                    menu,
                 },
             )
         } else {

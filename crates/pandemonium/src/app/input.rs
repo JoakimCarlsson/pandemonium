@@ -8,7 +8,9 @@
 use pm_gfx::Point;
 #[cfg(not(target_os = "macos"))]
 use pm_gfx::Size;
-use pm_ui::PointerCursor;
+use pm_ui::{Axis, PointerCursor};
+
+use crate::panes::SplitDirection;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, NamedKey};
 #[cfg(not(target_os = "macos"))]
@@ -63,8 +65,8 @@ impl App {
                 }
             }
             Action::Save => {
-                if let Some(project) = self.open.active().map(pm_core::Project::id) {
-                    self.editor.save(project);
+                if let Some(file) = self.active_tab() {
+                    self.editor.save(file);
                 }
                 self.request_redraw();
             }
@@ -72,6 +74,31 @@ impl App {
                 self.editor.save_all();
                 self.request_redraw();
             }
+            Action::SplitRight => {
+                self.split_pane(self.panes.focus(), None, SplitDirection::Right);
+                self.request_redraw();
+            }
+            Action::SplitDown => {
+                self.split_pane(self.panes.focus(), None, SplitDirection::Down);
+                self.request_redraw();
+            }
+            Action::ClosePane => {
+                self.close_active_tab();
+                self.request_redraw();
+            }
+            Action::NextTab | Action::PreviousTab => {
+                if let Some(pane) = self.panes.focused_mut() {
+                    match action {
+                        Action::NextTab => pane.next_tab(),
+                        _ => pane.previous_tab(),
+                    }
+                }
+                self.request_redraw();
+            }
+            Action::FocusLeft => self.move_focus(Axis::Horizontal, false),
+            Action::FocusRight => self.move_focus(Axis::Horizontal, true),
+            Action::FocusUp => self.move_focus(Axis::Vertical, false),
+            Action::FocusDown => self.move_focus(Axis::Vertical, true),
             Action::Cancel => {
                 if self.dismiss_menu() {
                     return self.request_redraw();
@@ -83,6 +110,12 @@ impl App {
             }
             _ => self.request_redraw(),
         }
+    }
+
+    /// Moves the keyboard to the next pane along, and draws the move.
+    fn move_focus(&mut self, axis: Axis, forward: bool) {
+        self.focus_neighbour(axis, forward);
+        self.request_redraw();
     }
 
     /// Resolves a keypress against the keymap, falling back to focus movement.
@@ -114,15 +147,12 @@ impl App {
         let Some(file) = self.focused_file() else {
             return false;
         };
-        let Some(project) = self.open.active().map(pm_core::Project::id) else {
-            return false;
-        };
         let rows = file.borrow().rows();
         let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
             return false;
         };
 
-        self.editor.edit(project, |buffer| match edit {
+        self.edit_active(|buffer| match edit {
             editor::Edit::Insert(text) => buffer.insert(&text),
             editor::Edit::Newline => buffer.insert_newline(),
             editor::Edit::Indent => buffer.insert_indent(),
@@ -216,8 +246,14 @@ impl App {
     }
 
     /// Tells the element tree the pointer has left the window.
+    ///
+    /// A tab being carried is put back when the pointer leaves: the release
+    /// that would have dropped it happens somewhere this window will never
+    /// hear about, and a tab stuck to a pointer that is not there is worse
+    /// than one that stayed where it was.
     pub(super) fn pointer_left(&mut self) {
         self.pointer = None;
+        self.drag = None;
         if let Some(ui) = self.ui.as_mut() {
             ui.pointer_left();
         }
@@ -271,6 +307,9 @@ impl App {
         };
         self.update_pointer_cursor();
         self.handle(message);
+        if state == ElementState::Released {
+            self.release_drag();
+        }
     }
 
     /// Scrolls the page by `delta` logical pixels and redraws.

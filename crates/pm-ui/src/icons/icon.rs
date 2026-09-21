@@ -43,6 +43,8 @@ pub enum IconName {
     FolderOpen,
     /// Add another of whatever the control is beside.
     Plus,
+    /// Divide a pane.
+    Split,
     /// A terminal.
     Terminal,
     /// Something the editor wants looked at.
@@ -62,6 +64,7 @@ impl IconName {
             Self::Folder => Svg::new("folder", include_icon!("folder")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
             Self::Plus => Svg::new("plus", include_icon!("plus")),
+            Self::Split => Svg::new("split", include_icon!("split")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),
         }

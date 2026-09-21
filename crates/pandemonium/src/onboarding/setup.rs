@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::editor::FileId;
 use crate::keymap::BaseKeymap;
+use crate::panes::{PaneId, SplitDirection, SplitId};
 use crate::terminal::ShellId;
 
 /// Which theme the editor draws in.
@@ -136,32 +137,46 @@ pub enum Message {
     ResizeBottomPanel(ResizeEvent),
     /// Resize the secondary sidebar.
     ResizeSecondarySidebar(ResizeEvent),
-    /// Open this entry of the file tree in the editor pane.
+    /// Open this entry of the file tree in the pane that has the keyboard.
     OpenFile(EntryId),
-    /// Show this open file in the editor pane.
-    SelectFile(FileId),
-    /// Close this open file.
-    CloseFile(FileId),
+    /// Show this open file in this pane.
+    SelectFile(PaneId, FileId),
+    /// Close this open file's tab in this pane.
+    CloseFile(PaneId, FileId),
+    /// Send later keystrokes to this pane.
+    FocusPane(PaneId),
+    /// Divide this pane that way, showing the same file in both halves.
+    SplitPane(PaneId, SplitDirection),
+    /// Divide this pane that way, showing this file in the new half.
+    SplitFile(PaneId, FileId, SplitDirection),
+    /// Open the menu of things that can be done to this pane.
+    ShowPaneMenu(PaneId),
+    /// Carry this pane's tab across the window, and let go of it somewhere.
+    DragTab(PaneId, FileId, ResizeEvent),
+    /// Close this pane, giving what it held back to its neighbour.
+    ClosePane(PaneId),
+    /// Drag this divider of this split, so much of it to a pixel of travel.
+    ResizeSplit(SplitId, usize, ResizeEvent, f32),
     /// Put the cursor where a press landed, selecting to where it reached.
-    SelectText(Position, Position),
+    SelectText(PaneId, Position, Position),
     /// Drag the editor's scrollbar, so many lines to a pixel of travel.
-    ScrollEditor(ResizeEvent, f32),
+    ScrollEditor(PaneId, ResizeEvent, f32),
     /// Open the menu of things that can be done to this file's tab.
-    ShowFileMenu(FileId),
+    ShowFileMenu(PaneId, FileId),
     /// Open the menu of things that can be done to this shell's tab.
     ShowTerminalMenu(ShellId),
     /// Put away whatever menu is open.
     DismissMenu,
-    /// Close every open file but this one.
-    CloseOtherFiles(FileId),
-    /// Close the files opened before this one.
-    CloseFilesLeft(FileId),
-    /// Close the files opened after this one.
-    CloseFilesRight(FileId),
-    /// Close the files that are the same as they are on disk.
-    CloseSavedFiles,
-    /// Close every open file.
-    CloseAllFiles,
+    /// Close every tab of this pane but this one.
+    CloseOtherFiles(PaneId, FileId),
+    /// Close the tabs of this pane left of this one.
+    CloseFilesLeft(PaneId, FileId),
+    /// Close the tabs of this pane right of this one.
+    CloseFilesRight(PaneId, FileId),
+    /// Close the tabs of this pane that are the same as they are on disk.
+    CloseSavedFiles(PaneId),
+    /// Close every tab of this pane.
+    CloseAllFiles(PaneId),
     /// Put this file's path on the clipboard.
     CopyFilePath(FileId),
     /// Put this file's path, from the worktree down, on the clipboard.
@@ -211,18 +226,25 @@ impl Setup {
             | Message::ResizeBottomPanel(_)
             | Message::ResizeSecondarySidebar(_) => {}
             Message::OpenFile(_)
-            | Message::SelectFile(_)
-            | Message::CloseFile(_)
-            | Message::SelectText(_, _)
-            | Message::ScrollEditor(_, _) => {}
-            Message::ShowFileMenu(_)
+            | Message::SelectFile(_, _)
+            | Message::CloseFile(_, _)
+            | Message::FocusPane(_)
+            | Message::SplitPane(_, _)
+            | Message::SplitFile(_, _, _)
+            | Message::ShowPaneMenu(_)
+            | Message::DragTab(_, _, _)
+            | Message::ClosePane(_)
+            | Message::ResizeSplit(_, _, _, _)
+            | Message::SelectText(_, _, _)
+            | Message::ScrollEditor(_, _, _) => {}
+            Message::ShowFileMenu(_, _)
             | Message::ShowTerminalMenu(_)
             | Message::DismissMenu
-            | Message::CloseOtherFiles(_)
-            | Message::CloseFilesLeft(_)
-            | Message::CloseFilesRight(_)
-            | Message::CloseSavedFiles
-            | Message::CloseAllFiles
+            | Message::CloseOtherFiles(_, _)
+            | Message::CloseFilesLeft(_, _)
+            | Message::CloseFilesRight(_, _)
+            | Message::CloseSavedFiles(_)
+            | Message::CloseAllFiles(_)
             | Message::CopyFilePath(_)
             | Message::CopyFileRelativePath(_)
             | Message::RevealFile(_)

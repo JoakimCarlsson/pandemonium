@@ -1,12 +1,13 @@
-//! The files the window has open, listed per project.
+//! The files the window has open, whichever pane is showing them.
 //!
-//! A file is opened once per project and shown in that project's pane: the
-//! same path in two projects is two documents, because it is two worktrees.
-//! This is the one seam a file is opened, edited, saved and closed through,
-//! so the language server hears about every change exactly once.
+//! A file is opened once per project: the same path in two projects is two
+//! documents, because it is two worktrees. Which pane shows which of them is
+//! the pane tree's business — this is only where the documents live, and the
+//! one seam a file is opened, edited, saved and closed through, so the
+//! language server hears about every change exactly once.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ pub type OpenFile = Rc<RefCell<Document>>;
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FileId(u64);
 
-/// One open file as the bar of tabs presents it.
+/// One open file as a bar of tabs presents it.
 pub struct FileEntry {
     /// Which file this tab is.
     pub id: FileId,
@@ -33,8 +34,6 @@ pub struct FileEntry {
     pub name: String,
     /// Whether it has changes that are not on disk.
     pub dirty: bool,
-    /// Whether this is the file the pane is showing.
-    pub active: bool,
     /// Whether it is only being previewed, and will give its tab up.
     pub preview: bool,
 }
@@ -49,9 +48,9 @@ pub struct Document {
     rows: usize,
     /// Whether the file is only being looked at, not kept open.
     ///
-    /// A previewed file holds the one preview tab of its project and gives
-    /// it up to the next file previewed. Editing it, or asking for it a
-    /// second time, is what keeps it.
+    /// A previewed file holds the one preview tab of the pane it was opened
+    /// in and gives it up to the next file previewed there. Editing it, or
+    /// asking for it a second time, is what keeps it.
     preview: bool,
     /// The language server this file is open in, when it has one.
     server: Option<Arc<Client>>,
@@ -180,50 +179,19 @@ impl Drop for Document {
     }
 }
 
-/// One project's open files and which of them its pane is showing.
-#[derive(Default)]
-struct ProjectFiles {
-    /// The files, in the order they were opened.
-    open: Vec<(FileId, OpenFile)>,
-    /// The one the pane is showing.
-    active: Option<FileId>,
-}
-
-impl ProjectFiles {
-    /// The file `id` names, if it is still open.
-    fn get(&self, id: FileId) -> Option<OpenFile> {
-        self.open
-            .iter()
-            .find(|(open, _)| *open == id)
-            .map(|(_, file)| file.clone())
-    }
-
-    /// The file `path` is open as, if it is open at all.
-    fn find(&self, path: &Path) -> Option<FileId> {
-        self.open
-            .iter()
-            .find(|(_, file)| file.borrow().buffer().path() == path)
-            .map(|(id, _)| *id)
-    }
-
-    /// The file the pane is showing.
-    fn active(&self) -> Option<OpenFile> {
-        self.active.and_then(|id| self.get(id))
-    }
-
-    /// Shows another file when the one that was showing has been closed.
-    fn settle(&mut self) {
-        if self.active().is_none() {
-            self.active = self.open.last().map(|(id, _)| *id);
-        }
-    }
+/// One open file: the worktree it belongs to and the document itself.
+struct Entry {
+    /// The project whose worktree the file was opened from.
+    project: ProjectId,
+    /// The document, shared with whichever panes are drawing it.
+    document: OpenFile,
 }
 
 /// Every file the window has open, and the servers behind them.
 #[derive(Default)]
 pub struct Files {
-    /// The open files, by the project whose worktree they belong to.
-    projects: BTreeMap<ProjectId, ProjectFiles>,
+    /// The open files, by the id the panes name them with.
+    open: BTreeMap<FileId, Entry>,
     /// The id the next file opened will be given.
     next: FileId,
     /// The language servers those files are open in.
@@ -236,16 +204,11 @@ impl Files {
         self.servers.set_notify(notify);
     }
 
-    /// Opens `path` in `project`, or shows it if it is already open.
-    ///
-    /// A file opened for preview takes the project's one preview tab from
-    /// whatever held it, which is what makes clicking through a tree leave
-    /// one tab behind rather than twenty. Opening the same file again
-    /// without `preview` keeps it where it is.
+    /// Opens `path` in `project`, or hands back the file if it is open already.
     ///
     /// A file that cannot be read does not open and does not complain: the
     /// tree lists what is on disk, and a directory entry that turns out not
-    /// to be a readable file is the tree's business, not the pane's.
+    /// to be a readable file is the tree's business, not the store's.
     pub fn open(
         &mut self,
         project: ProjectId,
@@ -253,10 +216,9 @@ impl Files {
         path: &Path,
         preview: bool,
     ) -> Option<FileId> {
-        if let Some(id) = self.projects.get(&project).and_then(|open| open.find(path)) {
-            self.activate(project, id);
+        if let Some(id) = self.find(project, path) {
             if !preview {
-                self.keep(project, id);
+                self.keep(id);
             }
             return Some(id);
         }
@@ -266,178 +228,110 @@ impl Files {
             .language()
             .and_then(|language| self.servers.open(root, language));
 
-        if preview {
-            self.close_preview(project);
-        }
-
         let id = self.next;
         self.next = FileId(id.0 + 1);
-        let files = self.projects.entry(project).or_default();
-        files.open.push((
+        self.open.insert(
             id,
-            Rc::new(RefCell::new(Document::new(buffer, preview, server))),
-        ));
-        files.active = Some(id);
+            Entry {
+                project,
+                document: Rc::new(RefCell::new(Document::new(buffer, preview, server))),
+            },
+        );
         Some(id)
     }
 
-    /// Keeps the file `id` names open, so nothing else takes its tab.
-    pub fn keep(&mut self, project: ProjectId, id: FileId) {
-        if let Some(file) = self.projects.get(&project).and_then(|files| files.get(id)) {
-            file.borrow_mut().keep();
-        }
-    }
-
-    /// Closes the file `project` is previewing, if it is previewing one.
-    fn close_preview(&mut self, project: ProjectId) {
-        self.retain_files(project, |file| !file.borrow().is_preview());
-    }
-
-    /// The file `project` is showing, if it has one.
-    pub fn active(&self, project: ProjectId) -> Option<OpenFile> {
-        self.projects.get(&project)?.active()
-    }
-
-    /// Shows the file `id` names.
-    pub fn activate(&mut self, project: ProjectId, id: FileId) {
-        if let Some(files) = self.projects.get_mut(&project)
-            && files.get(id).is_some()
-        {
-            files.active = Some(id);
-        }
-    }
-
-    /// Every open file of `project`, in the order they were opened.
-    pub fn list(&self, project: ProjectId) -> Vec<FileEntry> {
-        let Some(files) = self.projects.get(&project) else {
-            return Vec::new();
-        };
-        files
-            .open
+    /// The file `path` is open as in `project`, if it is open at all.
+    fn find(&self, project: ProjectId, path: &Path) -> Option<FileId> {
+        self.open
             .iter()
-            .map(|(id, file)| {
-                let document = file.borrow();
-                FileEntry {
-                    id: *id,
-                    name: document.buffer().name(),
-                    dirty: document.buffer().is_dirty(),
-                    active: files.active == Some(*id),
-                    preview: document.is_preview(),
-                }
+            .find(|(_, entry)| {
+                entry.project == project && entry.document.borrow().buffer().path() == path
             })
-            .collect()
+            .map(|(id, _)| *id)
     }
 
-    /// Applies `edit` to the file `project` is showing.
-    pub fn edit(&mut self, project: ProjectId, edit: impl FnOnce(&mut Buffer)) {
-        if let Some(file) = self.active(project) {
-            file.borrow_mut().edit(edit);
+    /// The document `id` names, if it is still open.
+    pub fn get(&self, id: FileId) -> Option<OpenFile> {
+        self.open.get(&id).map(|entry| entry.document.clone())
+    }
+
+    /// The project whose worktree the file `id` names was opened from.
+    pub fn project_of(&self, id: FileId) -> Option<ProjectId> {
+        self.open.get(&id).map(|entry| entry.project)
+    }
+
+    /// The file `id` names as a bar of tabs presents it.
+    pub fn entry(&self, id: FileId) -> Option<FileEntry> {
+        let document = self.open.get(&id)?.document.borrow();
+        Some(FileEntry {
+            id,
+            name: document.buffer().name(),
+            dirty: document.buffer().is_dirty(),
+            preview: document.is_preview(),
+        })
+    }
+
+    /// Whether the file `id` names is only being looked at.
+    pub fn is_preview(&self, id: FileId) -> bool {
+        self.open
+            .get(&id)
+            .is_some_and(|entry| entry.document.borrow().is_preview())
+    }
+
+    /// Whether the file `id` names has changes that are not on disk.
+    pub fn is_dirty(&self, id: FileId) -> bool {
+        self.open
+            .get(&id)
+            .is_some_and(|entry| entry.document.borrow().buffer().is_dirty())
+    }
+
+    /// Keeps the file `id` names open, so nothing else takes its tab.
+    pub fn keep(&mut self, id: FileId) {
+        if let Some(entry) = self.open.get(&id) {
+            entry.document.borrow_mut().keep();
         }
     }
 
-    /// Writes the file `project` is showing to disk.
-    pub fn save(&mut self, project: ProjectId) {
-        if let Some(file) = self.active(project) {
-            file.borrow_mut().save();
+    /// Applies `edit` to the file `id` names.
+    pub fn edit(&mut self, id: FileId, edit: impl FnOnce(&mut Buffer)) {
+        if let Some(entry) = self.open.get(&id) {
+            entry.document.borrow_mut().edit(edit);
         }
     }
 
-    /// Writes every open file of every project to disk.
+    /// Writes the file `id` names to disk.
+    pub fn save(&mut self, id: FileId) {
+        if let Some(entry) = self.open.get(&id) {
+            entry.document.borrow_mut().save();
+        }
+    }
+
+    /// Writes every open file to disk.
     pub fn save_all(&mut self) {
-        for files in self.projects.values() {
-            for (_, file) in &files.open {
-                file.borrow_mut().save();
-            }
+        for entry in self.open.values() {
+            entry.document.borrow_mut().save();
         }
     }
 
     /// Where the file `id` names lives, if it is open at all.
-    pub fn path(&self, project: ProjectId, id: FileId) -> Option<PathBuf> {
-        let file = self.projects.get(&project)?.get(id)?;
-        let path = file.borrow().buffer().path().to_path_buf();
+    pub fn path(&self, id: FileId) -> Option<PathBuf> {
+        let entry = self.open.get(&id)?;
+        let path = entry.document.borrow().buffer().path().to_path_buf();
         Some(path)
     }
 
-    /// Closes every file of `project` but the one `id` names.
-    pub fn close_others(&mut self, project: ProjectId, id: FileId) {
-        self.retain(project, |open| open == id);
-    }
-
-    /// Closes the files of `project` opened before the one `id` names.
-    pub fn close_left(&mut self, project: ProjectId, id: FileId) {
-        let Some(index) = self.index_of(project, id) else {
-            return;
-        };
-        let mut seen = 0;
-        self.retain(project, |_| {
-            let keep = seen >= index;
-            seen += 1;
-            keep
-        });
-    }
-
-    /// Closes the files of `project` opened after the one `id` names.
-    pub fn close_right(&mut self, project: ProjectId, id: FileId) {
-        let Some(index) = self.index_of(project, id) else {
-            return;
-        };
-        let mut seen = 0;
-        self.retain(project, |_| {
-            let keep = seen <= index;
-            seen += 1;
-            keep
-        });
-    }
-
-    /// Closes the files of `project` that are the same as they are on disk.
-    pub fn close_saved(&mut self, project: ProjectId) {
-        self.retain_files(project, |file| file.borrow().buffer().is_dirty());
-    }
-
-    /// Closes every file of `project`.
-    pub fn close_all(&mut self, project: ProjectId) {
-        self.retain(project, |_| false);
-    }
-
-    /// Where the file `id` names sits in the project's list of open files.
-    fn index_of(&self, project: ProjectId, id: FileId) -> Option<usize> {
-        self.projects
-            .get(&project)?
-            .open
-            .iter()
-            .position(|(open, _)| *open == id)
-    }
-
-    /// Keeps the files of `project` whose id `keep` accepts.
-    fn retain(&mut self, project: ProjectId, mut keep: impl FnMut(FileId) -> bool) {
-        let Some(files) = self.projects.get_mut(&project) else {
-            return;
-        };
-        files.open.retain(|(id, _)| keep(*id));
-        files.settle();
-    }
-
-    /// Keeps the files of `project` that `keep` accepts.
-    fn retain_files(&mut self, project: ProjectId, mut keep: impl FnMut(&OpenFile) -> bool) {
-        let Some(files) = self.projects.get_mut(&project) else {
-            return;
-        };
-        files.open.retain(|(_, file)| keep(file));
-        files.settle();
-    }
-
-    /// Closes the file `id` names, showing another of the project's instead.
-    pub fn close(&mut self, project: ProjectId, id: FileId) {
-        let Some(files) = self.projects.get_mut(&project) else {
-            return;
-        };
-        files.open.retain(|(open, _)| *open != id);
-        files.settle();
+    /// Closes every file no pane is holding open any more.
+    ///
+    /// A document lives as long as a tab somewhere names it, so closing a tab
+    /// is the pane tree's business alone and the store is swept afterwards:
+    /// the same file open in two panes survives one of them being closed.
+    pub fn retain(&mut self, held: &BTreeSet<FileId>) {
+        self.open.retain(|id, _| held.contains(id));
     }
 
     /// Closes every file of `project` and ends the servers over `root`.
     pub fn close_project(&mut self, project: ProjectId, root: &Path) {
-        self.projects.remove(&project);
+        self.open.retain(|_, entry| entry.project != project);
         self.servers.close(root);
     }
 
@@ -446,10 +340,8 @@ impl Files {
         if !self.servers.take_fresh() {
             return false;
         }
-        for files in self.projects.values() {
-            for (_, file) in &files.open {
-                file.borrow_mut().refresh();
-            }
+        for entry in self.open.values() {
+            entry.document.borrow_mut().refresh();
         }
         true
     }

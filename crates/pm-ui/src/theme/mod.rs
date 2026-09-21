@@ -44,6 +44,12 @@ pub struct Colors {
     pub border_focused: Rgba,
     /// The outline of a selected element.
     pub border_selected: Rgba,
+    /// The wash over where something being carried would land if let go of.
+    ///
+    /// A drop target is read against whatever it covers — a pane of text, a
+    /// bar of tabs, an empty pane — so it is a translucent neutral rather
+    /// than the accent, which a theme is free to make as quiet as it likes.
+    pub drop_target: Rgba,
     /// Body text.
     pub text: Rgba,
     /// Secondary text: descriptions and captions.

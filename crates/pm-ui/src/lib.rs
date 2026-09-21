@@ -14,9 +14,11 @@ mod div;
 mod element;
 mod glyphs;
 mod icons;
+mod measured;
 mod overlay;
 mod resize;
 mod scroll;
+mod split;
 mod style;
 mod text;
 mod theme;
@@ -29,9 +31,11 @@ pub use element::{
 };
 pub use glyphs::Glyphs;
 pub use icons::{Icon, IconName, IconSize, LayoutIcon, LayoutIconButton, icon, layout_icon_button};
+pub use measured::{Bounds, Measured, measured};
 pub use overlay::{Overlay, overlay};
 pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
 pub use scroll::Scroll;
+pub use split::{Split, split};
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
 pub use text::{Text, text};
 pub use theme::{
@@ -40,6 +44,7 @@ pub use theme::{
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{
-    Button, ButtonVariant, MenuItem, Switch, ThemePreview, button, icon_button, menu, menu_entry,
-    menu_separator, rule, section, switch, switch_field, theme_preview, toggle_grid, toggle_row,
+    Button, ButtonVariant, MenuItem, Switch, TAB_BAR_HEIGHT, Tab, ThemePreview, button,
+    icon_button, menu, menu_entry, menu_separator, rule, section, switch, switch_field, tab,
+    tab_bar, theme_preview, toggle_grid, toggle_row,
 };
