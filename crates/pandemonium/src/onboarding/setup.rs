@@ -1,11 +1,12 @@
 //! What the setup screen decides, and the messages that change it.
 
 use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES};
+use serde::{Deserialize, Serialize};
 
 use crate::keymap::BaseKeymap;
 
 /// Which theme the editor draws in.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ThemeMode {
     /// Always the light theme.
     Light,

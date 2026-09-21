@@ -17,4 +17,4 @@ mod setup;
 mod theme_section;
 
 pub use page::page;
-pub use setup::{Message, Setup};
+pub use setup::{Message, Setup, ThemeMode};

@@ -1,5 +1,7 @@
 //! The keymap a first launch starts from.
 
+use serde::{Deserialize, Serialize};
+
 use crate::keymap::binding::{Keymap, Row};
 use crate::keymap::tables;
 
@@ -7,7 +9,7 @@ use crate::keymap::tables;
 ///
 /// Each one is [`tables::BASE`] with that editor's overlay on top; picking one
 /// is picking an overlay, not a table of its own.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum BaseKeymap {
     /// The editor's own bindings, with nothing laid over them.
     #[default]

@@ -7,6 +7,7 @@
 )]
 mod keymap;
 mod onboarding;
+mod settings;
 
 use std::sync::Arc;
 
@@ -48,12 +49,13 @@ impl App {
         }
     }
 
-    /// Folds a message in and redraws.
+    /// Folds a message in, writes the settings down and redraws.
     fn apply(&mut self, message: Message) {
         self.setup.apply(message);
         if let Message::SetKeymap(base) = message {
             self.resolver.set_keymap(base.keymap());
         }
+        settings::save(&self.setup);
         self.request_redraw();
     }
 
@@ -288,11 +290,13 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Starts the conductor window.
+/// Starts the conductor window from the settings the last launch left behind.
 fn main() {
     let event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Wait);
-    event_loop
-        .run_app(&mut App::default())
-        .expect("event loop failed");
+    let mut app = App {
+        setup: settings::load(),
+        ..App::default()
+    };
+    event_loop.run_app(&mut app).expect("event loop failed");
 }
