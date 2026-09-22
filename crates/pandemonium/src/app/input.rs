@@ -217,8 +217,10 @@ impl App {
     /// A prompt is a buffer, so it takes what a buffer takes. What it does
     /// not take is Enter on its own, which sends what has been written: a
     /// prompt of several lines is written with Shift held, the way every
-    /// other box one talks to something through behaves, and Tab takes the
-    /// command a slash has narrowed to. Escape stops the
+    /// other box one talks to something through behaves. While a slash has
+    /// narrowed the agent's commands to a list, the arrows move through it
+    /// and Enter takes what they land on rather than sending. Escape stops
+    /// the
     /// turn while one is running and lets go of the prompt when none is,
     /// which is the order a reader wants them in: the key that gets out of
     /// something gets out of the agent first.
@@ -227,17 +229,19 @@ impl App {
             return false;
         };
         match event.logical_key.as_ref() {
+            key if self.naming_command(session) => match key {
+                Key::Named(NamedKey::ArrowUp) => return self.step_command(session, -1),
+                Key::Named(NamedKey::ArrowDown) => return self.step_command(session, 1),
+                Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
+                    if let Some(talk) = self.agents.get_mut(session) {
+                        talk.take_chosen();
+                    }
+                    return true;
+                }
+                _ => {}
+            },
             Key::Named(NamedKey::Enter) if !self.modifiers.shift_key() => {
                 self.apply(Message::SendPrompt(session));
-                return true;
-            }
-            Key::Named(NamedKey::Tab)
-                if self
-                    .agents
-                    .get(session)
-                    .is_some_and(|talk| !talk.offered().is_empty()) =>
-            {
-                self.apply(Message::TakeAgentCommand(session, 0));
                 return true;
             }
             Key::Named(NamedKey::Escape) => {
@@ -274,6 +278,24 @@ impl App {
                 editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
             });
         });
+        if let Some(talk) = self.agents.get_mut(session) {
+            talk.retyped();
+        }
+        true
+    }
+
+    /// Whether `session`'s prompt is naming one of the agent's commands.
+    fn naming_command(&self, session: crate::agent::SessionId) -> bool {
+        self.agents
+            .get(session)
+            .is_some_and(|talk| !talk.offered().is_empty())
+    }
+
+    /// Moves `session`'s selection `by` rows through the commands offered.
+    fn step_command(&mut self, session: crate::agent::SessionId, by: isize) -> bool {
+        if let Some(talk) = self.agents.get_mut(session) {
+            talk.step_command(by);
+        }
         true
     }
 

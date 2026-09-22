@@ -142,11 +142,13 @@ pub fn agent_pane(theme: &Theme, talk: &Talk, typing: bool, width: f32) -> Div<M
 /// agent answers to, rather than having to know.
 fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
+    let chosen = talk.chosen();
     let rows = talk
         .offered()
         .into_iter()
-        .take(OFFERED)
         .enumerate()
+        .skip(chosen.saturating_sub(OFFERED - 1))
+        .take(OFFERED)
         .map(|(place, command)| {
             h_flex()
                 .w_full()
@@ -155,7 +157,7 @@ fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
                 .gap(1)
                 .items_center()
                 .hover_bg(theme.colors.surface_hover)
-                .when(place == 0, |row| row.bg(theme.colors.surface_selected))
+                .when(place == chosen, |row| row.bg(theme.colors.surface_selected))
                 .on_click(Message::TakeAgentCommand(session, place))
                 .child(
                     text(format!("/{}", command.name))
@@ -487,7 +489,7 @@ fn prompt_bar(theme: &Theme, talk: &Talk, typing: bool) -> Div<Message> {
 /// What the line under the prompt says the keyboard does.
 fn hints(talk: &Talk) -> [&'static str; 3] {
     if !talk.offered().is_empty() {
-        return ["⇥ take the command", "⏎ send", "esc leave the prompt"];
+        return ["↑↓ choose", "⏎ take the command", "esc leave the prompt"];
     }
     match talk.is_busy() {
         true => ["⏎ send", "⇧⏎ newline", "esc interrupt"],

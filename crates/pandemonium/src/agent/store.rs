@@ -45,6 +45,8 @@ pub struct Talk {
     asks: Vec<Ask>,
     /// The commands the agent has said it takes, as it last said them.
     commands: Vec<Command>,
+    /// Which of the commands a slash narrows to is selected.
+    chosen: usize,
     /// Whether the conversation is open and will take prompts.
     ready: bool,
     /// Whether a turn is running.
@@ -117,6 +119,40 @@ impl Talk {
             .collect()
     }
 
+    /// Which of the offered commands is selected.
+    ///
+    /// The list is rebuilt on every keystroke and can grow shorter as it
+    /// narrows, so the selection is held against what is offered now rather
+    /// than trusted: a row that is no longer there selects the last one that
+    /// is.
+    pub fn chosen(&self) -> usize {
+        self.chosen.min(self.offered().len().saturating_sub(1))
+    }
+
+    /// Moves the selection `by` rows through the offered commands.
+    ///
+    /// The ends are joined: a list a reader is stepping through is shorter
+    /// than the reach of the key, and going up from the first row to the
+    /// last is what every other list in the window does.
+    pub fn step_command(&mut self, by: isize) {
+        let offered = self.offered().len();
+        if offered == 0 {
+            return;
+        }
+        let at = self.chosen() as isize + by;
+        self.chosen = at.rem_euclid(offered as isize) as usize;
+    }
+
+    /// Puts the selected command into the prompt.
+    pub fn take_chosen(&mut self) {
+        self.take_command(self.chosen());
+    }
+
+    /// Starts the selection again, for a prompt that has been typed into.
+    pub fn retyped(&mut self) {
+        self.chosen = 0;
+    }
+
     /// Puts the command in `place` of what is offered into the prompt.
     ///
     /// The command is left with a space after it and the turn is not sent:
@@ -135,6 +171,7 @@ impl Talk {
             buffer.delete();
             buffer.insert(&format!("/{command} "));
         });
+        self.chosen = 0;
     }
 
     /// Whether the conversation is open and will take prompts.
@@ -202,6 +239,7 @@ impl Talk {
         });
         self.transcript.say(Voice::Reader, &text);
         self.session.prompt(&text);
+        self.chosen = 0;
         self.busy = true;
         self.following = true;
     }
@@ -308,6 +346,7 @@ impl Sessions {
                 prompt: Rc::new(RefCell::new(Document::scratch("Prompt"))),
                 asks: Vec::new(),
                 commands: Vec::new(),
+                chosen: 0,
                 ready: false,
                 busy: false,
                 mode: None,
