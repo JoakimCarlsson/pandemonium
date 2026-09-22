@@ -34,6 +34,6 @@ pub use index::{baseline, discard, discard_all, stage, unstage, write_index};
 pub use run::Said;
 pub use status::{Changed, FileStatus, Status};
 pub use worktree::{
-    Summary, add_worktree, commit_of, remember, remembered_base, remembered_name, remove_worktree,
-    since, worktrees,
+    Summary, add_worktree, commit_of, remember, remember_port, remembered_base, remembered_name,
+    remembered_port, remove_worktree, since, worktrees,
 };

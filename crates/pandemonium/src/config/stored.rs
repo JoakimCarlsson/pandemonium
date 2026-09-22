@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use pm_core::Bootstrap;
 use pm_text::Server;
 use pm_ui::families;
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,12 @@ pub(super) struct Stored {
     crash_reports: Option<bool>,
     /// The servers to run for a language, in place of the ones it names.
     language_servers: Option<BTreeMap<String, Vec<StoredServer>>>,
+    /// Paths symlinked into a fresh worktree, relative to the repository.
+    worktree_link: Option<Vec<PathBuf>>,
+    /// Paths copied into it, relative to the repository.
+    worktree_copy: Option<Vec<PathBuf>>,
+    /// The variable a session's own port is handed to a program in.
+    worktree_port: Option<String>,
     /// Whether setup has been finished, which swaps the page.
     finished: Option<bool>,
     /// The roots of the projects the window had open.
@@ -145,6 +152,7 @@ impl Stored {
             window: self.window(),
             panes: self.panes.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
+            bootstrap: self.bootstrap(),
             setup: self.into_setup(),
         }
     }
@@ -160,6 +168,16 @@ impl Stored {
                 (language, servers)
             })
             .collect()
+    }
+
+    /// What this file gives a fresh worktree, defaulting what it leaves out.
+    fn bootstrap(&self) -> Bootstrap {
+        let defaults = Bootstrap::default();
+        Bootstrap {
+            link: self.worktree_link.clone().unwrap_or(defaults.link),
+            copy: self.worktree_copy.clone().unwrap_or(defaults.copy),
+            port: self.worktree_port.clone().or(defaults.port),
+        }
     }
 
     /// The regions this file stands for, defaulting anything it leaves out.
@@ -231,6 +249,7 @@ impl Stored {
             panes,
             window,
             language_servers,
+            bootstrap,
         } = restored;
 
         Self {
@@ -251,6 +270,9 @@ impl Stored {
                     })
                     .collect()
             }),
+            worktree_link: Some(bootstrap.link.clone()),
+            worktree_copy: Some(bootstrap.copy.clone()),
+            worktree_port: bootstrap.port.clone(),
             finished: Some(setup.finished),
             projects: Some(projects.clone()),
             active_project: active.clone(),

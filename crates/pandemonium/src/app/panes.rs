@@ -431,15 +431,17 @@ impl App {
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
         let sessions = &self.sessions;
+        let bootstrap = &self.bootstrap;
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
             let (checkout, project) = projects
                 .iter()
                 .find(|(root, _)| *root == tab.project)
                 .cloned()?;
-            let session = sessions
+            let held = sessions
                 .of(project)
-                .find(|session| session.root() == tab.worktree)
-                .map(pm_core::Session::id);
+                .find(|session| session.root() == tab.worktree);
+            let env = bootstrap.env(held.and_then(pm_core::Session::port));
+            let session = held.map(pm_core::Session::id);
             let scope = match session {
                 Some(session) => Scope::of(project, session),
                 None => Scope::checkout(project),
@@ -452,8 +454,8 @@ impl App {
             if tab.kind == SavedKind::Agent {
                 let agent = pm_acp::Agent::named(&tab.agent)?;
                 let talk = match tab.session.is_empty() {
-                    true => agents.start(project, session, &root, agent)?,
-                    false => agents.resume(project, session, &root, agent, &tab.session)?,
+                    true => agents.start(project, session, &root, &env, agent)?,
+                    false => agents.resume(project, session, &root, &env, agent, &tab.session)?,
                 };
                 return Some((scope, Item::Agent(scope, talk)));
             }

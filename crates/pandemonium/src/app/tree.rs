@@ -196,7 +196,8 @@ impl App {
             false => path.parent().unwrap_or(&path).to_path_buf(),
         };
 
-        self.terminals.start(scope, &directory);
+        let env = self.worktree_env(scope);
+        self.terminals.start(scope, &directory, &env);
         self.bottom_panel_open = true;
         self.terminal_focused = true;
         self.editor_focused = false;

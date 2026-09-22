@@ -16,4 +16,4 @@ pub use git::{
 };
 pub use project::{OpenError, Project, ProjectId, Projects};
 pub use scope::Scope;
-pub use session::{Session, SessionId, Sessions, StartError, slug};
+pub use session::{Bootstrap, Session, SessionId, Sessions, StartError, Started, slug};

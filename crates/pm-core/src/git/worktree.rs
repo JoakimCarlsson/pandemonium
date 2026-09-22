@@ -20,6 +20,9 @@ const BASE_KEY: &str = "pandemonium.base";
 /// The config key a worktree remembers what it is called under.
 const NAME_KEY: &str = "pandemonium.name";
 
+/// The config key a worktree remembers the port it was given under.
+const PORT_KEY: &str = "pandemonium.port";
+
 /// The line of `git worktree list --porcelain` naming a worktree's path.
 const WORKTREE_LINE: &str = "worktree ";
 
@@ -143,6 +146,20 @@ pub fn since(root: &Path, base: &str) -> Summary {
 pub fn remember(root: &Path, base: &str, name: &str) {
     let _ = answer(root, ["config", BASE_KEY, base]);
     let _ = answer(root, ["config", NAME_KEY, name]);
+}
+
+/// Writes down the port the worktree at `root` was given.
+///
+/// The port is the session's for as long as the worktree is, so it is kept
+/// where the rest of what a worktree knows about itself is kept: a launch
+/// that finds the worktree again hands its server the same port.
+pub fn remember_port(root: &Path, port: u16) {
+    let _ = answer(root, ["config", PORT_KEY, &port.to_string()]);
+}
+
+/// The port the worktree at `root` was given, as it wrote it down.
+pub fn remembered_port(root: &Path) -> Option<u16> {
+    read(root, PORT_KEY)?.parse().ok()
 }
 
 /// The commit the worktree at `root` was cut from, as it wrote it down.

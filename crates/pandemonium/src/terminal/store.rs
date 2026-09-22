@@ -101,21 +101,29 @@ impl Terminals {
     }
 
     /// The shell `scope` is showing, starting its first one in `root`.
-    pub fn open(&mut self, scope: Scope, root: &Path) -> Option<Shell> {
+    pub fn open(&mut self, scope: Scope, root: &Path, env: &[(String, String)]) -> Option<Shell> {
         if self
             .worktrees
             .get(&scope)
             .is_none_or(|shells| shells.running.is_empty())
         {
-            self.start(scope, root);
+            self.start(scope, root, env);
         }
         self.active(scope)
     }
 
     /// Starts another shell in `root` and shows it.
-    pub fn start(&mut self, scope: Scope, root: &Path) -> Option<ShellId> {
+    ///
+    /// The `env` is the worktree's own, so a shell opened in a session serves
+    /// on the session's port rather than on whatever the last one took.
+    pub fn start(
+        &mut self,
+        scope: Scope,
+        root: &Path,
+        env: &[(String, String)],
+    ) -> Option<ShellId> {
         let notify = self.notify.clone()?;
-        let shell = match Terminal::shell(root, INITIAL_COLS, INITIAL_ROWS, notify) {
+        let shell = match Terminal::shell(root, INITIAL_COLS, INITIAL_ROWS, env, notify) {
             Ok(shell) => shell,
             Err(error) => {
                 eprintln!("could not start a shell in {}: {error}", root.display());

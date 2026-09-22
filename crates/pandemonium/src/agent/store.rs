@@ -456,9 +456,10 @@ impl Talks {
         project: ProjectId,
         session: Option<SessionId>,
         root: &Path,
+        env: &[(String, String)],
         agent: Agent,
     ) -> Option<TalkId> {
-        self.open(project, session, root, agent, None)
+        self.open(project, session, root, env, agent, None)
     }
 
     /// Takes the conversation `resume` names up again, in a session of its own.
@@ -467,10 +468,11 @@ impl Talks {
         project: ProjectId,
         session: Option<SessionId>,
         root: &Path,
+        env: &[(String, String)],
         agent: Agent,
         resume: &str,
     ) -> Option<TalkId> {
-        self.open(project, session, root, agent, Some(resume))
+        self.open(project, session, root, env, agent, Some(resume))
     }
 
     /// Starts `agent` in `root`, taking up `resume` where there is one.
@@ -479,13 +481,14 @@ impl Talks {
         project: ProjectId,
         session: Option<SessionId>,
         root: &Path,
+        env: &[(String, String)],
         agent: Agent,
         resume: Option<&str>,
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
         let started = match resume {
-            Some(resume) => Session::resume(agent, root, resume, notify),
-            None => Session::start(agent, root, notify),
+            Some(resume) => Session::resume(agent, root, env, resume, notify),
+            None => Session::start(agent, root, env, notify),
         };
         let conversation = match started {
             Ok(conversation) => conversation,

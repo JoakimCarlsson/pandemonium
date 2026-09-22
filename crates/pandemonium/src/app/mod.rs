@@ -182,6 +182,8 @@ pub struct App {
     editor: Files,
     /// The servers to run for a language, in place of the ones it names.
     language_servers: BTreeMap<String, Vec<pm_text::Server>>,
+    /// What a session's fresh worktree is given, git having left it out.
+    bootstrap: pm_core::Bootstrap,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
@@ -326,6 +328,7 @@ impl App {
             close_requested: false,
             editor: Files::default(),
             language_servers: restored.language_servers,
+            bootstrap: restored.bootstrap,
             panes: PaneTree::default(),
             saved,
             geometry: Geometry::default(),
@@ -374,7 +377,8 @@ impl App {
     fn active_shell(&mut self) -> Option<Shell> {
         let scope = self.scope()?;
         let root = self.root_of(scope)?;
-        self.terminals.open(scope, &root)
+        let env = self.worktree_env(scope);
+        self.terminals.open(scope, &root, &env)
     }
 
     /// Closes the panel once the worktree's last shell has exited.
@@ -619,7 +623,8 @@ impl App {
         let Some(root) = self.root_of(scope) else {
             return;
         };
-        self.terminals.start(scope, &root);
+        let env = self.worktree_env(scope);
+        self.terminals.start(scope, &root, &env);
         self.bottom_panel_open = true;
     }
 
@@ -1324,7 +1329,8 @@ impl App {
         else {
             return;
         };
-        self.terminals.start(scope, &directory);
+        let env = self.worktree_env(scope);
+        self.terminals.start(scope, &directory, &env);
         self.bottom_panel_open = true;
         self.terminal_focused = true;
         self.editor_focused = false;
@@ -1371,6 +1377,7 @@ impl App {
             panes: self.saved_panes(),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
+            bootstrap: self.bootstrap.clone(),
         }
     }
 

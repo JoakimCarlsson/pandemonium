@@ -63,6 +63,8 @@ pub struct Restored {
     pub window: WindowState,
     /// The servers to run for a language, in place of the ones it names.
     pub language_servers: BTreeMap<String, Vec<pm_text::Server>>,
+    /// What a session's fresh worktree is given, git having left it out.
+    pub bootstrap: pm_core::Bootstrap,
 }
 
 /// What the last launch left behind, or a first launch's defaults.

@@ -101,8 +101,14 @@ impl App {
             return;
         };
 
-        match self.sessions.start(&project, name, &base, &under) {
-            Ok(session) => self.select_session(session),
+        match self
+            .sessions
+            .start(&project, name, &base, &under, &self.bootstrap)
+        {
+            Ok(started) => {
+                self.select_session(started.id);
+                self.say_bootstrap_trouble(&started.trouble);
+            }
             Err(trouble) => self.say_trouble("The session could not be cut", &trouble),
         }
     }
@@ -260,6 +266,20 @@ impl App {
         self.session
     }
 
+    /// The environment a program started in `scope`'s worktree is given.
+    ///
+    /// A session serves on a port of its own, and this is where that becomes
+    /// a variable, so a shell and an agent in the same worktree are handed
+    /// the same one. A project's own checkout is handed nothing: it is where
+    /// the reader's own server runs, on whatever port the project says.
+    pub(super) fn worktree_env(&self, scope: Scope) -> Vec<(String, String)> {
+        let port = scope
+            .session()
+            .and_then(|session| self.sessions.get(session))
+            .and_then(Session::port);
+        self.bootstrap.env(port)
+    }
+
     /// The worktree an agent started now would work in, if a session's.
     pub(super) fn session_root(&self) -> Option<std::path::PathBuf> {
         let session = self.sessions.get(self.selected_session()?)?;
@@ -311,6 +331,22 @@ impl App {
             () if talk.is_busy() => theme.colors.success,
             () => theme.colors.text_subtle,
         }
+    }
+
+    /// Says what could not be brought into a worktree that was cut anyway.
+    ///
+    /// The session is already there and already selected: this is a reading
+    /// of what is missing from it, so that an agent failing to install or
+    /// serve is explained before it happens rather than after.
+    fn say_bootstrap_trouble(&mut self, trouble: &[String]) {
+        if trouble.is_empty() {
+            return;
+        }
+        self.ask_first(Prompt::asking(
+            "The worktree was cut, but not everything came with it".to_owned(),
+            trouble.to_vec(),
+            vec![Answer::understood()],
+        ));
     }
 
     /// Says that something could not be done, and what git made of it.

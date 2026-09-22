@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::git;
 use crate::project::{Project, ProjectId};
+use crate::session::bootstrap::{self, Bootstrap};
 use crate::session::placement;
 use crate::session::{Session, SessionId};
 
@@ -34,19 +35,25 @@ impl Sessions {
     /// somewhere to work, and the branch it ends up on is named later, by
     /// whoever ends up naming it. An empty `base` is what the project has
     /// checked out, which is where a reader who was not asked means.
+    ///
+    /// What git leaves out of a worktree, `wanted` brings across, and the
+    /// session is given a port nothing else in the window has. Neither can
+    /// fail the session: a worktree that was cut exists, and what could not
+    /// be brought into it is reported instead.
     pub fn start(
         &mut self,
         project: &Project,
         name: &str,
         base: &str,
         under: &Path,
-    ) -> Result<SessionId, StartError> {
+        wanted: &Bootstrap,
+    ) -> Result<Started, StartError> {
         let origin = project.root().to_path_buf();
-        let wanted = match base.is_empty() {
+        let cut_from = match base.is_empty() {
             true => "HEAD",
             false => base,
         };
-        let base = git::commit_of(&origin, wanted).ok_or(StartError::NoCommit)?;
+        let base = git::commit_of(&origin, cut_from).ok_or(StartError::NoCommit)?;
         let root = placement::place(under, project.name(), name);
 
         if let Some(parent) = root.parent() {
@@ -58,6 +65,12 @@ impl Sessions {
         git::add_worktree(&origin, &root, &base).map_err(StartError::Git)?;
         git::remember(&root, &base, name);
 
+        let trouble = bootstrap::apply(&origin, &root, wanted);
+        let port = bootstrap::free_port(&self.ports());
+        if let Some(port) = port {
+            git::remember_port(&root, port);
+        }
+
         let id = self.next;
         self.next = id.next();
         self.open.push(Session {
@@ -68,8 +81,14 @@ impl Sessions {
             root,
             origin,
             base,
+            port,
         });
-        Ok(id)
+        Ok(Started { id, trouble })
+    }
+
+    /// The ports the sessions of every project have already been given.
+    fn ports(&self) -> Vec<u16> {
+        self.open.iter().filter_map(Session::port).collect()
     }
 
     /// Takes the session `id` names out of the window and off disk.
@@ -101,6 +120,7 @@ impl Sessions {
                 .or_else(|| git::commit_of(&root, "HEAD"))
                 .unwrap_or_default();
             let name = git::remembered_name(&root).unwrap_or_else(|| named(&root));
+            let port = git::remembered_port(&root);
 
             let id = self.next;
             self.next = id.next();
@@ -112,6 +132,7 @@ impl Sessions {
                 root,
                 origin: origin.clone(),
                 base,
+                port,
             });
         }
     }
@@ -147,6 +168,19 @@ impl Sessions {
             session.refresh();
         }
     }
+}
+
+/// A session that was cut, and what could not be brought into its worktree.
+///
+/// The two travel together because the session is started either way: a
+/// dependency tree that could not be linked is worth saying out loud, but it
+/// is not a reason to take a worktree away again.
+#[derive(Clone, Debug)]
+pub struct Started {
+    /// The session that was cut.
+    pub id: SessionId,
+    /// What could not be brought across, one line apiece.
+    pub trouble: Vec<String>,
 }
 
 /// What a session directory is called when nothing wrote a name down.

@@ -225,12 +225,13 @@ impl App {
         root: &std::path::Path,
         agent: Agent,
     ) {
-        let Some(talk) = self.agents.start(project, session, root, agent) else {
-            return;
-        };
         let scope = match session {
             Some(session) => pm_core::Scope::of(project, session),
             None => pm_core::Scope::checkout(project),
+        };
+        let env = self.worktree_env(scope);
+        let Some(talk) = self.agents.start(project, session, root, &env, agent) else {
+            return;
         };
         self.show_item(self.panes.focus(), scope, Item::Agent(scope, talk), false);
         self.focus_prompt(talk);

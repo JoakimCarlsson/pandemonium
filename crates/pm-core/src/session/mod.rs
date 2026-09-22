@@ -10,13 +10,16 @@
 //! [`Sessions`] is the one seam a session is started and finished through —
 //! the palette, a keybinding and a restored window all go through it, and
 //! nothing else cuts or tears down a worktree. [`placement`] says where the
-//! worktree goes; [`store`] is the set itself.
+//! worktree goes; [`bootstrap`] says what it is given once it is there;
+//! [`store`] is the set itself.
 
+mod bootstrap;
 mod placement;
 mod store;
 
+pub use bootstrap::Bootstrap;
 pub use placement::slug;
-pub use store::{Sessions, StartError};
+pub use store::{Sessions, StartError, Started};
 
 use std::path::{Path, PathBuf};
 
@@ -53,6 +56,8 @@ pub struct Session {
     origin: PathBuf,
     /// The commit it was cut from, shortened.
     base: String,
+    /// The local port this session serves on, where one was free.
+    port: Option<u16>,
     /// How far it has drifted from that commit, as git last said.
     summary: Summary,
 }
@@ -81,6 +86,15 @@ impl Session {
     /// The commit it was cut from.
     pub fn base(&self) -> &str {
         &self.base
+    }
+
+    /// The local port this session serves on, where one was free.
+    ///
+    /// A port is the session's own so that two of them serving the same
+    /// project can both be looked at: what hands it to a program is
+    /// [`Bootstrap::env`], which names it.
+    pub fn port(&self) -> Option<u16> {
+        self.port
     }
 
     /// How far it has drifted from that commit, as git last said.

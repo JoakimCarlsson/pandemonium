@@ -129,8 +129,13 @@ impl Session {
     ///
     /// The handshake goes out here and is answered on the reader thread: a
     /// session is startable in a frame because nothing of it is waited for.
-    pub fn start(agent: Agent, root: &Path, notify: Notify) -> std::io::Result<Self> {
-        Self::open(agent, root, None, notify)
+    pub fn start(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        Self::open(agent, root, env, None, notify)
     }
 
     /// Starts `agent` in `root` and takes the conversation `id` names up again.
@@ -140,20 +145,32 @@ impl Session {
     /// for the conversation it was holding, which it replays. An agent that
     /// cannot do that opens a new conversation instead, because a pane with a
     /// fresh agent in it is nearer to what the reader left than no pane.
-    pub fn resume(agent: Agent, root: &Path, id: &str, notify: Notify) -> std::io::Result<Self> {
-        Self::open(agent, root, Some(id.to_owned()), notify)
+    pub fn resume(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        id: &str,
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        Self::open(agent, root, env, Some(id.to_owned()), notify)
     }
 
     /// Starts `agent` in `root`, taking up `resume` where there is one.
+    ///
+    /// The `env` is the worktree's own, so what the agent runs — a dev
+    /// server, a test that binds a port — is the session's rather than
+    /// whatever the machine's environment named.
     fn open(
         agent: Agent,
         root: &Path,
+        env: &[(String, String)],
         resume: Option<String>,
         notify: Notify,
     ) -> std::io::Result<Self> {
         let mut process = agent
             .command()
             .current_dir(root)
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
