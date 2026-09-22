@@ -110,7 +110,7 @@ impl App {
         match item {
             Item::File(file) => self.editor.is_preview(file),
             Item::Change(project, change) => self.is_change_preview(project, change),
-            Item::Review(_) => false,
+            Item::Review(_) | Item::Agent(..) => false,
         }
     }
 
@@ -170,7 +170,9 @@ impl App {
     pub(super) fn project_of(&self, item: Item) -> Option<ProjectId> {
         match item {
             Item::File(file) => self.editor.project_of(file),
-            Item::Review(project) | Item::Change(project, _) => Some(project),
+            Item::Review(project) | Item::Change(project, _) | Item::Agent(project, _) => {
+                Some(project)
+            }
         }
     }
 
@@ -311,6 +313,9 @@ impl App {
     /// run gave them, which is the only thing the next launch can act on.
     pub(super) fn saved_panes(&self) -> Saved {
         self.panes.save(&|item| {
+            if item.session().is_some() {
+                return None;
+            }
             let project = self.project_of(item)?;
             let root = self.open.get(project)?.root().to_path_buf();
             if let Some(change) = item.change() {
@@ -384,13 +389,25 @@ impl App {
 
     /// Closes every file no pane is holding open any more.
     pub(super) fn sweep(&mut self) {
-        let held = self
-            .panes
-            .held()
-            .into_iter()
+        let held = self.panes.held();
+        let files = held
+            .iter()
+            .copied()
             .filter_map(Item::file)
             .collect::<BTreeSet<_>>();
-        self.editor.retain(&held);
+        let sessions = held
+            .iter()
+            .copied()
+            .filter_map(Item::session)
+            .collect::<BTreeSet<_>>();
+        self.editor.retain(&files);
+        self.agents.retain(&sessions);
+        if self
+            .prompt_focused
+            .is_some_and(|open| !sessions.contains(&open))
+        {
+            self.prompt_focused = None;
+        }
     }
 
     /// Takes the files of `project` out of every pane that was showing them.
@@ -457,7 +474,7 @@ impl App {
             match item {
                 Item::File(file) => self.editor.keep(file),
                 Item::Change(project, change) => self.keep_change(project, change),
-                Item::Review(_) => {}
+                Item::Review(_) | Item::Agent(..) => {}
             }
         }
         self.activate_tab(pane, item);
@@ -600,6 +617,17 @@ impl App {
                 preview: false,
                 pinned: false,
             }),
+            Item::Agent(_, session) => {
+                let talk = self.agents.get(session)?;
+                Some(TabEntry {
+                    item,
+                    name: talk.agent().name.to_owned(),
+                    icon: IconName::Sparkle,
+                    dirty: talk.is_busy(),
+                    preview: false,
+                    pinned: false,
+                })
+            }
             Item::Change(project, change) => {
                 let review = self.reviews.get(&project)?;
                 let path = review.path_of(change)?;
@@ -673,7 +701,7 @@ impl App {
                     })
                     .collect(),
                 active,
-                content: self.shown(theme, active),
+                content: self.shown(theme, active, bounds.get().size.width),
                 bounds,
                 bar,
                 tab_bounds,
@@ -691,7 +719,7 @@ impl App {
     }
 
     /// What a pane showing `item` draws beneath its bar of tabs.
-    fn shown(&self, theme: &Theme, item: Option<Item>) -> Content {
+    fn shown(&self, theme: &Theme, item: Option<Item>, width: f32) -> Content {
         match item {
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),
@@ -702,6 +730,15 @@ impl App {
                     theme,
                     review,
                     self.commit_focused,
+                ))),
+                None => Content::Empty,
+            },
+            Some(Item::Agent(_, session)) => match self.agents.get(session) {
+                Some(talk) => Content::Built(Box::new(crate::agent::agent_pane(
+                    theme,
+                    talk,
+                    self.prompt_focused == Some(session),
+                    width,
                 ))),
                 None => Content::Empty,
             },

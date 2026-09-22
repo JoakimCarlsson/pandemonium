@@ -53,6 +53,8 @@ pub enum Kind {
     RenamePath,
     /// The name of a local branch to create and check out.
     NewBranch,
+    /// The agents the editor can start in the active project's worktree.
+    Agents,
 }
 
 impl Kind {
@@ -75,6 +77,7 @@ impl Kind {
             Self::NewFolder => "Name of the new directory",
             Self::RenamePath => "New name",
             Self::NewBranch => "Name of the new branch",
+            Self::Agents => "Start an agent in this worktree",
         }
     }
 
@@ -117,6 +120,8 @@ pub enum Choice {
     FetchRemote(ProjectId, String),
     /// Push this project to the named remote.
     PushRemote(ProjectId, String),
+    /// Start this agent in the active project's worktree.
+    Agent(pm_acp::Agent),
 }
 
 /// One thing the picker is offering.

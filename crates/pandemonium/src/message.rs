@@ -9,6 +9,7 @@ use pm_core::{EntryId, ProjectId};
 use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
+use crate::agent::SessionId;
 use crate::editor::{FileId, ScrollAxis, SearchField};
 use crate::keymap::{Action, BaseKeymap};
 use crate::onboarding::ThemeMode;
@@ -278,4 +279,16 @@ pub enum Message {
     WriteCommit(ResizePhase, Position, Position),
     /// Commit what the index holds, saying what the message field holds.
     Commit,
+    /// Ask which agent to start in the active project's worktree.
+    NewAgentSession,
+    /// Put the prompt's cursor where a press landed, selecting to it.
+    ///
+    /// A press in the prompt is also what gives it the keyboard, so this is
+    /// the whole of how a prompt is written in: there is nothing to focus
+    /// first.
+    WriteAgentPrompt(SessionId, ResizePhase, Position, Position),
+    /// Send what this session's prompt holds, and empty it.
+    SendPrompt(SessionId),
+    /// Answer this session's permission request with the choice in this place.
+    AnswerAgent(SessionId, u64, usize),
 }

@@ -631,6 +631,11 @@ fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
         .items_center()
         .bg(theme.colors.surface)
         .border_1(theme.colors.border)
+        .child(h_flex().px(1).items_center().child(icon_button(
+            theme,
+            IconName::Sparkle,
+            Message::NewAgentSession,
+        )))
         .child(h_flex().flex_1())
         .child(
             h_flex()

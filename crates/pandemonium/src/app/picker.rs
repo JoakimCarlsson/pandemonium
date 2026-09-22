@@ -137,6 +137,7 @@ impl App {
                 self.open.activate(project);
                 self.store();
             }
+            Choice::Agent(agent) => self.start_agent(agent),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::FetchRemote(project, remote) => {
                 self.run_for_project(project, RemoteOperation::Fetch, move |root| {
@@ -186,6 +187,7 @@ impl App {
             Kind::FetchRemotes => self.remote_rows(true),
             Kind::PushRemotes => self.remote_rows(false),
             Kind::Problems => self.problem_rows(),
+            Kind::Agents => self.agent_rows(),
             Kind::References => Vec::new(),
             Kind::Search => self.search_rows(query),
             Kind::Symbols

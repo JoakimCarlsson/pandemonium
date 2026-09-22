@@ -87,6 +87,11 @@ impl Geometry {
         Self::cell(&mut self.panes, id)
     }
 
+    /// Where pane `id` came out in the last frame, if it was drawn in it.
+    pub fn pane_size(&self, id: PaneId) -> Option<pm_gfx::Size> {
+        self.panes.get(&id).map(|cell| cell.get().size)
+    }
+
     /// The cell the bar of tabs of pane `id` writes its bounds into.
     pub fn bar(&mut self, id: PaneId) -> Bounds {
         Self::cell(&mut self.bars, id)

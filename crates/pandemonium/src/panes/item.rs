@@ -8,6 +8,7 @@
 
 use pm_core::ProjectId;
 
+use crate::agent::SessionId;
 use crate::editor::FileId;
 use crate::review::ChangeId;
 
@@ -24,6 +25,8 @@ pub enum Item {
     Review(ProjectId),
     /// The diff of one changed file, which is what a row of that list opens.
     Change(ProjectId, ChangeId),
+    /// One agent session of a project, with everything said in it.
+    Agent(ProjectId, SessionId),
 }
 
 impl Item {
@@ -31,7 +34,7 @@ impl Item {
     pub fn file(self) -> Option<FileId> {
         match self {
             Self::File(file) => Some(file),
-            Self::Review(_) | Self::Change(..) => None,
+            Self::Review(_) | Self::Change(..) | Self::Agent(..) => None,
         }
     }
 
@@ -39,7 +42,7 @@ impl Item {
     pub fn change(self) -> Option<ChangeId> {
         match self {
             Self::Change(_, change) => Some(change),
-            Self::File(_) | Self::Review(_) => None,
+            Self::File(_) | Self::Review(_) | Self::Agent(..) => None,
         }
     }
 
@@ -47,7 +50,15 @@ impl Item {
     pub fn review(self) -> Option<ProjectId> {
         match self {
             Self::Review(project) => Some(project),
-            Self::File(_) | Self::Change(..) => None,
+            Self::File(_) | Self::Change(..) | Self::Agent(..) => None,
+        }
+    }
+
+    /// The agent session this holds, when that is what it holds.
+    pub fn session(self) -> Option<SessionId> {
+        match self {
+            Self::Agent(_, session) => Some(session),
+            Self::File(_) | Self::Review(_) | Self::Change(..) => None,
         }
     }
 }

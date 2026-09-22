@@ -175,6 +175,8 @@ pub enum Action {
     ShowChanges,
     /// Open those changes for review, in a pane.
     OpenReview,
+    /// Start an agent in the active project's worktree, in a pane.
+    NewAgentSession,
     /// Put what the list of changes is acting on into the index.
     StageSelectedChanges,
     /// Take what it is acting on back out of the index.
@@ -375,6 +377,7 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::RevertChange, "git.revert_change", "Revert Change"),
     (Action::ShowChanges, "git.changes", "Show Source Control"),
     (Action::OpenReview, "git.review", "Review Changes"),
+    (Action::NewAgentSession, "agent.new", "New Agent Session"),
     (Action::StageSelectedChanges, "git.stage", "Stage Changes"),
     (
         Action::UnstageSelectedChanges,

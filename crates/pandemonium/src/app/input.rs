@@ -89,6 +89,9 @@ impl App {
                 Resolution::None => {}
             }
         }
+        if self.send_to_agent_prompt(event) {
+            return self.request_redraw();
+        }
         if self.send_to_commit(event) {
             return self.request_redraw();
         }
@@ -206,6 +209,61 @@ impl App {
         if let Some(completions) = self.completions.as_mut() {
             completions.step(step);
         }
+        true
+    }
+
+    /// Sends a keypress to an agent's prompt, when it has the keyboard.
+    ///
+    /// A prompt is a buffer, so it takes what a buffer takes. What it does
+    /// not take is Enter on its own, which sends what has been written: a
+    /// prompt of several lines is written with Shift held, the way every
+    /// other box one talks to something through behaves. Escape stops the
+    /// turn while one is running and lets go of the prompt when none is,
+    /// which is the order a reader wants them in: the key that gets out of
+    /// something gets out of the agent first.
+    fn send_to_agent_prompt(&mut self, event: &KeyEvent) -> bool {
+        let Some(session) = self.prompt_focused else {
+            return false;
+        };
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Enter) if !self.modifiers.shift_key() => {
+                self.apply(Message::SendPrompt(session));
+                return true;
+            }
+            Key::Named(NamedKey::Escape) => {
+                match self.agents.get(session).filter(|talk| talk.is_busy()) {
+                    Some(talk) => talk.cancel(),
+                    None => self.prompt_focused = None,
+                }
+                return true;
+            }
+            _ => {}
+        }
+        if self.is_window_chord() {
+            return false;
+        }
+
+        let Some(prompt) = self.agents.get(session).map(crate::agent::Talk::prompt) else {
+            return false;
+        };
+        let rows = prompt.borrow().rows();
+        let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
+            return false;
+        };
+        prompt.borrow_mut().edit(|buffer| {
+            buffer.at_each(|buffer| match edit.clone() {
+                editor::Edit::Type(ch) => buffer.insert_typed(ch),
+                editor::Edit::Insert(text) => buffer.insert(&text),
+                editor::Edit::Newline => buffer.insert_newline(),
+                editor::Edit::Indent => buffer.insert_indent(),
+                editor::Edit::Outdent => buffer.outdent_lines(),
+                editor::Edit::Backspace => buffer.backspace(),
+                editor::Edit::Delete => buffer.delete(),
+                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
+                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
+                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
+            });
+        });
         true
     }
 
@@ -623,6 +681,10 @@ impl App {
             return;
         }
         let rows = (delta / text.code.line_height).round() as isize;
+        if self.scroll_agent(-rows) {
+            self.request_redraw();
+            return;
+        }
         if self.scroll_review(-rows) {
             self.request_redraw();
             return;

@@ -581,7 +581,7 @@ impl App {
         match item {
             Item::Review(project) => Some((project, None)),
             Item::Change(project, change) => Some((project, Some(change))),
-            Item::File(_) => None,
+            Item::File(_) | Item::Agent(..) => None,
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Application entry point: opens the window and runs the event loop.
 
+mod agent;
 mod app;
 mod config;
 mod desktop;

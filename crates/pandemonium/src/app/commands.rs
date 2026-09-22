@@ -73,6 +73,7 @@ impl App {
                 ));
             }
             Action::OpenReview => return self.apply(Message::OpenReview),
+            Action::NewAgentSession => return self.apply(Message::NewAgentSession),
             Action::StageSelectedChanges => return self.apply(Message::StageSelection),
             Action::UnstageSelectedChanges => return self.apply(Message::UnstageSelection),
             Action::DiscardSelectedChanges => return self.apply(Message::DiscardSelection),

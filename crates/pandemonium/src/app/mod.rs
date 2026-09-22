@@ -5,6 +5,7 @@
 //! implements none of them — every frame is `pm-ui` elements built from that
 //! model, submitted to `pm-gfx` as one draw list.
 
+mod agent;
 mod clicks;
 mod commands;
 mod drag;
@@ -36,6 +37,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
+use crate::agent::Sessions;
 use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
 use crate::app::places::Trail;
@@ -64,6 +66,8 @@ const PICKER_WIDTH: f32 = 620.0;
 pub enum Wake {
     /// A terminal's child has written something that is waiting to be read.
     Terminal,
+    /// An agent has said something that is waiting to be taken in.
+    Agent,
     /// A language server has said something about a file that is open.
     Language,
     /// A blame has come back for a file that asked for one.
@@ -216,6 +220,10 @@ pub struct App {
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
     tab_clicks: Clicks<Item>,
+    /// The agent sessions the window is running, one per project.
+    agents: Sessions,
+    /// The session whose prompt keystrokes go to, if one has the keyboard.
+    prompt_focused: Option<crate::agent::SessionId>,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -322,6 +330,8 @@ impl App {
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
             menu: None,
+            agents: Sessions::default(),
+            prompt_focused: None,
             terminals: Terminals::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
@@ -357,6 +367,7 @@ impl App {
     /// The click that lands back in a pane brings it straight back, so a
     /// press is free to drop focus without knowing where it landed.
     pub(super) fn release_pane_focus(&mut self) {
+        self.prompt_focused = None;
         self.terminal_focused = false;
         self.editor_focused = false;
         self.commit_focused = false;
@@ -1031,6 +1042,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.agent_command(message) {
+            self.request_redraw();
+            return;
+        }
         if self.review_command(message) {
             self.request_redraw();
             return;
@@ -1060,6 +1075,7 @@ impl App {
             self.files.remove(&id);
             self.trail.close_project(id);
             self.terminals.close(id);
+            self.agents.close_project(id);
             self.drop_project_tabs(id);
             self.store();
             self.request_redraw();
@@ -1580,6 +1596,12 @@ impl ApplicationHandler<Wake> for App {
                     self.request_redraw();
                 }
             }
+            Wake::Agent => {
+                if self.agents.pump() {
+                    self.follow_agents();
+                    self.request_redraw();
+                }
+            }
             Wake::Language => {
                 let answered = self.collect_answers();
                 if self.editor.refresh() || answered {
@@ -1650,6 +1672,7 @@ impl ApplicationHandler<Wake> for App {
         self.resolver.set_keymap(self.setup.keymap.keymap());
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
+        self.agents.set_notify(self.waker(Wake::Agent));
         self.editor.set_notify(self.waker(Wake::Language));
         self.editor.set_language_servers(&self.language_servers);
         self.reread_changes();
