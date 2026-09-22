@@ -5,7 +5,7 @@
 //! is running are the window's, and they are here. Every command a session
 //! answers to goes through [`App::agent_command`].
 
-use pm_acp::Agent;
+use pm_acp::{About, Agent, Knob, Setting};
 
 use crate::agent::SessionId;
 use crate::app::{App, Writing};
@@ -36,6 +36,20 @@ impl App {
                 }
                 self.focus_prompt(session);
             }
+            Message::ShowAgentModes(session) => self.show_agent_modes(session),
+            Message::CycleAgentMode(session) => self.cycle_agent_mode(session),
+            Message::PressKnob(session, place) => self.press_knob(session, place),
+            Message::StartAgentCommand(session) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.start_command();
+                }
+                self.focus_prompt(session);
+            }
+            Message::StopAgentTurn(session) => {
+                if let Some(talk) = self.agents.get(session) {
+                    talk.cancel();
+                }
+            }
             _ => return false,
         }
         true
@@ -63,6 +77,124 @@ impl App {
                 enabled: agent.startable(),
             })
             .collect()
+    }
+
+    /// Asks which mode to put `session` into.
+    ///
+    /// An agent says what its modes are in one of two ways — as modes, or as
+    /// a knob that is about the mode — and both are asked about here, because
+    /// to a reader there is one question. A session whose agent has neither
+    /// has nothing to ask about, and the list is not opened on nothing.
+    pub(super) fn show_agent_modes(&mut self, session: SessionId) {
+        let rows = self.mode_rows(session);
+        if !rows.is_empty() {
+            return self.open_picker_with(Kind::Modes, rows, String::new());
+        }
+        if let Some(place) = self.knob_about(session, About::Mode) {
+            self.press_knob(session, place);
+        }
+    }
+
+    /// Puts `session` into the mode after the one it is in.
+    pub(super) fn cycle_agent_mode(&mut self, session: SessionId) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        match talk.modes().is_empty() {
+            false => talk.cycle_mode(),
+            true => {
+                if let Some(knob) = talk.knob_about(About::Mode) {
+                    talk.cycle_knob(&knob.id);
+                }
+            }
+        }
+    }
+
+    /// Does what pressing the knob in `place` of `session`'s means.
+    ///
+    /// A knob of several values asks which; a switch has two and is put the
+    /// other way where it is shown, which is one press instead of two.
+    pub(super) fn press_knob(&mut self, session: SessionId, place: usize) {
+        let Some(knob) = self.knob_at(session, place) else {
+            return;
+        };
+        let Setting::Picked { value, picks } = knob.setting else {
+            if let Some(talk) = self.agents.get(session) {
+                talk.toggle_knob(&knob.id);
+            }
+            return;
+        };
+        let rows = picks
+            .into_iter()
+            .map(|pick| Row {
+                section: None,
+                label: pick.name,
+                detail: detail(pick.description.as_deref(), pick.id == value),
+                choice: Choice::Knob(session, knob.id.clone(), pick.id),
+                enabled: true,
+            })
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return;
+        }
+        self.open_picker_with(Kind::Knob, rows, String::new());
+    }
+
+    /// The knob in `place` of what `session`'s agent offers.
+    pub(super) fn knob_at(&self, session: SessionId, place: usize) -> Option<Knob> {
+        self.agents.get(session)?.knobs().into_iter().nth(place)
+    }
+
+    /// Where the knob about `about` is, where `session`'s agent has one.
+    pub(super) fn knob_about(&self, session: SessionId, about: About) -> Option<usize> {
+        let talk = self.agents.get(session)?;
+        talk.knobs().iter().position(|knob| knob.about == about)
+    }
+
+    /// Sets `session`'s knob `knob` to the value `value` names.
+    pub(super) fn set_knob(&mut self, session: SessionId, knob: &str, value: &str) {
+        if let Some(talk) = self.agents.get(session) {
+            talk.set_knob(knob, value);
+        }
+    }
+
+    /// The modes `session` can be put into, as the picker offers them.
+    pub(super) fn mode_rows(&self, session: SessionId) -> Vec<Row> {
+        let Some(talk) = self.agents.get(session) else {
+            return Vec::new();
+        };
+        talk.modes()
+            .into_iter()
+            .map(|mode| {
+                let current = Some(mode.id.as_str()) == talk.mode();
+                Row {
+                    section: None,
+                    label: mode.name.clone(),
+                    detail: detail(mode.description.as_deref(), current),
+                    choice: Choice::Mode(session, mode.id),
+                    enabled: true,
+                }
+            })
+            .collect()
+    }
+
+    /// Puts `session` into the mode `mode` names.
+    pub(super) fn set_agent_mode(&mut self, session: SessionId, mode: &str) {
+        if let Some(talk) = self.agents.get(session) {
+            talk.set_mode(mode);
+        }
+    }
+
+    /// The session a command about an agent is about.
+    ///
+    /// It is the one being written to where a prompt has the keyboard, and
+    /// the one the focused pane is showing otherwise: a reader who is typing
+    /// at an agent means that agent, whichever pane is focused.
+    pub(super) fn focused_session(&self) -> Option<SessionId> {
+        match self.writing {
+            Some(Writing::Prompt(session)) => Some(session),
+            _ => self.active_tab()?.session(),
+        }
     }
 
     /// Starts `agent` in the active project's worktree, and opens its pane.
@@ -183,5 +315,17 @@ impl App {
             .get(session)
             .map_or(0, |talk| crate::agent::row_count(&theme, talk, size.width));
         (total, held)
+    }
+}
+
+/// What a mode's row says beside its name.
+///
+/// The mode the session is already in says so, because a list of modes with
+/// nothing marked is a list a reader has to remember their way around.
+fn detail(description: Option<&str>, current: bool) -> String {
+    match (description.unwrap_or_default(), current) {
+        ("", true) => "current".to_owned(),
+        (description, true) => format!("current · {description}"),
+        (description, false) => description.to_owned(),
     }
 }

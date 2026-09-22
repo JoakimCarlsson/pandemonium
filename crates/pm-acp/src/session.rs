@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use crate::agent::Agent;
 use crate::transport;
-use crate::update::{self, Event, Method, Mode, Stop, Tools};
+use crate::update::{self, Event, Knob, Method, Mode, Setting, Stop, Tools};
 
 /// The identifier the handshake is sent under.
 const HANDSHAKE: i64 = 1;
@@ -60,8 +60,10 @@ enum Sent {
     Resume,
     /// A turn.
     Turn,
-    /// A change of mode.
-    Mode,
+    /// A change of mode, from the mode the session was in before it.
+    Mode(Option<String>),
+    /// A knob being set, from the knobs as they stood before it.
+    Knob(Vec<Knob>),
 }
 
 /// What the agent has said, and what it has not been told yet.
@@ -83,6 +85,10 @@ struct State {
     logins: Vec<Method>,
     /// The modes the session can be put into.
     modes: Vec<Mode>,
+    /// The mode the window has last been told the session is in.
+    mode: Option<String>,
+    /// What the session can be set to, as the agent last offered it.
+    knobs: Vec<Knob>,
     /// The tool calls of this conversation, as they now stand.
     tools: Tools,
     /// What has arrived and not yet been drained.
@@ -113,6 +119,9 @@ pub struct Session {
     /// The identifier the next request will be sent under, shared with the
     /// reader thread so that the two never number one twice.
     next: Arc<AtomicI64>,
+    /// How the window is woken when the session has something to say of its
+    /// own, without having been told it by the agent.
+    notify: Notify,
 }
 
 impl Session {
@@ -163,6 +172,7 @@ impl Session {
             stdin: Arc::new(Mutex::new(stdin)),
             state: state.clone(),
             next: next.clone(),
+            notify: notify.clone(),
         };
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
@@ -292,6 +302,10 @@ impl Session {
     }
 
     /// Puts the session into the mode `mode` names.
+    ///
+    /// The mode is taken as changed as soon as it is asked for: the agent
+    /// answers a set mode with nothing at all, and a reader who has chosen a
+    /// mode should see it. An agent that refuses puts back the mode it was in.
     pub fn set_mode(&self, mode: &str) {
         let Ok(mut state) = self.state.lock() else {
             return;
@@ -299,14 +313,75 @@ impl Session {
         let Some(id) = state.id.clone() else {
             return;
         };
+        let was = state.mode.replace(mode.to_owned());
+        state.events.push(Event::Mode(mode.to_owned()));
+        state.fresh = true;
         let request = self.request(
             &mut state,
-            Sent::Mode,
+            Sent::Mode(was),
             "session/set_mode",
             &json!({ "sessionId": id, "modeId": mode }),
         );
         drop(state);
         self.send(&request);
+        (self.notify)();
+    }
+
+    /// Sets the knob `knob` names to the value `value` names.
+    ///
+    /// Like a mode, a knob is taken as set as soon as it is asked for: the
+    /// agent answers with the knobs as they now stand, which replaces this,
+    /// and an agent that refuses puts back the knobs as they were.
+    pub fn set_knob(&self, knob: &str, value: &str) {
+        self.turn_knob(knob, json!({ "value": value }), |setting| {
+            if let Setting::Picked { value: set, .. } = setting {
+                *set = value.to_owned();
+            }
+        });
+    }
+
+    /// Puts the switch `knob` names on or off.
+    pub fn switch_knob(&self, knob: &str, on: bool) {
+        self.turn_knob(knob, json!({ "type": "boolean", "value": on }), |setting| {
+            if let Setting::Switched(set) = setting {
+                *set = on;
+            }
+        });
+    }
+
+    /// Asks for the knob `knob` names to be set, having set it here first.
+    ///
+    /// `value` is what goes on the wire and `set` is the same change made to
+    /// the knob the window is drawing, so that the two never disagree while
+    /// the agent is answering.
+    fn turn_knob(&self, knob: &str, value: Value, set: impl FnOnce(&mut Setting)) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let Some(id) = state.id.clone() else {
+            return;
+        };
+        let were = state.knobs.clone();
+        if let Some(turned) = state.knobs.iter_mut().find(|held| held.id == knob) {
+            set(&mut turned.setting);
+        }
+        let knobs = state.knobs.clone();
+        state.events.push(Event::Knobs(knobs));
+        state.fresh = true;
+
+        let mut params = json!({ "sessionId": id, "configId": knob });
+        if let (Some(params), Some(value)) = (params.as_object_mut(), value.as_object()) {
+            params.extend(value.clone());
+        }
+        let request = self.request(
+            &mut state,
+            Sent::Knob(were),
+            "session/set_config_option",
+            &params,
+        );
+        drop(state);
+        self.send(&request);
+        (self.notify)();
     }
 
     /// Everything the agent has said since this was last asked.
@@ -314,6 +389,15 @@ impl Session {
         self.state
             .lock()
             .map(|mut state| std::mem::take(&mut state.events))
+            .unwrap_or_default()
+    }
+
+    /// What this session can be set to, as the agent last offered it.
+    #[must_use]
+    pub fn knobs(&self) -> Vec<Knob> {
+        self.state
+            .lock()
+            .map(|state| state.knobs.clone())
             .unwrap_or_default()
     }
 
@@ -477,8 +561,21 @@ impl Reader {
                 self.raise(Event::Failed(complaint(error)));
                 self.idle();
             }
+            (Sent::Mode(was), Some(error)) => {
+                self.raise(Event::Failed(complaint(error)));
+                if let Some(was) = was {
+                    self.moded(&was);
+                }
+            }
+            (Sent::Knob(were), Some(error)) => {
+                self.raise(Event::Failed(complaint(error)));
+                self.knobbed(were);
+            }
             (_, Some(error)) => self.raise(Event::Failed(complaint(error))),
-            (Sent::Mode, None) => {}
+            (Sent::Mode(_), None) => {}
+            (Sent::Knob(_), None) => {
+                self.knobbed(update::knobs(&message["result"]["configOptions"]));
+            }
         }
     }
 
@@ -544,18 +641,36 @@ impl Reader {
     }
 
     /// Takes down the conversation the agent opened, and starts talking.
+    ///
+    /// An agent says what its session can be set to in one of two ways: as
+    /// modes, or as the knobs that took their place and hold the mode among
+    /// them. An agent that says both is taken at its newer word, so that one
+    /// fact about the session is never shown twice.
     fn opened(&self, result: &Value) {
         let Some(id) = result["sessionId"].as_str().map(str::to_owned) else {
             self.raise(Event::Failed("the agent opened no session".to_owned()));
             return;
         };
-        let modes = update::modes(&result["modes"]);
-        let current = result["modes"]["currentModeId"].as_str().map(str::to_owned);
+        let knobs = update::knobs(&result["configOptions"]);
+        let has_knobs = !knobs.is_empty();
+        let modes = match has_knobs {
+            true => Vec::new(),
+            false => update::modes(&result["modes"]),
+        };
+        let current = result["modes"]["currentModeId"]
+            .as_str()
+            .filter(|_| !has_knobs)
+            .map(str::to_owned);
 
         if let Ok(mut state) = self.state.lock() {
             state.id = Some(id);
+            state.knobs = knobs.clone();
             state.modes = modes;
+            state.mode = current.clone();
             state.events.push(Event::Ready);
+            if has_knobs {
+                state.events.push(Event::Knobs(knobs));
+            }
             if let Some(current) = current {
                 state.events.push(Event::Mode(current));
             }
@@ -599,6 +714,11 @@ impl Reader {
         let Some(event) = update::event(update, &mut state.tools) else {
             return;
         };
+        match &event {
+            Event::Mode(mode) => state.mode = Some(mode.clone()),
+            Event::Knobs(knobs) => state.knobs = knobs.clone(),
+            _ => {}
+        }
         state.events.push(event);
         state.fresh = true;
         drop(state);
@@ -661,6 +781,31 @@ impl Reader {
             "id": id,
             "error": { "code": code, "message": message },
         }));
+    }
+
+    /// Says the session is in the mode `mode` names, without asking for it.
+    ///
+    /// This is the way back from a mode the agent would not take: what it
+    /// puts back is what the session was in before the mode was asked for.
+    fn moded(&self, mode: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.mode = Some(mode.to_owned());
+        }
+        self.raise(Event::Mode(mode.to_owned()));
+    }
+
+    /// Says what the session is set to, as the agent has just put it.
+    ///
+    /// This is both the answer to a knob being set and the way back from one
+    /// the agent would not set: either way the agent's list is the list.
+    fn knobbed(&self, knobs: Vec<Knob>) {
+        if knobs.is_empty() {
+            return;
+        }
+        if let Ok(mut state) = self.state.lock() {
+            state.knobs = knobs.clone();
+        }
+        self.raise(Event::Knobs(knobs));
     }
 
     /// Adds `event` to what the window has yet to see, and wakes it.

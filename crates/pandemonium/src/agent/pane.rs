@@ -17,9 +17,9 @@
 
 use std::path::Path;
 
-use pm_acp::{Ask, Output, Status, Step, ToolCall, Voice, Weight};
+use pm_acp::{About, Ask, Knob, Output, Setting, Status, Step, ToolCall, Voice, Weight};
 use pm_gfx::Rgba;
-use pm_ui::{Div, Styled, Theme, button, h_flex, rule, text, v_flex};
+use pm_ui::{Div, IconName, IconSize, Styled, Theme, button, h_flex, icon, rule, text, v_flex};
 
 use crate::agent::{Block, SessionId, Talk};
 use crate::input::input_view;
@@ -126,13 +126,12 @@ pub fn agent_pane(theme: &Theme, talk: &Talk, typing: bool, width: f32) -> Div<M
         .children(
             talk.asks()
                 .iter()
-                .flat_map(|ask| [rule(theme), permission(theme, talk.id(), ask)]),
+                .map(|ask| permission(theme, talk.id(), ask)),
         )
-        .child(rule(theme))
         .when(!talk.offered().is_empty(), |pane| {
             pane.child(commands(theme, talk))
         })
-        .child(prompt_bar(theme, talk, typing))
+        .child(composer(theme, talk, typing))
 }
 
 /// Builds the list of commands the slash being typed narrows to.
@@ -152,7 +151,7 @@ fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
         .map(|(place, command)| {
             h_flex()
                 .w_full()
-                .px(1.75)
+                .px(1)
                 .py(0.25)
                 .gap(1)
                 .items_center()
@@ -173,11 +172,16 @@ fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
         })
         .collect::<Vec<_>>();
 
-    v_flex()
-        .w_full()
-        .py(0.5)
-        .bg(theme.colors.surface)
-        .children(rows)
+    v_flex().w_full().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .py(0.5)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.border)
+            .bg(theme.colors.surface)
+            .overflow_hidden()
+            .children(rows),
+    )
 }
 
 /// The first line of `said`, which is as much of it as a row has room for.
@@ -236,7 +240,7 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
 /// The rule the conversation opens with: which agent, over which worktree.
 fn opening(talk: &Talk, columns: usize) -> Row {
     let worktree = name_of(talk.root());
-    let said = match talk.mode() {
+    let said = match talk.mode_name() {
         Some(mode) => format!("{RULED} {} ── {worktree} ── {mode} ", talk.agent().name),
         None => format!("{RULED} {} ── {worktree} ", talk.agent().name),
     };
@@ -389,9 +393,6 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
                 .color(theme.colors.text_subtle),
         )
         .child(h_flex().flex_1())
-        .when_some(talk.mode().map(str::to_owned), |bar, mode| {
-            bar.child(chip(theme, mode))
-        })
         .child(chip(theme, doing(talk)))
 }
 
@@ -426,72 +427,147 @@ fn permission(theme: &Theme, session: SessionId, ask: &Ask) -> Div<Message> {
         })
         .collect::<Vec<_>>();
 
-    v_flex()
-        .w_full()
-        .px(1.75)
-        .py(1)
-        .gap(0.75)
-        .bg(theme.colors.surface)
-        .child(
-            text(format!("{BULLET}{}", ask.tool.title))
-                .text_xs()
-                .font_mono()
-                .color(theme.colors.warning),
-        )
-        .child(h_flex().gap(0.75).children(choices))
+    v_flex().w_full().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .p(0.75)
+            .gap(0.75)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.warning)
+            .bg(theme.colors.surface)
+            .child(
+                text(format!("{BULLET}{}", ask.tool.title))
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.warning),
+            )
+            .child(h_flex().gap(0.75).children(choices)),
+    )
 }
 
 /// Builds the box the next prompt is written in, and what it takes.
-fn prompt_bar(theme: &Theme, talk: &Talk, typing: bool) -> Div<Message> {
+///
+/// Everything a reader sets about the turn they are about to send sits in one
+/// card with the box they are typing it in: which model, how hard it thinks,
+/// what mode it is in and whether it is sent or stopped. They are facts about
+/// the next turn, so they are where the next turn is written and not in a bar
+/// at the top of the pane.
+fn composer(theme: &Theme, talk: &Talk, typing: bool) -> Div<Message> {
     let id = talk.id();
+    let edge = match typing {
+        true => theme.colors.border_focused,
+        false => theme.colors.border,
+    };
 
-    v_flex()
-        .w_full()
-        .px(1.75)
-        .py(1)
-        .gap(0.5)
-        .bg(theme.colors.background)
-        .child(
-            h_flex()
-                .w_full()
-                .gap(0.75)
-                .items_center()
-                .child(
-                    text(">")
-                        .text_xs()
-                        .font_mono()
-                        .color(theme.colors.text_subtle),
-                )
-                .child(input_view(
-                    theme,
-                    talk.prompt(),
-                    typing,
-                    PROMPT_LINES,
-                    move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
-                    Message::ShowInputMenu,
-                )),
-        )
-        .child(
-            h_flex()
-                .gap(2)
-                .children(hints(talk).into_iter().map(|hint| {
-                    text(hint)
-                        .text_xs()
-                        .font_mono()
-                        .color(theme.colors.text_subtle)
-                })),
-        )
+    v_flex().w_full().px(1.25).pt(0.5).pb(1).child(
+        v_flex()
+            .w_full()
+            .gap(0.5)
+            .p(0.75)
+            .rounded(theme.radius.lg)
+            .border_1(edge)
+            .bg(theme.colors.surface)
+            .child(input_view(
+                theme,
+                talk.prompt(),
+                typing,
+                PROMPT_LINES,
+                move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
+                Message::ShowInputMenu,
+            ))
+            .child(controls(theme, talk)),
+    )
 }
 
-/// What the line under the prompt says the keyboard does.
-fn hints(talk: &Talk) -> [&'static str; 3] {
-    if !talk.offered().is_empty() {
-        return ["↑↓ choose", "⏎ take the command", "esc leave the prompt"];
+/// Builds the row of controls under the prompt.
+fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
+    let session = talk.id();
+
+    h_flex()
+        .w_full()
+        .gap(0.5)
+        .items_center()
+        .child(
+            pill(theme, "/", theme.syntax.function).on_click(Message::StartAgentCommand(session)),
+        )
+        .children(
+            talk.knobs()
+                .into_iter()
+                .enumerate()
+                .filter(|(_, knob)| knob.about != About::Mode)
+                .map(|(place, knob)| {
+                    pill(theme, set_to(&knob), theme.colors.text_muted)
+                        .on_click(Message::PressKnob(session, place))
+                }),
+        )
+        .child(h_flex().flex_1())
+        .when_some(mode_of(talk), |row, mode| {
+            row.child(
+                pill(theme, mode, theme.colors.text_muted)
+                    .on_click(Message::ShowAgentModes(session)),
+            )
+        })
+        .child(send(theme, talk))
+}
+
+/// What the session's mode is called, whichever way the agent says it.
+///
+/// An agent says its mode as a mode or as a knob that is about the mode; the
+/// pill reads the same either way, and it sits where the mode belongs rather
+/// than among the model and the rest.
+fn mode_of(talk: &Talk) -> Option<String> {
+    match talk.mode_name() {
+        Some(mode) => Some(mode),
+        None => talk.knob_about(About::Mode).map(|knob| set_to(&knob)),
     }
-    match talk.is_busy() {
-        true => ["⏎ send", "⇧⏎ newline", "esc interrupt"],
-        false => ["⏎ send", "⇧⏎ newline", "esc leave the prompt"],
+}
+
+/// Builds one of the composer's pills: a label that is also a control.
+fn pill(theme: &Theme, label: impl Into<String>, color: Rgba) -> Div<Message> {
+    h_flex()
+        .h_px(theme.size.icon_control)
+        .px(0.75)
+        .items_center()
+        .rounded(theme.radius.full)
+        .bg(theme.colors.surface_hover)
+        .hover_bg(theme.colors.surface_active)
+        .child(text(label.into()).text_xs().color(color))
+}
+
+/// What a knob's pill says: what it is set to, or what it is and whether.
+fn set_to(knob: &Knob) -> String {
+    match &knob.setting {
+        Setting::Picked { value, picks } => picks
+            .iter()
+            .find(|pick| &pick.id == value)
+            .map_or_else(|| value.clone(), |pick| pick.name.clone()),
+        Setting::Switched(true) => format!("{} on", knob.name),
+        Setting::Switched(false) => format!("{} off", knob.name),
     }
+}
+
+/// Builds the control that sends the turn, or stops the one that is running.
+fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
+    let session = talk.id();
+    let (name, message) = match talk.is_busy() {
+        true => (IconName::Close, Message::StopAgentTurn(session)),
+        false => (IconName::ArrowUp, Message::SendPrompt(session)),
+    };
+
+    v_flex()
+        .size_px(theme.size.icon_control)
+        .items_center()
+        .justify_center()
+        .rounded(theme.radius.md)
+        .bg(theme.colors.accent)
+        .hover_bg(theme.colors.accent_hover)
+        .active_bg(theme.colors.accent_active)
+        .on_click(message)
+        .child(
+            icon(name)
+                .size(IconSize::Small)
+                .color(theme.colors.text_on_accent),
+        )
 }
 
 /// How many characters of the conversation's type fit across `width`.

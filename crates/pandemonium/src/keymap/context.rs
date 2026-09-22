@@ -259,7 +259,8 @@ impl std::error::Error for ParseWhenError {}
 /// The vocabulary lives here so that a clause in a keymap table and the window
 /// that fills the context in spell the same key.
 pub mod keys {
-    /// What the focused pane holds: `file`, `diff`, `agent`, `terminal` or `input`.
+    /// What the focused pane holds: `file`, `diff`, `review`, `agent`,
+    /// `terminal`, `prompt` — an agent's prompt — or `commit`.
     pub const PANE_KIND: &str = "pane.kind";
     /// Set while a project has the focus.
     pub const PROJECT_FOCUSED: &str = "project.focused";

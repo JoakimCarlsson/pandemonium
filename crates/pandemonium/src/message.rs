@@ -293,6 +293,16 @@ pub enum Message {
     AnswerAgent(SessionId, u64, usize),
     /// Put the command this session is offering in this place into its prompt.
     TakeAgentCommand(SessionId, usize),
+    /// Ask which of its agent's modes to put this session into.
+    ShowAgentModes(SessionId),
+    /// Put this session into the mode after the one it is in.
+    CycleAgentMode(SessionId),
+    /// Act on the knob in this place: ask which value, or flip the switch.
+    PressKnob(SessionId, usize),
+    /// Start naming one of this session's commands, in its prompt.
+    StartAgentCommand(SessionId),
+    /// Stop the turn this session is running.
+    StopAgentTurn(SessionId),
     /// Open the menu of things that can be done to the box being written in.
     ShowInputMenu,
     /// Carry out this command in whatever box has the keyboard.

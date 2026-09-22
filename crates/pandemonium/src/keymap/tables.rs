@@ -28,6 +28,21 @@ pub const BASE: &[Row] = &[
     ("primary+shift+d", Action::ReviewSession, "session.focused"),
     ("primary+shift+enter", Action::FocusAgent, "session.focused"),
     (
+        "primary+shift+m",
+        Action::ChangeAgentMode,
+        "pane.kind == agent || pane.kind == prompt",
+    ),
+    (
+        "shift+tab",
+        Action::CycleAgentMode,
+        "pane.kind == agent || pane.kind == prompt",
+    ),
+    (
+        "primary+alt+/",
+        Action::ChangeAgentModel,
+        "pane.kind == agent || pane.kind == prompt",
+    ),
+    (
         "primary+k primary+shift+e",
         Action::EndSession,
         "session.focused",
@@ -52,37 +67,37 @@ pub const BASE: &[Row] = &[
     (
         "primary+z",
         Action::Undo,
-        "pane.kind == file || pane.kind == prompt",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
     ),
     (
         "primary+shift+z",
         Action::Redo,
-        "pane.kind == file || pane.kind == prompt",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
     ),
     (
         "primary+y",
         Action::Redo,
-        "pane.kind == file || pane.kind == prompt",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
     ),
     (
         "primary+x",
         Action::Cut,
-        "pane.kind == file || pane.kind == prompt",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
     ),
     (
         "primary+c",
         Action::Copy,
-        "pane.kind == file || pane.kind == prompt",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
     ),
     (
         "primary+v",
         Action::Paste,
-        "pane.kind == file || pane.kind == prompt",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
     ),
     (
         "primary+a",
         Action::SelectAll,
-        "pane.kind == file || pane.kind == prompt",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
     ),
     ("primary+l", Action::SelectLine, "pane.kind == file"),
     (

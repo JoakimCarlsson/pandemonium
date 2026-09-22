@@ -34,6 +34,8 @@ pub enum Event {
     Offers(Vec<Command>),
     /// The mode the session has changed to.
     Mode(String),
+    /// What the session can be set to, as the agent now offers it.
+    Knobs(Vec<Knob>),
     /// A tool call the agent will not run until the reader allows it.
     Asked(Ask),
     /// The turn is over, for the reason given.
@@ -72,6 +74,69 @@ pub struct Mode {
     /// What the agent calls this mode when it is set.
     pub id: String,
     /// What a menu offering it says.
+    pub name: String,
+    /// What it means, where the agent explains it.
+    pub description: Option<String>,
+}
+
+/// Something about the session a reader can set.
+///
+/// Which model the agent is using, how hard it is made to think and whatever
+/// switch it offers are one kind of thing to the protocol and one kind of
+/// thing here: a named control, what it is set to, and what else it takes.
+/// The mode is one of these too, for an agent that says so this way rather
+/// than through [`Mode`].
+#[derive(Clone, Debug)]
+pub struct Knob {
+    /// What the agent calls this knob when it is set.
+    pub id: String,
+    /// What a chip and a menu call it.
+    pub name: String,
+    /// What it does, where the agent explains it.
+    pub description: Option<String>,
+    /// What it is about, as far as the editor cares.
+    pub about: About,
+    /// What it is set to, and what else it can be set to.
+    pub setting: Setting,
+}
+
+/// What a knob is about.
+///
+/// The agent says this so that a client can put the model where a reader
+/// expects the model to be; a knob it says nothing about is still shown, and
+/// is still set the same way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum About {
+    /// Which model the agent is talking to.
+    Model,
+    /// Which mode the session is in.
+    Mode,
+    /// How hard the model is made to think.
+    Thinking,
+    /// Something only the agent knows the meaning of.
+    Other,
+}
+
+/// What a knob is set to.
+#[derive(Clone, Debug)]
+pub enum Setting {
+    /// One value out of a list of them.
+    Picked {
+        /// What it is set to now.
+        value: String,
+        /// What it can be set to.
+        picks: Vec<Pick>,
+    },
+    /// On or off.
+    Switched(bool),
+}
+
+/// One value a knob can be set to.
+#[derive(Clone, Debug)]
+pub struct Pick {
+    /// What the agent calls this value when it is set.
+    pub id: String,
+    /// What a menu row says.
     pub name: String,
     /// What it means, where the agent explains it.
     pub description: Option<String>,
@@ -253,6 +318,7 @@ pub(crate) fn event(update: &Value, tools: &mut Tools) -> Option<Event> {
         "plan" => Some(Event::Planned(steps(&update["entries"]))),
         "available_commands_update" => Some(Event::Offers(commands(&update["availableCommands"]))),
         "current_mode_update" => Some(Event::Mode(update["currentModeId"].as_str()?.to_owned())),
+        "config_option_update" => Some(Event::Knobs(knobs(&update["configOptions"]))),
         _ => None,
     }
 }
@@ -287,6 +353,77 @@ pub(crate) fn modes(modes: &Value) -> Vec<Mode> {
             })
         })
         .collect()
+}
+
+/// The knobs `options` lists, in the order the agent put them in.
+///
+/// A knob of a kind the editor cannot draw is dropped rather than shown
+/// broken: the protocol grows a new one whenever a client learns to set a new
+/// kind of thing, and an agent is free to offer more than the window takes.
+pub(crate) fn knobs(options: &Value) -> Vec<Knob> {
+    options
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            Some(Knob {
+                id: option["id"].as_str()?.to_owned(),
+                name: option["name"].as_str().unwrap_or_default().to_owned(),
+                description: option["description"].as_str().map(str::to_owned),
+                about: about(option["category"].as_str()),
+                setting: setting(option)?,
+            })
+        })
+        .collect()
+}
+
+/// What `category` says a knob is about.
+fn about(category: Option<&str>) -> About {
+    match category {
+        Some("model") => About::Model,
+        Some("mode") => About::Mode,
+        Some("thought_level") => About::Thinking,
+        _ => About::Other,
+    }
+}
+
+/// What `option` says a knob is set to, where it says anything the editor
+/// can set.
+fn setting(option: &Value) -> Option<Setting> {
+    match option["type"].as_str()? {
+        "select" => Some(Setting::Picked {
+            value: option["currentValue"].as_str()?.to_owned(),
+            picks: picks(&option["options"]),
+        }),
+        "boolean" => Some(Setting::Switched(option["currentValue"].as_bool()?)),
+        _ => None,
+    }
+}
+
+/// The values `options` lists, whether or not they come in groups.
+///
+/// A group is a heading over the values it holds; the window shows one flat
+/// list, so the headings are dropped and the values are kept in the order the
+/// groups put them in.
+fn picks(options: &Value) -> Vec<Pick> {
+    options
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|option| match option["options"].as_array() {
+            Some(grouped) => grouped.iter().filter_map(pick).collect::<Vec<_>>(),
+            None => pick(option).into_iter().collect(),
+        })
+        .collect()
+}
+
+/// The one value `option` describes.
+fn pick(option: &Value) -> Option<Pick> {
+    Some(Pick {
+        id: option["value"].as_str()?.to_owned(),
+        name: option["name"].as_str().unwrap_or_default().to_owned(),
+        description: option["description"].as_str().map(str::to_owned),
+    })
 }
 
 /// The permission request `params` asks, read against the tool calls so far.

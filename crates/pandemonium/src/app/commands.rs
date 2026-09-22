@@ -74,6 +74,23 @@ impl App {
             }
             Action::OpenReview => return self.apply(Message::OpenReview),
             Action::NewAgentSession => return self.apply(Message::NewAgentSession),
+            Action::ChangeAgentMode => {
+                if let Some(session) = self.focused_session() {
+                    return self.apply(Message::ShowAgentModes(session));
+                }
+            }
+            Action::CycleAgentMode => {
+                if let Some(session) = self.focused_session() {
+                    return self.apply(Message::CycleAgentMode(session));
+                }
+            }
+            Action::ChangeAgentModel => {
+                if let Some(session) = self.focused_session()
+                    && let Some(place) = self.knob_about(session, pm_acp::About::Model)
+                {
+                    return self.apply(Message::PressKnob(session, place));
+                }
+            }
             Action::StageSelectedChanges => return self.apply(Message::StageSelection),
             Action::UnstageSelectedChanges => return self.apply(Message::UnstageSelection),
             Action::DiscardSelectedChanges => return self.apply(Message::DiscardSelection),

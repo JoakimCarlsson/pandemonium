@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use pm_core::ProjectId;
 use pm_text::Position;
 
+use crate::agent::SessionId;
 use crate::field::Field;
 use crate::keymap::Action;
 
@@ -55,6 +56,10 @@ pub enum Kind {
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
     Agents,
+    /// The modes the agent of the session in hand can be put into.
+    Modes,
+    /// The values one of that agent's knobs takes: its models, say.
+    Knob,
 }
 
 impl Kind {
@@ -78,6 +83,8 @@ impl Kind {
             Self::RenamePath => "New name",
             Self::NewBranch => "Name of the new branch",
             Self::Agents => "Start an agent in this worktree",
+            Self::Modes => "Put this agent into a mode",
+            Self::Knob => "Set this to one of what it takes",
         }
     }
 
@@ -122,6 +129,10 @@ pub enum Choice {
     PushRemote(ProjectId, String),
     /// Start this agent in the active project's worktree.
     Agent(pm_acp::Agent),
+    /// Put this session into the mode this names.
+    Mode(SessionId, String),
+    /// Set this session's knob to the value this names.
+    Knob(SessionId, String, String),
 }
 
 /// One thing the picker is offering.

@@ -13,7 +13,9 @@ use std::path::Path;
 
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
-use pm_acp::{Agent, Ask, Command, Event, Notify, Session, Stop, Voice};
+use pm_acp::{
+    About, Agent, Ask, Command, Event, Knob, Mode, Notify, Session, Setting, Stop, Voice,
+};
 use pm_core::ProjectId;
 
 /// A session's identity for as long as it is running.
@@ -156,6 +158,12 @@ impl Talk {
         self.take_command(self.chosen());
     }
 
+    /// Puts a slash in the prompt, which is what offers the commands.
+    pub fn start_command(&mut self) {
+        self.prompt.set("/");
+        self.chosen = 0;
+    }
+
     /// Starts the selection again, for a prompt that has been typed into.
     pub fn retyped(&mut self) {
         self.chosen = 0;
@@ -191,6 +199,101 @@ impl Talk {
     /// The mode the agent is in, where it has modes.
     pub fn mode(&self) -> Option<&str> {
         self.mode.as_deref()
+    }
+
+    /// The modes the agent takes, in the order it offered them.
+    ///
+    /// An agent says what its modes are when the conversation opens, and an
+    /// agent that has none says nothing: an empty list is a session that is
+    /// only ever in one mode, not one whose modes have not arrived.
+    pub fn modes(&self) -> Vec<Mode> {
+        self.session.modes()
+    }
+
+    /// What the mode it is in is called, which is what a reader is shown.
+    ///
+    /// A mode the agent has not named is shown as the agent named it: a
+    /// session that has been put into a mode nobody listed is still in it.
+    pub fn mode_name(&self) -> Option<String> {
+        let mode = self.mode.as_deref()?;
+        let named = self
+            .modes()
+            .into_iter()
+            .find(|offered| offered.id == mode)
+            .map(|offered| offered.name);
+        Some(named.unwrap_or_else(|| mode.to_owned()))
+    }
+
+    /// Puts the session into the mode `mode` names.
+    pub fn set_mode(&self, mode: &str) {
+        self.session.set_mode(mode);
+    }
+
+    /// What the session can be set to, as the agent now offers it.
+    ///
+    /// A model, how hard the agent is made to think, a switch it offers and,
+    /// for an agent that says so this way, the mode: the protocol has one
+    /// shape for all of them, and so has the window.
+    pub fn knobs(&self) -> Vec<Knob> {
+        self.session.knobs()
+    }
+
+    /// The knob `id` names.
+    pub fn knob(&self, id: &str) -> Option<Knob> {
+        self.knobs().into_iter().find(|knob| knob.id == id)
+    }
+
+    /// The knob that is about `about`, where the agent offers one.
+    pub fn knob_about(&self, about: About) -> Option<Knob> {
+        self.knobs().into_iter().find(|knob| knob.about == about)
+    }
+
+    /// Sets the knob `id` names to the value `value` names.
+    pub fn set_knob(&self, id: &str, value: &str) {
+        self.session.set_knob(id, value);
+    }
+
+    /// Puts the switch `id` names the other way.
+    pub fn toggle_knob(&self, id: &str) {
+        let Some(Setting::Switched(on)) = self.knob(id).map(|knob| knob.setting) else {
+            return;
+        };
+        self.session.switch_knob(id, !on);
+    }
+
+    /// Sets the knob `id` names to the value after the one it is set to.
+    pub fn cycle_knob(&self, id: &str) {
+        let Some(knob) = self.knob(id) else {
+            return;
+        };
+        let Setting::Picked { value, picks } = knob.setting else {
+            return self.toggle_knob(id);
+        };
+        if picks.is_empty() {
+            return;
+        }
+        let at = picks
+            .iter()
+            .position(|pick| pick.id == value)
+            .map_or(0, |at| (at + 1) % picks.len());
+        self.set_knob(id, &picks[at].id);
+    }
+
+    /// Puts it into the mode after the one it is in, wrapping round.
+    ///
+    /// One chord walks the modes because there are two or three of them and
+    /// a reader changing mode is usually going to the next one; the list is
+    /// there for the times they are not.
+    pub fn cycle_mode(&self) {
+        let modes = self.modes();
+        if modes.is_empty() {
+            return;
+        }
+        let at = modes
+            .iter()
+            .position(|offered| Some(offered.id.as_str()) == self.mode())
+            .map_or(0, |at| (at + 1) % modes.len());
+        self.set_mode(&modes[at].id);
     }
 
     /// Whether the agent's process is still there.
@@ -282,6 +385,7 @@ impl Talk {
             Event::Planned(steps) => self.transcript.planned(steps),
             Event::Offers(commands) => self.commands = commands,
             Event::Mode(mode) => self.mode = Some(mode),
+            Event::Knobs(_) => {}
             Event::Asked(ask) => self.asks.push(ask),
             Event::Stopped(stop) => {
                 self.busy = false;

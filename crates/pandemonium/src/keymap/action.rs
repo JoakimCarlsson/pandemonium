@@ -177,6 +177,12 @@ pub enum Action {
     OpenReview,
     /// Start an agent in the active project's worktree, in a pane.
     NewAgentSession,
+    /// Choose which mode to put the agent in hand into.
+    ChangeAgentMode,
+    /// Put it into the mode after the one it is in.
+    CycleAgentMode,
+    /// Choose which model that agent is to talk to.
+    ChangeAgentModel,
     /// Put what the list of changes is acting on into the index.
     StageSelectedChanges,
     /// Take what it is acting on back out of the index.
@@ -378,6 +384,12 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::ShowChanges, "git.changes", "Show Source Control"),
     (Action::OpenReview, "git.review", "Review Changes"),
     (Action::NewAgentSession, "agent.new", "New Agent Session"),
+    (Action::ChangeAgentMode, "agent.mode", "Change Agent Mode"),
+    (
+        Action::CycleAgentMode,
+        "agent.cycle_mode",
+        "Cycle Agent Mode",
+    ),
     (Action::StageSelectedChanges, "git.stage", "Stage Changes"),
     (
         Action::UnstageSelectedChanges,
