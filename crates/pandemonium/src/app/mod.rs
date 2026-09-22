@@ -1605,6 +1605,9 @@ impl ApplicationHandler<Wake> for App {
                     self.follow_agents();
                     self.request_redraw();
                 }
+                if self.agents.take_opened() {
+                    self.store();
+                }
             }
             Wake::Language => {
                 let answered = self.collect_answers();

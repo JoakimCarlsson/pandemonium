@@ -75,6 +75,11 @@ impl Talk {
         self.session.root()
     }
 
+    /// What the agent calls this conversation, once it has opened one.
+    pub fn resumable(&self) -> Option<String> {
+        self.session.id()
+    }
+
     /// Everything said so far.
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
@@ -311,6 +316,8 @@ pub struct Sessions {
     next: SessionId,
     /// How an agent wakes the window once it has something to say.
     notify: Option<Notify>,
+    /// Whether a session has opened its conversation since this was asked.
+    opened: bool,
 }
 
 impl Sessions {
@@ -321,8 +328,34 @@ impl Sessions {
 
     /// Starts `agent` in `root` for `project`, and says which session it is.
     pub fn start(&mut self, project: ProjectId, root: &Path, agent: Agent) -> Option<SessionId> {
+        self.open(project, root, agent, None)
+    }
+
+    /// Takes the conversation `resume` names up again, in a session of its own.
+    pub fn resume(
+        &mut self,
+        project: ProjectId,
+        root: &Path,
+        agent: Agent,
+        resume: &str,
+    ) -> Option<SessionId> {
+        self.open(project, root, agent, Some(resume))
+    }
+
+    /// Starts `agent` in `root`, taking up `resume` where there is one.
+    fn open(
+        &mut self,
+        project: ProjectId,
+        root: &Path,
+        agent: Agent,
+        resume: Option<&str>,
+    ) -> Option<SessionId> {
         let notify = self.notify.clone()?;
-        let session = match Session::start(agent, root, notify) {
+        let started = match resume {
+            Some(resume) => Session::resume(agent, root, resume, notify),
+            None => Session::start(agent, root, notify),
+        };
+        let session = match started {
             Ok(session) => session,
             Err(error) => {
                 eprintln!(
@@ -398,11 +431,21 @@ impl Sessions {
         let mut changed = false;
         for talk in self.talks.values_mut() {
             for event in talk.session.drain() {
+                self.opened |= matches!(event, Event::Ready);
                 talk.take(event);
                 changed = true;
             }
         }
         changed
+    }
+
+    /// Whether a conversation has been opened since this was last asked.
+    ///
+    /// The window writes down which conversation each pane is holding so
+    /// that the next launch can take it up again, and the name to write down
+    /// is the agent's, which does not exist until the agent has answered.
+    pub fn take_opened(&mut self) -> bool {
+        std::mem::take(&mut self.opened)
     }
 }
 

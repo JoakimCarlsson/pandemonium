@@ -56,6 +56,8 @@ enum Sent {
     Login,
     /// The conversation being opened.
     Open,
+    /// A conversation from a launch before this one being taken up again.
+    Resume,
     /// A turn.
     Turn,
     /// A change of mode.
@@ -67,6 +69,10 @@ enum Sent {
 struct State {
     /// What the agent calls this conversation, once it has opened one.
     id: Option<String>,
+    /// The conversation to take up again, before one has been opened.
+    resume: Option<String>,
+    /// Whether the agent said it can take a conversation up again.
+    loads: bool,
     /// Whether a turn is running, and so whether another may be sent.
     busy: bool,
     /// The prompts waiting for the conversation, or for the turn before them.
@@ -115,6 +121,27 @@ impl Session {
     /// The handshake goes out here and is answered on the reader thread: a
     /// session is startable in a frame because nothing of it is waited for.
     pub fn start(agent: Agent, root: &Path, notify: Notify) -> std::io::Result<Self> {
+        Self::open(agent, root, None, notify)
+    }
+
+    /// Starts `agent` in `root` and takes the conversation `id` names up again.
+    ///
+    /// A window comes back as the last launch left it, and a session is one
+    /// of the things it comes back to: the agent is started again and asked
+    /// for the conversation it was holding, which it replays. An agent that
+    /// cannot do that opens a new conversation instead, because a pane with a
+    /// fresh agent in it is nearer to what the reader left than no pane.
+    pub fn resume(agent: Agent, root: &Path, id: &str, notify: Notify) -> std::io::Result<Self> {
+        Self::open(agent, root, Some(id.to_owned()), notify)
+    }
+
+    /// Starts `agent` in `root`, taking up `resume` where there is one.
+    fn open(
+        agent: Agent,
+        root: &Path,
+        resume: Option<String>,
+        notify: Notify,
+    ) -> std::io::Result<Self> {
         let mut process = agent
             .command()
             .current_dir(root)
@@ -139,6 +166,7 @@ impl Session {
         };
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
+            state.resume = resume;
         }
         session.send(&json!({
             "jsonrpc": "2.0",
@@ -173,6 +201,15 @@ impl Session {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// What the agent calls this conversation, once it has opened one.
+    ///
+    /// This is what a launch writes down and hands back to [`Self::resume`],
+    /// and it is the agent's name for the conversation, not the editor's.
+    #[must_use]
+    pub fn id(&self) -> Option<String> {
+        self.state.lock().ok()?.id.clone()
     }
 
     /// Sends `text` as the reader's next turn.
@@ -416,6 +453,13 @@ impl Reader {
         match (sent, failure) {
             (Sent::Handshake, None) => self.shook(&message["result"]),
             (Sent::Open, None) => self.opened(&message["result"]),
+            (Sent::Resume, None) => self.resumed(&message["result"]),
+            (Sent::Resume, Some(_)) => {
+                if let Ok(mut state) = self.state.lock() {
+                    state.resume = None;
+                }
+                self.open();
+            }
             (Sent::Open, Some(error)) if error["code"] == json!(LOGIN_REQUIRED) => {
                 let logins = self
                     .state
@@ -442,22 +486,61 @@ impl Reader {
     fn shook(&self, result: &Value) {
         if let Ok(mut state) = self.state.lock() {
             state.logins = update::methods(&result["authMethods"]);
+            state.loads = result["agentCapabilities"]["loadSession"] == json!(true);
         }
         self.open();
     }
 
-    /// Asks the agent to open a conversation over the worktree.
+    /// Opens the conversation: the one that was left, or a new one.
     fn open(&self) {
+        let resumed = match self.state.lock() {
+            Ok(state) => state.resume.clone().filter(|_| state.loads),
+            Err(_) => None,
+        };
+        match resumed {
+            Some(resumed) => self.ask(
+                Sent::Resume,
+                "session/load",
+                &json!({
+                    "sessionId": resumed,
+                    "cwd": self.root,
+                    "mcpServers": [],
+                }),
+            ),
+            None => self.ask(
+                Sent::Open,
+                "session/new",
+                &json!({ "cwd": self.root, "mcpServers": [] }),
+            ),
+        }
+    }
+
+    /// Takes up the conversation the last launch left, or opens a new one.
+    ///
+    /// The agent replays what was said before it answers, so by the time this
+    /// returns the transcript is already back; what is left is to say which
+    /// conversation the prompts now go to.
+    fn resumed(&self, result: &Value) {
+        let resumed = match self.state.lock() {
+            Ok(mut state) => state.resume.take(),
+            Err(_) => None,
+        };
+        let Some(resumed) = resumed else {
+            return self.open();
+        };
+        let mut result = result.clone();
+        result["sessionId"] = json!(resumed);
+        self.opened(&result);
+    }
+
+    /// Sends one request of the reader thread's own.
+    fn ask(&self, sent: Sent, method: &str, params: &Value) {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut state) = self.state.lock() {
-            state.sent.insert(id, Sent::Open);
+            state.sent.insert(id, sent);
         }
-        self.replies.send(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "session/new",
-            "params": { "cwd": self.root, "mcpServers": [] },
-        }));
+        self.replies
+            .send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
     }
 
     /// Takes down the conversation the agent opened, and starts talking.

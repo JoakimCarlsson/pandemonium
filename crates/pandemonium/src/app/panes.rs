@@ -313,11 +313,18 @@ impl App {
     /// run gave them, which is the only thing the next launch can act on.
     pub(super) fn saved_panes(&self) -> Saved {
         self.panes.save(&|item| {
-            if item.session().is_some() {
-                return None;
-            }
             let project = self.project_of(item)?;
             let root = self.open.get(project)?.root().to_path_buf();
+            if let Some(session) = item.session() {
+                let talk = self.agents.get(session)?;
+                return Some(SavedTab {
+                    kind: SavedKind::Agent,
+                    project: root,
+                    agent: talk.agent().id.to_owned(),
+                    session: talk.resumable().unwrap_or_default(),
+                    ..SavedTab::default()
+                });
+            }
             if let Some(change) = item.change() {
                 let path = self.reviews.get(&project)?.path_of(change)?;
                 return Some(SavedTab {
@@ -363,11 +370,20 @@ impl App {
             .collect::<Vec<_>>();
         let editor = &mut self.editor;
         let reviews = &mut self.reviews;
+        let agents = &mut self.agents;
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
             let (root, project) = roots
                 .iter()
                 .find(|(root, _)| *root == tab.project)
                 .cloned()?;
+            if tab.kind == SavedKind::Agent {
+                let agent = pm_acp::Agent::named(&tab.agent)?;
+                let session = match tab.session.is_empty() {
+                    true => agents.start(project, &root, agent)?,
+                    false => agents.resume(project, &root, agent, &tab.session)?,
+                };
+                return Some((project, Item::Agent(project, session)));
+            }
             if tab.kind == SavedKind::Review {
                 return Some((project, Item::Review(project)));
             }
