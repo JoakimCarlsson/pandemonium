@@ -102,6 +102,8 @@ impl App {
             (Kind::NewFile | Kind::NewFolder, _) => self.make_path(kind, &typed),
             (Kind::RenamePath, _) => self.rename_path(&typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
+            (Kind::NewSession, _) => self.start_session(&typed),
+            (Kind::CloneUrl, _) => self.clone_project(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
         }
@@ -119,16 +121,16 @@ impl App {
     fn take(&mut self, choice: Choice) {
         match choice {
             Choice::Act(action) => self.act(action),
-            Choice::Open(project, path) => {
+            Choice::Open(scope, path) => {
                 self.jump_to(&Place {
-                    project,
+                    scope,
                     path,
                     position: Position::default(),
                 });
             }
-            Choice::OpenAt(project, path, position) => {
+            Choice::OpenAt(scope, path, position) => {
                 self.jump_to(&Place {
-                    project,
+                    scope,
                     path,
                     position,
                 });
@@ -142,14 +144,18 @@ impl App {
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::FetchRemote(project, remote) => {
-                self.run_for_project(project, RemoteOperation::Fetch, move |root| {
-                    pm_core::fetch_from(root, &remote)
-                });
+                self.run_in(
+                    pm_core::Scope::checkout(project),
+                    RemoteOperation::Fetch,
+                    move |root| pm_core::fetch_from(root, &remote),
+                );
             }
             Choice::PushRemote(project, remote) => {
-                self.run_for_project(project, RemoteOperation::Push, move |root| {
-                    pm_core::push_to(root, &remote)
-                });
+                self.run_in(
+                    pm_core::Scope::checkout(project),
+                    RemoteOperation::Push,
+                    move |root| pm_core::push_to(root, &remote),
+                );
             }
         }
     }
@@ -191,7 +197,7 @@ impl App {
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
             Kind::Modes => self
-                .focused_session()
+                .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
             Kind::Knob | Kind::References => Vec::new(),
             Kind::Search => self.search_rows(query),
@@ -201,7 +207,9 @@ impl App {
             | Kind::NewFile
             | Kind::NewFolder
             | Kind::RenamePath
-            | Kind::NewBranch => Vec::new(),
+            | Kind::NewBranch
+            | Kind::NewSession
+            | Kind::CloneUrl => Vec::new(),
         }
     }
 
@@ -226,12 +234,11 @@ impl App {
             .collect()
     }
 
-    /// Every file of every open project.
+    /// Every file of every worktree the window is holding.
     fn file_rows(&self) -> Vec<Row> {
-        self.open
-            .iter()
-            .flat_map(|project| {
-                let (id, root) = (project.id(), project.root().to_path_buf());
+        self.worktrees()
+            .into_iter()
+            .flat_map(|(id, root)| {
                 pm_core::walk(&root).into_iter().map(move |path| {
                     let name = path
                         .file_name()
@@ -336,13 +343,14 @@ impl App {
         else {
             return;
         };
+        let scope = pm_core::Scope::checkout(project);
         let said = if self.editor.project_is_dirty(project) {
             Err("save or discard open editor changes before changing branch".to_owned())
         } else {
             change(&root)
         };
         let changed = said.is_ok();
-        if let Some(review) = self.reviews.get_mut(&project) {
+        if let Some(review) = self.reviews.get_mut(&scope) {
             review.report(said);
         }
         if !changed {
@@ -352,8 +360,8 @@ impl App {
         }
 
         self.open.refresh(project);
-        self.editor.reload_project(project, &root);
-        if let Some(tree) = self.files.get_mut(&project) {
+        self.editor.reload_project(scope, &root);
+        if let Some(tree) = self.files.get_mut(&scope) {
             tree.reload();
         }
         self.reread_changes();
@@ -365,7 +373,7 @@ impl App {
         let Some(project) = self.open.active() else {
             return;
         };
-        let id = project.id();
+        let id = pm_core::Scope::checkout(project.id());
         let upstream = self
             .reviews
             .get(&id)
@@ -385,27 +393,23 @@ impl App {
         if self.remote_operation.is_some() {
             return;
         }
-        let Some(project) = self.open.active() else {
+        let Some(scope) = self.scope() else {
             return;
         };
-        self.run_for_project(project.id(), kind, operation);
+        self.run_in(scope, kind, operation);
     }
 
-    /// Runs a remote Git operation for one explicitly named project.
-    fn run_for_project(
+    /// Runs a remote Git operation in one explicitly named worktree.
+    fn run_in(
         &mut self,
-        project: ProjectId,
+        scope: pm_core::Scope,
         kind: RemoteOperation,
         operation: impl FnOnce(&Path) -> pm_core::Said + Send + 'static,
     ) {
         if self.remote_operation.is_some() {
             return;
         }
-        let Some(root) = self
-            .open
-            .get(project)
-            .map(|project| project.root().to_path_buf())
-        else {
+        let Some(root) = self.root_of(scope) else {
             return;
         };
         let results = self.git_results.clone();
@@ -416,7 +420,7 @@ impl App {
         std::thread::spawn(move || {
             let said = operation(&root);
             if let Ok(mut results) = results.lock() {
-                results.push((project, said));
+                results.push((scope, said));
             }
             wake();
         });
@@ -425,7 +429,7 @@ impl App {
     /// Every error and warning a server has reported in an open file.
     fn problem_rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
-        for (project, path, file) in self.open_files() {
+        for (scope, path, file) in self.open_files() {
             let Some(document) = self.editor.get(file) else {
                 continue;
             };
@@ -439,7 +443,7 @@ impl App {
                         path.file_name().unwrap_or_default().to_string_lossy(),
                         found.range.start.line + 1
                     ),
-                    choice: Choice::OpenAt(project, path.clone(), found.range.start),
+                    choice: Choice::OpenAt(scope, path.clone(), found.range.start),
                     enabled: true,
                 });
             }
@@ -447,7 +451,7 @@ impl App {
         rows
     }
 
-    /// Every place `query` appears in the worktrees of the open projects.
+    /// Every place `query` appears in the worktrees the window is holding.
     fn search_rows(&self, query: &str) -> Vec<Row> {
         if query.len() < 2 {
             return Vec::new();
@@ -455,8 +459,7 @@ impl App {
         let needle = query.to_lowercase().chars().collect::<Vec<_>>();
         let mut rows = Vec::new();
 
-        for project in self.open.iter() {
-            let (id, root) = (project.id(), project.root().to_path_buf());
+        for (id, root) in self.worktrees() {
             for path in pm_core::walk(&root) {
                 if rows.len() >= SEARCH_LIMIT {
                     return rows;
@@ -484,13 +487,13 @@ impl App {
         rows
     }
 
-    /// Every file the window has open, with the project and path it belongs to.
-    fn open_files(&self) -> Vec<(ProjectId, PathBuf, crate::editor::FileId)> {
+    /// Every file the window has open, with the worktree and path it is in.
+    fn open_files(&self) -> Vec<(pm_core::Scope, PathBuf, crate::editor::FileId)> {
         self.panes
             .held()
             .into_iter()
             .filter_map(Item::file)
-            .filter_map(|file| Some((self.editor.project_of(file)?, self.editor.path(file)?, file)))
+            .filter_map(|file| Some((self.editor.scope_of(file)?, self.editor.path(file)?, file)))
             .collect()
     }
 }

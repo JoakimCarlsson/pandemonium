@@ -64,3 +64,57 @@ impl<M> Element<M> for Overlay<M> {
         cx.pop_layer();
     }
 }
+
+/// One element painted beside another, in a layer of its own.
+///
+/// This is the overlay that has somewhere to be: a submenu belongs against
+/// the row that opened it, and the row only knows where it is once it has
+/// been laid out. The panel takes no room either way — the screen is laid
+/// out as though only the anchor were there.
+pub struct Beside<M> {
+    /// The element the panel is placed against.
+    anchor: Box<dyn Element<M>>,
+    /// What is drawn beside it.
+    panel: Box<dyn Element<M>>,
+}
+
+/// `panel`, painted against the right edge of `anchor`.
+pub fn beside<M>(anchor: impl IntoElement<M>, panel: impl IntoElement<M>) -> Beside<M> {
+    Beside {
+        anchor: anchor.into_element(),
+        panel: panel.into_element(),
+    }
+}
+
+impl<M> Element<M> for Beside<M> {
+    /// Lays out as the anchor does; the panel is placed, not stacked.
+    fn layout_style(&self) -> Style {
+        self.anchor.layout_style()
+    }
+
+    /// Asks for what the anchor asks for, the panel taking no room.
+    fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
+        self.anchor.measure(available, cx)
+    }
+
+    /// Paints the anchor where it belongs, then the panel against its edge.
+    fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
+        self.anchor.paint(bounds, cx);
+
+        let window = cx.viewport();
+        let size = self.panel.measure(window.size, &mut cx.layout);
+        let x = bounds
+            .right()
+            .min(window.right() - size.width - MARGIN)
+            .max(window.left() + MARGIN);
+        let y = bounds
+            .top()
+            .min(window.bottom() - size.height - MARGIN)
+            .max(window.top() + MARGIN);
+
+        cx.push_layer();
+        self.panel
+            .paint(Rect::from_xywh(x, y, size.width, size.height), cx);
+        cx.pop_layer();
+    }
+}

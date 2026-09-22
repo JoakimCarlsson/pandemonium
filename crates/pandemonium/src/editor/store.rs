@@ -1,6 +1,6 @@
 //! The files the window has open, whichever pane is showing them.
 //!
-//! A file is opened once per project: the same path in two projects is two
+//! A file is opened once per worktree: the same path in two worktrees is two
 //! documents, because it is two worktrees. Which pane shows which of them is
 //! the pane tree's business — this is only where the documents live, and the
 //! one seam a file is opened, edited, saved and closed through, so the
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use pm_core::{Blame, Change, ProjectId};
+use pm_core::{Blame, Change, ProjectId, Scope};
 use pm_gfx::Point;
 use pm_text::{Buffer, Client, Position, Server, Servers};
 
@@ -39,7 +39,7 @@ pub struct FileId(u64);
 /// One open file as a bar of tabs presents it.
 ///
 /// What the tab is drawn like beyond this — which icon it wears, whether the
-/// pane keeps it through a change of project — is the pane's, because the
+/// pane keeps it through a change of worktree — is the pane's, because the
 /// same file is one document and as many tabs as there are panes showing it.
 pub struct FileEntry {
     /// What the tab calls it: the file's own name.
@@ -553,8 +553,8 @@ impl Drop for Document {
 
 /// One open file: the worktree it belongs to and the document itself.
 struct Entry {
-    /// The project whose worktree the file was opened from.
-    project: ProjectId,
+    /// The worktree the file was opened from.
+    scope: Scope,
     /// The document, shared with whichever panes are drawing it.
     document: OpenFile,
 }
@@ -585,19 +585,19 @@ impl Files {
         self.servers.set_overrides(named);
     }
 
-    /// Opens `path` in `project`, or hands back the file if it is open already.
+    /// Opens `path` in `scope`, or hands back the file if it is open already.
     ///
     /// A file that cannot be read does not open and does not complain: the
     /// tree lists what is on disk, and a directory entry that turns out not
     /// to be a readable file is the tree's business, not the store's.
     pub fn open(
         &mut self,
-        project: ProjectId,
+        scope: Scope,
         root: &Path,
         path: &Path,
         preview: bool,
     ) -> Option<FileId> {
-        if let Some(id) = self.find(project, path) {
+        if let Some(id) = self.find(scope, path) {
             if !preview {
                 self.keep(id);
             }
@@ -615,7 +615,7 @@ impl Files {
         self.open.insert(
             id,
             Entry {
-                project,
+                scope,
                 document: Rc::new(RefCell::new(Document::new(
                     buffer,
                     preview,
@@ -627,19 +627,19 @@ impl Files {
         Some(id)
     }
 
-    /// The file `path` is open as in `project`, if it is open at all.
-    fn find(&self, project: ProjectId, path: &Path) -> Option<FileId> {
+    /// The file `path` is open as in `scope`, if it is open at all.
+    fn find(&self, scope: Scope, path: &Path) -> Option<FileId> {
         self.open
             .iter()
             .find(|(_, entry)| {
-                entry.project == project && entry.document.borrow().buffer().path() == path
+                entry.scope == scope && entry.document.borrow().buffer().path() == path
             })
             .map(|(id, _)| *id)
     }
 
-    /// The file `path` is open as in `project`, whether or not it is open.
-    pub fn opened(&self, project: ProjectId, path: &Path) -> Option<FileId> {
-        self.find(project, path)
+    /// The file `path` is open as in `scope`, whether or not it is open.
+    pub fn opened(&self, scope: Scope, path: &Path) -> Option<FileId> {
+        self.find(scope, path)
     }
 
     /// The document `id` names, if it is still open.
@@ -647,9 +647,9 @@ impl Files {
         self.open.get(&id).map(|entry| entry.document.clone())
     }
 
-    /// The project whose worktree the file `id` names was opened from.
-    pub fn project_of(&self, id: FileId) -> Option<ProjectId> {
-        self.open.get(&id).map(|entry| entry.project)
+    /// The worktree the file `id` names was opened from.
+    pub fn scope_of(&self, id: FileId) -> Option<Scope> {
+        self.open.get(&id).map(|entry| entry.scope)
     }
 
     /// The file `id` names as a bar of tabs presents it.
@@ -704,11 +704,11 @@ impl Files {
     }
 
     /// Writes every open file to disk, each against its own worktree.
-    pub fn save_all(&mut self, root: &dyn Fn(ProjectId) -> Option<PathBuf>) {
+    pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<PathBuf>) {
         for entry in self.open.values() {
             let mut document = entry.document.borrow_mut();
             document.save();
-            if let Some(root) = root(entry.project) {
+            if let Some(root) = root(entry.scope) {
                 document.reread_baseline(&root);
             }
         }
@@ -716,15 +716,15 @@ impl Files {
 
     /// Whether `project` has an open document whose edits are not on disk.
     pub fn project_is_dirty(&self, project: ProjectId) -> bool {
-        self.open
-            .values()
-            .any(|entry| entry.project == project && entry.document.borrow().buffer().is_dirty())
+        self.open.values().any(|entry| {
+            entry.scope.project() == project && entry.document.borrow().buffer().is_dirty()
+        })
     }
 
-    /// Reads every clean open document of `project` from its changed worktree.
-    pub fn reload_project(&mut self, project: ProjectId, root: &Path) {
+    /// Reads every clean open document of `scope` from its changed worktree.
+    pub fn reload_project(&mut self, scope: Scope, root: &Path) {
         for entry in self.open.values() {
-            if entry.project == project {
+            if entry.scope == scope {
                 entry.document.borrow_mut().reload(root);
             }
         }
@@ -748,7 +748,8 @@ impl Files {
 
     /// Closes every file of `project` and ends the servers over `root`.
     pub fn close_project(&mut self, project: ProjectId, root: &Path) {
-        self.open.retain(|_, entry| entry.project != project);
+        self.open
+            .retain(|_, entry| entry.scope.project() != project);
         self.servers.close(root);
     }
 

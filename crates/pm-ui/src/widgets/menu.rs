@@ -7,12 +7,17 @@
 //! is opened.
 
 use crate::div::{Div, h_flex, v_flex};
+use crate::element::{Element, IntoElement};
+use crate::overlay::beside;
 use crate::style::Styled;
 use crate::text::text;
 use crate::theme::Theme;
 
 /// Narrowest a menu is drawn, however short its entries are.
 const MIN_WIDTH: f32 = 190.0;
+
+/// What a line with a menu of its own carries at its right edge.
+const ARROW: &str = "›";
 
 /// Height of the line between two groups of entries, gaps included.
 const SEPARATOR_HEIGHT: f32 = 9.0;
@@ -26,6 +31,17 @@ pub enum MenuItem<M> {
         /// What choosing it sends, or nothing when it does not apply.
         message: Option<M>,
     },
+    /// A menu of its own, opened from this line.
+    Submenu {
+        /// What the line is called.
+        label: String,
+        /// What opening it sends, which is what puts `expanded` the other way.
+        message: Option<M>,
+        /// Whether it is open right now.
+        expanded: bool,
+        /// The lines it opens onto.
+        items: Vec<MenuItem<M>>,
+    },
     /// A line between two groups of commands.
     Separator,
 }
@@ -35,6 +51,25 @@ pub fn menu_entry<M>(label: impl Into<String>, message: Option<M>) -> MenuItem<M
     MenuItem::Entry {
         label: label.into(),
         message,
+    }
+}
+
+/// A line called `label` that opens `items` beside it when it is expanded.
+///
+/// Whether it is open is the caller's to hold, as everything else a screen
+/// shows is: the line asks to be opened by sending `message`, and is drawn
+/// open the next frame because the caller said so.
+pub fn menu_submenu<M>(
+    label: impl Into<String>,
+    message: Option<M>,
+    expanded: bool,
+    items: Vec<MenuItem<M>>,
+) -> MenuItem<M> {
+    MenuItem::Submenu {
+        label: label.into(),
+        message,
+        expanded,
+        items,
     }
 }
 
@@ -57,19 +92,26 @@ pub fn menu<M: Clone + 'static>(theme: &Theme, items: Vec<MenuItem<M>>) -> Div<M
 }
 
 /// Builds one line of the menu.
-fn entry<M: Clone + 'static>(theme: &Theme, item: MenuItem<M>) -> Div<M> {
-    let (label, message) = match item {
-        MenuItem::Separator => return separator(theme),
-        MenuItem::Entry { label, message } => (label, message),
+fn entry<M: Clone + 'static>(theme: &Theme, item: MenuItem<M>) -> Box<dyn Element<M>> {
+    let (label, message, opening) = match item {
+        MenuItem::Separator => return separator(theme).into_element(),
+        MenuItem::Entry { label, message } => (label, message, None),
+        MenuItem::Submenu {
+            label,
+            message,
+            expanded,
+            items,
+        } => (label, message, Some((expanded, items))),
     };
     let color = match message {
         Some(_) => theme.colors.text,
         None => theme.colors.text_subtle,
     };
 
-    h_flex()
+    let line = h_flex()
         .h_px(theme.size.row)
         .px(2)
+        .gap(2)
         .items_center()
         .when_some(message, |entry, message| {
             entry
@@ -77,7 +119,21 @@ fn entry<M: Clone + 'static>(theme: &Theme, item: MenuItem<M>) -> Div<M> {
                 .active_bg(theme.colors.surface_active)
                 .on_click(message)
         })
+        .when(opening.is_some(), Div::justify_between)
         .child(text(label).text_sm().font_light().color(color))
+        .when(opening.is_some(), |line| {
+            line.child(
+                text(ARROW)
+                    .text_sm()
+                    .font_light()
+                    .color(theme.colors.text_subtle),
+            )
+        });
+
+    match opening {
+        Some((true, items)) => beside(line, menu(theme, items)).into_element(),
+        _ => line.into_element(),
+    }
 }
 
 /// Builds the line between two groups of entries.

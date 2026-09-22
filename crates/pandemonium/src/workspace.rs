@@ -1,14 +1,14 @@
 //! The editor workspace shown after onboarding has finished.
 
-use pm_core::{FileStatus, FileTree, Project, ProjectId, Projects, Row};
+use pm_core::{FileStatus, FileTree, Project, ProjectId, Projects, Row, SessionId};
 use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
 use pm_ui::button;
 use pm_ui::{
-    Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Theme, h_flex,
-    icon, icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule, sash,
-    tab, tab_bar, text, v_flex,
+    Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Text, Theme,
+    h_flex, icon, icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule,
+    sash, tab, tab_bar, text, v_flex,
 };
 
 use crate::editor::{FileId, OpenFile};
@@ -23,14 +23,17 @@ const CARRIED_OFFSET: f32 = 8.0;
 /// How much shorter than its bar a control sitting inside one is drawn.
 const BAR_INSET: f32 = 4.0;
 
-/// Height of the line naming a project above its sessions.
-const PROJECT_HEADER_HEIGHT: f32 = 30.0;
+/// How far a session row sits in from the project row above it.
+const SESSION_INDENT: f32 = 12.0;
 
 /// How far the first level of the file tree sits from the edge.
 const FILE_INSET: f32 = 6.0;
 
 /// How far each further level of the file tree is indented.
 const FILE_INDENT: f32 = 14.0;
+
+/// Width of the bar marking the row the window is pointed at.
+const MARKER_WIDTH: f32 = 2.0;
 
 /// Diameter of the dot marking what state a worktree is in.
 const DOT_SIZE: f32 = 7.0;
@@ -143,16 +146,20 @@ pub struct Worktree<'a> {
 pub struct SidebarProject {
     /// Which project these sessions belong to.
     pub project: ProjectId,
+    /// Whether the window is pointed at the project's own checkout.
+    pub at_checkout: bool,
     /// Sessions belonging to that project.
     pub sessions: Vec<SidebarSession>,
 }
 
 /// One session as presented by the workspace model.
 pub struct SidebarSession {
+    /// Which session the row is of.
+    pub id: SessionId,
     /// Human-readable name of the work.
     pub name: String,
-    /// Compact diff summary.
-    pub summary: String,
+    /// How far its worktree has drifted, as the row states it.
+    pub drift: String,
     /// Colour representing the state reported by the agent.
     pub status_color: Rgba,
     /// Whether this session is selected.
@@ -228,6 +235,12 @@ pub enum MenuTarget {
     Tab(PaneId, Item),
     /// One of the editor panes itself.
     Pane(PaneId),
+    /// The control that adds another project to the window.
+    Projects,
+    /// One of the projects the window holds open.
+    Project(ProjectId),
+    /// One of the sessions hanging under one of them.
+    Session(SessionId),
     /// A shell running in the terminal panel.
     Terminal(ShellId),
     /// The text one of the editor panes is showing.
@@ -364,6 +377,66 @@ fn backdrop(message: Message) -> Div<Message> {
         .on_secondary_click(message)
 }
 
+/// The ways a project is added to the window.
+///
+/// A repository the reader already has is opened where it sits; one they
+/// have not is fetched first. Both end in the same place — a project in the
+/// window — so both are offered from the one control that adds one.
+pub fn add_project_items() -> Vec<MenuItem<Message>> {
+    vec![
+        menu_entry("Open a Repository…", Some(Message::OpenProject)),
+        menu_entry("Clone from a URL…", Some(Message::CloneProject)),
+    ]
+}
+
+/// The things that can be done to one session.
+///
+/// A session is a worktree and the work in it: going to it is what the row
+/// itself does, so what is left is ending it, which takes the worktree away.
+pub fn session_menu_items(session: SessionId) -> Vec<MenuItem<Message>> {
+    vec![
+        menu_entry("Go to Session", Some(Message::SelectSession(session))),
+        menu_separator(),
+        menu_entry("Finish Session…", Some(Message::FinishSession(session))),
+    ]
+}
+
+/// The things that can be done to one project.
+///
+/// Cutting a session is the whole of it, and there is one way to do it: the
+/// line opens onto every branch there is to cut one from, the checked-out
+/// one first. Nothing here starts an agent — a session is a worktree first,
+/// and what is run in it comes after.
+pub fn project_menu_items(
+    project: &Project,
+    bases: &[String],
+    showing_bases: bool,
+) -> Vec<MenuItem<Message>> {
+    let id = project.id();
+    let from = bases
+        .iter()
+        .enumerate()
+        .map(|(place, base)| {
+            menu_entry(
+                format!("Based on {base}"),
+                Some(Message::NewSessionFrom(id, place)),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    vec![
+        pm_ui::menu_submenu(
+            "New Session From…",
+            (!from.is_empty()).then_some(Message::ShowSessionBases),
+            showing_bases,
+            from,
+        ),
+        menu_separator(),
+        menu_entry("Open Project…", Some(Message::OpenProject)),
+        menu_entry("Close Project", Some(Message::CloseProject(id))),
+    ]
+}
+
 /// The things that can be done to one shell's tab.
 pub fn terminal_menu(shells: &[ShellEntry], id: ShellId) -> Vec<MenuItem<Message>> {
     let others = shells.len() > 1;
@@ -420,14 +493,14 @@ impl Status {
         layout: Layout,
         files: &Worktree<'_>,
     ) -> Self {
-        let active = open.active();
+        let (project, pointed) = pointed_at(open, sessions);
         let showing = panes.showing.as_ref().map(|file| file.borrow());
         let buffer = showing.as_ref().map(|document| document.buffer());
 
         Self {
-            project: active.map(|project| project.name().to_owned()),
-            branch: active.map(|project| project.branch().to_owned()),
-            sessions: active.map_or(0, |project| sessions_of(project, sessions).len()),
+            project: project.map(|project| project.name().to_owned()),
+            branch: pointed,
+            sessions: project.map_or(0, |project| sessions_of(project, sessions).len()),
             changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.terminal.shells.len(),
             agents: panes.agents,
@@ -633,7 +706,7 @@ fn status_item(
 }
 
 /// `count` written out with `noun`, pluralized the way English does it.
-fn counted(count: usize, noun: &str) -> String {
+pub fn counted(count: usize, noun: &str) -> String {
     if count == 1 {
         format!("{count} {noun}")
     } else {
@@ -954,22 +1027,24 @@ fn file_row(theme: &Theme, row: &Row<'_>, status: Option<FileStatus>) -> Div<Mes
 }
 
 /// Builds the projects sidebar: every open project, its sessions beneath it.
+///
+/// A project's own row is its checkout — what the repository is called, and
+/// the branch it has out — and every row under it is a session of it, saying
+/// how far that worktree has drifted. The list is one reading, taken down the
+/// window: what is being worked on, and how much of it there is.
 fn projects_sidebar(
     theme: &Theme,
     open: &Projects,
     sessions: &[SidebarProject],
     width: f32,
 ) -> Div<Message> {
-    let active = open.active().map(Project::id);
     let rows = open
         .iter()
-        .map(|project| {
-            project_rows(
-                theme,
-                project,
-                sessions_of(project, sessions),
-                active == Some(project.id()),
-            )
+        .filter_map(|project| {
+            let entry = sessions
+                .iter()
+                .find(|entry| entry.project == project.id())?;
+            Some(project_rows(theme, project, entry))
         })
         .collect::<Vec<_>>();
 
@@ -995,14 +1070,7 @@ fn projects_sidebar(
                 .child(add_project(theme)),
         )
         .when(open.is_empty(), |sidebar| {
-            sidebar.child(
-                text("No projects open")
-                    .text_sm()
-                    .font_light()
-                    .color(theme.colors.text_subtle)
-                    .px(3)
-                    .py(2),
-            )
+            sidebar.child(open_project(theme))
         })
         .children(rows)
 }
@@ -1016,13 +1084,54 @@ fn add_project(theme: &Theme) -> Div<Message> {
         .rounded(theme.radius.md)
         .hover_bg(theme.colors.surface_hover)
         .active_bg(theme.colors.surface_active)
-        .on_click(Message::OpenProject)
+        .on_click(Message::AddProjectMenu)
         .child(
             text("+")
                 .text_lg()
                 .font_light()
                 .color(theme.colors.text_subtle),
         )
+}
+
+/// Builds the line a window with nothing open offers a repository through.
+fn open_project(theme: &Theme) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .h_px(theme.size.row)
+        .px(3)
+        .items_center()
+        .hover_bg(theme.colors.surface_hover)
+        .on_click(Message::AddProjectMenu)
+        .child(
+            text("Open a project…")
+                .text_sm()
+                .font_light()
+                .color(theme.colors.text_subtle),
+        )
+}
+
+/// The active project, and what the window is pointed at within it.
+///
+/// A project is read through one worktree at a time: its own checkout, named
+/// by the branch it has out, or the session whose row the reader picked,
+/// named by what they called it. The bar states that one place, because it
+/// is the one every other reading in it is about.
+fn pointed_at<'a>(
+    open: &'a Projects,
+    sessions: &[SidebarProject],
+) -> (Option<&'a Project>, Option<String>) {
+    let Some(project) = open.active() else {
+        return (None, None);
+    };
+    let session = sessions_of(project, sessions)
+        .iter()
+        .find(|session| session.selected)
+        .map(|session| session.name.clone());
+
+    (
+        Some(project),
+        Some(session.unwrap_or_else(|| project.branch().to_owned())),
+    )
 }
 
 /// The sessions listed under `project`, of which there may be none.
@@ -1033,108 +1142,101 @@ fn sessions_of<'a>(project: &Project, sessions: &'a [SidebarProject]) -> &'a [Si
         .map_or(&[], |entry| entry.sessions.as_slice())
 }
 
-/// Builds one project: its heading, its checkout, then its sessions.
-///
-/// The checkout comes first because it is the worktree the project was opened
-/// from — the repository itself, which the sessions are worktrees beside.
-/// Clicking either it or the heading points the window's files at it.
-fn project_rows(
-    theme: &Theme,
-    project: &Project,
-    sessions: &[SidebarSession],
-    active: bool,
-) -> Div<Message> {
+/// Builds one project: its own row, then a row for each of its sessions.
+fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div<Message> {
     v_flex()
         .w_full()
-        .child(
-            h_flex()
-                .w_full()
-                .h_px(PROJECT_HEADER_HEIGHT)
-                .pl(3)
-                .pr(1.5)
-                .items_center()
-                .child(text(project.name().to_owned()).text_sm().font_light())
-                .child(h_flex().flex_1())
-                .child(project_menu(theme, project)),
-        )
-        .child(checkout_row(theme, project, active))
-        .children(sessions.iter().map(|session| session_row(theme, session)))
-}
-
-/// Builds the control that opens what can be done to one project.
-///
-/// The menu behind it is not built yet; the control is here because this is
-/// where it belongs, and it will send the same message when it is.
-fn project_menu(theme: &Theme, project: &Project) -> Div<Message> {
-    v_flex()
-        .size_px(theme.size.icon_control)
-        .items_center()
-        .justify_center()
-        .rounded(theme.radius.md)
-        .hover_bg(theme.colors.surface_hover)
-        .active_bg(theme.colors.surface_active)
-        .on_click(Message::ProjectMenu(project.id()))
-        .child(
-            text("⋯")
-                .text_lg()
-                .font_light()
-                .color(theme.colors.text_subtle),
+        .child(project_row(theme, project, entry.at_checkout))
+        .children(
+            entry
+                .sessions
+                .iter()
+                .map(|session| session_row(theme, session)),
         )
 }
 
-/// Builds the row for the project's own checkout.
-fn checkout_row(theme: &Theme, project: &Project, active: bool) -> Div<Message> {
-    h_flex()
-        .w_full()
-        .h_px(theme.size.field)
-        .overflow_hidden()
-        .px(3)
-        .gap(2)
-        .items_center()
-        .when(active, |row| row.bg(theme.colors.surface_selected))
-        .hover_bg(theme.colors.surface_hover)
+/// Builds the row standing for a project's own checkout.
+///
+/// The project is the worktree its sessions were cut from, so its row names
+/// it and states the branch it has out — `main`, most of the time — and the
+/// sessions under it are read against that.
+fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message> {
+    row(theme, selected)
         .on_click(Message::ActivateProject(project.id()))
-        .child(v_flex().w(3))
-        .child(state_dot(
-            theme,
-            if active {
-                theme.colors.success
-            } else {
-                theme.colors.text_subtle
-            },
+        .on_secondary_click(Message::ProjectMenu(project.id()))
+        .child(marker(theme, selected))
+        .child(v_flex().w(2))
+        .child(named(
+            text(project.name().to_owned())
+                .text_sm()
+                .font_medium()
+                .color(theme.colors.text),
         ))
-        .child(text(project.branch().to_owned()).text_sm().font_light())
-        .child(h_flex().flex_1())
-        .child(
-            text("checkout")
-                .text_xs()
-                .font_light()
-                .color(theme.colors.text_subtle),
-        )
+        .child(reading(theme, project.branch().to_owned()))
 }
 
-/// Builds one session row.
+/// Builds one session row: its state, what it is called, how far it has gone.
 fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
+    row(theme, session.selected)
+        .on_click(Message::SelectSession(session.id))
+        .on_secondary_click(Message::SessionMenu(session.id))
+        .child(marker(theme, session.selected))
+        .child(v_flex().w_px(SESSION_INDENT))
+        .child(state_dot(theme, session.status_color))
+        .child(v_flex().w(1))
+        .child(named(
+            text(session.name.clone())
+                .text_sm()
+                .font_light()
+                .color(theme.colors.text),
+        ))
+        .child(reading(theme, session.drift.clone()))
+}
+
+/// Builds the box a project or session row is laid out in.
+fn row(theme: &Theme, selected: bool) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(theme.size.field)
+        .h_px(theme.size.row)
         .overflow_hidden()
-        .px(3)
-        .gap(2)
+        .pr(3)
         .items_center()
-        .when(session.selected, |row| {
-            row.bg(theme.colors.surface_selected)
-        })
-        .child(v_flex().w(3))
-        .child(state_dot(theme, session.status_color))
-        .child(text(session.name.clone()).text_sm().font_light())
-        .child(h_flex().flex_1())
-        .child(
-            text(session.summary.clone())
-                .text_xs()
-                .font_light()
-                .color(theme.colors.text_subtle),
-        )
+        .when(selected, |row| row.bg(theme.colors.surface_selected))
+        .hover_bg(theme.colors.surface_hover)
+}
+
+/// Builds the part of a row its name sits in, which is the part that gives way.
+///
+/// A name is as long as whoever wrote it made it; the reading at the other
+/// end is three numbers wide and is what the column is scanned for. So the
+/// name is what a narrow sidebar takes the space from.
+fn named(label: Text) -> Div<Message> {
+    h_flex()
+        .flex_1()
+        .h_full()
+        .items_center()
+        .overflow_hidden()
+        .child(label)
+}
+
+/// Builds the reading at the right-hand end of a row.
+fn reading(theme: &Theme, said: String) -> Text {
+    text(said)
+        .text_xs()
+        .font_mono()
+        .color(theme.colors.text_subtle)
+}
+
+/// Builds the bar down the left edge of the row the window is pointed at.
+///
+/// One worktree is being read at a time, and the sidebar says which: the bar
+/// is drawn in every row so that the rows line up whether or not they are
+/// the one, and coloured in only the one.
+fn marker(theme: &Theme, selected: bool) -> Div<Message> {
+    v_flex().w_px(MARKER_WIDTH).h_full().bg(match selected {
+        true => theme.colors.border_selected,
+        false => theme.colors.surface,
+    })
 }
 
 /// Builds the state marker used by a checkout or session row.

@@ -18,6 +18,9 @@ const SETTINGS_FILE: &str = "settings.yaml";
 /// The directory themes are read from, inside the editor's home.
 const THEMES_DIRECTORY: &str = "themes";
 
+/// The directory session worktrees are cut into, inside the editor's home.
+const WORKTREES_DIRECTORY: &str = "worktrees";
+
 /// The editor's home: `PANDEMONIUM_HOME`, else `~/.pandemonium`.
 pub fn home() -> Option<PathBuf> {
     match std::env::var_os(HOME_VARIABLE) {
@@ -34,4 +37,13 @@ pub fn settings() -> Option<PathBuf> {
 /// The directory a reader's own themes live in.
 pub fn themes() -> Option<PathBuf> {
     home().map(|home| home.join(THEMES_DIRECTORY))
+}
+
+/// The directory session worktrees are cut into, one per project.
+///
+/// A worktree never lands beside the repository it was cut from: the project
+/// on disk is the truth, and what the editor makes for itself lives in the
+/// editor's own home.
+pub fn worktrees() -> Option<PathBuf> {
+    home().map(|home| home.join(WORKTREES_DIRECTORY))
 }

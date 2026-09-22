@@ -13,12 +13,14 @@
 mod blame;
 mod branch;
 mod changes;
+mod clone;
 mod commit;
 mod diff;
 mod head;
 mod index;
 mod run;
 mod status;
+mod worktree;
 
 pub use blame::{Blame, blame};
 pub use branch::{
@@ -26,9 +28,14 @@ pub use branch::{
     remotes, switch_branch,
 };
 pub use changes::{Change, ChangeKind, changes};
+pub use clone::{clone, named};
 pub use commit::{commit, last_message};
 pub use diff::{Hunk, Line, LineKind, Side, diff, diffs};
 pub use head::Head;
 pub use index::{baseline, discard, discard_all, stage, unstage, write_index};
 pub use run::Said;
 pub use status::{Changed, FileStatus, Status};
+pub use worktree::{
+    Summary, add_worktree, commit_of, remember, remember_port, remembered_base, remembered_name,
+    remembered_port, remove_worktree, since, worktrees,
+};

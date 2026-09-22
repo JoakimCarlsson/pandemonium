@@ -35,13 +35,22 @@ pub struct Terminal {
 
 impl Terminal {
     /// Starts the user's shell in `cwd` on a screen of `cols` by `rows`.
+    ///
+    /// The `env` is what the worktree adds to the one the editor was started
+    /// with — a session's own port, and whatever else is its rather than the
+    /// machine's.
     pub fn shell(
         cwd: impl Into<PathBuf>,
         cols: usize,
         rows: usize,
+        env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::spawn(Pty::shell(), cwd, cols, rows, notify)
+        let mut command = Pty::shell();
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        Self::spawn(command, cwd, cols, rows, notify)
     }
 
     /// Starts `command` in `cwd` on a screen of `cols` by `rows`.

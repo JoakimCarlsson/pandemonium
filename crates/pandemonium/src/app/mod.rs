@@ -15,6 +15,7 @@ mod panes;
 mod picker;
 mod places;
 mod review;
+mod session;
 mod tree;
 
 use std::cell::Cell;
@@ -24,7 +25,7 @@ use std::time::Instant;
 
 use std::collections::BTreeMap;
 
-use pm_core::{FileTree, ProjectId, Projects};
+use pm_core::{FileTree, Projects, Scope, Sessions};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
 use pm_text::Position;
 use pm_ui::{
@@ -37,7 +38,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
-use crate::agent::Sessions;
+use crate::agent::Talks;
 use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
 use crate::app::places::Trail;
@@ -52,7 +53,7 @@ use crate::review::Review;
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
     self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panel, Panes,
-    SECONDARY_SIDEBAR_RANGE, SidebarProject, SidebarView, TabMenu,
+    SECONDARY_SIDEBAR_RANGE, SidebarView, TabMenu,
 };
 
 /// The blames that have come back from the threads that asked for them.
@@ -71,7 +72,7 @@ pub(super) enum Writing {
     /// The commit message of the active project's review.
     Commit,
     /// The prompt of one agent session.
-    Prompt(crate::agent::SessionId),
+    Prompt(crate::agent::TalkId),
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -87,6 +88,8 @@ pub enum Wake {
     Blame,
     /// A remote Git operation has finished.
     Git,
+    /// A repository being cloned has finished being cloned.
+    Clone,
 }
 
 /// The remote operation currently represented by the Source Control button.
@@ -133,14 +136,24 @@ pub struct App {
     last_titlebar_click: Option<Instant>,
     /// How far the page is scrolled.
     scroll: Scroll,
-    /// Projects and sessions presented by the workspace.
-    projects: Vec<SidebarProject>,
+    /// The sessions of those projects: a worktree apiece, to work an agent in.
+    sessions: Sessions,
+    /// The session the window is pointed at, once one has been picked.
+    session: Option<pm_core::SessionId>,
+    /// How many agents were in the middle of a turn when git was last asked.
+    working: usize,
+    /// What a session being named is cut from, while one is being named.
+    session_base: Option<String>,
+    /// The branches the open project menu offers to cut a session from.
+    session_bases: Vec<String>,
+    /// Whether that menu is showing them.
+    showing_bases: bool,
     /// The projects this window holds open.
     open: Projects,
-    /// One file tree per open project, so each keeps what it has expanded.
-    files: BTreeMap<ProjectId, FileTree>,
-    /// What each of those projects has changed, and what git said about it.
-    reviews: BTreeMap<ProjectId, Review>,
+    /// One file tree per worktree, so each keeps what it has expanded.
+    files: BTreeMap<Scope, FileTree>,
+    /// What each of those worktrees has changed, and what git said about it.
+    reviews: BTreeMap<Scope, Review>,
     /// The changes the reader is being asked whether to throw away.
     discarding: Vec<crate::review::ChangeId>,
     /// Whether keystrokes go to the list of changes.
@@ -171,6 +184,8 @@ pub struct App {
     editor: Files,
     /// The servers to run for a language, in place of the ones it names.
     language_servers: BTreeMap<String, Vec<pm_text::Server>>,
+    /// What a session's fresh worktree is given, git having left it out.
+    bootstrap: pm_core::Bootstrap,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
@@ -198,7 +213,9 @@ pub struct App {
     /// Remote Git work currently running away from the UI thread.
     remote_operation: Option<RemoteOperation>,
     /// Completed remote Git work waiting for the event loop.
-    git_results: Arc<Mutex<Vec<(ProjectId, pm_core::Said)>>>,
+    git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
+    /// The repositories a clone has finished with, and where they landed.
+    cloned: Arc<Mutex<Vec<Result<std::path::PathBuf, String>>>>,
     /// Next time the remote-operation spinner advances.
     remote_tick: Instant,
     /// Frame of the animated remote-operation spinner.
@@ -234,7 +251,7 @@ pub struct App {
     /// The last press on a tab, for keeping a previewed file open.
     tab_clicks: Clicks<Item>,
     /// The agent sessions the window is running, one per project.
-    agents: Sessions,
+    agents: Talks,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -265,7 +282,7 @@ impl App {
 
         let files = open
             .iter()
-            .map(|project| (project.id(), FileTree::new(project.root())))
+            .map(|project| (Scope::checkout(project.id()), FileTree::new(project.root())))
             .collect();
 
         Self {
@@ -279,7 +296,12 @@ impl App {
             pointer: None,
             last_titlebar_click: None,
             scroll: Scroll::default(),
-            projects: Vec::new(),
+            sessions: Sessions::new(),
+            session: None,
+            working: 0,
+            session_base: None,
+            session_bases: Vec::new(),
+            showing_bases: false,
             open,
             files,
             reviews: BTreeMap::new(),
@@ -310,6 +332,7 @@ impl App {
             close_requested: false,
             editor: Files::default(),
             language_servers: restored.language_servers,
+            bootstrap: restored.bootstrap,
             panes: PaneTree::default(),
             saved,
             geometry: Geometry::default(),
@@ -324,6 +347,7 @@ impl App {
             remote_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             remote_operation: None,
             git_results: Arc::new(Mutex::new(Vec::new())),
+            cloned: Arc::new(Mutex::new(Vec::new())),
             remote_tick: Instant::now(),
             remote_phase: 0,
             prompt: None,
@@ -341,7 +365,7 @@ impl App {
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
             menu: None,
-            agents: Sessions::default(),
+            agents: Talks::default(),
             terminals: Terminals::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
@@ -350,23 +374,24 @@ impl App {
         }
     }
 
-    /// The shell of the active project, started in its worktree if need be.
+    /// The shell of the worktree the window is pointed at, started if need be.
     ///
     /// A shell belongs to the worktree the window is pointed at, the same one
     /// the file tree lists, and it is started the first time its pane is
     /// drawn rather than when the project is opened.
     fn active_shell(&mut self) -> Option<Shell> {
-        let project = self.open.active()?;
-        let (id, root) = (project.id(), project.root().to_path_buf());
-        self.terminals.open(id, &root)
+        let scope = self.scope()?;
+        let root = self.root_of(scope)?;
+        let env = self.worktree_env(scope);
+        self.terminals.open(scope, &root, &env)
     }
 
     /// Closes the panel once the worktree's last shell has exited.
     fn close_empty_panel(&mut self) {
-        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+        let Some(scope) = self.scope() else {
             return;
         };
-        if self.bottom_panel_open && self.terminals.count(project) == 0 {
+        if self.bottom_panel_open && self.terminals.count(scope) == 0 {
             self.bottom_panel_open = false;
             self.terminal_focused = false;
         }
@@ -417,11 +442,13 @@ impl App {
     /// pane was is taken down on the trail and going back returns to it.
     fn open_file(&mut self, id: pm_core::EntryId) {
         let preview = self.tree_clicks.press(id) < 2;
-        let Some(project) = self.open.active() else {
+        let Some(scope) = self.scope() else {
             return;
         };
-        let (project, root) = (project.id(), project.root().to_path_buf());
-        let Some(path) = self.files.get(&project).and_then(|tree| {
+        let Some(root) = self.root_of(scope) else {
+            return;
+        };
+        let Some(path) = self.files.get(&scope).and_then(|tree| {
             tree.rows()
                 .iter()
                 .find(|row| row.entry.id() == id)
@@ -430,7 +457,7 @@ impl App {
             return;
         };
 
-        if let Some(file) = self.editor.open(project, &root, &path, preview) {
+        if let Some(file) = self.editor.open(scope, &root, &path, preview) {
             if self.active_tab() != Some(crate::panes::Item::File(file))
                 && let Some(from) = self.here()
             {
@@ -593,13 +620,16 @@ impl App {
         self.open_menu(MenuTarget::Text(pane));
     }
 
-    /// Starts another shell in the active project's worktree.
+    /// Starts another shell in the worktree the window is pointed at.
     fn start_shell(&mut self) {
-        let Some(project) = self.open.active() else {
+        let Some(scope) = self.scope() else {
             return;
         };
-        let (id, root) = (project.id(), project.root().to_path_buf());
-        self.terminals.start(id, &root);
+        let Some(root) = self.root_of(scope) else {
+            return;
+        };
+        let env = self.worktree_env(scope);
+        self.terminals.start(scope, &root, &env);
         self.bottom_panel_open = true;
     }
 
@@ -608,11 +638,11 @@ impl App {
     /// An empty panel is a panel with nothing to show, so it goes away the
     /// way it would have if the shell had exited on its own.
     fn stop_shell(&mut self, shell: crate::terminal::ShellId) {
-        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+        let Some(scope) = self.scope() else {
             return;
         };
-        self.terminals.stop(project, shell);
-        if self.terminals.count(project) == 0 {
+        self.terminals.stop(scope, shell);
+        if self.terminals.count(scope) == 0 {
             self.bottom_panel_open = false;
             self.terminal_focused = false;
         }
@@ -624,11 +654,7 @@ impl App {
     /// of the drag reports travel from the same press: adding the travel to
     /// where the view has already moved would run away from the pointer.
     fn drag_terminal_scrollbar(&mut self, event: ResizeEvent, lines_per_pixel: f32) {
-        let Some(shell) = self
-            .open
-            .active()
-            .and_then(|project| self.terminals.active(project.id()))
-        else {
+        let Some(shell) = self.scope().and_then(|scope| self.terminals.active(scope)) else {
             return;
         };
 
@@ -654,8 +680,7 @@ impl App {
         if !self.terminal_focused || !self.bottom_panel_open {
             return None;
         }
-        let project = self.open.active()?;
-        self.terminals.active(project.id())
+        self.terminals.active(self.scope()?)
     }
 
     /// The theme this frame is drawn from: the chosen family, in whichever
@@ -714,6 +739,19 @@ impl App {
         }
         if let Message::ShowTerminalMenu(id) = message {
             self.open_menu(MenuTarget::Terminal(id));
+            return;
+        }
+        if let Message::ProjectMenu(id) = message {
+            self.open_project_menu(id);
+            return;
+        }
+        if message == Message::AddProjectMenu {
+            self.open_menu(MenuTarget::Projects);
+            return;
+        }
+        if message == Message::ShowSessionBases {
+            self.showing_bases = !self.showing_bases;
+            self.request_redraw();
             return;
         }
         if message == Message::ShowRemoteMenu {
@@ -974,8 +1012,8 @@ impl App {
             return;
         }
         if let Message::SelectTerminal(id) = message {
-            if let Some(project) = self.open.active().map(pm_core::Project::id) {
-                self.terminals.activate(project, id);
+            if let Some(scope) = self.scope() {
+                self.terminals.activate(scope, id);
             }
             self.terminal_focused = true;
             self.request_redraw();
@@ -1061,6 +1099,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.session_command(message) {
+            self.request_redraw();
+            return;
+        }
         if self.review_command(message) {
             self.request_redraw();
             return;
@@ -1078,6 +1120,11 @@ impl App {
             self.request_redraw();
             return;
         }
+        if message == Message::CloneProject {
+            self.open_picker(crate::picker::Kind::CloneUrl);
+            self.request_redraw();
+            return;
+        }
         if let Message::CloseProject(id) = message {
             if let Some(root) = self
                 .open
@@ -1087,10 +1134,12 @@ impl App {
                 self.editor.close_project(id, &root);
             }
             self.open.remove(id);
-            self.files.remove(&id);
+            self.files.retain(|scope, _| scope.project() != id);
+            self.reviews.retain(|scope, _| scope.project() != id);
             self.trail.close_project(id);
             self.terminals.close(id);
             self.agents.close_project(id);
+            self.sessions.close_project(id);
             self.drop_project_tabs(id);
             self.store();
             self.request_redraw();
@@ -1098,17 +1147,14 @@ impl App {
         }
         if let Message::ActivateProject(id) = message {
             self.open.activate(id);
+            self.select_checkout();
             self.store();
             self.request_redraw();
             return;
         }
-        if matches!(message, Message::ProjectMenu(_)) {
-            self.request_redraw();
-            return;
-        }
         if let Message::ToggleEntry(id) = message {
-            if let Some(project) = self.open.active().map(pm_core::Project::id)
-                && let Some(files) = self.files.get_mut(&project)
+            if let Some(scope) = self.scope()
+                && let Some(files) = self.files.get_mut(&scope)
             {
                 files.toggle(id);
             }
@@ -1262,13 +1308,13 @@ impl App {
             Message::KeepFileOpen(file) => self.editor.keep(file),
             Message::TogglePin(pane, item) => self.toggle_pin(pane, item),
             Message::CloseOtherTerminals(id) => {
-                if let Some(project) = self.open.active().map(pm_core::Project::id) {
-                    self.terminals.stop_others(project, id);
+                if let Some(scope) = self.scope() {
+                    self.terminals.stop_others(scope, id);
                 }
             }
             Message::CloseAllTerminals => {
-                if let Some(project) = self.open.active().map(pm_core::Project::id) {
-                    self.terminals.stop_all(project);
+                if let Some(scope) = self.scope() {
+                    self.terminals.stop_all(scope);
                 }
                 self.close_empty_panel();
             }
@@ -1279,8 +1325,7 @@ impl App {
 
     /// The path of the file `id` names, from its own worktree down.
     fn relative_path(&self, id: crate::editor::FileId) -> Option<String> {
-        let project = self.editor.project_of(id)?;
-        let root = self.open.get(project)?.root().to_path_buf();
+        let root = self.root_of(self.editor.scope_of(id)?)?;
         let path = self.editor.path(id)?;
         let relative = path.strip_prefix(&root).unwrap_or(&path);
         Some(relative.display().to_string())
@@ -1288,7 +1333,7 @@ impl App {
 
     /// Starts a shell in the directory the file `id` names sits in.
     fn start_shell_beside(&mut self, id: crate::editor::FileId) {
-        let Some(project) = self.editor.project_of(id) else {
+        let Some(scope) = self.editor.scope_of(id) else {
             return;
         };
         let Some(directory) = self
@@ -1298,7 +1343,8 @@ impl App {
         else {
             return;
         };
-        self.terminals.start(project, &directory);
+        let env = self.worktree_env(scope);
+        self.terminals.start(scope, &directory, &env);
         self.bottom_panel_open = true;
         self.terminal_focused = true;
         self.editor_focused = false;
@@ -1319,16 +1365,62 @@ impl App {
         let _ = self.open.find_or_open(root);
     }
 
-    /// Reads the worktree of any project that does not have a tree yet.
+    /// Fetches the repository at `url` into a directory the reader picks.
+    ///
+    /// A clone is the one git operation that takes as long as the network
+    /// does and has no worktree to report into, so it runs on a thread of
+    /// its own and the window is told when it lands rather than waiting for
+    /// it. Where it goes is asked first, because that is the reader's.
+    pub(super) fn clone_project(&mut self, url: &str) {
+        let url = url.trim().to_owned();
+        if url.is_empty() {
+            return;
+        }
+        let Some(under) = rfd::FileDialog::new().set_title("Clone into").pick_folder() else {
+            return;
+        };
+
+        let cloned = self.cloned.clone();
+        let wake = self.waker(Wake::Clone);
+        std::thread::spawn(move || {
+            let landed = pm_core::clone(&url, &under);
+            if let Ok(mut cloned) = cloned.lock() {
+                cloned.push(landed);
+            }
+            wake();
+        });
+    }
+
+    /// Opens what a clone has finished fetching, or says why it did not.
+    fn take_clones(&mut self) {
+        let finished = self
+            .cloned
+            .lock()
+            .map(|mut cloned| std::mem::take(&mut *cloned))
+            .unwrap_or_default();
+
+        for landed in finished {
+            match landed {
+                Ok(root) => {
+                    let _ = self.open.find_or_open(root);
+                    self.read_new_worktrees();
+                    self.store();
+                }
+                Err(trouble) => self.say_trouble("The repository could not be cloned", &trouble),
+            }
+        }
+    }
+
+    /// Reads the worktree of any project the window has just opened.
     fn read_new_worktrees(&mut self) {
         let missing = self
             .open
             .iter()
-            .filter(|project| !self.files.contains_key(&project.id()))
-            .map(|project| (project.id(), project.root().to_path_buf()))
+            .map(|project| Scope::checkout(project.id()))
+            .filter(|scope| !self.files.contains_key(scope))
             .collect::<Vec<_>>();
-        for (id, root) in missing {
-            self.files.insert(id, FileTree::new(root));
+        for scope in missing {
+            self.point_at(scope);
         }
     }
 
@@ -1345,6 +1437,7 @@ impl App {
             panes: self.saved_panes(),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
+            bootstrap: self.bootstrap.clone(),
         }
     }
 
@@ -1545,9 +1638,8 @@ impl App {
             .then(|| self.active_shell())
             .flatten();
         let shells = self
-            .open
-            .active()
-            .map(|project| self.terminals.list(project.id()))
+            .scope()
+            .map(|scope| self.terminals.list(scope))
             .unwrap_or_default();
         let panel = Panel {
             shell,
@@ -1562,10 +1654,11 @@ impl App {
         let editor = self.pane_view(&theme);
         let menu = self.menu_items();
         let overlays = self.overlays(&theme);
-        let active = self.open.active().map(pm_core::Project::id);
+        let scope = self.scope();
+        let sidebar = self.sidebar_projects();
         let files = workspace::Worktree {
-            tree: active.and_then(|id| self.files.get(&id)),
-            review: active.and_then(|id| self.reviews.get(&id)),
+            tree: scope.and_then(|scope| self.files.get(&scope)),
+            review: scope.and_then(|scope| self.reviews.get(&scope)),
             committing: self.writing == Some(Writing::Commit),
             branch_bounds: self.branch_bounds.clone(),
             remote_bounds: self.remote_bounds.clone(),
@@ -1594,7 +1687,7 @@ impl App {
             workspace::workspace(
                 &theme,
                 &self.open,
-                &self.projects,
+                &sidebar,
                 files,
                 layout,
                 Panes {
@@ -1668,6 +1761,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Agent => {
                 if self.agents.pump() {
                     self.follow_agents();
+                    self.reread_worked_sessions();
                     self.request_redraw();
                 }
                 if self.agents.take_opened() {
@@ -1691,12 +1785,16 @@ impl ApplicationHandler<Wake> for App {
                     .lock()
                     .map(|mut results| std::mem::take(&mut *results))
                     .unwrap_or_default();
-                for (project, said) in finished {
-                    if let Some(review) = self.reviews.get_mut(&project) {
+                for (scope, said) in finished {
+                    if let Some(review) = self.reviews.get_mut(&scope) {
                         review.report(said);
                     }
                 }
                 self.remote_operation = None;
+                self.request_redraw();
+            }
+            Wake::Clone => {
+                self.take_clones();
                 self.request_redraw();
             }
         }

@@ -21,7 +21,7 @@ use pm_acp::{About, Ask, Knob, Output, Setting, Status, Step, ToolCall, Voice, W
 use pm_gfx::Rgba;
 use pm_ui::{Div, IconName, IconSize, Styled, Theme, button, h_flex, icon, rule, text, v_flex};
 
-use crate::agent::{Block, SessionId, Talk};
+use crate::agent::{Block, Talk, TalkId};
 use crate::input::input_view;
 use crate::message::Message;
 
@@ -412,7 +412,7 @@ fn chip(theme: &Theme, label: impl Into<String>) -> Div<Message> {
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.
-fn permission(theme: &Theme, session: SessionId, ask: &Ask) -> Div<Message> {
+fn permission(theme: &Theme, session: TalkId, ask: &Ask) -> Div<Message> {
     let choices = ask
         .choices
         .iter()
