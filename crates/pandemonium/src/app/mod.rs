@@ -61,6 +61,19 @@ type Blamed = Arc<Mutex<Vec<(editor::FileId, Vec<pm_core::Blame>)>>>;
 /// How wide the picker is drawn, for centring it over the window.
 const PICKER_WIDTH: f32 = 620.0;
 
+/// Which box of text the keyboard is going to, when it is going to one.
+///
+/// A window has more than one thing that is written in and only one keyboard,
+/// so which box has it is one answer rather than a flag per box: two flags
+/// can both be true, and there is no such state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Writing {
+    /// The commit message of the active project's review.
+    Commit,
+    /// The prompt of one agent session.
+    Prompt(crate::agent::SessionId),
+}
+
 /// What the window is woken up for from outside the event loop.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Wake {
@@ -148,8 +161,8 @@ pub struct App {
     secondary_sidebar_open: bool,
     /// Which of the worktree's two lists that sidebar is showing.
     secondary_sidebar_view: SidebarView,
-    /// Whether keystrokes go to the commit message.
-    commit_focused: bool,
+    /// The box of text keystrokes go to, if they go to one.
+    writing: Option<Writing>,
     /// The size and state the window is written down with.
     window_state: WindowState,
     /// Whether the event loop should close after the current event.
@@ -222,8 +235,6 @@ pub struct App {
     tab_clicks: Clicks<Item>,
     /// The agent sessions the window is running, one per project.
     agents: Sessions,
-    /// The session whose prompt keystrokes go to, if one has the keyboard.
-    prompt_focused: Option<crate::agent::SessionId>,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -294,7 +305,7 @@ impl App {
             bottom_panel_open: layout.bottom_panel_open,
             secondary_sidebar_open: layout.secondary_sidebar_open,
             secondary_sidebar_view: layout.secondary_sidebar_view,
-            commit_focused: false,
+            writing: None,
             window_state: restored.window,
             close_requested: false,
             editor: Files::default(),
@@ -331,7 +342,6 @@ impl App {
             tab_clicks: Clicks::default(),
             menu: None,
             agents: Sessions::default(),
-            prompt_focused: None,
             terminals: Terminals::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
@@ -367,10 +377,9 @@ impl App {
     /// The click that lands back in a pane brings it straight back, so a
     /// press is free to drop focus without knowing where it landed.
     pub(super) fn release_pane_focus(&mut self) {
-        self.prompt_focused = None;
+        self.writing = None;
         self.terminal_focused = false;
         self.editor_focused = false;
-        self.commit_focused = false;
         self.changes_focused = false;
     }
 
@@ -378,7 +387,7 @@ impl App {
     pub(super) fn focused_pane_kind(&self) -> Option<&'static str> {
         let showing = |shown: fn(crate::panes::Item) -> bool| self.active_tab().is_some_and(shown);
 
-        if self.prompt_focused.is_some() {
+        if self.writing.is_some() {
             return Some("prompt");
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -1166,8 +1175,10 @@ impl App {
                     review.toggle(index);
                 }
             }
+            Message::ShowInputMenu => self.open_menu(MenuTarget::Input),
+            Message::EditText(action) => self.act(action),
             Message::WriteCommit(phase, anchor, head) => {
-                self.select_commit_text(phase, anchor, head);
+                self.point_in(Writing::Commit, phase, anchor, head);
             }
             _ => return false,
         }
@@ -1375,6 +1386,54 @@ impl App {
         }
     }
 
+    /// The box of text that has the keyboard, to write in.
+    pub(super) fn written_in(&mut self) -> Option<&mut crate::input::Input> {
+        match self.writing? {
+            Writing::Commit => self.review_mut().map(crate::review::Review::message_mut),
+            Writing::Prompt(session) => self
+                .agents
+                .get_mut(session)
+                .map(crate::agent::Talk::prompt_mut),
+        }
+    }
+
+    /// Gives the keyboard to `writing`, taking it from whatever had it.
+    pub(super) fn write_in(&mut self, writing: Writing) {
+        self.release_pane_focus();
+        self.writing = Some(writing);
+    }
+
+    /// Answers a press, a drag or a release of the pointer in a box of text.
+    ///
+    /// A press in a box is also what gives it the keyboard, so this is the
+    /// whole of how one is written in: there is nothing to focus first. The
+    /// presses are counted the way they are in the editor, so a box selects a
+    /// word on the second and its line on the third.
+    pub(super) fn point_in(
+        &mut self,
+        writing: Writing,
+        phase: ResizePhase,
+        anchor: Position,
+        head: Position,
+    ) {
+        self.write_in(writing);
+        let pressed = phase == ResizePhase::Started;
+        let still = anchor == head;
+        if still && !pressed {
+            return;
+        }
+        let presses = match still {
+            true => self.text_clicks.press(anchor),
+            false => {
+                self.text_clicks.clear();
+                0
+            }
+        };
+        if let Some(input) = self.written_in() {
+            input.point(phase, anchor, head, presses);
+        }
+    }
+
     /// Writes the window's preferences, projects and layout down.
     fn store(&mut self) {
         self.remember_window();
@@ -1504,7 +1563,7 @@ impl App {
         let files = workspace::Worktree {
             tree: active.and_then(|id| self.files.get(&id)),
             review: active.and_then(|id| self.reviews.get(&id)),
-            committing: self.commit_focused,
+            committing: self.writing == Some(Writing::Commit),
             branch_bounds: self.branch_bounds.clone(),
             remote_bounds: self.remote_bounds.clone(),
             remote_operation: self.remote_operation.map(|operation| {

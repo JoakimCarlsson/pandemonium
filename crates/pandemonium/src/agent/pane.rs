@@ -22,7 +22,7 @@ use pm_gfx::Rgba;
 use pm_ui::{Div, Styled, Theme, button, h_flex, rule, text, v_flex};
 
 use crate::agent::{Block, SessionId, Talk};
-use crate::editor::plain_view;
+use crate::input::input_view;
 use crate::message::Message;
 
 /// How many rows are built at once, however long the conversation runs.
@@ -454,24 +454,21 @@ fn prompt_bar(theme: &Theme, talk: &Talk, typing: bool) -> Div<Message> {
         .child(
             h_flex()
                 .w_full()
-                .h_px(theme.size.control * PROMPT_LINES)
-                .px(1)
-                .py(0.5)
                 .gap(0.75)
-                .overflow_hidden()
-                .rounded(theme.radius.md)
-                .border_1(match typing {
-                    true => theme.colors.border_focused,
-                    false => theme.colors.border,
-                })
+                .items_center()
                 .child(
                     text(">")
                         .text_xs()
                         .font_mono()
                         .color(theme.colors.text_subtle),
                 )
-                .child(plain_view(talk.prompt(), typing).caret(typing).on_select(
+                .child(input_view(
+                    theme,
+                    talk.prompt(),
+                    typing,
+                    PROMPT_LINES,
                     move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
+                    Message::ShowInputMenu,
                 )),
         )
         .child(

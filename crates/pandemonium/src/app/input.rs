@@ -15,7 +15,7 @@ use winit::keyboard::{Key, NamedKey};
 #[cfg(not(target_os = "macos"))]
 use winit::window::ResizeDirection;
 
-use crate::app::App;
+use crate::app::{App, Writing};
 use crate::editor::{self, Completions};
 use crate::field::Typed;
 use crate::keymap::{self, Action, Context, Resolution, keys};
@@ -89,10 +89,7 @@ impl App {
                 Resolution::None => {}
             }
         }
-        if self.send_to_agent_prompt(event) {
-            return self.request_redraw();
-        }
-        if self.send_to_commit(event) {
+        if self.send_to_input(event) {
             return self.request_redraw();
         }
         if self.send_to_changes(event) {
@@ -212,69 +209,67 @@ impl App {
         true
     }
 
-    /// Sends a keypress to an agent's prompt, when it has the keyboard.
+    /// Sends a keypress to the box of text that has the keyboard.
     ///
-    /// A prompt is a buffer, so it takes what a buffer takes. What it does
-    /// not take is Enter on its own, which sends what has been written: a
-    /// prompt of several lines is written with Shift held, the way every
-    /// other box one talks to something through behaves. While a slash has
-    /// narrowed the agent's commands to a list, the arrows move through it
-    /// and Enter takes what they land on rather than sending. Escape stops
-    /// the
-    /// turn while one is running and lets go of the prompt when none is,
-    /// which is the order a reader wants them in: the key that gets out of
-    /// something gets out of the agent first.
-    fn send_to_agent_prompt(&mut self, event: &KeyEvent) -> bool {
-        let Some(session) = self.prompt_focused else {
+    /// Every box takes the same keys, so there is one of these however many
+    /// boxes the window has: what differs is the key that finishes a box and
+    /// what finishing it means, and both of those belong to the box.
+    ///
+    /// The one thing that comes before the box is the list of commands a
+    /// slash has narrowed to, because while it is up the arrows and Enter are
+    /// choosing from it rather than writing.
+    fn send_to_input(&mut self, event: &KeyEvent) -> bool {
+        let Some(writing) = self.writing else {
             return false;
         };
-        match event.logical_key.as_ref() {
-            key if self.naming_command(session) => match key {
-                Key::Named(NamedKey::ArrowUp) => return self.step_command(session, -1),
-                Key::Named(NamedKey::ArrowDown) => return self.step_command(session, 1),
-                Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
-                    if let Some(talk) = self.agents.get_mut(session) {
-                        talk.take_chosen();
-                    }
-                    return true;
-                }
-                _ => {}
-            },
-            Key::Named(NamedKey::Enter) if !self.modifiers.shift_key() => {
-                self.apply(Message::SendPrompt(session));
-                return true;
-            }
-            _ => {}
+        if let Writing::Prompt(session) = writing
+            && self.choosing_command(session, event)
+        {
+            return true;
+        }
+
+        let (key, modifiers) = (event.logical_key.clone(), self.modifiers);
+        if self
+            .written_in()
+            .is_some_and(|input| input.submits(&key, modifiers))
+        {
+            self.submit_writing(writing);
+            return true;
         }
         if self.is_window_chord() {
             return false;
         }
 
-        let Some(prompt) = self.agents.get(session).map(crate::agent::Talk::prompt) else {
+        let Some(input) = self.written_in() else {
             return false;
         };
-        let rows = prompt.borrow().rows();
-        let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
+        if input.press(&key, modifiers) == Typed::Ignored {
             return false;
-        };
-        prompt.borrow_mut().edit(|buffer| {
-            buffer.at_each(|buffer| match edit.clone() {
-                editor::Edit::Type(ch) => buffer.insert_typed(ch),
-                editor::Edit::Insert(text) => buffer.insert(&text),
-                editor::Edit::Newline => buffer.insert_newline(),
-                editor::Edit::Indent => buffer.insert_indent(),
-                editor::Edit::Outdent => buffer.outdent_lines(),
-                editor::Edit::Backspace => buffer.backspace(),
-                editor::Edit::Delete => buffer.delete(),
-                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
-                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
-                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
-            });
-        });
-        if let Some(talk) = self.agents.get_mut(session) {
+        }
+        if let Writing::Prompt(session) = writing
+            && let Some(talk) = self.agents.get_mut(session)
+        {
             talk.retyped();
         }
         true
+    }
+
+    /// Takes a key the list of commands a slash narrowed to wanted.
+    fn choosing_command(&mut self, session: crate::agent::SessionId, event: &KeyEvent) -> bool {
+        if !self.naming_command(session) {
+            return false;
+        }
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::ArrowUp) => self.step_command(session, -1),
+            Key::Named(NamedKey::ArrowDown) => self.step_command(session, 1),
+            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.take_chosen();
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Whether `session`'s prompt is naming one of the agent's commands.
@@ -292,54 +287,12 @@ impl App {
         true
     }
 
-    /// Sends a keypress to the commit message, when it has the keyboard.
-    ///
-    /// The message is a buffer, so it takes what a buffer takes: characters,
-    /// line breaks, the cursor moved and the text selected. What it does not
-    /// take is the platform key with Enter, which is how a message that is
-    /// finished is committed without leaving the keyboard.
-    fn send_to_commit(&mut self, event: &KeyEvent) -> bool {
-        if !self.commit_focused {
-            return false;
+    /// Does what finishing the box that has the keyboard means.
+    fn submit_writing(&mut self, writing: Writing) {
+        match writing {
+            Writing::Commit => self.apply(Message::Commit),
+            Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
         }
-        let committing = self.modifiers.super_key() || self.modifiers.control_key();
-        match event.logical_key.as_ref() {
-            Key::Named(NamedKey::Enter) if committing => {
-                self.apply(Message::Commit);
-                return true;
-            }
-            Key::Named(NamedKey::Escape) => {
-                self.commit_focused = false;
-                return true;
-            }
-            _ => {}
-        }
-        if self.is_window_chord() {
-            return false;
-        }
-
-        let Some(message) = self.review().map(crate::review::Review::message) else {
-            return false;
-        };
-        let rows = message.borrow().rows();
-        let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
-            return false;
-        };
-        message.borrow_mut().edit(|buffer| {
-            buffer.at_each(|buffer| match edit.clone() {
-                editor::Edit::Type(ch) => buffer.insert_typed(ch),
-                editor::Edit::Insert(text) => buffer.insert(&text),
-                editor::Edit::Newline => buffer.insert_newline(),
-                editor::Edit::Indent => buffer.insert_indent(),
-                editor::Edit::Outdent => buffer.outdent_lines(),
-                editor::Edit::Backspace => buffer.backspace(),
-                editor::Edit::Delete => buffer.delete(),
-                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
-                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
-                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
-            });
-        });
-        true
     }
 
     /// Sends a keypress to the list of changes, when the list has the keyboard.

@@ -8,13 +8,11 @@
 //! [`Talk`] is one of them — the agent, everything said to it and by it, the
 //! prompt being typed and whatever it is waiting to be allowed to do.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::rc::Rc;
 
 use crate::agent::transcript::Transcript;
-use crate::editor::{Document, OpenFile};
+use crate::input::Input;
 use pm_acp::{Agent, Ask, Command, Event, Notify, Session, Stop, Voice};
 use pm_core::ProjectId;
 
@@ -40,7 +38,7 @@ pub struct Talk {
     ///
     /// A prompt is several lines as often as it is one, so it is written in
     /// the editor the window is made of rather than in a line of its own.
-    prompt: OpenFile,
+    prompt: Input,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
     /// The commands the agent has said it takes, as it last said them.
@@ -85,9 +83,14 @@ impl Talk {
         &self.transcript
     }
 
-    /// The buffer the next prompt is written in.
-    pub fn prompt(&self) -> OpenFile {
-        self.prompt.clone()
+    /// The box the next prompt is written in.
+    pub fn prompt(&self) -> &Input {
+        &self.prompt
+    }
+
+    /// That box, to write in.
+    pub fn prompt_mut(&mut self) -> &mut Input {
+        &mut self.prompt
     }
 
     /// The permission requests waiting on the reader.
@@ -101,7 +104,7 @@ impl Talk {
     /// slash with an argument after it has been named already, and a slash
     /// in the middle of a sentence is a slash.
     pub fn naming(&self) -> Option<String> {
-        let typed = self.prompt.borrow().buffer().contents();
+        let typed = self.prompt.value();
         let named = typed.strip_prefix('/')?;
         match named.contains(char::is_whitespace) {
             true => None,
@@ -171,11 +174,7 @@ impl Talk {
         else {
             return;
         };
-        self.prompt.borrow_mut().edit(|buffer| {
-            buffer.select_all();
-            buffer.delete();
-            buffer.insert(&format!("/{command} "));
-        });
+        self.prompt.set(&format!("/{command} "));
         self.chosen = 0;
     }
 
@@ -233,15 +232,11 @@ impl Talk {
     /// echoes it: an agent is not obliged to say back what it was told, and
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
-        let text = self.prompt.borrow().buffer().contents();
-        let text = text.trim().to_owned();
+        let text = self.prompt.value().trim().to_owned();
         if text.is_empty() {
             return;
         }
-        self.prompt.borrow_mut().edit(|buffer| {
-            buffer.select_all();
-            buffer.delete();
-        });
+        self.prompt.clear();
         self.transcript.say(Voice::Reader, &text);
         self.session.prompt(&text);
         self.chosen = 0;
@@ -376,7 +371,7 @@ impl Sessions {
                 project,
                 session,
                 transcript: Transcript::default(),
-                prompt: Rc::new(RefCell::new(Document::scratch("Prompt"))),
+                prompt: Input::many_lines("Prompt"),
                 asks: Vec::new(),
                 commands: Vec::new(),
                 chosen: 0,

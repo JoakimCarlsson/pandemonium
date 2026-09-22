@@ -1,0 +1,177 @@
+//! One box of text: what is in it, and what the keyboard does to it.
+//!
+//! The text is a buffer, the same one the editor is made of, so an input
+//! takes what the editor takes: selection, several cursors, undo, the word
+//! and line motions. What an input adds is the two things a box has and a
+//! document does not — how many lines it may hold, and what finishes it.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use pm_text::Position;
+use pm_ui::ResizePhase;
+use winit::keyboard::{Key, ModifiersState, NamedKey};
+
+use crate::editor::{self, Document, OpenFile};
+use crate::field::Typed;
+
+/// How much text a box holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Lines {
+    /// One line: a name, a query, a path.
+    One,
+    /// As many as are typed: a message, a prompt.
+    Many,
+}
+
+/// What finishes a box.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Submit {
+    /// Enter sends it, and Shift with Enter breaks the line instead.
+    ///
+    /// This is for a box whose whole purpose is to be sent — a prompt — where
+    /// sending is what the reader does every time and a line break is the
+    /// exception.
+    Enter,
+    /// The platform key with Enter sends it, and Enter breaks the line.
+    ///
+    /// This is for a box that is written before it is sent — a commit message
+    /// — where a stray Enter should never be the thing that sends it.
+    Chord,
+}
+
+/// One box of text being written in.
+pub struct Input {
+    /// The text itself, and everything the editor knows about it.
+    text: OpenFile,
+    /// How many lines it may hold.
+    lines: Lines,
+    /// What finishes it.
+    submit: Submit,
+}
+
+impl Input {
+    /// A box of one line, sent with Enter, called `name` where a name shows.
+    pub fn one_line(name: &str) -> Self {
+        Self {
+            text: Rc::new(RefCell::new(Document::scratch(name))),
+            lines: Lines::One,
+            submit: Submit::Enter,
+        }
+    }
+
+    /// A box of as many lines as are typed, sent with Enter.
+    pub fn many_lines(name: &str) -> Self {
+        Self {
+            text: Rc::new(RefCell::new(Document::scratch(name))),
+            lines: Lines::Many,
+            submit: Submit::Enter,
+        }
+    }
+
+    /// Returns this box finished by `submit` rather than by plain Enter.
+    pub fn submitting(mut self, submit: Submit) -> Self {
+        self.submit = submit;
+        self
+    }
+
+    /// The buffer behind the box, for the screen that draws it.
+    pub fn text(&self) -> OpenFile {
+        self.text.clone()
+    }
+
+    /// What is in the box.
+    pub fn value(&self) -> String {
+        self.text.borrow().buffer().contents()
+    }
+
+    /// Whether there is nothing in it.
+    pub fn is_empty(&self) -> bool {
+        self.value().is_empty()
+    }
+
+    /// Empties it.
+    pub fn clear(&mut self) {
+        self.edit(|buffer| {
+            buffer.select_all();
+            buffer.delete();
+        });
+    }
+
+    /// Puts `value` in, leaving the cursor at the end of it.
+    pub fn set(&mut self, value: &str) {
+        self.clear();
+        self.edit(|buffer| buffer.insert(value));
+    }
+
+    /// Whether `key` is the one that finishes this box.
+    pub fn submits(&self, key: &Key, modifiers: ModifiersState) -> bool {
+        if !matches!(key, Key::Named(NamedKey::Enter)) {
+            return false;
+        }
+        match self.submit {
+            Submit::Enter => !modifiers.shift_key(),
+            Submit::Chord => modifiers.super_key() || modifiers.control_key(),
+        }
+    }
+
+    /// Applies `key` to the box, saying whether it was one the box wanted.
+    ///
+    /// A box of one line has no line to break: Enter that does not finish it
+    /// does nothing rather than growing a box the screen has no room for.
+    pub fn press(&mut self, key: &Key, modifiers: ModifiersState) -> Typed {
+        let rows = self.text.borrow().rows();
+        let Some(edit) = editor::edit(key, modifiers, rows) else {
+            return Typed::Ignored;
+        };
+        if self.lines == Lines::One && matches!(edit, editor::Edit::Newline) {
+            return Typed::Ignored;
+        }
+
+        self.edit(|buffer| {
+            buffer.at_each(|buffer| match edit.clone() {
+                editor::Edit::Type(ch) => buffer.insert_typed(ch),
+                editor::Edit::Insert(text) => buffer.insert(&text),
+                editor::Edit::Newline => buffer.insert_newline(),
+                editor::Edit::Indent => buffer.insert_indent(),
+                editor::Edit::Outdent => buffer.outdent_lines(),
+                editor::Edit::Backspace => buffer.backspace(),
+                editor::Edit::Delete => buffer.delete(),
+                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
+                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
+                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
+            });
+        });
+        Typed::Taken
+    }
+
+    /// Answers a press, a drag or a release of the pointer in the box.
+    ///
+    /// `presses` is how many times the pointer has been pressed in the same
+    /// place, so that the box selects what every other box selects: a word on
+    /// the second press, the line on the third.
+    pub fn point(&mut self, phase: ResizePhase, anchor: Position, head: Position, presses: usize) {
+        let still = anchor == head;
+        if still && phase != ResizePhase::Started {
+            return;
+        }
+
+        self.edit(|buffer| {
+            buffer.collapse_cursors();
+            match (still, presses) {
+                (true, 2) => buffer.select_word(head),
+                (true, count) if count >= 3 => buffer.select_line(head),
+                (true, _) => buffer.place(head, false),
+                (false, _) => {
+                    buffer.place(anchor, false);
+                    buffer.place(head, true);
+                }
+            }
+        });
+    }
+
+    /// Puts the buffer through `change`.
+    fn edit(&mut self, change: impl FnOnce(&mut pm_text::Buffer)) {
+        self.text.borrow_mut().edit(change);
+    }
+}

@@ -293,4 +293,8 @@ pub enum Message {
     AnswerAgent(SessionId, u64, usize),
     /// Put the command this session is offering in this place into its prompt.
     TakeAgentCommand(SessionId, usize),
+    /// Open the menu of things that can be done to the box being written in.
+    ShowInputMenu,
+    /// Carry out this command in whatever box has the keyboard.
+    EditText(Action),
 }

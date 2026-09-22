@@ -232,6 +232,8 @@ pub enum MenuTarget {
     Terminal(ShellId),
     /// The text one of the editor panes is showing.
     Text(PaneId),
+    /// The box of text that is being written in.
+    Input,
     /// The fixes a language server offered where the cursor is.
     CodeActions,
     /// One entry of the file tree.

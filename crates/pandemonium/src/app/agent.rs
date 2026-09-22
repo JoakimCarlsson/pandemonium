@@ -6,14 +6,12 @@
 //! answers to goes through [`App::agent_command`].
 
 use pm_acp::Agent;
-use pm_ui::ResizePhase;
 
 use crate::agent::SessionId;
-use crate::app::App;
+use crate::app::{App, Writing};
 use crate::message::Message;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Row};
-use pm_text::Position;
 
 impl App {
     /// Carries out the commands an agent session answers to.
@@ -24,7 +22,7 @@ impl App {
         match message {
             Message::NewAgentSession => self.open_picker(Kind::Agents),
             Message::WriteAgentPrompt(session, phase, anchor, head) => {
-                self.write_prompt(session, phase, anchor, head);
+                self.point_in(Writing::Prompt(session), phase, anchor, head);
             }
             Message::SendPrompt(session) => self.send_prompt(session),
             Message::AnswerAgent(session, ask, place) => {
@@ -36,7 +34,7 @@ impl App {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.take_command(place);
                 }
-                self.prompt_focused = Some(session);
+                self.focus_prompt(session);
             }
             _ => return false,
         }
@@ -89,20 +87,19 @@ impl App {
     /// agent, and the press after it leaves the prompt — so a reader who
     /// wants the agent to stop never has to look at where the keyboard is.
     pub(super) fn stop_or_release_prompt(&mut self) -> bool {
-        let Some(session) = self.prompt_focused else {
+        let Some(Writing::Prompt(session)) = self.writing else {
             return false;
         };
         match self.agents.get(session).filter(|talk| talk.is_busy()) {
             Some(talk) => talk.cancel(),
-            None => self.prompt_focused = None,
+            None => self.writing = None,
         }
         true
     }
 
     /// Gives the keyboard to `session`'s prompt.
     pub(super) fn focus_prompt(&mut self, session: SessionId) {
-        self.release_pane_focus();
-        self.prompt_focused = Some(session);
+        self.write_in(Writing::Prompt(session));
     }
 
     /// Sends what `session`'s prompt holds, and follows what comes back.
@@ -110,37 +107,8 @@ impl App {
         if let Some(talk) = self.agents.get_mut(session) {
             talk.send();
         }
-        self.prompt_focused = Some(session);
-        self.follow_agents();
-    }
-
-    /// Puts the prompt's cursor where a press landed, selecting to `head`.
-    fn write_prompt(
-        &mut self,
-        session: SessionId,
-        phase: ResizePhase,
-        anchor: Position,
-        head: Position,
-    ) {
         self.focus_prompt(session);
-        let Some(prompt) = self.agents.get(session).map(crate::agent::Talk::prompt) else {
-            return;
-        };
-        let still = anchor == head;
-        if still && phase != ResizePhase::Started {
-            return;
-        }
-
-        prompt.borrow_mut().edit(|buffer| {
-            buffer.collapse_cursors();
-            match still {
-                true => buffer.place(head, false),
-                false => {
-                    buffer.place(anchor, false);
-                    buffer.place(head, true);
-                }
-            }
-        });
+        self.follow_agents();
     }
 
     /// The session the pointer is over, or the one the focused pane shows.

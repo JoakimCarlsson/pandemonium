@@ -280,8 +280,10 @@ impl App {
     /// prompt is a buffer too, and a command that edits text means whichever
     /// of them has the keyboard, not the file behind it.
     pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
-        let session = self.prompt_focused?;
-        self.agents.get(session).map(crate::agent::Talk::prompt)
+        match self.writing? {
+            crate::app::Writing::Commit => Some(self.review()?.message().text()),
+            crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
+        }
     }
 
     /// Changes the tabs of `pane` and closes whatever that left with nothing.
@@ -432,11 +434,10 @@ impl App {
             .collect::<BTreeSet<_>>();
         self.editor.retain(&files);
         self.agents.retain(&sessions);
-        if self
-            .prompt_focused
-            .is_some_and(|open| !sessions.contains(&open))
+        if let Some(crate::app::Writing::Prompt(open)) = self.writing
+            && !sessions.contains(&open)
         {
-            self.prompt_focused = None;
+            self.writing = None;
         }
     }
 
@@ -759,7 +760,7 @@ impl App {
                 Some(review) => Content::Built(Box::new(crate::review::review_pane(
                     theme,
                     review,
-                    self.commit_focused,
+                    self.writing == Some(crate::app::Writing::Commit),
                 ))),
                 None => Content::Empty,
             },
@@ -767,7 +768,7 @@ impl App {
                 Some(talk) => Content::Built(Box::new(crate::agent::agent_pane(
                     theme,
                     talk,
-                    self.prompt_focused == Some(session),
+                    self.writing == Some(crate::app::Writing::Prompt(session)),
                     width,
                 ))),
                 None => Content::Empty,
@@ -814,6 +815,12 @@ impl App {
                     served: document.is_served(),
                     tracked: document.is_tracked(),
                 })
+            }
+            MenuTarget::Input => {
+                let selected = self
+                    .typed_into()
+                    .is_some_and(|text| !text.borrow().buffer().selection().is_empty());
+                crate::input::input_menu(selected)
             }
             MenuTarget::Change => crate::review::change_menu(self.review()?),
             MenuTarget::Remote => vec![
