@@ -190,6 +190,8 @@ pub struct Panes {
     pub carried: Option<(Point, String)>,
     /// The terminal panel and the shells running in it.
     pub terminal: Panel,
+    /// How many agents are running in the active project's worktree.
+    pub agents: usize,
     /// The tab menu that is open, and what it holds.
     pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
     /// What is drawn over the panes, each at a point of its own.
@@ -391,6 +393,8 @@ struct Status {
     changes: usize,
     /// How many shells are running in the worktree.
     shells: usize,
+    /// How many agents are running in it.
+    agents: usize,
     /// Whether the panel those shells are shown in is open.
     panel_open: bool,
     /// Where the cursor is in the file the pane is showing.
@@ -424,6 +428,7 @@ impl Status {
             sessions: active.map_or(0, |project| sessions_of(project, sessions).len()),
             changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.terminal.shells.len(),
+            agents: panes.agents,
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
@@ -473,6 +478,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         sessions,
         changes,
         shells,
+        agents,
         panel_open,
         cursor,
         cursors,
@@ -570,6 +576,16 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         })
         .child(status_item(
             theme,
+            Some(IconName::Sparkle),
+            match agents {
+                0 => "New agent".to_owned(),
+                running => counted(running, "agent"),
+            },
+            Some(Message::NewAgentSession),
+            agents > 0,
+        ))
+        .child(status_item(
+            theme,
             Some(IconName::Terminal),
             counted(shells, "shell"),
             Some(Message::ToggleBottomPanel),
@@ -631,11 +647,6 @@ fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
         .items_center()
         .bg(theme.colors.surface)
         .border_1(theme.colors.border)
-        .child(h_flex().px(1).items_center().child(icon_button(
-            theme,
-            IconName::Sparkle,
-            Message::NewAgentSession,
-        )))
         .child(h_flex().flex_1())
         .child(
             h_flex()

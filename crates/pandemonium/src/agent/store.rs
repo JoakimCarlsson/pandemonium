@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 use crate::agent::transcript::Transcript;
 use crate::editor::{Document, OpenFile};
-use pm_acp::{Agent, Ask, Event, Notify, Session, Stop, Voice};
+use pm_acp::{Agent, Ask, Command, Event, Notify, Session, Stop, Voice};
 use pm_core::ProjectId;
 
 /// A session's identity for as long as it is running.
@@ -43,6 +43,8 @@ pub struct Talk {
     prompt: OpenFile,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
+    /// The commands the agent has said it takes, as it last said them.
+    commands: Vec<Command>,
     /// Whether the conversation is open and will take prompts.
     ready: bool,
     /// Whether a turn is running.
@@ -84,6 +86,55 @@ impl Talk {
     /// The permission requests waiting on the reader.
     pub fn asks(&self) -> &[Ask] {
         &self.asks
+    }
+
+    /// What the prompt is naming after a slash, when that is what it holds.
+    ///
+    /// A command is only being named while it is the whole of the prompt: a
+    /// slash with an argument after it has been named already, and a slash
+    /// in the middle of a sentence is a slash.
+    pub fn naming(&self) -> Option<String> {
+        let typed = self.prompt.borrow().buffer().contents();
+        let named = typed.strip_prefix('/')?;
+        match named.contains(char::is_whitespace) {
+            true => None,
+            false => Some(named.to_lowercase()),
+        }
+    }
+
+    /// The commands the prompt is narrowing to, while it is naming one.
+    ///
+    /// An agent says what it takes when the conversation opens and says it
+    /// again whenever that changes, so this is what it offers now — the
+    /// skills, the slash commands and whatever else it has put on the list.
+    pub fn offered(&self) -> Vec<&Command> {
+        let Some(named) = self.naming() else {
+            return Vec::new();
+        };
+        self.commands
+            .iter()
+            .filter(|command| command.name.to_lowercase().starts_with(&named))
+            .collect()
+    }
+
+    /// Puts the command in `place` of what is offered into the prompt.
+    ///
+    /// The command is left with a space after it and the turn is not sent:
+    /// most of them take something, and the ones that do not are one more
+    /// key away.
+    pub fn take_command(&mut self, place: usize) {
+        let Some(command) = self
+            .offered()
+            .get(place)
+            .map(|command| command.name.clone())
+        else {
+            return;
+        };
+        self.prompt.borrow_mut().edit(|buffer| {
+            buffer.select_all();
+            buffer.delete();
+            buffer.insert(&format!("/{command} "));
+        });
     }
 
     /// Whether the conversation is open and will take prompts.
@@ -191,7 +242,7 @@ impl Talk {
             Event::Said(voice, text) => self.transcript.say(voice, &text),
             Event::Ran(call) => self.transcript.ran(call),
             Event::Planned(steps) => self.transcript.planned(steps),
-            Event::Offers(_) => {}
+            Event::Offers(commands) => self.commands = commands,
             Event::Mode(mode) => self.mode = Some(mode),
             Event::Asked(ask) => self.asks.push(ask),
             Event::Stopped(stop) => {
@@ -256,6 +307,7 @@ impl Sessions {
                 transcript: Transcript::default(),
                 prompt: Rc::new(RefCell::new(Document::scratch("Prompt"))),
                 asks: Vec::new(),
+                commands: Vec::new(),
                 ready: false,
                 busy: false,
                 mode: None,
@@ -264,6 +316,14 @@ impl Sessions {
             },
         );
         Some(id)
+    }
+
+    /// How many sessions `project` has running.
+    pub fn count(&self, project: ProjectId) -> usize {
+        self.talks
+            .values()
+            .filter(|talk| talk.project == project)
+            .count()
     }
 
     /// The session `id` names.

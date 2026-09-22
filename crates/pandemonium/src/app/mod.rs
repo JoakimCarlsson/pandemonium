@@ -1538,6 +1538,10 @@ impl App {
                     drop,
                     carried,
                     terminal: panel,
+                    agents: self
+                        .open
+                        .active()
+                        .map_or(0, |project| self.agents.count(project.id())),
                     menu,
                     overlays,
                 },

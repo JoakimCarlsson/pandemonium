@@ -34,6 +34,9 @@ const RESULT_LINES: usize = 8;
 /// How many lines of the prompt the pane has room for.
 const PROMPT_LINES: f32 = 3.0;
 
+/// How many of the commands a slash narrows to are offered at once.
+const OFFERED: usize = 8;
+
 /// How wide one character of the conversation's type is, as a share of its
 /// size.
 ///
@@ -126,7 +129,58 @@ pub fn agent_pane(theme: &Theme, talk: &Talk, typing: bool, width: f32) -> Div<M
                 .flat_map(|ask| [rule(theme), permission(theme, talk.id(), ask)]),
         )
         .child(rule(theme))
+        .when(!talk.offered().is_empty(), |pane| {
+            pane.child(commands(theme, talk))
+        })
         .child(prompt_bar(theme, talk, typing))
+}
+
+/// Builds the list of commands the slash being typed narrows to.
+///
+/// The agent says what it takes — its slash commands and its skills — and
+/// this is where that list is: a reader who types a slash is shown what this
+/// agent answers to, rather than having to know.
+fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
+    let session = talk.id();
+    let rows = talk
+        .offered()
+        .into_iter()
+        .take(OFFERED)
+        .enumerate()
+        .map(|(place, command)| {
+            h_flex()
+                .w_full()
+                .px(1.75)
+                .py(0.25)
+                .gap(1)
+                .items_center()
+                .hover_bg(theme.colors.surface_hover)
+                .when(place == 0, |row| row.bg(theme.colors.surface_selected))
+                .on_click(Message::TakeAgentCommand(session, place))
+                .child(
+                    text(format!("/{}", command.name))
+                        .text_xs()
+                        .font_mono()
+                        .color(tone(theme, Tone::Tool)),
+                )
+                .child(
+                    text(first_line(&command.description))
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                )
+        })
+        .collect::<Vec<_>>();
+
+    v_flex()
+        .w_full()
+        .py(0.5)
+        .bg(theme.colors.surface)
+        .children(rows)
+}
+
+/// The first line of `said`, which is as much of it as a row has room for.
+fn first_line(said: &str) -> String {
+    said.lines().next().unwrap_or_default().to_owned()
 }
 
 /// How many rows the conversation comes to at `width` logical pixels.
@@ -432,6 +486,9 @@ fn prompt_bar(theme: &Theme, talk: &Talk, typing: bool) -> Div<Message> {
 
 /// What the line under the prompt says the keyboard does.
 fn hints(talk: &Talk) -> [&'static str; 3] {
+    if !talk.offered().is_empty() {
+        return ["⇥ take the command", "⏎ send", "esc leave the prompt"];
+    }
     match talk.is_busy() {
         true => ["⏎ send", "⇧⏎ newline", "esc interrupt"],
         false => ["⏎ send", "⇧⏎ newline", "esc leave the prompt"],

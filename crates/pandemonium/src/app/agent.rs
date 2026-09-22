@@ -32,6 +32,12 @@ impl App {
                     talk.answer(ask, place);
                 }
             }
+            Message::TakeAgentCommand(session, place) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.take_command(place);
+                }
+                self.prompt_focused = Some(session);
+            }
             _ => return false,
         }
         true

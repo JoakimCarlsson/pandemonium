@@ -217,7 +217,8 @@ impl App {
     /// A prompt is a buffer, so it takes what a buffer takes. What it does
     /// not take is Enter on its own, which sends what has been written: a
     /// prompt of several lines is written with Shift held, the way every
-    /// other box one talks to something through behaves. Escape stops the
+    /// other box one talks to something through behaves, and Tab takes the
+    /// command a slash has narrowed to. Escape stops the
     /// turn while one is running and lets go of the prompt when none is,
     /// which is the order a reader wants them in: the key that gets out of
     /// something gets out of the agent first.
@@ -228,6 +229,15 @@ impl App {
         match event.logical_key.as_ref() {
             Key::Named(NamedKey::Enter) if !self.modifiers.shift_key() => {
                 self.apply(Message::SendPrompt(session));
+                return true;
+            }
+            Key::Named(NamedKey::Tab)
+                if self
+                    .agents
+                    .get(session)
+                    .is_some_and(|talk| !talk.offered().is_empty()) =>
+            {
+                self.apply(Message::TakeAgentCommand(session, 0));
                 return true;
             }
             Key::Named(NamedKey::Escape) => {

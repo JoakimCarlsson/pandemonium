@@ -291,4 +291,6 @@ pub enum Message {
     SendPrompt(SessionId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(SessionId, u64, usize),
+    /// Put the command this session is offering in this place into its prompt.
+    TakeAgentCommand(SessionId, usize),
 }
