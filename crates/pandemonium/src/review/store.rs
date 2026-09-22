@@ -9,12 +9,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use pm_core::{Changed, Head, Hunk, Side, Status};
 
-use crate::editor::{Document, OpenFile};
+use crate::input::{Input, Submit};
 
 /// One changed file's identity for as long as the window is open.
 ///
@@ -101,7 +98,7 @@ pub struct Review {
     /// in a line of its own: a commit message is several lines, it is written
     /// with the cursor moved about and the text selected, and every one of
     /// those is something the editor already does.
-    message: OpenFile,
+    message: Input,
     /// What git said when it last would not do something.
     trouble: Option<String>,
     /// The id each file that has ever changed here was given.
@@ -136,7 +133,7 @@ impl Review {
             status: Status::default(),
             patches: BTreeMap::new(),
             collapsed: BTreeSet::new(),
-            message: Rc::new(RefCell::new(Document::scratch("COMMIT_EDITMSG"))),
+            message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
             trouble: None,
             ids: BTreeMap::new(),
             next: 0,
@@ -507,14 +504,19 @@ impl Review {
         }
     }
 
-    /// The buffer the next commit's message is written in.
-    pub fn message(&self) -> OpenFile {
-        self.message.clone()
+    /// The box the next commit's message is written in.
+    pub fn message(&self) -> &Input {
+        &self.message
     }
 
-    /// What that buffer holds.
+    /// That box, to write in.
+    pub fn message_mut(&mut self) -> &mut Input {
+        &mut self.message
+    }
+
+    /// What it holds.
     pub fn said(&self) -> String {
-        self.message.borrow().buffer().contents()
+        self.message.value()
     }
 
     /// Whether nothing has been written in it.
@@ -708,10 +710,7 @@ impl Review {
         let message = self.said();
         let said = pm_core::commit(&self.root, &message, self.staged() == 0);
         if said.is_ok() {
-            self.message.borrow_mut().edit(|buffer| {
-                buffer.select_all();
-                buffer.delete();
-            });
+            self.message.clear();
         }
         self.done(said);
     }

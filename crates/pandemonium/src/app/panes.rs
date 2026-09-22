@@ -110,7 +110,7 @@ impl App {
         match item {
             Item::File(file) => self.editor.is_preview(file),
             Item::Change(project, change) => self.is_change_preview(project, change),
-            Item::Review(_) => false,
+            Item::Review(_) | Item::Agent(..) => false,
         }
     }
 
@@ -170,7 +170,9 @@ impl App {
     pub(super) fn project_of(&self, item: Item) -> Option<ProjectId> {
         match item {
             Item::File(file) => self.editor.project_of(file),
-            Item::Review(project) | Item::Change(project, _) => Some(project),
+            Item::Review(project) | Item::Change(project, _) | Item::Agent(project, _) => {
+                Some(project)
+            }
         }
     }
 
@@ -263,8 +265,24 @@ impl App {
 
     /// Applies `edit` to the tab in front of the pane with the keyboard.
     pub(super) fn edit_active(&mut self, edit: impl FnOnce(&mut pm_text::Buffer)) {
+        if let Some(typed) = self.typed_into() {
+            typed.borrow_mut().edit(edit);
+            return;
+        }
         if let Some(file) = self.active_file_id() {
             self.editor.edit(file, edit);
+        }
+    }
+
+    /// The buffer being typed into that is not a pane's file, if there is one.
+    ///
+    /// A pane's file is not the only thing a reader writes in: an agent's
+    /// prompt is a buffer too, and a command that edits text means whichever
+    /// of them has the keyboard, not the file behind it.
+    pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
+        match self.writing? {
+            crate::app::Writing::Commit => Some(self.review()?.message().text()),
+            crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
         }
     }
 
@@ -313,6 +331,16 @@ impl App {
         self.panes.save(&|item| {
             let project = self.project_of(item)?;
             let root = self.open.get(project)?.root().to_path_buf();
+            if let Some(session) = item.session() {
+                let talk = self.agents.get(session)?;
+                return Some(SavedTab {
+                    kind: SavedKind::Agent,
+                    project: root,
+                    agent: talk.agent().id.to_owned(),
+                    session: talk.resumable().unwrap_or_default(),
+                    ..SavedTab::default()
+                });
+            }
             if let Some(change) = item.change() {
                 let path = self.reviews.get(&project)?.path_of(change)?;
                 return Some(SavedTab {
@@ -358,11 +386,20 @@ impl App {
             .collect::<Vec<_>>();
         let editor = &mut self.editor;
         let reviews = &mut self.reviews;
+        let agents = &mut self.agents;
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
             let (root, project) = roots
                 .iter()
                 .find(|(root, _)| *root == tab.project)
                 .cloned()?;
+            if tab.kind == SavedKind::Agent {
+                let agent = pm_acp::Agent::named(&tab.agent)?;
+                let session = match tab.session.is_empty() {
+                    true => agents.start(project, &root, agent)?,
+                    false => agents.resume(project, &root, agent, &tab.session)?,
+                };
+                return Some((project, Item::Agent(project, session)));
+            }
             if tab.kind == SavedKind::Review {
                 return Some((project, Item::Review(project)));
             }
@@ -384,13 +421,24 @@ impl App {
 
     /// Closes every file no pane is holding open any more.
     pub(super) fn sweep(&mut self) {
-        let held = self
-            .panes
-            .held()
-            .into_iter()
+        let held = self.panes.held();
+        let files = held
+            .iter()
+            .copied()
             .filter_map(Item::file)
             .collect::<BTreeSet<_>>();
-        self.editor.retain(&held);
+        let sessions = held
+            .iter()
+            .copied()
+            .filter_map(Item::session)
+            .collect::<BTreeSet<_>>();
+        self.editor.retain(&files);
+        self.agents.retain(&sessions);
+        if let Some(crate::app::Writing::Prompt(open)) = self.writing
+            && !sessions.contains(&open)
+        {
+            self.writing = None;
+        }
     }
 
     /// Takes the files of `project` out of every pane that was showing them.
@@ -457,7 +505,7 @@ impl App {
             match item {
                 Item::File(file) => self.editor.keep(file),
                 Item::Change(project, change) => self.keep_change(project, change),
-                Item::Review(_) => {}
+                Item::Review(_) | Item::Agent(..) => {}
             }
         }
         self.activate_tab(pane, item);
@@ -600,6 +648,17 @@ impl App {
                 preview: false,
                 pinned: false,
             }),
+            Item::Agent(_, session) => {
+                let talk = self.agents.get(session)?;
+                Some(TabEntry {
+                    item,
+                    name: talk.agent().name.to_owned(),
+                    icon: IconName::Sparkle,
+                    dirty: talk.is_busy(),
+                    preview: false,
+                    pinned: false,
+                })
+            }
             Item::Change(project, change) => {
                 let review = self.reviews.get(&project)?;
                 let path = review.path_of(change)?;
@@ -673,7 +732,7 @@ impl App {
                     })
                     .collect(),
                 active,
-                content: self.shown(theme, active),
+                content: self.shown(theme, active, bounds.get().size.width),
                 bounds,
                 bar,
                 tab_bounds,
@@ -691,7 +750,7 @@ impl App {
     }
 
     /// What a pane showing `item` draws beneath its bar of tabs.
-    fn shown(&self, theme: &Theme, item: Option<Item>) -> Content {
+    fn shown(&self, theme: &Theme, item: Option<Item>, width: f32) -> Content {
         match item {
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),
@@ -701,7 +760,16 @@ impl App {
                 Some(review) => Content::Built(Box::new(crate::review::review_pane(
                     theme,
                     review,
-                    self.commit_focused,
+                    self.writing == Some(crate::app::Writing::Commit),
+                ))),
+                None => Content::Empty,
+            },
+            Some(Item::Agent(_, session)) => match self.agents.get(session) {
+                Some(talk) => Content::Built(Box::new(crate::agent::agent_pane(
+                    theme,
+                    talk,
+                    self.writing == Some(crate::app::Writing::Prompt(session)),
+                    width,
                 ))),
                 None => Content::Empty,
             },
@@ -747,6 +815,12 @@ impl App {
                     served: document.is_served(),
                     tracked: document.is_tracked(),
                 })
+            }
+            MenuTarget::Input => {
+                let selected = self
+                    .typed_into()
+                    .is_some_and(|text| !text.borrow().buffer().selection().is_empty());
+                crate::input::input_menu(selected)
             }
             MenuTarget::Change => crate::review::change_menu(self.review()?),
             MenuTarget::Remote => vec![

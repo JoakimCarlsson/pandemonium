@@ -73,6 +73,24 @@ impl App {
                 ));
             }
             Action::OpenReview => return self.apply(Message::OpenReview),
+            Action::NewAgentSession => return self.apply(Message::NewAgentSession),
+            Action::ChangeAgentMode => {
+                if let Some(session) = self.focused_session() {
+                    return self.apply(Message::ShowAgentModes(session));
+                }
+            }
+            Action::CycleAgentMode => {
+                if let Some(session) = self.focused_session() {
+                    return self.apply(Message::CycleAgentMode(session));
+                }
+            }
+            Action::ChangeAgentModel => {
+                if let Some(session) = self.focused_session()
+                    && let Some(place) = self.knob_about(session, pm_acp::About::Model)
+                {
+                    return self.apply(Message::PressKnob(session, place));
+                }
+            }
             Action::StageSelectedChanges => return self.apply(Message::StageSelection),
             Action::UnstageSelectedChanges => return self.apply(Message::UnstageSelection),
             Action::DiscardSelectedChanges => return self.apply(Message::DiscardSelection),
@@ -265,6 +283,9 @@ impl App {
             return;
         }
         if self.release_commit_focus() {
+            return;
+        }
+        if self.stop_or_release_prompt() {
             return;
         }
         if self.with_buffer(Buffer::has_many_cursors) == Some(true) {
@@ -570,7 +591,7 @@ impl App {
 
     /// Reads something off the focused buffer, when a pane is showing one.
     pub(super) fn with_buffer<T>(&self, read: impl FnOnce(&Buffer) -> T) -> Option<T> {
-        let document = self.active_file()?;
+        let document = self.typed_into().or_else(|| self.active_file())?;
         let document = document.borrow();
         Some(read(document.buffer()))
     }

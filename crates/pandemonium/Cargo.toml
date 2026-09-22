@@ -5,7 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-arboard = "3.6.1"
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
+pm-acp.workspace = true
 pm-core.workspace = true
 pm-gfx.workspace = true
 pm-text.workspace = true

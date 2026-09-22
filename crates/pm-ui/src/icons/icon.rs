@@ -69,6 +69,8 @@ pub enum IconName {
     Pin,
     /// The same pin, filled, for what is being kept already.
     PinFilled,
+    /// An agent, and what it says.
+    Sparkle,
     /// Divide a pane.
     Split,
     /// A terminal.
@@ -103,6 +105,7 @@ impl IconName {
             Self::Undo => Svg::new("undo", include_icon!("undo")),
             Self::Pin => Svg::new("pin", include_icon!("pin")),
             Self::PinFilled => Svg::new("pin_filled", include_icon!("pin_filled")),
+            Self::Sparkle => Svg::new("sparkle", include_icon!("sparkle")),
             Self::Split => Svg::new("split", include_icon!("split")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),

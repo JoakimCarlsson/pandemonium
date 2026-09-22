@@ -504,50 +504,12 @@ impl App {
         self.reread_worktree();
     }
 
-    /// Sends later keystrokes to the commit message.
-    pub(super) fn focus_commit_message(&mut self) {
-        self.commit_focused = true;
-        self.editor_focused = false;
-        self.terminal_focused = false;
-        self.search_focused = false;
-        self.changes_focused = false;
-    }
-
-    /// Puts the commit message's cursor where a press landed.
-    ///
-    /// A press that goes nowhere places the cursor; one that travels selects
-    /// from where it began, which is the same gesture the panes answer.
-    pub(super) fn select_commit_text(
-        &mut self,
-        phase: pm_ui::ResizePhase,
-        anchor: Position,
-        head: Position,
-    ) {
-        self.focus_commit_message();
-        let Some(message) = self.review().map(Review::message) else {
-            return;
-        };
-        let still = anchor == head;
-        if still && phase != pm_ui::ResizePhase::Started {
-            return;
-        }
-
-        message.borrow_mut().edit(|buffer| {
-            buffer.collapse_cursors();
-            match still {
-                true => buffer.place(head, false),
-                false => {
-                    buffer.place(anchor, false);
-                    buffer.place(head, true);
-                }
-            }
-        });
-    }
-
     /// Takes the keyboard away from the commit message.
     pub(super) fn release_commit_focus(&mut self) -> bool {
-        let focused = self.commit_focused;
-        self.commit_focused = false;
+        let focused = self.writing == Some(crate::app::Writing::Commit);
+        if focused {
+            self.writing = None;
+        }
         focused
     }
 
@@ -581,7 +543,7 @@ impl App {
         match item {
             Item::Review(project) => Some((project, None)),
             Item::Change(project, change) => Some((project, Some(change))),
-            Item::File(_) => None,
+            Item::File(_) | Item::Agent(..) => None,
         }
     }
 }

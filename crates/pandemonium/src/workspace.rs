@@ -190,6 +190,8 @@ pub struct Panes {
     pub carried: Option<(Point, String)>,
     /// The terminal panel and the shells running in it.
     pub terminal: Panel,
+    /// How many agents are running in the active project's worktree.
+    pub agents: usize,
     /// The tab menu that is open, and what it holds.
     pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
     /// What is drawn over the panes, each at a point of its own.
@@ -230,6 +232,8 @@ pub enum MenuTarget {
     Terminal(ShellId),
     /// The text one of the editor panes is showing.
     Text(PaneId),
+    /// The box of text that is being written in.
+    Input,
     /// The fixes a language server offered where the cursor is.
     CodeActions,
     /// One entry of the file tree.
@@ -391,6 +395,8 @@ struct Status {
     changes: usize,
     /// How many shells are running in the worktree.
     shells: usize,
+    /// How many agents are running in it.
+    agents: usize,
     /// Whether the panel those shells are shown in is open.
     panel_open: bool,
     /// Where the cursor is in the file the pane is showing.
@@ -424,6 +430,7 @@ impl Status {
             sessions: active.map_or(0, |project| sessions_of(project, sessions).len()),
             changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.terminal.shells.len(),
+            agents: panes.agents,
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
@@ -473,6 +480,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         sessions,
         changes,
         shells,
+        agents,
         panel_open,
         cursor,
         cursors,
@@ -568,6 +576,16 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         .when_some(language, |bar, language| {
             bar.child(status_item(theme, None, language, None, false))
         })
+        .child(status_item(
+            theme,
+            Some(IconName::Sparkle),
+            match agents {
+                0 => "New agent".to_owned(),
+                running => counted(running, "agent"),
+            },
+            Some(Message::NewAgentSession),
+            agents > 0,
+        ))
         .child(status_item(
             theme,
             Some(IconName::Terminal),

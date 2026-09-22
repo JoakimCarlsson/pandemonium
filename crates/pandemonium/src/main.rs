@@ -1,10 +1,16 @@
 //! Application entry point: opens the window and runs the event loop.
 
+mod agent;
 mod app;
 mod config;
 mod desktop;
 mod editor;
 mod field;
+#[allow(
+    dead_code,
+    reason = "a box of text is offered whole — one line or many — before every box in the window has been moved onto it"
+)]
+mod input;
 #[allow(
     dead_code,
     unused_imports,

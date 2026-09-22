@@ -17,9 +17,6 @@ use crate::message::Message;
 use crate::review::commit_editor;
 use crate::review::store::{Group, Review};
 
-/// How many lines of the commit message the sidebar has room for.
-const MESSAGE_LINES: f32 = 3.0;
-
 /// Builds the sidebar: the commit message, then the changes under it.
 ///
 /// A window with no project open still draws the sidebar, because the
@@ -241,21 +238,11 @@ fn branch_row(
 /// It is the editor, not a line: several lines, a cursor that moves, text
 /// that selects — the same buffer the panes draw, in a box of its own.
 fn message_field(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
-    v_flex().w_full().px(1.5).py(1).child(
-        v_flex()
-            .w_full()
-            .h_px(theme.size.control * MESSAGE_LINES)
-            .px(0.5)
-            .py(0.5)
-            .overflow_hidden()
-            .rounded(theme.radius.md)
-            .bg(theme.colors.background)
-            .border_1(match typing {
-                true => theme.colors.border_focused,
-                false => theme.colors.border,
-            })
-            .child(commit_editor(review, typing)),
-    )
+    v_flex()
+        .w_full()
+        .px(1.5)
+        .py(1)
+        .child(commit_editor(theme, review, typing))
 }
 
 /// Builds the control that commits, and says what it would commit.

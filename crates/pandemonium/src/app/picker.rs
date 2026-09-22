@@ -137,6 +137,9 @@ impl App {
                 self.open.activate(project);
                 self.store();
             }
+            Choice::Agent(agent) => self.start_agent(agent),
+            Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
+            Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::FetchRemote(project, remote) => {
                 self.run_for_project(project, RemoteOperation::Fetch, move |root| {
@@ -186,7 +189,11 @@ impl App {
             Kind::FetchRemotes => self.remote_rows(true),
             Kind::PushRemotes => self.remote_rows(false),
             Kind::Problems => self.problem_rows(),
-            Kind::References => Vec::new(),
+            Kind::Agents => self.agent_rows(),
+            Kind::Modes => self
+                .focused_session()
+                .map_or_else(Vec::new, |session| self.mode_rows(session)),
+            Kind::Knob | Kind::References => Vec::new(),
             Kind::Search => self.search_rows(query),
             Kind::Symbols
             | Kind::Line

@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+pm-acp = { path = "crates/pm-acp" }
 pm-core = { path = "crates/pm-core" }
 pm-gfx = { path = "crates/pm-gfx" }
 pm-text = { path = "crates/pm-text" }

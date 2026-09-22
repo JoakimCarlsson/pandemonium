@@ -5,6 +5,7 @@
 //! implements none of them — every frame is `pm-ui` elements built from that
 //! model, submitted to `pm-gfx` as one draw list.
 
+mod agent;
 mod clicks;
 mod commands;
 mod drag;
@@ -36,6 +37,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
+use crate::agent::Sessions;
 use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
 use crate::app::places::Trail;
@@ -59,11 +61,26 @@ type Blamed = Arc<Mutex<Vec<(editor::FileId, Vec<pm_core::Blame>)>>>;
 /// How wide the picker is drawn, for centring it over the window.
 const PICKER_WIDTH: f32 = 620.0;
 
+/// Which box of text the keyboard is going to, when it is going to one.
+///
+/// A window has more than one thing that is written in and only one keyboard,
+/// so which box has it is one answer rather than a flag per box: two flags
+/// can both be true, and there is no such state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Writing {
+    /// The commit message of the active project's review.
+    Commit,
+    /// The prompt of one agent session.
+    Prompt(crate::agent::SessionId),
+}
+
 /// What the window is woken up for from outside the event loop.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Wake {
     /// A terminal's child has written something that is waiting to be read.
     Terminal,
+    /// An agent has said something that is waiting to be taken in.
+    Agent,
     /// A language server has said something about a file that is open.
     Language,
     /// A blame has come back for a file that asked for one.
@@ -144,8 +161,8 @@ pub struct App {
     secondary_sidebar_open: bool,
     /// Which of the worktree's two lists that sidebar is showing.
     secondary_sidebar_view: SidebarView,
-    /// Whether keystrokes go to the commit message.
-    commit_focused: bool,
+    /// The box of text keystrokes go to, if they go to one.
+    writing: Option<Writing>,
     /// The size and state the window is written down with.
     window_state: WindowState,
     /// Whether the event loop should close after the current event.
@@ -216,6 +233,8 @@ pub struct App {
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
     tab_clicks: Clicks<Item>,
+    /// The agent sessions the window is running, one per project.
+    agents: Sessions,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -286,7 +305,7 @@ impl App {
             bottom_panel_open: layout.bottom_panel_open,
             secondary_sidebar_open: layout.secondary_sidebar_open,
             secondary_sidebar_view: layout.secondary_sidebar_view,
-            commit_focused: false,
+            writing: None,
             window_state: restored.window,
             close_requested: false,
             editor: Files::default(),
@@ -322,6 +341,7 @@ impl App {
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
             menu: None,
+            agents: Sessions::default(),
             terminals: Terminals::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
@@ -357,9 +377,9 @@ impl App {
     /// The click that lands back in a pane brings it straight back, so a
     /// press is free to drop focus without knowing where it landed.
     pub(super) fn release_pane_focus(&mut self) {
+        self.writing = None;
         self.terminal_focused = false;
         self.editor_focused = false;
-        self.commit_focused = false;
         self.changes_focused = false;
     }
 
@@ -367,9 +387,15 @@ impl App {
     pub(super) fn focused_pane_kind(&self) -> Option<&'static str> {
         let showing = |shown: fn(crate::panes::Item) -> bool| self.active_tab().is_some_and(shown);
 
+        match self.writing {
+            Some(Writing::Prompt(_)) => return Some("prompt"),
+            Some(Writing::Commit) => return Some("commit"),
+            None => {}
+        }
         match (self.editor_focused, self.terminal_focused) {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
+            (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
             _ => None,
@@ -1031,6 +1057,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.agent_command(message) {
+            self.request_redraw();
+            return;
+        }
         if self.review_command(message) {
             self.request_redraw();
             return;
@@ -1060,6 +1090,7 @@ impl App {
             self.files.remove(&id);
             self.trail.close_project(id);
             self.terminals.close(id);
+            self.agents.close_project(id);
             self.drop_project_tabs(id);
             self.store();
             self.request_redraw();
@@ -1147,8 +1178,10 @@ impl App {
                     review.toggle(index);
                 }
             }
+            Message::ShowInputMenu => self.open_menu(MenuTarget::Input),
+            Message::EditText(action) => self.act(action),
             Message::WriteCommit(phase, anchor, head) => {
-                self.select_commit_text(phase, anchor, head);
+                self.point_in(Writing::Commit, phase, anchor, head);
             }
             _ => return false,
         }
@@ -1356,6 +1389,54 @@ impl App {
         }
     }
 
+    /// The box of text that has the keyboard, to write in.
+    pub(super) fn written_in(&mut self) -> Option<&mut crate::input::Input> {
+        match self.writing? {
+            Writing::Commit => self.review_mut().map(crate::review::Review::message_mut),
+            Writing::Prompt(session) => self
+                .agents
+                .get_mut(session)
+                .map(crate::agent::Talk::prompt_mut),
+        }
+    }
+
+    /// Gives the keyboard to `writing`, taking it from whatever had it.
+    pub(super) fn write_in(&mut self, writing: Writing) {
+        self.release_pane_focus();
+        self.writing = Some(writing);
+    }
+
+    /// Answers a press, a drag or a release of the pointer in a box of text.
+    ///
+    /// A press in a box is also what gives it the keyboard, so this is the
+    /// whole of how one is written in: there is nothing to focus first. The
+    /// presses are counted the way they are in the editor, so a box selects a
+    /// word on the second and its line on the third.
+    pub(super) fn point_in(
+        &mut self,
+        writing: Writing,
+        phase: ResizePhase,
+        anchor: Position,
+        head: Position,
+    ) {
+        self.write_in(writing);
+        let pressed = phase == ResizePhase::Started;
+        let still = anchor == head;
+        if still && !pressed {
+            return;
+        }
+        let presses = match still {
+            true => self.text_clicks.press(anchor),
+            false => {
+                self.text_clicks.clear();
+                0
+            }
+        };
+        if let Some(input) = self.written_in() {
+            input.point(phase, anchor, head, presses);
+        }
+    }
+
     /// Writes the window's preferences, projects and layout down.
     fn store(&mut self) {
         self.remember_window();
@@ -1485,7 +1566,7 @@ impl App {
         let files = workspace::Worktree {
             tree: active.and_then(|id| self.files.get(&id)),
             review: active.and_then(|id| self.reviews.get(&id)),
-            committing: self.commit_focused,
+            committing: self.writing == Some(Writing::Commit),
             branch_bounds: self.branch_bounds.clone(),
             remote_bounds: self.remote_bounds.clone(),
             remote_operation: self.remote_operation.map(|operation| {
@@ -1522,6 +1603,10 @@ impl App {
                     drop,
                     carried,
                     terminal: panel,
+                    agents: self
+                        .open
+                        .active()
+                        .map_or(0, |project| self.agents.count(project.id())),
                     menu,
                     overlays,
                 },
@@ -1578,6 +1663,15 @@ impl ApplicationHandler<Wake> for App {
                 if self.terminals.pump() {
                     self.close_empty_panel();
                     self.request_redraw();
+                }
+            }
+            Wake::Agent => {
+                if self.agents.pump() {
+                    self.follow_agents();
+                    self.request_redraw();
+                }
+                if self.agents.take_opened() {
+                    self.store();
                 }
             }
             Wake::Language => {
@@ -1650,6 +1744,7 @@ impl ApplicationHandler<Wake> for App {
         self.resolver.set_keymap(self.setup.keymap.keymap());
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
+        self.agents.set_notify(self.waker(Wake::Agent));
         self.editor.set_notify(self.waker(Wake::Language));
         self.editor.set_language_servers(&self.language_servers);
         self.reread_changes();

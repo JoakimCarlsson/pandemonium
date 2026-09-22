@@ -62,6 +62,8 @@ pub enum SavedKind {
     Review,
     /// The diff of one file of the worktree.
     Change,
+    /// An agent session over the worktree.
+    Agent,
 }
 
 /// The axis of a division, named as the file names it.
@@ -107,6 +109,10 @@ pub struct SavedTab {
     pub project: PathBuf,
     /// The file itself, for a tab that held one.
     pub path: PathBuf,
+    /// Which agent was running, for a tab that held a session.
+    pub agent: String,
+    /// What that agent called the conversation, so it can be taken up again.
+    pub session: String,
     /// Whether it was only being previewed.
     pub preview: bool,
     /// Whether it was drawn whichever project the window was showing.

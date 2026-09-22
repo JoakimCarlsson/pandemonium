@@ -35,9 +35,6 @@ const DRAWN: usize = 400;
 /// How wide the column of line numbers is drawn.
 const NUMBERS: f32 = 76.0;
 
-/// How many lines of the commit message the pane has room for.
-const MESSAGE_LINES: f32 = 3.0;
-
 /// Builds the review of everything one project has changed.
 ///
 /// `typing` says the commit message at the foot of it has the keyboard, so
@@ -247,17 +244,7 @@ fn commit_bar(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
         .child(
             h_flex()
                 .flex_1()
-                .h_px(theme.size.control * MESSAGE_LINES)
-                .px(0.5)
-                .py(0.5)
-                .overflow_hidden()
-                .rounded(theme.radius.md)
-                .bg(theme.colors.background)
-                .border_1(match typing {
-                    true => theme.colors.border_focused,
-                    false => theme.colors.border,
-                })
-                .child(commit_editor(review, typing)),
+                .child(commit_editor(theme, review, typing)),
         )
         .child(
             h_flex()
