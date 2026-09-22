@@ -43,10 +43,12 @@ impl App {
 
     /// The agents a reader can start, as the picker offers them.
     ///
-    /// Every agent the editor knows about is offered, installed or not: one
+    /// Every agent the editor knows about is listed, installed or not: one
     /// that is missing is fetched the first time it is started, and a list
     /// that left it out would be a list of what happens to be on this
-    /// machine rather than of what the editor can run.
+    /// machine rather than of what the editor can run. An agent that comes
+    /// from an installer instead of a package is listed unpickable until it
+    /// is installed, with where to get it in its place.
     pub(super) fn agent_rows(&self) -> Vec<Row> {
         pm_acp::AGENTS
             .into_iter()
@@ -55,10 +57,10 @@ impl App {
                 label: agent.name.to_owned(),
                 detail: match agent.installed() {
                     true => agent.program.to_owned(),
-                    false => format!("{} (fetched on first run)", agent.package),
+                    false => agent.source.hint(),
                 },
                 choice: Choice::Agent(agent),
-                enabled: true,
+                enabled: agent.startable(),
             })
             .collect()
     }

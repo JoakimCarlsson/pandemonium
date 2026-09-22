@@ -15,7 +15,7 @@ mod session;
 mod transport;
 mod update;
 
-pub use agent::{AGENTS, Agent};
+pub use agent::{AGENTS, Agent, Source};
 pub use session::{Notify, Session};
 pub use update::{
     Ask, Choice, Command, Event, Kind, Location, Method, Mode, Output, Status, Step, Stop,

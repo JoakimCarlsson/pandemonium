@@ -23,36 +23,73 @@ pub struct Agent {
     pub program: &'static str,
     /// The arguments that put the program into protocol mode.
     pub arguments: &'static [&'static str],
-    /// The package [`RUNNER`] fetches when the program is not installed.
-    pub package: &'static str,
+    /// Where the program comes from when it is not installed.
+    pub source: Source,
+}
+
+/// Where an agent's program comes from when the reader does not have it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Source {
+    /// A published package, which [`RUNNER`] fetches the first time the
+    /// agent is started.
+    Package(&'static str),
+    /// A program the reader installs themselves, named by where it is had
+    /// from. An agent that comes this way is only started once it is there.
+    Installer(&'static str),
+}
+
+impl Source {
+    /// What the picker writes beside an agent that is not installed yet.
+    #[must_use]
+    pub fn hint(self) -> String {
+        match self {
+            Self::Package(package) => format!("{package} (fetched on first run)"),
+            Self::Installer(origin) => format!("install from {origin}"),
+        }
+    }
 }
 
 /// Every agent the editor ships knowing about.
 ///
 /// A reader who has none of them installed still sees all of them: an agent
 /// that is missing is fetched by [`RUNNER`] the first time it is started,
-/// which is how these are meant to be run.
-pub const AGENTS: [Agent; 3] = [
+/// which is how most of these are meant to be run. The few that ship with an
+/// application of their own are named by where they are had from instead.
+pub const AGENTS: [Agent; 5] = [
     Agent {
         id: "claude-code",
         name: "Claude Code",
         program: "claude-agent-acp",
         arguments: &[],
-        package: "@agentclientprotocol/claude-agent-acp",
+        source: Source::Package("@agentclientprotocol/claude-agent-acp"),
     },
     Agent {
         id: "codex",
         name: "Codex",
         program: "codex-acp",
         arguments: &[],
-        package: "@agentclientprotocol/codex-acp",
+        source: Source::Package("@agentclientprotocol/codex-acp"),
     },
     Agent {
         id: "gemini",
         name: "Gemini",
         program: "gemini",
         arguments: &["--experimental-acp"],
-        package: "@google/gemini-cli",
+        source: Source::Package("@google/gemini-cli"),
+    },
+    Agent {
+        id: "copilot",
+        name: "GitHub Copilot",
+        program: "copilot",
+        arguments: &["--acp"],
+        source: Source::Package("@github/copilot"),
+    },
+    Agent {
+        id: "cursor",
+        name: "Cursor",
+        program: "agent",
+        arguments: &["acp"],
+        source: Source::Installer("cursor.com"),
     },
 ];
 
@@ -69,6 +106,15 @@ impl Agent {
         installed(self.program).is_some()
     }
 
+    /// Whether the agent can be started on this machine.
+    ///
+    /// An agent [`RUNNER`] can fetch is always startable; one that comes
+    /// from an installer is startable once the reader has installed it.
+    #[must_use]
+    pub fn startable(self) -> bool {
+        matches!(self.source, Source::Package(_)) || self.installed()
+    }
+
     /// The command that starts this agent, installed or not.
     ///
     /// Neither the pipes nor the working directory are set here: what the
@@ -76,15 +122,16 @@ impl Agent {
     /// run.
     #[must_use]
     pub fn command(self) -> Command {
-        match installed(self.program) {
-            Some(program) => {
-                let mut command = Command::new(program);
-                command.args(self.arguments);
+        match (installed(self.program), self.source) {
+            (None, Source::Package(package)) => {
+                let mut command = Command::new(RUNNER);
+                command.arg("--yes").arg(package).args(self.arguments);
                 command
             }
-            None => {
-                let mut command = Command::new(RUNNER);
-                command.arg("--yes").arg(self.package).args(self.arguments);
+            (program, _) => {
+                let mut command =
+                    Command::new(program.unwrap_or_else(|| PathBuf::from(self.program)));
+                command.args(self.arguments);
                 command
             }
         }
