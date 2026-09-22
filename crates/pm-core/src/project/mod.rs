@@ -77,4 +77,9 @@ impl Project {
     pub fn branch(&self) -> &str {
         &self.branch
     }
+
+    /// Reads the branch checked out in this working copy again.
+    fn refresh(&mut self) {
+        self.branch = repository::branch(&self.root);
+    }
 }

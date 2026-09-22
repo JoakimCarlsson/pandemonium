@@ -202,6 +202,28 @@ pub enum Message {
     OpenReview,
     /// Ask git again what it makes of every open worktree.
     RefreshChanges,
+    /// Open the active project's branch selector.
+    ShowBranches,
+    /// Open the branch selector from the window-wide status bar.
+    ShowStatusBranches,
+    /// Create the branch currently typed into the branch selector.
+    CreateTypedBranch,
+    /// Push the active branch, publishing it first when it has no upstream.
+    PushBranch,
+    /// Fetch updates from every remote of the active project.
+    Fetch,
+    /// Pull the active branch with a merge.
+    Pull,
+    /// Pull the active branch by rebasing its local commits.
+    PullRebase,
+    /// Push the active branch with a force-with-lease safeguard.
+    ForcePush,
+    /// Open the menu of remote Git operations.
+    ShowRemoteMenu,
+    /// Ask which configured remote to fetch from.
+    ChooseFetchRemote,
+    /// Ask which configured remote to push to.
+    ChoosePushRemote,
     /// Put this change into the index, or take it back out if it is in.
     ToggleChangeStaged(usize),
     /// Put this whole group into the index, or take the whole of it out.

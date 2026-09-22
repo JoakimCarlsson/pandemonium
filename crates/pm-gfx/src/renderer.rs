@@ -371,6 +371,7 @@ impl Renderer {
                         ],
                         color,
                         clip,
+                        rotation: [0.0; 4],
                     },
                 ));
             }
@@ -410,6 +411,7 @@ impl Renderer {
                     ],
                     color: icon.color.to_array(),
                     clip: self.clip(*clip),
+                    rotation: [icon.rotation, 0.0, 0.0, 0.0],
                 },
             ));
         }

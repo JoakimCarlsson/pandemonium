@@ -84,6 +84,8 @@ pub struct IconRun {
     pub svg: Svg,
     /// Colour the artwork's coverage is tinted with.
     pub color: Rgba,
+    /// Clockwise rotation around the icon's centre, in radians.
+    pub rotation: f32,
 }
 
 /// Where a primitive sits in the stack of things drawn over each other.
@@ -198,12 +200,25 @@ impl DrawList {
 
     /// Adds `svg` drawn inside `bounds` in `color`.
     pub fn icon(&mut self, bounds: Rect, svg: Svg, color: Rgba) {
+        self.rotated_icon(bounds, svg, color, 0.0);
+    }
+
+    /// Adds `svg` rotated around its centre inside `bounds`.
+    pub fn rotated_icon(&mut self, bounds: Rect, svg: Svg, color: Rgba, rotation: f32) {
         if color.is_transparent() || bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
             return;
         }
         let clip = self.clip();
-        self.icons
-            .push((IconRun { bounds, svg, color }, clip, self.layer));
+        self.icons.push((
+            IconRun {
+                bounds,
+                svg,
+                color,
+                rotation,
+            },
+            clip,
+            self.layer,
+        ));
     }
 
     /// The quads to draw, each with its clip rectangle and layer.

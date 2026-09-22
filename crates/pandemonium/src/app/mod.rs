@@ -16,6 +16,8 @@ mod places;
 mod review;
 mod tree;
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -66,6 +68,30 @@ pub enum Wake {
     Language,
     /// A blame has come back for a file that asked for one.
     Blame,
+    /// A remote Git operation has finished.
+    Git,
+}
+
+/// The remote operation currently represented by the Source Control button.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RemoteOperation {
+    /// Updating remote references.
+    Fetch,
+    /// Bringing remote commits into the worktree.
+    Pull,
+    /// Sending local commits to a remote.
+    Push,
+}
+
+impl RemoteOperation {
+    /// Present-progress label used by the split button.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetching…",
+            Self::Pull => "Pulling…",
+            Self::Push => "Pushing…",
+        }
+    }
 }
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
@@ -146,6 +172,20 @@ pub struct App {
     trail: Trail,
     /// The list the window is asking the reader to choose from, if it is.
     picker: Option<crate::picker::Picker>,
+    /// Pointer position of the status-bar branch control anchoring its popover.
+    branch_picker_at: Option<Point>,
+    /// Bounds of the Source Control branch control from the last frame.
+    branch_bounds: pm_ui::Bounds,
+    /// Bounds of the Source Control remote split button from the last frame.
+    remote_bounds: pm_ui::Bounds,
+    /// Remote Git work currently running away from the UI thread.
+    remote_operation: Option<RemoteOperation>,
+    /// Completed remote Git work waiting for the event loop.
+    git_results: Arc<Mutex<Vec<(ProjectId, pm_core::Said)>>>,
+    /// Next time the remote-operation spinner advances.
+    remote_tick: Instant,
+    /// Frame of the animated remote-operation spinner.
+    remote_phase: usize,
     /// The question the window is asking before it acts, if it is asking one.
     prompt: Option<crate::prompt::Prompt>,
     /// What could be written where the cursor is, while the list is up.
@@ -260,6 +300,13 @@ impl App {
             zoom: 1.0,
             trail: Trail::default(),
             picker: None,
+            branch_picker_at: None,
+            branch_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            remote_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            remote_operation: None,
+            git_results: Arc::new(Mutex::new(Vec::new())),
+            remote_tick: Instant::now(),
+            remote_phase: 0,
             prompt: None,
             completions: None,
             hint: None,
@@ -643,6 +690,15 @@ impl App {
             self.open_menu(MenuTarget::Terminal(id));
             return;
         }
+        if message == Message::ShowRemoteMenu {
+            let bounds = self.remote_bounds.get();
+            self.menu = Some(TabMenu {
+                at: Point::new((bounds.right() - 190.0).max(8.0), bounds.bottom() + 2.0),
+                target: MenuTarget::Remote,
+            });
+            self.request_redraw();
+            return;
+        }
         self.menu = None;
         if self.tab_command(message) {
             self.request_redraw();
@@ -913,6 +969,65 @@ impl App {
             self.secondary_sidebar_view = view;
             self.secondary_sidebar_open = true;
             self.store();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ShowBranches {
+            let bounds = self.branch_bounds.get();
+            self.branch_picker_at = Some(Point::new(bounds.left(), bounds.top()));
+            self.open_picker(crate::picker::Kind::Branches);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ShowStatusBranches {
+            self.branch_picker_at = self.pointer;
+            self.open_picker(crate::picker::Kind::Branches);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::CreateTypedBranch {
+            let name = self
+                .picker
+                .as_ref()
+                .map(|picker| picker.field().value().trim().to_owned())
+                .unwrap_or_default();
+            self.picker = None;
+            self.create_branch(&name);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::PushBranch {
+            self.push_branch();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::Fetch {
+            self.remote_operation(RemoteOperation::Fetch, pm_core::fetch);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::Pull {
+            self.remote_operation(RemoteOperation::Pull, |root| pm_core::pull(root, false));
+            self.request_redraw();
+            return;
+        }
+        if message == Message::PullRebase {
+            self.remote_operation(RemoteOperation::Pull, |root| pm_core::pull(root, true));
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ForcePush {
+            self.remote_operation(RemoteOperation::Push, pm_core::force_push);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ChooseFetchRemote {
+            self.open_picker(crate::picker::Kind::FetchRemotes);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ChoosePushRemote {
+            self.open_picker(crate::picker::Kind::PushRemotes);
             self.request_redraw();
             return;
         }
@@ -1276,8 +1391,25 @@ impl App {
         let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
 
         if let Some(picker) = self.picker.as_ref() {
+            let width = crate::picker::width(picker.kind());
+            let at = self.branch_picker_at.filter(|_| {
+                matches!(
+                    picker.kind(),
+                    crate::picker::Kind::Branches | crate::picker::Kind::NewBranch
+                )
+            });
+            let point = at.map_or_else(
+                || Point::new(window.width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
+                |anchor| {
+                    let height = crate::picker::height(picker);
+                    Point::new(
+                        (anchor.x - 24.0).clamp(8.0, (window.width - width - 8.0).max(8.0)),
+                        (anchor.y - height - 8.0).max(8.0),
+                    )
+                },
+            );
             overlays.push(workspace::Overlaid {
-                at: Point::new(window.width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
+                at: point,
                 content: Box::new(crate::picker::picker(theme, picker)),
                 backdrop: Some(Message::DismissPopup),
             });
@@ -1354,6 +1486,12 @@ impl App {
             tree: active.and_then(|id| self.files.get(&id)),
             review: active.and_then(|id| self.reviews.get(&id)),
             committing: self.commit_focused,
+            branch_bounds: self.branch_bounds.clone(),
+            remote_bounds: self.remote_bounds.clone(),
+            remote_operation: self.remote_operation.map(|operation| {
+                let rotation = self.remote_phase as f32 * std::f32::consts::TAU / 20.0;
+                (operation.label(), rotation)
+            }),
         };
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
@@ -1413,10 +1551,17 @@ impl ApplicationHandler<Wake> for App {
     /// holding still and a caret blinking are the two things it has to
     /// notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.rested() || self.blinked() {
+        let now = Instant::now();
+        let remote_ticked = self.remote_operation.is_some() && now >= self.remote_tick;
+        if remote_ticked {
+            self.remote_tick = now + std::time::Duration::from_millis(100);
+            self.remote_phase = self.remote_phase.wrapping_add(1);
+        }
+        if self.rested() || self.blinked() || remote_ticked {
             self.request_redraw();
         }
-        let next = [self.next_rest(), self.next_blink()]
+        let remote_tick = self.remote_operation.map(|_| self.remote_tick);
+        let next = [self.next_rest(), self.next_blink(), remote_tick]
             .into_iter()
             .flatten()
             .min();
@@ -1445,6 +1590,20 @@ impl ApplicationHandler<Wake> for App {
                 if self.collect_blame() {
                     self.request_redraw();
                 }
+            }
+            Wake::Git => {
+                let finished = self
+                    .git_results
+                    .lock()
+                    .map(|mut results| std::mem::take(&mut *results))
+                    .unwrap_or_default();
+                for (project, said) in finished {
+                    if let Some(review) = self.reviews.get_mut(&project) {
+                        review.report(said);
+                    }
+                }
+                self.remote_operation = None;
+                self.request_redraw();
             }
         }
     }

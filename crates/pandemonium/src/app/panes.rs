@@ -749,6 +749,16 @@ impl App {
                 })
             }
             MenuTarget::Change => crate::review::change_menu(self.review()?),
+            MenuTarget::Remote => vec![
+                pm_ui::menu_entry("Fetch", Some(Message::Fetch)),
+                pm_ui::menu_entry("Fetch From", Some(Message::ChooseFetchRemote)),
+                pm_ui::menu_entry("Pull", Some(Message::Pull)),
+                pm_ui::menu_entry("Pull (Rebase)", Some(Message::PullRebase)),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Push", Some(Message::PushBranch)),
+                pm_ui::menu_entry("Push To", Some(Message::ChoosePushRemote)),
+                pm_ui::menu_entry("Force Push", Some(Message::ForcePush)),
+            ],
             MenuTarget::Unsaved(pane, file) => {
                 let name = self.editor.entry(file)?.name;
                 panes::unsaved_menu(pane, file, &name)

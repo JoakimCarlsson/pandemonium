@@ -9,8 +9,8 @@
 use pm_core::{Changed, FileStatus, Head};
 use pm_gfx::Rgba;
 use pm_ui::{
-    Div, IconName, IconSize, MenuItem, Styled, Theme, ToggleState, checkbox, h_flex, icon,
-    icon_button, menu_entry, menu_separator, text, v_flex,
+    Bounds, Div, IconName, IconSize, MenuItem, Styled, Theme, ToggleState, checkbox, h_flex, icon,
+    icon_button, measured, menu_entry, menu_separator, text, v_flex,
 };
 
 use crate::message::Message;
@@ -30,6 +30,9 @@ pub fn changes_sidebar(
     review: Option<&Review>,
     typing: bool,
     width: f32,
+    branch_bounds: Bounds,
+    remote_bounds: Bounds,
+    remote_operation: Option<(&'static str, f32)>,
 ) -> Div<Message> {
     let Some(review) = review else {
         return empty(theme, width);
@@ -41,7 +44,10 @@ pub fn changes_sidebar(
         .flex_1()
         .overflow_hidden()
         .child(heading(theme, review))
-        .child(branch_row(theme, review.head()))
+        .child(measured(
+            branch_bounds,
+            branch_row(theme, review.head(), remote_bounds, remote_operation),
+        ))
         .child(message_field(theme, review, typing))
         .child(commit_button(theme, &title, stopped))
         .when_some(review.trouble(), |sidebar, said| {
@@ -122,13 +128,28 @@ fn heading(theme: &Theme, review: &Review) -> Div<Message> {
 }
 
 /// Builds the line saying which branch the worktree is on, and how it stands.
-fn branch_row(theme: &Theme, head: &Head) -> Div<Message> {
+fn branch_row(
+    theme: &Theme,
+    head: &Head,
+    remote_bounds: Bounds,
+    remote_operation: Option<(&'static str, f32)>,
+) -> Div<Message> {
     let name = head.name();
-    let drift = match (head.ahead, head.behind) {
-        (0, 0) => String::new(),
-        (ahead, 0) => format!("↑{ahead}"),
-        (0, behind) => format!("↓{behind}"),
-        (ahead, behind) => format!("↑{ahead} ↓{behind}"),
+    let (remote_label, remote_action) = match (&head.upstream, head.ahead, head.behind) {
+        (None, _, _) => ("Publish", Message::PushBranch),
+        (Some(_), 0, 0) => ("Fetch", Message::Fetch),
+        (Some(_), _, 0) => ("Push", Message::PushBranch),
+        (Some(_), _, _) => ("Pull", Message::Pull),
+    };
+    let remote_icon = match remote_label {
+        "Publish" => Some(IconName::ArrowUp),
+        "Fetch" => Some(IconName::Refresh),
+        _ => None,
+    };
+    let busy = remote_operation.is_some();
+    let remote_color = match busy {
+        true => theme.colors.text_subtle,
+        false => theme.colors.text,
     };
 
     h_flex()
@@ -138,6 +159,9 @@ fn branch_row(theme: &Theme, head: &Head) -> Div<Message> {
         .gap(0.75)
         .items_center()
         .overflow_hidden()
+        .hover_bg(theme.colors.surface_hover)
+        .active_bg(theme.colors.surface_active)
+        .on_click(Message::ShowBranches)
         .child(
             icon(IconName::GitBranch)
                 .size(IconSize::XSmall)
@@ -145,14 +169,76 @@ fn branch_row(theme: &Theme, head: &Head) -> Div<Message> {
         )
         .child(text(name).text_sm().font_light())
         .child(h_flex().flex_1())
-        .when(!drift.is_empty(), |row| {
-            row.child(
-                text(drift)
-                    .text_xs()
-                    .font_light()
-                    .color(theme.colors.text_muted),
-            )
-        })
+        .child(measured(
+            remote_bounds,
+            h_flex()
+                .h_px(theme.size.control)
+                .items_center()
+                .rounded(theme.radius.sm)
+                .bg(theme.colors.surface_selected)
+                .border_1(theme.colors.border)
+                .child(
+                    h_flex()
+                        .h_full()
+                        .px(1)
+                        .gap(0.5)
+                        .items_center()
+                        .hover_bg(theme.colors.surface_hover)
+                        .active_bg(theme.colors.surface_active)
+                        .when(!busy, |control| control.on_click(remote_action))
+                        .when(remote_icon.is_none() && head.behind > 0, |control| {
+                            control
+                                .child(
+                                    icon(IconName::ArrowDown)
+                                        .size(IconSize::XSmall)
+                                        .color(theme.colors.text_subtle),
+                                )
+                                .child(text(head.behind.to_string()).text_xs())
+                        })
+                        .when(remote_icon.is_none() && head.ahead > 0, |control| {
+                            control
+                                .child(
+                                    icon(IconName::ArrowUp)
+                                        .size(IconSize::XSmall)
+                                        .color(theme.colors.text_subtle),
+                                )
+                                .child(text(head.ahead.to_string()).text_xs())
+                        })
+                        .when_some(
+                            remote_operation.filter(|_| remote_icon.is_some()),
+                            |control, (_, rotation)| {
+                                control.child(
+                                    icon(IconName::LoadCircle)
+                                        .size(IconSize::XSmall)
+                                        .color(theme.colors.text_subtle)
+                                        .rotate(rotation),
+                                )
+                            },
+                        )
+                        .when_some(remote_icon.filter(|_| !busy), |control, name| {
+                            control.child(
+                                icon(name)
+                                    .size(IconSize::XSmall)
+                                    .color(theme.colors.text_subtle),
+                            )
+                        })
+                        .child(text(remote_label).text_sm().color(remote_color)),
+                )
+                .child(
+                    h_flex()
+                        .h_full()
+                        .px(0.75)
+                        .items_center()
+                        .hover_bg(theme.colors.surface_hover)
+                        .active_bg(theme.colors.surface_active)
+                        .on_click(Message::ShowRemoteMenu)
+                        .child(
+                            icon(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(theme.colors.text_subtle),
+                        ),
+                ),
+        ))
 }
 
 /// Builds the box the commit message is written in.

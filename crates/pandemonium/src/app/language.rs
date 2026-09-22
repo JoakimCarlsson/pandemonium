@@ -472,6 +472,7 @@ impl App {
                         let project = self.editor.project_of(pending.file)?;
                         let path = self.editor.path(pending.file)?;
                         Some(Row {
+                            section: None,
                             label: format!("{}{}", "  ".repeat(symbol.depth), symbol.name),
                             detail: if symbol.detail.is_empty() {
                                 symbol.kind.to_owned()
@@ -532,6 +533,7 @@ impl App {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 Some(Row {
+                    section: None,
                     label: format!("{name}:{}", place.position.line + 1),
                     detail: self.relative_to(place.project, &location.path),
                     choice: Choice::OpenAt(place.project, place.path, place.position),

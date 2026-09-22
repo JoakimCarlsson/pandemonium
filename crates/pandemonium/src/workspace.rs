@@ -6,9 +6,9 @@ use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
 use pm_ui::button;
 use pm_ui::{
-    Axis, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Theme, h_flex, icon,
-    icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule, sash, tab,
-    tab_bar, text, v_flex,
+    Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Theme, h_flex,
+    icon, icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule, sash,
+    tab, tab_bar, text, v_flex,
 };
 
 use crate::editor::{FileId, OpenFile};
@@ -128,6 +128,12 @@ pub struct Worktree<'a> {
     pub review: Option<&'a Review>,
     /// Whether the commit message is where keystrokes are going.
     pub committing: bool,
+    /// Where the Source Control branch row was drawn in the last frame.
+    pub branch_bounds: Bounds,
+    /// Where the Source Control remote split button was drawn last frame.
+    pub remote_bounds: Bounds,
+    /// Remote operation label and animated spinner frame, while one runs.
+    pub remote_operation: Option<(&'static str, f32)>,
 }
 
 /// The sessions belonging to one open project.
@@ -232,6 +238,8 @@ pub enum MenuTarget {
     Unsaved(PaneId, FileId),
     /// The list of what a project has changed, on the rows it is acting on.
     Change,
+    /// The split button beside the Source Control branch row.
+    Remote,
 }
 
 /// Builds the workspace with its resizable sessions sidebar.
@@ -504,7 +512,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                 theme,
                 Some(IconName::GitBranch),
                 branch,
-                Some(Message::SetSidebarView(SidebarView::Changes)),
+                Some(Message::ShowStatusBranches),
                 false,
             ))
         })
@@ -766,7 +774,15 @@ fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<
         .child(view_switch(theme, view))
         .child(match view {
             SidebarView::Files => files_sidebar(theme, files, width),
-            SidebarView::Changes => changes_sidebar(theme, files.review, files.committing, width),
+            SidebarView::Changes => changes_sidebar(
+                theme,
+                files.review,
+                files.committing,
+                width,
+                files.branch_bounds.clone(),
+                files.remote_bounds.clone(),
+                files.remote_operation,
+            ),
         })
 }
 

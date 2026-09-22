@@ -496,6 +496,35 @@ impl Document {
         }
     }
 
+    /// Reads this clean document from disk after its worktree changes branch.
+    fn reload(&mut self, root: &Path) {
+        if self.buffer.is_dirty() {
+            return;
+        }
+        let path = self.buffer.path().to_path_buf();
+        let selection = self.buffer.selection();
+        let Ok(mut buffer) = Buffer::open(&path) else {
+            return;
+        };
+        buffer.place(selection.head, false);
+        for server in &self.servers {
+            server.did_close(&path);
+            if let Some(language) = buffer.language() {
+                server.did_open(
+                    &path,
+                    language.language_id(),
+                    buffer.version(),
+                    &buffer.contents(),
+                );
+            }
+        }
+        self.buffer = buffer;
+        self.baseline = pm_core::baseline(root, &path);
+        self.changes = (-1, Vec::new());
+        self.blame.clear();
+        self.folded.clear();
+    }
+
     /// Takes in what the servers have last said about this file.
     ///
     /// What they say is added together: a type checker and a linter both
@@ -681,6 +710,22 @@ impl Files {
             document.save();
             if let Some(root) = root(entry.project) {
                 document.reread_baseline(&root);
+            }
+        }
+    }
+
+    /// Whether `project` has an open document whose edits are not on disk.
+    pub fn project_is_dirty(&self, project: ProjectId) -> bool {
+        self.open
+            .values()
+            .any(|entry| entry.project == project && entry.document.borrow().buffer().is_dirty())
+    }
+
+    /// Reads every clean open document of `project` from its changed worktree.
+    pub fn reload_project(&mut self, project: ProjectId, root: &Path) {
+        for entry in self.open.values() {
+            if entry.project == project {
+                entry.document.borrow_mut().reload(root);
             }
         }
     }

@@ -189,6 +189,10 @@ pub enum Action {
     CommitChanges,
     /// Ask git again what it makes of the open worktrees.
     RefreshChanges,
+    /// Choose a local branch to check out in the active project.
+    SwitchBranch,
+    /// Create and check out a local branch in the active project.
+    CreateBranch,
     /// Draw the editor's text one step larger.
     ZoomIn,
     /// Draw the editor's text one step smaller.
@@ -394,6 +398,16 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     ),
     (Action::CommitChanges, "git.commit", "Commit"),
     (Action::RefreshChanges, "git.refresh", "Refresh Changes"),
+    (
+        Action::SwitchBranch,
+        "git.switch_branch",
+        "Git: Switch Branch",
+    ),
+    (
+        Action::CreateBranch,
+        "git.create_branch",
+        "Git: Create Branch",
+    ),
     (Action::ZoomIn, "view.zoom_in", "Zoom In"),
     (Action::ZoomOut, "view.zoom_out", "Zoom Out"),
     (Action::ZoomReset, "view.zoom_reset", "Reset Zoom"),

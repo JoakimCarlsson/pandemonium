@@ -11,6 +11,7 @@
 //! something the reader has to be told about.
 
 mod blame;
+mod branch;
 mod changes;
 mod commit;
 mod diff;
@@ -20,6 +21,10 @@ mod run;
 mod status;
 
 pub use blame::{Blame, blame};
+pub use branch::{
+    Branch, branches, create_branch, fetch, fetch_from, force_push, pull, push_branch, push_to,
+    remotes, switch_branch,
+};
 pub use changes::{Change, ChangeKind, changes};
 pub use commit::{commit, last_message};
 pub use diff::{Hunk, Line, LineKind, Side, diff, diffs};

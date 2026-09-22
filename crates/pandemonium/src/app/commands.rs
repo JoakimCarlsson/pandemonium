@@ -33,6 +33,8 @@ impl App {
             Action::ShowProjects => self.open_picker(Kind::Projects),
             Action::SearchProject => self.open_picker(Kind::Search),
             Action::ShowProblems => self.open_picker(Kind::Problems),
+            Action::SwitchBranch => self.open_picker(Kind::Branches),
+            Action::CreateBranch => self.open_picker(Kind::NewBranch),
             Action::OpenSettings => return self.apply(Message::Reopen),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::RemoveProject => {

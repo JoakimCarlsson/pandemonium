@@ -527,6 +527,11 @@ impl Review {
         self.trouble.as_deref()
     }
 
+    /// Records what a Git operation outside the review said and rereads it.
+    pub fn report(&mut self, said: pm_core::Said) {
+        self.done(said);
+    }
+
     /// The first row the pane showing `shown` is drawn from.
     pub fn scroll(&self, shown: Option<ChangeId>) -> usize {
         self.scrolls.get(&shown).copied().unwrap_or_default()

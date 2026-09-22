@@ -25,6 +25,8 @@ macro_rules! include_icon {
 /// One piece of artwork, at whatever size it is asked for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IconName {
+    /// Zed's loading circle, at one eighth-turn of its animation.
+    LoadCircle,
     /// A directory that is not showing what it holds.
     ChevronRight,
     /// A directory that is showing what it holds.
@@ -79,6 +81,7 @@ impl IconName {
     /// The artwork this icon is drawn from.
     pub fn svg(self) -> Svg {
         match self {
+            Self::LoadCircle => Svg::new("load_circle", include_icon!("load_circle")),
             Self::ChevronRight => Svg::new("chevron_right", include_icon!("chevron_right")),
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),
             Self::ChevronUp => Svg::new("chevron_up", include_icon!("chevron_up")),
@@ -145,6 +148,8 @@ pub struct Icon {
     color: Option<Rgba>,
     /// How the box is sized.
     style: Style,
+    /// Clockwise rotation around the icon's centre, in radians.
+    rotation: f32,
 }
 
 /// An icon of `name` at the default size, in the theme's subtle text colour.
@@ -154,6 +159,7 @@ pub fn icon(name: IconName) -> Icon {
         size: IconSize::default(),
         color: None,
         style: Style::default(),
+        rotation: 0.0,
     }
 }
 
@@ -167,6 +173,12 @@ impl Icon {
     /// Returns this icon tinted `color`.
     pub fn color(mut self, color: Rgba) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// Returns this icon rotated clockwise by `radians` around its centre.
+    pub fn rotate(mut self, radians: f32) -> Self {
+        self.rotation = radians;
         self
     }
 
@@ -205,6 +217,6 @@ impl<M> Element<M> for Icon {
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         let color = self.color.unwrap_or(cx.theme().colors.text_subtle);
         let box_ = self.box_(bounds);
-        cx.icon(box_, self.name.svg(), color);
+        cx.rotated_icon(box_, self.name.svg(), color, self.rotation);
     }
 }
