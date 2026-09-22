@@ -103,6 +103,7 @@ impl App {
             (Kind::RenamePath, _) => self.rename_path(&typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::NewSession, _) => self.start_session(&typed),
+            (Kind::CloneUrl, _) => self.clone_project(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
         }
@@ -207,7 +208,8 @@ impl App {
             | Kind::NewFolder
             | Kind::RenamePath
             | Kind::NewBranch
-            | Kind::NewSession => Vec::new(),
+            | Kind::NewSession
+            | Kind::CloneUrl => Vec::new(),
         }
     }
 

@@ -875,6 +875,7 @@ impl App {
                 &self.session_bases,
                 self.showing_bases,
             ),
+            MenuTarget::Projects => crate::workspace::add_project_items(),
             MenuTarget::Session(session) => crate::workspace::session_menu_items(session),
             MenuTarget::Text(pane) => {
                 let file = self.panes.pane(pane)?.active(self.scope()?)?.file()?;

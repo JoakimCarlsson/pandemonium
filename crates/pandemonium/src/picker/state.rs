@@ -58,6 +58,8 @@ pub enum Kind {
     Agents,
     /// What to call the session about to be cut.
     NewSession,
+    /// The URL of a repository to clone and open.
+    CloneUrl,
     /// The modes the agent of the session in hand can be put into.
     Modes,
     /// The values one of that agent's knobs takes: its models, say.
@@ -85,6 +87,7 @@ impl Kind {
             Self::RenamePath => "New name",
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
+            Self::CloneUrl => "The repository to clone",
             Self::Agents => "Start an agent in this worktree",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
@@ -102,6 +105,7 @@ impl Kind {
                 | Self::RenamePath
                 | Self::NewBranch
                 | Self::NewSession
+                | Self::CloneUrl
         )
     }
 

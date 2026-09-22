@@ -350,7 +350,7 @@ impl App {
     }
 
     /// Says that something could not be done, and what git made of it.
-    fn say_trouble(&mut self, asked: &str, trouble: &impl std::fmt::Display) {
+    pub(super) fn say_trouble(&mut self, asked: &str, trouble: &impl std::fmt::Display) {
         self.ask_first(Prompt::asking(
             asked.to_owned(),
             vec![trouble.to_string()],

@@ -41,8 +41,12 @@ pub enum Message {
     Finish,
     /// Come back to the setup flow.
     Reopen,
+    /// Open the menu of ways a project is added to the window.
+    AddProjectMenu,
     /// Ask for a repository and add it to the window as a project.
     OpenProject,
+    /// Ask for a repository URL, clone it, and add it as a project.
+    CloneProject,
     /// Take this project out of the window.
     CloseProject(ProjectId),
     /// Make this the project the window's files and commands apply to.

@@ -235,6 +235,8 @@ pub enum MenuTarget {
     Tab(PaneId, Item),
     /// One of the editor panes itself.
     Pane(PaneId),
+    /// The control that adds another project to the window.
+    Projects,
     /// One of the projects the window holds open.
     Project(ProjectId),
     /// One of the sessions hanging under one of them.
@@ -287,7 +289,7 @@ pub fn workspace(
                 .flex_1()
                 .items_stretch()
                 .when(layout.primary_sidebar_open, |body| {
-                    body.child(sessions_sidebar(
+                    body.child(projects_sidebar(
                         theme,
                         open,
                         sessions,
@@ -373,6 +375,18 @@ fn backdrop(message: Message) -> Div<Message> {
         .h_full()
         .on_click(message)
         .on_secondary_click(message)
+}
+
+/// The ways a project is added to the window.
+///
+/// A repository the reader already has is opened where it sits; one they
+/// have not is fetched first. Both end in the same place — a project in the
+/// window — so both are offered from the one control that adds one.
+pub fn add_project_items() -> Vec<MenuItem<Message>> {
+    vec![
+        menu_entry("Open a Repository…", Some(Message::OpenProject)),
+        menu_entry("Clone from a URL…", Some(Message::CloneProject)),
+    ]
 }
 
 /// The things that can be done to one session.
@@ -1012,13 +1026,13 @@ fn file_row(theme: &Theme, row: &Row<'_>, status: Option<FileStatus>) -> Div<Mes
         )
 }
 
-/// Builds the sessions sidebar: every open project, its sessions beneath it.
+/// Builds the projects sidebar: every open project, its sessions beneath it.
 ///
 /// A project's own row is its checkout — what the repository is called, and
 /// the branch it has out — and every row under it is a session of it, saying
 /// how far that worktree has drifted. The list is one reading, taken down the
 /// window: what is being worked on, and how much of it there is.
-fn sessions_sidebar(
+fn projects_sidebar(
     theme: &Theme,
     open: &Projects,
     sessions: &[SidebarProject],
@@ -1048,12 +1062,12 @@ fn sessions_sidebar(
                 .items_center()
                 .justify_between()
                 .child(
-                    text("SESSIONS")
+                    text("PROJECTS")
                         .text_xs()
                         .font_light()
                         .color(theme.colors.text_subtle),
                 )
-                .child(new_session(theme)),
+                .child(add_project(theme)),
         )
         .when(open.is_empty(), |sidebar| {
             sidebar.child(open_project(theme))
@@ -1061,8 +1075,8 @@ fn sessions_sidebar(
         .children(rows)
 }
 
-/// Builds the control that cuts another session of the active project.
-fn new_session(theme: &Theme) -> Div<Message> {
+/// Builds the control that asks for another repository to open.
+fn add_project(theme: &Theme) -> Div<Message> {
     v_flex()
         .size_px(theme.size.icon_control)
         .items_center()
@@ -1070,7 +1084,7 @@ fn new_session(theme: &Theme) -> Div<Message> {
         .rounded(theme.radius.md)
         .hover_bg(theme.colors.surface_hover)
         .active_bg(theme.colors.surface_active)
-        .on_click(Message::NewSession)
+        .on_click(Message::AddProjectMenu)
         .child(
             text("+")
                 .text_lg()
@@ -1087,7 +1101,7 @@ fn open_project(theme: &Theme) -> Div<Message> {
         .px(3)
         .items_center()
         .hover_bg(theme.colors.surface_hover)
-        .on_click(Message::OpenProject)
+        .on_click(Message::AddProjectMenu)
         .child(
             text("Open a project…")
                 .text_sm()

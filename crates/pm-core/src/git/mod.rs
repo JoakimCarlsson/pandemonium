@@ -13,6 +13,7 @@
 mod blame;
 mod branch;
 mod changes;
+mod clone;
 mod commit;
 mod diff;
 mod head;
@@ -27,6 +28,7 @@ pub use branch::{
     remotes, switch_branch,
 };
 pub use changes::{Change, ChangeKind, changes};
+pub use clone::{clone, named};
 pub use commit::{commit, last_message};
 pub use diff::{Hunk, Line, LineKind, Side, diff, diffs};
 pub use head::Head;

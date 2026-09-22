@@ -88,6 +88,8 @@ pub enum Wake {
     Blame,
     /// A remote Git operation has finished.
     Git,
+    /// A repository being cloned has finished being cloned.
+    Clone,
 }
 
 /// The remote operation currently represented by the Source Control button.
@@ -212,6 +214,8 @@ pub struct App {
     remote_operation: Option<RemoteOperation>,
     /// Completed remote Git work waiting for the event loop.
     git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
+    /// The repositories a clone has finished with, and where they landed.
+    cloned: Arc<Mutex<Vec<Result<std::path::PathBuf, String>>>>,
     /// Next time the remote-operation spinner advances.
     remote_tick: Instant,
     /// Frame of the animated remote-operation spinner.
@@ -343,6 +347,7 @@ impl App {
             remote_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             remote_operation: None,
             git_results: Arc::new(Mutex::new(Vec::new())),
+            cloned: Arc::new(Mutex::new(Vec::new())),
             remote_tick: Instant::now(),
             remote_phase: 0,
             prompt: None,
@@ -740,6 +745,10 @@ impl App {
             self.open_project_menu(id);
             return;
         }
+        if message == Message::AddProjectMenu {
+            self.open_menu(MenuTarget::Projects);
+            return;
+        }
         if message == Message::ShowSessionBases {
             self.showing_bases = !self.showing_bases;
             self.request_redraw();
@@ -1111,6 +1120,11 @@ impl App {
             self.request_redraw();
             return;
         }
+        if message == Message::CloneProject {
+            self.open_picker(crate::picker::Kind::CloneUrl);
+            self.request_redraw();
+            return;
+        }
         if let Message::CloseProject(id) = message {
             if let Some(root) = self
                 .open
@@ -1349,6 +1363,52 @@ impl App {
             return;
         };
         let _ = self.open.find_or_open(root);
+    }
+
+    /// Fetches the repository at `url` into a directory the reader picks.
+    ///
+    /// A clone is the one git operation that takes as long as the network
+    /// does and has no worktree to report into, so it runs on a thread of
+    /// its own and the window is told when it lands rather than waiting for
+    /// it. Where it goes is asked first, because that is the reader's.
+    pub(super) fn clone_project(&mut self, url: &str) {
+        let url = url.trim().to_owned();
+        if url.is_empty() {
+            return;
+        }
+        let Some(under) = rfd::FileDialog::new().set_title("Clone into").pick_folder() else {
+            return;
+        };
+
+        let cloned = self.cloned.clone();
+        let wake = self.waker(Wake::Clone);
+        std::thread::spawn(move || {
+            let landed = pm_core::clone(&url, &under);
+            if let Ok(mut cloned) = cloned.lock() {
+                cloned.push(landed);
+            }
+            wake();
+        });
+    }
+
+    /// Opens what a clone has finished fetching, or says why it did not.
+    fn take_clones(&mut self) {
+        let finished = self
+            .cloned
+            .lock()
+            .map(|mut cloned| std::mem::take(&mut *cloned))
+            .unwrap_or_default();
+
+        for landed in finished {
+            match landed {
+                Ok(root) => {
+                    let _ = self.open.find_or_open(root);
+                    self.read_new_worktrees();
+                    self.store();
+                }
+                Err(trouble) => self.say_trouble("The repository could not be cloned", &trouble),
+            }
+        }
     }
 
     /// Reads the worktree of any project the window has just opened.
@@ -1731,6 +1791,10 @@ impl ApplicationHandler<Wake> for App {
                     }
                 }
                 self.remote_operation = None;
+                self.request_redraw();
+            }
+            Wake::Clone => {
+                self.take_clones();
                 self.request_redraw();
             }
         }
