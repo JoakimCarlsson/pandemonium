@@ -25,7 +25,7 @@ pub use button::{Button, ButtonVariant, button};
 pub use checkbox::{ToggleState, checkbox};
 pub use field::{Field, field};
 pub use icon_button::{icon_button, tinted_icon_button};
-pub use menu::{MenuItem, menu, menu_entry, menu_separator};
+pub use menu::{MenuItem, menu, menu_entry, menu_separator, menu_submenu};
 pub use rule::rule;
 pub use section::section;
 pub use switch::{Switch, switch};

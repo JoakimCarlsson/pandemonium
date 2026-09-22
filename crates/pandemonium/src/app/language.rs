@@ -469,7 +469,7 @@ impl App {
                 let rows = symbols
                     .into_iter()
                     .filter_map(|symbol| {
-                        let project = self.editor.project_of(pending.file)?;
+                        let scope = self.editor.scope_of(pending.file)?;
                         let path = self.editor.path(pending.file)?;
                         Some(Row {
                             section: None,
@@ -479,7 +479,7 @@ impl App {
                             } else {
                                 symbol.detail
                             },
-                            choice: Choice::OpenAt(project, path, symbol.position),
+                            choice: Choice::OpenAt(scope, path, symbol.position),
                             enabled: true,
                         })
                     })
@@ -535,8 +535,8 @@ impl App {
                 Some(Row {
                     section: None,
                     label: format!("{name}:{}", place.position.line + 1),
-                    detail: self.relative_to(place.project, &location.path),
-                    choice: Choice::OpenAt(place.project, place.path, place.position),
+                    detail: self.relative_to(place.scope, &location.path),
+                    choice: Choice::OpenAt(place.scope, place.path, place.position),
                     enabled: true,
                 })
             })
@@ -594,10 +594,9 @@ impl App {
                 continue;
             }
             let opened = self
-                .open
-                .iter()
-                .map(pm_core::Project::id)
-                .find_map(|project| self.editor.opened(project, &path));
+                .scopes()
+                .into_iter()
+                .find_map(|scope| self.editor.opened(scope, &path));
 
             match opened.and_then(|file| self.editor.get(file)) {
                 Some(document) => document
@@ -609,24 +608,26 @@ impl App {
         self.store();
     }
 
-    /// The place `at` in the file at `path` comes to, in whichever project holds it.
+    /// The place `at` in the file at `path` comes to, in whichever worktree holds it.
     pub(super) fn place_of(&self, path: &std::path::Path, at: Position) -> Option<Place> {
-        let project = self
-            .open
-            .iter()
-            .filter(|project| path.starts_with(project.root()))
-            .max_by_key(|project| project.root().as_os_str().len())
-            .or_else(|| self.open.active())?;
+        let scope = self
+            .scopes()
+            .into_iter()
+            .filter_map(|scope| Some((scope, self.root_of(scope)?)))
+            .filter(|(_, root)| path.starts_with(root))
+            .max_by_key(|(_, root)| root.as_os_str().len())
+            .map(|(scope, _)| scope)
+            .or_else(|| self.scope())?;
         Some(Place {
-            project: project.id(),
+            scope,
             path: path.to_path_buf(),
             position: at,
         })
     }
 
-    /// `path` written from the worktree of `project` down.
-    fn relative_to(&self, project: pm_core::ProjectId, path: &std::path::Path) -> String {
-        let Some(root) = self.open.get(project).map(pm_core::Project::root) else {
+    /// `path` written from the worktree `scope` names down.
+    fn relative_to(&self, scope: pm_core::Scope, path: &std::path::Path) -> String {
+        let Some(root) = self.root_of(scope) else {
             return path.display().to_string();
         };
         path.strip_prefix(root)

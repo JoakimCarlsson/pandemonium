@@ -177,6 +177,8 @@ pub enum Action {
     OpenReview,
     /// Start an agent in the active project's worktree, in a pane.
     NewAgentSession,
+    /// Finish the session in hand, which takes its worktree away.
+    FinishSession,
     /// Choose which mode to put the agent in hand into.
     ChangeAgentMode,
     /// Put it into the mode after the one it is in.
@@ -384,6 +386,7 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::ShowChanges, "git.changes", "Show Source Control"),
     (Action::OpenReview, "git.review", "Review Changes"),
     (Action::NewAgentSession, "agent.new", "New Agent Session"),
+    (Action::FinishSession, "session.finish", "Finish Session"),
     (Action::ChangeAgentMode, "agent.mode", "Change Agent Mode"),
     (
         Action::CycleAgentMode,

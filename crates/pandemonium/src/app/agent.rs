@@ -7,7 +7,7 @@
 
 use pm_acp::{About, Agent, Knob, Setting};
 
-use crate::agent::SessionId;
+use crate::agent::TalkId;
 use crate::app::{App, Writing};
 use crate::message::Message;
 use crate::panes::Item;
@@ -85,7 +85,7 @@ impl App {
     /// a knob that is about the mode — and both are asked about here, because
     /// to a reader there is one question. A session whose agent has neither
     /// has nothing to ask about, and the list is not opened on nothing.
-    pub(super) fn show_agent_modes(&mut self, session: SessionId) {
+    pub(super) fn show_agent_modes(&mut self, session: TalkId) {
         let rows = self.mode_rows(session);
         if !rows.is_empty() {
             return self.open_picker_with(Kind::Modes, rows, String::new());
@@ -96,7 +96,7 @@ impl App {
     }
 
     /// Puts `session` into the mode after the one it is in.
-    pub(super) fn cycle_agent_mode(&mut self, session: SessionId) {
+    pub(super) fn cycle_agent_mode(&mut self, session: TalkId) {
         let Some(talk) = self.agents.get(session) else {
             return;
         };
@@ -114,7 +114,7 @@ impl App {
     ///
     /// A knob of several values asks which; a switch has two and is put the
     /// other way where it is shown, which is one press instead of two.
-    pub(super) fn press_knob(&mut self, session: SessionId, place: usize) {
+    pub(super) fn press_knob(&mut self, session: TalkId, place: usize) {
         let Some(knob) = self.knob_at(session, place) else {
             return;
         };
@@ -141,25 +141,25 @@ impl App {
     }
 
     /// The knob in `place` of what `session`'s agent offers.
-    pub(super) fn knob_at(&self, session: SessionId, place: usize) -> Option<Knob> {
+    pub(super) fn knob_at(&self, session: TalkId, place: usize) -> Option<Knob> {
         self.agents.get(session)?.knobs().into_iter().nth(place)
     }
 
     /// Where the knob about `about` is, where `session`'s agent has one.
-    pub(super) fn knob_about(&self, session: SessionId, about: About) -> Option<usize> {
+    pub(super) fn knob_about(&self, session: TalkId, about: About) -> Option<usize> {
         let talk = self.agents.get(session)?;
         talk.knobs().iter().position(|knob| knob.about == about)
     }
 
     /// Sets `session`'s knob `knob` to the value `value` names.
-    pub(super) fn set_knob(&mut self, session: SessionId, knob: &str, value: &str) {
+    pub(super) fn set_knob(&mut self, session: TalkId, knob: &str, value: &str) {
         if let Some(talk) = self.agents.get(session) {
             talk.set_knob(knob, value);
         }
     }
 
     /// The modes `session` can be put into, as the picker offers them.
-    pub(super) fn mode_rows(&self, session: SessionId) -> Vec<Row> {
+    pub(super) fn mode_rows(&self, session: TalkId) -> Vec<Row> {
         let Some(talk) = self.agents.get(session) else {
             return Vec::new();
         };
@@ -179,40 +179,61 @@ impl App {
     }
 
     /// Puts `session` into the mode `mode` names.
-    pub(super) fn set_agent_mode(&mut self, session: SessionId, mode: &str) {
+    pub(super) fn set_agent_mode(&mut self, session: TalkId, mode: &str) {
         if let Some(talk) = self.agents.get(session) {
             talk.set_mode(mode);
         }
     }
 
-    /// The session a command about an agent is about.
+    /// The conversation a command about an agent is about.
     ///
     /// It is the one being written to where a prompt has the keyboard, and
     /// the one the focused pane is showing otherwise: a reader who is typing
     /// at an agent means that agent, whichever pane is focused.
-    pub(super) fn focused_session(&self) -> Option<SessionId> {
+    pub(super) fn focused_talk(&self) -> Option<TalkId> {
         match self.writing {
             Some(Writing::Prompt(session)) => Some(session),
             _ => self.active_tab()?.session(),
         }
     }
 
-    /// Starts `agent` in the active project's worktree, and opens its pane.
+    /// Starts `agent` where the window is pointed, and opens its pane.
+    ///
+    /// Where that is depends on what the reader has picked: the worktree of
+    /// the session in hand, or the project's own checkout when they are in
+    /// none. A session is cut before an agent is put in it, never by putting
+    /// one in it.
     pub(super) fn start_agent(&mut self, agent: Agent) {
         let Some(project) = self.open.active() else {
             return;
         };
-        let (project, root) = (project.id(), project.root().to_path_buf());
-        let Some(session) = self.agents.start(project, &root, agent) else {
+        let (project, checkout) = (project.id(), project.root().to_path_buf());
+        let session = self.selected_session();
+        let root = self.session_root().unwrap_or(checkout);
+        self.open_agent(project, session, &root, agent);
+    }
+
+    /// Starts `agent` in `root` for `project`, and opens the pane it is read in.
+    ///
+    /// Every agent the window starts comes through here, whichever worktree
+    /// it is started in, so a conversation, its tab and the keyboard always
+    /// arrive together.
+    pub(super) fn open_agent(
+        &mut self,
+        project: pm_core::ProjectId,
+        session: Option<pm_core::SessionId>,
+        root: &std::path::Path,
+        agent: Agent,
+    ) {
+        let Some(talk) = self.agents.start(project, session, root, agent) else {
             return;
         };
-        self.show_item(
-            self.panes.focus(),
-            project,
-            Item::Agent(project, session),
-            false,
-        );
-        self.focus_prompt(session);
+        let scope = match session {
+            Some(session) => pm_core::Scope::of(project, session),
+            None => pm_core::Scope::checkout(project),
+        };
+        self.show_item(self.panes.focus(), scope, Item::Agent(scope, talk), false);
+        self.focus_prompt(talk);
     }
 
     /// Gets out of one thing the focused prompt is in the middle of.
@@ -239,12 +260,12 @@ impl App {
     }
 
     /// Gives the keyboard to `session`'s prompt.
-    pub(super) fn focus_prompt(&mut self, session: SessionId) {
+    pub(super) fn focus_prompt(&mut self, session: TalkId) {
         self.write_in(Writing::Prompt(session));
     }
 
     /// Sends what `session`'s prompt holds, and follows what comes back.
-    pub(super) fn send_prompt(&mut self, session: SessionId) {
+    pub(super) fn send_prompt(&mut self, session: TalkId) {
         if let Some(talk) = self.agents.get_mut(session) {
             talk.send();
         }
@@ -253,7 +274,7 @@ impl App {
     }
 
     /// The session the pointer is over, or the one the focused pane shows.
-    fn agent_under(&self) -> Option<SessionId> {
+    fn agent_under(&self) -> Option<TalkId> {
         let scope = self.scope()?;
         let pane = self
             .pointer
@@ -309,7 +330,7 @@ impl App {
     }
 
     /// How many rows `session` comes to, and how many of them a pane holds.
-    fn measure_agent(&self, session: SessionId) -> (usize, usize) {
+    fn measure_agent(&self, session: TalkId) -> (usize, usize) {
         let theme = self.theme();
         let size = self
             .geometry

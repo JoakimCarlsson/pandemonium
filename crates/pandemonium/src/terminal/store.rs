@@ -1,11 +1,11 @@
-//! The shells the window has running, listed per project.
+//! The shells the window has running, listed per worktree.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use pm_core::ProjectId;
+use pm_core::{ProjectId, Scope};
 use pm_vt::{Notify, Terminal};
 
 /// Columns a shell is started with, before a pane has been drawn for it.
@@ -25,7 +25,7 @@ pub type Shell = Rc<RefCell<Terminal>>;
 ///
 /// Ids are handed out by [`Terminals`] and are unique across the window, so a
 /// list row, a keybinding and a pane all name the same shell without knowing
-/// which project it belongs to.
+/// which worktree it belongs to.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ShellId(u64);
 
@@ -39,16 +39,16 @@ pub struct ShellEntry {
     pub active: bool,
 }
 
-/// One project's shells and which of them its pane is showing.
+/// One worktree's shells and which of them its pane is showing.
 #[derive(Default)]
-struct ProjectShells {
+struct WorktreeShells {
     /// The shells, in the order they were started.
     running: Vec<(ShellId, Shell)>,
     /// The one the pane is showing.
     active: Option<ShellId>,
 }
 
-impl ProjectShells {
+impl WorktreeShells {
     /// The shell `id` names, if it is still running.
     fn get(&self, id: ShellId) -> Option<Shell> {
         self.running
@@ -77,16 +77,17 @@ impl ProjectShells {
     }
 }
 
-/// Every shell the window is running, and which one each project is showing.
+/// Every shell the window is running, and which one each worktree is showing.
 ///
-/// A project's first shell is started the first time its pane is drawn, and
+/// A worktree's first shell is started the first time its pane is drawn, and
 /// the rest when they are asked for; they live until they exit or the project
-/// leaves the window. Switching projects switches lists rather than
-/// restarting anything.
+/// leaves the window. Switching worktree switches lists rather than
+/// restarting anything: a session's shells run in the session's own
+/// directory, which is the whole point of its having one.
 #[derive(Default)]
 pub struct Terminals {
-    /// The shells, by the project whose worktree they are running in.
-    projects: BTreeMap<ProjectId, ProjectShells>,
+    /// The shells, by the worktree they are running in.
+    worktrees: BTreeMap<Scope, WorktreeShells>,
     /// The id the next shell started will be given.
     next: ShellId,
     /// What a shell calls when it has written something.
@@ -99,20 +100,20 @@ impl Terminals {
         self.notify = Some(notify);
     }
 
-    /// The shell `project` is showing, starting its first one in `root`.
-    pub fn open(&mut self, project: ProjectId, root: &Path) -> Option<Shell> {
+    /// The shell `scope` is showing, starting its first one in `root`.
+    pub fn open(&mut self, scope: Scope, root: &Path) -> Option<Shell> {
         if self
-            .projects
-            .get(&project)
+            .worktrees
+            .get(&scope)
             .is_none_or(|shells| shells.running.is_empty())
         {
-            self.start(project, root);
+            self.start(scope, root);
         }
-        self.active(project)
+        self.active(scope)
     }
 
     /// Starts another shell in `root` and shows it.
-    pub fn start(&mut self, project: ProjectId, root: &Path) -> Option<ShellId> {
+    pub fn start(&mut self, scope: Scope, root: &Path) -> Option<ShellId> {
         let notify = self.notify.clone()?;
         let shell = match Terminal::shell(root, INITIAL_COLS, INITIAL_ROWS, notify) {
             Ok(shell) => shell,
@@ -124,29 +125,29 @@ impl Terminals {
 
         let id = self.next;
         self.next = ShellId(id.0 + 1);
-        let shells = self.projects.entry(project).or_default();
+        let shells = self.worktrees.entry(scope).or_default();
         shells.running.push((id, Rc::new(RefCell::new(shell))));
         shells.active = Some(id);
         Some(id)
     }
 
-    /// The shell `project` is showing, if it has one.
-    pub fn active(&self, project: ProjectId) -> Option<Shell> {
-        self.projects.get(&project)?.active()
+    /// The shell `scope` is showing, if it has one.
+    pub fn active(&self, scope: Scope) -> Option<Shell> {
+        self.worktrees.get(&scope)?.active()
     }
 
     /// Shows the shell `id` names.
-    pub fn activate(&mut self, project: ProjectId, id: ShellId) {
-        if let Some(shells) = self.projects.get_mut(&project)
+    pub fn activate(&mut self, scope: Scope, id: ShellId) {
+        if let Some(shells) = self.worktrees.get_mut(&scope)
             && shells.get(id).is_some()
         {
             shells.active = Some(id);
         }
     }
 
-    /// Every shell of `project`, in the order they were started.
-    pub fn list(&self, project: ProjectId) -> Vec<ShellEntry> {
-        let Some(shells) = self.projects.get(&project) else {
+    /// Every shell of `scope`, in the order they were started.
+    pub fn list(&self, scope: Scope) -> Vec<ShellEntry> {
+        let Some(shells) = self.worktrees.get(&scope) else {
             return Vec::new();
         };
         shells
@@ -160,16 +161,16 @@ impl Terminals {
             .collect()
     }
 
-    /// How many shells `project` has running.
-    pub fn count(&self, project: ProjectId) -> usize {
-        self.projects
-            .get(&project)
+    /// How many shells `scope` has running.
+    pub fn count(&self, scope: Scope) -> usize {
+        self.worktrees
+            .get(&scope)
             .map_or(0, |shells| shells.running.len())
     }
 
-    /// Stops the shell `id` names, showing another of the project's instead.
-    pub fn stop(&mut self, project: ProjectId, id: ShellId) {
-        let Some(shells) = self.projects.get_mut(&project) else {
+    /// Stops the shell `id` names, showing another of the worktree's instead.
+    pub fn stop(&mut self, scope: Scope, id: ShellId) {
+        let Some(shells) = self.worktrees.get_mut(&scope) else {
             return;
         };
         shells.running.retain(|(running, _)| *running != id);
@@ -178,18 +179,18 @@ impl Terminals {
         }
     }
 
-    /// Stops every shell of `project` but the one `id` names.
-    pub fn stop_others(&mut self, project: ProjectId, id: ShellId) {
-        let Some(shells) = self.projects.get_mut(&project) else {
+    /// Stops every shell of `scope` but the one `id` names.
+    pub fn stop_others(&mut self, scope: Scope, id: ShellId) {
+        let Some(shells) = self.worktrees.get_mut(&scope) else {
             return;
         };
         shells.running.retain(|(running, _)| *running == id);
         shells.active = Some(id);
     }
 
-    /// Stops every shell of `project`, leaving the project open.
-    pub fn stop_all(&mut self, project: ProjectId) {
-        if let Some(shells) = self.projects.get_mut(&project) {
+    /// Stops every shell of `scope`, leaving the worktree open.
+    pub fn stop_all(&mut self, scope: Scope) {
+        if let Some(shells) = self.worktrees.get_mut(&scope) {
             shells.running.clear();
             shells.active = None;
         }
@@ -197,7 +198,7 @@ impl Terminals {
 
     /// Stops every shell of `project`, for a project leaving the window.
     pub fn close(&mut self, project: ProjectId) {
-        self.projects.remove(&project);
+        self.worktrees.retain(|scope, _| scope.project() != project);
     }
 
     /// Applies what every shell has written, and says whether anything changed.
@@ -206,7 +207,7 @@ impl Terminals {
     /// list as a dead pane: the list shows what is running.
     pub fn pump(&mut self) -> bool {
         let mut changed = false;
-        for shells in self.projects.values_mut() {
+        for shells in self.worktrees.values_mut() {
             for (_, shell) in &shells.running {
                 changed |= shell.borrow_mut().pump();
             }

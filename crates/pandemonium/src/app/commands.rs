@@ -74,18 +74,23 @@ impl App {
             }
             Action::OpenReview => return self.apply(Message::OpenReview),
             Action::NewAgentSession => return self.apply(Message::NewAgentSession),
+            Action::FinishSession => {
+                if let Some(session) = self.selected_session() {
+                    return self.apply(Message::FinishSession(session));
+                }
+            }
             Action::ChangeAgentMode => {
-                if let Some(session) = self.focused_session() {
+                if let Some(session) = self.focused_talk() {
                     return self.apply(Message::ShowAgentModes(session));
                 }
             }
             Action::CycleAgentMode => {
-                if let Some(session) = self.focused_session() {
+                if let Some(session) = self.focused_talk() {
                     return self.apply(Message::CycleAgentMode(session));
                 }
             }
             Action::ChangeAgentModel => {
-                if let Some(session) = self.focused_session()
+                if let Some(session) = self.focused_talk()
                     && let Some(place) = self.knob_about(session, pm_acp::About::Model)
                 {
                     return self.apply(Message::PressKnob(session, place));
@@ -240,14 +245,14 @@ impl App {
     /// Writes every changed file to disk, each into its own worktree.
     fn save_all(&mut self) {
         let roots = self
-            .open
-            .iter()
-            .map(|project| (project.id(), project.root().to_path_buf()))
+            .scopes()
+            .into_iter()
+            .filter_map(|scope| Some((scope, self.root_of(scope)?)))
             .collect::<Vec<_>>();
-        self.editor.save_all(&|project| {
+        self.editor.save_all(&|scope| {
             roots
                 .iter()
-                .find(|(id, _)| *id == project)
+                .find(|(held, _)| *held == scope)
                 .map(|(_, root)| root.clone())
         });
         self.reread_changes();
@@ -255,8 +260,7 @@ impl App {
 
     /// The worktree the file `id` names was opened from.
     pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<std::path::PathBuf> {
-        let project = self.editor.project_of(id)?;
-        Some(self.open.get(project)?.root().to_path_buf())
+        self.root_of(self.editor.scope_of(id)?)
     }
 
     /// Puts what the pointer is carrying down where the cursor is.
@@ -548,7 +552,7 @@ impl App {
         let document = self.editor.get(file)?;
         let document = document.borrow();
         Some(Place {
-            project: self.editor.project_of(file)?,
+            scope: self.editor.scope_of(file)?,
             path: document.buffer().path().to_path_buf(),
             position: document.buffer().selection().head,
         })
@@ -556,14 +560,10 @@ impl App {
 
     /// Opens `place` in the focused pane and puts the cursor where it names.
     pub(super) fn go_to(&mut self, place: &Place) {
-        let Some(root) = self
-            .open
-            .get(place.project)
-            .map(|project| project.root().to_path_buf())
-        else {
+        let Some(root) = self.root_of(place.scope) else {
             return;
         };
-        let Some(file) = self.editor.open(place.project, &root, &place.path, false) else {
+        let Some(file) = self.editor.open(place.scope, &root, &place.path, false) else {
             return;
         };
         self.show_file(self.panes.focus(), file, false);

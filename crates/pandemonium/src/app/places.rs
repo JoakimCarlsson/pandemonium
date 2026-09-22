@@ -7,17 +7,17 @@
 
 use std::path::PathBuf;
 
-use pm_core::ProjectId;
+use pm_core::{ProjectId, Scope};
 use pm_text::Position;
 
 /// How many places back the trail remembers.
 const DEPTH: usize = 64;
 
-/// One place in one project's worktree.
+/// One place in one worktree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Place {
-    /// The project whose worktree the file belongs to.
-    pub project: ProjectId,
+    /// The worktree the file belongs to.
+    pub scope: Scope,
     /// Where the file lives.
     pub path: PathBuf,
     /// Where in it the cursor was.
@@ -80,7 +80,7 @@ impl Trail {
     /// Forgets everything about `project`, which is no longer open.
     pub fn close_project(&mut self, project: ProjectId) {
         for places in [&mut self.back, &mut self.forward, &mut self.closed] {
-            places.retain(|place| place.project != project);
+            places.retain(|place| place.scope.project() != project);
         }
     }
 }

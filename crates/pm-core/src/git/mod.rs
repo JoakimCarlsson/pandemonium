@@ -19,6 +19,7 @@ mod head;
 mod index;
 mod run;
 mod status;
+mod worktree;
 
 pub use blame::{Blame, blame};
 pub use branch::{
@@ -32,3 +33,7 @@ pub use head::Head;
 pub use index::{baseline, discard, discard_all, stage, unstage, write_index};
 pub use run::Said;
 pub use status::{Changed, FileStatus, Status};
+pub use worktree::{
+    Summary, add_worktree, commit_of, remember, remembered_base, remembered_name, remove_worktree,
+    since, worktrees,
+};

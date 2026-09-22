@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pm_core::ProjectId;
+use pm_core::Scope;
 use pm_ui::{Axis, ResizePhase};
 
 use crate::panes::item::Item;
@@ -74,26 +74,26 @@ pub struct SplitId(u64);
 
 /// One tab of a pane: what it holds, whose it is, and whether it stays.
 ///
-/// A tab belongs to the project what it holds was opened from and is drawn only
-/// while that project is the one the window is showing, the way a shell is.
+/// A tab belongs to the worktree what it holds was opened from and is drawn
+/// only while that worktree is the one the window is showing, as a shell is.
 /// Pinning is the one way out of that: a pinned tab is drawn in every
-/// project, which is how one thing stays in front of every worktree at once.
+/// worktree, which is how one thing stays in front of every one of them.
 #[derive(Clone, Copy, Debug)]
 pub struct Tab {
     /// What the tab holds.
     item: Item,
-    /// The project it was opened from.
-    project: ProjectId,
-    /// Whether the tab is drawn whichever project the window is showing.
+    /// The worktree it was opened from.
+    scope: Scope,
+    /// Whether the tab is drawn whichever worktree the window is showing.
     pinned: bool,
 }
 
 impl Tab {
-    /// A tab holding `item`, which was opened from `project`.
-    pub fn new(item: Item, project: ProjectId) -> Self {
+    /// A tab holding `item`, which was opened from `scope`.
+    pub fn new(item: Item, scope: Scope) -> Self {
         Self {
             item,
-            project,
+            scope,
             pinned: false,
         }
     }
@@ -103,25 +103,25 @@ impl Tab {
         self.item
     }
 
-    /// Whether `scope` is a project this tab is drawn in.
-    fn shown_in(self, scope: ProjectId) -> bool {
-        self.pinned || self.project == scope
+    /// Whether `scope` is a worktree this tab is drawn in.
+    fn shown_in(self, scope: Scope) -> bool {
+        self.pinned || self.scope == scope
     }
 }
 
-/// One pane: the tabs open in it, and the one it shows in each project.
+/// One pane: the tabs open in it, and the one it shows in each worktree.
 ///
-/// The bar holds the tabs of every project the window has open, and draws
-/// the ones belonging to the project it is showing. Which tab is in front is
-/// remembered per project, so leaving a project and coming back to it finds
-/// the same thing in front rather than whatever the other project left.
+/// The bar holds the tabs of every worktree the window has open, and draws
+/// the ones belonging to the worktree it is showing. Which tab is in front
+/// is remembered per worktree, so leaving one and coming back to it finds
+/// the same thing in front rather than whatever the other one left.
 pub struct Pane {
     /// Which pane this is.
     id: PaneId,
     /// The tabs open in it, in the order their bar is drawn.
     tabs: Vec<Tab>,
-    /// The tab in front in each project that has one.
-    active: BTreeMap<ProjectId, Item>,
+    /// The tab in front in each worktree that has one.
+    active: BTreeMap<Scope, Item>,
 }
 
 impl Pane {
@@ -140,21 +140,21 @@ impl Pane {
     }
 
     /// What `scope` sees open in it, in the order their tabs are drawn.
-    pub fn tabs(&self, scope: ProjectId) -> Vec<Item> {
+    pub fn tabs(&self, scope: Scope) -> Vec<Item> {
         self.shown(scope).map(Tab::item).collect()
     }
 
-    /// Everything open in it, whichever project it belongs to.
+    /// Everything open in it, whichever worktree it belongs to.
     pub fn items(&self) -> impl Iterator<Item = Item> + '_ {
         self.tabs.iter().map(|tab| tab.item)
     }
 
-    /// What the pane shows while `scope` is the project it is showing.
+    /// What the pane shows while `scope` is the worktree it is showing.
     ///
-    /// A project whose tab has closed falls back to the first tab it does
+    /// A worktree whose tab has closed falls back to the first tab it does
     /// see, so a pane that has something to draw draws it rather than
     /// waiting to be told which one again.
-    pub fn active(&self, scope: ProjectId) -> Option<Item> {
+    pub fn active(&self, scope: Scope) -> Option<Item> {
         let front = self.active.get(&scope).copied();
         front
             .filter(|item| self.shown(scope).any(|tab| tab.item == *item))
@@ -166,7 +166,7 @@ impl Pane {
         self.tabs.is_empty()
     }
 
-    /// Whether the tab holding `item` is drawn in every project.
+    /// Whether the tab holding `item` is drawn in every worktree.
     pub fn is_pinned(&self, item: Item) -> bool {
         self.tabs.iter().any(|tab| tab.item == item && tab.pinned)
     }
@@ -178,10 +178,10 @@ impl Pane {
         }
     }
 
-    /// Shows `item` of `project`, opening a tab for it when the pane has none.
-    pub fn open(&mut self, project: ProjectId, item: Item) {
+    /// Shows `item` of `scope`, opening a tab for it when the pane has none.
+    pub fn open(&mut self, scope: Scope, item: Item) {
         if !self.tabs.iter().any(|tab| tab.item == item) {
-            self.tabs.push(Tab::new(item, project));
+            self.tabs.push(Tab::new(item, scope));
         }
         self.activate(item);
     }
@@ -193,7 +193,7 @@ impl Pane {
     }
 
     /// Puts `tab` at `index` among the ones `scope` sees, and shows it.
-    pub fn insert(&mut self, tab: Tab, scope: ProjectId, index: usize) {
+    pub fn insert(&mut self, tab: Tab, scope: Scope, index: usize) {
         let at = self.place_for(scope, index);
         self.tabs.insert(at, tab);
         self.activate(tab.item);
@@ -212,7 +212,7 @@ impl Pane {
     ///
     /// A tab already in this pane is moved rather than opened twice, which
     /// is what dragging one along its own bar comes to.
-    pub fn place(&mut self, scope: ProjectId, item: Item, index: usize) {
+    pub fn place(&mut self, scope: Scope, item: Item, index: usize) {
         let from = self.shown(scope).position(|tab| tab.item == item);
         let Some(tab) = self.take(item) else {
             return;
@@ -227,13 +227,13 @@ impl Pane {
     /// Shows `item`, if the pane has a tab for it.
     pub fn activate(&mut self, item: Item) {
         if let Some(tab) = self.tabs.iter().find(|tab| tab.item == item) {
-            self.active.insert(tab.project, tab.item);
+            self.active.insert(tab.scope, tab.item);
         }
     }
 
     /// What is `steps` along the bar `scope` sees from the one in front,
     /// wrapping round at either end of it.
-    pub fn tab_along(&self, scope: ProjectId, steps: isize) -> Option<Item> {
+    pub fn tab_along(&self, scope: Scope, steps: isize) -> Option<Item> {
         let shown = self.tabs(scope);
         if shown.is_empty() {
             return None;
@@ -265,7 +265,7 @@ impl Pane {
     }
 
     /// The tabs `scope` sees, in the order they are drawn.
-    fn shown(&self, scope: ProjectId) -> impl Iterator<Item = Tab> + '_ {
+    fn shown(&self, scope: Scope) -> impl Iterator<Item = Tab> + '_ {
         self.tabs
             .iter()
             .copied()
@@ -273,7 +273,7 @@ impl Pane {
     }
 
     /// Where `index` among the tabs `scope` sees falls among all of them.
-    fn place_for(&self, scope: ProjectId, index: usize) -> usize {
+    fn place_for(&self, scope: Scope, index: usize) -> usize {
         self.tabs
             .iter()
             .enumerate()
@@ -283,28 +283,28 @@ impl Pane {
             .unwrap_or(self.tabs.len())
     }
 
-    /// Where the tab in front sits among the ones each project sees.
-    fn places(&self) -> Vec<(ProjectId, usize)> {
+    /// Where the tab in front sits among the ones each worktree sees.
+    fn places(&self) -> Vec<(Scope, usize)> {
         self.active
             .iter()
-            .map(|(project, item)| {
+            .map(|(scope, item)| {
                 let place = self
-                    .shown(*project)
+                    .shown(*scope)
                     .position(|tab| tab.item == *item)
                     .unwrap_or(0);
-                (*project, place)
+                (*scope, place)
             })
             .collect()
     }
 
-    /// Brings a tab forward in every project whose front one has gone.
+    /// Brings a tab forward in every worktree whose front one has gone.
     ///
-    /// `places` is where each project's front tab sat before the bar
+    /// `places` is where each worktree's front tab sat before the bar
     /// changed, so what comes forward is the tab that took its place: the
     /// one to its right, and the one to its left when the bar has run out on
     /// that side. A project the pane holds nothing for any more is
     /// forgotten rather than left pointing at a tab that closed.
-    fn settle(&mut self, places: &[(ProjectId, usize)]) {
+    fn settle(&mut self, places: &[(Scope, usize)]) {
         let open = self
             .tabs
             .iter()
@@ -524,7 +524,7 @@ impl PaneTree {
     /// launch hands out are its own.
     pub fn restored(
         saved: &Saved,
-        open: &mut dyn FnMut(&SavedTab) -> Option<(ProjectId, Item)>,
+        open: &mut dyn FnMut(&SavedTab) -> Option<(Scope, Item)>,
     ) -> Self {
         let mut panes = 0;
         let mut splits = 0;
@@ -804,7 +804,7 @@ fn written(node: &Node, tab: &dyn Fn(Item) -> Option<SavedTab>) -> SavedNode {
                 .filter_map(|open| {
                     let mut saved = tab(open.item)?;
                     saved.pinned = open.pinned;
-                    saved.front = pane.active.get(&open.project) == Some(&open.item);
+                    saved.front = pane.active.get(&open.scope) == Some(&open.item);
                     Some(saved)
                 })
                 .collect(),
@@ -831,7 +831,7 @@ fn read(
     node: &SavedNode,
     panes: &mut u64,
     splits: &mut u64,
-    open: &mut dyn FnMut(&SavedTab) -> Option<(ProjectId, Item)>,
+    open: &mut dyn FnMut(&SavedTab) -> Option<(Scope, Item)>,
 ) -> Node {
     match node {
         SavedNode::Pane { tabs } => {
@@ -839,16 +839,16 @@ fn read(
             *panes += 1;
             let mut pane = Pane::new(id);
             for saved in tabs {
-                let Some((project, item)) = open(saved) else {
+                let Some((scope, item)) = open(saved) else {
                     continue;
                 };
                 pane.tabs.push(Tab {
                     item,
-                    project,
+                    scope,
                     pinned: saved.pinned,
                 });
                 if saved.front {
-                    pane.active.insert(project, item);
+                    pane.active.insert(scope, item);
                 }
             }
             Node::Pane(pane)

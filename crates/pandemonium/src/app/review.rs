@@ -6,7 +6,7 @@
 //! here decides what a change is — that is git's — and nothing else in the
 //! window writes to the index.
 
-use pm_core::{FileStatus, ProjectId};
+use pm_core::{FileStatus, Scope};
 use pm_text::Position;
 
 use crate::app::App;
@@ -27,26 +27,20 @@ impl App {
         self.reviews.get_mut(&scope)
     }
 
-    /// Asks git again what it makes of every open worktree.
+    /// Asks git again what it makes of every worktree the window is holding.
     ///
-    /// A project the window has just opened is read for the first time here;
-    /// one it has closed is forgotten, because a review of a worktree nobody
-    /// is looking at is an answer to a question nobody asked.
+    /// A worktree the window has just been pointed at is read for the first
+    /// time here; one whose project has closed is forgotten, because a review
+    /// of a worktree nobody is looking at answers a question nobody asked.
     pub(super) fn reread_changes(&mut self) {
-        let open = self
-            .open
-            .iter()
-            .map(|project| (project.id(), project.root().to_path_buf()))
-            .collect::<Vec<_>>();
+        self.reread_sessions();
+        if let Some(scope) = self.scope() {
+            self.point_at(scope);
+        }
         self.reviews
-            .retain(|id, _| open.iter().any(|(open, _)| open == id));
-        for (id, root) in open {
-            match self.reviews.get_mut(&id) {
-                Some(review) => review.reread(),
-                None => {
-                    self.reviews.insert(id, Review::of(&root));
-                }
-            }
+            .retain(|scope, _| self.open.get(scope.project()).is_some());
+        for review in self.reviews.values_mut() {
+            review.reread();
         }
     }
 
@@ -56,10 +50,10 @@ impl App {
     /// for it twice does not open it twice: a pane already showing it brings
     /// it to the front, and only a window with none opens one.
     pub(super) fn open_review(&mut self) {
-        let Some(project) = self.scope() else {
+        let Some(scope) = self.scope() else {
             return;
         };
-        let item = Item::Review(project);
+        let item = Item::Review(scope);
         let holder = self.panes.panes().into_iter().find(|pane| {
             self.panes
                 .pane(*pane)
@@ -68,7 +62,7 @@ impl App {
 
         match holder {
             Some(pane) => self.activate_tab(pane, item),
-            None => self.show_item(self.panes.focus(), project, item, false),
+            None => self.show_item(self.panes.focus(), scope, item, false),
         }
     }
 
@@ -92,17 +86,17 @@ impl App {
     /// otherwise — which also opens the file's diff, because that is what
     /// clicking a change is for.
     pub(super) fn select_change(&mut self, index: usize, marking: bool, ranging: bool) {
-        let Some(project) = self.scope() else {
+        let Some(scope) = self.scope() else {
             return;
         };
         let Some(id) = self
             .reviews
-            .get(&project)
+            .get(&scope)
             .and_then(|review| review.id_of(index))
         else {
             return;
         };
-        let Some(review) = self.reviews.get_mut(&project) else {
+        let Some(review) = self.reviews.get_mut(&scope) else {
             return;
         };
 
@@ -172,17 +166,17 @@ impl App {
     /// way it does in a file manager: the menu is about what was pointed at
     /// unless what was pointed at is already part of a larger answer.
     pub(super) fn aim_at_change(&mut self, index: usize) {
-        let Some(project) = self.scope() else {
+        let Some(scope) = self.scope() else {
             return;
         };
         let Some(id) = self
             .reviews
-            .get(&project)
+            .get(&scope)
             .and_then(|review| review.id_of(index))
         else {
             return;
         };
-        if let Some(review) = self.reviews.get_mut(&project) {
+        if let Some(review) = self.reviews.get_mut(&scope) {
             match review.is_marked(id) {
                 true => review.selected_is(id),
                 false => review.select(id),
@@ -305,19 +299,19 @@ impl App {
     /// one review rather than a tab per file: the reader goes on down the
     /// same pane, and the row they clicked is the top of it.
     pub(super) fn open_change(&mut self, index: usize) {
-        let Some(project) = self.scope() else {
+        let Some(scope) = self.scope() else {
             return;
         };
         let Some(id) = self
             .reviews
-            .get(&project)
+            .get(&scope)
             .and_then(|review| review.id_of(index))
         else {
             return;
         };
 
         self.open_review();
-        if let Some(review) = self.reviews.get_mut(&project) {
+        if let Some(review) = self.reviews.get_mut(&scope) {
             let row = crate::review::row_of(review, id).unwrap_or_default();
             review.scroll_to(None, row);
         }
@@ -329,35 +323,30 @@ impl App {
     /// clicking down a list of changes leaves one tab behind rather than
     /// twenty, and the one you meant stays when you ask for it twice.
     pub(super) fn open_change_diff(&mut self, index: usize) {
-        let Some(project) = self.scope() else {
+        let Some(scope) = self.scope() else {
             return;
         };
         let Some(change) = self
             .reviews
-            .get(&project)
+            .get(&scope)
             .and_then(|review| review.id_of(index))
         else {
             return;
         };
-        self.show_item(
-            self.panes.focus(),
-            project,
-            Item::Change(project, change),
-            true,
-        );
+        self.show_item(self.panes.focus(), scope, Item::Change(scope, change), true);
     }
 
     /// Keeps the diff of `change` open, so the next one takes its own tab.
-    pub(super) fn keep_change(&mut self, project: ProjectId, change: ChangeId) {
-        if let Some(review) = self.reviews.get_mut(&project) {
+    pub(super) fn keep_change(&mut self, scope: Scope, change: ChangeId) {
+        if let Some(review) = self.reviews.get_mut(&scope) {
             review.keep(change);
         }
     }
 
     /// Whether the diff of `change` is only being looked at, not kept open.
-    pub(super) fn is_change_preview(&self, project: ProjectId, change: ChangeId) -> bool {
+    pub(super) fn is_change_preview(&self, scope: Scope, change: ChangeId) -> bool {
         self.reviews
-            .get(&project)
+            .get(&scope)
             .is_some_and(|review| review.is_preview(change))
     }
 
@@ -397,10 +386,10 @@ impl App {
     /// the top of the file: a row of a list of changes is a place, and the
     /// place is where the file stopped being what it was.
     pub(super) fn open_change_file(&mut self, index: usize) {
-        let Some((project, root, path, line)) = self.changed_at(index) else {
+        let Some((scope, root, path, line)) = self.changed_at(index) else {
             return;
         };
-        let Some(file) = self.editor.open(project, &root, &path, false) else {
+        let Some(file) = self.editor.open(scope, &root, &path, false) else {
             return;
         };
         self.show_file(self.panes.focus(), file, false);
@@ -411,9 +400,9 @@ impl App {
     fn changed_at(
         &self,
         index: usize,
-    ) -> Option<(ProjectId, std::path::PathBuf, std::path::PathBuf, usize)> {
-        let project = self.scope()?;
-        let review = self.reviews.get(&project)?;
+    ) -> Option<(Scope, std::path::PathBuf, std::path::PathBuf, usize)> {
+        let scope = self.scope()?;
+        let review = self.reviews.get(&scope)?;
         let changed = review.change(index)?;
         let first = review
             .patch(&changed.path)
@@ -426,7 +415,7 @@ impl App {
             })
             .unwrap_or(1);
         Some((
-            project,
+            scope,
             review.root().to_path_buf(),
             changed.path.clone(),
             first.saturating_sub(1),
@@ -521,10 +510,10 @@ impl App {
     /// file's diff scrolls apart from the review it came from, because they
     /// are two panes and the reader is somewhere different in each.
     pub(super) fn scroll_review(&mut self, rows: isize) -> bool {
-        let Some((project, shown)) = self.review_under() else {
+        let Some((scope, shown)) = self.review_under() else {
             return false;
         };
-        let Some(review) = self.reviews.get_mut(&project) else {
+        let Some(review) = self.reviews.get_mut(&scope) else {
             return false;
         };
         let total = crate::review::row_count(review, shown);
@@ -533,7 +522,7 @@ impl App {
     }
 
     /// The review the pointer is over, and which of its files it is showing.
-    fn review_under(&self) -> Option<(ProjectId, Option<ChangeId>)> {
+    fn review_under(&self) -> Option<(Scope, Option<ChangeId>)> {
         let scope = self.scope()?;
         let pane = self
             .pointer
@@ -541,8 +530,8 @@ impl App {
             .unwrap_or_else(|| self.panes.focus());
         let item = self.panes.pane(pane)?.active(scope)?;
         match item {
-            Item::Review(project) => Some((project, None)),
-            Item::Change(project, change) => Some((project, Some(change))),
+            Item::Review(scope) => Some((scope, None)),
+            Item::Change(scope, change) => Some((scope, Some(change))),
             Item::File(_) | Item::Agent(..) => None,
         }
     }

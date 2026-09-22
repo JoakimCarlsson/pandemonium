@@ -9,10 +9,10 @@
 
 use std::path::PathBuf;
 
-use pm_core::ProjectId;
+use pm_core::{ProjectId, Scope};
 use pm_text::Position;
 
-use crate::agent::SessionId;
+use crate::agent::TalkId;
 use crate::field::Field;
 use crate::keymap::Action;
 
@@ -56,6 +56,8 @@ pub enum Kind {
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
     Agents,
+    /// What to call the session about to be cut.
+    NewSession,
     /// The modes the agent of the session in hand can be put into.
     Modes,
     /// The values one of that agent's knobs takes: its models, say.
@@ -82,6 +84,7 @@ impl Kind {
             Self::NewFolder => "Name of the new directory",
             Self::RenamePath => "New name",
             Self::NewBranch => "Name of the new branch",
+            Self::NewSession => "What the session is called",
             Self::Agents => "Start an agent in this worktree",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
@@ -98,6 +101,7 @@ impl Kind {
                 | Self::NewFolder
                 | Self::RenamePath
                 | Self::NewBranch
+                | Self::NewSession
         )
     }
 
@@ -115,10 +119,10 @@ impl Kind {
 pub enum Choice {
     /// Carry out this command.
     Act(Action),
-    /// Open this file of this project.
-    Open(ProjectId, PathBuf),
-    /// Open this file of this project and go to this place in it.
-    OpenAt(ProjectId, PathBuf, Position),
+    /// Open this file of this worktree.
+    Open(Scope, PathBuf),
+    /// Open this file of this worktree and go to this place in it.
+    OpenAt(Scope, PathBuf, Position),
     /// Make this the project the window's files and commands apply to.
     Project(ProjectId),
     /// Check out this local branch of this project.
@@ -130,9 +134,9 @@ pub enum Choice {
     /// Start this agent in the active project's worktree.
     Agent(pm_acp::Agent),
     /// Put this session into the mode this names.
-    Mode(SessionId, String),
+    Mode(TalkId, String),
     /// Set this session's knob to the value this names.
-    Knob(SessionId, String, String),
+    Knob(TalkId, String, String),
 }
 
 /// One thing the picker is offering.

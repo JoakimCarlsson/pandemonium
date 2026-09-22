@@ -255,7 +255,7 @@ impl App {
     }
 
     /// Takes a key the list of commands a slash narrowed to wanted.
-    fn choosing_command(&mut self, session: crate::agent::SessionId, event: &KeyEvent) -> bool {
+    fn choosing_command(&mut self, session: crate::agent::TalkId, event: &KeyEvent) -> bool {
         if !self.naming_command(session) {
             return false;
         }
@@ -273,14 +273,14 @@ impl App {
     }
 
     /// Whether `session`'s prompt is naming one of the agent's commands.
-    fn naming_command(&self, session: crate::agent::SessionId) -> bool {
+    fn naming_command(&self, session: crate::agent::TalkId) -> bool {
         self.agents
             .get(session)
             .is_some_and(|talk| !talk.offered().is_empty())
     }
 
     /// Moves `session`'s selection `by` rows through the commands offered.
-    fn step_command(&mut self, session: crate::agent::SessionId, by: isize) -> bool {
+    fn step_command(&mut self, session: crate::agent::TalkId, by: isize) -> bool {
         if let Some(talk) = self.agents.get_mut(session) {
             talk.step_command(by);
         }

@@ -22,6 +22,8 @@ use crate::panes::Saved;
 use crate::workspace::Layout;
 use stored::Stored;
 
+pub use paths::worktrees;
+
 /// The window's own size and state, as a launch leaves it.
 #[derive(Clone, Copy, Debug)]
 pub struct WindowState {

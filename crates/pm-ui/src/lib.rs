@@ -32,7 +32,7 @@ pub use element::{
 pub use glyphs::Glyphs;
 pub use icons::{Icon, IconName, IconSize, LayoutIcon, LayoutIconButton, icon, layout_icon_button};
 pub use measured::{Bounds, Measured, measured};
-pub use overlay::{Overlay, overlay};
+pub use overlay::{Beside, Overlay, beside, overlay};
 pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
 pub use scroll::Scroll;
 pub use split::{Split, split};
@@ -46,6 +46,6 @@ pub use theme::{
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{
     Button, ButtonVariant, Field, MenuItem, Switch, Tab, ThemePreview, ToggleState, button,
-    checkbox, field, icon_button, menu, menu_entry, menu_separator, rule, section, switch,
-    switch_field, tab, tab_bar, theme_preview, tinted_icon_button, toggle_grid, toggle_row,
+    checkbox, field, icon_button, menu, menu_entry, menu_separator, menu_submenu, rule, section,
+    switch, switch_field, tab, tab_bar, theme_preview, tinted_icon_button, toggle_grid, toggle_row,
 };

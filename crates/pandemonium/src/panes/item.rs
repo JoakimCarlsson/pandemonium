@@ -6,9 +6,9 @@
 //! knows nor cares which, because splitting, tabbing, carrying and closing are
 //! the same four things whichever it is.
 
-use pm_core::ProjectId;
+use pm_core::Scope;
 
-use crate::agent::SessionId;
+use crate::agent::TalkId;
 use crate::editor::FileId;
 use crate::review::ChangeId;
 
@@ -17,16 +17,16 @@ use crate::review::ChangeId;
 pub enum Item {
     /// A file, open in the editor.
     File(FileId),
-    /// Everything that has changed in one project, gathered for review.
+    /// Everything that has changed in one worktree, gathered for review.
     ///
-    /// The review is the project's rather than the tab's: two panes showing
-    /// the same project's changes are two views of one thing, the way two
+    /// The review is the worktree's rather than the tab's: two panes showing
+    /// the same worktree's changes are two views of one thing, the way two
     /// panes showing one file are.
-    Review(ProjectId),
+    Review(Scope),
     /// The diff of one changed file, which is what a row of that list opens.
-    Change(ProjectId, ChangeId),
-    /// One agent session of a project, with everything said in it.
-    Agent(ProjectId, SessionId),
+    Change(Scope, ChangeId),
+    /// One conversation held in a worktree, with everything said in it.
+    Agent(Scope, TalkId),
 }
 
 impl Item {
@@ -46,16 +46,16 @@ impl Item {
         }
     }
 
-    /// The project whose changes this reviews, when that is what it is.
-    pub fn review(self) -> Option<ProjectId> {
+    /// The worktree whose changes this reviews, when that is what it is.
+    pub fn review(self) -> Option<Scope> {
         match self {
-            Self::Review(project) => Some(project),
+            Self::Review(scope) => Some(scope),
             Self::File(_) | Self::Change(..) | Self::Agent(..) => None,
         }
     }
 
     /// The agent session this holds, when that is what it holds.
-    pub fn session(self) -> Option<SessionId> {
+    pub fn session(self) -> Option<TalkId> {
         match self {
             Self::Agent(_, session) => Some(session),
             Self::File(_) | Self::Review(_) | Self::Change(..) => None,

@@ -19,6 +19,18 @@ impl Answer {
         }
     }
 
+    /// The answer to a question that only states something, and asks nothing.
+    ///
+    /// A trouble the reader can do nothing about is still asked about, so
+    /// that it is said where every other question is said; the one way past
+    /// it is to have read it.
+    pub fn understood() -> Self {
+        Self {
+            label: "OK".to_owned(),
+            taken: None,
+        }
+    }
+
     /// The answer that backs out, which every question has and none carries out.
     pub fn cancel() -> Self {
         Self {

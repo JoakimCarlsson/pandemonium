@@ -107,6 +107,13 @@ pub struct SavedTab {
     pub kind: SavedKind,
     /// The worktree it was opened from.
     pub project: PathBuf,
+    /// The session worktree it was open in, for a tab that held an agent.
+    ///
+    /// An agent works in a session's worktree as often as in the project's
+    /// own checkout, and the two are the same tab written down two ways: an
+    /// empty path is the checkout, and a path names the session to take up
+    /// again.
+    pub worktree: PathBuf,
     /// The file itself, for a tab that held one.
     pub path: PathBuf,
     /// Which agent was running, for a tab that held a session.

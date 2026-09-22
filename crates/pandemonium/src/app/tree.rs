@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pm_core::{EntryId, ProjectId};
+use pm_core::EntryId;
 
 use crate::app::App;
 use crate::desktop;
@@ -16,10 +16,10 @@ use crate::picker::Kind;
 use crate::prompt::{Answer, Prompt};
 
 impl App {
-    /// Reads the active project's worktree again, and what git makes of it.
+    /// Reads the worktree the window is pointed at again, and what git makes of it.
     pub(super) fn reread_worktree(&mut self) {
-        if let Some(project) = self.open.active().map(pm_core::Project::id)
-            && let Some(tree) = self.files.get_mut(&project)
+        if let Some(scope) = self.scope()
+            && let Some(tree) = self.files.get_mut(&scope)
         {
             tree.reload();
         }
@@ -168,13 +168,10 @@ impl App {
 
     /// Opens the file at `path` in the pane that has the keyboard.
     fn open_path(&mut self, path: &Path) {
-        let Some(project) = self.project_holding(path) else {
+        let Some((scope, root)) = self.worktree_holding(path) else {
             return;
         };
-        let Some(root) = self.open.get(project).map(|open| open.root().to_path_buf()) else {
-            return;
-        };
-        if let Some(file) = self.editor.open(project, &root, path, false) {
+        if let Some(file) = self.editor.open(scope, &root, path, false) {
             self.show_file(self.panes.focus(), file, false);
         }
     }
@@ -191,7 +188,7 @@ impl App {
         let Some((path, directory)) = self.entry_path(id) else {
             return;
         };
-        let Some(project) = self.project_holding(&path) else {
+        let Some((scope, _)) = self.worktree_holding(&path) else {
             return;
         };
         let directory = match directory {
@@ -199,7 +196,7 @@ impl App {
             false => path.parent().unwrap_or(&path).to_path_buf(),
         };
 
-        self.terminals.start(project, &directory);
+        self.terminals.start(scope, &directory);
         self.bottom_panel_open = true;
         self.terminal_focused = true;
         self.editor_focused = false;
@@ -210,9 +207,9 @@ impl App {
         let Some((path, _)) = self.entry_path(id) else {
             return;
         };
-        let written = match self.project_holding(&path).and_then(|id| self.open.get(id)) {
-            Some(project) if relative => path
-                .strip_prefix(project.root())
+        let written = match self.worktree_holding(&path) {
+            Some((_, root)) if relative => path
+                .strip_prefix(&root)
                 .unwrap_or(&path)
                 .display()
                 .to_string(),
@@ -223,18 +220,16 @@ impl App {
 
     /// Where the tree entry `id` names lives, and whether it holds others.
     pub(super) fn entry_path(&self, id: EntryId) -> Option<(PathBuf, bool)> {
-        let project = self.open.active()?.id();
-        let tree = self.files.get(&project)?;
+        let tree = self.files.get(&self.scope()?)?;
         let entry = crate::tree::entry_of(tree, id)?;
         Some((entry.path().to_path_buf(), entry.is_directory()))
     }
 
-    /// The open project whose worktree holds `path`.
-    fn project_holding(&self, path: &Path) -> Option<ProjectId> {
-        self.open
-            .iter()
-            .filter(|project| path.starts_with(project.root()))
-            .max_by_key(|project| project.root().as_os_str().len())
-            .map(pm_core::Project::id)
+    /// The worktree the window is holding that `path` lives in.
+    fn worktree_holding(&self, path: &Path) -> Option<(pm_core::Scope, PathBuf)> {
+        self.worktrees()
+            .into_iter()
+            .filter(|(_, root)| path.starts_with(root))
+            .max_by_key(|(_, root)| root.as_os_str().len())
     }
 }

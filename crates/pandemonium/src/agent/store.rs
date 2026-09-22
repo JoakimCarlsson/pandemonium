@@ -1,9 +1,11 @@
-//! The agent sessions the window is holding, listed per project.
+//! The conversations the window is holding, listed per project.
 //!
-//! [`Sessions`] is the one seam an agent is started and ended through, and it
+//! [`Talks`] is the one seam an agent is started and ended through, and it
 //! is keyed by project id the way the shells are: an agent works in the
-//! worktree of the project it was started from, and a session that is not
-//! attached to a project is a bug.
+//! worktree of the project it was started from, and a conversation that is
+//! not attached to a project is a bug. Which worktree that is — the
+//! project's own checkout, or a session cut beside it — is the window's to
+//! say, and it says it by where the agent is started.
 //!
 //! [`Talk`] is one of them — the agent, everything said to it and by it, the
 //! prompt being typed and whatever it is waiting to be allowed to do.
@@ -16,24 +18,26 @@ use crate::input::Input;
 use pm_acp::{
     About, Agent, Ask, Command, Event, Knob, Mode, Notify, Session, Setting, Stop, Voice,
 };
-use pm_core::ProjectId;
+use pm_core::{ProjectId, SessionId};
 
-/// A session's identity for as long as it is running.
+/// A conversation's identity for as long as it is running.
 ///
-/// Ids are handed out by [`Sessions`] and are unique across the window, so a
+/// Ids are handed out by [`Talks`] and are unique across the window, so a
 /// tab, a keybinding and a pane all name the same conversation without
 /// knowing which project it belongs to.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct SessionId(u64);
+pub struct TalkId(u64);
 
-/// One agent session: what it is, what has been said, and what it is owed.
+/// One conversation: what is running, what has been said, what it is owed.
 pub struct Talk {
     /// Which session this is.
-    id: SessionId,
+    id: TalkId,
     /// The project whose worktree it is working in.
     project: ProjectId,
-    /// The agent itself.
-    session: Session,
+    /// The session it is working in, where it was started in one.
+    session: Option<SessionId>,
+    /// The conversation itself, as the protocol carries it.
+    conversation: Session,
     /// Everything said so far.
     transcript: Transcript,
     /// The buffer the next prompt is written in.
@@ -63,23 +67,23 @@ pub struct Talk {
 
 impl Talk {
     /// Which session this is.
-    pub fn id(&self) -> SessionId {
+    pub fn id(&self) -> TalkId {
         self.id
     }
 
     /// Which agent is running.
     pub fn agent(&self) -> Agent {
-        self.session.agent()
+        self.conversation.agent()
     }
 
     /// The worktree the agent is working in.
     pub fn root(&self) -> &Path {
-        self.session.root()
+        self.conversation.root()
     }
 
     /// What the agent calls this conversation, once it has opened one.
     pub fn resumable(&self) -> Option<String> {
-        self.session.id()
+        self.conversation.id()
     }
 
     /// Everything said so far.
@@ -227,7 +231,7 @@ impl Talk {
     /// agent that has none says nothing: an empty list is a session that is
     /// only ever in one mode, not one whose modes have not arrived.
     pub fn modes(&self) -> Vec<Mode> {
-        self.session.modes()
+        self.conversation.modes()
     }
 
     /// What the mode it is in is called, which is what a reader is shown.
@@ -246,7 +250,7 @@ impl Talk {
 
     /// Puts the session into the mode `mode` names.
     pub fn set_mode(&self, mode: &str) {
-        self.session.set_mode(mode);
+        self.conversation.set_mode(mode);
     }
 
     /// What the session can be set to, as the agent now offers it.
@@ -255,7 +259,7 @@ impl Talk {
     /// for an agent that says so this way, the mode: the protocol has one
     /// shape for all of them, and so has the window.
     pub fn knobs(&self) -> Vec<Knob> {
-        self.session.knobs()
+        self.conversation.knobs()
     }
 
     /// The knob `id` names.
@@ -270,7 +274,7 @@ impl Talk {
 
     /// Sets the knob `id` names to the value `value` names.
     pub fn set_knob(&self, id: &str, value: &str) {
-        self.session.set_knob(id, value);
+        self.conversation.set_knob(id, value);
     }
 
     /// Puts the switch `id` names the other way.
@@ -278,7 +282,7 @@ impl Talk {
         let Some(Setting::Switched(on)) = self.knob(id).map(|knob| knob.setting) else {
             return;
         };
-        self.session.switch_knob(id, !on);
+        self.conversation.switch_knob(id, !on);
     }
 
     /// Sets the knob `id` names to the value after the one it is set to.
@@ -318,7 +322,7 @@ impl Talk {
 
     /// Whether the agent's process is still there.
     pub fn is_running(&self) -> bool {
-        self.session.is_running()
+        self.conversation.is_running()
     }
 
     /// The first row the pane is drawn from.
@@ -361,7 +365,7 @@ impl Talk {
         }
         self.prompt.clear();
         self.transcript.say(Voice::Reader, &text);
-        self.session.prompt(&text);
+        self.conversation.prompt(&text);
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
@@ -370,7 +374,7 @@ impl Talk {
 
     /// Stops the turn that is running.
     pub fn cancel(&self) {
-        self.session.cancel();
+        self.conversation.cancel();
     }
 
     /// Answers the permission request `ask` with the choice in `place`.
@@ -383,8 +387,8 @@ impl Talk {
         };
         let waiting = self.asks.remove(at);
         match waiting.choices.get(place) {
-            Some(choice) => self.session.allow(ask, &choice.id),
-            None => self.session.refuse(ask),
+            Some(choice) => self.conversation.allow(ask, &choice.id),
+            None => self.conversation.refuse(ask),
         }
     }
 
@@ -421,7 +425,7 @@ impl Talk {
             Event::Ended => {
                 self.busy = false;
                 self.ready = false;
-                self.transcript.note(ended(&self.session));
+                self.transcript.note(ended(&self.conversation));
             }
         }
     }
@@ -429,54 +433,62 @@ impl Talk {
 
 /// Every agent session the window is running.
 #[derive(Default)]
-pub struct Sessions {
+pub struct Talks {
     /// The sessions, by the id each was handed.
-    talks: BTreeMap<SessionId, Talk>,
+    talks: BTreeMap<TalkId, Talk>,
     /// The id the next session started will be given.
-    next: SessionId,
+    next: TalkId,
     /// How an agent wakes the window once it has something to say.
     notify: Option<Notify>,
     /// Whether a session has opened its conversation since this was asked.
     opened: bool,
 }
 
-impl Sessions {
+impl Talks {
     /// Wakes the window through `notify` whenever an agent says something.
     pub fn set_notify(&mut self, notify: Notify) {
         self.notify = Some(notify);
     }
 
-    /// Starts `agent` in `root` for `project`, and says which session it is.
-    pub fn start(&mut self, project: ProjectId, root: &Path, agent: Agent) -> Option<SessionId> {
-        self.open(project, root, agent, None)
+    /// Starts `agent` in `root` for `project`, and says which talk it is.
+    pub fn start(
+        &mut self,
+        project: ProjectId,
+        session: Option<SessionId>,
+        root: &Path,
+        agent: Agent,
+    ) -> Option<TalkId> {
+        self.open(project, session, root, agent, None)
     }
 
     /// Takes the conversation `resume` names up again, in a session of its own.
     pub fn resume(
         &mut self,
         project: ProjectId,
+        session: Option<SessionId>,
         root: &Path,
         agent: Agent,
         resume: &str,
-    ) -> Option<SessionId> {
-        self.open(project, root, agent, Some(resume))
+    ) -> Option<TalkId> {
+        self.open(project, session, root, agent, Some(resume))
     }
 
     /// Starts `agent` in `root`, taking up `resume` where there is one.
     fn open(
         &mut self,
         project: ProjectId,
+        session: Option<SessionId>,
         root: &Path,
         agent: Agent,
         resume: Option<&str>,
-    ) -> Option<SessionId> {
+    ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
         let started = match resume {
             Some(resume) => Session::resume(agent, root, resume, notify),
             None => Session::start(agent, root, notify),
         };
-        let session = match started {
-            Ok(session) => session,
+        let conversation = match started {
+            Ok(conversation) => conversation,
             Err(error) => {
                 eprintln!(
                     "could not start {} in {}: {error}",
@@ -488,13 +500,14 @@ impl Sessions {
         };
 
         let id = self.next;
-        self.next = SessionId(id.0 + 1);
+        self.next = TalkId(id.0 + 1);
         self.talks.insert(
             id,
             Talk {
                 id,
                 project,
                 session,
+                conversation,
                 transcript: Transcript::default(),
                 prompt: Input::many_lines("Prompt"),
                 asks: Vec::new(),
@@ -519,13 +532,21 @@ impl Sessions {
             .count()
     }
 
-    /// The session `id` names.
-    pub fn get(&self, id: SessionId) -> Option<&Talk> {
+    /// The conversation running in the session `session` names, if one is.
+    pub fn of_session(&self, session: SessionId) -> Option<TalkId> {
+        self.talks
+            .values()
+            .find(|talk| talk.session == Some(session))
+            .map(Talk::id)
+    }
+
+    /// The conversation `id` names.
+    pub fn get(&self, id: TalkId) -> Option<&Talk> {
         self.talks.get(&id)
     }
 
-    /// The session `id` names, to act on.
-    pub fn get_mut(&mut self, id: SessionId) -> Option<&mut Talk> {
+    /// The conversation `id` names, to act on.
+    pub fn get_mut(&mut self, id: TalkId) -> Option<&mut Talk> {
         self.talks.get_mut(&id)
     }
 
@@ -534,7 +555,7 @@ impl Sessions {
     /// An agent is a process, and the tab is the whole of what is holding it:
     /// a session nothing shows any more is one nobody can read, answer or
     /// stop, so it is ended rather than left running unseen.
-    pub fn retain(&mut self, held: &BTreeSet<SessionId>) {
+    pub fn retain(&mut self, held: &BTreeSet<TalkId>) {
         self.talks.retain(|id, _| held.contains(id));
     }
 
@@ -551,7 +572,7 @@ impl Sessions {
     pub fn pump(&mut self) -> bool {
         let mut changed = false;
         for talk in self.talks.values_mut() {
-            for event in talk.session.drain() {
+            for event in talk.conversation.drain() {
                 self.opened |= matches!(event, Event::Ready);
                 talk.take(event);
                 changed = true;

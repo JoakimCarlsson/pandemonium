@@ -5,11 +5,11 @@
 //! is built from the result. There is no widget state anywhere in between,
 //! and no screen reaches into the window behind its back.
 
-use pm_core::{EntryId, ProjectId};
+use pm_core::{EntryId, ProjectId, SessionId};
 use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
-use crate::agent::SessionId;
+use crate::agent::TalkId;
 use crate::editor::{FileId, ScrollAxis, SearchField};
 use crate::keymap::{Action, BaseKeymap};
 use crate::onboarding::ThemeMode;
@@ -49,6 +49,16 @@ pub enum Message {
     ActivateProject(ProjectId),
     /// Open the menu of things that can be done to this project.
     ProjectMenu(ProjectId),
+    /// Cut a session of this project from the branch in this place of its list.
+    NewSessionFrom(ProjectId, usize),
+    /// Show or hide the branches a new session can be cut from.
+    ShowSessionBases,
+    /// Point the window at this session, bringing its agent forward.
+    SelectSession(SessionId),
+    /// Ask whether to finish this session, which takes its worktree away.
+    FinishSession(SessionId),
+    /// Finish this session, having been told to.
+    EndSession(SessionId),
     /// Show or hide what this directory of the file tree holds.
     ToggleEntry(EntryId),
     /// Resize the sessions sidebar.
@@ -286,23 +296,23 @@ pub enum Message {
     /// A press in the prompt is also what gives it the keyboard, so this is
     /// the whole of how a prompt is written in: there is nothing to focus
     /// first.
-    WriteAgentPrompt(SessionId, ResizePhase, Position, Position),
+    WriteAgentPrompt(TalkId, ResizePhase, Position, Position),
     /// Send what this session's prompt holds, and empty it.
-    SendPrompt(SessionId),
+    SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
-    AnswerAgent(SessionId, u64, usize),
+    AnswerAgent(TalkId, u64, usize),
     /// Put the command this session is offering in this place into its prompt.
-    TakeAgentCommand(SessionId, usize),
+    TakeAgentCommand(TalkId, usize),
     /// Ask which of its agent's modes to put this session into.
-    ShowAgentModes(SessionId),
+    ShowAgentModes(TalkId),
     /// Put this session into the mode after the one it is in.
-    CycleAgentMode(SessionId),
+    CycleAgentMode(TalkId),
     /// Act on the knob in this place: ask which value, or flip the switch.
-    PressKnob(SessionId, usize),
+    PressKnob(TalkId, usize),
     /// Start naming one of this session's commands, in its prompt.
-    StartAgentCommand(SessionId),
+    StartAgentCommand(TalkId),
     /// Stop the turn this session is running.
-    StopAgentTurn(SessionId),
+    StopAgentTurn(TalkId),
     /// Open the menu of things that can be done to the box being written in.
     ShowInputMenu,
     /// Carry out this command in whatever box has the keyboard.

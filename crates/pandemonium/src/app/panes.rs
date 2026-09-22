@@ -7,8 +7,9 @@
 //! a keybinding, a tab menu or the file tree asked for it.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
-use pm_core::ProjectId;
+use pm_core::Scope;
 use pm_gfx::Rect;
 use pm_ui::{Axis, Element, IconName, MenuItem, ResizeEvent, ResizePhase, Theme};
 
@@ -22,13 +23,61 @@ use crate::panes::{
 use crate::workspace::{MenuTarget, TabMenu};
 
 impl App {
-    /// The project the panes are showing, which is the active one.
+    /// The worktree the panes are showing: the active project's, or a session's.
     ///
-    /// A tab belongs to the project its file was opened from and is drawn
-    /// only while that project is the one the window is pointed at, the way
-    /// a shell is. Every question about what a pane holds is asked of this.
-    pub(super) fn scope(&self) -> Option<ProjectId> {
-        self.open.active().map(pm_core::Project::id)
+    /// A tab belongs to the worktree its file was opened from and is drawn
+    /// only while that worktree is the one the window is pointed at, the way
+    /// a shell is. Every question about what a pane holds is asked of this,
+    /// and it is the one answer to "where am I" the whole window reads.
+    pub(super) fn scope(&self) -> Option<Scope> {
+        let project = self.open.active()?.id();
+        let session = self.session.filter(|session| {
+            self.sessions
+                .get(*session)
+                .is_some_and(|session| session.project() == project)
+        });
+        Some(match session {
+            Some(session) => Scope::of(project, session),
+            None => Scope::checkout(project),
+        })
+    }
+
+    /// Where the worktree `scope` names sits on disk.
+    pub(super) fn root_of(&self, scope: Scope) -> Option<PathBuf> {
+        match scope.session() {
+            Some(session) => self
+                .sessions
+                .get(session)
+                .map(|session| session.root().to_path_buf()),
+            None => self
+                .open
+                .get(scope.project())
+                .map(|project| project.root().to_path_buf()),
+        }
+    }
+
+    /// Every worktree the window is holding, with where it sits on disk.
+    pub(super) fn worktrees(&self) -> Vec<(Scope, PathBuf)> {
+        self.scopes()
+            .into_iter()
+            .filter_map(|scope| Some((scope, self.root_of(scope)?)))
+            .collect()
+    }
+
+    /// Every worktree the window is holding: each checkout, and each session.
+    pub(super) fn scopes(&self) -> Vec<Scope> {
+        self.open
+            .iter()
+            .flat_map(|project| {
+                let checkout = Scope::checkout(project.id());
+                let sessions = self
+                    .sessions
+                    .of(project.id())
+                    .map(|session| Scope::of(project.id(), session.id()))
+                    .collect::<Vec<_>>();
+                std::iter::once(checkout).chain(sessions)
+            })
+            .collect()
     }
 
     /// The file the pane with the keyboard is showing, when it shows one.
@@ -61,26 +110,20 @@ impl App {
     /// than twenty — and it is the pane's tab, not the window's, so a file
     /// previewed on the right leaves the pane on the left as it was.
     pub(super) fn show_file(&mut self, pane: PaneId, file: FileId, preview: bool) {
-        let Some(project) = self.editor.project_of(file) else {
+        let Some(scope) = self.editor.scope_of(file) else {
             return;
         };
-        self.show_item(pane, project, Item::File(file), preview);
+        self.show_item(pane, scope, Item::File(file), preview);
     }
 
-    /// Shows `item` of `project` in `pane`, opening a tab for it if need be.
-    pub(super) fn show_item(
-        &mut self,
-        pane: PaneId,
-        project: pm_core::ProjectId,
-        item: Item,
-        preview: bool,
-    ) {
+    /// Shows `item` of `scope` in `pane`, opening a tab for it if need be.
+    pub(super) fn show_item(&mut self, pane: PaneId, scope: Scope, item: Item, preview: bool) {
         if preview {
             self.close_previews(pane, item);
         }
-        self.open.activate(project);
+        self.point_at(scope);
         if let Some(pane) = self.panes.pane_mut(pane) {
-            pane.open(project, item);
+            pane.open(scope, item);
         }
         self.focus_pane(pane);
         self.sweep();
@@ -109,7 +152,7 @@ impl App {
     fn is_preview(&self, item: Item) -> bool {
         match item {
             Item::File(file) => self.editor.is_preview(file),
-            Item::Change(project, change) => self.is_change_preview(project, change),
+            Item::Change(scope, change) => self.is_change_preview(scope, change),
             Item::Review(_) | Item::Agent(..) => false,
         }
     }
@@ -134,14 +177,12 @@ impl App {
             let scope = self.scope()?;
             self.panes.pane(pane)?.active(scope)
         });
-        let project = item.and_then(|item| self.project_of(item));
+        let scope = item.and_then(|item| self.scope_of(item));
         let Some(fresh) = self.panes.split(pane, direction) else {
             return;
         };
-        if let (Some(item), Some(project), Some(fresh)) =
-            (item, project, self.panes.pane_mut(fresh))
-        {
-            fresh.open(project, item);
+        if let (Some(item), Some(scope), Some(fresh)) = (item, scope, self.panes.pane_mut(fresh)) {
+            fresh.open(scope, item);
         }
         self.editor_focused = true;
         self.terminal_focused = false;
@@ -166,13 +207,11 @@ impl App {
         }
     }
 
-    /// The project `item` belongs to.
-    pub(super) fn project_of(&self, item: Item) -> Option<ProjectId> {
+    /// The worktree `item` belongs to.
+    pub(super) fn scope_of(&self, item: Item) -> Option<Scope> {
         match item {
-            Item::File(file) => self.editor.project_of(file),
-            Item::Review(project) | Item::Change(project, _) | Item::Agent(project, _) => {
-                Some(project)
-            }
+            Item::File(file) => self.editor.scope_of(file),
+            Item::Review(scope) | Item::Change(scope, _) | Item::Agent(scope, _) => Some(scope),
         }
     }
 
@@ -312,7 +351,7 @@ impl App {
                 let document = self.editor.get(file)?;
                 let document = document.borrow();
                 Some(crate::app::places::Place {
-                    project: self.editor.project_of(file)?,
+                    scope: self.editor.scope_of(file)?,
                     path: document.buffer().path().to_path_buf(),
                     position: document.buffer().selection().head,
                 })
@@ -329,23 +368,25 @@ impl App {
     /// run gave them, which is the only thing the next launch can act on.
     pub(super) fn saved_panes(&self) -> Saved {
         self.panes.save(&|item| {
-            let project = self.project_of(item)?;
-            let root = self.open.get(project)?.root().to_path_buf();
-            if let Some(session) = item.session() {
-                let talk = self.agents.get(session)?;
+            let scope = self.scope_of(item)?;
+            let project = self.open.get(scope.project())?.root().to_path_buf();
+            let worktree = self.root_of(scope)?;
+            if let Some(talk) = item.session().and_then(|talk| self.agents.get(talk)) {
                 return Some(SavedTab {
                     kind: SavedKind::Agent,
-                    project: root,
+                    project,
+                    worktree,
                     agent: talk.agent().id.to_owned(),
                     session: talk.resumable().unwrap_or_default(),
                     ..SavedTab::default()
                 });
             }
             if let Some(change) = item.change() {
-                let path = self.reviews.get(&project)?.path_of(change)?;
+                let path = self.reviews.get(&scope)?.path_of(change)?;
                 return Some(SavedTab {
                     kind: SavedKind::Change,
-                    project: root,
+                    project,
+                    worktree,
                     path: path.to_path_buf(),
                     ..SavedTab::default()
                 });
@@ -353,7 +394,8 @@ impl App {
             let Some(file) = item.file() else {
                 return Some(SavedTab {
                     kind: SavedKind::Review,
-                    project: root,
+                    project,
+                    worktree,
                     ..SavedTab::default()
                 });
             };
@@ -362,7 +404,8 @@ impl App {
             let head = document.buffer().selection().head;
             Some(SavedTab {
                 kind: SavedKind::File,
-                project: root,
+                project,
+                worktree,
                 path: document.buffer().path().to_path_buf(),
                 preview: document.is_preview(),
                 scroll: document.scroll(),
@@ -379,7 +422,7 @@ impl App {
     /// disk, is left behind: the window comes back as much like itself as
     /// what is still there allows.
     pub(super) fn restore_panes(&mut self, saved: &Saved) {
-        let roots = self
+        let projects = self
             .open
             .iter()
             .map(|project| (project.root().to_path_buf(), project.id()))
@@ -387,34 +430,50 @@ impl App {
         let editor = &mut self.editor;
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
+        let sessions = &self.sessions;
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
-            let (root, project) = roots
+            let (checkout, project) = projects
                 .iter()
                 .find(|(root, _)| *root == tab.project)
                 .cloned()?;
+            let session = sessions
+                .of(project)
+                .find(|session| session.root() == tab.worktree)
+                .map(pm_core::Session::id);
+            let scope = match session {
+                Some(session) => Scope::of(project, session),
+                None => Scope::checkout(project),
+            };
+            let root = match session {
+                Some(_) => tab.worktree.clone(),
+                None => checkout,
+            };
+
             if tab.kind == SavedKind::Agent {
                 let agent = pm_acp::Agent::named(&tab.agent)?;
-                let session = match tab.session.is_empty() {
-                    true => agents.start(project, &root, agent)?,
-                    false => agents.resume(project, &root, agent, &tab.session)?,
+                let talk = match tab.session.is_empty() {
+                    true => agents.start(project, session, &root, agent)?,
+                    false => agents.resume(project, session, &root, agent, &tab.session)?,
                 };
-                return Some((project, Item::Agent(project, session)));
+                return Some((scope, Item::Agent(scope, talk)));
             }
             if tab.kind == SavedKind::Review {
-                return Some((project, Item::Review(project)));
+                return Some((scope, Item::Review(scope)));
             }
             if tab.kind == SavedKind::Change {
-                let review = reviews.get_mut(&project)?;
+                let review = reviews
+                    .entry(scope)
+                    .or_insert_with(|| crate::review::Review::of(&root));
                 let change = review.name(&tab.path);
                 review.keep(change);
-                return Some((project, Item::Change(project, change)));
+                return Some((scope, Item::Change(scope, change)));
             }
-            let file = editor.open(project, &root, &tab.path, tab.preview)?;
+            let file = editor.open(scope, &root, &tab.path, tab.preview)?;
             if let Some(document) = editor.get(file) {
                 let mut document = document.borrow_mut();
                 document.restore(tab.line, tab.column, tab.scroll);
             }
-            Some((project, Item::File(file)))
+            Some((scope, Item::File(file)))
         });
         self.sweep();
     }
@@ -443,13 +502,18 @@ impl App {
 
     /// Takes the files of `project` out of every pane that was showing them.
     pub(super) fn drop_project_tabs(&mut self, project: pm_core::ProjectId) {
-        let leaving = self
+        self.drop_tabs(&|scope| scope.project() == project);
+    }
+
+    /// Closes every tab of the worktrees `leaving` names, wherever they are.
+    pub(super) fn drop_tabs(&mut self, leaving: &dyn Fn(Scope) -> bool) {
+        let gone = self
             .panes
             .held()
             .into_iter()
-            .filter(|item| self.project_of(*item) == Some(project))
+            .filter(|item| self.scope_of(*item).is_some_and(leaving))
             .collect::<BTreeSet<_>>();
-        self.panes.retain(|item| !leaving.contains(&item));
+        self.panes.retain(|item| !gone.contains(&item));
         self.panes.close_empty();
     }
 
@@ -637,9 +701,9 @@ impl App {
                     pinned: false,
                 })
             }
-            Item::Review(project) => Some(TabEntry {
+            Item::Review(scope) => Some(TabEntry {
                 item,
-                name: match self.open.get(project) {
+                name: match self.open.get(scope.project()) {
                     Some(_) => "Uncommitted Changes".to_owned(),
                     None => return None,
                 },
@@ -804,6 +868,11 @@ impl App {
                 panes::tab_menu(pane, &tabs, item)
             }
             MenuTarget::Pane(pane) => panes::pane_menu(pane, self.panes.is_split()),
+            MenuTarget::Project(project) => crate::workspace::project_menu_items(
+                self.open.get(project)?,
+                &self.session_bases,
+                self.showing_bases,
+            ),
             MenuTarget::Text(pane) => {
                 let file = self.panes.pane(pane)?.active(self.scope()?)?.file()?;
                 let document = self.editor.get(file)?;
@@ -838,8 +907,7 @@ impl App {
                 panes::unsaved_menu(pane, file, &name)
             }
             MenuTarget::Entry(id) => {
-                let project = self.open.active()?.id();
-                let tree = self.files.get(&project)?;
+                let tree = self.files.get(&self.scope()?)?;
                 crate::tree::entry_menu(crate::tree::entry_of(tree, id)?)
             }
             MenuTarget::CodeActions => self
@@ -852,9 +920,8 @@ impl App {
                 .collect(),
             MenuTarget::Terminal(shell) => {
                 let shells = self
-                    .open
-                    .active()
-                    .map(|project| self.terminals.list(project.id()))
+                    .scope()
+                    .map(|scope| self.terminals.list(scope))
                     .unwrap_or_default();
                 crate::workspace::terminal_menu(&shells, shell)
             }
