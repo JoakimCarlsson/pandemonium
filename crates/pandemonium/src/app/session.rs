@@ -22,7 +22,12 @@ impl App {
     /// The answer says whether the message was one of them, so that the
     /// window can go on trying the rest.
     pub(super) fn session_command(&mut self, message: Message) -> bool {
+        if let Message::SessionMenu(session) = message {
+            self.open_menu(MenuTarget::Session(session));
+            return true;
+        }
         match message {
+            Message::NewSession => self.name_session_here(),
             Message::NewSessionFrom(project, place) => self.name_session(project, place),
             Message::SelectSession(session) => self.select_session(session),
             Message::FinishSession(session) => self.ask_finish_session(session),
@@ -55,6 +60,21 @@ impl App {
             .collect();
         self.showing_bases = false;
         self.open_menu(MenuTarget::Project(project));
+    }
+
+    /// Asks what to call a session of the active project, cut from its head.
+    ///
+    /// This is what the sidebar's `+` and the keybinding mean: another
+    /// session of what is already in front of the reader, from what that
+    /// project has checked out. Cutting one from some other branch is the
+    /// project's menu, where the branches are listed.
+    pub(super) fn name_session_here(&mut self) {
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return;
+        };
+        self.session_base = None;
+        self.open.activate(project);
+        self.open_picker_with(Kind::NewSession, Vec::new(), String::new());
     }
 
     /// Asks what to call a session of `project`, cut from the `place`-th base.
@@ -215,6 +235,22 @@ impl App {
         self.sessions.reread();
     }
 
+    /// Asks git again how far the sessions have drifted, on a turn boundary.
+    ///
+    /// A row states how much work is in a worktree, so the number has to move
+    /// as the agent writes — but git is a subprocess a session, and an agent
+    /// says something several times a second. A turn starting or ending is
+    /// when the answer can have changed by anything worth reading, so that is
+    /// when it is asked for.
+    pub(super) fn reread_worked_sessions(&mut self) {
+        let working = self.agents.working();
+        if working == self.working {
+            return;
+        }
+        self.working = working;
+        self.sessions.reread();
+    }
+
     /// The session the window is pointed at, if it is pointed at one.
     ///
     /// This is the one answer to "which worktree am I in": the file tree, the
@@ -247,10 +283,7 @@ impl App {
                     .map(|session| SidebarSession {
                         id: session.id(),
                         name: session.name().to_owned(),
-                        summary: match session.summary().is_empty() {
-                            true => session.base().to_owned(),
-                            false => session.summary().line(),
-                        },
+                        drift: session.summary().line(),
                         status_color: self.session_color(&theme, session.id()),
                         selected: selected == Some(session.id()),
                     })

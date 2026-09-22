@@ -138,6 +138,8 @@ pub struct App {
     sessions: Sessions,
     /// The session the window is pointed at, once one has been picked.
     session: Option<pm_core::SessionId>,
+    /// How many agents were in the middle of a turn when git was last asked.
+    working: usize,
     /// What a session being named is cut from, while one is being named.
     session_base: Option<String>,
     /// The branches the open project menu offers to cut a session from.
@@ -290,6 +292,7 @@ impl App {
             scroll: Scroll::default(),
             sessions: Sessions::new(),
             session: None,
+            working: 0,
             session_base: None,
             session_bases: Vec::new(),
             showing_bases: false,
@@ -1691,6 +1694,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Agent => {
                 if self.agents.pump() {
                     self.follow_agents();
+                    self.reread_worked_sessions();
                     self.request_redraw();
                 }
                 if self.agents.take_opened() {

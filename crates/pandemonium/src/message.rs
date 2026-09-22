@@ -49,12 +49,16 @@ pub enum Message {
     ActivateProject(ProjectId),
     /// Open the menu of things that can be done to this project.
     ProjectMenu(ProjectId),
+    /// Cut a session of the active project from the branch it has out.
+    NewSession,
     /// Cut a session of this project from the branch in this place of its list.
     NewSessionFrom(ProjectId, usize),
     /// Show or hide the branches a new session can be cut from.
     ShowSessionBases,
     /// Point the window at this session, bringing its agent forward.
     SelectSession(SessionId),
+    /// Open the menu of things that can be done to this session.
+    SessionMenu(SessionId),
     /// Ask whether to finish this session, which takes its worktree away.
     FinishSession(SessionId),
     /// Finish this session, having been told to.

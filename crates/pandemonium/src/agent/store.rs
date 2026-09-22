@@ -564,6 +564,11 @@ impl Talks {
         self.talks.retain(|_, talk| talk.project != project);
     }
 
+    /// How many of the conversations are in the middle of a turn.
+    pub fn working(&self) -> usize {
+        self.talks.values().filter(|talk| talk.is_busy()).count()
+    }
+
     /// Applies what every agent has said, and says whether anything changed.
     ///
     /// A session whose agent has gone is kept rather than dropped: what was

@@ -37,6 +37,7 @@ impl App {
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
             Action::OpenSettings => return self.apply(Message::Reopen),
             Action::AddProject => return self.apply(Message::OpenProject),
+            Action::NewSession => return self.apply(Message::NewSession),
             Action::RemoveProject => {
                 if let Some(id) = self.open.active().map(pm_core::Project::id) {
                     return self.apply(Message::CloseProject(id));
