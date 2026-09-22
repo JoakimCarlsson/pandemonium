@@ -117,6 +117,8 @@ pub struct App {
     close_requested: bool,
     /// The files the window has open, and the servers behind them.
     editor: Files,
+    /// The servers to run for a language, in place of the ones it names.
+    language_servers: BTreeMap<String, Vec<pm_text::Server>>,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
@@ -231,6 +233,7 @@ impl App {
             window_state: restored.window,
             close_requested: false,
             editor: Files::default(),
+            language_servers: restored.language_servers,
             panes: PaneTree::default(),
             saved,
             geometry: Geometry::default(),
@@ -1024,6 +1027,7 @@ impl App {
             layout: self.layout(),
             panes: self.saved_panes(),
             window: self.window_state,
+            language_servers: self.language_servers.clone(),
         }
     }
 
@@ -1142,7 +1146,7 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
-        self.refresh_hints();
+        self.refresh_annotations();
         let shell = self
             .bottom_panel_open
             .then(|| self.active_shell())
@@ -1300,6 +1304,7 @@ impl ApplicationHandler<Wake> for App {
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.editor.set_notify(self.waker(Wake::Language));
+        self.editor.set_language_servers(&self.language_servers);
         self.reread_status();
 
         let saved = std::mem::take(&mut self.saved);

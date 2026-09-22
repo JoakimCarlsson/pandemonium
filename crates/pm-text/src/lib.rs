@@ -22,7 +22,7 @@ pub use cursor::{Motion, Position, Selection};
 pub use diagnostic::{Diagnostic, Severity};
 pub use hint::Hint;
 pub use indent::Indent;
-pub use language::{Language, Server};
+pub use language::{Language, NO_OPTIONS, Server};
 pub use lsp::{
     Answer, Asked, Client, CodeAction, Completion, FileEdit, Location, Request, Servers, Symbol,
 };

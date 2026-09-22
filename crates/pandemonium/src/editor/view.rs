@@ -1151,6 +1151,12 @@ fn tint(highlight: Highlight, theme: &Theme) -> Rgba {
         Highlight::Number => theme.syntax.number,
         Highlight::Type => theme.syntax.type_name,
         Highlight::Punctuation => theme.syntax.punctuation,
+        Highlight::Variable => theme.syntax.variable,
+        Highlight::Property => theme.syntax.property,
+        Highlight::Constant => theme.syntax.constant,
+        Highlight::Operator => theme.syntax.operator,
+        Highlight::Tag => theme.syntax.tag,
+        Highlight::Attribute => theme.syntax.attribute,
     }
 }
 

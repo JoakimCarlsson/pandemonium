@@ -12,6 +12,7 @@ use ropey::Rope;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{InputEdit, Node, Parser, Query, QueryCursor, TextProvider, Tree};
 
+use crate::cursor::Position;
 use crate::language::Language;
 
 /// What a character is, as far as colour is concerned.
@@ -21,7 +22,7 @@ use crate::language::Language;
 /// once they reach a palette.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Highlight {
-    /// A keyword, an operator or an attribute.
+    /// A keyword.
     Keyword,
     /// A string, a character literal or an escape in one.
     String,
@@ -29,12 +30,24 @@ pub enum Highlight {
     Function,
     /// A comment, documentation included.
     Comment,
-    /// A number or another literal constant.
+    /// A number or a boolean.
     Number,
-    /// A type, a trait or a named constant.
+    /// A type or a trait.
     Type,
     /// A bracket, a delimiter or another piece of punctuation.
     Punctuation,
+    /// A variable, a parameter or a plain identifier.
+    Variable,
+    /// A field, a member or a key.
+    Property,
+    /// A named constant.
+    Constant,
+    /// An operator.
+    Operator,
+    /// A markup element, such as an HTML or JSX tag.
+    Tag,
+    /// A markup attribute, or an annotation on a declaration.
+    Attribute,
 }
 
 impl Highlight {
@@ -42,18 +55,47 @@ impl Highlight {
     fn of(capture: &str) -> Option<Self> {
         let kind = capture.split('.').next().unwrap_or(capture);
         match (kind, capture) {
+            (_, "text.literal") => Some(Self::String),
+            (_, "text.title") => Some(Self::Keyword),
+            (_, "variable.member") => Some(Self::Property),
             ("comment", _) => Some(Self::Comment),
             ("string", _) | ("escape", _) | ("character", _) => Some(Self::String),
-            (_, "text.literal") => Some(Self::String),
-            ("number", _) | ("boolean", _) => Some(Self::Number),
             (_, "constant.builtin") => Some(Self::Number),
+            ("number", _) | ("boolean", _) => Some(Self::Number),
+            ("constant", _) => Some(Self::Constant),
             ("function", _) | ("constructor", _) => Some(Self::Function),
-            ("keyword", _) | ("operator", _) | ("attribute", _) | ("label", _) => {
-                Some(Self::Keyword)
-            }
-            (_, "text.title") => Some(Self::Keyword),
-            ("type", _) | ("constant", _) => Some(Self::Type),
+            ("keyword", _) | ("label", _) => Some(Self::Keyword),
+            ("operator", _) => Some(Self::Operator),
+            ("attribute", _) | ("annotation", _) => Some(Self::Attribute),
+            ("tag", _) => Some(Self::Tag),
+            ("property", _) | ("field", _) => Some(Self::Property),
+            ("type", _) | ("module", _) | ("namespace", _) => Some(Self::Type),
             ("punctuation", _) => Some(Self::Punctuation),
+            ("variable", _) | ("parameter", _) => Some(Self::Variable),
+            _ => None,
+        }
+    }
+
+    /// What one of the protocol's semantic token types comes to.
+    ///
+    /// A server names what it found in the language's own words; these are
+    /// the same distinctions a theme draws, so a token a theme has no colour
+    /// for leaves the grammar's own answer standing.
+    pub fn of_token(kind: &str) -> Option<Self> {
+        match kind {
+            "namespace" | "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" => {
+                Some(Self::Type)
+            }
+            "parameter" | "variable" => Some(Self::Variable),
+            "property" | "event" => Some(Self::Property),
+            "enumMember" => Some(Self::Constant),
+            "function" | "method" | "macro" => Some(Self::Function),
+            "keyword" | "modifier" => Some(Self::Keyword),
+            "comment" => Some(Self::Comment),
+            "string" | "regexp" => Some(Self::String),
+            "number" => Some(Self::Number),
+            "operator" => Some(Self::Operator),
+            "decorator" => Some(Self::Attribute),
             _ => None,
         }
     }
@@ -73,6 +115,35 @@ pub struct Highlights {
 }
 
 impl Highlights {
+    /// Writes `highlight` over the characters `span` covers.
+    ///
+    /// What a language server says about a span is written over what the
+    /// grammar guessed, because the server knows which of two things a name
+    /// is and the grammar only knows that it is a name.
+    pub fn repaint(&mut self, span: Range<Position>, highlight: Highlight) {
+        for line in span.start.line..=span.end.line {
+            let Some(index) = line.checked_sub(self.first) else {
+                continue;
+            };
+            let Some(row) = self.rows.get_mut(index) else {
+                break;
+            };
+            let from = if line == span.start.line {
+                span.start.column
+            } else {
+                0
+            };
+            let to = if line == span.end.line {
+                span.end.column
+            } else {
+                row.len()
+            };
+            for slot in row.iter_mut().take(to).skip(from) {
+                *slot = Some(highlight);
+            }
+        }
+    }
+
     /// The highlight of the character at `line` and `column`, if it has one.
     pub fn at(&self, line: usize, column: usize) -> Option<Highlight> {
         *self
@@ -103,7 +174,7 @@ impl Syntax {
         let grammar = language.grammar();
         let mut parser = Parser::new();
         parser.set_language(&grammar).ok()?;
-        let query = Query::new(&grammar, language.highlights()).ok()?;
+        let query = Query::new(&grammar, &language.highlights()).ok()?;
 
         Some(Self {
             parser,

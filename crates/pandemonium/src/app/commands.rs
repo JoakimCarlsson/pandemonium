@@ -183,7 +183,7 @@ impl App {
     fn save_or_format(&mut self) {
         let served = self
             .active_file()
-            .is_some_and(|document| document.borrow().server().is_some());
+            .is_some_and(|document| document.borrow().is_served());
         if self.setup.format_on_save && served {
             self.saving = true;
             return self.ask(pm_text::Request::Format);

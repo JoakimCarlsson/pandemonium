@@ -38,9 +38,10 @@ pub use scroll::Scroll;
 pub use split::{Split, split};
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
 pub use text::{Text, text};
+pub use theme::install as install_themes;
 pub use theme::{
-    Appearance, Colors, DEFAULT_FAMILY, Emphasis, FAMILIES, Font, Radii, Sizes, Syntax, Terminal,
-    TextScale, TextSize, Theme, ThemeFamily, family,
+    Appearance, BUILT_IN, Colors, DEFAULT_FAMILY, Emphasis, Font, Radii, Sizes, Syntax, Terminal,
+    TextScale, TextSize, Theme, ThemeFamily, families, family,
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{

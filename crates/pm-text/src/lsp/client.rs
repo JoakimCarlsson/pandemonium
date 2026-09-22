@@ -19,14 +19,46 @@ use serde_json::{Value, json};
 use crate::cursor::Position;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::language::Server;
-use crate::lsp::answer::{Answer, Request};
+use crate::lsp::answer::{self, Answer, Request};
 use crate::lsp::{transport, uri};
+use crate::syntax::Highlight;
 
 /// The request identifier the handshake is sent under.
 const INITIALIZE: i64 = 1;
 
 /// The identifier the first question after the handshake is asked under.
 const FIRST_REQUEST: i64 = 2;
+
+/// The semantic token types the editor understands, in the protocol's words.
+///
+/// A server hands back a legend of its own, in its own order, of the types
+/// it will use out of these; a type the editor did not ask for is one it
+/// will not be sent.
+const TOKEN_TYPES: [&str; 23] = [
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator",
+    "decorator",
+];
 
 /// A question asked of a server, for as long as it is unanswered.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -47,6 +79,8 @@ struct State {
     answers: HashMap<i64, Answer>,
     /// Whether anything has arrived since the editor last looked.
     fresh: bool,
+    /// What the server said its semantic token types are, in its own order.
+    legend: Vec<Option<Highlight>>,
 }
 
 /// A language server the editor is talking to.
@@ -57,8 +91,6 @@ pub struct Client {
     stdin: Arc<Mutex<ChildStdin>>,
     /// What the server has said and what it is owed.
     state: Arc<Mutex<State>>,
-    /// What the server is told the documents are written in.
-    language_id: &'static str,
     /// The identifier the next question will be asked under.
     next: AtomicI64,
 }
@@ -89,14 +121,13 @@ impl Client {
             process: Mutex::new(process),
             stdin: Arc::new(Mutex::new(stdin)),
             state: state.clone(),
-            language_id: server.language_id,
             next: AtomicI64::new(FIRST_REQUEST),
         };
         client.send(&json!({
             "jsonrpc": "2.0",
             "id": INITIALIZE,
             "method": "initialize",
-            "params": initialize(root),
+            "params": initialize(root, server),
         }));
 
         let reader = Reader {
@@ -112,14 +143,19 @@ impl Client {
         Ok(client)
     }
 
-    /// Tells the server a file is open, and what is in it.
-    pub fn did_open(&self, path: &Path, version: i32, text: &str) {
+    /// Tells the server a file is open, what language it is in and what is
+    /// in it.
+    ///
+    /// The language comes with the file rather than with the server: one
+    /// clangd serves a checkout's C and its C++ alike, and each document
+    /// says which of the two it is.
+    pub fn did_open(&self, path: &Path, language_id: &str, version: i32, text: &str) {
         self.notify(&json!({
             "method": "textDocument/didOpen",
             "params": {
                 "textDocument": {
                     "uri": uri::of(path),
-                    "languageId": self.language_id,
+                    "languageId": language_id,
                     "version": version,
                     "text": text,
                 },
@@ -290,7 +326,7 @@ impl Reader {
     fn dispatch(&self, message: &Value) {
         if message.get("id").is_some() && message.get("method").is_none() {
             if message["id"] == json!(INITIALIZE) {
-                self.ready();
+                self.ready(&message["result"]);
             } else if let Some(id) = message["id"].as_i64() {
                 match message.get("error") {
                     Some(_) => self.gave_up(id),
@@ -311,10 +347,11 @@ impl Reader {
     }
 
     /// Completes the handshake and lets the held-back notifications go.
-    fn ready(&self) {
+    fn ready(&self, result: &Value) {
         let queued = match self.state.lock() {
             Ok(mut state) => {
                 state.ready = true;
+                state.legend = answer::legend(&result["capabilities"]);
                 std::mem::take(&mut state.queued)
             }
             Err(_) => return,
@@ -342,7 +379,8 @@ impl Reader {
         let Some((request, path)) = state.asked.remove(&id) else {
             return;
         };
-        let answer = request.read(&path, result);
+        let legend = state.legend.clone();
+        let answer = request.read(&path, result, &legend);
         state.answers.insert(id, answer);
         state.fresh = true;
         drop(state);
@@ -399,8 +437,10 @@ fn position(published: lsp_types::Position) -> Position {
 }
 
 /// What the editor tells a server about itself when it starts one.
-fn initialize(root: &Path) -> Value {
+fn initialize(root: &Path, server: Server) -> Value {
+    let options = serde_json::from_str::<Value>(server.options).unwrap_or(Value::Null);
     json!({
+        "initializationOptions": options,
         "processId": std::process::id(),
         "clientInfo": { "name": "Pandemonium" },
         "rootUri": uri::of(root),
@@ -429,6 +469,12 @@ fn initialize(root: &Path) -> Value {
                 "formatting": {},
                 "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
                 "inlayHint": { "resolveSupport": { "properties": [] } },
+                "semanticTokens": {
+                    "requests": { "full": true },
+                    "formats": ["relative"],
+                    "tokenTypes": TOKEN_TYPES,
+                    "tokenModifiers": [],
+                },
             },
             "workspace": { "workspaceEdit": { "documentChanges": true } },
             "window": { "workDoneProgress": true },

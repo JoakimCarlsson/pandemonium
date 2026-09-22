@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::cursor::Position;
 use crate::lsp::uri;
+use crate::syntax::Highlight;
 
 /// One thing a language server can be asked about a place in a file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,6 +43,8 @@ pub enum Request {
     Symbols,
     /// What the server would write into the lines of this span.
     Hints(Range<Position>),
+    /// What the server makes of every name in the file.
+    Semantics,
 }
 
 impl Request {
@@ -61,6 +64,7 @@ impl Request {
             Self::Format => "textDocument/formatting",
             Self::Symbols => "textDocument/documentSymbol",
             Self::Hints(_) => "textDocument/inlayHint",
+            Self::Semantics => "textDocument/semanticTokens/full",
         }
     }
 
@@ -89,7 +93,7 @@ impl Request {
                 "textDocument": document,
                 "options": { "tabSize": 4, "insertSpaces": true },
             }),
-            Self::Symbols => json!({ "textDocument": document }),
+            Self::Symbols | Self::Semantics => json!({ "textDocument": document }),
             Self::Hints(span) => json!({
                 "textDocument": document,
                 "range": {
@@ -102,7 +106,15 @@ impl Request {
     }
 
     /// What a server's reply to this request, made about `path`, comes to.
-    pub(super) fn read(&self, path: &std::path::Path, result: &Value) -> Answer {
+    ///
+    /// `legend` is what the server said its token types are, in the order it
+    /// numbers them; only a reply about semantics is read through it.
+    pub(super) fn read(
+        &self,
+        path: &std::path::Path,
+        result: &Value,
+        legend: &[Option<Highlight>],
+    ) -> Answer {
         match self {
             Self::Definition
             | Self::TypeDefinition
@@ -120,6 +132,7 @@ impl Request {
             }]),
             Self::Symbols => Answer::Symbols(symbols(result)),
             Self::Hints(_) => Answer::Hints(hints(result)),
+            Self::Semantics => Answer::Semantics(semantics(result, legend)),
         }
     }
 }
@@ -143,6 +156,28 @@ pub enum Answer {
     Symbols(Vec<Symbol>),
     /// What the server would write into the lines it was asked about.
     Hints(Vec<crate::hint::Hint>),
+    /// What the server makes of every name in the file, as spans to colour.
+    Semantics(Vec<(Range<Position>, Highlight)>),
+}
+
+impl Answer {
+    /// Whether the server answered with nothing.
+    ///
+    /// A server that was asked something it has no opinion about answers
+    /// the question and says nothing in it, which is not the same as an
+    /// answer worth showing.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Locations(found) => found.is_empty(),
+            Self::Hover(text) | Self::Signature(text) => text.is_empty(),
+            Self::Completions(items) => items.is_empty(),
+            Self::CodeActions(actions) => actions.is_empty(),
+            Self::Edits(files) => files.iter().all(|file| file.edits.is_empty()),
+            Self::Symbols(symbols) => symbols.is_empty(),
+            Self::Hints(hints) => hints.is_empty(),
+            Self::Semantics(spans) => spans.is_empty(),
+        }
+    }
 }
 
 /// One place in one file.
@@ -522,4 +557,50 @@ fn symbol_kind(kind: u64) -> &'static str {
         26 => "type",
         _ => "",
     }
+}
+
+/// The legend a server publishes, as the highlight each of its types means.
+pub(super) fn legend(capabilities: &Value) -> Vec<Option<Highlight>> {
+    capabilities["semanticTokensProvider"]["legend"]["tokenTypes"]
+        .as_array()
+        .map(|types| {
+            types
+                .iter()
+                .map(|kind| kind.as_str().and_then(Highlight::of_token))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The spans a server's semantic tokens come to, in the file's own terms.
+///
+/// The protocol sends them as five numbers each, every one of them relative
+/// to the token before it: a line down from the last token's, a column along
+/// from it when they share a line, a length, a type and its modifiers. A
+/// token whose type the editor draws no differently is left out here rather
+/// than carried to the painter to be discarded there.
+fn semantics(result: &Value, legend: &[Option<Highlight>]) -> Vec<(Range<Position>, Highlight)> {
+    const STRIDE: usize = 5;
+
+    let Some(data) = result["data"].as_array() else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    let (mut line, mut column) = (0_usize, 0_usize);
+
+    for token in data.as_chunks::<STRIDE>().0 {
+        let [down, along, length, kind, _] =
+            std::array::from_fn(|index| token[index].as_u64().unwrap_or_default() as usize);
+
+        line += down;
+        column = if down == 0 { column + along } else { along };
+
+        let Some(Some(highlight)) = legend.get(kind) else {
+            continue;
+        };
+        let start = Position::new(line, column);
+        let end = Position::new(line, column + length);
+        spans.push((start..end, *highlight));
+    }
+    spans
 }

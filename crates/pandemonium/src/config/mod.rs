@@ -4,12 +4,16 @@
 //! [`load`] answers what the last launch left behind, [`save`] records what
 //! this one decided. Onboarding writes through here on its first run and a
 //! settings surface will edit the same file later — neither keeps a store of
-//! its own. Nothing fails loudly: a missing, unreadable or outdated file is a
-//! first launch, and a write that cannot land leaves the running editor alone.
+//! its own. Themes the reader wrote are read from the same home and put on
+//! offer beside the built-in ones. Nothing fails loudly: a missing, unreadable
+//! or outdated file is a first launch, and a write that cannot land leaves the
+//! running editor alone.
 
 mod paths;
 mod stored;
+mod theme;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -55,10 +59,17 @@ pub struct Restored {
     pub panes: Saved,
     /// The size and state of the window itself.
     pub window: WindowState,
+    /// The servers to run for a language, in place of the ones it names.
+    pub language_servers: BTreeMap<String, Vec<pm_text::Server>>,
 }
 
 /// What the last launch left behind, or a first launch's defaults.
+///
+/// The reader's own themes go on offer before the file is read, because the
+/// family it names is resolved against the themes there are: a launch that
+/// read the preferences first could not find a theme it had not loaded yet.
 pub fn load() -> Restored {
+    pm_ui::install_themes(theme::installed());
     paths::settings()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_norway::from_str::<Stored>(&text).ok())

@@ -2,11 +2,14 @@
 //!
 //! Distinct from the in-memory state so the file survives that shape changing:
 //! the theme family is stored by name rather than by its index into
-//! [`FAMILIES`], and every field is optional so an older file still loads.
+//! the families on offer, and every field is optional so an older file still
+//! loads.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pm_ui::FAMILIES;
+use pm_text::Server;
+use pm_ui::families;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Restored, WindowState};
@@ -35,6 +38,8 @@ pub(super) struct Stored {
     metrics: Option<bool>,
     /// Whether crash reports are sent.
     crash_reports: Option<bool>,
+    /// The servers to run for a language, in place of the ones it names.
+    language_servers: Option<BTreeMap<String, Vec<StoredServer>>>,
     /// Whether setup has been finished, which swaps the page.
     finished: Option<bool>,
     /// The roots of the projects the window had open.
@@ -63,6 +68,71 @@ pub(super) struct Stored {
     window_maximized: Option<bool>,
 }
 
+/// One language server as it is written down.
+///
+/// A server that takes no arguments is written as the command alone, which
+/// is what nearly all of them are; one that takes arguments spells them out.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum StoredServer {
+    /// The command, run with no arguments.
+    Command(String),
+    /// The command, the arguments to run it with, and what to configure it
+    /// with as it starts.
+    Invocation {
+        /// The program to run.
+        command: String,
+        /// The arguments to run it with.
+        arguments: Vec<String>,
+        /// What the server is configured with as it starts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<serde_norway::Value>,
+    },
+}
+
+impl StoredServer {
+    /// The server this stands for, named for as long as the editor runs.
+    fn into_server(self) -> Server {
+        let (command, arguments, options) = match self {
+            Self::Command(command) => (command, Vec::new(), None),
+            Self::Invocation {
+                command,
+                arguments,
+                options,
+            } => (command, arguments, options),
+        };
+        Server {
+            command: command.leak(),
+            arguments: arguments
+                .into_iter()
+                .map(|argument| &*argument.leak())
+                .collect::<Vec<_>>()
+                .leak(),
+            options: options
+                .and_then(|options| serde_json::to_string(&options).ok())
+                .map_or(pm_text::NO_OPTIONS, |options| &*options.leak()),
+        }
+    }
+
+    /// How `server` is written down.
+    fn of(server: &Server) -> Self {
+        let options = serde_json::from_str::<serde_norway::Value>(server.options).ok();
+        let options = options.filter(|options| !matches!(options, serde_norway::Value::Null));
+        if server.arguments.is_empty() && options.is_none() {
+            return Self::Command(server.command.to_owned());
+        }
+        Self::Invocation {
+            command: server.command.to_owned(),
+            arguments: server
+                .arguments
+                .iter()
+                .map(|&argument| argument.to_owned())
+                .collect(),
+            options,
+        }
+    }
+}
+
 impl Stored {
     /// What this file stands for, defaulting anything it leaves out.
     pub(super) fn into_restored(self) -> Restored {
@@ -72,8 +142,22 @@ impl Stored {
             layout: self.layout(),
             window: self.window(),
             panes: self.panes.clone().unwrap_or_default(),
+            language_servers: self.language_servers(),
             setup: self.into_setup(),
         }
+    }
+
+    /// The servers this file puts in place of the ones languages name.
+    fn language_servers(&self) -> BTreeMap<String, Vec<Server>> {
+        self.language_servers
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(language, servers)| {
+                let servers = servers.into_iter().map(StoredServer::into_server).collect();
+                (language, servers)
+            })
+            .collect()
     }
 
     /// The regions this file stands for, defaulting anything it leaves out.
@@ -140,6 +224,7 @@ impl Stored {
             layout,
             panes,
             window,
+            language_servers,
         } = restored;
 
         Self {
@@ -151,6 +236,15 @@ impl Stored {
             trust_worktrees: Some(setup.trust_worktrees),
             metrics: Some(setup.metrics),
             crash_reports: Some(setup.crash_reports),
+            language_servers: (!language_servers.is_empty()).then(|| {
+                language_servers
+                    .iter()
+                    .map(|(language, servers)| {
+                        let servers = servers.iter().map(StoredServer::of).collect();
+                        (language.clone(), servers)
+                    })
+                    .collect()
+            }),
             finished: Some(setup.finished),
             projects: Some(projects.clone()),
             active_project: active.clone(),
@@ -168,7 +262,7 @@ impl Stored {
     }
 }
 
-/// The index into [`FAMILIES`] of the family called `name`.
+/// The index of the family called `name`, of the ones on offer.
 fn family_index(name: &str) -> Option<usize> {
-    FAMILIES.iter().position(|family| family.name == name)
+    families().iter().position(|family| family.name == name)
 }

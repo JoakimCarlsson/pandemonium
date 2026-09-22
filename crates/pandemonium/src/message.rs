@@ -20,7 +20,7 @@ use crate::terminal::ShellId;
 pub enum Message {
     /// Draw in this theme mode.
     SetThemeMode(ThemeMode),
-    /// Draw in this theme family, by index into `pm_ui::FAMILIES`.
+    /// Draw in this theme family, by index into `pm_ui::families`.
     SetThemeFamily(usize),
     /// Start from this keymap.
     SetKeymap(BaseKeymap),

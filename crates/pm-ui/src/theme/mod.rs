@@ -20,6 +20,8 @@ mod terminal;
 mod text;
 mod verdant;
 
+use std::sync::OnceLock;
+
 pub use colors::Colors;
 pub use emphasis::Emphasis;
 pub use radii::Radii;
@@ -100,21 +102,36 @@ impl ThemeFamily {
 }
 
 /// Every family the editor ships with, in the order the picker offers them.
-pub const FAMILIES: [ThemeFamily; 4] = [
+pub const BUILT_IN: [ThemeFamily; 4] = [
     pandemonium::family(),
     fathom::family(),
     ember::family(),
     verdant::family(),
 ];
 
-/// The family a first launch starts in, as an index into [`FAMILIES`].
+/// The family a first launch starts in, as an index into [`families`].
 pub const DEFAULT_FAMILY: usize = 0;
 
+/// The families on offer: the built-in ones, and any that were installed.
+static INSTALLED: OnceLock<Vec<ThemeFamily>> = OnceLock::new();
+
+/// Puts `extra` on offer after the built-in families, once.
+///
+/// Themes read off disk come through here, so the picker, the preferences
+/// and the window all see one list rather than each assembling its own. A
+/// second call is ignored: what the editor is drawing from does not change
+/// under it mid-launch.
+pub fn install(extra: Vec<ThemeFamily>) {
+    let _ = INSTALLED.set(BUILT_IN.into_iter().chain(extra).collect());
+}
+
+/// Every family on offer, in the order the picker offers them.
+pub fn families() -> &'static [ThemeFamily] {
+    INSTALLED.get().map_or(&BUILT_IN, Vec::as_slice)
+}
+
 /// The family at `index`, or the default one when the index is out of range.
-pub const fn family(index: usize) -> ThemeFamily {
-    if index < FAMILIES.len() {
-        FAMILIES[index]
-    } else {
-        FAMILIES[DEFAULT_FAMILY]
-    }
+pub fn family(index: usize) -> ThemeFamily {
+    let families = families();
+    *families.get(index).unwrap_or(&families[DEFAULT_FAMILY])
 }

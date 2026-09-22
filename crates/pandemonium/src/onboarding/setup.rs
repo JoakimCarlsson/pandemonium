@@ -1,6 +1,6 @@
 //! What the setup screen decides, and the messages that change it.
 
-use pm_ui::{Appearance, DEFAULT_FAMILY, FAMILIES};
+use pm_ui::{Appearance, DEFAULT_FAMILY, families};
 use serde::{Deserialize, Serialize};
 
 use crate::keymap::BaseKeymap;
@@ -42,7 +42,7 @@ impl ThemeMode {
 pub struct Setup {
     /// Which theme the editor draws in.
     pub theme_mode: ThemeMode,
-    /// Index into `pm_ui::FAMILIES` of the theme family the editor draws in.
+    /// Index into `pm_ui::families` of the theme family the editor draws in.
     pub theme_family: usize,
     /// The keymap the editor starts from.
     pub keymap: BaseKeymap,
@@ -86,7 +86,7 @@ impl Setup {
         match message {
             Message::SetThemeMode(mode) => self.theme_mode = mode,
             Message::SetThemeFamily(index) => {
-                self.theme_family = index.min(FAMILIES.len() - 1);
+                self.theme_family = index.min(families().len() - 1);
             }
             Message::SetKeymap(keymap) => self.keymap = keymap,
             Message::ToggleVimMode => self.vim_mode = !self.vim_mode,

@@ -24,7 +24,7 @@ use crate::hint::Hint;
 use crate::history::History;
 use crate::indent::Indent;
 use crate::language::Language;
-use crate::syntax::{Highlights, Syntax};
+use crate::syntax::{Highlight, Highlights, Syntax};
 
 /// How wide a tab character is drawn, in characters.
 pub const TAB_WIDTH: usize = 4;
@@ -57,6 +57,8 @@ pub struct Buffer {
     diagnostics: Vec<Diagnostic>,
     /// What a server has written into the lines that the file does not hold.
     hints: Vec<Hint>,
+    /// What a language server makes of every name in the file.
+    semantics: Vec<(Range<Position>, Highlight)>,
 }
 
 impl Buffer {
@@ -93,6 +95,7 @@ impl Buffer {
             saved_depth: 0,
             diagnostics: Vec::new(),
             hints: Vec::new(),
+            semantics: Vec::new(),
         }
     }
 
@@ -284,12 +287,30 @@ impl Buffer {
         self.diagnostics = diagnostics;
     }
 
-    /// The highlights of `lines`, when the buffer has a syntax tree.
+    /// Replaces what a language server makes of the names in this file.
+    pub fn set_semantics(&mut self, semantics: Vec<(Range<Position>, Highlight)>) {
+        self.semantics = semantics;
+    }
+
+    /// The highlights of `lines`: what the grammar found, then what a server
+    /// knows.
+    ///
+    /// The grammar answers about every file the moment it is opened and the
+    /// server answers about the ones it serves a moment later, so the two are
+    /// one pass with the better answer written last rather than a choice
+    /// between them.
     pub fn highlights(&mut self, lines: Range<usize>) -> Highlights {
-        match self.syntax.as_mut() {
-            Some(syntax) => syntax.highlights(&self.text, lines),
+        let mut highlights = match self.syntax.as_mut() {
+            Some(syntax) => syntax.highlights(&self.text, lines.clone()),
             None => Highlights::default(),
+        };
+        for (span, highlight) in &self.semantics {
+            if span.end.line < lines.start || span.start.line >= lines.end {
+                continue;
+            }
+            highlights.repaint(span.clone(), *highlight);
         }
+        highlights
     }
 
     /// The bracket matching the one at or before the cursor, if there is one.

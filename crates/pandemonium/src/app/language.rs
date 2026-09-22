@@ -73,40 +73,45 @@ impl App {
         self.ask_about(file, at, request);
     }
 
-    /// Asks the server behind `file` `request`, about `at` in it.
+    /// Asks every server behind `file` `request`, about `at` in it.
     ///
     /// A question of the same kind that is still unanswered is given up on
     /// first: what the reader is asking about now is where the cursor is
     /// now, and an answer about where it was a keystroke ago is an answer to
     /// nothing.
+    ///
+    /// All of them are asked rather than one of them, because which has the
+    /// answer is not knowable in advance: a linter has the fix and a type
+    /// checker has the type, and the one with nothing to say says nothing.
     pub(super) fn ask_about(&mut self, file: FileId, at: Position, request: Request) {
         self.forget(file, &request);
         let Some(document) = self.editor.get(file) else {
             return;
         };
         let document = document.borrow();
-        let Some(client) = document.server() else {
-            return;
-        };
+        let clients = document.servers();
         let path = document.buffer().path().to_path_buf();
         drop(document);
 
-        let asked = client.ask(request.clone(), &path, at);
-        self.asked.push(Pending {
-            client,
-            asked,
-            file,
-            at,
-            request,
-        });
+        for client in clients {
+            let asked = client.ask(request.clone(), &path, at);
+            self.asked.push(Pending {
+                client,
+                asked,
+                file,
+                at,
+                request: request.clone(),
+            });
+        }
     }
 
-    /// Asks the servers what to write into the lines of the files on screen.
+    /// Asks the servers what they know about the files on screen: what to
+    /// write into their lines, and what their names are.
     ///
     /// The whole of each file is asked about rather than the part on screen:
     /// scrolling is not a question, and a file short enough to be open is
     /// short enough to be answered about in one go.
-    pub(super) fn refresh_hints(&mut self) {
+    pub(super) fn refresh_annotations(&mut self) {
         let showing = self
             .panes
             .panes()
@@ -118,6 +123,9 @@ impl App {
             let Some(document) = self.editor.get(file) else {
                 continue;
             };
+            if document.borrow_mut().wants_semantics() {
+                self.ask_about(file, Position::default(), Request::Semantics);
+            }
             let wanted = document.borrow_mut().wants_hints();
             if !wanted {
                 continue;
@@ -200,9 +208,16 @@ impl App {
     }
 
     /// Acts on one answer, if the file it was about is still open.
+    ///
+    /// An empty answer is no answer: every server behind the file is asked,
+    /// and the ones with nothing to say must not wipe out what the one with
+    /// something to say has already put on the screen.
     fn answered(&mut self, pending: &Pending, answer: Answer) {
         if self.editor.get(pending.file).is_none() {
             return;
+        }
+        if answer.is_empty() {
+            return self.save_once_formatted(pending);
         }
         match answer {
             Answer::Locations(found) if pending.request == Request::References => {
@@ -210,19 +225,22 @@ impl App {
             }
             Answer::Locations(found) => self.go_to_first(&found),
             Answer::Hover(text) | Answer::Signature(text) => {
-                self.hint = (!text.is_empty()).then_some((self.hint_at, text));
+                self.hint = Some((self.hint_at, text));
             }
             Answer::Completions(items) => self.show_completions(pending, items),
             Answer::CodeActions(actions) => self.show_code_actions(actions),
             Answer::Edits(files) => {
                 self.apply_edits(files);
-                if pending.request == Request::Format && std::mem::take(&mut self.saving) {
-                    self.save_active();
-                }
+                self.save_once_formatted(pending);
             }
             Answer::Hints(hints) => {
                 if let Some(document) = self.editor.get(pending.file) {
                     document.borrow_mut().buffer_mut().set_hints(hints);
+                }
+            }
+            Answer::Semantics(spans) => {
+                if let Some(document) = self.editor.get(pending.file) {
+                    document.borrow_mut().buffer_mut().set_semantics(spans);
                 }
             }
             Answer::Symbols(symbols) => {
@@ -247,6 +265,26 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    /// Saves a file that was formatted on its way to being saved.
+    ///
+    /// The save waits for the last server to answer, not the first: a
+    /// formatter that has changes to make must have made them before the
+    /// file they are made to goes to disk.
+    fn save_once_formatted(&mut self, pending: &Pending) {
+        if pending.request != Request::Format || !self.saving {
+            return;
+        }
+        let awaited = self
+            .asked
+            .iter()
+            .any(|other| other.file == pending.file && other.request == Request::Format);
+        if awaited {
+            return;
+        }
+        self.saving = false;
+        self.save_active();
     }
 
     /// Goes to the first place a server named, taking down where the cursor was.

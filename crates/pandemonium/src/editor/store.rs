@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use pm_core::{Blame, Change, ProjectId};
 use pm_gfx::Point;
-use pm_text::{Buffer, Client, Position, Servers};
+use pm_text::{Buffer, Client, Position, Server, Servers};
 
 use crate::editor::layout::TextLayout;
 use crate::editor::search::Search;
@@ -66,8 +66,8 @@ pub struct Document {
     /// in and gives it up to the next file previewed there. Editing it, or
     /// asking for it a second time, is what keeps it.
     preview: bool,
-    /// The language server this file is open in, when it has one.
-    server: Option<Arc<Client>>,
+    /// The language servers this file is open in.
+    servers: Vec<Arc<Client>>,
     /// What the index holds for this file, when git knows about it.
     baseline: Option<String>,
     /// Where the file differs from that, and at which version it was worked out.
@@ -78,20 +78,29 @@ pub struct Document {
     blame_shown: bool,
     /// The version the server was last asked what to write into the lines.
     hinted: Option<i32>,
+    /// The version the server was last asked what the names in the file are.
+    named: Option<i32>,
     /// The runs of lines that are folded away, in the order they appear.
     folded: Vec<std::ops::Range<usize>>,
 }
 
 impl Document {
-    /// Opens `buffer`, telling `server` that it is open.
+    /// Opens `buffer`, telling every one of `servers` that it is open.
     fn new(
         buffer: Buffer,
         preview: bool,
-        server: Option<Arc<Client>>,
+        servers: Vec<Arc<Client>>,
         baseline: Option<String>,
     ) -> Self {
-        if let Some(server) = server.as_ref() {
-            server.did_open(buffer.path(), buffer.version(), &buffer.contents());
+        if let Some(language) = buffer.language() {
+            for server in &servers {
+                server.did_open(
+                    buffer.path(),
+                    language.language_id(),
+                    buffer.version(),
+                    &buffer.contents(),
+                );
+            }
         }
 
         Self {
@@ -100,6 +109,7 @@ impl Document {
             blame: Vec::new(),
             blame_shown: false,
             hinted: None,
+            named: None,
             folded: Vec::new(),
             buffer,
             scroll: 0,
@@ -107,7 +117,7 @@ impl Document {
             layout: TextLayout::default(),
             search: Search::default(),
             preview,
-            server,
+            servers,
         }
     }
 
@@ -236,10 +246,20 @@ impl Document {
     /// only says whether what it is showing is still what was asked about.
     pub fn wants_hints(&mut self) -> bool {
         let version = self.buffer.version();
-        if self.server.is_none() || self.hinted == Some(version) {
+        if self.servers.is_empty() || self.hinted == Some(version) {
             return false;
         }
         self.hinted = Some(version);
+        true
+    }
+
+    /// Whether the server should be asked again what the names in the file are.
+    pub fn wants_semantics(&mut self) -> bool {
+        let version = self.buffer.version();
+        if self.servers.is_empty() || self.named == Some(version) {
+            return false;
+        }
+        self.named = Some(version);
         true
     }
 
@@ -274,9 +294,14 @@ impl Document {
         &self.search
     }
 
-    /// The language server this file is open in, when it has one.
-    pub fn server(&self) -> Option<Arc<Client>> {
-        self.server.clone()
+    /// The language servers this file is open in.
+    pub fn servers(&self) -> Vec<Arc<Client>> {
+        self.servers.clone()
+    }
+
+    /// Whether any language server is open on this file.
+    pub fn is_served(&self) -> bool {
+        !self.servers.is_empty()
     }
 
     /// Puts the search through `change`, against the text as it stands.
@@ -426,12 +451,9 @@ impl Document {
         if self.search.is_open() {
             self.search.refresh(&self.buffer);
         }
-        if let Some(server) = self.server.as_ref() {
-            server.did_change(
-                self.buffer.path(),
-                self.buffer.version(),
-                &self.buffer.contents(),
-            );
+        let contents = self.buffer.contents();
+        for server in &self.servers {
+            server.did_change(self.buffer.path(), self.buffer.version(), &contents);
         }
     }
 
@@ -440,24 +462,33 @@ impl Document {
         if self.buffer.save().is_err() {
             return;
         }
-        if let Some(server) = self.server.as_ref() {
-            server.did_save(self.buffer.path(), &self.buffer.contents());
+        let contents = self.buffer.contents();
+        for server in &self.servers {
+            server.did_save(self.buffer.path(), &contents);
         }
     }
 
-    /// Takes in what the server has last said about this file.
+    /// Takes in what the servers have last said about this file.
+    ///
+    /// What they say is added together: a type checker and a linter both
+    /// have squiggles to draw, and neither one's replace the other's.
     fn refresh(&mut self) {
-        if let Some(server) = self.server.as_ref() {
-            self.buffer
-                .set_diagnostics(server.diagnostics(self.buffer.path()));
+        if self.servers.is_empty() {
+            return;
         }
+        let faults = self
+            .servers
+            .iter()
+            .flat_map(|server| server.diagnostics(self.buffer.path()))
+            .collect();
+        self.buffer.set_diagnostics(faults);
     }
 }
 
 impl Drop for Document {
-    /// Tells the server the file is no longer open.
+    /// Tells every server the file is no longer open.
     fn drop(&mut self) {
-        if let Some(server) = self.server.as_ref() {
+        for server in &self.servers {
             server.did_close(self.buffer.path());
         }
     }
@@ -488,6 +519,15 @@ impl Files {
         self.servers.set_notify(notify);
     }
 
+    /// Runs `overrides` for the languages they name, in place of the usual.
+    pub fn set_language_servers(&mut self, overrides: &BTreeMap<String, Vec<Server>>) {
+        let named = overrides
+            .iter()
+            .map(|(language, servers)| (&*language.clone().leak(), servers.clone()))
+            .collect();
+        self.servers.set_overrides(named);
+    }
+
     /// Opens `path` in `project`, or hands back the file if it is open already.
     ///
     /// A file that cannot be read does not open and does not complain: the
@@ -508,9 +548,10 @@ impl Files {
         }
 
         let buffer = Buffer::open(path).ok()?;
-        let server = buffer
+        let servers = buffer
             .language()
-            .and_then(|language| self.servers.open(root, language));
+            .map(|language| self.servers.open(root, language))
+            .unwrap_or_default();
 
         let id = self.next;
         self.next = FileId(id.0 + 1);
@@ -521,7 +562,7 @@ impl Files {
                 document: Rc::new(RefCell::new(Document::new(
                     buffer,
                     preview,
-                    server,
+                    servers,
                     pm_core::baseline(root, path),
                 ))),
             },

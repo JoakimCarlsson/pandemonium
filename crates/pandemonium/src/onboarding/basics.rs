@@ -1,7 +1,7 @@
 //! The settings themselves, in the order a first launch wants them.
 
 use pm_ui::{
-    Div, FAMILIES, Styled, Theme, h_flex, rule, section, space, switch_field, text, theme_preview,
+    Div, Styled, Theme, families, h_flex, rule, section, space, switch_field, text, theme_preview,
     toggle_grid, toggle_row, v_flex,
 };
 
@@ -66,7 +66,7 @@ fn theme_section(theme: &Theme, setup: &Setup) -> Div<Message> {
         ThemeMode::System => None,
         _ => Some(theme.appearance),
     };
-    let previews = FAMILIES
+    let previews = families()
         .iter()
         .enumerate()
         .map(|(index, family)| {

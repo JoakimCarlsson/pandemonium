@@ -514,7 +514,7 @@ impl App {
                     pane,
                     file,
                     selected: !document.buffer().selection().is_empty(),
-                    served: document.server().is_some(),
+                    served: document.is_served(),
                     tracked: document.is_tracked(),
                 })
             }
