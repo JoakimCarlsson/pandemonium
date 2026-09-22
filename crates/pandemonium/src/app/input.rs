@@ -31,11 +31,13 @@ const PAGE_NOTCHES: f32 = 4.0;
 /// How many rows of a picker a page key moves through.
 const PICKER_PAGE: isize = 10;
 
-/// How long the pointer stays still before the editor says what is under it.
-const REST_DELAY: std::time::Duration = std::time::Duration::from_millis(450);
-
-/// How far the pointer may drift and still count as having stayed still.
-const REST_SLACK: f32 = 3.0;
+/// How long the pointer stays still before the editor asks about what is
+/// under it.
+///
+/// The question goes out well before the panel is due, so that the answer is
+/// usually already in hand by the time the reader has stopped long enough to
+/// want one.
+const REST_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Longest interval treated as a double click.
 pub(super) const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -67,6 +69,7 @@ impl App {
     /// terminal, then the window's own chords, then the search bar, then the
     /// text itself. Only a key nothing wanted becomes focus movement.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
+        self.blink.restart();
         if self.send_to_picker(event) {
             return self.request_redraw();
         }
@@ -334,18 +337,21 @@ impl App {
 
     /// Tells the element tree where the pointer is now.
     ///
-    /// A pointer that has moved has stopped resting, so whatever was being
-    /// said about the place it left goes away and the clock on the place it
-    /// reached starts again.
+    /// Every move starts the clock again, at the place the pointer has
+    /// reached: a clock left running from where the pointer set off would
+    /// go off about a place it has long since left, which is how a reader
+    /// creeping onto a name gets an answer about the blank they started
+    /// from. What was being said about the word the pointer has left goes
+    /// away; what is said about the word it is still on stays, and so does
+    /// the link it is still over.
     pub(super) fn pointer_moved(&mut self, position: Point) {
-        let moved = self
-            .pointer
-            .is_none_or(|last| (last.x - position.x).hypot(last.y - position.y) > REST_SLACK);
+        let moved = self.pointer != Some(position);
         self.pointer = Some(position);
         if moved {
-            self.hint = None;
+            self.forget_hint(position);
             self.resting = Some((std::time::Instant::now(), position));
         }
+        self.follow_pointer(position);
         let message = self.ui.as_mut().and_then(|ui| ui.pointer_moved(position));
         self.update_pointer_cursor();
         self.handle(message);
@@ -373,6 +379,19 @@ impl App {
         self.resting.map(|(since, _)| since + REST_DELAY)
     }
 
+    /// Whether the caret has turned over since the last frame.
+    ///
+    /// Only a pane with the keyboard has a caret to blink; a window whose
+    /// text is not being edited is a window that stays still.
+    pub(super) fn blinked(&mut self) -> bool {
+        self.editor_focused && self.blink.changed()
+    }
+
+    /// When the caret next turns over, while there is one to turn.
+    pub(super) fn next_blink(&self) -> Option<std::time::Instant> {
+        self.editor_focused.then(|| self.blink.next_change())
+    }
+
     /// Tells the element tree the pointer has left the window.
     ///
     /// A tab being carried is put back when the pointer leaves: the release
@@ -384,6 +403,7 @@ impl App {
         self.drag = None;
         self.resting = None;
         self.hint = None;
+        self.link = None;
         if let Some(ui) = self.ui.as_mut() {
             ui.pointer_left();
         }
@@ -495,7 +515,7 @@ impl App {
     }
 
     /// Applies the cursor requested by the current hover or drag target.
-    fn update_pointer_cursor(&self) {
+    pub(super) fn update_pointer_cursor(&self) {
         let icon = self.window_resize_cursor().unwrap_or_else(|| {
             let cursor = self
                 .ui

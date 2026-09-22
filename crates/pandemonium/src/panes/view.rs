@@ -30,6 +30,12 @@ pub struct Contents {
     pub bar: Bounds,
     /// Where each of its tabs leaves its own, in the order they are drawn.
     pub tab_bounds: Vec<Bounds>,
+    /// The name the pointer is over in it, while the link key is held.
+    pub link: Option<std::ops::Range<pm_text::Position>>,
+    /// The name the editor is saying something about, while it says it.
+    pub hovered: Option<std::ops::Range<pm_text::Position>>,
+    /// Whether the caret is solid this instant, for its blink.
+    pub caret: bool,
 }
 
 /// Builds the whole tree of panes, `focused` when the window's own focus is.
@@ -88,6 +94,9 @@ fn pane_view(
         .map(|(file, bounds)| pane_tab(id, &file, active == Some(file.id), bounds))
         .collect::<Vec<_>>();
     let empty = contents.file.is_none();
+    let link = contents.link.clone();
+    let hovered = contents.hovered.clone();
+    let caret = contents.caret;
     let searching = contents
         .file
         .as_ref()
@@ -113,7 +122,12 @@ fn pane_view(
         .when_some(contents.file, |view, file| {
             view.child(
                 buffer_view(file, focused)
-                    .on_select(move |anchor, head| Message::SelectText(id, anchor, head))
+                    .link(link)
+                    .hovered(hovered)
+                    .caret(caret)
+                    .on_select(move |phase, anchor, head| {
+                        Message::SelectText(id, phase, anchor, head)
+                    })
                     .on_gutter(move |anchor, head| Message::SelectLines(id, anchor, head))
                     .on_fold(move |at| Message::ToggleFold(id, at))
                     .on_scroll(move |axis, event, step| {

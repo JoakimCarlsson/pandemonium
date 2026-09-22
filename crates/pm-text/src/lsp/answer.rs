@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 use crate::cursor::Position;
+use crate::lsp::encoding::Files;
 use crate::lsp::uri;
 use crate::syntax::Highlight;
 
@@ -65,6 +66,20 @@ impl Request {
             Self::Symbols => "textDocument/documentSymbol",
             Self::Hints(_) => "textDocument/inlayHint",
             Self::Semantics => "textDocument/semanticTokens/full",
+        }
+    }
+
+    /// This request with every place named in it counted the server's way.
+    ///
+    /// Only a request carrying a span of its own has anything to translate;
+    /// the place the rest are asked about is translated by the client as it
+    /// asks them.
+    pub(super) fn encoded(&self, path: &std::path::Path, files: &mut Files) -> Self {
+        match self {
+            Self::Hints(span) => {
+                Self::Hints(files.encode(path, span.start)..files.encode(path, span.end))
+            }
+            request => request.clone(),
         }
     }
 
@@ -161,6 +176,53 @@ pub enum Answer {
 }
 
 impl Answer {
+    /// Counts every place the answer names the editor's way.
+    ///
+    /// The file a place is in is the file it is counted against, which is
+    /// not always the file that was asked about: a definition is somewhere
+    /// else by definition, and a rename is in as many files as it touches.
+    pub(super) fn decode(&mut self, path: &std::path::Path, files: &mut Files) {
+        match self {
+            Self::Locations(found) => {
+                for location in found {
+                    let at = location.path.clone();
+                    location.range = files.decode_span(&at, location.range.clone());
+                    location.origin = location
+                        .origin
+                        .clone()
+                        .map(|span| files.decode_span(path, span));
+                }
+            }
+            Self::Hover(_) | Self::Signature(_) => {}
+            Self::Completions(items) => {
+                for item in items {
+                    item.range = item.range.clone().map(|span| files.decode_span(path, span));
+                }
+            }
+            Self::CodeActions(actions) => {
+                for action in actions {
+                    decode_edits(&mut action.edits, files);
+                }
+            }
+            Self::Edits(edited) => decode_edits(edited, files),
+            Self::Symbols(symbols) => {
+                for symbol in symbols {
+                    symbol.position = files.decode(path, symbol.position);
+                }
+            }
+            Self::Hints(hints) => {
+                for hint in hints {
+                    hint.position = files.decode(path, hint.position);
+                }
+            }
+            Self::Semantics(spans) => {
+                for (span, _) in spans {
+                    *span = files.decode_span(path, span.clone());
+                }
+            }
+        }
+    }
+
     /// Whether the server answered with nothing.
     ///
     /// A server that was asked something it has no opinion about answers
@@ -180,6 +242,16 @@ impl Answer {
     }
 }
 
+/// Counts the places every one of `edited` names the editor's way.
+fn decode_edits(edited: &mut [FileEdit], files: &mut Files) {
+    for file in edited {
+        let path = file.path.clone();
+        for (span, _) in &mut file.edits {
+            *span = files.decode_span(&path, span.clone());
+        }
+    }
+}
+
 /// One place in one file.
 #[derive(Clone, Debug)]
 pub struct Location {
@@ -187,6 +259,12 @@ pub struct Location {
     pub path: PathBuf,
     /// The span in it.
     pub range: Range<Position>,
+    /// The span in the asking file that leads here, when the server said.
+    ///
+    /// This is what a link is drawn under: the server knows where the name
+    /// it resolved begins and ends, and it knows it better than a walk over
+    /// the characters around the pointer does.
+    pub origin: Option<Range<Position>>,
 }
 
 /// One thing that could be written where the cursor is.
@@ -274,6 +352,7 @@ fn locations(result: &Value) -> Vec<Location> {
             Some(Location {
                 path: uri::path(uri)?,
                 range: range(span),
+                origin: value.get("originSelectionRange").map(range),
             })
         })
         .collect()

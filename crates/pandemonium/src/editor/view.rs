@@ -18,7 +18,7 @@ use pm_text::{
 };
 use pm_ui::{
     Element, Glyphs, IconName, IconSize, LayoutContext, PaintContext, PointerCursor, ResizeEvent,
-    Style, Styled, Theme,
+    ResizePhase, Style, Styled, Theme,
 };
 
 use crate::editor::OpenFile;
@@ -30,6 +30,9 @@ const CURSOR_WIDTH: f32 = 2.0;
 
 /// Thickness of the line under a diagnostic.
 const SQUIGGLE_WIDTH: f32 = 1.5;
+
+/// Thickness of the line under a name the link key has turned into one.
+const LINK_WIDTH: f32 = 1.0;
 
 /// Width of the bar saying how far through the file the pane is looking.
 const SCROLLBAR_WIDTH: f32 = 6.0;
@@ -61,6 +64,9 @@ const REMOVED_HEIGHT: f32 = 3.0;
 /// What a drag on a scrollbar reports, given the axis and the scale of it.
 type ScrollHandler<M> = Arc<dyn Fn(ScrollAxis, ResizeEvent, f32) -> M>;
 
+/// What a gesture over the text reports: its stage, and the places it spans.
+type SelectHandler<M> = Arc<dyn Fn(ResizePhase, Position, Position) -> M>;
+
 /// How much there is to scroll through, and how far in the view has reached.
 #[derive(Clone, Copy)]
 struct Reach {
@@ -88,7 +94,7 @@ pub struct BufferView<M> {
     /// Whether keystrokes are going to this pane.
     focused: bool,
     /// What a press or a drag over the text sends, given where it reached.
-    on_select: Option<Arc<dyn Fn(Position, Position) -> M>>,
+    on_select: Option<SelectHandler<M>>,
     /// What a press or a drag down the gutter sends, given the lines it spans.
     on_gutter: Option<Arc<dyn Fn(Position, Position) -> M>>,
     /// What dragging a scrollbar sends, given the drag and the scale of it.
@@ -97,6 +103,12 @@ pub struct BufferView<M> {
     on_fold: Option<Arc<dyn Fn(Position) -> M>>,
     /// What a press of the secondary button over the pane sends.
     on_menu: Option<M>,
+    /// The name the pointer is over, while the key that links it is held.
+    link: Option<Range<Position>>,
+    /// The name the editor is saying something about, while it says it.
+    hovered: Option<Range<Position>>,
+    /// Whether the caret is solid this instant, for its blink.
+    caret: bool,
     /// How the pane is sized within its parent.
     style: Style,
 }
@@ -111,6 +123,9 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_fold: None,
         on_scroll: None,
         on_menu: None,
+        link: None,
+        hovered: None,
+        caret: true,
         style: Style::default(),
     }
     .w_full()
@@ -120,10 +135,14 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
 impl<M> BufferView<M> {
     /// Returns this pane placing the cursor and selecting through `on_select`.
     ///
-    /// The handler is given where the gesture began and where it has
-    /// reached, in lines and columns, because only the pane knows how wide a
-    /// character came out and how far along the line it had scrolled.
-    pub fn on_select(mut self, on_select: impl Fn(Position, Position) -> M + 'static) -> Self {
+    /// The handler is given the stage of the gesture, where it began and
+    /// where it has reached, in lines and columns, because only the pane
+    /// knows how wide a character came out and how far along the line it had
+    /// scrolled.
+    pub fn on_select(
+        mut self,
+        on_select: impl Fn(ResizePhase, Position, Position) -> M + 'static,
+    ) -> Self {
         self.on_select = Some(Arc::new(on_select));
         self
     }
@@ -152,6 +171,32 @@ impl<M> BufferView<M> {
     /// Returns this pane opening a menu with `message` on the other button.
     pub fn on_menu(mut self, message: M) -> Self {
         self.on_menu = Some(message);
+        self
+    }
+
+    /// Returns this pane drawing `span` as the link the pointer is over.
+    ///
+    /// Holding the key that follows a name to where it is defined turns the
+    /// name under the pointer into a link, the way it does everywhere else:
+    /// underlined, and under a pointer that says it can be pressed.
+    pub fn link(mut self, span: Option<Range<Position>>) -> Self {
+        self.link = span;
+        self
+    }
+
+    /// Returns this pane lighting up `span`, the name being talked about.
+    ///
+    /// What a hover is about is shown on the text as well as beside it, so
+    /// that a panel which opened over a crowded line still says which name
+    /// it answered for.
+    pub fn hovered(mut self, span: Option<Range<Position>>) -> Self {
+        self.hovered = span;
+        self
+    }
+
+    /// Returns this pane drawing its caret solid or through a blink.
+    pub fn caret(mut self, solid: bool) -> Self {
+        self.caret = solid;
         self
     }
 }
@@ -228,12 +273,15 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             drawn,
             folded,
             hovered: cx.input().pointer.filter(|at| layout.over_folds(*at)),
+            link: self.link.clone(),
+            talked_about: self.hovered.clone(),
         };
 
         cx.push_clip(bounds);
         self.paint_current_line(&painting, cx);
         self.paint_search(&painting, cx);
         self.paint_occurrences(&painting, cx);
+        self.paint_talked_about(&painting, cx);
         self.paint_guides(&painting, cx);
 
         let mut glyphs = Glyphs::default();
@@ -241,6 +289,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             self.paint_line(line, &painting, &mut glyphs, cx);
         }
         self.paint_brackets(&painting, cx);
+        self.paint_link(&painting, cx);
         self.paint_cursor(&painting, cx);
         self.paint_changes(&painting, cx);
         self.paint_blame(&painting, &mut glyphs, cx);
@@ -294,6 +343,14 @@ impl<M> BufferView<M> {
         for found in &painting.occurrences {
             self.wash(found.clone(), color, painting, cx);
         }
+    }
+
+    /// Lights up the name the editor is saying something about.
+    fn paint_talked_about(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(span) = painting.talked_about.clone() else {
+            return;
+        };
+        self.wash(span, painting.theme.colors.surface_hover, painting, cx);
     }
 
     /// Lights up every match of what is being looked for on screen.
@@ -795,8 +852,34 @@ impl<M> BufferView<M> {
         ));
     }
 
+    /// Draws the line under the name the link key has turned into one.
+    fn paint_link(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(span) = painting.link.clone() else {
+            return;
+        };
+        let Some(top) = painting.top_of(span.start.line) else {
+            return;
+        };
+        let layout = painting.layout;
+        let left = layout.x_of(painting.column_of(span.start));
+        let right = layout.x_of(painting.column_of(span.end));
+
+        cx.quad(Quad::filled(
+            Rect::from_xywh(
+                left,
+                top + layout.cell.height - LINK_WIDTH,
+                (right - left).max(0.0),
+                LINK_WIDTH,
+            ),
+            painting.theme.colors.link,
+        ));
+    }
+
     /// Draws every cursor: solid while the pane is focused, faint otherwise.
     fn paint_cursor(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        if !self.caret {
+            return;
+        }
         let layout = painting.layout;
         let color = if self.focused {
             painting.theme.colors.cursor
@@ -829,12 +912,17 @@ impl<M: Clone + 'static> BufferView<M> {
             return;
         };
         let file = self.file.clone();
+        let cursor = match self.link.is_some() {
+            true => PointerCursor::Pointer,
+            false => PointerCursor::Text,
+        };
         cx.draggable(
             layout.text_area(),
-            PointerCursor::Text,
+            cursor,
             Arc::new(move |event| {
                 let document = file.borrow();
                 on_select(
+                    event.phase,
                     document.position_at(event.start),
                     document.position_at(event.current),
                 )
@@ -1052,6 +1140,10 @@ struct Painting<'a> {
     folded: Vec<bool>,
     /// Where the pointer is over the fold column, when it is.
     hovered: Option<Point>,
+    /// The name the pointer is over, while the key that links it is held.
+    link: Option<Range<Position>>,
+    /// The name the editor is saying something about, while it says it.
+    talked_about: Option<Range<Position>>,
 }
 
 impl Painting<'_> {

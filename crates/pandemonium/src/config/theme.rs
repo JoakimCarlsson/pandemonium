@@ -78,6 +78,8 @@ struct StoredColors {
     cursor: Option<String>,
     /// The selection colour.
     selection: Option<String>,
+    /// The colour a name that can be followed is drawn in.
+    link: Option<String>,
     /// The accent colour.
     accent: Option<String>,
     /// The accent hover colour.
@@ -215,6 +217,7 @@ impl StoredColors {
             text_on_accent: color(self.text_on_accent.as_deref(), base.text_on_accent),
             cursor: color(self.cursor.as_deref(), base.cursor),
             selection: color(self.selection.as_deref(), base.selection),
+            link: color(self.link.as_deref(), base.link),
             accent: color(self.accent.as_deref(), base.accent),
             accent_hover: color(self.accent_hover.as_deref(), base.accent_hover),
             accent_active: color(self.accent_active.as_deref(), base.accent_active),

@@ -14,12 +14,14 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lsp_types::{DiagnosticSeverity, PublishDiagnosticsParams};
+use ropey::Rope;
 use serde_json::{Value, json};
 
 use crate::cursor::Position;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::language::Server;
 use crate::lsp::answer::{self, Answer, Request};
+use crate::lsp::encoding::{Encoding, Files};
 use crate::lsp::{transport, uri};
 use crate::syntax::Highlight;
 
@@ -81,6 +83,10 @@ struct State {
     fresh: bool,
     /// What the server said its semantic token types are, in its own order.
     legend: Vec<Option<Highlight>>,
+    /// How the server counts a column, as the handshake settled it.
+    encoding: Encoding,
+    /// The text of each open file, as the server was last told it.
+    texts: HashMap<PathBuf, Rope>,
 }
 
 /// A language server the editor is talking to.
@@ -96,16 +102,18 @@ pub struct Client {
 }
 
 impl Client {
-    /// Starts `server` over `root`, waking the window through `notify`.
+    /// Starts `program` as `server` over `root`, waking the window through
+    /// `notify`.
     ///
     /// The handshake goes out here and is answered on the reader thread, so
     /// starting a server never blocks the frame that asked for one.
     pub fn start(
         root: &Path,
+        program: &Path,
         server: Server,
         notify: Arc<dyn Fn() + Send + Sync>,
     ) -> std::io::Result<Self> {
-        let mut process = Command::new(server.command)
+        let mut process = Command::new(program)
             .args(server.arguments)
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -150,6 +158,7 @@ impl Client {
     /// clangd serves a checkout's C and its C++ alike, and each document
     /// says which of the two it is.
     pub fn did_open(&self, path: &Path, language_id: &str, version: i32, text: &str) {
+        self.record(path, text);
         self.notify(&json!({
             "method": "textDocument/didOpen",
             "params": {
@@ -169,6 +178,7 @@ impl Client {
     /// that is not short of them, and cost a second representation of every
     /// edit that has to agree with the first one exactly.
     pub fn did_change(&self, path: &Path, version: i32, text: &str) {
+        self.record(path, text);
         self.notify(&json!({
             "method": "textDocument/didChange",
             "params": {
@@ -191,6 +201,9 @@ impl Client {
 
     /// Tells the server a file is no longer open.
     pub fn did_close(&self, path: &Path) {
+        if let Ok(mut state) = self.state.lock() {
+            state.texts.remove(path);
+        }
         self.notify(&json!({
             "method": "textDocument/didClose",
             "params": { "textDocument": { "uri": uri::of(path) } },
@@ -204,10 +217,12 @@ impl Client {
     /// follows. Nothing the editor asks a server may hold a frame up.
     pub fn ask(&self, request: Request, path: &Path, at: Position) -> Asked {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let mut files = files(&self.state);
+        let outgoing = request.encoded(path, &mut files);
         let message = json!({
             "id": id,
-            "method": request.method(),
-            "params": request.params(path, at),
+            "method": outgoing.method(),
+            "params": outgoing.params(path, files.encode(path, at)),
         });
         if let Ok(mut state) = self.state.lock() {
             state.asked.insert(id, (request, path.to_path_buf()));
@@ -245,6 +260,13 @@ impl Client {
             .lock()
             .map(|mut state| std::mem::take(&mut state.fresh))
             .unwrap_or_default()
+    }
+
+    /// Keeps the text the server was last told, for counting columns by.
+    fn record(&self, path: &Path, text: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.texts.insert(path.to_path_buf(), Rope::from_str(text));
+        }
     }
 
     /// Sends a notification, holding it back until the handshake is answered.
@@ -352,6 +374,7 @@ impl Reader {
             Ok(mut state) => {
                 state.ready = true;
                 state.legend = answer::legend(&result["capabilities"]);
+                state.encoding = Encoding::of(&result["capabilities"]);
                 std::mem::take(&mut state.queued)
             }
             Err(_) => return,
@@ -380,7 +403,15 @@ impl Reader {
             return;
         };
         let legend = state.legend.clone();
-        let answer = request.read(&path, result, &legend);
+        drop(state);
+
+        let mut files = files(&self.state);
+        let mut answer = request.read(&path, result, &legend);
+        answer.decode(&path, &mut files);
+
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
         state.answers.insert(id, answer);
         state.fresh = true;
         drop(state);
@@ -406,13 +437,30 @@ impl Reader {
         let Some(path) = uri::path(params.uri.as_str()) else {
             return;
         };
-        let diagnostics = params.diagnostics.iter().map(diagnostic).collect();
+        let mut files = files(&self.state);
+        let diagnostics = params
+            .diagnostics
+            .iter()
+            .map(|published| {
+                let mut found = diagnostic(published);
+                found.range = files.decode_span(&path, found.range);
+                found
+            })
+            .collect();
 
         if let Ok(mut state) = self.state.lock() {
             state.diagnostics.insert(path, diagnostics);
             state.fresh = true;
         }
         (self.notify)();
+    }
+}
+
+/// The files an answer's positions are counted against, as they were sent.
+fn files(state: &Mutex<State>) -> Files {
+    match state.lock() {
+        Ok(state) => Files::new(state.encoding, state.texts.clone()),
+        Err(_) => Files::new(Encoding::default(), HashMap::new()),
     }
 }
 

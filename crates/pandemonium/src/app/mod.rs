@@ -140,9 +140,11 @@ pub struct App {
     /// What could be written where the cursor is, while the list is up.
     completions: Option<crate::editor::Completions>,
     /// What the editor has to say about a place, and where to say it.
-    hint: Option<(Point, String)>,
-    /// Where the next thing said about a place will be said.
-    hint_at: Point,
+    hint: Option<editor::Shown>,
+    /// The name the pointer is over, while the key that links it is held.
+    link: Option<crate::app::language::Link>,
+    /// Where the caret is in its blink.
+    blink: editor::Blink,
     /// Where the pointer has been resting, and since when.
     resting: Option<(Instant, Point)>,
     /// The fixes a server last offered, for the menu that shows them.
@@ -245,7 +247,8 @@ impl App {
             picker: None,
             completions: None,
             hint: None,
-            hint_at: Point::new(0.0, 0.0),
+            link: None,
+            blink: editor::Blink::default(),
             resting: None,
             code_actions: Vec::new(),
             asked: Vec::new(),
@@ -339,28 +342,44 @@ impl App {
     /// A second press in the same place takes the word under it and a third
     /// takes the line, which are the gestures the element tree cannot tell
     /// the window about on its own. Alt puts another cursor down instead of
-    /// moving the one there is, and alt with shift draws a box.
-    fn select_text(&mut self, pane: crate::panes::PaneId, anchor: Position, head: Position) {
+    /// moving the one there is, alt with shift draws a box, and control
+    /// follows the name under the pointer to where it is defined.
+    ///
+    /// Only the press begins a gesture. The release that ends one says the
+    /// same thing over again, and a click counted twice is a click that
+    /// selects a word nobody double-clicked.
+    fn select_text(
+        &mut self,
+        pane: crate::panes::PaneId,
+        phase: ResizePhase,
+        anchor: Position,
+        head: Position,
+    ) {
         self.focus_pane(pane);
         self.search_focused = false;
         self.dismiss_popup();
 
-        if anchor == head && self.modifiers.control_key() {
-            self.place_cursor(head, false);
-            return self.act(crate::keymap::Action::GoToDefinition);
+        let pressed = phase == ResizePhase::Started;
+        let still = anchor == head;
+
+        if pressed && still && self.modifiers.control_key() {
+            return self.follow_link(head);
         }
         if self.modifiers.alt_key() && self.modifiers.shift_key() {
             self.text_clicks.clear();
             return self.edit_active(|buffer| buffer.box_selection(anchor, head));
         }
-        if anchor == head && self.modifiers.alt_key() {
+        if pressed && still && self.modifiers.alt_key() {
             self.text_clicks.clear();
             return self.edit_active(|buffer| {
                 buffer.add_cursor(pm_text::Selection::at(head));
             });
         }
+        if still && !pressed {
+            return;
+        }
 
-        let presses = if anchor == head {
+        let presses = if still {
             self.text_clicks.press(anchor)
         } else {
             self.text_clicks.clear();
@@ -378,6 +397,20 @@ impl App {
                 }
             }
         });
+    }
+
+    /// Follows the name under the pointer to where it is defined.
+    ///
+    /// The place is taken from under the pointer rather than from where a
+    /// caret would land: aiming at the right half of the last letter of a
+    /// name is aiming at the name, not at what follows it.
+    fn follow_link(&mut self, pressed: Position) {
+        let at = self
+            .pointer
+            .and_then(|point| self.place_under(point))
+            .map_or(pressed, |(_, at)| at);
+        self.place_cursor(at, false);
+        self.act(crate::keymap::Action::GoToDefinition);
     }
 
     /// Scrolls the editor by a drag on one of its scrollbars.
@@ -657,8 +690,8 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::SelectText(pane, anchor, head) = message {
-            self.select_text(pane, anchor, head);
+        if let Message::SelectText(pane, phase, anchor, head) = message {
+            self.select_text(pane, phase, anchor, head);
             self.request_redraw();
             return;
         }
@@ -1123,10 +1156,10 @@ impl App {
             });
         }
 
-        if let Some((at, hint)) = self.hint.as_ref() {
+        if let Some(hint) = self.hint.as_ref().filter(|hint| !hint.is_empty()) {
             overlays.push(workspace::Overlaid {
-                at: Point::new(at.x, at.y),
-                content: Box::new(editor::hint(theme, hint)),
+                at: hint.at,
+                content: Box::new(editor::hint(theme, &hint.text())),
                 backdrop: None,
             });
         }
@@ -1220,19 +1253,26 @@ impl App {
         self.scroll.set_content_height(painted.height);
 
         renderer.render(list);
+        self.update_pointer_cursor();
     }
 }
 
 impl ApplicationHandler<Wake> for App {
-    /// Waits for the next event, or for the pointer to have rested long enough.
+    /// Waits for the next event, for the pointer to have rested long enough,
+    /// or for the caret to turn over.
     ///
     /// The window is otherwise woken only by something happening; a pointer
-    /// holding still is the one thing it has to notice by the clock.
+    /// holding still and a caret blinking are the two things it has to
+    /// notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.rested() {
+        if self.rested() || self.blinked() {
             self.request_redraw();
         }
-        event_loop.set_control_flow(match self.next_rest() {
+        let next = [self.next_rest(), self.next_blink()]
+            .into_iter()
+            .flatten()
+            .min();
+        event_loop.set_control_flow(match next {
             Some(when) => winit::event_loop::ControlFlow::WaitUntil(when),
             None => winit::event_loop::ControlFlow::Wait,
         });
@@ -1378,7 +1418,13 @@ impl ApplicationHandler<Wake> for App {
                     self.scroll_by(down);
                 }
             }
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+                if let Some(pointer) = self.pointer {
+                    self.follow_pointer(pointer);
+                }
+                self.request_redraw();
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     self.key_pressed(&event);

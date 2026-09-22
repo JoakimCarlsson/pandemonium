@@ -8,6 +8,7 @@
 //! arriving later into a place in the file.
 
 mod bar;
+mod caret;
 mod completions;
 mod hint;
 mod keys;
@@ -18,8 +19,9 @@ mod store;
 mod view;
 
 pub use bar::search_bar;
+pub use caret::Blink;
 pub use completions::{Completions, completion_list};
-pub use hint::hint;
+pub use hint::{Shown, hint};
 pub use keys::{Edit, edit};
 pub use menu::{TextMenu, text_menu};
 pub use search::{Search, SearchField};

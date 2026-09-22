@@ -14,6 +14,7 @@
 
 mod answer;
 mod client;
+mod encoding;
 mod transport;
 mod uri;
 
@@ -68,12 +69,16 @@ impl Servers {
         };
         wanted
             .iter()
-            .filter(|server| installed(server.command))
-            .filter_map(|server| {
+            .filter_map(|server| Some((server, installed(server.command)?)))
+            .filter_map(|(server, program)| {
                 let notify = notify.clone();
                 self.running
                     .entry((root.to_path_buf(), server.command))
-                    .or_insert_with(|| Client::start(root, *server, notify).ok().map(Arc::new))
+                    .or_insert_with(|| {
+                        Client::start(root, &program, *server, notify)
+                            .ok()
+                            .map(Arc::new)
+                    })
                     .clone()
             })
             .collect()
@@ -95,13 +100,41 @@ impl Servers {
     }
 }
 
-/// Whether `command` is installed, as a program on the path.
+/// The directories a server is looked for in besides the path.
 ///
-/// Nothing is started to find out: a server that is not on the path is one
-/// the checkout does not have, and the editor does not try to run it.
-fn installed(command: &str) -> bool {
-    let Some(path) = env::var_os("PATH") else {
-        return false;
-    };
-    env::split_paths(&path).any(|directory| directory.join(command).is_file())
+/// A window started from a desktop session inherits the path that session
+/// was given, which is not the one a shell has: rustup, go and npm each put
+/// their programs somewhere that only a shell profile ever hears about. A
+/// server the reader has installed is a server the editor runs, whether or
+/// not the session was told where it lives.
+const TOOL_DIRECTORIES: [&str; 7] = [
+    ".cargo/bin",
+    ".local/bin",
+    "go/bin",
+    ".bun/bin",
+    ".deno/bin",
+    ".npm-global/bin",
+    ".volta/bin",
+];
+
+/// Where `command` is installed, on the path or in the usual places beside it.
+///
+/// Nothing is started to find out: a server that is nowhere is one the
+/// reader does not have, and the editor does not try to run it.
+fn installed(command: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH").unwrap_or_default();
+    let home = env::var_os("HOME").map(PathBuf::from);
+
+    env::split_paths(&path)
+        .chain(
+            TOOL_DIRECTORIES
+                .iter()
+                .filter_map(|directory| Some(home.as_ref()?.join(directory))),
+        )
+        .chain([
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+        ])
+        .map(|directory| directory.join(command))
+        .find(|program| program.is_file())
 }

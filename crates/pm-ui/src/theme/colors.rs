@@ -45,6 +45,12 @@ pub struct Colors {
     pub cursor: Rgba,
     /// The wash over selected text.
     pub selection: Rgba,
+    /// A name that can be followed, while the pointer is over it.
+    ///
+    /// Not the accent: the accent is a surface a control is drawn on, and a
+    /// link is a line drawn on the background under a name, which has to be
+    /// legible against it in a theme whose accent is nearly the background.
+    pub link: Rgba,
     /// The one colour that means "this is the action".
     pub accent: Rgba,
     /// The accent under the pointer.

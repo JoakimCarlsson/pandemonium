@@ -337,6 +337,23 @@ impl Document {
             .clamped(self.buffer.position_at_display(line, column))
     }
 
+    /// The character in the file `point` is over, when it is over one.
+    ///
+    /// Nothing is over the blank to the right of a line or under the last
+    /// one: a question asked about the place a caret would be clamped to is
+    /// a question about a name the reader is not pointing at.
+    pub fn position_under(&self, point: Point) -> Option<Position> {
+        let row = self.layout.row_at(point);
+        let line = self.line_at_row(self.scroll, row);
+        if line >= self.buffer.line_count() || self.row_of(self.scroll, line) != Some(row) {
+            return None;
+        }
+        let at = self
+            .buffer
+            .position_at_display(line, self.layout.column_under(point));
+        (at.column < self.buffer.line_len(line)).then_some(at)
+    }
+
     /// Where on screen `position` was drawn, as the pane last drew it.
     pub fn point_of(&self, position: Position) -> Point {
         let row = self

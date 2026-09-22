@@ -7,7 +7,7 @@
 
 use pm_core::{EntryId, ProjectId};
 use pm_text::Position;
-use pm_ui::ResizeEvent;
+use pm_ui::{ResizeEvent, ResizePhase};
 
 use crate::editor::{FileId, ScrollAxis, SearchField};
 use crate::keymap::{Action, BaseKeymap};
@@ -101,7 +101,11 @@ pub enum Message {
     /// Drag this divider of this split, so much of it to a pixel of travel.
     ResizeSplit(SplitId, usize, ResizeEvent, f32),
     /// Put the cursor where a press landed, selecting to where it reached.
-    SelectText(PaneId, Position, Position),
+    ///
+    /// The stage of the gesture comes with it: a press, the drag after it
+    /// and the release that ends it say the same two places over again, and
+    /// only the press begins anything.
+    SelectText(PaneId, ResizePhase, Position, Position),
     /// Drag one of this pane's scrollbars, so much of it to a pixel of travel.
     ScrollEditor(PaneId, ScrollAxis, ResizeEvent, f32),
     /// Select every line a drag down this pane's gutter reaches.

@@ -471,6 +471,9 @@ impl App {
         }
 
         let files = &self.editor;
+        let link = self.link_target();
+        let talked_about = self.hovered_name();
+        let caret = self.blink.is_solid();
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
         panes::pane_tree(theme, &self.panes, self.editor_focused, &|pane| {
             let (bounds, bar, tab_bounds) = cells
@@ -488,6 +491,15 @@ impl App {
                 bounds,
                 bar,
                 tab_bounds,
+                link: link
+                    .clone()
+                    .filter(|(file, _)| pane.active() == Some(*file))
+                    .map(|(_, span)| span),
+                hovered: talked_about
+                    .clone()
+                    .filter(|(file, _)| pane.active() == Some(*file))
+                    .map(|(_, span)| span),
+                caret,
             }
         })
     }

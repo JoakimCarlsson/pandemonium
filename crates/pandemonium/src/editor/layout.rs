@@ -98,6 +98,16 @@ impl TextLayout {
         self.column + offset.round().max(0.0) as usize
     }
 
+    /// The drawn column `point` is over, rather than the nearer edge of one.
+    ///
+    /// A caret is placed between two characters, so a press rounds; asking
+    /// what the pointer is over aims at a character, and the right half of
+    /// the last letter of a name is still that name.
+    pub fn column_under(&self, point: Point) -> usize {
+        let offset = (point.x - self.text_left()) / self.cell.width.max(1.0);
+        self.column + offset.floor().max(0.0) as usize
+    }
+
     /// Where the blame column begins, when one is being drawn.
     pub fn blame_left(&self) -> f32 {
         self.text_left() - self.blame
