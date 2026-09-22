@@ -118,12 +118,7 @@ fn heading(theme: &Theme, review: &Review) -> Div<Message> {
                         IconName::GitCompare,
                         Message::OpenReview,
                     ))
-                })
-                .child(icon_button(
-                    theme,
-                    IconName::Refresh,
-                    Message::RefreshChanges,
-                )),
+                }),
         )
 }
 
