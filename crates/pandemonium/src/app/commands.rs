@@ -15,7 +15,7 @@ use crate::desktop;
 use crate::editor::{Completions, Document, SearchField};
 use crate::keymap::Action;
 use crate::message::Message;
-use crate::panes::SplitDirection;
+use crate::panes::{PaneId, SplitDirection};
 use crate::picker::Kind;
 
 /// How far one step of zoom moves the editor's text.
@@ -47,13 +47,11 @@ impl App {
             Action::ClosePane => self.close_active_tab(),
             Action::ReopenTab => self.reopen_tab(),
             Action::NextTab | Action::PreviousTab => {
-                if let Some(pane) = self.panes.focused_mut() {
-                    match action {
-                        Action::NextTab => pane.next_tab(),
-                        _ => pane.previous_tab(),
-                    }
+                let pane = self.panes.focus();
+                let along = if action == Action::NextTab { 1 } else { -1 };
+                if let Some(file) = self.panes.pane(pane).and_then(|pane| pane.tab_along(along)) {
+                    self.activate_tab(pane, file);
                 }
-                self.store();
             }
             Action::FocusLeft => self.focus_neighbour(Axis::Horizontal, false),
             Action::FocusRight => self.focus_neighbour(Axis::Horizontal, true),
@@ -490,7 +488,12 @@ impl App {
 
     /// Where the cursor is, as a place the trail can bring the window back to.
     pub(super) fn here(&self) -> Option<Place> {
-        let file = self.active_tab()?;
+        self.place_in(self.panes.focus())
+    }
+
+    /// Where the cursor is in `pane`, as a place the trail can return to.
+    pub(super) fn place_in(&self, pane: PaneId) -> Option<Place> {
+        let file = self.panes.pane(pane)?.active()?;
         let document = self.editor.get(file)?;
         let document = document.borrow();
         Some(Place {

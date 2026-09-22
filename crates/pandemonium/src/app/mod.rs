@@ -317,6 +317,9 @@ impl App {
     /// One click previews the file and two keep it, the way every editor
     /// with a preview tab behaves: clicking down a tree leaves one tab
     /// behind, and the file you meant stays when you ask for it twice.
+    ///
+    /// Reaching another file this way is a jump like any other, so where the
+    /// pane was is taken down on the trail and going back returns to it.
     fn open_file(&mut self, id: pm_core::EntryId) {
         let preview = self.tree_clicks.press(id) < 2;
         let Some(project) = self.open.active() else {
@@ -333,6 +336,11 @@ impl App {
         };
 
         if let Some(file) = self.editor.open(project, &root, &path, preview) {
+            if self.active_tab() != Some(file)
+                && let Some(from) = self.here()
+            {
+                self.trail.jumped(from);
+            }
             self.show_file(self.panes.focus(), file, preview);
         }
     }
@@ -1400,6 +1408,11 @@ impl ApplicationHandler<Wake> for App {
                 state: ElementState::Pressed,
                 ..
             } => self.secondary_pressed(),
+            WindowEvent::MouseInput {
+                button: button @ (MouseButton::Back | MouseButton::Forward),
+                state: ElementState::Pressed,
+                ..
+            } => self.travelled(button == MouseButton::Back),
             WindowEvent::MouseWheel { delta, .. } => {
                 let (across, down) = match delta {
                     MouseScrollDelta::LineDelta(columns, lines) => {

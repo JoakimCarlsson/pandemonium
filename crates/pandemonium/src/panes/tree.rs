@@ -142,25 +142,17 @@ impl Pane {
         }
     }
 
-    /// Shows the next tab along, wrapping round at the end of the bar.
-    pub fn next_tab(&mut self) {
-        self.step(1);
-    }
-
-    /// Shows the previous tab along, wrapping round at the start of the bar.
-    pub fn previous_tab(&mut self) {
-        self.step(-1);
-    }
-
-    /// Shows the tab `steps` along from the one in front.
-    fn step(&mut self, steps: isize) {
+    /// The file `steps` along the bar from the one in front, wrapping round
+    /// at either end of it.
+    pub fn tab_along(&self, steps: isize) -> Option<FileId> {
         if self.tabs.is_empty() {
-            return;
+            return None;
         }
         let count = self.tabs.len() as isize;
         let index = self.index_of(self.active).unwrap_or(0) as isize;
-        let next = (index + steps).rem_euclid(count) as usize;
-        self.active = self.tabs.get(next).copied();
+        self.tabs
+            .get((index + steps).rem_euclid(count) as usize)
+            .copied()
     }
 
     /// Closes the tab `file` is open in.
@@ -363,11 +355,6 @@ impl PaneTree {
     /// The pane the keyboard is in.
     pub fn focused(&self) -> Option<&Pane> {
         self.pane(self.focus)
-    }
-
-    /// The pane the keyboard is in, to open a tab in or close one from.
-    pub fn focused_mut(&mut self) -> Option<&mut Pane> {
-        self.pane_mut(self.focus)
     }
 
     /// The window as it stands, in the shape a launch restores it from.

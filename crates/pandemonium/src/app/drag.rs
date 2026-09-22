@@ -125,6 +125,14 @@ impl Geometry {
         self.bars.get(&pane).map(|cell| cell.get())
     }
 
+    /// The pane `point` falls inside.
+    pub fn pane_at(&self, point: Point) -> Option<PaneId> {
+        self.panes
+            .iter()
+            .find(|(_, cell)| cell.get().contains(point))
+            .map(|(pane, _)| *pane)
+    }
+
     /// The pane under `point`, and where in it a tab let go of there lands.
     ///
     /// A bar of tabs answers first, because a tab dropped on the bar belongs
@@ -138,12 +146,8 @@ impl Geometry {
         if let Some((pane, place)) = self.tab_place(point, order) {
             return Some((pane, place));
         }
-        let (pane, bounds) = self
-            .panes
-            .iter()
-            .map(|(pane, cell)| (*pane, cell.get()))
-            .find(|(_, bounds)| bounds.contains(point))?;
-        Some((pane, place_in(bounds, point)))
+        let pane = self.pane_at(point)?;
+        Some((pane, place_in(self.pane_bounds(pane)?, point)))
     }
 
     /// The line marking place `index` in the bar of tabs of `pane`.

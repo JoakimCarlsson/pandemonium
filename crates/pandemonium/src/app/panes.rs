@@ -367,6 +367,20 @@ impl App {
         if self.tab_clicks.press(file) >= 2 {
             self.editor.keep(file);
         }
+        self.activate_tab(pane, file);
+    }
+
+    /// Brings `pane`'s tab for `file` in front, and gives the pane the keyboard.
+    ///
+    /// Leaving one tab for another is a jump like following a definition is,
+    /// so the place left behind goes on the trail: going back returns to the
+    /// tab that was in front, at the line it was left at.
+    pub(super) fn activate_tab(&mut self, pane: PaneId, file: FileId) {
+        if self.panes.pane(pane).and_then(panes::Pane::active) != Some(file)
+            && let Some(from) = self.place_in(pane)
+        {
+            self.trail.jumped(from);
+        }
         if let Some(pane) = self.panes.pane_mut(pane) {
             pane.activate(file);
         }

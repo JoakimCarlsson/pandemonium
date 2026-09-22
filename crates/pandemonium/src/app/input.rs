@@ -335,6 +335,29 @@ impl App {
         }
     }
 
+    /// Goes back or forward along the trail from the mouse's own thumb
+    /// buttons.
+    ///
+    /// The pane the pointer is over takes the jump, and the focus with it, the
+    /// way it does in Zed: a thumb button is aimed at what is under it, while
+    /// the keyboard's back and forward belong to whatever has the focus. A
+    /// list open over the screen takes the window's attention first, and the
+    /// buttons do nothing while it is up, as the keys they stand in for do.
+    pub(super) fn travelled(&mut self, back: bool) {
+        if !self.setup.finished || self.picker.is_some() {
+            return;
+        }
+        let action = if back {
+            Action::GoBack
+        } else {
+            Action::GoForward
+        };
+        match self.pointer.and_then(|point| self.geometry.pane_at(point)) {
+            Some(pane) => self.apply(Message::PaneAction(pane, action)),
+            None => self.act(action),
+        }
+    }
+
     /// Tells the element tree where the pointer is now.
     ///
     /// Every move starts the clock again, at the place the pointer has
