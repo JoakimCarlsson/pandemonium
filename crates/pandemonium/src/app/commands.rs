@@ -49,7 +49,10 @@ impl App {
             Action::NextTab | Action::PreviousTab => {
                 let pane = self.panes.focus();
                 let along = if action == Action::NextTab { 1 } else { -1 };
-                if let Some(file) = self.panes.pane(pane).and_then(|pane| pane.tab_along(along)) {
+                let scope = self.scope();
+                if let Some(file) =
+                    scope.and_then(|scope| self.panes.pane(pane)?.tab_along(scope, along))
+                {
                     self.activate_tab(pane, file);
                 }
             }
@@ -493,7 +496,7 @@ impl App {
 
     /// Where the cursor is in `pane`, as a place the trail can return to.
     pub(super) fn place_in(&self, pane: PaneId) -> Option<Place> {
-        let file = self.panes.pane(pane)?.active()?;
+        let file = self.panes.pane(pane)?.active(self.scope()?)?;
         let document = self.editor.get(file)?;
         let document = document.borrow();
         Some(Place {

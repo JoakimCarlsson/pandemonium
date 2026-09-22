@@ -7,8 +7,9 @@
 //! what a tab holds or how a pane is drawn — a pane names files, and the
 //! store behind them says what those files are.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use pm_core::ProjectId;
 use pm_ui::{Axis, ResizePhase};
 
 use crate::editor::FileId;
@@ -71,14 +72,56 @@ pub struct PaneId(u64);
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SplitId(u64);
 
-/// One pane: the tabs open in it and the one it is showing.
+/// One tab of a pane: the file it holds, whose it is, and whether it stays.
+///
+/// A tab belongs to the project its file was opened from and is only drawn
+/// while that project is the one the window is showing, the way a shell is.
+/// Pinning is the one way out of that: a pinned tab is drawn in every
+/// project, which is how one file stays in front of every worktree at once.
+#[derive(Clone, Copy, Debug)]
+pub struct Tab {
+    /// The file the tab holds.
+    file: FileId,
+    /// The project the file was opened from.
+    project: ProjectId,
+    /// Whether the tab is drawn whichever project the window is showing.
+    pinned: bool,
+}
+
+impl Tab {
+    /// A tab holding `file`, which was opened from `project`.
+    pub fn new(file: FileId, project: ProjectId) -> Self {
+        Self {
+            file,
+            project,
+            pinned: false,
+        }
+    }
+
+    /// The file the tab holds.
+    fn file(self) -> FileId {
+        self.file
+    }
+
+    /// Whether `scope` is a project this tab is drawn in.
+    fn shown_in(self, scope: ProjectId) -> bool {
+        self.pinned || self.project == scope
+    }
+}
+
+/// One pane: the tabs open in it, and the one it shows in each project.
+///
+/// The bar holds the tabs of every project the window has open, and draws
+/// the ones belonging to the project it is showing. Which tab is in front is
+/// remembered per project, so leaving a project and coming back to it finds
+/// the same file in front rather than whatever the other project left.
 pub struct Pane {
     /// Which pane this is.
     id: PaneId,
-    /// The files open in it, in the order their tabs are drawn.
-    tabs: Vec<FileId>,
-    /// The one the pane is showing.
-    active: Option<FileId>,
+    /// The tabs open in it, in the order their bar is drawn.
+    tabs: Vec<Tab>,
+    /// The tab in front in each project that has one.
+    active: BTreeMap<ProjectId, FileId>,
 }
 
 impl Pane {
@@ -87,7 +130,7 @@ impl Pane {
         Self {
             id,
             tabs: Vec::new(),
-            active: None,
+            active: BTreeMap::new(),
         }
     }
 
@@ -96,61 +139,111 @@ impl Pane {
         self.id
     }
 
-    /// The files open in it, in the order their tabs are drawn.
-    pub fn tabs(&self) -> &[FileId] {
-        &self.tabs
+    /// The files `scope` sees open in it, in the order their tabs are drawn.
+    pub fn tabs(&self, scope: ProjectId) -> Vec<FileId> {
+        self.shown(scope).map(Tab::file).collect()
     }
 
-    /// The file the pane is showing.
-    pub fn active(&self) -> Option<FileId> {
-        self.active
+    /// Every file open in it, whichever project it belongs to.
+    pub fn files(&self) -> impl Iterator<Item = FileId> + '_ {
+        self.tabs.iter().map(|tab| tab.file)
     }
 
-    /// Whether nothing is open in the pane.
+    /// The file the pane shows while `scope` is the project it is showing.
+    ///
+    /// A project whose tab has closed falls back to the first tab it does
+    /// see, so a pane that has something to draw draws it rather than
+    /// waiting to be told which one again.
+    pub fn active(&self, scope: ProjectId) -> Option<FileId> {
+        let front = self.active.get(&scope).copied();
+        front
+            .filter(|file| self.shown(scope).any(|tab| tab.file == *file))
+            .or_else(|| self.shown(scope).next().map(Tab::file))
+    }
+
+    /// Whether nothing at all is open in the pane.
     pub fn is_empty(&self) -> bool {
         self.tabs.is_empty()
     }
 
-    /// Shows `file`, opening a tab for it when the pane has none.
-    pub fn open(&mut self, file: FileId) {
-        if !self.tabs.contains(&file) {
-            self.tabs.push(file);
-        }
-        self.active = Some(file);
+    /// Whether the tab holding `file` is drawn in every project.
+    pub fn is_pinned(&self, file: FileId) -> bool {
+        self.tabs.iter().any(|tab| tab.file == file && tab.pinned)
     }
 
-    /// Puts `file` at `index` in the bar of tabs and shows it.
+    /// Pins the tab holding `file`, or unpins it when it is pinned already.
+    pub fn toggle_pin(&mut self, file: FileId) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.file == file) {
+            tab.pinned = !tab.pinned;
+        }
+    }
+
+    /// Shows `file` of `project`, opening a tab for it when the pane has none.
+    pub fn open(&mut self, project: ProjectId, file: FileId) {
+        if !self.tabs.iter().any(|tab| tab.file == file) {
+            self.tabs.push(Tab::new(file, project));
+        }
+        self.activate(file);
+    }
+
+    /// Puts `tab` at the end of the bar and shows it.
+    pub fn append(&mut self, tab: Tab) {
+        self.tabs.push(tab);
+        self.activate(tab.file);
+    }
+
+    /// Puts `tab` at `index` among the ones `scope` sees, and shows it.
+    pub fn insert(&mut self, tab: Tab, scope: ProjectId, index: usize) {
+        let at = self.place_for(scope, index);
+        self.tabs.insert(at, tab);
+        self.activate(tab.file);
+    }
+
+    /// Takes the tab holding `file` out of the pane, to be let go of elsewhere.
+    pub fn take(&mut self, file: FileId) -> Option<Tab> {
+        let index = self.tabs.iter().position(|tab| tab.file == file)?;
+        let places = self.places();
+        let taken = self.tabs.remove(index);
+        self.settle(&places);
+        Some(taken)
+    }
+
+    /// Puts `file` at `index` in the bar `scope` sees, and shows it.
     ///
     /// A tab already in this pane is moved rather than opened twice, which
     /// is what dragging one along its own bar comes to.
-    pub fn place(&mut self, file: FileId, index: usize) {
-        let from = self.index_of(Some(file));
-        self.tabs.retain(|open| *open != file);
+    pub fn place(&mut self, scope: ProjectId, file: FileId, index: usize) {
+        let from = self.shown(scope).position(|tab| tab.file == file);
+        let Some(tab) = self.take(file) else {
+            return;
+        };
         let index = match from {
             Some(from) if from < index => index - 1,
             _ => index,
         };
-        let index = index.min(self.tabs.len());
-        self.tabs.insert(index, file);
-        self.active = Some(file);
+        self.insert(tab, scope, index);
     }
 
     /// Shows `file`, if the pane has a tab for it.
     pub fn activate(&mut self, file: FileId) {
-        if self.tabs.contains(&file) {
-            self.active = Some(file);
+        if let Some(tab) = self.tabs.iter().find(|tab| tab.file == file) {
+            self.active.insert(tab.project, tab.file);
         }
     }
 
-    /// The file `steps` along the bar from the one in front, wrapping round
-    /// at either end of it.
-    pub fn tab_along(&self, steps: isize) -> Option<FileId> {
-        if self.tabs.is_empty() {
+    /// The file `steps` along the bar `scope` sees from the one in front,
+    /// wrapping round at either end of it.
+    pub fn tab_along(&self, scope: ProjectId, steps: isize) -> Option<FileId> {
+        let shown = self.tabs(scope);
+        if shown.is_empty() {
             return None;
         }
-        let count = self.tabs.len() as isize;
-        let index = self.index_of(self.active).unwrap_or(0) as isize;
-        self.tabs
+        let count = shown.len() as isize;
+        let index = self
+            .active(scope)
+            .and_then(|file| shown.iter().position(|shown| *shown == file))
+            .unwrap_or(0) as isize;
+        shown
             .get((index + steps).rem_euclid(count) as usize)
             .copied()
     }
@@ -160,27 +253,78 @@ impl Pane {
         self.retain(|open| open != file);
     }
 
-    /// Keeps the tabs `keep` accepts, showing another when the front one goes.
+    /// Keeps the tabs `keep` accepts, showing another when a front one goes.
     ///
     /// What comes forward is the tab to the right of the one that closed, as
     /// every editor with tabs does it, and the one to its left when the bar
     /// has run out on that side.
     pub fn retain(&mut self, mut keep: impl FnMut(FileId) -> bool) {
-        let index = self.index_of(self.active).unwrap_or(0);
-        self.tabs.retain(|file| keep(*file));
-        if self.active.is_some_and(|file| self.tabs.contains(&file)) {
-            return;
-        }
-        self.active = self
-            .tabs
-            .get(index.min(self.tabs.len().saturating_sub(1)))
-            .copied();
+        let places = self.places();
+        self.tabs.retain(|tab| keep(tab.file));
+        self.settle(&places);
     }
 
-    /// Where `file` sits in the bar of tabs.
-    fn index_of(&self, file: Option<FileId>) -> Option<usize> {
-        let file = file?;
-        self.tabs.iter().position(|open| *open == file)
+    /// The tabs `scope` sees, in the order they are drawn.
+    fn shown(&self, scope: ProjectId) -> impl Iterator<Item = Tab> + '_ {
+        self.tabs
+            .iter()
+            .copied()
+            .filter(move |tab| tab.shown_in(scope))
+    }
+
+    /// Where `index` among the tabs `scope` sees falls among all of them.
+    fn place_for(&self, scope: ProjectId, index: usize) -> usize {
+        self.tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| tab.shown_in(scope))
+            .map(|(at, _)| at)
+            .nth(index)
+            .unwrap_or(self.tabs.len())
+    }
+
+    /// Where the tab in front sits among the ones each project sees.
+    fn places(&self) -> Vec<(ProjectId, usize)> {
+        self.active
+            .iter()
+            .map(|(project, file)| {
+                let place = self
+                    .shown(*project)
+                    .position(|tab| tab.file == *file)
+                    .unwrap_or(0);
+                (*project, place)
+            })
+            .collect()
+    }
+
+    /// Brings a tab forward in every project whose front one has gone.
+    ///
+    /// `places` is where each project's front tab sat before the bar
+    /// changed, so what comes forward is the tab that took its place: the
+    /// one to its right, and the one to its left when the bar has run out on
+    /// that side. A project the pane holds nothing for any more is
+    /// forgotten rather than left pointing at a tab that closed.
+    fn settle(&mut self, places: &[(ProjectId, usize)]) {
+        let open = self
+            .tabs
+            .iter()
+            .map(|tab| tab.file)
+            .collect::<BTreeSet<_>>();
+        for (project, place) in places {
+            if self
+                .active
+                .get(project)
+                .is_some_and(|file| open.contains(file))
+            {
+                continue;
+            }
+            let shown = self.tabs(*project);
+            match shown.get((*place).min(shown.len().saturating_sub(1))) {
+                Some(file) => self.active.insert(*project, *file),
+                None => self.active.remove(project),
+            };
+        }
+        self.active.retain(|_, file| open.contains(file));
     }
 }
 
@@ -378,7 +522,10 @@ impl PaneTree {
     /// Panes are given fresh ids as they are read: what was written down is
     /// the shape of the division and what was in it, and the identities this
     /// launch hands out are its own.
-    pub fn restored(saved: &Saved, open: &mut dyn FnMut(&SavedTab) -> Option<FileId>) -> Self {
+    pub fn restored(
+        saved: &Saved,
+        open: &mut dyn FnMut(&SavedTab) -> Option<(ProjectId, FileId)>,
+    ) -> Self {
         let mut panes = 0;
         let mut splits = 0;
         let root = read(&saved.root, &mut panes, &mut splits, open);
@@ -408,8 +555,7 @@ impl PaneTree {
     /// Every file open in any pane of the window.
     pub fn held(&self) -> BTreeSet<FileId> {
         let mut held = BTreeSet::new();
-        self.root
-            .walk(&mut |pane| held.extend(pane.tabs().iter().copied()));
+        self.root.walk(&mut |pane| held.extend(pane.files()));
         held
     }
 
@@ -651,20 +797,18 @@ impl PaneTree {
 /// One node of the tree, in the shape it is written down in.
 fn written(node: &Node, tab: &dyn Fn(FileId) -> Option<SavedTab>) -> SavedNode {
     match node {
-        Node::Pane(pane) => {
-            let tabs = pane
-                .tabs()
+        Node::Pane(pane) => SavedNode::Pane {
+            tabs: pane
+                .tabs
                 .iter()
-                .filter_map(|file| tab(*file).map(|saved| (*file, saved)))
-                .collect::<Vec<_>>();
-            let active = pane
-                .active()
-                .and_then(|active| tabs.iter().position(|(file, _)| *file == active));
-            SavedNode::Pane {
-                tabs: tabs.into_iter().map(|(_, saved)| saved).collect(),
-                active,
-            }
-        }
+                .filter_map(|open| {
+                    let mut saved = tab(open.file)?;
+                    saved.pinned = open.pinned;
+                    saved.front = pane.active.get(&open.project) == Some(&open.file);
+                    Some(saved)
+                })
+                .collect(),
+        },
         Node::Split(split) => SavedNode::Split {
             axis: split.axis().into(),
             shares: split.shares().to_vec(),
@@ -687,20 +831,26 @@ fn read(
     node: &SavedNode,
     panes: &mut u64,
     splits: &mut u64,
-    open: &mut dyn FnMut(&SavedTab) -> Option<FileId>,
+    open: &mut dyn FnMut(&SavedTab) -> Option<(ProjectId, FileId)>,
 ) -> Node {
     match node {
-        SavedNode::Pane { tabs, active } => {
+        SavedNode::Pane { tabs } => {
             let id = PaneId(*panes);
             *panes += 1;
             let mut pane = Pane::new(id);
-            let files = tabs.iter().map(&mut *open).collect::<Vec<_>>();
-            for file in files.iter().flatten() {
-                pane.open(*file);
+            for saved in tabs {
+                let Some((project, file)) = open(saved) else {
+                    continue;
+                };
+                pane.tabs.push(Tab {
+                    file,
+                    project,
+                    pinned: saved.pinned,
+                });
+                if saved.front {
+                    pane.active.insert(project, file);
+                }
             }
-            pane.active = active
-                .and_then(|active| files.get(active).copied().flatten())
-                .or_else(|| pane.tabs.first().copied());
             Node::Pane(pane)
         }
         SavedNode::Split {

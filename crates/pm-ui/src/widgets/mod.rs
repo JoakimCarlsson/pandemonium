@@ -22,7 +22,7 @@ mod toggle_row;
 
 pub use button::{Button, ButtonVariant, button};
 pub use field::{Field, field};
-pub use icon_button::icon_button;
+pub use icon_button::{icon_button, tinted_icon_button};
 pub use menu::{MenuItem, menu, menu_entry, menu_separator};
 pub use rule::rule;
 pub use section::section;

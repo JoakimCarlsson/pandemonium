@@ -20,8 +20,10 @@ use super::tree::{Node, Pane, PaneId, PaneTree, SplitDirection};
 
 /// What one pane is showing, read out of the files the window has open.
 pub struct Contents {
-    /// Every file open in the pane, for the bar of tabs above it.
+    /// Every file the pane shows, for the bar of tabs above it.
     pub tabs: Vec<FileEntry>,
+    /// The tab in front, which is the one the bar lights.
+    pub active: Option<FileId>,
     /// The file in front, which is the one the pane draws.
     pub file: Option<OpenFile>,
     /// Where the pane leaves its bounds, for a drop to be resolved against.
@@ -86,7 +88,7 @@ fn pane_view(
     divided: bool,
 ) -> Measured<Message> {
     let id = pane.id();
-    let active = pane.active();
+    let active = contents.active;
     let tabs = contents
         .tabs
         .into_iter()
@@ -155,6 +157,7 @@ fn pane_tab(pane: PaneId, file: &FileEntry, active: bool, bounds: Bounds) -> Tab
     .active(active)
     .dirty(file.dirty)
     .preview(file.preview)
+    .pinned(file.pinned, Message::TogglePin(pane, id))
     .on_drag(bounds, move |event| Message::DragTab(pane, id, event))
 }
 
@@ -244,11 +247,16 @@ pub fn file_menu(pane: &Pane, tabs: &[FileEntry], target: FileId) -> Vec<MenuIte
     let right = index.is_some_and(|index| index + 1 < tabs.len());
     let saved = tabs.iter().any(|file| !file.dirty);
     let preview = tabs.iter().any(|file| file.id == target && file.preview);
+    let pinned = tabs.iter().any(|file| file.id == target && file.pinned);
 
     vec![
         menu_entry(
             "Keep Open",
             preview.then_some(Message::KeepFileOpen(target)),
+        ),
+        menu_entry(
+            if pinned { "Unpin Tab" } else { "Pin Tab" },
+            Some(Message::TogglePin(id, target)),
         ),
         menu_separator(),
         menu_entry(

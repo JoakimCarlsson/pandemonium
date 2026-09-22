@@ -183,11 +183,14 @@ impl App {
     /// scrolling is not a question, and a file short enough to be open is
     /// short enough to be answered about in one go.
     pub(super) fn refresh_annotations(&mut self) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
         let showing = self
             .panes
             .panes()
             .into_iter()
-            .filter_map(|pane| self.panes.pane(pane)?.active())
+            .filter_map(|pane| self.panes.pane(pane)?.active(scope))
             .collect::<Vec<_>>();
 
         for file in showing {
@@ -372,8 +375,9 @@ impl App {
         &self,
         point: pm_gfx::Point,
     ) -> Option<(FileId, crate::editor::OpenFile)> {
+        let scope = self.scope()?;
         self.panes.panes().into_iter().find_map(|pane| {
-            let file = self.panes.pane(pane)?.active()?;
+            let file = self.panes.pane(pane)?.active(scope)?;
             let document = self.editor.get(file)?;
             let over = document.borrow().layout().text_area().contains(point);
             over.then_some((file, document))

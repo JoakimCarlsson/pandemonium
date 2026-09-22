@@ -46,6 +46,12 @@ pub struct FileEntry {
     pub dirty: bool,
     /// Whether it is only being previewed, and will give its tab up.
     pub preview: bool,
+    /// Whether its pane keeps it through a change of project.
+    ///
+    /// Pinning belongs to the tab rather than to the document — the same
+    /// file can be pinned in one pane and not in another — so the store
+    /// leaves this alone and the pane holding the tab fills it in.
+    pub pinned: bool,
 }
 
 /// One open file: its buffer, where the pane is looking, and who serves it.
@@ -620,6 +626,7 @@ impl Files {
             name: document.buffer().name(),
             dirty: document.buffer().is_dirty(),
             preview: document.is_preview(),
+            pinned: false,
         })
     }
 

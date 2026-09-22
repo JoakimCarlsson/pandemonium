@@ -985,6 +985,7 @@ impl App {
             }
             Message::OpenFileInTerminal(file) => self.start_shell_beside(file),
             Message::KeepFileOpen(file) => self.editor.keep(file),
+            Message::TogglePin(pane, file) => self.toggle_pin(pane, file),
             Message::CloseOtherTerminals(id) => {
                 if let Some(project) = self.open.active().map(pm_core::Project::id) {
                     self.terminals.stop_others(project, id);

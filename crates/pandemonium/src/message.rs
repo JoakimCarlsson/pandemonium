@@ -180,6 +180,8 @@ pub enum Message {
     OpenFileInTerminal(FileId),
     /// Keep this previewed file open, so nothing takes its tab.
     KeepFileOpen(FileId),
+    /// Keep this tab in this pane through a change of project, or let it go.
+    TogglePin(PaneId, FileId),
     /// End every shell but this one.
     CloseOtherTerminals(ShellId),
     /// End every shell of the project.

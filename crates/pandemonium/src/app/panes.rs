@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 
+use pm_core::ProjectId;
 use pm_gfx::Rect;
 use pm_ui::{Axis, Element, MenuItem, ResizeEvent, ResizePhase, Theme};
 
@@ -19,6 +20,15 @@ use crate::panes::{self, Contents, PaneId, Saved, SavedTab, SplitDirection};
 use crate::workspace::{MenuTarget, TabMenu};
 
 impl App {
+    /// The project the panes are showing, which is the active one.
+    ///
+    /// A tab belongs to the project its file was opened from and is drawn
+    /// only while that project is the one the window is pointed at, the way
+    /// a shell is. Every question about what a pane holds is asked of this.
+    pub(super) fn scope(&self) -> Option<ProjectId> {
+        self.open.active().map(pm_core::Project::id)
+    }
+
     /// The file the pane with the keyboard is showing.
     pub(super) fn active_file(&self) -> Option<OpenFile> {
         self.editor.get(self.active_tab()?)
@@ -26,7 +36,7 @@ impl App {
 
     /// The tab in front of the pane with the keyboard.
     pub(super) fn active_tab(&self) -> Option<FileId> {
-        self.panes.focused()?.active()
+        self.panes.focused()?.active(self.scope()?)
     }
 
     /// Gives the keyboard to `pane`, taking it from the terminal.
@@ -43,11 +53,15 @@ impl App {
     /// than twenty — and it is the pane's tab, not the window's, so a file
     /// previewed on the right leaves the pane on the left as it was.
     pub(super) fn show_file(&mut self, pane: PaneId, file: FileId, preview: bool) {
+        let Some(project) = self.editor.project_of(file) else {
+            return;
+        };
         if preview {
             self.close_previews(pane, file);
         }
+        self.open.activate(project);
         if let Some(pane) = self.panes.pane_mut(pane) {
-            pane.open(file);
+            pane.open(project, file);
         }
         self.focus_pane(pane);
         self.sweep();
@@ -60,9 +74,7 @@ impl App {
             .panes
             .pane(pane)
             .map(|pane| {
-                pane.tabs()
-                    .iter()
-                    .copied()
+                pane.files()
                     .filter(|file| *file != keep && self.editor.is_preview(*file))
                     .collect::<Vec<_>>()
             })
@@ -85,12 +97,18 @@ impl App {
         file: Option<FileId>,
         direction: SplitDirection,
     ) {
-        let file = file.or_else(|| self.panes.pane(pane).and_then(panes::Pane::active));
+        let file = file.or_else(|| {
+            let scope = self.scope()?;
+            self.panes.pane(pane)?.active(scope)
+        });
+        let project = file.and_then(|file| self.editor.project_of(file));
         let Some(fresh) = self.panes.split(pane, direction) else {
             return;
         };
-        if let (Some(file), Some(fresh)) = (file, self.panes.pane_mut(fresh)) {
-            fresh.open(file);
+        if let (Some(file), Some(project), Some(fresh)) =
+            (file, project, self.panes.pane_mut(fresh))
+        {
+            fresh.open(project, file);
         }
         self.editor_focused = true;
         self.terminal_focused = false;
@@ -175,16 +193,12 @@ impl App {
     /// quietly losing the lot is the one answer that cannot be taken back.
     pub(super) fn close_saved_tabs(&mut self, pane: PaneId, keep: impl Fn(FileId) -> bool) {
         let dirty = |file: FileId| self.editor.is_dirty(file);
-        let held = self
-            .panes
-            .pane(pane)
-            .map(|pane| pane.tabs().to_vec())
-            .unwrap_or_default();
-        let kept = held
+        let closing = self
+            .tabs_of(pane)
             .into_iter()
-            .filter(|file| keep(*file) || dirty(*file))
+            .filter(|file| !keep(*file) && !dirty(*file))
             .collect::<Vec<_>>();
-        self.close_tabs(pane, |pane| pane.retain(|file| kept.contains(&file)));
+        self.close_tabs(pane, |pane| pane.retain(|file| !closing.contains(&file)));
     }
 
     /// The tabs of `pane` on one side of `file`, and `file` itself.
@@ -267,6 +281,7 @@ impl App {
                 scroll: document.scroll(),
                 line: head.line,
                 column: head.column,
+                ..SavedTab::default()
             })
         })
     }
@@ -293,7 +308,7 @@ impl App {
                 let mut document = document.borrow_mut();
                 document.restore(tab.line, tab.column, tab.scroll);
             }
-            Some(file)
+            Some((project, file))
         });
         self.sweep();
     }
@@ -370,13 +385,27 @@ impl App {
         self.activate_tab(pane, file);
     }
 
+    /// Pins `pane`'s tab for `file` in every project, or lets it go again.
+    ///
+    /// A pinned tab is drawn whichever project the window is showing, which
+    /// is the one way a file stays in front of every worktree at once.
+    pub(super) fn toggle_pin(&mut self, pane: PaneId, file: FileId) {
+        if let Some(pane) = self.panes.pane_mut(pane) {
+            pane.toggle_pin(file);
+        }
+        self.store();
+    }
+
     /// Brings `pane`'s tab for `file` in front, and gives the pane the keyboard.
     ///
     /// Leaving one tab for another is a jump like following a definition is,
     /// so the place left behind goes on the trail: going back returns to the
     /// tab that was in front, at the line it was left at.
     pub(super) fn activate_tab(&mut self, pane: PaneId, file: FileId) {
-        if self.panes.pane(pane).and_then(panes::Pane::active) != Some(file)
+        if self
+            .scope()
+            .and_then(|scope| self.panes.pane(pane)?.active(scope))
+            != Some(file)
             && let Some(from) = self.place_in(pane)
         {
             self.trail.jumped(from);
@@ -394,32 +423,36 @@ impl App {
     /// the way dragging a tab does everywhere, and the pane it leaves empty
     /// gives its room back to its neighbours.
     fn drop_tab(&mut self, drag: TabDrag) {
-        let Some((target, place)) = drag.target else {
+        let (Some((target, place)), Some(scope)) = (drag.target, self.scope()) else {
             return;
         };
-        let landed = match place {
-            DropPlace::Split(direction) => {
-                self.split_pane(target, Some(drag.file), direction);
-                self.panes.focus()
-            }
-            DropPlace::Into => {
-                if let Some(pane) = self.panes.pane_mut(target) {
-                    pane.open(drag.file);
-                }
-                target
-            }
-            DropPlace::Tab(index) => {
-                if let Some(pane) = self.panes.pane_mut(target) {
-                    pane.place(drag.file, index);
-                }
-                target
-            }
-        };
-
-        if landed != drag.from
-            && let Some(from) = self.panes.pane_mut(drag.from)
+        if target == drag.from
+            && let DropPlace::Tab(index) = place
         {
-            from.close(drag.file);
+            if let Some(pane) = self.panes.pane_mut(target) {
+                pane.place(scope, drag.file, index);
+            }
+            self.focus_pane(target);
+            return self.store();
+        }
+
+        let (landed, index) = match place {
+            DropPlace::Split(direction) => match self.panes.split(target, direction) {
+                Some(fresh) => (fresh, None),
+                None => return,
+            },
+            DropPlace::Into => (target, None),
+            DropPlace::Tab(index) => (target, Some(index)),
+        };
+        let carried = self
+            .panes
+            .pane_mut(drag.from)
+            .and_then(|pane| pane.take(drag.file));
+        if let (Some(tab), Some(pane)) = (carried, self.panes.pane_mut(landed)) {
+            match index {
+                Some(index) => pane.insert(tab, scope, index),
+                None => pane.append(tab),
+            }
         }
         self.panes.close_empty();
         self.focus_pane(landed);
@@ -429,9 +462,12 @@ impl App {
 
     /// The files open in `pane`, in the order its tabs are drawn.
     pub(super) fn tabs_of(&self, pane: PaneId) -> Vec<FileId> {
+        let Some(scope) = self.scope() else {
+            return Vec::new();
+        };
         self.panes
             .pane(pane)
-            .map(|pane| pane.tabs().to_vec())
+            .map(|pane| pane.tabs(scope))
             .unwrap_or_default()
     }
 
@@ -485,6 +521,7 @@ impl App {
         }
 
         let files = &self.editor;
+        let scope = self.scope();
         let link = self.link_target();
         let talked_about = self.hovered_name();
         let caret = self.blink.is_solid();
@@ -495,23 +532,30 @@ impl App {
                 .find(|(id, _)| *id == pane.id())
                 .map(|(_, cells)| cells.clone())
                 .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
+            let active = scope.and_then(|scope| pane.active(scope));
             Contents {
-                tabs: pane
-                    .tabs()
-                    .iter()
-                    .filter_map(|file| files.entry(*file))
+                tabs: scope
+                    .map(|scope| pane.tabs(scope))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|file| {
+                        let mut entry = files.entry(file)?;
+                        entry.pinned = pane.is_pinned(file);
+                        Some(entry)
+                    })
                     .collect(),
-                file: pane.active().and_then(|file| files.get(file)),
+                active,
+                file: active.and_then(|file| files.get(file)),
                 bounds,
                 bar,
                 tab_bounds,
                 link: link
                     .clone()
-                    .filter(|(file, _)| pane.active() == Some(*file))
+                    .filter(|(file, _)| active == Some(*file))
                     .map(|(_, span)| span),
                 hovered: talked_about
                     .clone()
-                    .filter(|(file, _)| pane.active() == Some(*file))
+                    .filter(|(file, _)| active == Some(*file))
                     .map(|(_, span)| span),
                 caret,
             }
@@ -523,17 +567,24 @@ impl App {
         let open = self.menu?;
         let items = match open.target {
             MenuTarget::File(pane, file) => {
+                let tabs = self
+                    .tabs_of(pane)
+                    .into_iter()
+                    .filter_map(|file| self.editor.entry(file))
+                    .collect::<Vec<_>>();
                 let pane = self.panes.pane(pane)?;
-                let tabs = pane
-                    .tabs()
-                    .iter()
-                    .filter_map(|file| self.editor.entry(*file))
+                let tabs = tabs
+                    .into_iter()
+                    .map(|mut entry| {
+                        entry.pinned = pane.is_pinned(entry.id);
+                        entry
+                    })
                     .collect::<Vec<_>>();
                 panes::file_menu(pane, &tabs, file)
             }
             MenuTarget::Pane(pane) => panes::pane_menu(pane, self.panes.is_split()),
             MenuTarget::Text(pane) => {
-                let file = self.panes.pane(pane)?.active()?;
+                let file = self.panes.pane(pane)?.active(self.scope()?)?;
                 let document = self.editor.get(file)?;
                 let document = document.borrow();
                 crate::editor::text_menu(&crate::editor::TextMenu {

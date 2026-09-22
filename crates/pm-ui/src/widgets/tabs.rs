@@ -16,8 +16,8 @@ use crate::resize::ResizeEvent;
 use crate::style::Styled;
 use crate::text::text;
 use crate::theme::Theme;
-use crate::widgets::icon_button;
 use crate::widgets::rule;
+use crate::widgets::{icon_button, tinted_icon_button};
 
 /// Longest name a tab shows before it is cut short.
 const NAME_CHARS: usize = 20;
@@ -40,6 +40,10 @@ pub struct Tab<M> {
     pub dirty: bool,
     /// Whether it holds something that is only being previewed.
     pub preview: bool,
+    /// Whether it is kept in the bar whatever else the bar is showing.
+    pub pinned: bool,
+    /// What pinning it, or letting it go again, sends.
+    pub pin: Option<M>,
     /// What clicking the tab sends.
     pub select: M,
     /// What closing the tab sends.
@@ -64,6 +68,8 @@ pub fn tab<M>(icon: IconName, name: impl Into<String>, select: M, close: M, menu
         active: false,
         dirty: false,
         preview: false,
+        pinned: false,
+        pin: None,
         select,
         close,
         menu,
@@ -88,6 +94,18 @@ impl<M> Tab<M> {
     /// Returns this tab marked as holding something only being previewed.
     pub fn preview(mut self, preview: bool) -> Self {
         self.preview = preview;
+        self
+    }
+
+    /// Returns this tab wearing the pin that `pin` turns on and off.
+    ///
+    /// A bar whose tabs can be pinned wears the control on every one of
+    /// them: the pin is how a tab is kept as well as how it is let go of,
+    /// and a tab that only showed one once it was pinned would leave no way
+    /// to pin it in the first place.
+    pub fn pinned(mut self, pinned: bool, pin: M) -> Self {
+        self.pinned = pinned;
+        self.pin = Some(pin);
         self
     }
 
@@ -158,11 +176,19 @@ fn pane_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>) -> Div<M> {
         .on_secondary_click(tab.menu)
         .child(
             icon(tab.icon)
-                .size(IconSize::XSmall)
+                .size(IconSize::Medium)
                 .color(theme.colors.text_subtle),
         )
         .child(name)
         .when(tab.dirty, |row| row.child(unsaved_dot(theme, color)))
+        .when_some(tab.pin, |row, pin| {
+            let (glyph, tint) = if tab.pinned {
+                (IconName::PinFilled, color)
+            } else {
+                (IconName::Pin, theme.colors.text_subtle)
+            };
+            row.child(tinted_icon_button(theme, glyph, tint, pin))
+        })
         .child(icon_button(theme, IconName::Close, tab.close))
 }
 

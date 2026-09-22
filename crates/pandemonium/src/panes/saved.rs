@@ -30,9 +30,6 @@ pub enum SavedNode {
         /// The files open in it, in the order their tabs were drawn.
         #[serde(default)]
         tabs: Vec<SavedTab>,
-        /// Which of them was in front.
-        #[serde(default)]
-        active: Option<usize>,
     },
     /// A division of the space between further nodes.
     Split {
@@ -50,10 +47,7 @@ pub enum SavedNode {
 impl Default for SavedNode {
     /// One pane with nothing open in it.
     fn default() -> Self {
-        Self::Pane {
-            tabs: Vec::new(),
-            active: None,
-        }
+        Self::Pane { tabs: Vec::new() }
     }
 }
 
@@ -97,6 +91,10 @@ pub struct SavedTab {
     pub path: PathBuf,
     /// Whether it was only being previewed.
     pub preview: bool,
+    /// Whether it was drawn whichever project the window was showing.
+    pub pinned: bool,
+    /// Whether it was the tab in front in the project it belongs to.
+    pub front: bool,
     /// The first line the pane was showing.
     pub scroll: usize,
     /// The line the cursor was on.

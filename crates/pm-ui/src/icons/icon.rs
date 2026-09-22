@@ -43,6 +43,10 @@ pub enum IconName {
     FolderOpen,
     /// Add another of whatever the control is beside.
     Plus,
+    /// Keep what the control is on where it is.
+    Pin,
+    /// The same pin, filled, for what is being kept already.
+    PinFilled,
     /// Divide a pane.
     Split,
     /// A terminal.
@@ -64,6 +68,8 @@ impl IconName {
             Self::Folder => Svg::new("folder", include_icon!("folder")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
             Self::Plus => Svg::new("plus", include_icon!("plus")),
+            Self::Pin => Svg::new("pin", include_icon!("pin")),
+            Self::PinFilled => Svg::new("pin_filled", include_icon!("pin_filled")),
             Self::Split => Svg::new("split", include_icon!("split")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),
@@ -75,11 +81,16 @@ impl IconName {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum IconSize {
     /// 12px: inside a tab or a row of text.
+    ///
+    /// The artwork is drawn on a grid of sixteen, so anything below
+    /// [`IconSize::Medium`] rasterizes its strokes across two pixels rather
+    /// than into one: a size for an icon that has to fit, not one to reach
+    /// for because the icon is small.
     XSmall,
-    /// 14px: the size a control carries.
+    /// 14px: a smaller icon, where one at its own size would crowd its row.
     #[default]
     Small,
-    /// 16px: the artwork's own size, for a standalone icon.
+    /// 16px: the artwork's own size, which is the size it is sharpest at.
     Medium,
 }
 

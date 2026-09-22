@@ -301,7 +301,7 @@ fn carried_tab(theme: &Theme, name: String) -> Div<Message> {
         .border_1(theme.colors.border_focused)
         .child(
             icon(IconName::File)
-                .size(IconSize::XSmall)
+                .size(IconSize::Medium)
                 .color(theme.colors.text_subtle),
         )
         .child(text(name).text_sm().font_light())
@@ -794,20 +794,20 @@ fn file_row(theme: &Theme, row: &Row<'_>, status: Option<FileStatus>) -> Div<Mes
         .child(v_flex().w_px(FILE_INSET + row.depth as f32 * FILE_INDENT))
         .child(
             h_flex()
-                .w_px(IconSize::XSmall.pixels())
+                .w_px(IconSize::Medium.pixels())
                 .items_center()
                 .justify_center()
                 .when_some(chevron, |slot, chevron| {
                     slot.child(
                         icon(chevron)
-                            .size(IconSize::XSmall)
+                            .size(IconSize::Medium)
                             .color(theme.colors.text_subtle),
                     )
                 }),
         )
         .child(
             icon(glyph)
-                .size(IconSize::Small)
+                .size(IconSize::Medium)
                 .color(theme.colors.text_subtle),
         )
         .child(v_flex().w(1))
