@@ -123,6 +123,11 @@ impl TextLayout {
         point.x >= self.fold_left() && point.x < self.blame_left()
     }
 
+    /// How far the text sits from the edge when there is no gutter at all.
+    pub fn plain_gutter() -> f32 {
+        GUTTER_GAP
+    }
+
     /// How wide a gutter numbering `lines` lines needs.
     pub fn gutter_for(lines: usize, cell: Size) -> f32 {
         let digits = lines.to_string().len().max(GUTTER_DIGITS);

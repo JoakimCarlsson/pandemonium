@@ -12,8 +12,7 @@ use std::rc::Rc;
 use pm_gfx::{Point, Rect};
 use pm_ui::Bounds;
 
-use crate::editor::FileId;
-use crate::panes::{PaneId, SplitDirection};
+use crate::panes::{Item, PaneId, SplitDirection};
 
 /// How near an edge a tab must be let go of to divide the pane it is over.
 ///
@@ -41,8 +40,8 @@ pub enum DropPlace {
 pub struct TabDrag {
     /// The pane the tab was picked up from.
     pub from: PaneId,
-    /// The file that tab holds.
-    pub file: FileId,
+    /// What that tab holds.
+    pub item: Item,
     /// Where the pointer is now.
     pub at: Point,
     /// How far the pointer has travelled since the press.
@@ -77,7 +76,7 @@ pub struct Geometry {
     /// Where each pane was painted.
     panes: BTreeMap<PaneId, Bounds>,
     /// Where each tab of each pane was painted.
-    tabs: BTreeMap<(PaneId, FileId), Bounds>,
+    tabs: BTreeMap<(PaneId, Item), Bounds>,
     /// Where each pane's bar of tabs was painted.
     bars: BTreeMap<PaneId, Bounds>,
 }
@@ -93,9 +92,9 @@ impl Geometry {
         Self::cell(&mut self.bars, id)
     }
 
-    /// The cell the tab holding `file` in pane `id` writes its bounds into.
-    pub fn tab(&mut self, id: PaneId, file: FileId) -> Bounds {
-        Self::cell(&mut self.tabs, (id, file))
+    /// The cell the tab holding `item` in pane `id` writes its bounds into.
+    pub fn tab(&mut self, id: PaneId, item: Item) -> Bounds {
+        Self::cell(&mut self.tabs, (id, item))
     }
 
     /// The cell `key` writes into, starting one where there is none.
@@ -104,15 +103,15 @@ impl Geometry {
     }
 
     /// Forgets the panes and tabs that were not drawn in the last frame.
-    pub fn keep(&mut self, panes: &[PaneId], tabs: &[(PaneId, FileId)]) {
+    pub fn keep(&mut self, panes: &[PaneId], tabs: &[(PaneId, Item)]) {
         self.panes.retain(|id, _| panes.contains(id));
         self.bars.retain(|id, _| panes.contains(id));
         self.tabs.retain(|key, _| tabs.contains(key));
     }
 
-    /// Where the tab of `pane` holding `file` was painted.
-    pub fn tab_bounds(&self, pane: PaneId, file: FileId) -> Option<Rect> {
-        self.tabs.get(&(pane, file)).map(|cell| cell.get())
+    /// Where the tab of `pane` holding `item` was painted.
+    pub fn tab_bounds(&self, pane: PaneId, item: Item) -> Option<Rect> {
+        self.tabs.get(&(pane, item)).map(|cell| cell.get())
     }
 
     /// Where `pane` was painted.
@@ -141,7 +140,7 @@ impl Geometry {
     pub fn target_at(
         &self,
         point: Point,
-        order: &dyn Fn(PaneId) -> Vec<FileId>,
+        order: &dyn Fn(PaneId) -> Vec<Item>,
     ) -> Option<(PaneId, DropPlace)> {
         if let Some((pane, place)) = self.tab_place(point, order) {
             return Some((pane, place));
@@ -151,13 +150,13 @@ impl Geometry {
     }
 
     /// The line marking place `index` in the bar of tabs of `pane`.
-    pub fn caret(&self, pane: PaneId, index: usize, tabs: &[FileId]) -> Option<Rect> {
+    pub fn caret(&self, pane: PaneId, index: usize, tabs: &[Item]) -> Option<Rect> {
         let bar = self.bar_bounds(pane)?;
         let x = match tabs.get(index) {
-            Some(file) => self.tab_bounds(pane, *file)?.left(),
+            Some(item) => self.tab_bounds(pane, *item)?.left(),
             None => match tabs.last() {
-                Some(file) => {
-                    let bounds = self.tab_bounds(pane, *file)?;
+                Some(item) => {
+                    let bounds = self.tab_bounds(pane, *item)?;
                     bounds.left() + bounds.size.width
                 }
                 None => bar.left(),
@@ -170,7 +169,7 @@ impl Geometry {
     fn tab_place(
         &self,
         point: Point,
-        order: &dyn Fn(PaneId) -> Vec<FileId>,
+        order: &dyn Fn(PaneId) -> Vec<Item>,
     ) -> Option<(PaneId, DropPlace)> {
         let (pane, _) = self
             .bars
@@ -181,8 +180,8 @@ impl Geometry {
         let tabs = order(pane);
         let place = tabs
             .iter()
-            .position(|file| {
-                self.tab_bounds(pane, *file)
+            .position(|item| {
+                self.tab_bounds(pane, *item)
                     .is_some_and(|bounds| point.x < bounds.left() + bounds.size.width / 2.0)
             })
             .unwrap_or(tabs.len());

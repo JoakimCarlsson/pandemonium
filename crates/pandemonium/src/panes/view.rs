@@ -3,29 +3,64 @@
 //! The view walks the tree the window keeps and asks for each pane's
 //! contents as it reaches it, so what is drawn is the tree itself rather
 //! than a copy of it made beforehand. A pane is the same bar of tabs the
-//! terminal panel wears, with the file in front beneath it and a ring around
-//! it while it has the keyboard. Its tabs are carried by the pointer, and
-//! both they and the pane leave their bounds behind as they paint, because
-//! where a carried tab is let go of is the window's to answer.
+//! terminal panel wears, with whatever is in front beneath it and a ring
+//! around it while it has the keyboard. Its tabs are carried by the pointer,
+//! and both they and the pane leave their bounds behind as they paint,
+//! because where a carried tab is let go of is the window's to answer.
 
 use pm_ui::{
     Bounds, Div, Element, IconName, Measured, MenuItem, Styled, Tab, Theme, h_flex, icon_button,
     measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
-use crate::editor::{FileEntry, FileId, OpenFile, buffer_view, search_bar};
+use crate::editor::{OpenFile, buffer_view, search_bar};
 use crate::message::Message;
+use crate::panes::item::Item;
 
 use super::tree::{Node, Pane, PaneId, PaneTree, SplitDirection};
 
-/// What one pane is showing, read out of the files the window has open.
+/// One tab of a pane as its bar presents it.
+///
+/// The bar draws a name, an icon and three marks whatever the tab holds; what
+/// it holds is only how the window works out what to put in them.
+pub struct TabEntry {
+    /// What the tab holds.
+    pub item: Item,
+    /// What the tab calls it.
+    pub name: String,
+    /// What the tab shows before the name.
+    pub icon: IconName,
+    /// Whether what it holds has changes that are not on disk.
+    pub dirty: bool,
+    /// Whether it is only being previewed, and will give its tab up.
+    pub preview: bool,
+    /// Whether its pane keeps it through a change of project.
+    pub pinned: bool,
+}
+
+/// What a pane draws beneath its bar of tabs.
+///
+/// A file is drawn by the editor from the document itself, because the pane
+/// and the window are looking at one buffer. Everything else arrives already
+/// built: the window knows what a review or a session is, and the pane tree
+/// is not the place to learn.
+pub enum Content {
+    /// Nothing at all, which is a pane with no tabs left in it.
+    Empty,
+    /// A file, drawn from the document the window has open.
+    File(OpenFile),
+    /// A screen the window built, drawn as it arrived.
+    Built(Box<dyn Element<Message>>),
+}
+
+/// What one pane is showing, read out of what the window has open.
 pub struct Contents {
-    /// Every file the pane shows, for the bar of tabs above it.
-    pub tabs: Vec<FileEntry>,
+    /// Every tab the pane shows, for the bar above it.
+    pub tabs: Vec<TabEntry>,
     /// The tab in front, which is the one the bar lights.
-    pub active: Option<FileId>,
-    /// The file in front, which is the one the pane draws.
-    pub file: Option<OpenFile>,
+    pub active: Option<Item>,
+    /// What the pane draws beneath the bar.
+    pub content: Content,
     /// Where the pane leaves its bounds, for a drop to be resolved against.
     pub bounds: Bounds,
     /// Where its bar of tabs leaves its bounds, for the same reason.
@@ -79,7 +114,7 @@ fn node(
     }
 }
 
-/// Builds one pane: its bar of tabs, and the file in front beneath it.
+/// Builds one pane: its bar of tabs, and what is in front beneath it.
 fn pane_view(
     theme: &Theme,
     pane: &Pane,
@@ -93,14 +128,17 @@ fn pane_view(
         .tabs
         .into_iter()
         .zip(contents.tab_bounds)
-        .map(|(file, bounds)| pane_tab(id, &file, active == Some(file.id), bounds))
+        .map(|(held, bounds)| pane_tab(id, &held, active == Some(held.item), bounds))
         .collect::<Vec<_>>();
-    let empty = contents.file.is_none();
+    let empty = matches!(contents.content, Content::Empty);
     let link = contents.link.clone();
     let hovered = contents.hovered.clone();
     let caret = contents.caret;
-    let searching = contents
-        .file
+    let showing = match &contents.content {
+        Content::File(file) => Some(file.clone()),
+        _ => None,
+    };
+    let searching = showing
         .as_ref()
         .map(|file| file.borrow())
         .filter(|document| document.search().is_open())
@@ -121,7 +159,7 @@ fn pane_view(
             ))
         })
         .when_some(searching, Div::child)
-        .when_some(contents.file, |view, file| {
+        .when_some(showing, |view, file| {
             view.child(
                 buffer_view(file, focused)
                     .link(link)
@@ -138,27 +176,36 @@ fn pane_view(
                     .on_menu(Message::ShowEditorMenu(id)),
             )
         })
-        .when(empty, |view| view.child(placeholder(theme, id)));
+        .when(empty, |view| view.child(placeholder(theme, id)))
+        .when_some(built(contents.content), Div::child);
 
     measured(contents.bounds, body)
 }
 
+/// The screen a pane was handed, when what it holds is one.
+fn built(content: Content) -> Option<Box<dyn Element<Message>>> {
+    match content {
+        Content::Built(screen) => Some(screen),
+        Content::Empty | Content::File(_) => None,
+    }
+}
+
 /// Builds one tab of a pane: what it holds, and the drag that carries it.
-fn pane_tab(pane: PaneId, file: &FileEntry, active: bool, bounds: Bounds) -> Tab<Message> {
-    let id = file.id;
+fn pane_tab(pane: PaneId, held: &TabEntry, active: bool, bounds: Bounds) -> Tab<Message> {
+    let item = held.item;
 
     tab(
-        IconName::File,
-        file.name.clone(),
-        Message::SelectFile(pane, id),
-        Message::CloseFile(pane, id),
-        Message::ShowFileMenu(pane, id),
+        held.icon,
+        held.name.clone(),
+        Message::SelectItem(pane, item),
+        Message::CloseItem(pane, item),
+        Message::ShowTabMenu(pane, item),
     )
     .active(active)
-    .dirty(file.dirty)
-    .preview(file.preview)
-    .pinned(file.pinned, Message::TogglePin(pane, id))
-    .on_drag(bounds, move |event| Message::DragTab(pane, id, event))
+    .dirty(held.dirty)
+    .preview(held.preview)
+    .pinned(held.pinned, Message::TogglePin(pane, item))
+    .on_drag(bounds, move |event| Message::DragTab(pane, item, event))
 }
 
 /// Builds the pane's own controls, at the end of its bar of tabs.
@@ -217,7 +264,11 @@ pub fn pane_menu(id: PaneId, divided: bool) -> Vec<MenuItem<Message>> {
 /// Closing a file is not something to be quietly wrong about, so the only
 /// way past this menu is to say which of the two things should happen. The
 /// sheet under it dismisses it, which leaves the file open.
-pub fn unsaved_menu(pane: PaneId, file: FileId, name: &str) -> Vec<MenuItem<Message>> {
+pub fn unsaved_menu(
+    pane: PaneId,
+    file: crate::editor::FileId,
+    name: &str,
+) -> Vec<MenuItem<Message>> {
     vec![
         menu_entry(
             format!("{name} has changes that are not saved"),
@@ -237,22 +288,23 @@ pub fn unsaved_menu(pane: PaneId, file: FileId, name: &str) -> Vec<MenuItem<Mess
 /// The things that can be done to one tab of `pane`, given what else it holds.
 ///
 /// An entry that does not apply — closing what is left of the first tab,
-/// closing others when there are none — is greyed rather than left out, so
-/// the menu keeps its shape wherever it is opened.
-pub fn file_menu(pane: &Pane, tabs: &[FileEntry], target: FileId) -> Vec<MenuItem<Message>> {
+/// copying the path of something that is not a file — is greyed rather than
+/// left out, so the menu keeps its shape wherever it is opened.
+pub fn tab_menu(pane: &Pane, tabs: &[TabEntry], target: Item) -> Vec<MenuItem<Message>> {
     let id = pane.id();
-    let index = tabs.iter().position(|file| file.id == target);
+    let index = tabs.iter().position(|held| held.item == target);
     let others = tabs.len() > 1;
     let left = index.is_some_and(|index| index > 0);
     let right = index.is_some_and(|index| index + 1 < tabs.len());
-    let saved = tabs.iter().any(|file| !file.dirty);
-    let preview = tabs.iter().any(|file| file.id == target && file.preview);
-    let pinned = tabs.iter().any(|file| file.id == target && file.pinned);
+    let saved = tabs.iter().any(|held| !held.dirty);
+    let preview = tabs.iter().any(|held| held.item == target && held.preview);
+    let pinned = tabs.iter().any(|held| held.item == target && held.pinned);
+    let file = target.file();
 
     vec![
         menu_entry(
             "Keep Open",
-            preview.then_some(Message::KeepFileOpen(target)),
+            file.filter(|_| preview).map(Message::KeepFileOpen),
         ),
         menu_entry(
             if pinned { "Unpin Tab" } else { "Pin Tab" },
@@ -261,41 +313,38 @@ pub fn file_menu(pane: &Pane, tabs: &[FileEntry], target: FileId) -> Vec<MenuIte
         menu_separator(),
         menu_entry(
             "Split Right",
-            Some(Message::SplitFile(id, target, SplitDirection::Right)),
+            Some(Message::SplitItem(id, target, SplitDirection::Right)),
         ),
         menu_entry(
             "Split Down",
-            Some(Message::SplitFile(id, target, SplitDirection::Down)),
+            Some(Message::SplitItem(id, target, SplitDirection::Down)),
         ),
         menu_separator(),
-        menu_entry("Close", Some(Message::CloseFile(id, target))),
+        menu_entry("Close", Some(Message::CloseItem(id, target))),
         menu_entry(
             "Close Others",
-            others.then_some(Message::CloseOtherFiles(id, target)),
+            others.then_some(Message::CloseOtherTabs(id, target)),
         ),
         menu_separator(),
         menu_entry(
             "Close Left",
-            left.then_some(Message::CloseFilesLeft(id, target)),
+            left.then_some(Message::CloseTabsLeft(id, target)),
         ),
         menu_entry(
             "Close Right",
-            right.then_some(Message::CloseFilesRight(id, target)),
+            right.then_some(Message::CloseTabsRight(id, target)),
         ),
         menu_separator(),
-        menu_entry("Close Saved", saved.then_some(Message::CloseSavedFiles(id))),
-        menu_entry("Close All", Some(Message::CloseAllFiles(id))),
+        menu_entry("Close Saved", saved.then_some(Message::CloseSavedTabs(id))),
+        menu_entry("Close All", Some(Message::CloseAllTabs(id))),
         menu_separator(),
-        menu_entry("Copy Path", Some(Message::CopyFilePath(target))),
+        menu_entry("Copy Path", file.map(Message::CopyFilePath)),
         menu_entry(
             "Copy Relative Path",
-            Some(Message::CopyFileRelativePath(target)),
+            file.map(Message::CopyFileRelativePath),
         ),
         menu_separator(),
-        menu_entry("Reveal in File Manager", Some(Message::RevealFile(target))),
-        menu_entry(
-            "Open in Terminal",
-            Some(Message::OpenFileInTerminal(target)),
-        ),
+        menu_entry("Reveal in File Manager", file.map(Message::RevealFile)),
+        menu_entry("Open in Terminal", file.map(Message::OpenFileInTerminal)),
     ]
 }

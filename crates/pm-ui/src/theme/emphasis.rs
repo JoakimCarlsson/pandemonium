@@ -32,6 +32,8 @@ pub struct Emphasis {
     pub search_current: f32,
     /// The mark a bracket and its partner are outlined in.
     pub bracket: f32,
+    /// The wash over a line a diff shows as added or taken out.
+    pub change: f32,
 }
 
 impl Emphasis {
@@ -49,5 +51,6 @@ impl Emphasis {
         search: 0.22,
         search_current: 0.45,
         bracket: 0.3,
+        change: 0.14,
     };
 }

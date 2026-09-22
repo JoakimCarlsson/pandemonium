@@ -13,6 +13,7 @@ use pm_text::Position;
 use crate::app::App;
 use crate::app::places::Place;
 use crate::keymap::Action;
+use crate::panes::Item;
 use crate::picker::{Choice, Kind, Picker, Row};
 
 /// Most results a project-wide search gathers before it stops looking.
@@ -95,7 +96,6 @@ impl App {
             (Kind::Rename, _) => self.rename_to(typed),
             (Kind::NewFile | Kind::NewFolder, _) => self.make_path(kind, &typed),
             (Kind::RenamePath, _) => self.rename_path(&typed),
-            (Kind::ConfirmDelete, _) => self.delete_path(),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
         }
@@ -173,8 +173,7 @@ impl App {
             | Kind::Rename
             | Kind::NewFile
             | Kind::NewFolder
-            | Kind::RenamePath
-            | Kind::ConfirmDelete => Vec::new(),
+            | Kind::RenamePath => Vec::new(),
         }
     }
 
@@ -298,6 +297,7 @@ impl App {
         self.panes
             .held()
             .into_iter()
+            .filter_map(Item::file)
             .filter_map(|file| Some((self.editor.project_of(file)?, self.editor.path(file)?, file)))
             .collect()
     }

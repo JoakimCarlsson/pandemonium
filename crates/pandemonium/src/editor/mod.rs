@@ -26,4 +26,4 @@ pub use keys::{Edit, edit};
 pub use menu::{TextMenu, text_menu};
 pub use search::{Search, SearchField};
 pub use store::{Document, FileEntry, FileId, Files, OpenFile};
-pub use view::{ScrollAxis, buffer_view};
+pub use view::{ScrollAxis, buffer_view, plain_view};

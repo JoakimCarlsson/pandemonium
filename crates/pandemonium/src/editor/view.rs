@@ -109,6 +109,12 @@ pub struct BufferView<M> {
     hovered: Option<Range<Position>>,
     /// Whether the caret is solid this instant, for its blink.
     caret: bool,
+    /// Whether the pane is the text and nothing else.
+    ///
+    /// A commit message is edited in the same editor a file is, but none of
+    /// what surrounds a file belongs around it: it has no line numbers to
+    /// give, nothing to fold, nothing to blame and nowhere to scroll to.
+    plain: bool,
     /// How the pane is sized within its parent.
     style: Style,
 }
@@ -126,10 +132,19 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         link: None,
         hovered: None,
         caret: true,
+        plain: false,
         style: Style::default(),
     }
     .w_full()
     .flex_1()
+}
+
+/// A pane showing `file` as text alone, with nothing drawn around it.
+pub fn plain_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
+    BufferView {
+        plain: true,
+        ..buffer_view(file, focused)
+    }
 }
 
 impl<M> BufferView<M> {
@@ -229,7 +244,10 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         let mut document = file.borrow_mut();
         let count = document.buffer().line_count();
         let blame = TextLayout::blame_for(document.is_blamed(), cell);
-        let gutter = TextLayout::gutter_for(count, cell) + blame;
+        let gutter = match self.plain {
+            true => TextLayout::plain_gutter(),
+            false => TextLayout::gutter_for(count, cell) + blame,
+        };
 
         let sizing = TextLayout {
             bounds,
@@ -278,11 +296,15 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         };
 
         cx.push_clip(bounds);
-        self.paint_current_line(&painting, cx);
+        if !self.plain {
+            self.paint_current_line(&painting, cx);
+        }
         self.paint_search(&painting, cx);
         self.paint_occurrences(&painting, cx);
         self.paint_talked_about(&painting, cx);
-        self.paint_guides(&painting, cx);
+        if !self.plain {
+            self.paint_guides(&painting, cx);
+        }
 
         let mut glyphs = Glyphs::default();
         for line in painting.drawn.clone() {
@@ -291,10 +313,12 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         self.paint_brackets(&painting, cx);
         self.paint_link(&painting, cx);
         self.paint_cursor(&painting, cx);
-        self.paint_changes(&painting, cx);
-        self.paint_blame(&painting, &mut glyphs, cx);
-        self.paint_folds(&painting, cx);
-        self.paint_sticky(&painting, &mut glyphs, cx);
+        if !self.plain {
+            self.paint_changes(&painting, cx);
+            self.paint_blame(&painting, &mut glyphs, cx);
+            self.paint_folds(&painting, cx);
+            self.paint_sticky(&painting, &mut glyphs, cx);
+        }
         cx.pop_clip();
 
         let widest = painting.buffer.widest(span);
@@ -302,9 +326,11 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         drop(document);
 
         self.select_region(layout, cx);
-        self.gutter_region(layout, cx);
-        self.fold_region(layout, cx);
-        self.paint_scrollbars(layout, count, widest, &marks, &theme, cx);
+        if !self.plain {
+            self.gutter_region(layout, cx);
+            self.fold_region(layout, cx);
+            self.paint_scrollbars(layout, count, widest, &marks, &theme, cx);
+        }
     }
 }
 
@@ -472,7 +498,9 @@ impl<M> BufferView<M> {
         let buffer = painting.buffer;
 
         self.paint_selection(line, painting, cx);
-        self.paint_number(line, painting, glyphs, cx);
+        if !self.plain {
+            self.paint_number(line, painting, glyphs, cx);
+        }
 
         cx.push_clip(layout.text_area());
         let mut column = 0;

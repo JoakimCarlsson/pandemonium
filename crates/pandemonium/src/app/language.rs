@@ -119,7 +119,7 @@ impl App {
         if matches!(request, Request::Hover | Request::Signature) {
             self.hint = Some(Shown::at(self.cursor_point()));
         }
-        let Some(file) = self.active_tab() else {
+        let Some(file) = self.active_file_id() else {
             return;
         };
         let Some(at) = self
@@ -190,7 +190,7 @@ impl App {
             .panes
             .panes()
             .into_iter()
-            .filter_map(|pane| self.panes.pane(pane)?.active(scope))
+            .filter_map(|pane| self.panes.pane(pane)?.active(scope)?.file())
             .collect::<Vec<_>>();
 
         for file in showing {
@@ -377,7 +377,7 @@ impl App {
     ) -> Option<(FileId, crate::editor::OpenFile)> {
         let scope = self.scope()?;
         self.panes.panes().into_iter().find_map(|pane| {
-            let file = self.panes.pane(pane)?.active(scope)?;
+            let file = self.panes.pane(pane)?.active(scope)?.file()?;
             let document = self.editor.get(file)?;
             let over = document.borrow().layout().text_area().contains(point);
             over.then_some((file, document))

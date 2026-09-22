@@ -1,8 +1,5 @@
 //! The editor workspace shown after onboarding has finished.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-
 use pm_core::{FileStatus, FileTree, Project, ProjectId, Projects, Row};
 use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
@@ -16,7 +13,8 @@ use pm_ui::{
 
 use crate::editor::{FileId, OpenFile};
 use crate::message::Message;
-use crate::panes::PaneId;
+use crate::panes::{Item, PaneId};
+use crate::review::{Review, changes_sidebar, status_color};
 use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
 
 /// How far the tab under the pointer sits from the pointer itself.
@@ -76,6 +74,35 @@ pub struct Layout {
     pub secondary_sidebar_open: bool,
     /// Width of the secondary sidebar.
     pub secondary_sidebar_width: f32,
+    /// Which of the worktree's two lists that sidebar is showing.
+    pub secondary_sidebar_view: SidebarView,
+}
+
+/// What the sidebar beside the panes is listing.
+///
+/// The worktree is one thing looked at two ways: the files it holds, and
+/// what has changed in them. They share a sidebar because they are both the
+/// worktree, and a reader is looking at one or the other.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SidebarView {
+    /// Every file of the worktree.
+    #[default]
+    Files,
+    /// Everything that has changed in it.
+    Changes,
+}
+
+impl SidebarView {
+    /// Both views, in the order the switch offers them.
+    pub const ALL: [Self; 2] = [Self::Files, Self::Changes];
+
+    /// What the switch calls this view.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Files => "Files",
+            Self::Changes => "Changes",
+        }
+    }
 }
 
 impl Default for Layout {
@@ -88,16 +115,19 @@ impl Default for Layout {
             bottom_panel_height: BOTTOM_PANEL_HEIGHT,
             secondary_sidebar_open: true,
             secondary_sidebar_width: SECONDARY_SIDEBAR_WIDTH,
+            secondary_sidebar_view: SidebarView::default(),
         }
     }
 }
 
-/// The worktree the files sidebar lists, and what git makes of it.
+/// The worktree the sidebar beside the panes lists, either way it lists it.
 pub struct Worktree<'a> {
     /// The tree itself, when the window has a project open.
     pub tree: Option<&'a FileTree>,
-    /// What git makes of each of its files, once git has been asked.
-    pub status: Option<&'a HashMap<PathBuf, FileStatus>>,
+    /// What has changed in it, once git has been asked.
+    pub review: Option<&'a Review>,
+    /// Whether the commit message is where keystrokes are going.
+    pub committing: bool,
 }
 
 /// The sessions belonging to one open project.
@@ -186,8 +216,8 @@ pub struct TabMenu {
 /// The tab a menu was opened from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuTarget {
-    /// A file open in one of the editor panes.
-    File(PaneId, FileId),
+    /// One tab of one of the editor panes.
+    Tab(PaneId, Item),
     /// One of the editor panes itself.
     Pane(PaneId),
     /// A shell running in the terminal panel.
@@ -200,6 +230,8 @@ pub enum MenuTarget {
     Entry(pm_core::EntryId),
     /// A file with changes that are not on disk, being closed.
     Unsaved(PaneId, FileId),
+    /// The list of what a project has changed, on the rows it is acting on.
+    Change,
 }
 
 /// Builds the workspace with its resizable sessions sidebar.
@@ -211,7 +243,7 @@ pub fn workspace(
     layout: Layout,
     panes: Panes,
 ) -> Div<Message> {
-    let status = Status::of(open, sessions, &panes, layout);
+    let status = Status::of(open, sessions, &panes, layout, &files);
     let Panes {
         editor,
         drop,
@@ -243,7 +275,7 @@ pub fn workspace(
                 .child(main_area(theme, layout, panel, editor))
                 .when(layout.secondary_sidebar_open, |body| {
                     body.child(sash(Axis::Horizontal, Message::ResizeSecondarySidebar))
-                        .child(files_sidebar(theme, &files, layout.secondary_sidebar_width))
+                        .child(worktree_sidebar(theme, &files, layout))
                 }),
         )
         .child(rule(theme))
@@ -347,6 +379,8 @@ struct Status {
     branch: Option<String>,
     /// How many sessions that project has.
     sessions: usize,
+    /// How many files that project has changed.
+    changes: usize,
     /// How many shells are running in the worktree.
     shells: usize,
     /// Whether the panel those shells are shown in is open.
@@ -365,7 +399,13 @@ struct Status {
 
 impl Status {
     /// Reads the status of the window out of what the screen was given.
-    fn of(open: &Projects, sessions: &[SidebarProject], panes: &Panes, layout: Layout) -> Self {
+    fn of(
+        open: &Projects,
+        sessions: &[SidebarProject],
+        panes: &Panes,
+        layout: Layout,
+        files: &Worktree<'_>,
+    ) -> Self {
         let active = open.active();
         let showing = panes.showing.as_ref().map(|file| file.borrow());
         let buffer = showing.as_ref().map(|document| document.buffer());
@@ -374,6 +414,7 @@ impl Status {
             project: active.map(|project| project.name().to_owned()),
             branch: active.map(|project| project.branch().to_owned()),
             sessions: active.map_or(0, |project| sessions_of(project, sessions).len()),
+            changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.terminal.shells.len(),
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
@@ -422,6 +463,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         project,
         branch,
         sessions,
+        changes,
         shells,
         panel_open,
         cursor,
@@ -462,7 +504,16 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                 theme,
                 Some(IconName::GitBranch),
                 branch,
-                None,
+                Some(Message::SetSidebarView(SidebarView::Changes)),
+                false,
+            ))
+        })
+        .when(changes > 0, |bar| {
+            bar.child(status_item(
+                theme,
+                Some(IconName::GitCompare),
+                counted(changes, "change"),
+                Some(Message::SetSidebarView(SidebarView::Changes)),
                 false,
             ))
         })
@@ -702,15 +753,63 @@ fn window_controls() -> Div<Message> {
     h_flex()
 }
 
-/// Builds the files sidebar: the worktree of the active project.
-fn files_sidebar(theme: &Theme, files: &Worktree<'_>, width: f32) -> Div<Message> {
-    let rows = files.tree.map(FileTree::rows).unwrap_or_default();
+/// Builds the sidebar beside the panes: the switch, then what it is showing.
+fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<Message> {
+    let width = layout.secondary_sidebar_width;
+    let view = layout.secondary_sidebar_view;
 
     v_flex()
         .w_px(width)
         .h_full()
         .overflow_hidden()
         .bg(theme.colors.surface)
+        .child(view_switch(theme, view))
+        .child(match view {
+            SidebarView::Files => files_sidebar(theme, files, width),
+            SidebarView::Changes => changes_sidebar(theme, files.review, files.committing, width),
+        })
+}
+
+/// Builds the switch between the worktree's files and what has changed.
+fn view_switch(theme: &Theme, view: SidebarView) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .px(1)
+        .py(1)
+        .gap(0.5)
+        .items_center()
+        .children(SidebarView::ALL.map(|offered| {
+            let chosen = offered == view;
+            h_flex()
+                .flex_1()
+                .h_px(theme.size.control - BAR_INSET)
+                .items_center()
+                .justify_center()
+                .rounded(theme.radius.md)
+                .when(chosen, |tab| tab.bg(theme.colors.surface_selected))
+                .hover_bg(theme.colors.surface_hover)
+                .on_click(Message::SetSidebarView(offered))
+                .child(
+                    text(offered.label())
+                        .text_sm()
+                        .font_light()
+                        .color(match chosen {
+                            true => theme.colors.text,
+                            false => theme.colors.text_subtle,
+                        }),
+                )
+        }))
+}
+
+/// Builds the list of every file of the worktree.
+fn files_sidebar(theme: &Theme, files: &Worktree<'_>, width: f32) -> Div<Message> {
+    let rows = files.tree.map(FileTree::rows).unwrap_or_default();
+    let status = files.review.map(Review::status);
+
+    v_flex()
+        .w_px(width)
+        .flex_1()
+        .overflow_hidden()
         .when_some(files.tree, |sidebar, tree| {
             sidebar.child(tree_root(theme, tree))
         })
@@ -725,11 +824,11 @@ fn files_sidebar(theme: &Theme, files: &Worktree<'_>, width: f32) -> Div<Message
             )
         })
         .children(rows.iter().map(|row| {
-            let status = files
-                .status
-                .and_then(|status| status.get(row.entry.path()))
-                .copied();
-            file_row(theme, row, status)
+            file_row(
+                theme,
+                row,
+                status.and_then(|status| status.mark(row.entry.path())),
+            )
         }))
 }
 
@@ -811,21 +910,13 @@ fn file_row(theme: &Theme, row: &Row<'_>, status: Option<FileStatus>) -> Div<Mes
                 .color(theme.colors.text_subtle),
         )
         .child(v_flex().w(1))
-        .child(match (status_color(theme, status), directory) {
-            (Some(color), _) => text(entry.name().to_owned()).color(color),
-            (None, true) => text(entry.name().to_owned()),
-            (None, false) => text(entry.name().to_owned()).color(theme.colors.text_muted),
-        })
-}
-
-/// The colour a name is written in, given what git makes of it.
-fn status_color(theme: &Theme, status: Option<FileStatus>) -> Option<Rgba> {
-    Some(match status? {
-        FileStatus::Modified => theme.colors.warning,
-        FileStatus::Added | FileStatus::Untracked => theme.colors.success,
-        FileStatus::Deleted => theme.colors.text_subtle,
-        FileStatus::Conflicted => theme.colors.danger,
-    })
+        .child(
+            match (status.map(|status| status_color(theme, status)), directory) {
+                (Some(color), _) => text(entry.name().to_owned()).color(color),
+                (None, true) => text(entry.name().to_owned()),
+                (None, false) => text(entry.name().to_owned()).color(theme.colors.text_muted),
+            },
+        )
 }
 
 /// Builds the projects sidebar: every open project, its sessions beneath it.

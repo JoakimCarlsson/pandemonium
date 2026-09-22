@@ -45,8 +45,6 @@ pub enum Kind {
     NewFolder,
     /// A new name for a file or directory of the tree.
     RenamePath,
-    /// Whether a file or directory should be taken off the disk.
-    ConfirmDelete,
 }
 
 impl Kind {
@@ -65,7 +63,6 @@ impl Kind {
             Self::NewFile => "Name of the new file",
             Self::NewFolder => "Name of the new directory",
             Self::RenamePath => "New name",
-            Self::ConfirmDelete => "Press Enter to delete",
         }
     }
 
@@ -73,12 +70,7 @@ impl Kind {
     pub fn is_prompt(self) -> bool {
         matches!(
             self,
-            Self::Line
-                | Self::Rename
-                | Self::NewFile
-                | Self::NewFolder
-                | Self::RenamePath
-                | Self::ConfirmDelete
+            Self::Line | Self::Rename | Self::NewFile | Self::NewFolder | Self::RenamePath
         )
     }
 

@@ -29,20 +29,40 @@ pub enum IconName {
     ChevronRight,
     /// A directory that is showing what it holds.
     ChevronDown,
+    /// The way back up through what a pane is showing.
+    ChevronUp,
+    /// The way down to what follows.
+    ArrowDown,
+    /// Go to what the control is beside.
+    ArrowRight,
+    /// The way up to what came before.
+    ArrowUp,
+    /// All of what the control is on.
+    Check,
     /// Close what the control is on.
     Close,
     /// A file.
     File,
     /// The branch a worktree is on.
     GitBranch,
+    /// A commit.
+    GitCommit,
+    /// One side of a change against the other.
+    GitCompare,
     /// A worktree branched off another.
     GitFork,
     /// A directory.
     Folder,
     /// A directory that is open.
     FolderOpen,
+    /// Take away one of whatever the control is beside.
+    Minus,
     /// Add another of whatever the control is beside.
     Plus,
+    /// Read again whatever the control is beside.
+    Refresh,
+    /// Put back the way it was whatever the control is beside.
+    Undo,
     /// Keep what the control is on where it is.
     Pin,
     /// The same pin, filled, for what is being kept already.
@@ -61,13 +81,23 @@ impl IconName {
         match self {
             Self::ChevronRight => Svg::new("chevron_right", include_icon!("chevron_right")),
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),
+            Self::ChevronUp => Svg::new("chevron_up", include_icon!("chevron_up")),
+            Self::ArrowDown => Svg::new("arrow_down", include_icon!("arrow_down")),
+            Self::ArrowRight => Svg::new("arrow_right", include_icon!("arrow_right")),
+            Self::ArrowUp => Svg::new("arrow_up", include_icon!("arrow_up")),
+            Self::Check => Svg::new("check", include_icon!("check")),
             Self::Close => Svg::new("close", include_icon!("close")),
             Self::File => Svg::new("file", include_icon!("file")),
             Self::GitBranch => Svg::new("git_branch", include_icon!("git_branch")),
+            Self::GitCommit => Svg::new("git_commit", include_icon!("git_commit")),
+            Self::GitCompare => Svg::new("git_compare", include_icon!("git_compare")),
             Self::GitFork => Svg::new("git_fork", include_icon!("git_fork")),
             Self::Folder => Svg::new("folder", include_icon!("folder")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
+            Self::Minus => Svg::new("minus", include_icon!("minus")),
             Self::Plus => Svg::new("plus", include_icon!("plus")),
+            Self::Refresh => Svg::new("refresh", include_icon!("refresh")),
+            Self::Undo => Svg::new("undo", include_icon!("undo")),
             Self::Pin => Svg::new("pin", include_icon!("pin")),
             Self::PinFilled => Svg::new("pin_filled", include_icon!("pin_filled")),
             Self::Split => Svg::new("split", include_icon!("split")),

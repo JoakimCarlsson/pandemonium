@@ -37,21 +37,17 @@ pub type OpenFile = Rc<RefCell<Document>>;
 pub struct FileId(u64);
 
 /// One open file as a bar of tabs presents it.
+///
+/// What the tab is drawn like beyond this — which icon it wears, whether the
+/// pane keeps it through a change of project — is the pane's, because the
+/// same file is one document and as many tabs as there are panes showing it.
 pub struct FileEntry {
-    /// Which file this tab is.
-    pub id: FileId,
     /// What the tab calls it: the file's own name.
     pub name: String,
     /// Whether it has changes that are not on disk.
     pub dirty: bool,
     /// Whether it is only being previewed, and will give its tab up.
     pub preview: bool,
-    /// Whether its pane keeps it through a change of project.
-    ///
-    /// Pinning belongs to the tab rather than to the document — the same
-    /// file can be pinned in one pane and not in another — so the store
-    /// leaves this alone and the pane holding the tab fills it in.
-    pub pinned: bool,
 }
 
 /// One open file: its buffer, where the pane is looking, and who serves it.
@@ -125,6 +121,15 @@ impl Document {
             preview,
             servers,
         }
+    }
+
+    /// A document holding nothing, called `name`, that is not on disk.
+    ///
+    /// A commit message is edited in the same editor a file is — the same
+    /// cursor, the same selection, the same undo — so it is the same kind of
+    /// document, with no file behind it and no server to tell about it.
+    pub fn scratch(name: &str) -> Self {
+        Self::new(Buffer::holding(name, ""), false, Vec::new(), None)
     }
 
     /// The text and everything the editor knows about it.
@@ -622,11 +627,9 @@ impl Files {
     pub fn entry(&self, id: FileId) -> Option<FileEntry> {
         let document = self.open.get(&id)?.document.borrow();
         Some(FileEntry {
-            id,
             name: document.buffer().name(),
             dirty: document.buffer().is_dirty(),
             preview: document.is_preview(),
-            pinned: false,
         })
     }
 
