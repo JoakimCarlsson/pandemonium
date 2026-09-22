@@ -215,15 +215,22 @@ impl App {
         self.focus_prompt(session);
     }
 
-    /// Stops the turn the focused prompt is running, or lets go of it.
+    /// Gets out of one thing the focused prompt is in the middle of.
     ///
-    /// One key gets out of one thing at a time: the first press stops the
-    /// agent, and the press after it leaves the prompt — so a reader who
-    /// wants the agent to stop never has to look at where the keyboard is.
+    /// One key gets out of one thing at a time, nearest the reader first: the
+    /// list of commands a slash put up, then the turn that is running, then
+    /// the prompt itself — so a reader who wants the agent to stop never has
+    /// to look at where the keyboard is, and one who was only shown a list
+    /// keeps what they had typed.
     pub(super) fn stop_or_release_prompt(&mut self) -> bool {
         let Some(Writing::Prompt(session)) = self.writing else {
             return false;
         };
+        if let Some(talk) = self.agents.get_mut(session)
+            && talk.dismiss_commands()
+        {
+            return true;
+        }
         match self.agents.get(session).filter(|talk| talk.is_busy()) {
             Some(talk) => talk.cancel(),
             None => self.writing = None,

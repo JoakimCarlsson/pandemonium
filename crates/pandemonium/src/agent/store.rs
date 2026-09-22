@@ -47,6 +47,8 @@ pub struct Talk {
     commands: Vec<Command>,
     /// Which of the commands a slash narrows to is selected.
     chosen: usize,
+    /// Whether the reader has waved that list away for what is typed now.
+    dismissed: bool,
     /// Whether the conversation is open and will take prompts.
     ready: bool,
     /// Whether a turn is running.
@@ -120,7 +122,7 @@ impl Talk {
     /// again whenever that changes, so this is what it offers now — the
     /// skills, the slash commands and whatever else it has put on the list.
     pub fn offered(&self) -> Vec<&Command> {
-        let Some(named) = self.naming() else {
+        let Some(named) = self.naming().filter(|_| !self.dismissed) else {
             return Vec::new();
         };
         self.commands
@@ -162,11 +164,28 @@ impl Talk {
     pub fn start_command(&mut self) {
         self.prompt.set("/");
         self.chosen = 0;
+        self.dismissed = false;
+    }
+
+    /// Takes the list of commands away, leaving what has been typed alone.
+    ///
+    /// The list is a suggestion over the prompt, not a thing the prompt is
+    /// in: waving it away leaves the slash, the rest of the line and the
+    /// keyboard where they were. It comes back at the next keystroke.
+    ///
+    /// The answer says whether there was a list to take away.
+    pub fn dismiss_commands(&mut self) -> bool {
+        if self.offered().is_empty() {
+            return false;
+        }
+        self.dismissed = true;
+        true
     }
 
     /// Starts the selection again, for a prompt that has been typed into.
     pub fn retyped(&mut self) {
         self.chosen = 0;
+        self.dismissed = false;
     }
 
     /// Puts the command in `place` of what is offered into the prompt.
@@ -184,6 +203,7 @@ impl Talk {
         };
         self.prompt.set(&format!("/{command} "));
         self.chosen = 0;
+        self.dismissed = false;
     }
 
     /// Whether the conversation is open and will take prompts.
@@ -343,6 +363,7 @@ impl Talk {
         self.transcript.say(Voice::Reader, &text);
         self.session.prompt(&text);
         self.chosen = 0;
+        self.dismissed = false;
         self.busy = true;
         self.following = true;
     }
@@ -479,6 +500,7 @@ impl Sessions {
                 asks: Vec::new(),
                 commands: Vec::new(),
                 chosen: 0,
+                dismissed: false,
                 ready: false,
                 busy: false,
                 mode: None,
