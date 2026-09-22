@@ -16,7 +16,7 @@ use crate::config::{Restored, WindowState};
 use crate::keymap::BaseKeymap;
 use crate::onboarding::{Setup, ThemeMode};
 use crate::panes::Saved;
-use crate::workspace::Layout;
+use crate::workspace::{Layout, SidebarView};
 
 /// The preferences as they are written down.
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -60,6 +60,8 @@ pub(super) struct Stored {
     secondary_sidebar_open: Option<bool>,
     /// Width of the secondary sidebar.
     secondary_sidebar_width: Option<f32>,
+    /// Which of the worktree's two lists that sidebar was showing.
+    secondary_sidebar_view: Option<StoredSidebarView>,
     /// Logical width of the window when it is not maximized.
     window_width: Option<f32>,
     /// Logical height of the window when it is not maximized.
@@ -180,6 +182,10 @@ impl Stored {
             secondary_sidebar_width: self
                 .secondary_sidebar_width
                 .unwrap_or(defaults.secondary_sidebar_width),
+            secondary_sidebar_view: self.secondary_sidebar_view.map_or(
+                defaults.secondary_sidebar_view,
+                StoredSidebarView::into_view,
+            ),
         }
     }
 
@@ -255,9 +261,38 @@ impl Stored {
             bottom_panel_height: Some(layout.bottom_panel_height),
             secondary_sidebar_open: Some(layout.secondary_sidebar_open),
             secondary_sidebar_width: Some(layout.secondary_sidebar_width),
+            secondary_sidebar_view: Some(StoredSidebarView::of(layout.secondary_sidebar_view)),
             window_width: Some(window.width),
             window_height: Some(window.height),
             window_maximized: Some(window.maximized),
+        }
+    }
+}
+
+/// Which list the sidebar beside the panes was showing, as it is written down.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredSidebarView {
+    /// Every file of the worktree.
+    Files,
+    /// Everything that has changed in it.
+    Changes,
+}
+
+impl StoredSidebarView {
+    /// The written name of the view the sidebar was showing.
+    fn of(view: SidebarView) -> Self {
+        match view {
+            SidebarView::Files => Self::Files,
+            SidebarView::Changes => Self::Changes,
+        }
+    }
+
+    /// The view the written name stands for.
+    fn into_view(self) -> SidebarView {
+        match self {
+            Self::Files => SidebarView::Files,
+            Self::Changes => SidebarView::Changes,
         }
     }
 }

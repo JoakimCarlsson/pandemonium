@@ -70,6 +70,9 @@ impl App {
     /// text itself. Only a key nothing wanted becomes focus movement.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
+        if self.send_to_prompt(event) {
+            return self.request_redraw();
+        }
         if self.send_to_picker(event) {
             return self.request_redraw();
         }
@@ -86,6 +89,12 @@ impl App {
                 Resolution::None => {}
             }
         }
+        if self.send_to_commit(event) {
+            return self.request_redraw();
+        }
+        if self.send_to_changes(event) {
+            return self.request_redraw();
+        }
         if self.send_to_search(event) {
             return self.request_redraw();
         }
@@ -93,6 +102,44 @@ impl App {
             return self.request_redraw();
         }
         self.navigate(event);
+    }
+
+    /// Sends a keypress to the question the window is asking, if it is asking.
+    ///
+    /// The question is modal, so it answers before anything else does and
+    /// takes every key: a chord that would otherwise act on the file behind
+    /// it is a chord aimed at a window that is waiting for an answer.
+    fn send_to_prompt(&mut self, event: &KeyEvent) -> bool {
+        if self.prompt.is_none() {
+            return false;
+        }
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Escape) => {
+                self.dismiss_prompt();
+            }
+            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => self.answer_prompt(),
+            Key::Named(NamedKey::ArrowUp) => self.step_prompt(-1),
+            Key::Named(NamedKey::ArrowDown) => self.step_prompt(1),
+            Key::Named(NamedKey::Tab) if self.modifiers.shift_key() => self.step_prompt(-1),
+            Key::Named(NamedKey::Tab) => self.step_prompt(1),
+            _ => {}
+        }
+        true
+    }
+
+    /// Moves the question's answer `steps` along.
+    fn step_prompt(&mut self, steps: isize) {
+        if let Some(asked) = self.prompt.as_mut() {
+            asked.step(steps);
+        }
+    }
+
+    /// Answers the question the way it is showing.
+    fn answer_prompt(&mut self) {
+        let taken = self.prompt.take().and_then(|asked| asked.chosen());
+        if let Some(taken) = taken {
+            self.apply(taken);
+        }
     }
 
     /// Sends a keypress to the list the window is asking a choice from.
@@ -158,6 +205,83 @@ impl App {
         };
         if let Some(completions) = self.completions.as_mut() {
             completions.step(step);
+        }
+        true
+    }
+
+    /// Sends a keypress to the commit message, when it has the keyboard.
+    ///
+    /// The message is a buffer, so it takes what a buffer takes: characters,
+    /// line breaks, the cursor moved and the text selected. What it does not
+    /// take is the platform key with Enter, which is how a message that is
+    /// finished is committed without leaving the keyboard.
+    fn send_to_commit(&mut self, event: &KeyEvent) -> bool {
+        if !self.commit_focused {
+            return false;
+        }
+        let committing = self.modifiers.super_key() || self.modifiers.control_key();
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Enter) if committing => {
+                self.apply(Message::Commit);
+                return true;
+            }
+            Key::Named(NamedKey::Escape) => {
+                self.commit_focused = false;
+                return true;
+            }
+            _ => {}
+        }
+        if self.is_window_chord() {
+            return false;
+        }
+
+        let Some(message) = self.review().map(crate::review::Review::message) else {
+            return false;
+        };
+        let rows = message.borrow().rows();
+        let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
+            return false;
+        };
+        message.borrow_mut().edit(|buffer| {
+            buffer.at_each(|buffer| match edit.clone() {
+                editor::Edit::Type(ch) => buffer.insert_typed(ch),
+                editor::Edit::Insert(text) => buffer.insert(&text),
+                editor::Edit::Newline => buffer.insert_newline(),
+                editor::Edit::Indent => buffer.insert_indent(),
+                editor::Edit::Outdent => buffer.outdent_lines(),
+                editor::Edit::Backspace => buffer.backspace(),
+                editor::Edit::Delete => buffer.delete(),
+                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
+                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
+                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
+            });
+        });
+        true
+    }
+
+    /// Sends a keypress to the list of changes, when the list has the keyboard.
+    ///
+    /// The list works the way every list of files does: the arrows move the
+    /// row it is on and shift with them marks everything they pass, Enter
+    /// opens what is under it, Space stages it or takes it back out, and
+    /// Escape lets go of the marks before it lets go of the list.
+    fn send_to_changes(&mut self, event: &KeyEvent) -> bool {
+        if !self.changes_focused || self.is_window_chord() {
+            return false;
+        }
+        let marking = self.modifiers.shift_key();
+
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::ArrowUp) => self.step_changes(-1, marking),
+            Key::Named(NamedKey::ArrowDown) => self.step_changes(1, marking),
+            Key::Named(NamedKey::Enter) => self.open_selected_change(),
+            Key::Named(NamedKey::Space) => self.toggle_selection_staged(),
+            Key::Named(NamedKey::Escape) => {
+                if !self.clear_change_marks() {
+                    self.changes_focused = false;
+                }
+            }
+            _ => return false,
         }
         true
     }
@@ -495,6 +619,11 @@ impl App {
         if let Some(shell) = self.focused_shell() {
             let lines = (delta / text.terminal.line_height).round() as isize;
             shell.borrow_mut().scroll(lines);
+            self.request_redraw();
+            return;
+        }
+        let rows = (delta / text.code.line_height).round() as isize;
+        if self.scroll_review(-rows) {
             self.request_redraw();
             return;
         }

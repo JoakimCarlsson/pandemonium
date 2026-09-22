@@ -63,17 +63,20 @@ pub(crate) struct GlyphInstance {
     pub(crate) color: [f32; 4],
     /// Clip rectangle as left, top, right, bottom.
     pub(crate) clip: [f32; 4],
+    /// Rotation in radians, followed by alignment padding.
+    pub(crate) rotation: [f32; 4],
 }
 
 impl GlyphInstance {
     /// The vertex attributes the glyph shader expects, in declaration order.
-    pub(crate) const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    pub(crate) const ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x4,
         5 => Float32x4,
+        6 => Float32x4,
     ];
 }
 

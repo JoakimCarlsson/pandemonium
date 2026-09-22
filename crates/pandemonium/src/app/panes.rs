@@ -10,13 +10,15 @@ use std::collections::BTreeSet;
 
 use pm_core::ProjectId;
 use pm_gfx::Rect;
-use pm_ui::{Axis, Element, MenuItem, ResizeEvent, ResizePhase, Theme};
+use pm_ui::{Axis, Element, IconName, MenuItem, ResizeEvent, ResizePhase, Theme};
 
 use crate::app::App;
 use crate::app::drag::{DropPlace, TabDrag, highlight, unmeasured};
-use crate::editor::{FileId, OpenFile};
+use crate::editor::{FileEntry, FileId, OpenFile};
 use crate::message::Message;
-use crate::panes::{self, Contents, PaneId, Saved, SavedTab, SplitDirection};
+use crate::panes::{
+    self, Content, Contents, Item, PaneId, Saved, SavedKind, SavedTab, SplitDirection, TabEntry,
+};
 use crate::workspace::{MenuTarget, TabMenu};
 
 impl App {
@@ -29,14 +31,19 @@ impl App {
         self.open.active().map(pm_core::Project::id)
     }
 
-    /// The file the pane with the keyboard is showing.
+    /// The file the pane with the keyboard is showing, when it shows one.
     pub(super) fn active_file(&self) -> Option<OpenFile> {
-        self.editor.get(self.active_tab()?)
+        self.editor.get(self.active_tab()?.file()?)
     }
 
-    /// The tab in front of the pane with the keyboard.
-    pub(super) fn active_tab(&self) -> Option<FileId> {
+    /// What the pane with the keyboard is showing.
+    pub(super) fn active_tab(&self) -> Option<Item> {
         self.panes.focused()?.active(self.scope()?)
+    }
+
+    /// The file it is showing, for the commands that are a file's.
+    pub(super) fn active_file_id(&self) -> Option<FileId> {
+        self.active_tab()?.file()
     }
 
     /// Gives the keyboard to `pane`, taking it from the terminal.
@@ -44,6 +51,7 @@ impl App {
         self.panes.set_focus(pane);
         self.editor_focused = true;
         self.terminal_focused = false;
+        self.changes_focused = false;
     }
 
     /// Opens `file` in `pane`, as a preview or to stay.
@@ -56,12 +64,23 @@ impl App {
         let Some(project) = self.editor.project_of(file) else {
             return;
         };
+        self.show_item(pane, project, Item::File(file), preview);
+    }
+
+    /// Shows `item` of `project` in `pane`, opening a tab for it if need be.
+    pub(super) fn show_item(
+        &mut self,
+        pane: PaneId,
+        project: pm_core::ProjectId,
+        item: Item,
+        preview: bool,
+    ) {
         if preview {
-            self.close_previews(pane, file);
+            self.close_previews(pane, item);
         }
         self.open.activate(project);
         if let Some(pane) = self.panes.pane_mut(pane) {
-            pane.open(project, file);
+            pane.open(project, item);
         }
         self.focus_pane(pane);
         self.sweep();
@@ -69,21 +88,35 @@ impl App {
     }
 
     /// Closes whatever `pane` is previewing, other than `keep`.
-    fn close_previews(&mut self, pane: PaneId, keep: FileId) {
+    fn close_previews(&mut self, pane: PaneId, keep: Item) {
         let previews = self
             .panes
             .pane(pane)
             .map(|pane| {
-                pane.files()
-                    .filter(|file| *file != keep && self.editor.is_preview(*file))
+                pane.items()
+                    .filter(|item| *item != keep && self.is_preview(*item))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         if let Some(pane) = self.panes.pane_mut(pane) {
-            for file in previews {
-                pane.close(file);
+            for item in previews {
+                pane.close(item);
             }
         }
+    }
+
+    /// Whether `item` is only being looked at, not kept open.
+    fn is_preview(&self, item: Item) -> bool {
+        match item {
+            Item::File(file) => self.editor.is_preview(file),
+            Item::Change(project, change) => self.is_change_preview(project, change),
+            Item::Review(_) => false,
+        }
+    }
+
+    /// Whether `item` holds changes that are not on disk.
+    fn is_dirty(&self, item: Item) -> bool {
+        item.file().is_some_and(|file| self.editor.is_dirty(file))
     }
 
     /// Divides `pane` that way, showing `file` in the pane that opens.
@@ -94,21 +127,21 @@ impl App {
     pub(super) fn split_pane(
         &mut self,
         pane: PaneId,
-        file: Option<FileId>,
+        item: Option<Item>,
         direction: SplitDirection,
     ) {
-        let file = file.or_else(|| {
+        let item = item.or_else(|| {
             let scope = self.scope()?;
             self.panes.pane(pane)?.active(scope)
         });
-        let project = file.and_then(|file| self.editor.project_of(file));
+        let project = item.and_then(|item| self.project_of(item));
         let Some(fresh) = self.panes.split(pane, direction) else {
             return;
         };
-        if let (Some(file), Some(project), Some(fresh)) =
-            (file, project, self.panes.pane_mut(fresh))
+        if let (Some(item), Some(project), Some(fresh)) =
+            (item, project, self.panes.pane_mut(fresh))
         {
-            fresh.open(project, file);
+            fresh.open(project, item);
         }
         self.editor_focused = true;
         self.terminal_focused = false;
@@ -128,8 +161,16 @@ impl App {
     /// Closes the tab in front of the pane with the keyboard.
     pub(super) fn close_active_tab(&mut self) {
         let pane = self.panes.focus();
-        if let Some(file) = self.active_tab() {
-            self.close_file(pane, file);
+        if let Some(item) = self.active_tab() {
+            self.close_item(pane, item);
+        }
+    }
+
+    /// The project `item` belongs to.
+    pub(super) fn project_of(&self, item: Item) -> Option<ProjectId> {
+        match item {
+            Item::File(file) => self.editor.project_of(file),
+            Item::Review(project) | Item::Change(project, _) => Some(project),
         }
     }
 
@@ -138,11 +179,11 @@ impl App {
     /// A file with changes nobody has written down is not something to close
     /// quietly: the reader is asked which of the two things they meant, and
     /// the file stays open until they say.
-    pub(super) fn close_file(&mut self, pane: PaneId, file: FileId) {
-        if self.editor.is_dirty(file) {
+    pub(super) fn close_item(&mut self, pane: PaneId, item: Item) {
+        if let Some(file) = item.file().filter(|file| self.editor.is_dirty(*file)) {
             return self.open_menu(crate::workspace::MenuTarget::Unsaved(pane, file));
         }
-        self.close_tabs(pane, |pane| pane.close(file));
+        self.close_tabs(pane, |pane| pane.close(item));
     }
 
     /// Writes the file down and then closes its tab.
@@ -150,13 +191,13 @@ impl App {
         if let Some(root) = self.worktree_of(file) {
             self.editor.save(file, &root);
         }
-        self.close_tabs(pane, |pane| pane.close(file));
+        self.close_tabs(pane, |pane| pane.close(Item::File(file)));
         self.go_on_closing();
     }
 
     /// Closes the tab, losing whatever was not written down.
     pub(super) fn discard_and_close(&mut self, pane: PaneId, file: FileId) {
-        self.close_tabs(pane, |pane| pane.close(file));
+        self.close_tabs(pane, |pane| pane.close(Item::File(file)));
         self.go_on_closing();
     }
 
@@ -179,6 +220,7 @@ impl App {
         let next = self
             .tabs_of(pane)
             .into_iter()
+            .filter_map(Item::file)
             .find(|file| self.editor.is_dirty(*file));
         match next {
             Some(file) => self.open_menu(crate::workspace::MenuTarget::Unsaved(pane, file)),
@@ -191,20 +233,19 @@ impl App {
     /// Closing a bar of tabs at once leaves behind the ones with changes
     /// nobody has written down: there is no one file to ask about, and
     /// quietly losing the lot is the one answer that cannot be taken back.
-    pub(super) fn close_saved_tabs(&mut self, pane: PaneId, keep: impl Fn(FileId) -> bool) {
-        let dirty = |file: FileId| self.editor.is_dirty(file);
+    pub(super) fn close_saved_tabs(&mut self, pane: PaneId, keep: impl Fn(Item) -> bool) {
         let closing = self
             .tabs_of(pane)
             .into_iter()
-            .filter(|file| !keep(*file) && !dirty(*file))
+            .filter(|item| !keep(*item) && !self.is_dirty(*item))
             .collect::<Vec<_>>();
-        self.close_tabs(pane, |pane| pane.retain(|file| !closing.contains(&file)));
+        self.close_tabs(pane, |pane| pane.retain(|item| !closing.contains(&item)));
     }
 
-    /// The tabs of `pane` on one side of `file`, and `file` itself.
-    pub(super) fn tabs_from(&self, pane: PaneId, file: FileId, right: bool) -> Vec<FileId> {
+    /// The tabs of `pane` on one side of `item`, and `item` itself.
+    pub(super) fn tabs_from(&self, pane: PaneId, item: Item, right: bool) -> Vec<Item> {
         let tabs = self.tabs_of(pane);
-        let Some(index) = tabs.iter().position(|held| *held == file) else {
+        let Some(index) = tabs.iter().position(|held| *held == item) else {
             return tabs;
         };
         match right {
@@ -222,7 +263,7 @@ impl App {
 
     /// Applies `edit` to the tab in front of the pane with the keyboard.
     pub(super) fn edit_active(&mut self, edit: impl FnOnce(&mut pm_text::Buffer)) {
-        if let Some(file) = self.active_tab() {
+        if let Some(file) = self.active_file_id() {
             self.editor.edit(file, edit);
         }
     }
@@ -243,16 +284,17 @@ impl App {
     /// A tab is worth reopening whichever way it was closed — one tab, the
     /// others, everything to the right — so what closed it is not asked; the
     /// difference between what was open and what is open says it.
-    fn remember_closed(&mut self, before: &BTreeSet<FileId>) {
+    fn remember_closed(&mut self, before: &BTreeSet<Item>) {
         let held = self.panes.held();
         let gone = before
             .iter()
-            .filter(|file| !held.contains(file))
-            .filter_map(|file| {
-                let document = self.editor.get(*file)?;
+            .filter(|item| !held.contains(item))
+            .filter_map(|item| {
+                let file = item.file()?;
+                let document = self.editor.get(file)?;
                 let document = document.borrow();
                 Some(crate::app::places::Place {
-                    project: self.editor.project_of(*file)?,
+                    project: self.editor.project_of(file)?,
                     path: document.buffer().path().to_path_buf(),
                     position: document.buffer().selection().head,
                 })
@@ -268,13 +310,30 @@ impl App {
     /// A pane names its files by where they live rather than by the id this
     /// run gave them, which is the only thing the next launch can act on.
     pub(super) fn saved_panes(&self) -> Saved {
-        self.panes.save(&|file| {
-            let project = self.editor.project_of(file)?;
+        self.panes.save(&|item| {
+            let project = self.project_of(item)?;
             let root = self.open.get(project)?.root().to_path_buf();
+            if let Some(change) = item.change() {
+                let path = self.reviews.get(&project)?.path_of(change)?;
+                return Some(SavedTab {
+                    kind: SavedKind::Change,
+                    project: root,
+                    path: path.to_path_buf(),
+                    ..SavedTab::default()
+                });
+            }
+            let Some(file) = item.file() else {
+                return Some(SavedTab {
+                    kind: SavedKind::Review,
+                    project: root,
+                    ..SavedTab::default()
+                });
+            };
             let document = self.editor.get(file)?;
             let document = document.borrow();
             let head = document.buffer().selection().head;
             Some(SavedTab {
+                kind: SavedKind::File,
                 project: root,
                 path: document.buffer().path().to_path_buf(),
                 preview: document.is_preview(),
@@ -298,24 +357,39 @@ impl App {
             .map(|project| (project.root().to_path_buf(), project.id()))
             .collect::<Vec<_>>();
         let editor = &mut self.editor;
+        let reviews = &mut self.reviews;
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
             let (root, project) = roots
                 .iter()
                 .find(|(root, _)| *root == tab.project)
                 .cloned()?;
+            if tab.kind == SavedKind::Review {
+                return Some((project, Item::Review(project)));
+            }
+            if tab.kind == SavedKind::Change {
+                let review = reviews.get_mut(&project)?;
+                let change = review.name(&tab.path);
+                review.keep(change);
+                return Some((project, Item::Change(project, change)));
+            }
             let file = editor.open(project, &root, &tab.path, tab.preview)?;
             if let Some(document) = editor.get(file) {
                 let mut document = document.borrow_mut();
                 document.restore(tab.line, tab.column, tab.scroll);
             }
-            Some((project, file))
+            Some((project, Item::File(file)))
         });
         self.sweep();
     }
 
     /// Closes every file no pane is holding open any more.
     pub(super) fn sweep(&mut self) {
-        let held: BTreeSet<FileId> = self.panes.held();
+        let held = self
+            .panes
+            .held()
+            .into_iter()
+            .filter_map(Item::file)
+            .collect::<BTreeSet<_>>();
         self.editor.retain(&held);
     }
 
@@ -325,9 +399,9 @@ impl App {
             .panes
             .held()
             .into_iter()
-            .filter(|file| self.editor.project_of(*file) == Some(project))
+            .filter(|item| self.project_of(*item) == Some(project))
             .collect::<BTreeSet<_>>();
-        self.panes.retain(|file| !leaving.contains(&file));
+        self.panes.retain(|item| !leaving.contains(&item));
         self.panes.close_empty();
     }
 
@@ -337,13 +411,13 @@ impl App {
     /// selects the tab, which is what makes one gesture out of two: the tab
     /// is picked up by the same press that would have selected it, and only
     /// travel tells the two apart.
-    pub(super) fn drag_tab(&mut self, pane: PaneId, file: FileId, event: ResizeEvent) {
+    pub(super) fn drag_tab(&mut self, pane: PaneId, item: Item, event: ResizeEvent) {
         let travelled = (event.current.x - event.start.x).hypot(event.current.y - event.start.y);
         let order = |pane: PaneId| self.tabs_of(pane);
         let target = self.geometry.target_at(event.current, &order);
         let drag = TabDrag {
             from: pane,
-            file,
+            item,
             at: event.current,
             travelled,
             target,
@@ -373,25 +447,29 @@ impl App {
         if drag.is_carried() {
             self.drop_tab(drag);
         } else {
-            self.select_tab(drag.from, drag.file);
+            self.select_tab(drag.from, drag.item);
         }
     }
 
     /// Shows the tab that was clicked, keeping the file on a second click.
-    pub(super) fn select_tab(&mut self, pane: PaneId, file: FileId) {
-        if self.tab_clicks.press(file) >= 2 {
-            self.editor.keep(file);
+    pub(super) fn select_tab(&mut self, pane: PaneId, item: Item) {
+        if self.tab_clicks.press(item) >= 2 {
+            match item {
+                Item::File(file) => self.editor.keep(file),
+                Item::Change(project, change) => self.keep_change(project, change),
+                Item::Review(_) => {}
+            }
         }
-        self.activate_tab(pane, file);
+        self.activate_tab(pane, item);
     }
 
     /// Pins `pane`'s tab for `file` in every project, or lets it go again.
     ///
     /// A pinned tab is drawn whichever project the window is showing, which
     /// is the one way a file stays in front of every worktree at once.
-    pub(super) fn toggle_pin(&mut self, pane: PaneId, file: FileId) {
+    pub(super) fn toggle_pin(&mut self, pane: PaneId, item: Item) {
         if let Some(pane) = self.panes.pane_mut(pane) {
-            pane.toggle_pin(file);
+            pane.toggle_pin(item);
         }
         self.store();
     }
@@ -401,17 +479,17 @@ impl App {
     /// Leaving one tab for another is a jump like following a definition is,
     /// so the place left behind goes on the trail: going back returns to the
     /// tab that was in front, at the line it was left at.
-    pub(super) fn activate_tab(&mut self, pane: PaneId, file: FileId) {
+    pub(super) fn activate_tab(&mut self, pane: PaneId, item: Item) {
         if self
             .scope()
             .and_then(|scope| self.panes.pane(pane)?.active(scope))
-            != Some(file)
+            != Some(item)
             && let Some(from) = self.place_in(pane)
         {
             self.trail.jumped(from);
         }
         if let Some(pane) = self.panes.pane_mut(pane) {
-            pane.activate(file);
+            pane.activate(item);
         }
         self.focus_pane(pane);
         self.store();
@@ -430,7 +508,7 @@ impl App {
             && let DropPlace::Tab(index) = place
         {
             if let Some(pane) = self.panes.pane_mut(target) {
-                pane.place(scope, drag.file, index);
+                pane.place(scope, drag.item, index);
             }
             self.focus_pane(target);
             return self.store();
@@ -447,7 +525,7 @@ impl App {
         let carried = self
             .panes
             .pane_mut(drag.from)
-            .and_then(|pane| pane.take(drag.file));
+            .and_then(|pane| pane.take(drag.item));
         if let (Some(tab), Some(pane)) = (carried, self.panes.pane_mut(landed)) {
             match index {
                 Some(index) => pane.insert(tab, scope, index),
@@ -460,8 +538,8 @@ impl App {
         self.store();
     }
 
-    /// The files open in `pane`, in the order its tabs are drawn.
-    pub(super) fn tabs_of(&self, pane: PaneId) -> Vec<FileId> {
+    /// What is open in `pane`, in the order its tabs are drawn.
+    pub(super) fn tabs_of(&self, pane: PaneId) -> Vec<Item> {
         let Some(scope) = self.scope() else {
             return Vec::new();
         };
@@ -487,8 +565,58 @@ impl App {
     /// The tab being carried right now, and what it is called.
     pub(super) fn carried_tab(&self) -> Option<(pm_gfx::Point, String)> {
         let drag = self.drag.as_ref().filter(|drag| drag.is_carried())?;
-        let name = self.editor.entry(drag.file)?.name;
-        Some((drag.at, name))
+        Some((drag.at, self.tab_entry(drag.item)?.name))
+    }
+
+    /// One tab of a pane as its bar presents it.
+    ///
+    /// The bar draws the same three marks whatever a tab holds; what it holds
+    /// is only where the name, the icon and the marks are read from.
+    pub(super) fn tab_entry(&self, item: Item) -> Option<TabEntry> {
+        match item {
+            Item::File(file) => {
+                let FileEntry {
+                    name,
+                    dirty,
+                    preview,
+                } = self.editor.entry(file)?;
+                Some(TabEntry {
+                    item,
+                    name,
+                    icon: IconName::File,
+                    dirty,
+                    preview,
+                    pinned: false,
+                })
+            }
+            Item::Review(project) => Some(TabEntry {
+                item,
+                name: match self.open.get(project) {
+                    Some(_) => "Uncommitted Changes".to_owned(),
+                    None => return None,
+                },
+                icon: IconName::GitCompare,
+                dirty: false,
+                preview: false,
+                pinned: false,
+            }),
+            Item::Change(project, change) => {
+                let review = self.reviews.get(&project)?;
+                let path = review.path_of(change)?;
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                Some(TabEntry {
+                    item,
+                    name: format!("{name} (diff)"),
+                    icon: IconName::GitCompare,
+                    dirty: false,
+                    preview: review.is_preview(change),
+                    pinned: false,
+                })
+            }
+        }
     }
 
     /// Builds the tree of panes as the screen draws it.
@@ -502,8 +630,8 @@ impl App {
         let mut cells = Vec::new();
         for pane in self.panes.panes() {
             drawn.push(pane);
-            for file in self.tabs_of(pane) {
-                drawn_tabs.push((pane, file));
+            for item in self.tabs_of(pane) {
+                drawn_tabs.push((pane, item));
             }
         }
         self.geometry.keep(&drawn, &drawn_tabs);
@@ -511,7 +639,7 @@ impl App {
             let tabs = self
                 .tabs_of(*pane)
                 .into_iter()
-                .map(|file| self.geometry.tab(*pane, file))
+                .map(|item| self.geometry.tab(*pane, item))
                 .collect::<Vec<_>>();
             let bar = self.geometry.bar(*pane);
             if tabs.is_empty() {
@@ -520,7 +648,6 @@ impl App {
             cells.push((self.geometry.pane(*pane), bar, tabs));
         }
 
-        let files = &self.editor;
         let scope = self.scope();
         let link = self.link_target();
         let talked_about = self.hovered_name();
@@ -533,58 +660,84 @@ impl App {
                 .map(|(_, cells)| cells.clone())
                 .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
             let active = scope.and_then(|scope| pane.active(scope));
+            let file = active.and_then(Item::file);
             Contents {
                 tabs: scope
                     .map(|scope| pane.tabs(scope))
                     .unwrap_or_default()
                     .into_iter()
-                    .filter_map(|file| {
-                        let mut entry = files.entry(file)?;
-                        entry.pinned = pane.is_pinned(file);
+                    .filter_map(|item| {
+                        let mut entry = self.tab_entry(item)?;
+                        entry.pinned = pane.is_pinned(item);
                         Some(entry)
                     })
                     .collect(),
                 active,
-                file: active.and_then(|file| files.get(file)),
+                content: self.shown(theme, active),
                 bounds,
                 bar,
                 tab_bounds,
                 link: link
                     .clone()
-                    .filter(|(file, _)| active == Some(*file))
+                    .filter(|(open, _)| file == Some(*open))
                     .map(|(_, span)| span),
                 hovered: talked_about
                     .clone()
-                    .filter(|(file, _)| active == Some(*file))
+                    .filter(|(open, _)| file == Some(*open))
                     .map(|(_, span)| span),
                 caret,
             }
         })
     }
 
+    /// What a pane showing `item` draws beneath its bar of tabs.
+    fn shown(&self, theme: &Theme, item: Option<Item>) -> Content {
+        match item {
+            Some(Item::File(file)) => match self.editor.get(file) {
+                Some(document) => Content::File(document),
+                None => Content::Empty,
+            },
+            Some(Item::Review(project)) => match self.reviews.get(&project) {
+                Some(review) => Content::Built(Box::new(crate::review::review_pane(
+                    theme,
+                    review,
+                    self.commit_focused,
+                ))),
+                None => Content::Empty,
+            },
+            Some(Item::Change(project, change)) => match self.reviews.get(&project) {
+                Some(review) => {
+                    Content::Built(Box::new(crate::review::change_pane(theme, review, change)))
+                }
+                None => Content::Empty,
+            },
+            None => Content::Empty,
+        }
+    }
+
     /// The menu open over the panes, and what it holds.
     pub(super) fn menu_items(&self) -> Option<(TabMenu, Vec<MenuItem<Message>>)> {
         let open = self.menu?;
         let items = match open.target {
-            MenuTarget::File(pane, file) => {
+            MenuTarget::Tab(pane, item) => {
                 let tabs = self
                     .tabs_of(pane)
                     .into_iter()
-                    .filter_map(|file| self.editor.entry(file))
+                    .filter_map(|item| self.tab_entry(item))
                     .collect::<Vec<_>>();
                 let pane = self.panes.pane(pane)?;
                 let tabs = tabs
                     .into_iter()
                     .map(|mut entry| {
-                        entry.pinned = pane.is_pinned(entry.id);
+                        entry.pinned = pane.is_pinned(entry.item);
                         entry
                     })
                     .collect::<Vec<_>>();
-                panes::file_menu(pane, &tabs, file)
+                panes::tab_menu(pane, &tabs, item)
             }
             MenuTarget::Pane(pane) => panes::pane_menu(pane, self.panes.is_split()),
             MenuTarget::Text(pane) => {
-                let file = self.panes.pane(pane)?.active(self.scope()?)?;
+                let file = self.panes.pane(pane)?.active(self.scope()?)?.file()?;
                 let document = self.editor.get(file)?;
                 let document = document.borrow();
                 crate::editor::text_menu(&crate::editor::TextMenu {
@@ -595,6 +748,17 @@ impl App {
                     tracked: document.is_tracked(),
                 })
             }
+            MenuTarget::Change => crate::review::change_menu(self.review()?),
+            MenuTarget::Remote => vec![
+                pm_ui::menu_entry("Fetch", Some(Message::Fetch)),
+                pm_ui::menu_entry("Fetch From", Some(Message::ChooseFetchRemote)),
+                pm_ui::menu_entry("Pull", Some(Message::Pull)),
+                pm_ui::menu_entry("Pull (Rebase)", Some(Message::PullRebase)),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Push", Some(Message::PushBranch)),
+                pm_ui::menu_entry("Push To", Some(Message::ChoosePushRemote)),
+                pm_ui::menu_entry("Force Push", Some(Message::ForcePush)),
+            ],
             MenuTarget::Unsaved(pane, file) => {
                 let name = self.editor.entry(file)?.name;
                 panes::unsaved_menu(pane, file, &name)

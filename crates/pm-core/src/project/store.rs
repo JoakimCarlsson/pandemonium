@@ -90,6 +90,13 @@ impl Projects {
         self.open.iter().find(|project| project.id() == id)
     }
 
+    /// Reads the checked-out branch of project `id` again.
+    pub fn refresh(&mut self, id: ProjectId) {
+        if let Some(project) = self.open.iter_mut().find(|project| project.id() == id) {
+            project.refresh();
+        }
+    }
+
     /// The open projects, in the order they were opened.
     pub fn iter(&self) -> impl Iterator<Item = &Project> {
         self.open.iter()

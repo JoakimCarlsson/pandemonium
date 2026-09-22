@@ -51,6 +51,19 @@ impl Default for SavedNode {
     }
 }
 
+/// Which kind of thing a written-down tab held.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedKind {
+    /// A file of the worktree.
+    #[default]
+    File,
+    /// The worktree's changes, gathered for review.
+    Review,
+    /// The diff of one file of the worktree.
+    Change,
+}
+
 /// The axis of a division, named as the file names it.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,13 +94,18 @@ impl From<SavedAxis> for Axis {
     }
 }
 
-/// One open file as it is written down: where it lives, and where it was left.
+/// What one tab held, in the shape it is written down in.
+///
+/// A tab is named by where what it held lives rather than by the id this run
+/// gave it, because an id means nothing to the next launch.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SavedTab {
-    /// The worktree the file was opened from.
+    /// Which kind of thing it held.
+    pub kind: SavedKind,
+    /// The worktree it was opened from.
     pub project: PathBuf,
-    /// The file itself.
+    /// The file itself, for a tab that held one.
     pub path: PathBuf,
     /// Whether it was only being previewed.
     pub preview: bool,

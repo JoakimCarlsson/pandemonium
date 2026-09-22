@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 use pm_core::ProjectId;
 use pm_text::Position;
 
-use crate::app::App;
 use crate::app::places::Place;
+use crate::app::{App, RemoteOperation, Wake};
 use crate::keymap::Action;
+use crate::panes::Item;
 use crate::picker::{Choice, Kind, Picker, Row};
 
 /// Most results a project-wide search gathers before it stops looking.
@@ -24,6 +25,9 @@ const CONTEXT: usize = 120;
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
     pub(super) fn open_picker(&mut self, kind: Kind) {
+        if !matches!(kind, Kind::Branches | Kind::NewBranch) {
+            self.branch_picker_at = None;
+        }
         let seeded = match kind {
             Kind::Search => self
                 .with_buffer(pm_text::Buffer::selected_text)
@@ -62,6 +66,7 @@ impl App {
     /// Puts the picker away, saying whether one was open.
     pub(super) fn dismiss_picker(&mut self) -> bool {
         self.path_target = None;
+        self.branch_picker_at = None;
         self.picker.take().is_some()
     }
 
@@ -91,11 +96,12 @@ impl App {
 
         self.picker = None;
         match (kind, chosen) {
+            (Kind::Branches, _) if !typed.trim().is_empty() => self.create_branch(typed.trim()),
             (Kind::Line, _) => self.go_to_typed_line(&typed),
             (Kind::Rename, _) => self.rename_to(typed),
             (Kind::NewFile | Kind::NewFolder, _) => self.make_path(kind, &typed),
             (Kind::RenamePath, _) => self.rename_path(&typed),
-            (Kind::ConfirmDelete, _) => self.delete_path(),
+            (Kind::NewBranch, _) => self.create_branch(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
         }
@@ -131,6 +137,17 @@ impl App {
                 self.open.activate(project);
                 self.store();
             }
+            Choice::Branch(project, branch) => self.switch_branch(project, &branch),
+            Choice::FetchRemote(project, remote) => {
+                self.run_for_project(project, RemoteOperation::Fetch, move |root| {
+                    pm_core::fetch_from(root, &remote)
+                });
+            }
+            Choice::PushRemote(project, remote) => {
+                self.run_for_project(project, RemoteOperation::Push, move |root| {
+                    pm_core::push_to(root, &remote)
+                });
+            }
         }
     }
 
@@ -165,6 +182,9 @@ impl App {
             Kind::Commands => self.command_rows(),
             Kind::Files => self.file_rows(),
             Kind::Projects => self.project_rows(),
+            Kind::Branches => self.branch_rows(),
+            Kind::FetchRemotes => self.remote_rows(true),
+            Kind::PushRemotes => self.remote_rows(false),
             Kind::Problems => self.problem_rows(),
             Kind::References => Vec::new(),
             Kind::Search => self.search_rows(query),
@@ -174,7 +194,7 @@ impl App {
             | Kind::NewFile
             | Kind::NewFolder
             | Kind::RenamePath
-            | Kind::ConfirmDelete => Vec::new(),
+            | Kind::NewBranch => Vec::new(),
         }
     }
 
@@ -185,6 +205,7 @@ impl App {
 
         Action::all()
             .map(|action| Row {
+                section: None,
                 label: action.title().to_owned(),
                 detail: self
                     .resolver
@@ -210,6 +231,7 @@ impl App {
                         .map(|name| name.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     Row {
+                        section: None,
                         label: name,
                         detail: relative(&root, &path),
                         choice: Choice::Open(id, path),
@@ -225,12 +247,172 @@ impl App {
         self.open
             .iter()
             .map(|project| Row {
+                section: None,
                 label: project.name().to_owned(),
                 detail: project.branch().to_owned(),
                 choice: Choice::Project(project.id()),
                 enabled: true,
             })
             .collect()
+    }
+
+    /// Every local branch of the active project, current branch first.
+    fn branch_rows(&self) -> Vec<Row> {
+        let Some(project) = self.open.active() else {
+            return Vec::new();
+        };
+        let id = project.id();
+        pm_core::branches(project.root())
+            .into_iter()
+            .map(|branch| {
+                let remote = branch.is_remote();
+                let current = branch.is_current();
+                Row {
+                    section: Some(if remote {
+                        "Remote Branches"
+                    } else {
+                        "Local Branches"
+                    }),
+                    label: match current {
+                        true => format!("✓  {}", branch.name()),
+                        false => branch.name().to_owned(),
+                    },
+                    detail: branch.detail().to_owned(),
+                    choice: Choice::Branch(id, branch.name().to_owned()),
+                    enabled: !current,
+                }
+            })
+            .collect()
+    }
+
+    /// Every configured remote of the active project for fetching or pushing.
+    fn remote_rows(&self, fetching: bool) -> Vec<Row> {
+        let Some(project) = self.open.active() else {
+            return Vec::new();
+        };
+        let id = project.id();
+        pm_core::remotes(project.root())
+            .into_iter()
+            .map(|remote| Row {
+                section: None,
+                label: remote.clone(),
+                detail: String::new(),
+                choice: if fetching {
+                    Choice::FetchRemote(id, remote)
+                } else {
+                    Choice::PushRemote(id, remote)
+                },
+                enabled: true,
+            })
+            .collect()
+    }
+
+    /// Checks out `branch` in `project` through the window's branch seam.
+    fn switch_branch(&mut self, project: ProjectId, branch: &str) {
+        self.change_branch(project, |root| pm_core::switch_branch(root, branch));
+    }
+
+    /// Creates and checks out `name` in the active project.
+    pub(super) fn create_branch(&mut self, name: &str) {
+        let Some(project) = self.open.active().map(pm_core::Project::id) else {
+            return;
+        };
+        self.change_branch(project, |root| pm_core::create_branch(root, name));
+    }
+
+    /// Runs one branch-changing operation and refreshes every view of its project.
+    fn change_branch(&mut self, project: ProjectId, change: impl FnOnce(&Path) -> pm_core::Said) {
+        let Some(root) = self
+            .open
+            .get(project)
+            .map(|project| project.root().to_path_buf())
+        else {
+            return;
+        };
+        let said = if self.editor.project_is_dirty(project) {
+            Err("save or discard open editor changes before changing branch".to_owned())
+        } else {
+            change(&root)
+        };
+        let changed = said.is_ok();
+        if let Some(review) = self.reviews.get_mut(&project) {
+            review.report(said);
+        }
+        if !changed {
+            self.secondary_sidebar_view = crate::workspace::SidebarView::Changes;
+            self.secondary_sidebar_open = true;
+            return;
+        }
+
+        self.open.refresh(project);
+        self.editor.reload_project(project, &root);
+        if let Some(tree) = self.files.get_mut(&project) {
+            tree.reload();
+        }
+        self.reread_changes();
+        self.store();
+    }
+
+    /// Pushes the active branch, establishing its upstream when necessary.
+    pub(super) fn push_branch(&mut self) {
+        let Some(project) = self.open.active() else {
+            return;
+        };
+        let id = project.id();
+        let upstream = self
+            .reviews
+            .get(&id)
+            .and_then(|review| review.head().upstream.as_ref())
+            .is_some();
+        self.remote_operation(RemoteOperation::Push, move |root| {
+            pm_core::push_branch(root, upstream)
+        });
+    }
+
+    /// Runs a remote Git operation away from the UI thread and wakes on completion.
+    pub(super) fn remote_operation(
+        &mut self,
+        kind: RemoteOperation,
+        operation: impl FnOnce(&Path) -> pm_core::Said + Send + 'static,
+    ) {
+        if self.remote_operation.is_some() {
+            return;
+        }
+        let Some(project) = self.open.active() else {
+            return;
+        };
+        self.run_for_project(project.id(), kind, operation);
+    }
+
+    /// Runs a remote Git operation for one explicitly named project.
+    fn run_for_project(
+        &mut self,
+        project: ProjectId,
+        kind: RemoteOperation,
+        operation: impl FnOnce(&Path) -> pm_core::Said + Send + 'static,
+    ) {
+        if self.remote_operation.is_some() {
+            return;
+        }
+        let Some(root) = self
+            .open
+            .get(project)
+            .map(|project| project.root().to_path_buf())
+        else {
+            return;
+        };
+        let results = self.git_results.clone();
+        let wake = self.waker(Wake::Git);
+        self.remote_operation = Some(kind);
+        self.remote_phase = 0;
+        self.remote_tick = std::time::Instant::now();
+        std::thread::spawn(move || {
+            let said = operation(&root);
+            if let Ok(mut results) = results.lock() {
+                results.push((project, said));
+            }
+            wake();
+        });
     }
 
     /// Every error and warning a server has reported in an open file.
@@ -243,6 +425,7 @@ impl App {
             let document = document.borrow();
             for found in document.buffer().diagnostics() {
                 rows.push(Row {
+                    section: None,
                     label: found.message.lines().next().unwrap_or_default().to_owned(),
                     detail: format!(
                         "{}:{}",
@@ -279,6 +462,7 @@ impl App {
                         continue;
                     };
                     rows.push(Row {
+                        section: None,
                         label: content.trim().chars().take(CONTEXT).collect(),
                         detail: format!("{}:{}", relative(&root, &path), line + 1),
                         choice: Choice::OpenAt(id, path.clone(), Position::new(line, column)),
@@ -298,6 +482,7 @@ impl App {
         self.panes
             .held()
             .into_iter()
+            .filter_map(Item::file)
             .filter_map(|file| Some((self.editor.project_of(file)?, self.editor.path(file)?, file)))
             .collect()
     }

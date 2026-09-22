@@ -69,11 +69,16 @@ impl Buffer {
         Ok(Self::of(path, text))
     }
 
-    /// A buffer holding `text`, as though it had been read from `path`.
+    /// A buffer holding `text`, called `path` though nothing is there.
     ///
     /// This is how a view onto something that is not a file on disk — a
-    /// diff, a blame, a scratch buffer — gets the same editor the working
+    /// commit message, a scratch buffer — gets the same editor the working
     /// copy has, without a second kind of document behind it.
+    pub fn holding(path: impl Into<PathBuf>, text: &str) -> Self {
+        Self::of(path.into(), Rope::from_str(text))
+    }
+
+    /// A buffer holding `text`, as though it had been read from `path`.
     pub fn of(path: PathBuf, text: Rope) -> Self {
         let language = Language::of(&path);
         let mut syntax = language.and_then(Syntax::new);

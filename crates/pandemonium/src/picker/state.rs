@@ -27,6 +27,12 @@ pub enum Kind {
     Files,
     /// The projects the window holds open.
     Projects,
+    /// The local branches of the active project.
+    Branches,
+    /// A remote to fetch from.
+    FetchRemotes,
+    /// A remote to push to.
+    PushRemotes,
     /// The symbols of the file the focused pane is showing.
     Symbols,
     /// The errors and warnings of every open file.
@@ -45,8 +51,8 @@ pub enum Kind {
     NewFolder,
     /// A new name for a file or directory of the tree.
     RenamePath,
-    /// Whether a file or directory should be taken off the disk.
-    ConfirmDelete,
+    /// The name of a local branch to create and check out.
+    NewBranch,
 }
 
 impl Kind {
@@ -56,6 +62,9 @@ impl Kind {
             Self::Commands => "Run a command",
             Self::Files => "Open a file by name",
             Self::Projects => "Go to a project",
+            Self::Branches => "Switch or type to create a branch…",
+            Self::FetchRemotes => "Pick which remote to fetch",
+            Self::PushRemotes => "Pick which remote to push to",
             Self::Symbols => "Go to a symbol",
             Self::Problems => "Go to a problem",
             Self::References => "Go to a use of this symbol",
@@ -65,7 +74,7 @@ impl Kind {
             Self::NewFile => "Name of the new file",
             Self::NewFolder => "Name of the new directory",
             Self::RenamePath => "New name",
-            Self::ConfirmDelete => "Press Enter to delete",
+            Self::NewBranch => "Name of the new branch",
         }
     }
 
@@ -78,7 +87,7 @@ impl Kind {
                 | Self::NewFile
                 | Self::NewFolder
                 | Self::RenamePath
-                | Self::ConfirmDelete
+                | Self::NewBranch
         )
     }
 
@@ -102,11 +111,19 @@ pub enum Choice {
     OpenAt(ProjectId, PathBuf, Position),
     /// Make this the project the window's files and commands apply to.
     Project(ProjectId),
+    /// Check out this local branch of this project.
+    Branch(ProjectId, String),
+    /// Fetch this project's named remote.
+    FetchRemote(ProjectId, String),
+    /// Push this project to the named remote.
+    PushRemote(ProjectId, String),
 }
 
 /// One thing the picker is offering.
 #[derive(Clone, Debug)]
 pub struct Row {
+    /// The group this row belongs to, when a picker separates its choices.
+    pub section: Option<&'static str>,
     /// What the row is called, and what the query is matched against.
     pub label: String,
     /// What is said beside it: a path, a keybinding, a line of context.
@@ -174,6 +191,16 @@ impl Picker {
             .iter()
             .enumerate()
             .map(|(place, index)| (place, &self.rows[*index]))
+    }
+
+    /// How many rows the current query leaves.
+    pub fn shown_count(&self) -> usize {
+        self.matched.len()
+    }
+
+    /// Every row offered before the query narrows them.
+    pub fn rows(&self) -> impl Iterator<Item = &Row> {
+        self.rows.iter()
     }
 
     /// Which of the shown rows is selected.

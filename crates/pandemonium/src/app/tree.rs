@@ -11,26 +11,11 @@ use pm_core::{EntryId, ProjectId};
 
 use crate::app::App;
 use crate::desktop;
+use crate::message::Message;
 use crate::picker::Kind;
+use crate::prompt::{Answer, Prompt};
 
 impl App {
-    /// Reads again what git makes of every open project's worktree.
-    ///
-    /// The whole worktree is asked about at once because that is what git
-    /// answers in one go: asking per file would be a subprocess per row of
-    /// the tree.
-    pub(super) fn reread_status(&mut self) {
-        let roots = self
-            .open
-            .iter()
-            .map(|project| (project.id(), project.root().to_path_buf()))
-            .collect::<Vec<_>>();
-        self.statuses = roots
-            .into_iter()
-            .map(|(id, root)| (id, pm_core::status(&root)))
-            .collect();
-    }
-
     /// Reads the active project's worktree again, and what git makes of it.
     pub(super) fn reread_worktree(&mut self) {
         if let Some(project) = self.open.active().map(pm_core::Project::id)
@@ -38,7 +23,7 @@ impl App {
         {
             tree.reload();
         }
-        self.reread_status();
+        self.reread_changes();
     }
 
     /// Opens the menu of what can be done to the tree entry `id` names.
@@ -73,15 +58,27 @@ impl App {
 
     /// Asks whether the tree entry `id` names should come off the disk.
     pub(super) fn prompt_for_delete(&mut self, id: EntryId) {
-        let Some((path, _)) = self.entry_path(id) else {
+        let Some((path, directory)) = self.entry_path(id) else {
             return;
         };
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let asked = match directory {
+            true => "Are you sure you want to permanently delete this directory?",
+            false => "Are you sure you want to permanently delete this file?",
+        };
+
         self.path_target = Some(path);
-        self.open_picker_with(Kind::ConfirmDelete, Vec::new(), name);
+        self.ask_first(Prompt::asking(
+            asked,
+            vec![name],
+            vec![
+                Answer::new("Delete", Message::ConfirmDelete),
+                Answer::cancel(),
+            ],
+        ));
     }
 
     /// Makes what a path prompt was asking for, and opens it if it is a file.
@@ -154,16 +151,16 @@ impl App {
             .panes
             .held()
             .into_iter()
-            .filter(|file| {
-                self.editor
-                    .path(*file)
+            .filter(|item| {
+                item.file()
+                    .and_then(|file| self.editor.path(file))
                     .is_some_and(|open| open.starts_with(path))
             })
             .collect::<Vec<_>>();
         if gone.is_empty() {
             return;
         }
-        self.panes.retain(|file| !gone.contains(&file));
+        self.panes.retain(|item| !gone.contains(&item));
         self.panes.close_empty();
         self.sweep();
         self.store();

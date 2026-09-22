@@ -15,6 +15,8 @@ mod message;
 mod onboarding;
 mod panes;
 mod picker;
+mod prompt;
+mod review;
 mod terminal;
 mod tree;
 mod workspace;

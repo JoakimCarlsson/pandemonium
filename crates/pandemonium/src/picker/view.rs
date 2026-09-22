@@ -13,6 +13,9 @@ use crate::picker::state::{Kind, Picker};
 /// How wide the panel is drawn.
 const WIDTH: f32 = 620.0;
 
+/// Width of the branch popover attached to the status bar.
+const BRANCH_WIDTH: f32 = 360.0;
+
 /// How far from the top of the window it hangs.
 pub const TOP: f32 = 96.0;
 
@@ -22,12 +25,79 @@ const ROW_HEIGHT: f32 = 30.0;
 /// Most rows drawn at once, however many the query leaves.
 const VISIBLE: usize = 14;
 
+/// Most branch rows drawn in the compact status-bar popover.
+const BRANCH_VISIBLE: usize = 9;
+
+/// Approximate height of the picker's input and border.
+const FIELD_HEIGHT: f32 = 49.0;
+
+/// Approximate height of the explanatory line under a prompt.
+const HINT_HEIGHT: f32 = 32.0;
+
+/// Width of a picker, with branch workflows using their compact popover size.
+pub fn width(kind: Kind) -> f32 {
+    match kind {
+        Kind::Branches | Kind::NewBranch => BRANCH_WIDTH,
+        _ => WIDTH,
+    }
+}
+
+/// Height occupied by the visible portion of `picker`.
+pub fn height(picker: &Picker) -> f32 {
+    if picker.kind() == Kind::Branches {
+        let shown = picker.shown().take(BRANCH_VISIBLE).collect::<Vec<_>>();
+        let sections = shown
+            .iter()
+            .filter_map(|(_, row)| row.section)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        let creating = usize::from(!picker.field().value().trim().is_empty());
+        return FIELD_HEIGHT
+            + shown.len().max(1) as f32 * 46.0
+            + sections as f32 * 28.0
+            + creating as f32 * 54.0;
+    }
+    if picker.kind().is_prompt() {
+        return FIELD_HEIGHT + HINT_HEIGHT;
+    }
+    let visible = visible_rows(picker.kind());
+    FIELD_HEIGHT + picker.shown_count().min(visible).max(1) as f32 * ROW_HEIGHT
+}
+
+/// How many rows this kind of picker shows at once.
+fn visible_rows(kind: Kind) -> usize {
+    match kind {
+        Kind::Branches => BRANCH_VISIBLE,
+        _ => VISIBLE,
+    }
+}
+
 /// Builds the panel for `picker`, over whatever the window is showing.
 pub fn picker(theme: &Theme, picker: &Picker) -> Div<Message> {
     let prompt = picker.kind().is_prompt();
 
+    if picker.kind() == Kind::Branches {
+        return v_flex()
+            .w_px(width(picker.kind()))
+            .items_stretch()
+            .overflow_hidden()
+            .bg(theme.colors.surface)
+            .border_1(theme.colors.border)
+            .rounded(theme.radius.lg)
+            .child(rows(theme, picker))
+            .child(rule(theme))
+            .child(
+                field(picker.field().value(), picker.field().caret(), true)
+                    .placeholder(picker.kind().placeholder())
+                    .w_full()
+                    .px(2)
+                    .py(1.5)
+                    .on_press(Message::PlacePicker),
+            );
+    }
+
     v_flex()
-        .w_px(WIDTH)
+        .w_px(width(picker.kind()))
         .items_stretch()
         .overflow_hidden()
         .bg(theme.colors.surface)
@@ -49,11 +119,15 @@ pub fn picker(theme: &Theme, picker: &Picker) -> Div<Message> {
 
 /// Builds the list of what the query leaves.
 fn rows(theme: &Theme, picker: &Picker) -> Div<Message> {
-    let first = picker.selected().saturating_sub(VISIBLE - 1);
+    if picker.kind() == Kind::Branches {
+        return branch_rows(theme, picker);
+    }
+    let visible = visible_rows(picker.kind());
+    let first = picker.selected().saturating_sub(visible - 1);
     let shown = picker
         .shown()
         .skip(first)
-        .take(VISIBLE)
+        .take(visible)
         .map(|(place, row)| self::row(theme, place, row, place == picker.selected()))
         .collect::<Vec<_>>();
     let empty = shown.is_empty();
@@ -73,6 +147,83 @@ fn rows(theme: &Theme, picker: &Picker) -> Div<Message> {
             )
         })
         .children(shown)
+}
+
+/// Builds grouped local and remote branches, plus the branch being typed.
+fn branch_rows(theme: &Theme, picker: &Picker) -> Div<Message> {
+    let query = picker.field().value().trim();
+    let base = picker
+        .rows()
+        .find_map(|row| row.label.strip_prefix("✓  "))
+        .unwrap_or("current branch");
+    let mut previous = None;
+    let mut built = Vec::new();
+
+    if !query.is_empty() {
+        built.push(
+            v_flex()
+                .w_full()
+                .px(1)
+                .py(0.5)
+                .rounded(theme.radius.md)
+                .bg(theme.colors.surface_selected)
+                .hover_bg(theme.colors.surface_hover)
+                .on_click(Message::CreateTypedBranch)
+                .child(text(format!("＋  Create Branch: \"{query}\"…")).text_sm())
+                .child(
+                    text(format!("Based off {base}"))
+                        .text_xs()
+                        .font_light()
+                        .color(theme.colors.text_subtle)
+                        .pl(3),
+                ),
+        );
+    }
+
+    for (place, row) in picker.shown().take(BRANCH_VISIBLE) {
+        if row.section != previous {
+            previous = row.section;
+            if let Some(section) = row.section {
+                built.push(
+                    h_flex().w_full().px(1.5).pt(1).pb(0.5).child(
+                        text(section)
+                            .text_xs()
+                            .font_light()
+                            .color(theme.colors.text_subtle),
+                    ),
+                );
+            }
+        }
+        let color = if row.enabled {
+            theme.colors.text
+        } else {
+            theme.colors.text_subtle
+        };
+        built.push(
+            v_flex()
+                .w_full()
+                .px(1.5)
+                .py(0.5)
+                .overflow_hidden()
+                .when(place == picker.selected() && query.is_empty(), |line| {
+                    line.bg(theme.colors.surface_selected)
+                })
+                .hover_bg(theme.colors.surface_hover)
+                .on_click(Message::ChoosePicker(place))
+                .child(text(row.label.clone()).text_sm().color(color))
+                .when(!row.detail.is_empty(), |line| {
+                    line.child(
+                        text(row.detail.clone())
+                            .text_xs()
+                            .font_light()
+                            .color(theme.colors.text_subtle)
+                            .pl(3),
+                    )
+                }),
+        );
+    }
+
+    v_flex().w_full().py(0.5).items_stretch().children(built)
 }
 
 /// Builds one row of the list, lit while it is the selected one.

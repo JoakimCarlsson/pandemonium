@@ -171,6 +171,28 @@ pub enum Action {
     PreviousChange,
     /// Put the change under the cursor back the way the index has it.
     RevertChange,
+    /// Show what the active project has changed, in the sidebar.
+    ShowChanges,
+    /// Open those changes for review, in a pane.
+    OpenReview,
+    /// Put what the list of changes is acting on into the index.
+    StageSelectedChanges,
+    /// Take what it is acting on back out of the index.
+    UnstageSelectedChanges,
+    /// Throw away what it is acting on, having asked first.
+    DiscardSelectedChanges,
+    /// Put everything that has changed into the index.
+    StageAllChanges,
+    /// Take everything back out of the index.
+    UnstageAllChanges,
+    /// Commit what the index holds, saying what the message field holds.
+    CommitChanges,
+    /// Ask git again what it makes of the open worktrees.
+    RefreshChanges,
+    /// Choose a local branch to check out in the active project.
+    SwitchBranch,
+    /// Create and check out a local branch in the active project.
+    CreateBranch,
     /// Draw the editor's text one step larger.
     ZoomIn,
     /// Draw the editor's text one step smaller.
@@ -351,6 +373,41 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "Previous Change",
     ),
     (Action::RevertChange, "git.revert_change", "Revert Change"),
+    (Action::ShowChanges, "git.changes", "Show Source Control"),
+    (Action::OpenReview, "git.review", "Review Changes"),
+    (Action::StageSelectedChanges, "git.stage", "Stage Changes"),
+    (
+        Action::UnstageSelectedChanges,
+        "git.unstage",
+        "Unstage Changes",
+    ),
+    (
+        Action::DiscardSelectedChanges,
+        "git.discard",
+        "Discard Changes",
+    ),
+    (
+        Action::StageAllChanges,
+        "git.stage_all",
+        "Stage All Changes",
+    ),
+    (
+        Action::UnstageAllChanges,
+        "git.unstage_all",
+        "Unstage All Changes",
+    ),
+    (Action::CommitChanges, "git.commit", "Commit"),
+    (Action::RefreshChanges, "git.refresh", "Refresh Changes"),
+    (
+        Action::SwitchBranch,
+        "git.switch_branch",
+        "Git: Switch Branch",
+    ),
+    (
+        Action::CreateBranch,
+        "git.create_branch",
+        "Git: Create Branch",
+    ),
     (Action::ZoomIn, "view.zoom_in", "Zoom In"),
     (Action::ZoomOut, "view.zoom_out", "Zoom Out"),
     (Action::ZoomReset, "view.zoom_reset", "Reset Zoom"),

@@ -33,6 +33,8 @@ impl App {
             Action::ShowProjects => self.open_picker(Kind::Projects),
             Action::SearchProject => self.open_picker(Kind::Search),
             Action::ShowProblems => self.open_picker(Kind::Problems),
+            Action::SwitchBranch => self.open_picker(Kind::Branches),
+            Action::CreateBranch => self.open_picker(Kind::NewBranch),
             Action::OpenSettings => return self.apply(Message::Reopen),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::RemoveProject => {
@@ -65,6 +67,19 @@ impl App {
                 self.terminal_focused = true;
                 self.editor_focused = false;
             }
+            Action::ShowChanges => {
+                return self.apply(Message::SetSidebarView(
+                    crate::workspace::SidebarView::Changes,
+                ));
+            }
+            Action::OpenReview => return self.apply(Message::OpenReview),
+            Action::StageSelectedChanges => return self.apply(Message::StageSelection),
+            Action::UnstageSelectedChanges => return self.apply(Message::UnstageSelection),
+            Action::DiscardSelectedChanges => return self.apply(Message::DiscardSelection),
+            Action::StageAllChanges => return self.apply(Message::StageAll),
+            Action::UnstageAllChanges => return self.apply(Message::UnstageAll),
+            Action::CommitChanges => return self.apply(Message::Commit),
+            Action::RefreshChanges => return self.apply(Message::RefreshChanges),
             Action::Cancel => self.cancel(),
             Action::ZoomIn => self.zoom_by(ZOOM_STEP),
             Action::ZoomOut => self.zoom_by(-ZOOM_STEP),
@@ -194,14 +209,14 @@ impl App {
 
     /// Writes the file the focused pane is showing to disk.
     pub(super) fn save_active(&mut self) {
-        let Some(file) = self.active_tab() else {
+        let Some(file) = self.active_file_id() else {
             return;
         };
         let Some(root) = self.worktree_of(file) else {
             return;
         };
         self.editor.save(file, &root);
-        self.reread_status();
+        self.reread_changes();
     }
 
     /// Writes every changed file to disk, each into its own worktree.
@@ -217,7 +232,7 @@ impl App {
                 .find(|(id, _)| *id == project)
                 .map(|(_, root)| root.clone())
         });
-        self.reread_status();
+        self.reread_changes();
     }
 
     /// The worktree the file `id` names was opened from.
@@ -237,7 +252,19 @@ impl App {
 
     /// Dismisses whatever is open on top, innermost first.
     fn cancel(&mut self) {
+        if self.dismiss_prompt() {
+            return;
+        }
         if self.dismiss_menu() {
+            return;
+        }
+        if self.changes_focused {
+            if !self.clear_change_marks() {
+                self.changes_focused = false;
+            }
+            return;
+        }
+        if self.release_commit_focus() {
             return;
         }
         if self.with_buffer(Buffer::has_many_cursors) == Some(true) {
@@ -369,7 +396,7 @@ impl App {
     /// file's history: it is asked on a thread of its own and the column
     /// fills in when the answer comes back.
     fn toggle_blame(&mut self) {
-        let Some(file) = self.active_tab() else {
+        let Some(file) = self.active_file_id() else {
             return;
         };
         let Some(document) = self.editor.get(file) else {
@@ -496,7 +523,7 @@ impl App {
 
     /// Where the cursor is in `pane`, as a place the trail can return to.
     pub(super) fn place_in(&self, pane: PaneId) -> Option<Place> {
-        let file = self.panes.pane(pane)?.active(self.scope()?)?;
+        let file = self.panes.pane(pane)?.active(self.scope()?)?.file()?;
         let document = self.editor.get(file)?;
         let document = document.borrow();
         Some(Place {

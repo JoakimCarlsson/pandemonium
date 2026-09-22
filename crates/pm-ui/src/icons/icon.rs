@@ -25,24 +25,46 @@ macro_rules! include_icon {
 /// One piece of artwork, at whatever size it is asked for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IconName {
+    /// Zed's loading circle, at one eighth-turn of its animation.
+    LoadCircle,
     /// A directory that is not showing what it holds.
     ChevronRight,
     /// A directory that is showing what it holds.
     ChevronDown,
+    /// The way back up through what a pane is showing.
+    ChevronUp,
+    /// The way down to what follows.
+    ArrowDown,
+    /// Go to what the control is beside.
+    ArrowRight,
+    /// The way up to what came before.
+    ArrowUp,
+    /// All of what the control is on.
+    Check,
     /// Close what the control is on.
     Close,
     /// A file.
     File,
     /// The branch a worktree is on.
     GitBranch,
+    /// A commit.
+    GitCommit,
+    /// One side of a change against the other.
+    GitCompare,
     /// A worktree branched off another.
     GitFork,
     /// A directory.
     Folder,
     /// A directory that is open.
     FolderOpen,
+    /// Take away one of whatever the control is beside.
+    Minus,
     /// Add another of whatever the control is beside.
     Plus,
+    /// Read again whatever the control is beside.
+    Refresh,
+    /// Put back the way it was whatever the control is beside.
+    Undo,
     /// Keep what the control is on where it is.
     Pin,
     /// The same pin, filled, for what is being kept already.
@@ -59,15 +81,26 @@ impl IconName {
     /// The artwork this icon is drawn from.
     pub fn svg(self) -> Svg {
         match self {
+            Self::LoadCircle => Svg::new("load_circle", include_icon!("load_circle")),
             Self::ChevronRight => Svg::new("chevron_right", include_icon!("chevron_right")),
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),
+            Self::ChevronUp => Svg::new("chevron_up", include_icon!("chevron_up")),
+            Self::ArrowDown => Svg::new("arrow_down", include_icon!("arrow_down")),
+            Self::ArrowRight => Svg::new("arrow_right", include_icon!("arrow_right")),
+            Self::ArrowUp => Svg::new("arrow_up", include_icon!("arrow_up")),
+            Self::Check => Svg::new("check", include_icon!("check")),
             Self::Close => Svg::new("close", include_icon!("close")),
             Self::File => Svg::new("file", include_icon!("file")),
             Self::GitBranch => Svg::new("git_branch", include_icon!("git_branch")),
+            Self::GitCommit => Svg::new("git_commit", include_icon!("git_commit")),
+            Self::GitCompare => Svg::new("git_compare", include_icon!("git_compare")),
             Self::GitFork => Svg::new("git_fork", include_icon!("git_fork")),
             Self::Folder => Svg::new("folder", include_icon!("folder")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
+            Self::Minus => Svg::new("minus", include_icon!("minus")),
             Self::Plus => Svg::new("plus", include_icon!("plus")),
+            Self::Refresh => Svg::new("refresh", include_icon!("refresh")),
+            Self::Undo => Svg::new("undo", include_icon!("undo")),
             Self::Pin => Svg::new("pin", include_icon!("pin")),
             Self::PinFilled => Svg::new("pin_filled", include_icon!("pin_filled")),
             Self::Split => Svg::new("split", include_icon!("split")),
@@ -115,6 +148,8 @@ pub struct Icon {
     color: Option<Rgba>,
     /// How the box is sized.
     style: Style,
+    /// Clockwise rotation around the icon's centre, in radians.
+    rotation: f32,
 }
 
 /// An icon of `name` at the default size, in the theme's subtle text colour.
@@ -124,6 +159,7 @@ pub fn icon(name: IconName) -> Icon {
         size: IconSize::default(),
         color: None,
         style: Style::default(),
+        rotation: 0.0,
     }
 }
 
@@ -137,6 +173,12 @@ impl Icon {
     /// Returns this icon tinted `color`.
     pub fn color(mut self, color: Rgba) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// Returns this icon rotated clockwise by `radians` around its centre.
+    pub fn rotate(mut self, radians: f32) -> Self {
+        self.rotation = radians;
         self
     }
 
@@ -175,6 +217,6 @@ impl<M> Element<M> for Icon {
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         let color = self.color.unwrap_or(cx.theme().colors.text_subtle);
         let box_ = self.box_(bounds);
-        cx.icon(box_, self.name.svg(), color);
+        cx.rotated_icon(box_, self.name.svg(), color, self.rotation);
     }
 }

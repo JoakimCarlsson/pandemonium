@@ -12,8 +12,10 @@ use pm_ui::{ResizeEvent, ResizePhase};
 use crate::editor::{FileId, ScrollAxis, SearchField};
 use crate::keymap::{Action, BaseKeymap};
 use crate::onboarding::ThemeMode;
-use crate::panes::{PaneId, SplitDirection, SplitId};
+use crate::panes::{Item, PaneId, SplitDirection, SplitId};
+use crate::review::Group;
 use crate::terminal::ShellId;
+use crate::workspace::SidebarView;
 
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,10 +80,10 @@ pub enum Message {
     ResizeSecondarySidebar(ResizeEvent),
     /// Open this entry of the file tree in the pane that has the keyboard.
     OpenFile(EntryId),
-    /// Show this open file in this pane.
-    SelectFile(PaneId, FileId),
-    /// Close this open file's tab in this pane.
-    CloseFile(PaneId, FileId),
+    /// Show this tab of this pane.
+    SelectItem(PaneId, Item),
+    /// Close this tab of this pane.
+    CloseItem(PaneId, Item),
     /// Write this file to disk and then close its tab in this pane.
     SaveAndClose(PaneId, FileId),
     /// Close this file's tab in this pane, losing what is not on disk.
@@ -90,12 +92,12 @@ pub enum Message {
     FocusPane(PaneId),
     /// Divide this pane that way, showing the same file in both halves.
     SplitPane(PaneId, SplitDirection),
-    /// Divide this pane that way, showing this file in the new half.
-    SplitFile(PaneId, FileId, SplitDirection),
+    /// Divide this pane that way, showing this tab's contents in the new half.
+    SplitItem(PaneId, Item, SplitDirection),
     /// Open the menu of things that can be done to this pane.
     ShowPaneMenu(PaneId),
     /// Carry this pane's tab across the window, and let go of it somewhere.
-    DragTab(PaneId, FileId, ResizeEvent),
+    DragTab(PaneId, Item, ResizeEvent),
     /// Close this pane, giving what it held back to its neighbour.
     ClosePane(PaneId),
     /// Drag this divider of this split, so much of it to a pixel of travel.
@@ -134,6 +136,14 @@ pub enum Message {
     ChooseCompletion(usize),
     /// Take the fix the server offered in this place.
     TakeCodeAction(usize),
+    /// Take the answer the question is showing in this place.
+    ChoosePrompt(usize),
+    /// Put away the question without answering it.
+    DismissPrompt,
+    /// Throw away the change the question was asked about.
+    ConfirmDiscard,
+    /// Take off the disk what the question was asked about.
+    ConfirmDelete,
     /// Put away whatever is open over the text.
     DismissPopup,
     /// Open the menu of things that can be done to this entry of the tree.
@@ -154,22 +164,22 @@ pub enum Message {
     RevealEntry(EntryId),
     /// Start a shell in this entry's directory.
     OpenEntryInTerminal(EntryId),
-    /// Open the menu of things that can be done to this file's tab.
-    ShowFileMenu(PaneId, FileId),
+    /// Open the menu of things that can be done to this tab.
+    ShowTabMenu(PaneId, Item),
     /// Open the menu of things that can be done to this shell's tab.
     ShowTerminalMenu(ShellId),
     /// Put away whatever menu is open.
     DismissMenu,
     /// Close every tab of this pane but this one.
-    CloseOtherFiles(PaneId, FileId),
+    CloseOtherTabs(PaneId, Item),
     /// Close the tabs of this pane left of this one.
-    CloseFilesLeft(PaneId, FileId),
+    CloseTabsLeft(PaneId, Item),
     /// Close the tabs of this pane right of this one.
-    CloseFilesRight(PaneId, FileId),
+    CloseTabsRight(PaneId, Item),
     /// Close the tabs of this pane that are the same as they are on disk.
-    CloseSavedFiles(PaneId),
+    CloseSavedTabs(PaneId),
     /// Close every tab of this pane.
-    CloseAllFiles(PaneId),
+    CloseAllTabs(PaneId),
     /// Put this file's path on the clipboard.
     CopyFilePath(FileId),
     /// Put this file's path, from the worktree down, on the clipboard.
@@ -181,9 +191,91 @@ pub enum Message {
     /// Keep this previewed file open, so nothing takes its tab.
     KeepFileOpen(FileId),
     /// Keep this tab in this pane through a change of project, or let it go.
-    TogglePin(PaneId, FileId),
+    TogglePin(PaneId, Item),
     /// End every shell but this one.
     CloseOtherTerminals(ShellId),
     /// End every shell of the project.
     CloseAllTerminals,
+    /// Show this in the sidebar that lists the worktree.
+    SetSidebarView(SidebarView),
+    /// Open the active project's changes for review, in a pane.
+    OpenReview,
+    /// Ask git again what it makes of every open worktree.
+    RefreshChanges,
+    /// Open the active project's branch selector.
+    ShowBranches,
+    /// Open the branch selector from the window-wide status bar.
+    ShowStatusBranches,
+    /// Create the branch currently typed into the branch selector.
+    CreateTypedBranch,
+    /// Push the active branch, publishing it first when it has no upstream.
+    PushBranch,
+    /// Fetch updates from every remote of the active project.
+    Fetch,
+    /// Pull the active branch with a merge.
+    Pull,
+    /// Pull the active branch by rebasing its local commits.
+    PullRebase,
+    /// Push the active branch with a force-with-lease safeguard.
+    ForcePush,
+    /// Open the menu of remote Git operations.
+    ShowRemoteMenu,
+    /// Ask which configured remote to fetch from.
+    ChooseFetchRemote,
+    /// Ask which configured remote to push to.
+    ChoosePushRemote,
+    /// Put this change into the index, or take it back out if it is in.
+    ToggleChangeStaged(usize),
+    /// Put this whole group into the index, or take the whole of it out.
+    ToggleGroupStaged(Group),
+    /// Put the lines of one hunk back the way they were.
+    RestoreHunk(usize, bool, usize),
+    /// Put one hunk of this change into the index, or take it back out.
+    ///
+    /// The middle word says which side of the index the hunk was read from,
+    /// which is what says whether clicking it stages or unstages.
+    ToggleHunkStaged(usize, bool, usize),
+    /// Put the list's selection on this change, or mark it alongside.
+    ///
+    /// Which of the two it is comes from the modifiers held at the time: the
+    /// secondary one marks the row, shift marks every row to it, and neither
+    /// selects it alone and opens its diff.
+    SelectChange(usize),
+    /// Put what the list is acting on into the index.
+    StageSelection,
+    /// Take what the list is acting on back out of the index.
+    UnstageSelection,
+    /// Ask whether what the list is acting on should be thrown away.
+    DiscardSelection,
+    /// Move the review to the hunk above the one it is showing.
+    PreviousHunk,
+    /// Move the review to the hunk below it.
+    NextHunk,
+    /// Bring the review forward, at this change.
+    OpenChange(usize),
+    /// Open this change's diff on its own, in the pane that has the keyboard.
+    OpenChangeDiff(usize),
+    /// Open the file this change is to, at the first line it changed.
+    OpenChangeFile(usize),
+    /// Open the menu of things that can be done to this change.
+    ShowChangeMenu(usize),
+    /// Put this change's path on the clipboard.
+    CopyChangePath(usize),
+    /// Put this change's path, from the worktree down, on the clipboard.
+    CopyChangeRelativePath(usize),
+    /// Show the file this change is to in the desktop's file manager.
+    RevealChange(usize),
+    /// Show or hide the lines this change covers.
+    ExpandChange(usize),
+    /// Put everything the active project has changed into the index.
+    StageAll,
+    /// Take everything the active project has staged back out of the index.
+    UnstageAll,
+    /// Put the commit message's cursor where a press landed, selecting to it.
+    ///
+    /// A press in the message is also what gives it the keyboard, so this is
+    /// the whole of how it is written in: there is nothing to focus first.
+    WriteCommit(ResizePhase, Position, Position),
+    /// Commit what the index holds, saying what the message field holds.
+    Commit,
 }

@@ -13,8 +13,11 @@ mod language;
 mod panes;
 mod picker;
 mod places;
+mod review;
 mod tree;
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -42,11 +45,12 @@ use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::message::Message;
 use crate::onboarding::{self, Setup};
-use crate::panes::{PaneTree, Saved};
+use crate::panes::{Item, PaneTree, Saved};
+use crate::review::Review;
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
     self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panel, Panes,
-    SECONDARY_SIDEBAR_RANGE, SidebarProject, TabMenu,
+    SECONDARY_SIDEBAR_RANGE, SidebarProject, SidebarView, TabMenu,
 };
 
 /// The blames that have come back from the threads that asked for them.
@@ -64,6 +68,30 @@ pub enum Wake {
     Language,
     /// A blame has come back for a file that asked for one.
     Blame,
+    /// A remote Git operation has finished.
+    Git,
+}
+
+/// The remote operation currently represented by the Source Control button.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RemoteOperation {
+    /// Updating remote references.
+    Fetch,
+    /// Bringing remote commits into the worktree.
+    Pull,
+    /// Sending local commits to a remote.
+    Push,
+}
+
+impl RemoteOperation {
+    /// Present-progress label used by the split button.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetching…",
+            Self::Pull => "Pulling…",
+            Self::Push => "Pushing…",
+        }
+    }
 }
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
@@ -94,9 +122,12 @@ pub struct App {
     open: Projects,
     /// One file tree per open project, so each keeps what it has expanded.
     files: BTreeMap<ProjectId, FileTree>,
-    /// What git makes of each of those worktrees.
-    statuses:
-        BTreeMap<ProjectId, std::collections::HashMap<std::path::PathBuf, pm_core::FileStatus>>,
+    /// What each of those projects has changed, and what git said about it.
+    reviews: BTreeMap<ProjectId, Review>,
+    /// The changes the reader is being asked whether to throw away.
+    discarding: Vec<crate::review::ChangeId>,
+    /// Whether keystrokes go to the list of changes.
+    changes_focused: bool,
     /// What a path prompt is aimed at, while one is open.
     path_target: Option<std::path::PathBuf>,
     /// Current width and drag state of the sessions sidebar.
@@ -111,6 +142,10 @@ pub struct App {
     bottom_panel_open: bool,
     /// Whether the secondary sidebar is visible.
     secondary_sidebar_open: bool,
+    /// Which of the worktree's two lists that sidebar is showing.
+    secondary_sidebar_view: SidebarView,
+    /// Whether keystrokes go to the commit message.
+    commit_focused: bool,
     /// The size and state the window is written down with.
     window_state: WindowState,
     /// Whether the event loop should close after the current event.
@@ -137,6 +172,22 @@ pub struct App {
     trail: Trail,
     /// The list the window is asking the reader to choose from, if it is.
     picker: Option<crate::picker::Picker>,
+    /// Pointer position of the status-bar branch control anchoring its popover.
+    branch_picker_at: Option<Point>,
+    /// Bounds of the Source Control branch control from the last frame.
+    branch_bounds: pm_ui::Bounds,
+    /// Bounds of the Source Control remote split button from the last frame.
+    remote_bounds: pm_ui::Bounds,
+    /// Remote Git work currently running away from the UI thread.
+    remote_operation: Option<RemoteOperation>,
+    /// Completed remote Git work waiting for the event loop.
+    git_results: Arc<Mutex<Vec<(ProjectId, pm_core::Said)>>>,
+    /// Next time the remote-operation spinner advances.
+    remote_tick: Instant,
+    /// Frame of the animated remote-operation spinner.
+    remote_phase: usize,
+    /// The question the window is asking before it acts, if it is asking one.
+    prompt: Option<crate::prompt::Prompt>,
     /// What could be written where the cursor is, while the list is up.
     completions: Option<crate::editor::Completions>,
     /// What the editor has to say about a place, and where to say it.
@@ -164,7 +215,7 @@ pub struct App {
     /// The last press on a row of the file tree, for keeping a file open.
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
-    tab_clicks: Clicks<crate::editor::FileId>,
+    tab_clicks: Clicks<Item>,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -212,7 +263,9 @@ impl App {
             projects: Vec::new(),
             open,
             files,
-            statuses: BTreeMap::new(),
+            reviews: BTreeMap::new(),
+            discarding: Vec::new(),
+            changes_focused: false,
             path_target: None,
             sidebar: ResizeState::new(
                 layout.primary_sidebar_width,
@@ -232,6 +285,8 @@ impl App {
             primary_sidebar_open: layout.primary_sidebar_open,
             bottom_panel_open: layout.bottom_panel_open,
             secondary_sidebar_open: layout.secondary_sidebar_open,
+            secondary_sidebar_view: layout.secondary_sidebar_view,
+            commit_focused: false,
             window_state: restored.window,
             close_requested: false,
             editor: Files::default(),
@@ -245,6 +300,14 @@ impl App {
             zoom: 1.0,
             trail: Trail::default(),
             picker: None,
+            branch_picker_at: None,
+            branch_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            remote_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            remote_operation: None,
+            git_results: Arc::new(Mutex::new(Vec::new())),
+            remote_tick: Instant::now(),
+            remote_phase: 0,
+            prompt: None,
             completions: None,
             hint: None,
             link: None,
@@ -296,11 +359,17 @@ impl App {
     pub(super) fn release_pane_focus(&mut self) {
         self.terminal_focused = false;
         self.editor_focused = false;
+        self.commit_focused = false;
+        self.changes_focused = false;
     }
 
     /// What the focused pane holds, for the keymap's `when` clauses.
     pub(super) fn focused_pane_kind(&self) -> Option<&'static str> {
+        let showing = |shown: fn(crate::panes::Item) -> bool| self.active_tab().is_some_and(shown);
+
         match (self.editor_focused, self.terminal_focused) {
+            (true, _) if showing(|item| item.review().is_some()) => Some("review"),
+            (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
             _ => None,
@@ -336,7 +405,7 @@ impl App {
         };
 
         if let Some(file) = self.editor.open(project, &root, &path, preview) {
-            if self.active_tab() != Some(file)
+            if self.active_tab() != Some(crate::panes::Item::File(file))
                 && let Some(from) = self.here()
             {
                 self.trail.jumped(from);
@@ -582,8 +651,35 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
-        if let Message::ShowFileMenu(pane, file) = message {
-            self.open_menu(MenuTarget::File(pane, file));
+        if let Message::ShowTabMenu(pane, item) = message {
+            self.open_menu(MenuTarget::Tab(pane, item));
+            return;
+        }
+        if let Message::ShowChangeMenu(index) = message {
+            self.aim_at_change(index);
+            self.open_menu(MenuTarget::Change);
+            return;
+        }
+        if let Message::ChoosePrompt(place) = message {
+            let taken = self.prompt.take().and_then(|asked| asked.taken(place));
+            match taken {
+                Some(taken) => return self.apply(taken),
+                None => return self.request_redraw(),
+            }
+        }
+        if message == Message::DismissPrompt {
+            self.prompt = None;
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ConfirmDiscard {
+            self.discard_change();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ConfirmDelete {
+            self.delete_path();
+            self.request_redraw();
             return;
         }
         if let Message::ShowPaneMenu(pane) = message {
@@ -592,6 +688,15 @@ impl App {
         }
         if let Message::ShowTerminalMenu(id) = message {
             self.open_menu(MenuTarget::Terminal(id));
+            return;
+        }
+        if message == Message::ShowRemoteMenu {
+            let bounds = self.remote_bounds.get();
+            self.menu = Some(TabMenu {
+                at: Point::new((bounds.right() - 190.0).max(8.0), bounds.bottom() + 2.0),
+                target: MenuTarget::Remote,
+            });
+            self.request_redraw();
             return;
         }
         self.menu = None;
@@ -644,18 +749,18 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::SelectFile(pane, file) = message {
-            self.select_tab(pane, file);
+        if let Message::SelectItem(pane, item) = message {
+            self.select_tab(pane, item);
             self.request_redraw();
             return;
         }
-        if let Message::DragTab(pane, file, event) = message {
-            self.drag_tab(pane, file, event);
+        if let Message::DragTab(pane, item, event) = message {
+            self.drag_tab(pane, item, event);
             self.request_redraw();
             return;
         }
-        if let Message::CloseFile(pane, file) = message {
-            self.close_file(pane, file);
+        if let Message::CloseItem(pane, item) = message {
+            self.close_item(pane, item);
             self.request_redraw();
             return;
         }
@@ -679,8 +784,8 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::SplitFile(pane, file, direction) = message {
-            self.split_pane(pane, Some(file), direction);
+        if let Message::SplitItem(pane, item, direction) = message {
+            self.split_pane(pane, Some(item), direction);
             self.request_redraw();
             return;
         }
@@ -860,6 +965,76 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::SetSidebarView(view) = message {
+            self.secondary_sidebar_view = view;
+            self.secondary_sidebar_open = true;
+            self.store();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ShowBranches {
+            let bounds = self.branch_bounds.get();
+            self.branch_picker_at = Some(Point::new(bounds.left(), bounds.top()));
+            self.open_picker(crate::picker::Kind::Branches);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ShowStatusBranches {
+            self.branch_picker_at = self.pointer;
+            self.open_picker(crate::picker::Kind::Branches);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::CreateTypedBranch {
+            let name = self
+                .picker
+                .as_ref()
+                .map(|picker| picker.field().value().trim().to_owned())
+                .unwrap_or_default();
+            self.picker = None;
+            self.create_branch(&name);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::PushBranch {
+            self.push_branch();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::Fetch {
+            self.remote_operation(RemoteOperation::Fetch, pm_core::fetch);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::Pull {
+            self.remote_operation(RemoteOperation::Pull, |root| pm_core::pull(root, false));
+            self.request_redraw();
+            return;
+        }
+        if message == Message::PullRebase {
+            self.remote_operation(RemoteOperation::Pull, |root| pm_core::pull(root, true));
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ForcePush {
+            self.remote_operation(RemoteOperation::Push, pm_core::force_push);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ChooseFetchRemote {
+            self.open_picker(crate::picker::Kind::FetchRemotes);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ChoosePushRemote {
+            self.open_picker(crate::picker::Kind::PushRemotes);
+            self.request_redraw();
+            return;
+        }
+        if self.review_command(message) {
+            self.request_redraw();
+            return;
+        }
         if message == Message::ToggleSecondarySidebar {
             self.secondary_sidebar_open = !self.secondary_sidebar_open;
             self.store();
@@ -933,6 +1108,61 @@ impl App {
         self.request_redraw();
     }
 
+    /// Carries out a command about what a project has changed, if `message`
+    /// is one.
+    ///
+    /// Every one of them ends the same way — git is asked to do something and
+    /// then asked what the worktree now holds — so they are gathered here
+    /// rather than spread through the window's own state.
+    fn review_command(&mut self, message: Message) -> bool {
+        match message {
+            Message::OpenReview => self.open_review(),
+            Message::RefreshChanges => self.reread_worktree(),
+            Message::ToggleChangeStaged(index) => self.toggle_change_staged(index),
+            Message::ToggleGroupStaged(group) => self.toggle_group_staged(group),
+            Message::ToggleHunkStaged(index, staged, hunk) => {
+                self.toggle_hunk_staged(index, staged, hunk);
+            }
+            Message::RestoreHunk(index, staged, hunk) => self.restore_hunk(index, staged, hunk),
+            Message::SelectChange(index) => {
+                let marking = self.modifiers.super_key() || self.modifiers.control_key();
+                self.select_change(index, marking, self.modifiers.shift_key());
+            }
+            Message::StageSelection => self.change_selection(Review::stage),
+            Message::UnstageSelection => self.change_selection(Review::unstage),
+            Message::DiscardSelection => self.ask_to_discard(),
+            Message::StageAll => self.change_by(Review::stage_all),
+            Message::UnstageAll => self.change_by(Review::unstage_all),
+            Message::Commit => self.change_by(Review::commit),
+            Message::OpenChange(index) => self.open_change(index),
+            Message::OpenChangeDiff(index) => self.open_change_diff(index),
+            Message::PreviousHunk => self.step_hunk(false),
+            Message::NextHunk => self.step_hunk(true),
+            Message::OpenChangeFile(index) => self.open_change_file(index),
+            Message::CopyChangePath(index) => self.copy_changed_path(index, false),
+            Message::CopyChangeRelativePath(index) => self.copy_changed_path(index, true),
+            Message::RevealChange(index) => self.reveal_change(index),
+            Message::ExpandChange(index) => {
+                if let Some(review) = self.review_mut() {
+                    review.toggle(index);
+                }
+            }
+            Message::WriteCommit(phase, anchor, head) => {
+                self.select_commit_text(phase, anchor, head);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Changes what the index holds, and reads the worktree again after it.
+    fn change_by(&mut self, change: impl FnOnce(&mut Review)) {
+        if let Some(review) = self.review_mut() {
+            change(review);
+        }
+        self.reread_worktree();
+    }
+
     /// Opens the menu for `target` where the pointer is.
     ///
     /// The menu is placed rather than anchored: the pointer is the one place
@@ -940,6 +1170,18 @@ impl App {
     fn open_menu(&mut self, target: MenuTarget) {
         self.menu = self.pointer.map(|at| TabMenu { at, target });
         self.request_redraw();
+    }
+
+    /// Asks `question`, which nothing else answers until it is answered.
+    fn ask_first(&mut self, question: crate::prompt::Prompt) {
+        self.prompt = Some(question);
+        self.release_pane_focus();
+        self.request_redraw();
+    }
+
+    /// Puts away the question that is open, saying whether there was one.
+    pub(super) fn dismiss_prompt(&mut self) -> bool {
+        self.prompt.take().is_some()
     }
 
     /// Puts away the menu that is open, saying whether there was one.
@@ -955,19 +1197,19 @@ impl App {
     fn tab_command(&mut self, message: Message) -> bool {
         match message {
             Message::DismissMenu => {}
-            Message::CloseOtherFiles(pane, file) => {
-                self.close_saved_tabs(pane, |held| held == file);
+            Message::CloseOtherTabs(pane, item) => {
+                self.close_saved_tabs(pane, |held| held == item);
             }
-            Message::CloseFilesLeft(pane, file) => {
-                let kept = self.tabs_from(pane, file, false);
+            Message::CloseTabsLeft(pane, item) => {
+                let kept = self.tabs_from(pane, item, false);
                 self.close_saved_tabs(pane, move |held| kept.contains(&held));
             }
-            Message::CloseFilesRight(pane, file) => {
-                let kept = self.tabs_from(pane, file, true);
+            Message::CloseTabsRight(pane, item) => {
+                let kept = self.tabs_from(pane, item, true);
                 self.close_saved_tabs(pane, move |held| kept.contains(&held));
             }
-            Message::CloseSavedFiles(pane) => self.close_saved_tabs(pane, |_| false),
-            Message::CloseAllFiles(pane) => self.close_every_tab(pane),
+            Message::CloseSavedTabs(pane) => self.close_saved_tabs(pane, |_| false),
+            Message::CloseAllTabs(pane) => self.close_every_tab(pane),
             Message::CopyFilePath(file) => {
                 if let Some(path) = self.editor.path(file) {
                     desktop::copy(path.display().to_string());
@@ -985,7 +1227,7 @@ impl App {
             }
             Message::OpenFileInTerminal(file) => self.start_shell_beside(file),
             Message::KeepFileOpen(file) => self.editor.keep(file),
-            Message::TogglePin(pane, file) => self.toggle_pin(pane, file),
+            Message::TogglePin(pane, item) => self.toggle_pin(pane, item),
             Message::CloseOtherTerminals(id) => {
                 if let Some(project) = self.open.active().map(pm_core::Project::id) {
                     self.terminals.stop_others(project, id);
@@ -1082,6 +1324,7 @@ impl App {
             bottom_panel_height: self.bottom_panel.extent(),
             secondary_sidebar_open: self.secondary_sidebar_open,
             secondary_sidebar_width: self.secondary_sidebar.extent(),
+            secondary_sidebar_view: self.secondary_sidebar_view,
         }
     }
 
@@ -1145,15 +1388,42 @@ impl App {
     fn overlays(&self, theme: &Theme) -> Vec<workspace::Overlaid> {
         let mut overlays = Vec::new();
 
+        let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
+
         if let Some(picker) = self.picker.as_ref() {
-            let width = self
-                .renderer
-                .as_ref()
-                .map_or(0.0, |renderer| renderer.size().width);
+            let width = crate::picker::width(picker.kind());
+            let at = self.branch_picker_at.filter(|_| {
+                matches!(
+                    picker.kind(),
+                    crate::picker::Kind::Branches | crate::picker::Kind::NewBranch
+                )
+            });
+            let point = at.map_or_else(
+                || Point::new(window.width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
+                |anchor| {
+                    let height = crate::picker::height(picker);
+                    Point::new(
+                        (anchor.x - 24.0).clamp(8.0, (window.width - width - 8.0).max(8.0)),
+                        (anchor.y - height - 8.0).max(8.0),
+                    )
+                },
+            );
             overlays.push(workspace::Overlaid {
-                at: Point::new(width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
+                at: point,
                 content: Box::new(crate::picker::picker(theme, picker)),
                 backdrop: Some(Message::DismissPopup),
+            });
+        }
+
+        if let Some(asked) = self.prompt.as_ref() {
+            let height = crate::prompt::height(asked);
+            overlays.push(workspace::Overlaid {
+                at: Point::new(
+                    window.width / 2.0 - crate::prompt::WIDTH / 2.0,
+                    (window.height - height) / 2.0,
+                ),
+                content: Box::new(crate::prompt::prompt(theme, asked)),
+                backdrop: Some(Message::DismissPrompt),
             });
         }
 
@@ -1214,7 +1484,14 @@ impl App {
         let active = self.open.active().map(pm_core::Project::id);
         let files = workspace::Worktree {
             tree: active.and_then(|id| self.files.get(&id)),
-            status: active.and_then(|id| self.statuses.get(&id)),
+            review: active.and_then(|id| self.reviews.get(&id)),
+            committing: self.commit_focused,
+            branch_bounds: self.branch_bounds.clone(),
+            remote_bounds: self.remote_bounds.clone(),
+            remote_operation: self.remote_operation.map(|operation| {
+                let rotation = self.remote_phase as f32 * std::f32::consts::TAU / 20.0;
+                (operation.label(), rotation)
+            }),
         };
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
@@ -1274,10 +1551,17 @@ impl ApplicationHandler<Wake> for App {
     /// holding still and a caret blinking are the two things it has to
     /// notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.rested() || self.blinked() {
+        let now = Instant::now();
+        let remote_ticked = self.remote_operation.is_some() && now >= self.remote_tick;
+        if remote_ticked {
+            self.remote_tick = now + std::time::Duration::from_millis(100);
+            self.remote_phase = self.remote_phase.wrapping_add(1);
+        }
+        if self.rested() || self.blinked() || remote_ticked {
             self.request_redraw();
         }
-        let next = [self.next_rest(), self.next_blink()]
+        let remote_tick = self.remote_operation.map(|_| self.remote_tick);
+        let next = [self.next_rest(), self.next_blink(), remote_tick]
             .into_iter()
             .flatten()
             .min();
@@ -1306,6 +1590,20 @@ impl ApplicationHandler<Wake> for App {
                 if self.collect_blame() {
                     self.request_redraw();
                 }
+            }
+            Wake::Git => {
+                let finished = self
+                    .git_results
+                    .lock()
+                    .map(|mut results| std::mem::take(&mut *results))
+                    .unwrap_or_default();
+                for (project, said) in finished {
+                    if let Some(review) = self.reviews.get_mut(&project) {
+                        review.report(said);
+                    }
+                }
+                self.remote_operation = None;
+                self.request_redraw();
             }
         }
     }
@@ -1354,7 +1652,7 @@ impl ApplicationHandler<Wake> for App {
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.editor.set_notify(self.waker(Wake::Language));
         self.editor.set_language_servers(&self.language_servers);
-        self.reread_status();
+        self.reread_changes();
 
         let saved = std::mem::take(&mut self.saved);
         self.restore_panes(&saved);

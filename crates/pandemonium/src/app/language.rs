@@ -119,7 +119,7 @@ impl App {
         if matches!(request, Request::Hover | Request::Signature) {
             self.hint = Some(Shown::at(self.cursor_point()));
         }
-        let Some(file) = self.active_tab() else {
+        let Some(file) = self.active_file_id() else {
             return;
         };
         let Some(at) = self
@@ -190,7 +190,7 @@ impl App {
             .panes
             .panes()
             .into_iter()
-            .filter_map(|pane| self.panes.pane(pane)?.active(scope))
+            .filter_map(|pane| self.panes.pane(pane)?.active(scope)?.file())
             .collect::<Vec<_>>();
 
         for file in showing {
@@ -377,7 +377,7 @@ impl App {
     ) -> Option<(FileId, crate::editor::OpenFile)> {
         let scope = self.scope()?;
         self.panes.panes().into_iter().find_map(|pane| {
-            let file = self.panes.pane(pane)?.active(scope)?;
+            let file = self.panes.pane(pane)?.active(scope)?.file()?;
             let document = self.editor.get(file)?;
             let over = document.borrow().layout().text_area().contains(point);
             over.then_some((file, document))
@@ -472,6 +472,7 @@ impl App {
                         let project = self.editor.project_of(pending.file)?;
                         let path = self.editor.path(pending.file)?;
                         Some(Row {
+                            section: None,
                             label: format!("{}{}", "  ".repeat(symbol.depth), symbol.name),
                             detail: if symbol.detail.is_empty() {
                                 symbol.kind.to_owned()
@@ -532,6 +533,7 @@ impl App {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 Some(Row {
+                    section: None,
                     label: format!("{name}:{}", place.position.line + 1),
                     detail: self.relative_to(place.project, &location.path),
                     choice: Choice::OpenAt(place.project, place.path, place.position),

@@ -162,6 +162,11 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         self.list.icon(bounds, svg, color);
     }
 
+    /// Draws `svg` rotated clockwise around the centre of `bounds`.
+    pub fn rotated_icon(&mut self, bounds: Rect, svg: Svg, color: Rgba, rotation: f32) {
+        self.list.rotated_icon(bounds, svg, color, rotation);
+    }
+
     /// Confines later primitives to `bounds` as well as the current clip.
     pub fn push_clip(&mut self, bounds: Rect) {
         self.list.push_clip(bounds);
