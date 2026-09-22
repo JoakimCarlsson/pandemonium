@@ -265,9 +265,23 @@ impl App {
 
     /// Applies `edit` to the tab in front of the pane with the keyboard.
     pub(super) fn edit_active(&mut self, edit: impl FnOnce(&mut pm_text::Buffer)) {
+        if let Some(typed) = self.typed_into() {
+            typed.borrow_mut().edit(edit);
+            return;
+        }
         if let Some(file) = self.active_file_id() {
             self.editor.edit(file, edit);
         }
+    }
+
+    /// The buffer being typed into that is not a pane's file, if there is one.
+    ///
+    /// A pane's file is not the only thing a reader writes in: an agent's
+    /// prompt is a buffer too, and a command that edits text means whichever
+    /// of them has the keyboard, not the file behind it.
+    pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
+        let session = self.prompt_focused?;
+        self.agents.get(session).map(crate::agent::Talk::prompt)
     }
 
     /// Changes the tabs of `pane` and closes whatever that left with nothing.

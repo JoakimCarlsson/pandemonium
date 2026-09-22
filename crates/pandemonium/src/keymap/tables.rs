@@ -49,13 +49,41 @@ pub const BASE: &[Row] = &[
     ("primary+,", Action::OpenSettings, "true"),
     ("escape", Action::Cancel, "true"),
     ("primary+shift+t", Action::ReopenTab, "true"),
-    ("primary+z", Action::Undo, "pane.kind == file"),
-    ("primary+shift+z", Action::Redo, "pane.kind == file"),
-    ("primary+y", Action::Redo, "pane.kind == file"),
-    ("primary+x", Action::Cut, "pane.kind == file"),
-    ("primary+c", Action::Copy, "pane.kind == file"),
-    ("primary+v", Action::Paste, "pane.kind == file"),
-    ("primary+a", Action::SelectAll, "pane.kind == file"),
+    (
+        "primary+z",
+        Action::Undo,
+        "pane.kind == file || pane.kind == prompt",
+    ),
+    (
+        "primary+shift+z",
+        Action::Redo,
+        "pane.kind == file || pane.kind == prompt",
+    ),
+    (
+        "primary+y",
+        Action::Redo,
+        "pane.kind == file || pane.kind == prompt",
+    ),
+    (
+        "primary+x",
+        Action::Cut,
+        "pane.kind == file || pane.kind == prompt",
+    ),
+    (
+        "primary+c",
+        Action::Copy,
+        "pane.kind == file || pane.kind == prompt",
+    ),
+    (
+        "primary+v",
+        Action::Paste,
+        "pane.kind == file || pane.kind == prompt",
+    ),
+    (
+        "primary+a",
+        Action::SelectAll,
+        "pane.kind == file || pane.kind == prompt",
+    ),
     ("primary+l", Action::SelectLine, "pane.kind == file"),
     (
         "shift+alt+right",

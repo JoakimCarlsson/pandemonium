@@ -378,6 +378,9 @@ impl App {
     pub(super) fn focused_pane_kind(&self) -> Option<&'static str> {
         let showing = |shown: fn(crate::panes::Item) -> bool| self.active_tab().is_some_and(shown);
 
+        if self.prompt_focused.is_some() {
+            return Some("prompt");
+        }
         match (self.editor_focused, self.terminal_focused) {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),

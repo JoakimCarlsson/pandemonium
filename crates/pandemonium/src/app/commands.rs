@@ -268,6 +268,9 @@ impl App {
         if self.release_commit_focus() {
             return;
         }
+        if self.stop_or_release_prompt() {
+            return;
+        }
         if self.with_buffer(Buffer::has_many_cursors) == Some(true) {
             return self.edit_active(|buffer| {
                 buffer.collapse_cursors();
@@ -571,7 +574,7 @@ impl App {
 
     /// Reads something off the focused buffer, when a pane is showing one.
     pub(super) fn with_buffer<T>(&self, read: impl FnOnce(&Buffer) -> T) -> Option<T> {
-        let document = self.active_file()?;
+        let document = self.typed_into().or_else(|| self.active_file())?;
         let document = document.borrow();
         Some(read(document.buffer()))
     }

@@ -244,13 +244,6 @@ impl App {
                 self.apply(Message::SendPrompt(session));
                 return true;
             }
-            Key::Named(NamedKey::Escape) => {
-                match self.agents.get(session).filter(|talk| talk.is_busy()) {
-                    Some(talk) => talk.cancel(),
-                    None => self.prompt_focused = None,
-                }
-                return true;
-            }
             _ => {}
         }
         if self.is_window_chord() {

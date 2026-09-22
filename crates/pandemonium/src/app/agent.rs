@@ -83,6 +83,22 @@ impl App {
         self.focus_prompt(session);
     }
 
+    /// Stops the turn the focused prompt is running, or lets go of it.
+    ///
+    /// One key gets out of one thing at a time: the first press stops the
+    /// agent, and the press after it leaves the prompt — so a reader who
+    /// wants the agent to stop never has to look at where the keyboard is.
+    pub(super) fn stop_or_release_prompt(&mut self) -> bool {
+        let Some(session) = self.prompt_focused else {
+            return false;
+        };
+        match self.agents.get(session).filter(|talk| talk.is_busy()) {
+            Some(talk) => talk.cancel(),
+            None => self.prompt_focused = None,
+        }
+        true
+    }
+
     /// Gives the keyboard to `session`'s prompt.
     pub(super) fn focus_prompt(&mut self, session: SessionId) {
         self.release_pane_focus();
