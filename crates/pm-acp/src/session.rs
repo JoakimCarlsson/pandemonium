@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -529,11 +529,11 @@ impl Reader {
     /// all, which reads as a hung session rather than a missing feature.
     fn serve(&self, id: &Value, method: &str, params: &Value) {
         match method {
-            "fs/read_text_file" => match read(params) {
+            "fs/read_text_file" => match read(&self.root, params) {
                 Ok(content) => self.answer(id, &json!({ "content": content })),
                 Err(error) => self.refuse(id, FAILED, &error.to_string()),
             },
-            "fs/write_text_file" => match write(params) {
+            "fs/write_text_file" => match write(&self.root, params) {
                 Ok(()) => self.answer(id, &json!({})),
                 Err(error) => self.refuse(id, FAILED, &error.to_string()),
             },
@@ -604,7 +604,13 @@ fn watch(stderr: impl BufRead, state: &Mutex<State>) {
         state.trouble.push_str(&line);
         state.trouble.push('\n');
         if state.trouble.len() > TROUBLE {
-            let from = state.trouble.len() - TROUBLE;
+            let over = state.trouble.len() - TROUBLE;
+            let from = state
+                .trouble
+                .char_indices()
+                .map(|(at, _)| at)
+                .find(|at| *at >= over)
+                .unwrap_or(state.trouble.len());
             state.trouble = state.trouble.split_off(from);
         }
     }
@@ -635,10 +641,8 @@ fn handshake() -> Value {
 }
 
 /// What a file the agent asked for holds, from the line it asked for.
-fn read(params: &Value) -> std::io::Result<String> {
-    let path = params["path"]
-        .as_str()
-        .ok_or_else(|| std::io::Error::other("no path"))?;
+fn read(root: &Path, params: &Value) -> std::io::Result<String> {
+    let path = within(root, params)?;
     let text = std::fs::read_to_string(path)?;
 
     let from = params["line"].as_u64().unwrap_or(1).max(1) as usize - 1;
@@ -655,15 +659,55 @@ fn read(params: &Value) -> std::io::Result<String> {
 }
 
 /// Writes what the agent asked to be written.
-fn write(params: &Value) -> std::io::Result<()> {
-    let path = params["path"]
-        .as_str()
-        .ok_or_else(|| std::io::Error::other("no path"))?;
+fn write(root: &Path, params: &Value) -> std::io::Result<()> {
+    let path = within(root, params)?;
     let content = params["content"].as_str().unwrap_or_default();
-    if let Some(parent) = Path::new(path).parent() {
+    if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, content)
+}
+
+/// The file `params` names, once it is known to be one of the worktree's.
+///
+/// The agent is a program of the reader's, running as they do, and nothing
+/// here stops it opening a file for itself. What this stops is the editor
+/// doing it on the agent's behalf: the session was opened over one worktree,
+/// so the worktree is the whole of what the editor will read or write
+/// through, and a path that climbs out of it is refused rather than followed.
+fn within(root: &Path, params: &Value) -> std::io::Result<PathBuf> {
+    let path = params["path"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("no path"))?;
+    let path = cleaned(&root.join(path));
+
+    match path.starts_with(cleaned(root)) {
+        true => Ok(path),
+        false => Err(std::io::Error::other(format!(
+            "{} is outside this session's worktree",
+            path.display()
+        ))),
+    }
+}
+
+/// `path` with the steps that go nowhere taken out of it.
+///
+/// The disk is not asked: a file being written may not exist yet, and one
+/// that does may be reached through a link the reader meant to follow. What
+/// is resolved here is only the spelling — `.` and the `..` that a path
+/// climbs out through.
+fn cleaned(path: &Path) -> PathBuf {
+    let mut cleaned = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                cleaned.pop();
+            }
+            part => cleaned.push(part),
+        }
+    }
+    cleaned
 }
 
 /// What an agent's error says, in one line.
