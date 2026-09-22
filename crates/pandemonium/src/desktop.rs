@@ -61,3 +61,12 @@ const FILE_MANAGER: &str = "open";
 /// The program that opens a directory in the desktop's file manager.
 #[cfg(target_os = "windows")]
 const FILE_MANAGER: &str = "explorer";
+
+/// What is on the system clipboard, if anything readable is.
+///
+/// Reading is done here and now rather than on a thread of its own: a paste
+/// is a keypress the reader is waiting on, and a clipboard that does not
+/// answer is a paste of nothing rather than a window that stops drawing.
+pub fn paste() -> Option<String> {
+    arboard::Clipboard::new().ok()?.get_text().ok()
+}

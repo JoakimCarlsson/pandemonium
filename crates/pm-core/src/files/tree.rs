@@ -54,6 +54,22 @@ impl FileTree {
         self.expanded.push(path);
     }
 
+    /// Reads the worktree again, keeping whatever was expanded expanded.
+    ///
+    /// Everything read so far is thrown away rather than reconciled: a tree
+    /// is what is on disk, and the one thing that survives a change to the
+    /// disk is which directories the reader had opened.
+    pub fn reload(&mut self) {
+        self.children.clear();
+        self.read(&self.root.clone());
+        for path in self.expanded.clone() {
+            if path.is_dir() {
+                self.read(&path);
+            }
+        }
+        self.expanded.retain(|path| path.is_dir());
+    }
+
     /// The visible lines of the tree, in the order they are drawn.
     pub fn rows(&self) -> Vec<Row<'_>> {
         let mut rows = Vec::new();

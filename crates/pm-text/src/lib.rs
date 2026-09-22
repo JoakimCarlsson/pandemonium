@@ -10,13 +10,20 @@
 mod buffer;
 mod cursor;
 mod diagnostic;
+mod hint;
+mod history;
+mod indent;
 mod language;
 mod lsp;
 mod syntax;
 
-pub use buffer::Buffer;
+pub use buffer::{Buffer, TAB_WIDTH};
 pub use cursor::{Motion, Position, Selection};
 pub use diagnostic::{Diagnostic, Severity};
+pub use hint::Hint;
+pub use indent::Indent;
 pub use language::{Language, Server};
-pub use lsp::{Client, Servers};
+pub use lsp::{
+    Answer, Asked, Client, CodeAction, Completion, FileEdit, Location, Request, Servers, Symbol,
+};
 pub use syntax::{Highlight, Highlights};

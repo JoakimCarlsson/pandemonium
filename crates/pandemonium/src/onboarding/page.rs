@@ -2,8 +2,9 @@
 
 use pm_ui::{Div, Styled, Theme, button, h_flex, rule, space, text, v_flex};
 
+use crate::message::Message;
 use crate::onboarding::basics::basics;
-use crate::onboarding::setup::{Message, Setup};
+use crate::onboarding::setup::Setup;
 
 /// Width the page is capped at, however wide the window is.
 const PAGE_WIDTH: f32 = 780.0;

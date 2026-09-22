@@ -38,6 +38,13 @@ pub struct Colors {
     pub text_subtle: Rgba,
     /// Text drawn on top of `accent`.
     pub text_on_accent: Rgba,
+    /// The caret in a pane of text.
+    ///
+    /// Not the accent: a theme is free to have no accent colour at all, and
+    /// a caret that cannot be found is a caret that is not there.
+    pub cursor: Rgba,
+    /// The wash over selected text.
+    pub selection: Rgba,
     /// The one colour that means "this is the action".
     pub accent: Rgba,
     /// The accent under the pointer.

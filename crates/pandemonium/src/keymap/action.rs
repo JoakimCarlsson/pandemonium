@@ -2,7 +2,10 @@
 //!
 //! An action is a name, not a closure. A keymap, a palette entry and a menu
 //! item all resolve to the same [`Action`], and the window is the one place
-//! that carries one out.
+//! that carries one out. The catalogue below is the whole vocabulary: an
+//! action's name, the id a keymap binds it by and the title a palette shows
+//! are written down once, together, so there is no way for the three to
+//! drift apart.
 
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
@@ -18,6 +21,10 @@ pub enum Action {
     ShowProjects,
     /// Open the session palette.
     ShowSessions,
+    /// Open the palette of symbols in the focused file.
+    ShowSymbols,
+    /// Open the list of every error and warning in the open files.
+    ShowProblems,
     /// Add a repository to the window as a project.
     AddProject,
     /// Take the focused project out of the window.
@@ -36,6 +43,8 @@ pub enum Action {
     SplitDown,
     /// Close the focused pane's current tab.
     ClosePane,
+    /// Open again the tab that was closed last.
+    ReopenTab,
     /// Move to the next tab in the focused pane.
     NextTab,
     /// Move to the previous tab in the focused pane.
@@ -54,99 +63,392 @@ pub enum Action {
     Save,
     /// Write every changed buffer to disk.
     SaveAll,
+    /// Take back the last change to the focused buffer.
+    Undo,
+    /// Put back the change that was taken back last.
+    Redo,
+    /// Put the selection on the clipboard and take it out of the buffer.
+    Cut,
+    /// Put the selection on the clipboard.
+    Copy,
+    /// Put what is on the clipboard into the buffer.
+    Paste,
+    /// Select everything the focused buffer holds.
+    SelectAll,
+    /// Select the whole of the line the cursor is on.
+    SelectLine,
+    /// Grow the selection to the word under the cursor, then to its line.
+    ExpandSelection,
+    /// Put another cursor on the line above the topmost one.
+    AddCursorAbove,
+    /// Put another cursor on the line below the lowest one.
+    AddCursorBelow,
+    /// Select the word under the cursor, then the next place it appears.
+    AddNextMatch,
+    /// Put a cursor at every place the selected text appears.
+    SelectAllMatches,
+    /// Leave one cursor where the primary one is.
+    CollapseCursors,
+    /// Fold what the line the cursor is on holds, or unfold it.
+    ToggleFold,
+    /// Fold everything that holds something.
+    FoldAll,
+    /// Unfold everything.
+    UnfoldAll,
+    /// Put another copy of the selected lines below them.
+    DuplicateLine,
+    /// Take the selected lines out.
+    DeleteLine,
+    /// Move the selected lines one line up.
+    MoveLineUp,
+    /// Move the selected lines one line down.
+    MoveLineDown,
+    /// Join the line below the cursor onto the line it is on.
+    JoinLines,
+    /// Put an empty line below the one the cursor is on, and go to it.
+    InsertLineBelow,
+    /// Put an empty line above the one the cursor is on, and go to it.
+    InsertLineAbove,
+    /// Comment the selected lines, or take their comments off.
+    ToggleComment,
+    /// Indent the selected lines by one step.
+    Indent,
+    /// Take one step of indentation off the selected lines.
+    Outdent,
+    /// Open the search bar over the focused pane.
+    Find,
+    /// Open the search bar with its replacement field showing.
+    Replace,
+    /// Go to the next match of what is being looked for.
+    FindNext,
+    /// Go to the previous match of what is being looked for.
+    FindPrevious,
+    /// Look for what is selected.
+    FindSelection,
+    /// Replace the match being looked at.
+    ReplaceMatch,
+    /// Replace every match at once.
+    ReplaceAll,
+    /// Search every file of every open project.
+    SearchProject,
+    /// Go to a line of the focused file by number.
+    GoToLine,
+    /// Go to where the symbol under the cursor is defined.
+    GoToDefinition,
+    /// Go to where the type of the symbol under the cursor is defined.
+    GoToTypeDefinition,
+    /// Go to what implements the symbol under the cursor.
+    GoToImplementation,
+    /// Go to where the symbol under the cursor is declared.
+    GoToDeclaration,
+    /// List everywhere the symbol under the cursor is used.
+    FindReferences,
+    /// Go back to where the cursor was before the last jump.
+    GoBack,
+    /// Go forward again to where the cursor was before going back.
+    GoForward,
+    /// Go to the next error or warning in the focused file.
+    NextDiagnostic,
+    /// Go to the previous error or warning in the focused file.
+    PreviousDiagnostic,
+    /// Show what the language server says about what is under the cursor.
+    ShowHover,
+    /// Offer the completions the language server has for here.
+    ShowCompletions,
+    /// Show the signature of the call the cursor is inside.
+    ShowSignature,
+    /// Offer the fixes the language server has for here.
+    ShowCodeActions,
+    /// Rename the symbol under the cursor everywhere it appears.
+    Rename,
+    /// Lay the focused buffer out the way its formatter would.
+    Format,
+    /// Show who last changed each line of the focused file.
+    ToggleBlame,
+    /// Go to the next place the focused file differs from the index.
+    NextChange,
+    /// Go to the previous place the focused file differs from the index.
+    PreviousChange,
+    /// Put the change under the cursor back the way the index has it.
+    RevertChange,
+    /// Draw the editor's text one step larger.
+    ZoomIn,
+    /// Draw the editor's text one step smaller.
+    ZoomOut,
+    /// Draw the editor's text at the size it was set at.
+    ZoomReset,
     /// Open the settings screen.
     OpenSettings,
     /// Dismiss whatever is open on top: a palette, a prompt, a search.
     Cancel,
 }
 
+/// Every action, the name a keymap binds it by and the title a palette shows.
+///
+/// The order is the order a palette lists them in, which is why related
+/// commands sit together rather than alphabetically.
+const CATALOGUE: &[(Action, &str, &str)] = &[
+    (Action::ShowCommands, "palette.commands", "Show Commands"),
+    (Action::ShowFiles, "palette.files", "Go to File"),
+    (Action::ShowProjects, "palette.projects", "Go to Project"),
+    (Action::ShowSessions, "palette.sessions", "Go to Session"),
+    (Action::ShowSymbols, "palette.symbols", "Go to Symbol"),
+    (Action::ShowProblems, "palette.problems", "Go to Problem"),
+    (Action::AddProject, "project.add", "Add Project"),
+    (Action::RemoveProject, "project.remove", "Remove Project"),
+    (Action::NewSession, "session.new", "New Session"),
+    (Action::ReviewSession, "session.review", "Review Session"),
+    (Action::FocusAgent, "session.agent", "Focus Agent"),
+    (Action::EndSession, "session.end", "End Session"),
+    (Action::SplitRight, "pane.split_right", "Split Right"),
+    (Action::SplitDown, "pane.split_down", "Split Down"),
+    (Action::ClosePane, "pane.close", "Close Tab"),
+    (Action::ReopenTab, "pane.reopen", "Reopen Closed Tab"),
+    (Action::NextTab, "pane.next_tab", "Next Tab"),
+    (Action::PreviousTab, "pane.previous_tab", "Previous Tab"),
+    (Action::FocusLeft, "pane.focus_left", "Focus Pane Left"),
+    (Action::FocusRight, "pane.focus_right", "Focus Pane Right"),
+    (Action::FocusUp, "pane.focus_up", "Focus Pane Up"),
+    (Action::FocusDown, "pane.focus_down", "Focus Pane Down"),
+    (Action::NewTerminal, "terminal.new", "New Terminal"),
+    (Action::Save, "file.save", "Save"),
+    (Action::SaveAll, "file.save_all", "Save All"),
+    (Action::Undo, "edit.undo", "Undo"),
+    (Action::Redo, "edit.redo", "Redo"),
+    (Action::Cut, "edit.cut", "Cut"),
+    (Action::Copy, "edit.copy", "Copy"),
+    (Action::Paste, "edit.paste", "Paste"),
+    (Action::SelectAll, "edit.select_all", "Select All"),
+    (Action::SelectLine, "edit.select_line", "Select Line"),
+    (
+        Action::ExpandSelection,
+        "edit.expand_selection",
+        "Expand Selection",
+    ),
+    (
+        Action::AddCursorAbove,
+        "edit.cursor_above",
+        "Add Cursor Above",
+    ),
+    (
+        Action::AddCursorBelow,
+        "edit.cursor_below",
+        "Add Cursor Below",
+    ),
+    (
+        Action::AddNextMatch,
+        "edit.add_next_match",
+        "Add Selection to Next Match",
+    ),
+    (
+        Action::SelectAllMatches,
+        "edit.select_all_matches",
+        "Select All Occurrences",
+    ),
+    (
+        Action::CollapseCursors,
+        "edit.collapse_cursors",
+        "Collapse Cursors",
+    ),
+    (Action::ToggleFold, "view.toggle_fold", "Toggle Fold"),
+    (Action::FoldAll, "view.fold_all", "Fold All"),
+    (Action::UnfoldAll, "view.unfold_all", "Unfold All"),
+    (
+        Action::DuplicateLine,
+        "edit.duplicate_line",
+        "Duplicate Line",
+    ),
+    (Action::DeleteLine, "edit.delete_line", "Delete Line"),
+    (Action::MoveLineUp, "edit.move_line_up", "Move Line Up"),
+    (
+        Action::MoveLineDown,
+        "edit.move_line_down",
+        "Move Line Down",
+    ),
+    (Action::JoinLines, "edit.join_lines", "Join Lines"),
+    (
+        Action::InsertLineBelow,
+        "edit.line_below",
+        "Insert Line Below",
+    ),
+    (
+        Action::InsertLineAbove,
+        "edit.line_above",
+        "Insert Line Above",
+    ),
+    (
+        Action::ToggleComment,
+        "edit.toggle_comment",
+        "Toggle Comment",
+    ),
+    (Action::Indent, "edit.indent", "Indent"),
+    (Action::Outdent, "edit.outdent", "Outdent"),
+    (Action::Find, "search.find", "Find"),
+    (Action::Replace, "search.replace", "Replace"),
+    (Action::FindNext, "search.next", "Find Next"),
+    (Action::FindPrevious, "search.previous", "Find Previous"),
+    (Action::FindSelection, "search.selection", "Find Selection"),
+    (
+        Action::ReplaceMatch,
+        "search.replace_match",
+        "Replace Match",
+    ),
+    (Action::ReplaceAll, "search.replace_all", "Replace All"),
+    (Action::SearchProject, "search.project", "Search Project"),
+    (Action::GoToLine, "go.line", "Go to Line"),
+    (Action::GoToDefinition, "go.definition", "Go to Definition"),
+    (
+        Action::GoToTypeDefinition,
+        "go.type_definition",
+        "Go to Type Definition",
+    ),
+    (
+        Action::GoToImplementation,
+        "go.implementation",
+        "Go to Implementation",
+    ),
+    (
+        Action::GoToDeclaration,
+        "go.declaration",
+        "Go to Declaration",
+    ),
+    (
+        Action::FindReferences,
+        "go.references",
+        "Find All References",
+    ),
+    (Action::GoBack, "go.back", "Go Back"),
+    (Action::GoForward, "go.forward", "Go Forward"),
+    (Action::NextDiagnostic, "go.next_problem", "Next Problem"),
+    (
+        Action::PreviousDiagnostic,
+        "go.previous_problem",
+        "Previous Problem",
+    ),
+    (Action::ShowHover, "language.hover", "Show Hover"),
+    (
+        Action::ShowCompletions,
+        "language.completions",
+        "Show Completions",
+    ),
+    (
+        Action::ShowSignature,
+        "language.signature",
+        "Show Signature Help",
+    ),
+    (
+        Action::ShowCodeActions,
+        "language.code_actions",
+        "Show Code Actions",
+    ),
+    (Action::Rename, "language.rename", "Rename Symbol"),
+    (Action::Format, "language.format", "Format Document"),
+    (Action::ToggleBlame, "git.blame", "Toggle Git Blame"),
+    (Action::NextChange, "git.next_change", "Next Change"),
+    (
+        Action::PreviousChange,
+        "git.previous_change",
+        "Previous Change",
+    ),
+    (Action::RevertChange, "git.revert_change", "Revert Change"),
+    (Action::ZoomIn, "view.zoom_in", "Zoom In"),
+    (Action::ZoomOut, "view.zoom_out", "Zoom Out"),
+    (Action::ZoomReset, "view.zoom_reset", "Reset Zoom"),
+    (Action::OpenSettings, "window.settings", "Open Settings"),
+    (Action::Cancel, "window.cancel", "Cancel"),
+];
+
 impl Action {
-    /// Every action, in the order they are written above.
-    pub const ALL: [Self; 24] = [
-        Self::ShowCommands,
-        Self::ShowFiles,
-        Self::ShowProjects,
-        Self::ShowSessions,
-        Self::AddProject,
-        Self::RemoveProject,
-        Self::NewSession,
-        Self::ReviewSession,
-        Self::FocusAgent,
-        Self::EndSession,
-        Self::SplitRight,
-        Self::SplitDown,
-        Self::ClosePane,
-        Self::NextTab,
-        Self::PreviousTab,
-        Self::FocusLeft,
-        Self::FocusRight,
-        Self::FocusUp,
-        Self::FocusDown,
-        Self::NewTerminal,
-        Self::Save,
-        Self::SaveAll,
-        Self::OpenSettings,
-        Self::Cancel,
-    ];
+    /// Every action, in the order a palette lists them.
+    pub fn all() -> impl Iterator<Item = Self> {
+        CATALOGUE.iter().map(|(action, _, _)| *action)
+    }
 
     /// The name a keymap binds the action by.
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::ShowCommands => "palette.commands",
-            Self::ShowFiles => "palette.files",
-            Self::ShowProjects => "palette.projects",
-            Self::ShowSessions => "palette.sessions",
-            Self::AddProject => "project.add",
-            Self::RemoveProject => "project.remove",
-            Self::NewSession => "session.new",
-            Self::ReviewSession => "session.review",
-            Self::FocusAgent => "session.agent",
-            Self::EndSession => "session.end",
-            Self::SplitRight => "pane.split_right",
-            Self::SplitDown => "pane.split_down",
-            Self::ClosePane => "pane.close",
-            Self::NextTab => "pane.next_tab",
-            Self::PreviousTab => "pane.previous_tab",
-            Self::FocusLeft => "pane.focus_left",
-            Self::FocusRight => "pane.focus_right",
-            Self::FocusUp => "pane.focus_up",
-            Self::FocusDown => "pane.focus_down",
-            Self::NewTerminal => "terminal.new",
-            Self::Save => "file.save",
-            Self::SaveAll => "file.save_all",
-            Self::OpenSettings => "window.settings",
-            Self::Cancel => "window.cancel",
-        }
+    pub fn id(self) -> &'static str {
+        self.entry().1
     }
 
     /// The action's title, as the palette and the keymap screen show it.
-    pub const fn title(self) -> &'static str {
-        match self {
-            Self::ShowCommands => "Show Commands",
-            Self::ShowFiles => "Go to File",
-            Self::ShowProjects => "Go to Project",
-            Self::ShowSessions => "Go to Session",
-            Self::AddProject => "Add Project",
-            Self::RemoveProject => "Remove Project",
-            Self::NewSession => "New Session",
-            Self::ReviewSession => "Review Session",
-            Self::FocusAgent => "Focus Agent",
-            Self::EndSession => "End Session",
-            Self::SplitRight => "Split Right",
-            Self::SplitDown => "Split Down",
-            Self::ClosePane => "Close Tab",
-            Self::NextTab => "Next Tab",
-            Self::PreviousTab => "Previous Tab",
-            Self::FocusLeft => "Focus Pane Left",
-            Self::FocusRight => "Focus Pane Right",
-            Self::FocusUp => "Focus Pane Up",
-            Self::FocusDown => "Focus Pane Down",
-            Self::NewTerminal => "New Terminal",
-            Self::Save => "Save",
-            Self::SaveAll => "Save All",
-            Self::OpenSettings => "Open Settings",
-            Self::Cancel => "Cancel",
-        }
+    pub fn title(self) -> &'static str {
+        self.entry().2
+    }
+
+    /// Whether the action is one a pane showing a file carries out.
+    ///
+    /// The palette greys out what does not apply where the keyboard is, and
+    /// a file command asked for with a terminal focused would otherwise go
+    /// quietly nowhere.
+    pub fn needs_buffer(self) -> bool {
+        matches!(
+            self,
+            Self::Save
+                | Self::Undo
+                | Self::Redo
+                | Self::Cut
+                | Self::Copy
+                | Self::Paste
+                | Self::SelectAll
+                | Self::SelectLine
+                | Self::ExpandSelection
+                | Self::AddCursorAbove
+                | Self::AddCursorBelow
+                | Self::AddNextMatch
+                | Self::SelectAllMatches
+                | Self::CollapseCursors
+                | Self::ToggleFold
+                | Self::FoldAll
+                | Self::UnfoldAll
+                | Self::DuplicateLine
+                | Self::DeleteLine
+                | Self::MoveLineUp
+                | Self::MoveLineDown
+                | Self::JoinLines
+                | Self::InsertLineBelow
+                | Self::InsertLineAbove
+                | Self::ToggleComment
+                | Self::Indent
+                | Self::Outdent
+                | Self::Find
+                | Self::Replace
+                | Self::FindNext
+                | Self::FindPrevious
+                | Self::FindSelection
+                | Self::ReplaceMatch
+                | Self::ReplaceAll
+                | Self::GoToLine
+                | Self::ShowSymbols
+                | Self::GoToDefinition
+                | Self::GoToTypeDefinition
+                | Self::GoToImplementation
+                | Self::GoToDeclaration
+                | Self::FindReferences
+                | Self::NextDiagnostic
+                | Self::PreviousDiagnostic
+                | Self::ShowHover
+                | Self::ShowCompletions
+                | Self::ShowSignature
+                | Self::ShowCodeActions
+                | Self::Rename
+                | Self::Format
+                | Self::ToggleBlame
+                | Self::NextChange
+                | Self::PreviousChange
+                | Self::RevertChange
+        )
+    }
+
+    /// This action's row of the catalogue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the action is not in the catalogue, which is a table
+    /// compiled into the binary missing a variant compiled into the binary.
+    fn entry(self) -> &'static (Self, &'static str, &'static str) {
+        CATALOGUE
+            .iter()
+            .find(|(action, _, _)| *action == self)
+            .expect("every action is in the catalogue")
     }
 }
 
@@ -162,9 +464,10 @@ impl FromStr for Action {
 
     /// Reads an action by the name a keymap binds it by.
     fn from_str(id: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|action| action.id() == id)
+        CATALOGUE
+            .iter()
+            .find(|(_, name, _)| *name == id)
+            .map(|(action, _, _)| *action)
             .ok_or_else(|| UnknownAction { id: id.to_owned() })
     }
 }

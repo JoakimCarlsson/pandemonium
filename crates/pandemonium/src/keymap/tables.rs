@@ -46,10 +46,119 @@ pub const BASE: &[Row] = &[
     ("primary+alt+s", Action::SaveAll, "true"),
     ("primary+,", Action::OpenSettings, "true"),
     ("escape", Action::Cancel, "true"),
+    ("primary+shift+t", Action::ReopenTab, "true"),
+    ("primary+z", Action::Undo, "pane.kind == file"),
+    ("primary+shift+z", Action::Redo, "pane.kind == file"),
+    ("primary+y", Action::Redo, "pane.kind == file"),
+    ("primary+x", Action::Cut, "pane.kind == file"),
+    ("primary+c", Action::Copy, "pane.kind == file"),
+    ("primary+v", Action::Paste, "pane.kind == file"),
+    ("primary+a", Action::SelectAll, "pane.kind == file"),
+    ("primary+l", Action::SelectLine, "pane.kind == file"),
+    (
+        "shift+alt+right",
+        Action::ExpandSelection,
+        "pane.kind == file",
+    ),
+    ("shift+alt+down", Action::DuplicateLine, "pane.kind == file"),
+    ("primary+shift+k", Action::DeleteLine, "pane.kind == file"),
+    ("alt+up", Action::MoveLineUp, "pane.kind == file"),
+    ("alt+down", Action::MoveLineDown, "pane.kind == file"),
+    (
+        "primary+shift+alt+j",
+        Action::JoinLines,
+        "pane.kind == file",
+    ),
+    (
+        "primary+enter",
+        Action::InsertLineBelow,
+        "pane.kind == file",
+    ),
+    (
+        "primary+shift+enter",
+        Action::InsertLineAbove,
+        "pane.kind == file",
+    ),
+    ("primary+/", Action::ToggleComment, "pane.kind == file"),
+    ("primary+]", Action::Indent, "pane.kind == file"),
+    ("primary+[", Action::Outdent, "pane.kind == file"),
+    ("primary+f", Action::Find, "pane.kind == file"),
+    ("primary+h", Action::Replace, "pane.kind == file"),
+    ("f3", Action::FindNext, "pane.kind == file"),
+    ("shift+f3", Action::FindPrevious, "pane.kind == file"),
+    ("primary+f3", Action::FindSelection, "pane.kind == file"),
+    ("primary+shift+f", Action::SearchProject, "true"),
+    ("primary+g", Action::GoToLine, "pane.kind == file"),
+    ("primary+r", Action::ShowSymbols, "pane.kind == file"),
+    ("primary+shift+m", Action::ShowProblems, "true"),
+    ("f12", Action::GoToDefinition, "pane.kind == file"),
+    (
+        "primary+f12",
+        Action::GoToImplementation,
+        "pane.kind == file",
+    ),
+    ("shift+f12", Action::FindReferences, "pane.kind == file"),
+    ("alt+left", Action::GoBack, "true"),
+    ("alt+right", Action::GoForward, "true"),
+    ("f8", Action::NextDiagnostic, "pane.kind == file"),
+    ("shift+f8", Action::PreviousDiagnostic, "pane.kind == file"),
+    (
+        "primary+k primary+i",
+        Action::ShowHover,
+        "pane.kind == file",
+    ),
+    (
+        "primary+space",
+        Action::ShowCompletions,
+        "pane.kind == file",
+    ),
+    (
+        "primary+shift+space",
+        Action::ShowSignature,
+        "pane.kind == file",
+    ),
+    ("primary+.", Action::ShowCodeActions, "pane.kind == file"),
+    ("f2", Action::Rename, "pane.kind == file"),
+    ("shift+alt+f", Action::Format, "pane.kind == file"),
+    ("primary+alt+b", Action::ToggleBlame, "pane.kind == file"),
+    ("primary+alt+n", Action::NextChange, "pane.kind == file"),
+    ("primary+alt+p", Action::PreviousChange, "pane.kind == file"),
+    (
+        "primary+alt+up",
+        Action::AddCursorAbove,
+        "pane.kind == file",
+    ),
+    (
+        "primary+alt+down",
+        Action::AddCursorBelow,
+        "pane.kind == file",
+    ),
+    ("primary+d", Action::AddNextMatch, "pane.kind == file"),
+    (
+        "primary+shift+l",
+        Action::SelectAllMatches,
+        "pane.kind == file",
+    ),
+    (
+        "primary+k primary+l",
+        Action::ToggleFold,
+        "pane.kind == file",
+    ),
+    ("primary+k primary+0", Action::FoldAll, "pane.kind == file"),
+    (
+        "primary+k primary+j",
+        Action::UnfoldAll,
+        "pane.kind == file",
+    ),
+    ("primary+=", Action::ZoomIn, "true"),
+    ("primary+-", Action::ZoomOut, "true"),
+    ("primary+0", Action::ZoomReset, "true"),
 ];
 
 /// What VS Code does differently.
 pub const VS_CODE: &[Row] = &[
+    ("primary+shift+o", Action::ShowSymbols, "pane.kind == file"),
+    ("primary+k primary+x", Action::Format, "pane.kind == file"),
     ("primary+k primary+left", Action::FocusLeft, "true"),
     ("primary+k primary+right", Action::FocusRight, "true"),
     ("primary+k primary+up", Action::FocusUp, "true"),
@@ -62,6 +171,13 @@ pub const VS_CODE: &[Row] = &[
 
 /// What Zed does differently.
 pub const ZED: &[Row] = &[
+    ("primary+shift+h", Action::Replace, "pane.kind == file"),
+    ("primary+shift+o", Action::ShowSymbols, "pane.kind == file"),
+    (
+        "primary+k primary+t",
+        Action::GoToTypeDefinition,
+        "pane.kind == file",
+    ),
     ("primary+k right", Action::SplitRight, "true"),
     ("primary+k down", Action::SplitDown, "true"),
     ("primary+k primary+left", Action::FocusLeft, "true"),
@@ -74,6 +190,15 @@ pub const ZED: &[Row] = &[
 
 /// What JetBrains IDEs do differently.
 pub const JETBRAINS: &[Row] = &[
+    ("primary+shift+j", Action::JoinLines, "pane.kind == file"),
+    ("primary+alt+l", Action::Format, "pane.kind == file"),
+    ("primary+b", Action::GoToDefinition, "pane.kind == file"),
+    (
+        "primary+alt+f7",
+        Action::FindReferences,
+        "pane.kind == file",
+    ),
+    ("shift+f6", Action::Rename, "pane.kind == file"),
     ("primary+shift+a", Action::ShowCommands, "true"),
     ("primary+shift+n", Action::ShowFiles, "true"),
     ("primary+alt+shift+n", Action::NewSession, "project.focused"),
@@ -127,6 +252,12 @@ pub const HELIX: &[Row] = &[
 
 /// What Sublime Text does differently.
 pub const SUBLIME: &[Row] = &[
+    (
+        "primary+shift+d",
+        Action::DuplicateLine,
+        "pane.kind == file",
+    ),
+    ("primary+j", Action::JoinLines, "pane.kind == file"),
     ("primary+alt+2", Action::SplitRight, "true"),
     ("primary+alt+shift+2", Action::SplitDown, "true"),
     ("ctrl+tab", Action::NextTab, "true"),

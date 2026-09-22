@@ -6,9 +6,14 @@
 //! model, submitted to `pm-gfx` as one draw list.
 
 mod clicks;
+mod commands;
 mod drag;
 mod input;
+mod language;
 mod panes;
+mod picker;
+mod places;
+mod tree;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -28,19 +33,27 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
-use crate::app::clicks::DoubleClicks;
+use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
+use crate::app::places::Trail;
 use crate::config::{self, Restored, WindowState};
 use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
-use crate::onboarding::{self, Message, Setup};
+use crate::message::Message;
+use crate::onboarding::{self, Setup};
 use crate::panes::{PaneTree, Saved};
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
     self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panel, Panes,
     SECONDARY_SIDEBAR_RANGE, SidebarProject, TabMenu,
 };
+
+/// The blames that have come back from the threads that asked for them.
+type Blamed = Arc<Mutex<Vec<(editor::FileId, Vec<pm_core::Blame>)>>>;
+
+/// How wide the picker is drawn, for centring it over the window.
+const PICKER_WIDTH: f32 = 620.0;
 
 /// What the window is woken up for from outside the event loop.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,6 +62,8 @@ pub enum Wake {
     Terminal,
     /// A language server has said something about a file that is open.
     Language,
+    /// A blame has come back for a file that asked for one.
+    Blame,
 }
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
@@ -79,6 +94,11 @@ pub struct App {
     open: Projects,
     /// One file tree per open project, so each keeps what it has expanded.
     files: BTreeMap<ProjectId, FileTree>,
+    /// What git makes of each of those worktrees.
+    statuses:
+        BTreeMap<ProjectId, std::collections::HashMap<std::path::PathBuf, pm_core::FileStatus>>,
+    /// What a path prompt is aimed at, while one is open.
+    path_target: Option<std::path::PathBuf>,
     /// Current width and drag state of the sessions sidebar.
     sidebar: ResizeState,
     /// Current height and drag state of the bottom panel.
@@ -107,14 +127,40 @@ pub struct App {
     drag: Option<TabDrag>,
     /// Whether keystrokes go to the editor pane rather than to the window.
     editor_focused: bool,
+    /// Whether keystrokes go to the focused pane's search bar.
+    search_focused: bool,
+    /// How much larger or smaller than usual the editor's text is drawn.
+    zoom: f32,
+    /// Where the window has been, for going back and reopening tabs.
+    trail: Trail,
+    /// The list the window is asking the reader to choose from, if it is.
+    picker: Option<crate::picker::Picker>,
+    /// What could be written where the cursor is, while the list is up.
+    completions: Option<crate::editor::Completions>,
+    /// What the editor has to say about a place, and where to say it.
+    hint: Option<(Point, String)>,
+    /// Where the next thing said about a place will be said.
+    hint_at: Point,
+    /// Where the pointer has been resting, and since when.
+    resting: Option<(Instant, Point)>,
+    /// The fixes a server last offered, for the menu that shows them.
+    code_actions: Vec<pm_text::CodeAction>,
+    /// The questions asked of servers and not yet answered.
+    asked: Vec<language::Pending>,
+    /// Whether the formatting being waited on was asked for by a save.
+    saving: bool,
+    /// The pane whose tabs are being closed, while one of them is asked about.
+    closing: Option<crate::panes::PaneId>,
+    /// The blames that have come back and not yet been taken in.
+    blamed: Blamed,
     /// The tab menu that is open over the panes, if one is.
     menu: Option<TabMenu>,
     /// The last press in the editor pane, for selecting a word.
-    text_clicks: DoubleClicks<Position>,
+    text_clicks: Clicks<Position>,
     /// The last press on a row of the file tree, for keeping a file open.
-    tree_clicks: DoubleClicks<pm_core::EntryId>,
+    tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
-    tab_clicks: DoubleClicks<crate::editor::FileId>,
+    tab_clicks: Clicks<crate::editor::FileId>,
     /// The shells the window is running, one per project.
     terminals: Terminals,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -162,6 +208,8 @@ impl App {
             projects: Vec::new(),
             open,
             files,
+            statuses: BTreeMap::new(),
+            path_target: None,
             sidebar: ResizeState::new(
                 layout.primary_sidebar_width,
                 PRIMARY_SIDEBAR_RANGE.0,
@@ -188,9 +236,22 @@ impl App {
             geometry: Geometry::default(),
             drag: None,
             editor_focused: false,
-            text_clicks: DoubleClicks::default(),
-            tree_clicks: DoubleClicks::default(),
-            tab_clicks: DoubleClicks::default(),
+            search_focused: false,
+            zoom: 1.0,
+            trail: Trail::default(),
+            picker: None,
+            completions: None,
+            hint: None,
+            hint_at: Point::new(0.0, 0.0),
+            resting: None,
+            code_actions: Vec::new(),
+            asked: Vec::new(),
+            saving: false,
+            closing: None,
+            blamed: Arc::new(Mutex::new(Vec::new())),
+            text_clicks: Clicks::default(),
+            tree_clicks: Clicks::default(),
+            tab_clicks: Clicks::default(),
             menu: None,
             terminals: Terminals::default(),
             terminal_focused: false,
@@ -251,7 +312,7 @@ impl App {
     /// with a preview tab behaves: clicking down a tree leaves one tab
     /// behind, and the file you meant stays when you ask for it twice.
     fn open_file(&mut self, id: pm_core::EntryId) {
-        let preview = !self.tree_clicks.press(id);
+        let preview = self.tree_clicks.press(id) < 2;
         let Some(project) = self.open.active() else {
             return;
         };
@@ -272,52 +333,125 @@ impl App {
 
     /// Places the cursor where a press landed, or selects to where it reached.
     ///
-    /// A second press in the same place takes the word under it instead,
-    /// which is the one gesture the element tree cannot tell the window
-    /// about on its own.
+    /// A second press in the same place takes the word under it and a third
+    /// takes the line, which are the gestures the element tree cannot tell
+    /// the window about on its own. Alt puts another cursor down instead of
+    /// moving the one there is, and alt with shift draws a box.
     fn select_text(&mut self, pane: crate::panes::PaneId, anchor: Position, head: Position) {
         self.focus_pane(pane);
+        self.search_focused = false;
+        self.dismiss_popup();
 
-        let twice = anchor == head && self.text_clicks.press(anchor);
-        if anchor != head {
+        if anchor == head && self.modifiers.control_key() {
+            self.place_cursor(head, false);
+            return self.act(crate::keymap::Action::GoToDefinition);
+        }
+        if self.modifiers.alt_key() && self.modifiers.shift_key() {
             self.text_clicks.clear();
+            return self.edit_active(|buffer| buffer.box_selection(anchor, head));
+        }
+        if anchor == head && self.modifiers.alt_key() {
+            self.text_clicks.clear();
+            return self.edit_active(|buffer| {
+                buffer.add_cursor(pm_text::Selection::at(head));
+            });
         }
 
-        self.edit_active(|buffer| match (twice, anchor == head) {
-            (true, true) => buffer.select_word(head),
-            (false, true) => buffer.place(head, false),
-            (_, false) => {
-                buffer.place(anchor, false);
-                buffer.place(head, true);
+        let presses = if anchor == head {
+            self.text_clicks.press(anchor)
+        } else {
+            self.text_clicks.clear();
+            0
+        };
+        self.edit_active(|buffer| {
+            buffer.collapse_cursors();
+            match presses {
+                1 => buffer.place(head, false),
+                2 => buffer.select_word(head),
+                3 => buffer.select_line(head),
+                _ => {
+                    buffer.place(anchor, false);
+                    buffer.place(head, true);
+                }
             }
         });
     }
 
-    /// Scrolls the editor by a drag on its scrollbar.
+    /// Scrolls the editor by a drag on one of its scrollbars.
+    ///
+    /// Where the view stood when the drag began is remembered, because every
+    /// frame of a drag reports travel from the same press: adding the travel
+    /// to where the view has already moved would run away from the pointer.
     fn drag_editor_scrollbar(
         &mut self,
         pane: crate::panes::PaneId,
+        axis: editor::ScrollAxis,
         event: ResizeEvent,
-        lines_per_pixel: f32,
+        step: f32,
     ) {
         self.focus_pane(pane);
         let Some(file) = self.active_file() else {
             return;
         };
         let mut document = file.borrow_mut();
+        let vertical = axis == editor::ScrollAxis::Vertical;
+        let at = if vertical {
+            document.scroll()
+        } else {
+            document.column()
+        };
         let base = match event.phase {
-            ResizePhase::Started => document.scroll(),
-            _ => self
-                .editor_scroll_origin
-                .unwrap_or_else(|| document.scroll()),
+            ResizePhase::Started => at,
+            _ => self.editor_scroll_origin.unwrap_or(at),
         };
         self.editor_scroll_origin = match event.phase {
             ResizePhase::Ended => None,
             _ => Some(base),
         };
 
-        let travelled = event.delta(Axis::Vertical) * lines_per_pixel;
-        document.scroll_to((base as f32 + travelled).round().max(0.0) as usize);
+        let along = if vertical {
+            Axis::Vertical
+        } else {
+            Axis::Horizontal
+        };
+        let travelled = event.delta(along) * step;
+        let reached = (base as f32 + travelled).round().max(0.0) as usize;
+        if vertical {
+            document.scroll_to(reached);
+        } else {
+            document.scroll_to_column(reached);
+        }
+    }
+
+    /// Selects every line a drag down the gutter reaches.
+    fn select_lines(&mut self, pane: crate::panes::PaneId, anchor: Position, head: Position) {
+        self.focus_pane(pane);
+        self.text_clicks.clear();
+        self.edit_active(|buffer| {
+            let (first, last) = (anchor.line.min(head.line), anchor.line.max(head.line));
+            buffer.select_line(Position::new(first, 0));
+            let start = buffer.selection().start();
+            buffer.select_line(Position::new(last, 0));
+            let end = buffer.selection().end();
+            buffer.select_range(start..end);
+        });
+    }
+
+    /// Opens the menu of what can be done to the text, where the pointer is.
+    ///
+    /// A press outside the selection places the cursor first, the way every
+    /// editor does: the menu is about what is under the pointer, and a menu
+    /// offering to cut something the reader cannot see is offering nothing.
+    fn open_editor_menu(&mut self, pane: crate::panes::PaneId) {
+        self.focus_pane(pane);
+        if let (Some(pointer), Some(file)) = (self.pointer, self.active_file()) {
+            let at = file.borrow().position_at(pointer);
+            let selection = file.borrow().buffer().selection();
+            if selection.is_empty() || at < selection.start() || at > selection.end() {
+                self.place_cursor(at, false);
+            }
+        }
+        self.open_menu(MenuTarget::Text(pane));
     }
 
     /// Starts another shell in the active project's worktree.
@@ -389,7 +523,9 @@ impl App {
     /// appearance the theme mode resolves to.
     pub(super) fn theme(&self) -> Theme {
         let appearance = self.setup.theme_mode.resolve(self.system_appearance());
-        family(self.setup.theme_family).variant(appearance)
+        family(self.setup.theme_family)
+            .variant(appearance)
+            .zoomed(self.zoom)
     }
 
     /// The appearance the desktop asks for, defaulting to dark.
@@ -475,7 +611,17 @@ impl App {
             return;
         }
         if let Message::CloseFile(pane, file) = message {
-            self.close_tabs(pane, |pane| pane.close(file));
+            self.close_file(pane, file);
+            self.request_redraw();
+            return;
+        }
+        if let Message::SaveAndClose(pane, file) = message {
+            self.save_and_close(pane, file);
+            self.request_redraw();
+            return;
+        }
+        if let Message::DiscardAndClose(pane, file) = message {
+            self.discard_and_close(pane, file);
             self.request_redraw();
             return;
         }
@@ -513,8 +659,136 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::ScrollEditor(pane, event, lines_per_pixel) = message {
-            self.drag_editor_scrollbar(pane, event, lines_per_pixel);
+        if let Message::ScrollEditor(pane, axis, event, step) = message {
+            self.drag_editor_scrollbar(pane, axis, event, step);
+            self.request_redraw();
+            return;
+        }
+        if let Message::SelectLines(pane, anchor, head) = message {
+            self.select_lines(pane, anchor, head);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleFold(pane, at) = message {
+            self.focus_pane(pane);
+            self.with_document(|document| document.toggle_fold(at.line));
+            self.request_redraw();
+            return;
+        }
+        if let Message::ShowEditorMenu(pane) = message {
+            self.open_editor_menu(pane);
+            return;
+        }
+        if let Message::PlacePicker(caret) = message {
+            if let Some(picker) = self.picker.as_mut() {
+                picker.edit(|field| field.place(caret));
+            }
+            self.request_redraw();
+            return;
+        }
+        if let Message::ChoosePicker(place) = message {
+            self.choose_picker(place);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ChooseCompletion(place) = message {
+            self.take_completion(place);
+            self.request_redraw();
+            return;
+        }
+        if let Message::TakeCodeAction(index) = message {
+            self.take_code_action(index);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ShowEntryMenu(id) = message {
+            self.open_entry_menu(id);
+            return;
+        }
+        if let Message::NewFileIn(id) = message {
+            self.prompt_for_path(crate::picker::Kind::NewFile, id);
+            self.request_redraw();
+            return;
+        }
+        if let Message::NewFolderIn(id) = message {
+            self.prompt_for_path(crate::picker::Kind::NewFolder, id);
+            self.request_redraw();
+            return;
+        }
+        if let Message::RenameEntry(id) = message {
+            self.prompt_for_path(crate::picker::Kind::RenamePath, id);
+            self.request_redraw();
+            return;
+        }
+        if let Message::DeleteEntry(id) = message {
+            self.prompt_for_delete(id);
+            self.request_redraw();
+            return;
+        }
+        if let Message::CopyEntryPath(id) = message {
+            self.copy_entry_path(id, false);
+            self.request_redraw();
+            return;
+        }
+        if let Message::CopyEntryRelativePath(id) = message {
+            self.copy_entry_path(id, true);
+            self.request_redraw();
+            return;
+        }
+        if let Message::RevealEntry(id) = message {
+            self.reveal_entry(id);
+            self.request_redraw();
+            return;
+        }
+        if let Message::OpenEntryInTerminal(id) = message {
+            self.open_entry_in_terminal(id);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::DismissPopup {
+            self.dismiss_popup();
+            self.dismiss_picker();
+            self.request_redraw();
+            return;
+        }
+        if let Message::PaneAction(pane, action) = message {
+            self.focus_pane(pane);
+            return self.act(action);
+        }
+        if let Message::FocusSearch(pane, field, caret) = message {
+            self.focus_pane(pane);
+            self.focus_search(field, caret);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleSearchCase(pane) = message {
+            self.focus_pane(pane);
+            self.with_document(|document| {
+                document.search_with(super::editor::Search::toggle_case);
+            });
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleSearchWord(pane) = message {
+            self.focus_pane(pane);
+            self.with_document(|document| {
+                document.search_with(super::editor::Search::toggle_whole_word);
+            });
+            self.request_redraw();
+            return;
+        }
+        if let Message::CloseSearch(pane) = message {
+            self.focus_pane(pane);
+            self.close_search();
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleSearchReplace(pane) = message {
+            self.focus_pane(pane);
+            self.search_focused = true;
+            self.with_document(|document| {
+                document.search_with(|search, _| search.toggle_replacing());
+            });
             self.request_redraw();
             return;
         }
@@ -565,6 +839,7 @@ impl App {
             }
             self.open.remove(id);
             self.files.remove(&id);
+            self.trail.close_project(id);
             self.terminals.close(id);
             self.drop_project_tabs(id);
             self.store();
@@ -637,29 +912,18 @@ impl App {
         match message {
             Message::DismissMenu => {}
             Message::CloseOtherFiles(pane, file) => {
-                self.close_tabs(pane, |pane| pane.close_others(file));
+                self.close_saved_tabs(pane, |held| held == file);
             }
             Message::CloseFilesLeft(pane, file) => {
-                self.close_tabs(pane, |pane| pane.close_left(file));
+                let kept = self.tabs_from(pane, file, false);
+                self.close_saved_tabs(pane, move |held| kept.contains(&held));
             }
             Message::CloseFilesRight(pane, file) => {
-                self.close_tabs(pane, |pane| pane.close_right(file));
+                let kept = self.tabs_from(pane, file, true);
+                self.close_saved_tabs(pane, move |held| kept.contains(&held));
             }
-            Message::CloseSavedFiles(pane) => {
-                let saved = self
-                    .panes
-                    .pane(pane)
-                    .map(|pane| {
-                        pane.tabs()
-                            .iter()
-                            .copied()
-                            .filter(|file| !self.editor.is_dirty(*file))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                self.close_tabs(pane, |pane| pane.retain(|file| !saved.contains(&file)));
-            }
-            Message::CloseAllFiles(pane) => self.close_tabs(pane, crate::panes::Pane::close_all),
+            Message::CloseSavedFiles(pane) => self.close_saved_tabs(pane, |_| false),
+            Message::CloseAllFiles(pane) => self.close_every_tab(pane),
             Message::CopyFilePath(file) => {
                 if let Some(path) = self.editor.path(file) {
                     desktop::copy(path.display().to_string());
@@ -810,7 +1074,7 @@ impl App {
     }
 
     /// A handle the threads behind the window wake it with, sending `wake`.
-    fn waker(&self, wake: Wake) -> Arc<dyn Fn() + Send + Sync> {
+    pub(super) fn waker(&self, wake: Wake) -> Arc<dyn Fn() + Send + Sync> {
         let proxy = Mutex::new(self.proxy.clone());
         Arc::new(move || {
             if let Ok(proxy) = proxy.lock() {
@@ -826,8 +1090,59 @@ impl App {
         }
     }
 
+    /// What is drawn over the panes: a picker, a completion list, a hint.
+    ///
+    /// Each is placed where it belongs rather than laid out — the picker
+    /// under the title bar, a completion list under the word it completes, a
+    /// hint beside the cursor — because none of them takes room from the
+    /// screen they cover.
+    fn overlays(&self, theme: &Theme) -> Vec<workspace::Overlaid> {
+        let mut overlays = Vec::new();
+
+        if let Some(picker) = self.picker.as_ref() {
+            let width = self
+                .renderer
+                .as_ref()
+                .map_or(0.0, |renderer| renderer.size().width);
+            overlays.push(workspace::Overlaid {
+                at: Point::new(width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
+                content: Box::new(crate::picker::picker(theme, picker)),
+                backdrop: Some(Message::DismissPopup),
+            });
+        }
+
+        if let Some(completions) = self.completions.as_ref() {
+            overlays.push(workspace::Overlaid {
+                at: completions.at(),
+                content: Box::new(editor::completion_list(theme, completions)),
+                backdrop: None,
+            });
+        }
+
+        if let Some((at, hint)) = self.hint.as_ref() {
+            overlays.push(workspace::Overlaid {
+                at: Point::new(at.x, at.y),
+                content: Box::new(editor::hint(theme, hint)),
+                backdrop: None,
+            });
+        }
+        overlays
+    }
+
+    /// Where on screen the cursor of the focused pane last came out.
+    pub(super) fn cursor_point(&self) -> Point {
+        let Some(file) = self.active_file() else {
+            return Point::new(0.0, 0.0);
+        };
+        let document = file.borrow();
+        let head = document.buffer().selection().head;
+        let at = document.point_of(head);
+        Point::new(at.x, at.y + document.layout().cell.height)
+    }
+
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
+        self.refresh_hints();
         let shell = self
             .bottom_panel_open
             .then(|| self.active_shell())
@@ -849,8 +1164,12 @@ impl App {
         let theme = self.theme();
         let editor = self.pane_view(&theme);
         let menu = self.menu_items();
-        let files = self.open.active().map(pm_core::Project::id);
-        let files = files.and_then(|id| self.files.get(&id));
+        let overlays = self.overlays(&theme);
+        let active = self.open.active().map(pm_core::Project::id);
+        let files = workspace::Worktree {
+            tree: active.and_then(|id| self.files.get(&id)),
+            status: active.and_then(|id| self.statuses.get(&id)),
+        };
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
         else {
@@ -881,6 +1200,7 @@ impl App {
                     carried,
                     terminal: panel,
                     menu,
+                    overlays,
                 },
             )
         } else {
@@ -900,6 +1220,20 @@ impl App {
 }
 
 impl ApplicationHandler<Wake> for App {
+    /// Waits for the next event, or for the pointer to have rested long enough.
+    ///
+    /// The window is otherwise woken only by something happening; a pointer
+    /// holding still is the one thing it has to notice by the clock.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.rested() {
+            self.request_redraw();
+        }
+        event_loop.set_control_flow(match self.next_rest() {
+            Some(when) => winit::event_loop::ControlFlow::WaitUntil(when),
+            None => winit::event_loop::ControlFlow::Wait,
+        });
+    }
+
     /// Applies what the shells have written and draws the result.
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         match event {
@@ -910,7 +1244,13 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Language => {
-                if self.editor.refresh() {
+                let answered = self.collect_answers();
+                if self.editor.refresh() || answered {
+                    self.request_redraw();
+                }
+            }
+            Wake::Blame => {
+                if self.collect_blame() {
                     self.request_redraw();
                 }
             }
@@ -960,6 +1300,7 @@ impl ApplicationHandler<Wake> for App {
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.editor.set_notify(self.waker(Wake::Language));
+        self.reread_status();
 
         let saved = std::mem::take(&mut self.saved);
         self.restore_panes(&saved);
@@ -1015,11 +1356,22 @@ impl ApplicationHandler<Wake> for App {
                 ..
             } => self.secondary_pressed(),
             WindowEvent::MouseWheel { delta, .. } => {
-                let delta = match delta {
-                    MouseScrollDelta::LineDelta(_, lines) => lines * input::WHEEL_STEP,
-                    MouseScrollDelta::PixelDelta(position) => position.y as f32 / scale,
+                let (across, down) = match delta {
+                    MouseScrollDelta::LineDelta(columns, lines) => {
+                        (columns * input::WHEEL_STEP, lines * input::WHEEL_STEP)
+                    }
+                    MouseScrollDelta::PixelDelta(position) => {
+                        (position.x as f32 / scale, position.y as f32 / scale)
+                    }
                 };
-                self.scroll_by(delta);
+                if self.modifiers.shift_key() {
+                    self.scroll_across(-down);
+                } else if across != 0.0 {
+                    self.scroll_across(across);
+                    self.scroll_by(down);
+                } else {
+                    self.scroll_by(down);
+                }
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => {

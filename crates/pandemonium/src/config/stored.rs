@@ -27,6 +27,8 @@ pub(super) struct Stored {
     keymap: Option<BaseKeymap>,
     /// Whether editing starts in vim mode.
     vim_mode: Option<bool>,
+    /// Whether a file is laid out the way its formatter would when it is saved.
+    format_on_save: Option<bool>,
     /// Whether a new session's worktree is trusted without being asked about.
     trust_worktrees: Option<bool>,
     /// Whether anonymous usage data is sent.
@@ -119,6 +121,7 @@ impl Stored {
                 .unwrap_or(defaults.theme_family),
             keymap: self.keymap.unwrap_or(defaults.keymap),
             vim_mode: self.vim_mode.unwrap_or(defaults.vim_mode),
+            format_on_save: self.format_on_save.unwrap_or(defaults.format_on_save),
             trust_worktrees: self.trust_worktrees.unwrap_or(defaults.trust_worktrees),
             metrics: self.metrics.unwrap_or(defaults.metrics),
             crash_reports: self.crash_reports.unwrap_or(defaults.crash_reports),
@@ -144,6 +147,7 @@ impl Stored {
             theme_family: Some(pm_ui::family(setup.theme_family).name.to_owned()),
             keymap: Some(setup.keymap),
             vim_mode: Some(setup.vim_mode),
+            format_on_save: Some(setup.format_on_save),
             trust_worktrees: Some(setup.trust_worktrees),
             metrics: Some(setup.metrics),
             crash_reports: Some(setup.crash_reports),

@@ -14,7 +14,7 @@ use pm_ui::{Axis, Element, MenuItem, ResizeEvent, ResizePhase, Theme};
 use crate::app::App;
 use crate::app::drag::{DropPlace, TabDrag, highlight, unmeasured};
 use crate::editor::{FileId, OpenFile};
-use crate::onboarding::Message;
+use crate::message::Message;
 use crate::panes::{self, Contents, PaneId, Saved, SavedTab, SplitDirection};
 use crate::workspace::{MenuTarget, TabMenu};
 
@@ -110,10 +110,93 @@ impl App {
     /// Closes the tab in front of the pane with the keyboard.
     pub(super) fn close_active_tab(&mut self) {
         let pane = self.panes.focus();
-        let Some(file) = self.active_tab() else {
+        if let Some(file) = self.active_tab() {
+            self.close_file(pane, file);
+        }
+    }
+
+    /// Closes one tab, asking first when what is in it is not on disk.
+    ///
+    /// A file with changes nobody has written down is not something to close
+    /// quietly: the reader is asked which of the two things they meant, and
+    /// the file stays open until they say.
+    pub(super) fn close_file(&mut self, pane: PaneId, file: FileId) {
+        if self.editor.is_dirty(file) {
+            return self.open_menu(crate::workspace::MenuTarget::Unsaved(pane, file));
+        }
+        self.close_tabs(pane, |pane| pane.close(file));
+    }
+
+    /// Writes the file down and then closes its tab.
+    pub(super) fn save_and_close(&mut self, pane: PaneId, file: FileId) {
+        if let Some(root) = self.worktree_of(file) {
+            self.editor.save(file, &root);
+        }
+        self.close_tabs(pane, |pane| pane.close(file));
+        self.go_on_closing();
+    }
+
+    /// Closes the tab, losing whatever was not written down.
+    pub(super) fn discard_and_close(&mut self, pane: PaneId, file: FileId) {
+        self.close_tabs(pane, |pane| pane.close(file));
+        self.go_on_closing();
+    }
+
+    /// Closes every tab of `pane`, asking about each one that is not on disk.
+    ///
+    /// The unsaved ones are asked about one at a time: the answer closes that
+    /// file and brings up the next, so closing a bar of twenty tabs with
+    /// three unsaved among them is three questions and not twenty.
+    pub(super) fn close_every_tab(&mut self, pane: PaneId) {
+        self.closing = Some(pane);
+        self.close_saved_tabs(pane, |_| false);
+        self.go_on_closing();
+    }
+
+    /// Asks about the next unsaved tab of the pane being closed, if there is one.
+    fn go_on_closing(&mut self) {
+        let Some(pane) = self.closing else {
             return;
         };
-        self.close_tabs(pane, |pane| pane.close(file));
+        let next = self
+            .tabs_of(pane)
+            .into_iter()
+            .find(|file| self.editor.is_dirty(*file));
+        match next {
+            Some(file) => self.open_menu(crate::workspace::MenuTarget::Unsaved(pane, file)),
+            None => self.closing = None,
+        }
+    }
+
+    /// Closes every tab of `pane` that `keep` does not name and is on disk.
+    ///
+    /// Closing a bar of tabs at once leaves behind the ones with changes
+    /// nobody has written down: there is no one file to ask about, and
+    /// quietly losing the lot is the one answer that cannot be taken back.
+    pub(super) fn close_saved_tabs(&mut self, pane: PaneId, keep: impl Fn(FileId) -> bool) {
+        let dirty = |file: FileId| self.editor.is_dirty(file);
+        let held = self
+            .panes
+            .pane(pane)
+            .map(|pane| pane.tabs().to_vec())
+            .unwrap_or_default();
+        let kept = held
+            .into_iter()
+            .filter(|file| keep(*file) || dirty(*file))
+            .collect::<Vec<_>>();
+        self.close_tabs(pane, |pane| pane.retain(|file| kept.contains(&file)));
+    }
+
+    /// The tabs of `pane` on one side of `file`, and `file` itself.
+    pub(super) fn tabs_from(&self, pane: PaneId, file: FileId, right: bool) -> Vec<FileId> {
+        let tabs = self.tabs_of(pane);
+        let Some(index) = tabs.iter().position(|held| *held == file) else {
+            return tabs;
+        };
+        match right {
+            true => tabs[..=index].to_vec(),
+            false => tabs[index..].to_vec(),
+        }
     }
 
     /// Moves the keyboard to the pane `forward` of the focused one on `axis`.
@@ -132,11 +215,38 @@ impl App {
 
     /// Changes the tabs of `pane` and closes whatever that left with nothing.
     pub(super) fn close_tabs(&mut self, pane: PaneId, close: impl FnOnce(&mut panes::Pane)) {
+        let before = self.panes.held();
         if let Some(pane) = self.panes.pane_mut(pane) {
             close(pane);
         }
         self.panes.close_empty();
+        self.remember_closed(&before);
         self.sweep();
+    }
+
+    /// Takes down every file that was held before and is not held now.
+    ///
+    /// A tab is worth reopening whichever way it was closed — one tab, the
+    /// others, everything to the right — so what closed it is not asked; the
+    /// difference between what was open and what is open says it.
+    fn remember_closed(&mut self, before: &BTreeSet<FileId>) {
+        let held = self.panes.held();
+        let gone = before
+            .iter()
+            .filter(|file| !held.contains(file))
+            .filter_map(|file| {
+                let document = self.editor.get(*file)?;
+                let document = document.borrow();
+                Some(crate::app::places::Place {
+                    project: self.editor.project_of(*file)?,
+                    path: document.buffer().path().to_path_buf(),
+                    position: document.buffer().selection().head,
+                })
+            })
+            .collect::<Vec<_>>();
+        for place in gone {
+            self.trail.closed(place);
+        }
     }
 
     /// The panes as they stand, in the shape a launch restores them from.
@@ -254,7 +364,7 @@ impl App {
 
     /// Shows the tab that was clicked, keeping the file on a second click.
     pub(super) fn select_tab(&mut self, pane: PaneId, file: FileId) {
-        if self.tab_clicks.press(file) {
+        if self.tab_clicks.press(file) >= 2 {
             self.editor.keep(file);
         }
         if let Some(pane) = self.panes.pane_mut(pane) {
@@ -304,7 +414,7 @@ impl App {
     }
 
     /// The files open in `pane`, in the order its tabs are drawn.
-    fn tabs_of(&self, pane: PaneId) -> Vec<FileId> {
+    pub(super) fn tabs_of(&self, pane: PaneId) -> Vec<FileId> {
         self.panes
             .pane(pane)
             .map(|pane| pane.tabs().to_vec())
@@ -396,6 +506,35 @@ impl App {
                 panes::file_menu(pane, &tabs, file)
             }
             MenuTarget::Pane(pane) => panes::pane_menu(pane, self.panes.is_split()),
+            MenuTarget::Text(pane) => {
+                let file = self.panes.pane(pane)?.active()?;
+                let document = self.editor.get(file)?;
+                let document = document.borrow();
+                crate::editor::text_menu(&crate::editor::TextMenu {
+                    pane,
+                    file,
+                    selected: !document.buffer().selection().is_empty(),
+                    served: document.server().is_some(),
+                    tracked: document.is_tracked(),
+                })
+            }
+            MenuTarget::Unsaved(pane, file) => {
+                let name = self.editor.entry(file)?.name;
+                panes::unsaved_menu(pane, file, &name)
+            }
+            MenuTarget::Entry(id) => {
+                let project = self.open.active()?.id();
+                let tree = self.files.get(&project)?;
+                crate::tree::entry_menu(crate::tree::entry_of(tree, id)?)
+            }
+            MenuTarget::CodeActions => self
+                .code_actions
+                .iter()
+                .enumerate()
+                .map(|(index, action)| {
+                    pm_ui::menu_entry(action.title.clone(), Some(Message::TakeCodeAction(index)))
+                })
+                .collect(),
             MenuTarget::Terminal(shell) => {
                 let shells = self
                     .open

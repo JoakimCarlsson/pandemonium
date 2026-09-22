@@ -22,6 +22,8 @@ pub struct Language {
     highlights: &'static str,
     /// The language server to run for this language, when there is one.
     server: Option<Server>,
+    /// What begins a comment that runs to the end of the line, if anything.
+    line_comment: Option<&'static str>,
 }
 
 /// A language server, as the command that starts one.
@@ -45,6 +47,7 @@ const RUST: Language = Language {
         arguments: &[],
         language_id: "rust",
     }),
+    line_comment: Some("//"),
 };
 
 /// JSON: the grammar and its highlights.
@@ -53,6 +56,7 @@ const JSON: Language = Language {
     grammar: tree_sitter_json::LANGUAGE,
     highlights: tree_sitter_json::HIGHLIGHTS_QUERY,
     server: None,
+    line_comment: None,
 };
 
 /// TOML: the grammar and its highlights.
@@ -61,6 +65,7 @@ const TOML: Language = Language {
     grammar: tree_sitter_toml_ng::LANGUAGE,
     highlights: tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
     server: None,
+    line_comment: Some("#"),
 };
 
 /// Markdown: the block grammar and the highlights of its blocks.
@@ -69,6 +74,7 @@ const MARKDOWN: Language = Language {
     grammar: tree_sitter_md::LANGUAGE,
     highlights: tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
     server: None,
+    line_comment: None,
 };
 
 impl Debug for Language {
@@ -109,5 +115,10 @@ impl Language {
     /// The language server to run for this language, when there is one.
     pub const fn server(self) -> Option<Server> {
         self.server
+    }
+
+    /// What begins a comment that runs to the end of the line, if anything.
+    pub const fn line_comment(self) -> Option<&'static str> {
+        self.line_comment
     }
 }

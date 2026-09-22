@@ -4,15 +4,19 @@ mod app;
 mod config;
 mod desktop;
 mod editor;
+mod field;
 #[allow(
     dead_code,
     unused_imports,
     reason = "the keymap is a schema in full before the panes that press it exist"
 )]
 mod keymap;
+mod message;
 mod onboarding;
 mod panes;
+mod picker;
 mod terminal;
+mod tree;
 mod workspace;
 
 use winit::event_loop::{ControlFlow, EventLoop};

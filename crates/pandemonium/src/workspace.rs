@@ -1,6 +1,9 @@
 //! The editor workspace shown after onboarding has finished.
 
-use pm_core::{FileTree, Project, ProjectId, Projects, Row};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use pm_core::{FileStatus, FileTree, Project, ProjectId, Projects, Row};
 use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
@@ -12,7 +15,7 @@ use pm_ui::{
 };
 
 use crate::editor::{FileId, OpenFile};
-use crate::onboarding::Message;
+use crate::message::Message;
 use crate::panes::PaneId;
 use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
 
@@ -89,6 +92,14 @@ impl Default for Layout {
     }
 }
 
+/// The worktree the files sidebar lists, and what git makes of it.
+pub struct Worktree<'a> {
+    /// The tree itself, when the window has a project open.
+    pub tree: Option<&'a FileTree>,
+    /// What git makes of each of its files, once git has been asked.
+    pub status: Option<&'a HashMap<PathBuf, FileStatus>>,
+}
+
 /// The sessions belonging to one open project.
 ///
 /// The project itself comes from [`Projects`]; this is only what hangs under
@@ -145,6 +156,22 @@ pub struct Panes {
     pub terminal: Panel,
     /// The tab menu that is open, and what it holds.
     pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
+    /// What is drawn over the panes, each at a point of its own.
+    ///
+    /// A picker, a completion list and a hint are placed rather than laid
+    /// out: they belong over whatever the window is showing, at a point the
+    /// window worked out, and take no room from it.
+    pub overlays: Vec<Overlaid>,
+}
+
+/// One thing drawn over the panes, and whether it is modal.
+pub struct Overlaid {
+    /// Where its top left corner would like to be.
+    pub at: Point,
+    /// What is drawn there.
+    pub content: Box<dyn Element<Message>>,
+    /// What a click anywhere else sends, when it is modal.
+    pub backdrop: Option<Message>,
 }
 
 /// A menu of what can be done to one tab, open at a point of the window.
@@ -165,6 +192,14 @@ pub enum MenuTarget {
     Pane(PaneId),
     /// A shell running in the terminal panel.
     Terminal(ShellId),
+    /// The text one of the editor panes is showing.
+    Text(PaneId),
+    /// The fixes a language server offered where the cursor is.
+    CodeActions,
+    /// One entry of the file tree.
+    Entry(pm_core::EntryId),
+    /// A file with changes that are not on disk, being closed.
+    Unsaved(PaneId, FileId),
 }
 
 /// Builds the workspace with its resizable sessions sidebar.
@@ -172,7 +207,7 @@ pub fn workspace(
     theme: &Theme,
     open: &Projects,
     sessions: &[SidebarProject],
-    files: Option<&FileTree>,
+    files: Worktree<'_>,
     layout: Layout,
     panes: Panes,
 ) -> Div<Message> {
@@ -183,6 +218,7 @@ pub fn workspace(
         carried,
         terminal: panel,
         menu: open_menu,
+        overlays,
         ..
     } = panes;
 
@@ -207,7 +243,7 @@ pub fn workspace(
                 .child(main_area(theme, layout, panel, editor))
                 .when(layout.secondary_sidebar_open, |body| {
                     body.child(sash(Axis::Horizontal, Message::ResizeSecondarySidebar))
-                        .child(files_sidebar(theme, files, layout.secondary_sidebar_width))
+                        .child(files_sidebar(theme, &files, layout.secondary_sidebar_width))
                 }),
         )
         .child(rule(theme))
@@ -221,9 +257,21 @@ pub fn workspace(
                 carried_tab(theme, name),
             ))
         })
+        .children(overlays.into_iter().flat_map(|overlaid| {
+            let Overlaid {
+                at,
+                content,
+                backdrop: sheet,
+            } = overlaid;
+            let sheet = sheet.map(|message| overlay(Point::new(0.0, 0.0), backdrop(message)));
+            sheet.into_iter().chain([overlay(at, content)])
+        }))
         .when_some(open_menu, |screen, (open, items)| {
             screen
-                .child(overlay(Point::new(0.0, 0.0), backdrop()))
+                .child(overlay(
+                    Point::new(0.0, 0.0),
+                    backdrop(Message::DismissMenu),
+                ))
                 .child(overlay(open.at, menu(theme, items)))
         })
 }
@@ -264,12 +312,12 @@ fn carried_tab(theme: &Theme, name: String) -> Div<Message> {
 /// The sheet is what makes a menu modal: it covers the window, so the click
 /// that dismisses the menu is not also the click that pressed whatever was
 /// underneath it.
-fn backdrop() -> Div<Message> {
+fn backdrop(message: Message) -> Div<Message> {
     v_flex()
         .w_full()
         .h_full()
-        .on_click(Message::DismissMenu)
-        .on_secondary_click(Message::DismissMenu)
+        .on_click(message)
+        .on_secondary_click(message)
 }
 
 /// The things that can be done to one shell's tab.
@@ -305,6 +353,10 @@ struct Status {
     panel_open: bool,
     /// Where the cursor is in the file the pane is showing.
     cursor: Option<(usize, usize)>,
+    /// How many cursors that file has, when it has more than one.
+    cursors: Option<usize>,
+    /// How that file is indented.
+    indent: Option<String>,
     /// What that file is written in.
     language: Option<&'static str>,
     /// How many errors and warnings a server has reported in it.
@@ -327,6 +379,16 @@ impl Status {
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
                 (head.line + 1, head.column + 1)
+            }),
+            cursors: buffer
+                .map(|buffer| buffer.selections().len())
+                .filter(|count| *count > 1),
+            indent: buffer.map(|buffer| {
+                let indent = buffer.indent();
+                match indent.tabs {
+                    true => "Tabs".to_owned(),
+                    false => format!("Spaces: {}", indent.width),
+                }
             }),
             language: buffer.map(|buffer| {
                 buffer
@@ -363,6 +425,8 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         shells,
         panel_open,
         cursor,
+        cursors,
+        indent,
         language,
         problems,
     } = status;
@@ -429,6 +493,18 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                 None,
                 false,
             ))
+        })
+        .when_some(cursors, |bar, count| {
+            bar.child(status_item(
+                theme,
+                None,
+                format!("{count} cursors"),
+                None,
+                true,
+            ))
+        })
+        .when_some(indent, |bar, indent| {
+            bar.child(status_item(theme, None, indent, None, false))
         })
         .when_some(language, |bar, language| {
             bar.child(status_item(theme, None, language, None, false))
@@ -627,16 +703,18 @@ fn window_controls() -> Div<Message> {
 }
 
 /// Builds the files sidebar: the worktree of the active project.
-fn files_sidebar(theme: &Theme, files: Option<&FileTree>, width: f32) -> Div<Message> {
-    let rows = files.map(FileTree::rows).unwrap_or_default();
+fn files_sidebar(theme: &Theme, files: &Worktree<'_>, width: f32) -> Div<Message> {
+    let rows = files.tree.map(FileTree::rows).unwrap_or_default();
 
     v_flex()
         .w_px(width)
         .h_full()
         .overflow_hidden()
         .bg(theme.colors.surface)
-        .when_some(files, |sidebar, tree| sidebar.child(tree_root(theme, tree)))
-        .when(files.is_none(), |sidebar| {
+        .when_some(files.tree, |sidebar, tree| {
+            sidebar.child(tree_root(theme, tree))
+        })
+        .when(files.tree.is_none(), |sidebar| {
             sidebar.child(
                 text("No project open")
                     .text_sm()
@@ -646,7 +724,13 @@ fn files_sidebar(theme: &Theme, files: Option<&FileTree>, width: f32) -> Div<Mes
                     .py(2),
             )
         })
-        .children(rows.iter().map(|row| file_row(theme, row)))
+        .children(rows.iter().map(|row| {
+            let status = files
+                .status
+                .and_then(|status| status.get(row.entry.path()))
+                .copied();
+            file_row(theme, row, status)
+        }))
 }
 
 /// Builds the line above the tree naming the worktree it lists.
@@ -680,7 +764,7 @@ fn shortened(path: &std::path::Path) -> String {
 }
 
 /// Builds one line of the file tree: chevron, icon and name.
-fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
+fn file_row(theme: &Theme, row: &Row<'_>, status: Option<FileStatus>) -> Div<Message> {
     let entry = row.entry;
     let directory = entry.is_directory();
     let chevron = match (directory, row.expanded) {
@@ -706,6 +790,7 @@ fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
         } else {
             Message::OpenFile(entry.id())
         })
+        .on_secondary_click(Message::ShowEntryMenu(entry.id()))
         .child(v_flex().w_px(FILE_INSET + row.depth as f32 * FILE_INDENT))
         .child(
             h_flex()
@@ -726,11 +811,21 @@ fn file_row(theme: &Theme, row: &Row<'_>) -> Div<Message> {
                 .color(theme.colors.text_subtle),
         )
         .child(v_flex().w(1))
-        .child(if directory {
-            text(entry.name().to_owned())
-        } else {
-            text(entry.name().to_owned()).color(theme.colors.text_muted)
+        .child(match (status_color(theme, status), directory) {
+            (Some(color), _) => text(entry.name().to_owned()).color(color),
+            (None, true) => text(entry.name().to_owned()),
+            (None, false) => text(entry.name().to_owned()).color(theme.colors.text_muted),
         })
+}
+
+/// The colour a name is written in, given what git makes of it.
+fn status_color(theme: &Theme, status: Option<FileStatus>) -> Option<Rgba> {
+    Some(match status? {
+        FileStatus::Modified => theme.colors.warning,
+        FileStatus::Added | FileStatus::Untracked => theme.colors.success,
+        FileStatus::Deleted => theme.colors.text_subtle,
+        FileStatus::Conflicted => theme.colors.danger,
+    })
 }
 
 /// Builds the projects sidebar: every open project, its sessions beneath it.

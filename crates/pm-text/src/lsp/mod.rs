@@ -5,6 +5,7 @@
 //! for it. [`Servers`] is that seam — the only place a server process is
 //! started, found or ended.
 
+mod answer;
 mod client;
 mod transport;
 mod uri;
@@ -13,7 +14,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use client::Client;
+pub use answer::{Answer, CodeAction, Completion, FileEdit, Location, Request, Symbol};
+pub use client::{Asked, Client};
 
 use crate::language::Language;
 

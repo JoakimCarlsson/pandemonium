@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lsp_types::{DiagnosticSeverity, PublishDiagnosticsParams};
@@ -18,10 +19,18 @@ use serde_json::{Value, json};
 use crate::cursor::Position;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::language::Server;
+use crate::lsp::answer::{Answer, Request};
 use crate::lsp::{transport, uri};
 
 /// The request identifier the handshake is sent under.
 const INITIALIZE: i64 = 1;
+
+/// The identifier the first question after the handshake is asked under.
+const FIRST_REQUEST: i64 = 2;
+
+/// A question asked of a server, for as long as it is unanswered.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+pub struct Asked(i64);
 
 /// What a running server has told us, and what it has not been told yet.
 #[derive(Default)]
@@ -32,6 +41,10 @@ struct State {
     queued: Vec<Value>,
     /// The diagnostics last published, per file.
     diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
+    /// The questions asked and not yet answered, and what they were about.
+    asked: HashMap<i64, (Request, PathBuf)>,
+    /// The answers that have come back and not yet been collected.
+    answers: HashMap<i64, Answer>,
     /// Whether anything has arrived since the editor last looked.
     fresh: bool,
 }
@@ -46,6 +59,8 @@ pub struct Client {
     state: Arc<Mutex<State>>,
     /// What the server is told the documents are written in.
     language_id: &'static str,
+    /// The identifier the next question will be asked under.
+    next: AtomicI64,
 }
 
 impl Client {
@@ -75,6 +90,7 @@ impl Client {
             stdin: Arc::new(Mutex::new(stdin)),
             state: state.clone(),
             language_id: server.language_id,
+            next: AtomicI64::new(FIRST_REQUEST),
         };
         client.send(&json!({
             "jsonrpc": "2.0",
@@ -143,6 +159,39 @@ impl Client {
             "method": "textDocument/didClose",
             "params": { "textDocument": { "uri": uri::of(path) } },
         }));
+    }
+
+    /// Asks the server `request` about `at` in the file at `path`.
+    ///
+    /// The answer is not waited for: a question goes out, the reader thread
+    /// takes the reply down, and the window collects it on the wake that
+    /// follows. Nothing the editor asks a server may hold a frame up.
+    pub fn ask(&self, request: Request, path: &Path, at: Position) -> Asked {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let message = json!({
+            "id": id,
+            "method": request.method(),
+            "params": request.params(path, at),
+        });
+        if let Ok(mut state) = self.state.lock() {
+            state.asked.insert(id, (request, path.to_path_buf()));
+        }
+
+        self.notify(&message);
+        Asked(id)
+    }
+
+    /// The answer to `asked`, once it has come back, taken off the list.
+    pub fn answer(&self, asked: Asked) -> Option<Answer> {
+        self.state.lock().ok()?.answers.remove(&asked.0)
+    }
+
+    /// Gives up on `asked`, for a question whose answer is no longer wanted.
+    pub fn forget(&self, asked: Asked) {
+        if let Ok(mut state) = self.state.lock() {
+            state.asked.remove(&asked.0);
+            state.answers.remove(&asked.0);
+        }
     }
 
     /// What the server last said about `path`.
@@ -242,6 +291,11 @@ impl Reader {
         if message.get("id").is_some() && message.get("method").is_none() {
             if message["id"] == json!(INITIALIZE) {
                 self.ready();
+            } else if let Some(id) = message["id"].as_i64() {
+                match message.get("error") {
+                    Some(_) => self.gave_up(id),
+                    None => self.answered(id, &message["result"]),
+                }
             }
             return;
         }
@@ -273,6 +327,36 @@ impl Reader {
         }));
         for message in queued {
             self.answers.send(&message);
+        }
+    }
+
+    /// Takes down the answer to one question the editor asked.
+    ///
+    /// A reply to a question nobody is waiting for any more is dropped: the
+    /// file may have been closed, or the cursor moved on, between the asking
+    /// and the answering.
+    fn answered(&self, id: i64, result: &Value) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let Some((request, path)) = state.asked.remove(&id) else {
+            return;
+        };
+        let answer = request.read(&path, result);
+        state.answers.insert(id, answer);
+        state.fresh = true;
+        drop(state);
+        (self.notify)();
+    }
+
+    /// Forgets a question the server answered with an error.
+    ///
+    /// An error is not a short answer: a rename the server refused has not
+    /// renamed nothing, it has failed, and reporting it as no edits would be
+    /// reporting a refusal as a success.
+    fn gave_up(&self, id: i64) {
+        if let Ok(mut state) = self.state.lock() {
+            state.asked.remove(&id);
         }
     }
 
@@ -324,11 +408,29 @@ fn initialize(root: &Path) -> Value {
             "uri": uri::of(root),
             "name": root.file_name().unwrap_or_default().to_string_lossy(),
         }],
+        "general": { "positionEncodings": ["utf-8", "utf-16"] },
         "capabilities": {
             "textDocument": {
                 "synchronization": { "didSave": true, "dynamicRegistration": false },
                 "publishDiagnostics": { "relatedInformation": false },
+                "definition": { "linkSupport": true },
+                "typeDefinition": { "linkSupport": true },
+                "implementation": { "linkSupport": true },
+                "declaration": { "linkSupport": true },
+                "references": {},
+                "hover": { "contentFormat": ["plaintext", "markdown"] },
+                "completion": {
+                    "completionItem": { "snippetSupport": true },
+                    "contextSupport": false,
+                },
+                "signatureHelp": {},
+                "codeAction": {},
+                "rename": { "prepareSupport": false },
+                "formatting": {},
+                "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+                "inlayHint": { "resolveSupport": { "properties": [] } },
             },
+            "workspace": { "workspaceEdit": { "documentChanges": true } },
             "window": { "workDoneProgress": true },
         },
     })

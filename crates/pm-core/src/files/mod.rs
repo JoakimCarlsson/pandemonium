@@ -7,6 +7,8 @@
 
 mod entry;
 mod tree;
+mod walk;
 
 pub use entry::{Entry, EntryId, Row};
 pub use tree::FileTree;
+pub use walk::walk;

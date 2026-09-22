@@ -60,6 +60,20 @@ pub struct Theme {
     pub emphasis: Emphasis,
 }
 
+impl Theme {
+    /// This theme with the grid a file is edited in scaled by `factor`.
+    ///
+    /// Zooming an editor is zooming its text and nothing else: the bars, the
+    /// tabs and the sidebars are the window's furniture and stay the size
+    /// the reader set them at.
+    pub fn zoomed(mut self, factor: f32) -> Self {
+        let ratio = self.text.code.line_height / self.text.code.size;
+        self.text.code.size *= factor;
+        self.text.code.line_height = (self.text.code.size * ratio).round();
+        self
+    }
+}
+
 /// A theme in both appearances: what the theme picker offers as one choice.
 ///
 /// Families are how a light and a dark theme stay one decision. Picking the

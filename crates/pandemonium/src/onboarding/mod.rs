@@ -14,4 +14,4 @@ mod page;
 mod setup;
 
 pub use page::page;
-pub use setup::{Message, Setup, ThemeMode};
+pub use setup::{Setup, ThemeMode};

@@ -168,42 +168,6 @@ impl Pane {
         self.retain(|open| open != file);
     }
 
-    /// Closes every tab but `file`.
-    pub fn close_others(&mut self, file: FileId) {
-        self.retain(|open| open == file);
-    }
-
-    /// Closes the tabs to the left of `file`.
-    pub fn close_left(&mut self, file: FileId) {
-        let Some(index) = self.index_of(Some(file)) else {
-            return;
-        };
-        let mut seen = 0;
-        self.retain(|_| {
-            let keep = seen >= index;
-            seen += 1;
-            keep
-        });
-    }
-
-    /// Closes the tabs to the right of `file`.
-    pub fn close_right(&mut self, file: FileId) {
-        let Some(index) = self.index_of(Some(file)) else {
-            return;
-        };
-        let mut seen = 0;
-        self.retain(|_| {
-            let keep = seen <= index;
-            seen += 1;
-            keep
-        });
-    }
-
-    /// Closes every tab.
-    pub fn close_all(&mut self) {
-        self.retain(|_| false);
-    }
-
     /// Keeps the tabs `keep` accepts, showing another when the front one goes.
     ///
     /// What comes forward is the tab to the right of the one that closed, as

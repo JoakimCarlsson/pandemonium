@@ -22,6 +22,16 @@ pub struct Emphasis {
     pub dim: f32,
     /// How far a filled control is lifted towards the text colour on hover.
     pub hover_lift: f32,
+    /// The wash over another place the selected word appears.
+    pub occurrence: f32,
+    /// The line marking one step of indentation.
+    pub guide: f32,
+    /// The wash over a search match that is not the one being looked at.
+    pub search: f32,
+    /// The wash over the search match being looked at.
+    pub search_current: f32,
+    /// The mark a bracket and its partner are outlined in.
+    pub bracket: f32,
 }
 
 impl Emphasis {
@@ -34,5 +44,10 @@ impl Emphasis {
         halo: 0.22,
         dim: 0.6,
         hover_lift: 0.16,
+        occurrence: 0.12,
+        guide: 0.5,
+        search: 0.22,
+        search_current: 0.45,
+        bracket: 0.3,
     };
 }

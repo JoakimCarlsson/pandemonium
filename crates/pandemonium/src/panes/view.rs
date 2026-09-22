@@ -13,9 +13,8 @@ use pm_ui::{
     measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
-use crate::editor::buffer_view;
-use crate::editor::{FileEntry, FileId, OpenFile};
-use crate::onboarding::Message;
+use crate::editor::{FileEntry, FileId, OpenFile, buffer_view, search_bar};
+use crate::message::Message;
 
 use super::tree::{Node, Pane, PaneId, PaneTree, SplitDirection};
 
@@ -89,6 +88,12 @@ fn pane_view(
         .map(|(file, bounds)| pane_tab(id, &file, active == Some(file.id), bounds))
         .collect::<Vec<_>>();
     let empty = contents.file.is_none();
+    let searching = contents
+        .file
+        .as_ref()
+        .map(|file| file.borrow())
+        .filter(|document| document.search().is_open())
+        .map(|document| search_bar(theme, id, document.search()));
 
     let body = v_flex()
         .w_full()
@@ -104,11 +109,17 @@ fn pane_view(
                 tab_bar(theme, tabs, pane_actions(theme, id, divided)),
             ))
         })
+        .when_some(searching, Div::child)
         .when_some(contents.file, |view, file| {
             view.child(
                 buffer_view(file, focused)
                     .on_select(move |anchor, head| Message::SelectText(id, anchor, head))
-                    .on_scroll(move |event, lines| Message::ScrollEditor(id, event, lines)),
+                    .on_gutter(move |anchor, head| Message::SelectLines(id, anchor, head))
+                    .on_fold(move |at| Message::ToggleFold(id, at))
+                    .on_scroll(move |axis, event, step| {
+                        Message::ScrollEditor(id, axis, event, step)
+                    })
+                    .on_menu(Message::ShowEditorMenu(id)),
             )
         })
         .when(empty, |view| view.child(placeholder(theme, id)));
@@ -182,6 +193,28 @@ pub fn pane_menu(id: PaneId, divided: bool) -> Vec<MenuItem<Message>> {
         divided.then_some(Message::ClosePane(id)),
     ));
     items
+}
+
+/// What can be done about a file being closed with changes that are not saved.
+///
+/// Closing a file is not something to be quietly wrong about, so the only
+/// way past this menu is to say which of the two things should happen. The
+/// sheet under it dismisses it, which leaves the file open.
+pub fn unsaved_menu(pane: PaneId, file: FileId, name: &str) -> Vec<MenuItem<Message>> {
+    vec![
+        menu_entry(
+            format!("{name} has changes that are not saved"),
+            None::<Message>,
+        ),
+        menu_separator(),
+        menu_entry("Save and Close", Some(Message::SaveAndClose(pane, file))),
+        menu_entry(
+            "Close Without Saving",
+            Some(Message::DiscardAndClose(pane, file)),
+        ),
+        menu_separator(),
+        menu_entry("Cancel", Some(Message::DismissMenu)),
+    ]
 }
 
 /// The things that can be done to one tab of `pane`, given what else it holds.

@@ -3,28 +3,27 @@
 //! The pane is a window onto the document rather than a rendering of it:
 //! only the lines it has room for are measured, highlighted and drawn, so a
 //! file of a hundred thousand lines costs a frame what a file of fifty does.
-//! What the pane learns while drawing — how many lines fit, where the text
-//! begins — it writes back into the document, because nothing else in the
-//! window knows how tall a line came out.
+//! What the pane learns while drawing — how many lines fit, how wide a
+//! character came out, where the text begins — it writes back into the
+//! document as a [`TextLayout`], because that is the one measurement a click
+//! arriving later has to agree with.
 
+use std::ops::Range;
 use std::sync::Arc;
 
+use pm_core::{Blame, Change, ChangeKind};
 use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, Size};
-use pm_text::{Diagnostic, Highlight, Highlights, Position, Selection, Severity};
+use pm_text::{
+    Buffer, Diagnostic, Highlight, Highlights, Position, Selection, Severity, TAB_WIDTH,
+};
 use pm_ui::{
-    Element, Glyphs, LayoutContext, PaintContext, PointerCursor, ResizeEvent, Style, Styled, Theme,
+    Element, Glyphs, IconName, IconSize, LayoutContext, PaintContext, PointerCursor, ResizeEvent,
+    Style, Styled, Theme,
 };
 
 use crate::editor::OpenFile;
-
-/// How far the gutter's numbers sit from the text.
-const GUTTER_GAP: f32 = 16.0;
-
-/// How far the gutter's numbers sit from the edge of the pane.
-const GUTTER_INSET: f32 = 12.0;
-
-/// Shortest a line number column is, in digits.
-const GUTTER_DIGITS: usize = 2;
+use crate::editor::layout::{GUTTER_GAP, GUTTER_INSET, TextLayout};
+use crate::editor::search::Search;
 
 /// Width of the cursor while the pane is focused.
 const CURSOR_WIDTH: f32 = 2.0;
@@ -32,7 +31,7 @@ const CURSOR_WIDTH: f32 = 2.0;
 /// Thickness of the line under a diagnostic.
 const SQUIGGLE_WIDTH: f32 = 1.5;
 
-/// Width of the bar saying how far down the file the pane is looking.
+/// Width of the bar saying how far through the file the pane is looking.
 const SCROLLBAR_WIDTH: f32 = 6.0;
 
 /// How far that bar sits from the edges of the pane.
@@ -40,6 +39,47 @@ const SCROLLBAR_PADDING: f32 = 4.0;
 
 /// Shortest the bar's thumb is drawn, however long the file is.
 const SCROLLBAR_MIN_THUMB: f32 = 25.0;
+
+/// Longest a selection may be and still light up where else it appears.
+const OCCURRENCE_LIMIT: usize = 64;
+
+/// Most lines kept in sight at the top of a pane while their body scrolls.
+const STICKY_LIMIT: usize = 4;
+
+/// Width of the bar marking a line that differs from the index.
+const CHANGE_WIDTH: f32 = 3.0;
+
+/// How tall a mark on the scrollbar's track is drawn.
+const MARKER_HEIGHT: f32 = 2.0;
+
+/// How far past the scrollbar a mark on its track reaches.
+const MARKER_REACH: f32 = 5.0;
+
+/// How tall the mark for lines taken out is drawn.
+const REMOVED_HEIGHT: f32 = 3.0;
+
+/// What a drag on a scrollbar reports, given the axis and the scale of it.
+type ScrollHandler<M> = Arc<dyn Fn(ScrollAxis, ResizeEvent, f32) -> M>;
+
+/// How much there is to scroll through, and how far in the view has reached.
+#[derive(Clone, Copy)]
+struct Reach {
+    /// How much there is in all, in lines or in columns.
+    total: usize,
+    /// How much of it the pane is showing.
+    showing: usize,
+    /// How far in the first of what is showing sits.
+    at: usize,
+}
+
+/// Which way a drag on a scrollbar moves the view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollAxis {
+    /// Down the file.
+    Vertical,
+    /// Along its lines.
+    Horizontal,
+}
 
 /// A pane showing one open file.
 pub struct BufferView<M> {
@@ -49,8 +89,14 @@ pub struct BufferView<M> {
     focused: bool,
     /// What a press or a drag over the text sends, given where it reached.
     on_select: Option<Arc<dyn Fn(Position, Position) -> M>>,
-    /// What dragging the scrollbar sends, given the drag and the scale of it.
-    on_scroll: Option<Arc<dyn Fn(ResizeEvent, f32) -> M>>,
+    /// What a press or a drag down the gutter sends, given the lines it spans.
+    on_gutter: Option<Arc<dyn Fn(Position, Position) -> M>>,
+    /// What dragging a scrollbar sends, given the drag and the scale of it.
+    on_scroll: Option<ScrollHandler<M>>,
+    /// What a press in the fold column sends, given the line it landed on.
+    on_fold: Option<Arc<dyn Fn(Position) -> M>>,
+    /// What a press of the secondary button over the pane sends.
+    on_menu: Option<M>,
     /// How the pane is sized within its parent.
     style: Style,
 }
@@ -61,7 +107,10 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         file,
         focused,
         on_select: None,
+        on_gutter: None,
+        on_fold: None,
         on_scroll: None,
+        on_menu: None,
         style: Style::default(),
     }
     .w_full()
@@ -73,15 +122,36 @@ impl<M> BufferView<M> {
     ///
     /// The handler is given where the gesture began and where it has
     /// reached, in lines and columns, because only the pane knows how wide a
-    /// character came out.
+    /// character came out and how far along the line it had scrolled.
     pub fn on_select(mut self, on_select: impl Fn(Position, Position) -> M + 'static) -> Self {
         self.on_select = Some(Arc::new(on_select));
         self
     }
 
-    /// Returns this pane with a scrollbar that reports drags through `on_scroll`.
-    pub fn on_scroll(mut self, on_scroll: impl Fn(ResizeEvent, f32) -> M + 'static) -> Self {
+    /// Returns this pane selecting whole lines by drags down its gutter.
+    pub fn on_gutter(mut self, on_gutter: impl Fn(Position, Position) -> M + 'static) -> Self {
+        self.on_gutter = Some(Arc::new(on_gutter));
+        self
+    }
+
+    /// Returns this pane folding and unfolding through `on_fold`.
+    pub fn on_fold(mut self, on_fold: impl Fn(Position) -> M + 'static) -> Self {
+        self.on_fold = Some(Arc::new(on_fold));
+        self
+    }
+
+    /// Returns this pane with scrollbars that report drags through `on_scroll`.
+    pub fn on_scroll(
+        mut self,
+        on_scroll: impl Fn(ScrollAxis, ResizeEvent, f32) -> M + 'static,
+    ) -> Self {
         self.on_scroll = Some(Arc::new(on_scroll));
+        self
+    }
+
+    /// Returns this pane opening a menu with `message` on the other button.
+    pub fn on_menu(mut self, message: M) -> Self {
+        self.on_menu = Some(message);
         self
     }
 }
@@ -93,7 +163,7 @@ impl<M> Styled for BufferView<M> {
     }
 }
 
-impl<M: 'static> Element<M> for BufferView<M> {
+impl<M: Clone + 'static> Element<M> for BufferView<M> {
     /// How the pane is sized within its parent.
     fn layout_style(&self) -> Style {
         self.style
@@ -108,64 +178,103 @@ impl<M: 'static> Element<M> for BufferView<M> {
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         let font = cx.theme().text.code;
         let cell = Size::new(cx.measure("M", font).width.max(1.0), font.line_height);
-        let rows = (bounds.size.height / cell.height).floor().max(1.0) as usize;
+        let theme = *cx.theme();
 
         let file = self.file.clone();
         let mut document = file.borrow_mut();
-        document.set_rows(rows);
-
         let count = document.buffer().line_count();
-        let first = document.scroll();
-        let last = (first + rows).min(count);
-        let metrics = Metrics {
+        let blame = TextLayout::blame_for(document.is_blamed(), cell);
+        let gutter = TextLayout::gutter_for(count, cell) + blame;
+
+        let sizing = TextLayout {
             bounds,
             cell,
-            gutter: GUTTER_INSET * 2.0 + digits(count) as f32 * cell.width + GUTTER_GAP,
-            first,
+            gutter,
+            blame,
+            first: document.scroll(),
+            column: document.column(),
         };
+        document.follow_cursor(sizing.rows(), sizing.columns());
 
-        let theme = *cx.theme();
-        let selection = document.buffer().selection();
-        let highlights = document.buffer_mut().highlights(first..last);
+        let layout = TextLayout {
+            first: document.scroll(),
+            column: document.column(),
+            ..sizing
+        };
+        document.set_layout(layout);
+
+        let rows = layout.rows();
+        let drawn = document.drawn_lines(layout.first, rows);
+        let span = *drawn.first().unwrap_or(&0)..drawn.last().map_or(0, |last| last + 1);
+        let folded = drawn
+            .iter()
+            .map(|line| document.is_folded_at(*line))
+            .collect::<Vec<_>>();
+        let changes = document.changes().to_vec();
+        let highlights = document.buffer_mut().highlights(span.clone());
         let painting = Painting {
-            metrics,
+            layout,
             font,
             theme: &theme,
-            selection,
+            buffer: document.buffer(),
+            search: document.search(),
+            selection: document.buffer().selection(),
+            selections: document.buffer().selections(),
             highlights: &highlights,
+            brackets: document.buffer().matching_bracket(),
+            occurrences: occurrences(document.buffer(), span.clone()),
+            changes,
+            blame: document.blame(),
+            drawn,
+            folded,
+            hovered: cx.input().pointer.filter(|at| layout.over_folds(*at)),
         };
 
         cx.push_clip(bounds);
         self.paint_current_line(&painting, cx);
+        self.paint_search(&painting, cx);
+        self.paint_occurrences(&painting, cx);
+        self.paint_guides(&painting, cx);
+
         let mut glyphs = Glyphs::default();
-        for line in first..last {
-            self.paint_line(&document, line, &painting, &mut glyphs, cx);
+        for line in painting.drawn.clone() {
+            self.paint_line(line, &painting, &mut glyphs, cx);
         }
+        self.paint_brackets(&painting, cx);
         self.paint_cursor(&painting, cx);
+        self.paint_changes(&painting, cx);
+        self.paint_blame(&painting, &mut glyphs, cx);
+        self.paint_folds(&painting, cx);
+        self.paint_sticky(&painting, &mut glyphs, cx);
         cx.pop_clip();
 
+        let widest = painting.buffer.widest(span);
+        let marks = markers(&painting);
         drop(document);
-        self.select_region(metrics, cx);
-        self.paint_scrollbar(bounds, count, rows, first, &theme, cx);
+
+        self.select_region(layout, cx);
+        self.gutter_region(layout, cx);
+        self.fold_region(layout, cx);
+        self.paint_scrollbars(layout, count, widest, &marks, &theme, cx);
     }
 }
 
 impl<M> BufferView<M> {
     /// Marks the line the cursor is on, when nothing is selected.
     fn paint_current_line(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
-        let (metrics, selection) = (painting.metrics, painting.selection);
+        let (layout, selection) = (painting.layout, painting.selection);
         if !selection.is_empty() || !self.focused {
             return;
         }
-        let Some(top) = metrics.top_of(selection.head.line) else {
+        let Some(top) = painting.top_of(selection.head.line) else {
             return;
         };
         cx.quad(Quad::filled(
             Rect::from_xywh(
-                metrics.bounds.left(),
+                layout.bounds.left(),
                 top,
-                metrics.bounds.size.width,
-                metrics.cell.height,
+                layout.bounds.size.width,
+                layout.cell.height,
             ),
             painting
                 .theme
@@ -175,78 +284,232 @@ impl<M> BufferView<M> {
         ));
     }
 
+    /// Lights up every place the selected word also appears on screen.
+    fn paint_occurrences(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let color = painting
+            .theme
+            .colors
+            .text
+            .alpha(painting.theme.emphasis.occurrence);
+        for found in &painting.occurrences {
+            self.wash(found.clone(), color, painting, cx);
+        }
+    }
+
+    /// Lights up every match of what is being looked for on screen.
+    fn paint_search(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        if !painting.search.is_open() {
+            return;
+        }
+        for found in painting.search.matches() {
+            let strength = if painting.search.is_current(found) {
+                painting.theme.emphasis.search_current
+            } else {
+                painting.theme.emphasis.search
+            };
+            let color = painting.theme.colors.warning.alpha(strength);
+            self.wash(found.clone(), color, painting, cx);
+        }
+    }
+
+    /// Draws a line at every step of indentation the text stands at.
+    fn paint_guides(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let layout = painting.layout;
+        let color = painting
+            .theme
+            .colors
+            .border_variant
+            .alpha(painting.theme.emphasis.guide);
+
+        let step = painting.buffer.indent().width.max(1);
+        cx.push_clip(layout.text_area());
+        for line in painting.drawn.iter().copied() {
+            let Some(top) = painting.top_of(line) else {
+                continue;
+            };
+            let indent = painting
+                .buffer
+                .line_chars(line)
+                .take_while(|ch| ch.is_whitespace())
+                .count();
+            if indent == 0 || indent == painting.buffer.line_len(line) {
+                continue;
+            }
+            let width = painting.column_of(Position::new(line, indent));
+            for step in (step..width).step_by(step) {
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(layout.x_of(step), top, 1.0, layout.cell.height),
+                    color,
+                ));
+            }
+        }
+        cx.pop_clip();
+    }
+
+    /// Outlines the bracket at the cursor and the one that answers it.
+    fn paint_brackets(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let Some((here, there)) = painting.brackets else {
+            return;
+        };
+        let color = painting
+            .theme
+            .colors
+            .cursor
+            .alpha(painting.theme.emphasis.bracket);
+        for at in [here, there] {
+            let span = at..Position::new(at.line, at.column + 1);
+            self.wash(span, color, painting, cx);
+        }
+    }
+
+    /// Fills what `range` covers, however many lines it spans.
+    fn wash(
+        &self,
+        range: Range<Position>,
+        color: Rgba,
+        painting: &Painting<'_>,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let layout = painting.layout;
+        for line in range.start.line..=range.end.line {
+            let Some(top) = painting.top_of(line) else {
+                continue;
+            };
+            let from = if line == range.start.line {
+                painting.column_of(range.start)
+            } else {
+                0
+            };
+            let to = if line == range.end.line {
+                painting.column_of(range.end)
+            } else {
+                painting.buffer.display_width(line) + 1
+            };
+            if to <= from {
+                continue;
+            }
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    layout.x_of(from),
+                    top,
+                    (to - from) as f32 * layout.cell.width,
+                    layout.cell.height,
+                ),
+                color,
+            ));
+        }
+    }
+
     /// Draws one line: its number, its selection, its text and its faults.
     fn paint_line(
         &self,
-        document: &crate::editor::Document,
         line: usize,
         painting: &Painting<'_>,
         glyphs: &mut Glyphs,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
-        let metrics = painting.metrics;
-        let Some(top) = metrics.top_of(line) else {
+        let layout = painting.layout;
+        let Some(top) = painting.top_of(line) else {
             return;
         };
-        let buffer = document.buffer();
-        let len = buffer.line_len(line);
+        let buffer = painting.buffer;
 
-        self.paint_selection(line, len, painting, cx);
+        self.paint_selection(line, painting, cx);
         self.paint_number(line, painting, glyphs, cx);
 
-        for (column, ch) in buffer.line_chars(line).enumerate() {
+        cx.push_clip(layout.text_area());
+        let mut column = 0;
+        let mut hints = buffer.hints_on(line).peekable();
+        for (index, ch) in buffer.line_chars(line).enumerate() {
+            while let Some(hint) = hints.next_if(|hint| hint.position.column == index) {
+                column = self.paint_hint(hint, column, top, painting, glyphs, cx);
+            }
+            let width = if ch == '\t' {
+                TAB_WIDTH - column % TAB_WIDTH
+            } else {
+                1
+            };
+            let drawn = column;
+            column += width;
             if ch.is_whitespace() {
                 continue;
             }
-            let color = match painting.highlights.at(line, column) {
+            let x = layout.x_of(drawn);
+            if x + layout.cell.width < layout.text_left() {
+                continue;
+            }
+            if x > layout.bounds.right() {
+                break;
+            }
+            let color = match painting.highlights.at(line, index) {
                 Some(highlight) => tint(highlight, painting.theme),
                 None => painting.theme.colors.text,
             };
             let run = glyphs.shape(ch, painting.font, cx);
-            cx.text(Point::new(metrics.column_at(column), top), run, color);
+            cx.text(Point::new(x, top), run, color);
         }
 
-        for diagnostic in buffer.diagnostics() {
-            self.paint_diagnostic(diagnostic, line, len, top, painting, cx);
+        for hint in hints {
+            column = self.paint_hint(hint, column, top, painting, glyphs, cx);
         }
+        for diagnostic in buffer.diagnostics() {
+            self.paint_diagnostic(diagnostic, line, top, painting, cx);
+        }
+        cx.pop_clip();
     }
 
-    /// Fills what the selection covers on one line.
+    /// Writes one hint into a line, and says which column the line reaches.
+    fn paint_hint(
+        &self,
+        hint: &pm_text::Hint,
+        column: usize,
+        top: f32,
+        painting: &Painting<'_>,
+        glyphs: &mut Glyphs,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) -> usize {
+        let layout = painting.layout;
+        for (index, ch) in hint.text.chars().enumerate() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            let run = glyphs.shape(ch, painting.font, cx);
+            let x = layout.x_of(column + index);
+            cx.text(Point::new(x, top), run, painting.theme.colors.text_subtle);
+        }
+        column + hint.width()
+    }
+
+    /// Fills what every cursor has selected on one line.
     fn paint_selection(
         &self,
         line: usize,
-        len: usize,
         painting: &Painting<'_>,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
-        let (metrics, selection) = (painting.metrics, painting.selection);
-        if selection.is_empty() || !selection.touches(line) {
-            return;
-        }
-        let (start, end) = (selection.start(), selection.end());
-        let from = if start.line == line { start.column } else { 0 };
-        let to = if end.line == line {
-            end.column
-        } else {
-            len + 1
-        };
-        let Some(top) = metrics.top_of(line) else {
-            return;
-        };
+        let color = painting
+            .theme
+            .colors
+            .selection
+            .alpha(painting.theme.emphasis.selection);
 
-        cx.quad(Quad::filled(
-            Rect::from_xywh(
-                metrics.column_at(from),
-                top,
-                to.saturating_sub(from) as f32 * metrics.cell.width,
-                metrics.cell.height,
-            ),
-            painting
-                .theme
-                .colors
-                .accent
-                .alpha(painting.theme.emphasis.selection),
-        ));
+        for selection in &painting.selections {
+            if selection.is_empty() || !selection.touches(line) {
+                continue;
+            }
+            let (start, end) = (selection.start(), selection.end());
+            let from = if start.line == line {
+                start
+            } else {
+                Position::new(line, 0)
+            };
+            let to = if end.line == line {
+                end
+            } else {
+                Position::new(line, painting.buffer.line_len(line) + 1)
+            };
+            self.wash(from..to, color, painting, cx);
+        }
     }
 
     /// Draws one line's number in the gutter.
@@ -257,8 +520,8 @@ impl<M> BufferView<M> {
         glyphs: &mut Glyphs,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
-        let metrics = painting.metrics;
-        let Some(top) = metrics.top_of(line) else {
+        let layout = painting.layout;
+        let Some(top) = painting.top_of(line) else {
             return;
         };
         let color = if line == painting.selection.head.line {
@@ -267,12 +530,232 @@ impl<M> BufferView<M> {
             painting.theme.colors.text_subtle
         };
         let number = (line + 1).to_string();
-        let right = metrics.bounds.left() + metrics.gutter - GUTTER_GAP;
+        let right = layout.blame_left() - GUTTER_GAP;
 
         for (index, digit) in number.chars().rev().enumerate() {
             let run = glyphs.shape(digit, painting.font, cx);
-            let x = right - (index + 1) as f32 * metrics.cell.width;
+            let x = right - (index + 1) as f32 * layout.cell.width;
             cx.text(Point::new(x, top), run, color);
+        }
+    }
+
+    /// Keeps the lines the top of the pane is inside in sight above it.
+    ///
+    /// What is drawn over are the first lines of the body of those very
+    /// blocks, which have already been read: the trade is a few lines of
+    /// what you are in the middle of for knowing what you are in the middle
+    /// of at all. It is drawn in a layer of its own, because within one
+    /// layer every quad is drawn before every glyph — a panel painted late
+    /// without one would still sit under the text it is covering.
+    fn paint_sticky(
+        &self,
+        painting: &Painting<'_>,
+        glyphs: &mut Glyphs,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let layout = painting.layout;
+        let Some(first) = painting.drawn.first().copied() else {
+            return;
+        };
+        let holders = painting
+            .buffer
+            .enclosing(first)
+            .into_iter()
+            .filter(|line| *line < first)
+            .collect::<Vec<_>>();
+        let holders = &holders[holders.len().saturating_sub(STICKY_LIMIT)..];
+        if holders.is_empty() {
+            return;
+        }
+
+        cx.push_layer();
+        cx.quad(Quad::filled(
+            Rect::from_xywh(
+                layout.bounds.left(),
+                layout.bounds.top(),
+                layout.bounds.size.width,
+                holders.len() as f32 * layout.cell.height,
+            ),
+            painting.theme.colors.surface,
+        ));
+
+        for (row, line) in holders.iter().copied().enumerate() {
+            let top = layout.top_at(row);
+            self.paint_pinned(line, top, painting, glyphs, cx);
+        }
+        cx.quad(Quad::filled(
+            Rect::from_xywh(
+                layout.bounds.left(),
+                layout.bounds.top() + holders.len() as f32 * layout.cell.height,
+                layout.bounds.size.width,
+                1.0,
+            ),
+            painting.theme.colors.border,
+        ));
+        cx.pop_layer();
+    }
+
+    /// Writes one pinned line where the text of the pane would have been.
+    fn paint_pinned(
+        &self,
+        line: usize,
+        top: f32,
+        painting: &Painting<'_>,
+        glyphs: &mut Glyphs,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let layout = painting.layout;
+        let number = (line + 1).to_string();
+        let right = layout.blame_left() - GUTTER_GAP;
+        for (index, digit) in number.chars().rev().enumerate() {
+            let run = glyphs.shape(digit, painting.font, cx);
+            let x = right - (index + 1) as f32 * layout.cell.width;
+            cx.text(Point::new(x, top), run, painting.theme.colors.text_subtle);
+        }
+
+        cx.push_clip(layout.text_area());
+        let mut column = 0;
+        for ch in painting.buffer.line_chars(line) {
+            let width = if ch == '\t' {
+                TAB_WIDTH - column % TAB_WIDTH
+            } else {
+                1
+            };
+            let drawn = column;
+            column += width;
+            if ch.is_whitespace() {
+                continue;
+            }
+            let run = glyphs.shape(ch, painting.font, cx);
+            cx.text(
+                Point::new(layout.x_of(drawn), top),
+                run,
+                painting.theme.colors.text_muted,
+            );
+        }
+        cx.pop_clip();
+    }
+
+    /// Marks the lines that hold something folded away, or that could.
+    ///
+    /// A closed fold is always marked, because a line is missing under it; a
+    /// line that could be folded is marked only while the pointer is in the
+    /// column, the way every editor does it — a chevron beside every
+    /// indented line is a column of chevrons.
+    fn paint_folds(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let layout = painting.layout;
+        let hovered = painting.hovered_line();
+        let size = IconSize::XSmall.pixels();
+
+        for (row, line) in painting.drawn.iter().copied().enumerate() {
+            let Some(top) = layout.top_of(row) else {
+                continue;
+            };
+            let closed = painting.folded.get(row).copied().unwrap_or_default();
+            if !closed && (hovered != Some(line) || !painting.buffer.is_foldable(line)) {
+                continue;
+            }
+            let (glyph, color) = if closed {
+                (IconName::ChevronRight, painting.theme.colors.text_muted)
+            } else {
+                (IconName::ChevronDown, painting.theme.colors.text_subtle)
+            };
+            let bounds = Rect::from_xywh(
+                layout.fold_left(),
+                top + (layout.cell.height - size) / 2.0,
+                size,
+                size,
+            );
+            cx.icon(bounds, glyph.svg(), color);
+        }
+    }
+
+    /// Marks the lines that differ from what the index holds.
+    fn paint_changes(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let layout = painting.layout;
+        for change in &painting.changes {
+            let color = match change.kind {
+                ChangeKind::Added => painting.theme.colors.success,
+                ChangeKind::Modified => painting.theme.colors.warning,
+                ChangeKind::Removed => painting.theme.colors.danger,
+            };
+            if change.kind == ChangeKind::Removed {
+                let Some(top) = painting.top_of(change.anchor()) else {
+                    continue;
+                };
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(
+                        layout.bounds.left(),
+                        top + layout.cell.height - REMOVED_HEIGHT / 2.0,
+                        CHANGE_WIDTH,
+                        REMOVED_HEIGHT,
+                    ),
+                    color,
+                ));
+                continue;
+            }
+            for line in change.lines.clone() {
+                let Some(top) = painting.top_of(line) else {
+                    continue;
+                };
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(layout.bounds.left(), top, CHANGE_WIDTH, layout.cell.height),
+                    color,
+                ));
+            }
+        }
+    }
+
+    /// Writes who last changed each line, in the column before the text.
+    ///
+    /// A run of lines from one commit is named once, at the first of them
+    /// that is on screen: what the column is for is seeing where the
+    /// authorship changes, and repeating the same name down twenty lines
+    /// hides exactly that.
+    fn paint_blame(
+        &self,
+        painting: &Painting<'_>,
+        glyphs: &mut Glyphs,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let layout = painting.layout;
+        if layout.blame <= 0.0 {
+            return;
+        }
+        let width = super::layout::BLAME_WIDTH;
+        let mut above = None;
+
+        for line in painting.drawn.iter().copied() {
+            let Some(top) = painting.top_of(line) else {
+                continue;
+            };
+            let Some(blame) = painting.blame.get(line) else {
+                continue;
+            };
+            let repeated = above == Some(blame);
+            above = Some(blame);
+            if repeated {
+                continue;
+            }
+            let label = if blame.uncommitted {
+                "Uncommitted".to_owned()
+            } else {
+                format!("{} · {}", blame.author, blame.when)
+            };
+            let color = if line == painting.selection.head.line {
+                painting.theme.colors.text_muted
+            } else {
+                painting.theme.colors.text_subtle
+            };
+
+            for (index, ch) in label.chars().take(width).enumerate() {
+                if ch.is_whitespace() {
+                    continue;
+                }
+                let run = glyphs.shape(ch, painting.font, cx);
+                let x = layout.blame_left() + index as f32 * layout.cell.width;
+                cx.text(Point::new(x, top), run, color);
+            }
         }
     }
 
@@ -281,29 +764,30 @@ impl<M> BufferView<M> {
         &self,
         diagnostic: &Diagnostic,
         line: usize,
-        len: usize,
         top: f32,
         painting: &Painting<'_>,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
-        let metrics = painting.metrics;
-        let Some(columns) = diagnostic.columns(line, len) else {
+        let layout = painting.layout;
+        let Some(columns) = diagnostic.columns(line, painting.buffer.line_len(line)) else {
             return;
         };
+        let start = painting.column_of(Position::new(line, columns.start));
+        let end = painting.column_of(Position::new(line, columns.end));
         let color = severity(diagnostic.severity, painting.theme);
         cx.quad(Quad::filled(
             Rect::from_xywh(
-                metrics.column_at(columns.start),
-                top + metrics.cell.height - SQUIGGLE_WIDTH * 2.0,
-                columns.len() as f32 * metrics.cell.width,
+                layout.x_of(start),
+                top + layout.cell.height - SQUIGGLE_WIDTH * 2.0,
+                end.saturating_sub(start).max(1) as f32 * layout.cell.width,
                 SQUIGGLE_WIDTH,
             ),
             color,
         ));
         cx.quad(Quad::filled(
             Rect::from_xywh(
-                metrics.bounds.left() + GUTTER_INSET / 2.0,
-                top + metrics.cell.height / 2.0 - SQUIGGLE_WIDTH,
+                layout.bounds.left() + GUTTER_INSET / 2.0 + CHANGE_WIDTH,
+                top + layout.cell.height / 2.0 - SQUIGGLE_WIDTH,
                 SQUIGGLE_WIDTH * 2.0,
                 SQUIGGLE_WIDTH * 2.0,
             ),
@@ -311,92 +795,213 @@ impl<M> BufferView<M> {
         ));
     }
 
-    /// Draws the cursor: solid while the pane is focused, faint otherwise.
+    /// Draws every cursor: solid while the pane is focused, faint otherwise.
     fn paint_cursor(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
-        let metrics = painting.metrics;
-        let head = painting.selection.head;
-        let Some(top) = metrics.top_of(head.line) else {
-            return;
-        };
+        let layout = painting.layout;
         let color = if self.focused {
-            painting.theme.colors.accent
+            painting.theme.colors.cursor
         } else {
             painting.theme.colors.text_subtle
         };
-        cx.quad(Quad::filled(
-            Rect::from_xywh(
-                metrics.column_at(head.column),
-                top,
-                CURSOR_WIDTH,
-                metrics.cell.height,
-            ),
-            color,
-        ));
+
+        for selection in &painting.selections {
+            let head = selection.head;
+            let Some(top) = painting.top_of(head.line) else {
+                continue;
+            };
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    layout.x_of(painting.column_of(head)),
+                    top,
+                    CURSOR_WIDTH,
+                    layout.cell.height,
+                ),
+                color,
+            ));
+        }
     }
 }
 
-impl<M: 'static> BufferView<M> {
+impl<M: Clone + 'static> BufferView<M> {
     /// Takes the press and the drag that place the cursor and select text.
-    fn select_region(&mut self, metrics: Metrics, cx: &mut PaintContext<'_, '_, M>) {
+    fn select_region(&mut self, layout: TextLayout, cx: &mut PaintContext<'_, '_, M>) {
         let Some(on_select) = self.on_select.clone() else {
             return;
         };
-        let text = Rect::from_xywh(
-            metrics.bounds.left() + metrics.gutter,
-            metrics.bounds.top(),
-            (metrics.bounds.size.width - metrics.gutter).max(0.0),
-            metrics.bounds.size.height,
-        );
+        let file = self.file.clone();
         cx.draggable(
-            text,
+            layout.text_area(),
             PointerCursor::Text,
             Arc::new(move |event| {
+                let document = file.borrow();
                 on_select(
-                    metrics.position_of(event.start),
-                    metrics.position_of(event.current),
+                    document.position_at(event.start),
+                    document.position_at(event.current),
                 )
             }),
-            None,
+            self.on_menu.clone(),
         );
     }
 
-    /// Draws the scrollbar, and takes the drag on it the caller asked for.
-    fn paint_scrollbar(
+    /// Takes the press and the drag down the gutter that select whole lines.
+    fn gutter_region(&mut self, layout: TextLayout, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(on_gutter) = self.on_gutter.clone() else {
+            return;
+        };
+        let gutter = Rect::from_xywh(
+            layout.bounds.left(),
+            layout.bounds.top(),
+            layout.gutter,
+            layout.bounds.size.height,
+        );
+        let file = self.file.clone();
+        cx.draggable(
+            gutter,
+            PointerCursor::Default,
+            Arc::new(move |event| {
+                let document = file.borrow();
+                on_gutter(
+                    document.position_at(event.start),
+                    document.position_at(event.current),
+                )
+            }),
+            self.on_menu.clone(),
+        );
+    }
+
+    /// Takes the press in the fold column that opens and closes a fold.
+    ///
+    /// It is registered after the gutter it sits inside, so it is the region
+    /// the pointer finds first: the last one painted is the one on top.
+    fn fold_region(&mut self, layout: TextLayout, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(on_fold) = self.on_fold.clone() else {
+            return;
+        };
+        let column = Rect::from_xywh(
+            layout.fold_left(),
+            layout.bounds.top(),
+            super::layout::FOLD_WIDTH,
+            layout.bounds.size.height,
+        );
+        let file = self.file.clone();
+        let pointer = cx.input().pointer;
+        let pressed = pointer.map(|at| on_fold(file.borrow().position_at(at)));
+        cx.clickable(column, pressed, self.on_menu.clone());
+    }
+
+    /// Draws the scrollbars, and takes the drags on them the caller asked for.
+    fn paint_scrollbars(
         &mut self,
-        bounds: Rect,
+        layout: TextLayout,
         count: usize,
-        rows: usize,
-        first: usize,
+        widest: usize,
+        marks: &[(usize, Rgba)],
         theme: &Theme,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
-        if count <= rows {
-            return;
+        let bounds = layout.bounds;
+        let rows = layout.rows();
+        if count > rows {
+            let track = Rect::from_xywh(
+                bounds.right() - SCROLLBAR_PADDING - SCROLLBAR_WIDTH,
+                bounds.top() + SCROLLBAR_PADDING,
+                SCROLLBAR_WIDTH,
+                (bounds.size.height - SCROLLBAR_PADDING * 2.0).max(0.0),
+            );
+            self.paint_markers(track, count, marks, cx);
+            let reach = Reach {
+                total: count,
+                showing: rows,
+                at: layout.first,
+            };
+            self.paint_thumb(ScrollAxis::Vertical, track, reach, theme, cx);
         }
-        let track = Rect::from_xywh(
-            bounds.right() - SCROLLBAR_PADDING - SCROLLBAR_WIDTH,
-            bounds.top() + SCROLLBAR_PADDING,
-            SCROLLBAR_WIDTH,
-            (bounds.size.height - SCROLLBAR_PADDING * 2.0).max(0.0),
-        );
-        let hidden = (count - rows) as f32;
-        let thumb_height =
-            (track.size.height * rows as f32 / count as f32).max(SCROLLBAR_MIN_THUMB);
-        let travel = (track.size.height - thumb_height).max(0.0);
-        let thumb = Rect::from_xywh(
-            track.left(),
-            track.top() + travel * (first as f32 / hidden).min(1.0),
-            track.size.width,
-            thumb_height,
-        );
+
+        let columns = layout.columns();
+        if widest > columns {
+            let track = Rect::from_xywh(
+                layout.text_left() + SCROLLBAR_PADDING,
+                bounds.bottom() - SCROLLBAR_PADDING - SCROLLBAR_WIDTH,
+                (bounds.right() - layout.text_left() - SCROLLBAR_PADDING * 2.0).max(0.0),
+                SCROLLBAR_WIDTH,
+            );
+            let reach = Reach {
+                total: widest,
+                showing: columns,
+                at: layout.column,
+            };
+            self.paint_thumb(ScrollAxis::Horizontal, track, reach, theme, cx);
+        }
+    }
+
+    /// Marks the whole file's faults, changes and matches along the track.
+    ///
+    /// The track is the one place the whole file is in view at once, so what
+    /// is worth going to is drawn on it: a scrollbar that only says where
+    /// you are wastes the one view of the file that is always there.
+    fn paint_markers(
+        &mut self,
+        track: Rect,
+        count: usize,
+        marks: &[(usize, Rgba)],
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        for (line, color) in marks {
+            let along = track.size.height * *line as f32 / count.max(1) as f32;
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    track.left() - MARKER_REACH,
+                    track.top() + along,
+                    track.size.width + MARKER_REACH,
+                    MARKER_HEIGHT,
+                ),
+                *color,
+            ));
+        }
+    }
+
+    /// Draws one scrollbar's thumb and takes the drag along it.
+    ///
+    /// A bar down the side and a bar along the bottom are one control read
+    /// on two axes: how much there is, how much of it is showing, and how
+    /// far in the view has reached.
+    fn paint_thumb(
+        &mut self,
+        axis: ScrollAxis,
+        track: Rect,
+        reach: Reach,
+        theme: &Theme,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let Reach { total, showing, at } = reach;
+        let vertical = axis == ScrollAxis::Vertical;
+        let length = if vertical {
+            track.size.height
+        } else {
+            track.size.width
+        };
+        let hidden = total.saturating_sub(showing).max(1) as f32;
+        let extent = (length * showing as f32 / total as f32).max(SCROLLBAR_MIN_THUMB);
+        let travel = (length - extent).max(0.0);
+        let offset = travel * (at as f32 / hidden).min(1.0);
+        let thumb = if vertical {
+            Rect::from_xywh(track.left(), track.top() + offset, track.size.width, extent)
+        } else {
+            Rect::from_xywh(
+                track.left() + offset,
+                track.top(),
+                extent,
+                track.size.height,
+            )
+        };
 
         let interaction = match self.on_scroll.clone() {
             Some(on_scroll) => {
-                let lines_per_pixel = if travel > 0.0 { hidden / travel } else { 1.0 };
+                let step = if travel > 0.0 { hidden / travel } else { 1.0 };
                 cx.draggable(
                     thumb,
                     PointerCursor::Default,
-                    Arc::new(move |event| on_scroll(event, lines_per_pixel)),
+                    Arc::new(move |event| on_scroll(axis, event, step)),
                     None,
                 )
             }
@@ -418,57 +1023,122 @@ impl<M: 'static> BufferView<M> {
 /// What every line of one frame is drawn against.
 struct Painting<'a> {
     /// Where the text sits and what one character comes to.
-    metrics: Metrics,
+    layout: TextLayout,
     /// The type the buffer is set in.
     font: FontStyle,
     /// The tokens the frame is drawn from.
     theme: &'a Theme,
-    /// What is selected, and where the cursor is.
+    /// The text being drawn.
+    buffer: &'a Buffer,
+    /// What is being looked for in it, and where that was found.
+    search: &'a Search,
+    /// What the primary cursor has selected, and where it is.
     selection: Selection,
+    /// Every cursor, the primary one included.
+    selections: Vec<Selection>,
     /// The highlights of the lines being drawn.
     highlights: &'a Highlights,
+    /// The bracket at the cursor and the one that answers it.
+    brackets: Option<(Position, Position)>,
+    /// Where else on screen what is selected appears.
+    occurrences: Vec<Range<Position>>,
+    /// Where the file differs from what the index holds.
+    changes: Vec<Change>,
+    /// Who last changed each line, when the blame column is being drawn.
+    blame: &'a [Blame],
+    /// The lines being drawn, in the order they are drawn.
+    drawn: Vec<usize>,
+    /// Whether each of them has a fold closed under it.
+    folded: Vec<bool>,
+    /// Where the pointer is over the fold column, when it is.
+    hovered: Option<Point>,
 }
 
-/// Where the text sits on the screen and what one character of it comes to.
-#[derive(Clone, Copy)]
-struct Metrics {
-    /// The pane the buffer is drawn in.
-    bounds: Rect,
-    /// The extent of one character.
-    cell: Size,
-    /// How much of the pane the gutter takes on the left.
-    gutter: f32,
-    /// The first line the pane is showing.
-    first: usize,
-}
-
-impl Metrics {
-    /// The top of `line`, when the pane is showing it.
+impl Painting<'_> {
+    /// The top of `line`, when it is one of the lines being drawn.
     fn top_of(&self, line: usize) -> Option<f32> {
-        let row = line.checked_sub(self.first)?;
-        Some(self.bounds.top() + row as f32 * self.cell.height)
+        let row = self.drawn.binary_search(&line).ok()?;
+        self.layout.top_of(row)
     }
 
-    /// The left edge of `column`.
-    fn column_at(&self, column: usize) -> f32 {
-        self.bounds.left() + self.gutter + column as f32 * self.cell.width
-    }
-
-    /// The place in the buffer `point` falls on.
-    ///
-    /// A point below the last line or right of the last character still
-    /// names a place: the buffer clamps it to text that exists, which is
-    /// what dragging past the end of a line is asking for.
-    fn position_of(&self, point: Point) -> Position {
-        let row = ((point.y - self.bounds.top()) / self.cell.height).floor();
-        let column = ((point.x - self.bounds.left() - self.gutter) / self.cell.width).round();
-        Position::new(self.first + row.max(0.0) as usize, column.max(0.0) as usize)
+    /// The line the pointer is over, when it is over the lines at all.
+    fn hovered_line(&self) -> Option<usize> {
+        let at = self.hovered?;
+        self.drawn.get(self.layout.row_at(at)).copied()
     }
 }
 
-/// How many digits it takes to write the number of `lines`.
-fn digits(lines: usize) -> usize {
-    lines.to_string().len().max(GUTTER_DIGITS)
+impl Painting<'_> {
+    /// The column `position` is drawn at, tabs and hints counted in.
+    fn column_of(&self, position: Position) -> usize {
+        self.buffer.display_column(position)
+    }
+}
+
+/// The lines worth marking on the scrollbar's track, and what to mark them in.
+///
+/// A fault outranks a change and a change outranks a match, because a line
+/// with an error on it is a line the reader wants to find first however many
+/// other reasons there are to go there.
+fn markers(painting: &Painting<'_>) -> Vec<(usize, Rgba)> {
+    let colors = painting.theme.colors;
+    let mut marks = Vec::new();
+
+    for found in painting.search.matches() {
+        marks.push((found.start.line, colors.warning));
+    }
+    for change in &painting.changes {
+        marks.push((
+            change.anchor(),
+            match change.kind {
+                ChangeKind::Added => colors.success,
+                ChangeKind::Modified => colors.warning,
+                ChangeKind::Removed => colors.danger,
+            },
+        ));
+    }
+    for found in painting.buffer.diagnostics() {
+        marks.push((
+            found.range.start.line,
+            severity(found.severity, painting.theme),
+        ));
+    }
+    marks
+}
+
+/// Where else in `lines` the selected text appears.
+///
+/// A word is lit where it appears again the moment it is selected, which is
+/// how selecting an identifier answers "where else is this used" without
+/// being asked. A selection that spans lines, or that is long enough to be
+/// prose rather than a name, lights nothing.
+fn occurrences(buffer: &Buffer, lines: Range<usize>) -> Vec<Range<Position>> {
+    let selection = buffer.selection();
+    let (start, end) = (selection.start(), selection.end());
+    if selection.is_empty()
+        || start.line != end.line
+        || end.column - start.column > OCCURRENCE_LIMIT
+    {
+        return Vec::new();
+    }
+    let needle = buffer.text_in(start..end);
+    if needle.trim().is_empty() {
+        return Vec::new();
+    }
+    let width = needle.chars().count();
+
+    let mut found = Vec::new();
+    for line in lines {
+        let text = buffer.line_text(line);
+        for (byte, _) in text.match_indices(&needle) {
+            let column = text[..byte].chars().count();
+            if Position::new(line, column) == start {
+                continue;
+            }
+            found.push(Position::new(line, column)..Position::new(line, column + width));
+        }
+    }
+    found
 }
 
 /// The colour `highlight` is drawn in.

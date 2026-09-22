@@ -8,18 +8,18 @@
 use pm_gfx::Point;
 #[cfg(not(target_os = "macos"))]
 use pm_gfx::Size;
-use pm_ui::{Axis, PointerCursor};
+use pm_ui::PointerCursor;
 
-use crate::panes::SplitDirection;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, NamedKey};
 #[cfg(not(target_os = "macos"))]
 use winit::window::ResizeDirection;
 
 use crate::app::App;
-use crate::editor;
+use crate::editor::{self, Completions};
+use crate::field::Typed;
 use crate::keymap::{self, Action, Context, Resolution, keys};
-use crate::onboarding::Message;
+use crate::message::Message;
 use crate::terminal;
 
 /// Logical pixels one notch of a mouse wheel scrolls.
@@ -27,6 +27,15 @@ pub(super) const WHEEL_STEP: f32 = 48.0;
 
 /// How many notches a page key scrolls.
 const PAGE_NOTCHES: f32 = 4.0;
+
+/// How many rows of a picker a page key moves through.
+const PICKER_PAGE: isize = 10;
+
+/// How long the pointer stays still before the editor says what is under it.
+const REST_DELAY: std::time::Duration = std::time::Duration::from_millis(450);
+
+/// How far the pointer may drift and still count as having stayed still.
+const REST_SLACK: f32 = 3.0;
 
 /// Longest interval treated as a double click.
 pub(super) const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -41,7 +50,7 @@ const WINDOW_RESIZE_EDGE: f32 = 8.0;
 
 impl App {
     /// What is true where a key was pressed, for the `when` clauses to read.
-    fn context(&self) -> Context {
+    pub(super) fn context(&self) -> Context {
         let mut context = Context::new();
         context.flag(keys::SETUP_OPEN, !self.setup.finished);
         context.flag(keys::PROJECT_FOCUSED, self.open.active().is_some());
@@ -51,73 +60,19 @@ impl App {
         context
     }
 
-    /// Carries `action` out, ignoring the ones nothing is built behind yet.
-    fn act(&mut self, action: Action) {
-        match action {
-            Action::OpenSettings => self.apply(Message::Reopen),
-            Action::AddProject => self.apply(Message::OpenProject),
-            Action::RemoveProject => {
-                if let Some(id) = self.open.active().map(pm_core::Project::id) {
-                    self.apply(Message::CloseProject(id));
-                }
-            }
-            Action::Save => {
-                if let Some(file) = self.active_tab() {
-                    self.editor.save(file);
-                }
-                self.request_redraw();
-            }
-            Action::SaveAll => {
-                self.editor.save_all();
-                self.request_redraw();
-            }
-            Action::SplitRight => {
-                self.split_pane(self.panes.focus(), None, SplitDirection::Right);
-                self.request_redraw();
-            }
-            Action::SplitDown => {
-                self.split_pane(self.panes.focus(), None, SplitDirection::Down);
-                self.request_redraw();
-            }
-            Action::ClosePane => {
-                self.close_active_tab();
-                self.request_redraw();
-            }
-            Action::NextTab | Action::PreviousTab => {
-                if let Some(pane) = self.panes.focused_mut() {
-                    match action {
-                        Action::NextTab => pane.next_tab(),
-                        _ => pane.previous_tab(),
-                    }
-                }
-                self.store();
-                self.request_redraw();
-            }
-            Action::FocusLeft => self.move_focus(Axis::Horizontal, false),
-            Action::FocusRight => self.move_focus(Axis::Horizontal, true),
-            Action::FocusUp => self.move_focus(Axis::Vertical, false),
-            Action::FocusDown => self.move_focus(Axis::Vertical, true),
-            Action::Cancel => {
-                if self.dismiss_menu() {
-                    return self.request_redraw();
-                }
-                if let Some(ui) = self.ui.as_mut() {
-                    ui.clear_focus();
-                }
-                self.request_redraw();
-            }
-            _ => self.request_redraw(),
-        }
-    }
-
-    /// Moves the keyboard to the next pane along, and draws the move.
-    fn move_focus(&mut self, axis: Axis, forward: bool) {
-        self.focus_neighbour(axis, forward);
-        self.request_redraw();
-    }
-
-    /// Resolves a keypress against the keymap, falling back to focus movement.
+    /// Resolves a keypress against whatever has the keyboard.
+    ///
+    /// The order is what is nearest the reader first: a list open over the
+    /// screen, then the completions offered beside the cursor, then a
+    /// terminal, then the window's own chords, then the search bar, then the
+    /// text itself. Only a key nothing wanted becomes focus movement.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
+        if self.send_to_picker(event) {
+            return self.request_redraw();
+        }
+        if self.send_to_completions(event) {
+            return self.request_redraw();
+        }
         if self.send_to_terminal(event) {
             return self.request_redraw();
         }
@@ -128,10 +83,136 @@ impl App {
                 Resolution::None => {}
             }
         }
+        if self.send_to_search(event) {
+            return self.request_redraw();
+        }
         if self.send_to_editor(event) {
             return self.request_redraw();
         }
         self.navigate(event);
+    }
+
+    /// Sends a keypress to the list the window is asking a choice from.
+    fn send_to_picker(&mut self, event: &KeyEvent) -> bool {
+        if self.picker.is_none() || self.is_window_chord() {
+            return false;
+        }
+        let modifiers = self.modifiers;
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Escape) => self.dismiss_picker(),
+            Key::Named(NamedKey::Enter) => {
+                self.confirm_picker();
+                true
+            }
+            Key::Named(NamedKey::ArrowUp) => self.step_picker(-1),
+            Key::Named(NamedKey::ArrowDown) => self.step_picker(1),
+            Key::Named(NamedKey::PageUp) => self.step_picker(-(PICKER_PAGE)),
+            Key::Named(NamedKey::PageDown) => self.step_picker(PICKER_PAGE),
+            key => {
+                let Some(picker) = self.picker.as_mut() else {
+                    return false;
+                };
+                let mut taken = false;
+                picker.edit(|field| taken = field.press(&key, modifiers) == Typed::Taken);
+                if taken {
+                    self.refilter_picker();
+                }
+                taken
+            }
+        }
+    }
+
+    /// Moves the picker's selection, saying that the key was taken.
+    fn step_picker(&mut self, step: isize) -> bool {
+        if let Some(picker) = self.picker.as_mut() {
+            picker.step(step);
+        }
+        true
+    }
+
+    /// Sends a keypress to the completions offered beside the cursor.
+    ///
+    /// Only the keys that work the list are taken: everything else goes on
+    /// into the buffer and narrows the list afterwards, which is what makes
+    /// completion happen beside the typing rather than instead of it.
+    fn send_to_completions(&mut self, event: &KeyEvent) -> bool {
+        if self.completions.is_none() {
+            return false;
+        }
+        let step = match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Escape) => {
+                self.completions = None;
+                return true;
+            }
+            Key::Named(NamedKey::ArrowUp) => -1,
+            Key::Named(NamedKey::ArrowDown) => 1,
+            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
+                let place = self.completions.as_ref().map_or(0, Completions::selected);
+                self.take_completion(place);
+                return true;
+            }
+            _ => return false,
+        };
+        if let Some(completions) = self.completions.as_mut() {
+            completions.step(step);
+        }
+        true
+    }
+
+    /// Sends a keypress to the search bar, when the bar has the keyboard.
+    fn send_to_search(&mut self, event: &KeyEvent) -> bool {
+        if !self.search_focused || self.is_window_chord() {
+            return false;
+        }
+        let Some(file) = self.active_file() else {
+            return false;
+        };
+        if !file.borrow().search().is_open() {
+            self.search_focused = false;
+            return false;
+        }
+        let modifiers = self.modifiers;
+
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Enter) if modifiers.shift_key() => {
+                self.act(Action::FindPrevious);
+            }
+            Key::Named(NamedKey::Enter) => {
+                let replacing =
+                    file.borrow().search().field() == crate::editor::SearchField::Replacement;
+                self.act(if replacing {
+                    Action::ReplaceMatch
+                } else {
+                    Action::FindNext
+                });
+            }
+            Key::Named(NamedKey::Tab) => {
+                file.borrow_mut().search_with(|search, _| {
+                    let next = match search.field() {
+                        crate::editor::SearchField::Query => {
+                            crate::editor::SearchField::Replacement
+                        }
+                        crate::editor::SearchField::Replacement => {
+                            crate::editor::SearchField::Query
+                        }
+                    };
+                    search.focus(next);
+                });
+            }
+            key => {
+                let mut taken = false;
+                file.borrow_mut().search_with(|search, buffer| {
+                    search.edit_field(
+                        |field| taken = field.press(&key, modifiers) == Typed::Taken,
+                        buffer,
+                    );
+                });
+                if !taken {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Sends a keypress to the editor pane, when the pane has the keyboard.
@@ -150,15 +231,31 @@ impl App {
             return false;
         };
 
-        self.edit_active(|buffer| match edit {
-            editor::Edit::Insert(text) => buffer.insert(&text),
-            editor::Edit::Newline => buffer.insert_newline(),
-            editor::Edit::Indent => buffer.insert_indent(),
-            editor::Edit::Backspace => buffer.backspace(),
-            editor::Edit::Delete => buffer.delete(),
-            editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
-            editor::Edit::SelectAll => buffer.select_all(),
+        let typed = match edit {
+            editor::Edit::Type(ch) => Some(ch),
+            _ => None,
+        };
+        let line_wise = matches!(edit, editor::Edit::Indent | editor::Edit::Outdent);
+        self.edit_active(|buffer| {
+            let apply = |buffer: &mut pm_text::Buffer| match edit.clone() {
+                editor::Edit::Type(ch) => buffer.insert_typed(ch),
+                editor::Edit::Insert(text) => buffer.insert(&text),
+                editor::Edit::Newline => buffer.insert_newline(),
+                editor::Edit::Indent => buffer.insert_indent(),
+                editor::Edit::Outdent => buffer.outdent_lines(),
+                editor::Edit::Backspace => buffer.backspace(),
+                editor::Edit::Delete => buffer.delete(),
+                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
+                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
+                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
+            };
+            if line_wise {
+                buffer.on_each_line(apply);
+            } else {
+                buffer.at_each(apply);
+            }
         });
+        self.after_typing(typed);
         true
     }
 
@@ -236,11 +333,44 @@ impl App {
     }
 
     /// Tells the element tree where the pointer is now.
+    ///
+    /// A pointer that has moved has stopped resting, so whatever was being
+    /// said about the place it left goes away and the clock on the place it
+    /// reached starts again.
     pub(super) fn pointer_moved(&mut self, position: Point) {
+        let moved = self
+            .pointer
+            .is_none_or(|last| (last.x - position.x).hypot(last.y - position.y) > REST_SLACK);
         self.pointer = Some(position);
+        if moved {
+            self.hint = None;
+            self.resting = Some((std::time::Instant::now(), position));
+        }
         let message = self.ui.as_mut().and_then(|ui| ui.pointer_moved(position));
         self.update_pointer_cursor();
         self.handle(message);
+    }
+
+    /// Says what the editor knows about a place the pointer has rested on.
+    ///
+    /// The delay is what tells resting from passing over: a pointer crossing
+    /// a line of code on its way somewhere is not asking about every word it
+    /// crossed.
+    pub(super) fn rested(&mut self) -> bool {
+        let Some((since, at)) = self.resting else {
+            return false;
+        };
+        if since.elapsed() < REST_DELAY {
+            return false;
+        }
+        self.resting = None;
+        self.hover_at(at);
+        true
+    }
+
+    /// How long the window should wait before looking at the clock again.
+    pub(super) fn next_rest(&self) -> Option<std::time::Instant> {
+        self.resting.map(|(since, _)| since + REST_DELAY)
     }
 
     /// Tells the element tree the pointer has left the window.
@@ -252,6 +382,8 @@ impl App {
     pub(super) fn pointer_left(&mut self) {
         self.pointer = None;
         self.drag = None;
+        self.resting = None;
+        self.hint = None;
         if let Some(ui) = self.ui.as_mut() {
             ui.pointer_left();
         }
@@ -323,13 +455,34 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Some(file) = self.focused_file() {
+        let under = self
+            .pointer
+            .and_then(|pointer| self.document_at(pointer))
+            .map(|(_, document)| document)
+            .or_else(|| self.focused_file());
+        if let Some(file) = under {
             let lines = (delta / text.code.line_height).round() as isize;
             file.borrow_mut().scroll_by(-lines);
             self.request_redraw();
             return;
         }
         self.scroll.by(delta);
+        self.request_redraw();
+    }
+
+    /// Scrolls the focused pane along its lines by `delta` logical pixels.
+    pub(super) fn scroll_across(&mut self, delta: f32) {
+        let under = self
+            .pointer
+            .and_then(|pointer| self.document_at(pointer))
+            .map(|(_, document)| document)
+            .or_else(|| self.active_file());
+        let Some(file) = under else {
+            return;
+        };
+        let width = file.borrow().layout().cell.width.max(1.0);
+        let columns = (delta / width).round() as isize;
+        file.borrow_mut().scroll_columns(-columns);
         self.request_redraw();
     }
 

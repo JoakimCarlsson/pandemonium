@@ -19,6 +19,17 @@ impl Position {
     pub const fn new(line: usize, column: usize) -> Self {
         Self { line, column }
     }
+
+    /// Where `text` leaves the cursor, having been put in here.
+    pub fn after(self, text: &str) -> Self {
+        match text.rsplit_once('\n') {
+            Some((before, rest)) => Self::new(
+                self.line + before.matches('\n').count() + 1,
+                rest.chars().count(),
+            ),
+            None => Self::new(self.line, self.column + text.chars().count()),
+        }
+    }
 }
 
 /// What is selected: where the selection was begun, and where it is now.
@@ -61,6 +72,21 @@ impl Selection {
     pub fn touches(&self, line: usize) -> bool {
         (self.start().line..=self.end().line).contains(&line)
     }
+
+    /// The lines the selection reaches, however little of them it covers.
+    ///
+    /// A selection that ends at the very start of a line has not reached
+    /// into it, which is what makes selecting three whole lines indent
+    /// three rather than four.
+    pub fn lines(&self) -> std::ops::RangeInclusive<usize> {
+        let (start, end) = (self.start(), self.end());
+        let last = if end.line > start.line && end.column == 0 {
+            end.line - 1
+        } else {
+            end.line
+        };
+        start.line..=last
+    }
 }
 
 /// A way of moving the cursor that does not depend on where it is.
@@ -93,6 +119,8 @@ pub enum Motion {
     PageUp(usize),
     /// Down by as many lines as a pane holds.
     PageDown(usize),
+    /// To a place named outright, which a search or a server decided on.
+    To(Position),
 }
 
 impl Motion {

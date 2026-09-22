@@ -1,0 +1,525 @@
+//! What a language server can be asked, and what it says back.
+//!
+//! The protocol's own shapes stop here. A request is one of a closed set of
+//! questions, an answer is one of a closed set of replies, and both are in
+//! the editor's own terms — paths and [`Position`]s — so nothing above this
+//! layer ever sees a `file://` URI or a JSON value.
+
+use std::ops::Range;
+use std::path::PathBuf;
+
+use serde_json::{Value, json};
+
+use crate::cursor::Position;
+use crate::lsp::uri;
+
+/// One thing a language server can be asked about a place in a file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Request {
+    /// Where the symbol here is defined.
+    Definition,
+    /// Where the type of the symbol here is defined.
+    TypeDefinition,
+    /// What implements the symbol here.
+    Implementation,
+    /// Where the symbol here is declared.
+    Declaration,
+    /// Everywhere the symbol here is used.
+    References,
+    /// What the server has to say about the symbol here.
+    Hover,
+    /// What could be written here.
+    Completions,
+    /// The signature of the call this place is inside.
+    Signature,
+    /// The fixes and refactors the server offers here.
+    CodeActions,
+    /// Rename the symbol here to this everywhere it appears.
+    Rename(String),
+    /// Lay the whole file out the way the server's formatter would.
+    Format,
+    /// The symbols the file declares.
+    Symbols,
+    /// What the server would write into the lines of this span.
+    Hints(Range<Position>),
+}
+
+impl Request {
+    /// The method a server is asked by.
+    pub(super) fn method(&self) -> &'static str {
+        match self {
+            Self::Definition => "textDocument/definition",
+            Self::TypeDefinition => "textDocument/typeDefinition",
+            Self::Implementation => "textDocument/implementation",
+            Self::Declaration => "textDocument/declaration",
+            Self::References => "textDocument/references",
+            Self::Hover => "textDocument/hover",
+            Self::Completions => "textDocument/completion",
+            Self::Signature => "textDocument/signatureHelp",
+            Self::CodeActions => "textDocument/codeAction",
+            Self::Rename(_) => "textDocument/rename",
+            Self::Format => "textDocument/formatting",
+            Self::Symbols => "textDocument/documentSymbol",
+            Self::Hints(_) => "textDocument/inlayHint",
+        }
+    }
+
+    /// The parameters it is asked with, about `at` in the file at `path`.
+    pub(super) fn params(&self, path: &std::path::Path, at: Position) -> Value {
+        let document = json!({ "uri": uri::of(path) });
+        let position = json!({ "line": at.line, "character": at.column });
+
+        match self {
+            Self::References => json!({
+                "textDocument": document,
+                "position": position,
+                "context": { "includeDeclaration": false },
+            }),
+            Self::Rename(name) => json!({
+                "textDocument": document,
+                "position": position,
+                "newName": name,
+            }),
+            Self::CodeActions => json!({
+                "textDocument": document,
+                "range": { "start": position, "end": position },
+                "context": { "diagnostics": [] },
+            }),
+            Self::Format => json!({
+                "textDocument": document,
+                "options": { "tabSize": 4, "insertSpaces": true },
+            }),
+            Self::Symbols => json!({ "textDocument": document }),
+            Self::Hints(span) => json!({
+                "textDocument": document,
+                "range": {
+                    "start": { "line": span.start.line, "character": span.start.column },
+                    "end": { "line": span.end.line, "character": span.end.column },
+                },
+            }),
+            _ => json!({ "textDocument": document, "position": position }),
+        }
+    }
+
+    /// What a server's reply to this request, made about `path`, comes to.
+    pub(super) fn read(&self, path: &std::path::Path, result: &Value) -> Answer {
+        match self {
+            Self::Definition
+            | Self::TypeDefinition
+            | Self::Implementation
+            | Self::Declaration
+            | Self::References => Answer::Locations(locations(result)),
+            Self::Hover => Answer::Hover(hover(result)),
+            Self::Completions => Answer::Completions(completions(result)),
+            Self::Signature => Answer::Signature(signature(result)),
+            Self::CodeActions => Answer::CodeActions(code_actions(result)),
+            Self::Rename(_) => Answer::Edits(workspace_edit(result)),
+            Self::Format => Answer::Edits(vec![FileEdit {
+                path: path.to_path_buf(),
+                edits: text_edits(result),
+            }]),
+            Self::Symbols => Answer::Symbols(symbols(result)),
+            Self::Hints(_) => Answer::Hints(hints(result)),
+        }
+    }
+}
+
+/// What a server said in reply.
+#[derive(Clone, Debug)]
+pub enum Answer {
+    /// Places in files: a definition, a declaration, a list of uses.
+    Locations(Vec<Location>),
+    /// What the server says about a place, as text.
+    Hover(String),
+    /// What could be written where the cursor is.
+    Completions(Vec<Completion>),
+    /// The signature of the call the cursor is inside.
+    Signature(String),
+    /// The fixes and refactors offered where the cursor is.
+    CodeActions(Vec<CodeAction>),
+    /// Changes to make to files, from a rename or a formatter.
+    Edits(Vec<FileEdit>),
+    /// The symbols a file declares.
+    Symbols(Vec<Symbol>),
+    /// What the server would write into the lines it was asked about.
+    Hints(Vec<crate::hint::Hint>),
+}
+
+/// One place in one file.
+#[derive(Clone, Debug)]
+pub struct Location {
+    /// Where the file lives.
+    pub path: PathBuf,
+    /// The span in it.
+    pub range: Range<Position>,
+}
+
+/// One thing that could be written where the cursor is.
+#[derive(Clone, Debug)]
+pub struct Completion {
+    /// What the list calls it.
+    pub label: String,
+    /// What is said beside it: a type, a signature, a module.
+    pub detail: String,
+    /// What goes into the buffer when it is chosen.
+    pub insert: String,
+    /// What kind of thing it is, as one word.
+    pub kind: &'static str,
+    /// The span it replaces, when the server named one.
+    pub range: Option<Range<Position>>,
+}
+
+/// One fix or refactor the server offers.
+#[derive(Clone, Debug)]
+pub struct CodeAction {
+    /// What the menu calls it.
+    pub title: String,
+    /// The changes it makes, when it carries them itself.
+    pub edits: Vec<FileEdit>,
+}
+
+/// The changes one file is asked to take.
+#[derive(Clone, Debug)]
+pub struct FileEdit {
+    /// Where the file lives.
+    pub path: PathBuf,
+    /// The spans to replace, and what to put in their place.
+    pub edits: Vec<(Range<Position>, String)>,
+}
+
+/// One symbol a file declares.
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    /// What it is called.
+    pub name: String,
+    /// What is said beside it: a signature, or the symbol that holds it.
+    pub detail: String,
+    /// What kind of thing it is, as one word.
+    pub kind: &'static str,
+    /// Where it is declared.
+    pub position: Position,
+    /// How many symbols it sits inside.
+    pub depth: usize,
+}
+
+/// One end of a span, in the editor's own terms.
+fn position(value: &Value) -> Position {
+    Position::new(
+        value["line"].as_u64().unwrap_or_default() as usize,
+        value["character"].as_u64().unwrap_or_default() as usize,
+    )
+}
+
+/// One span, in the editor's own terms.
+fn range(value: &Value) -> Range<Position> {
+    position(&value["start"])..position(&value["end"])
+}
+
+/// The places a location, a link or a list of either names.
+fn locations(result: &Value) -> Vec<Location> {
+    let values = match result {
+        Value::Array(values) => values.clone(),
+        Value::Null => return Vec::new(),
+        value => vec![value.clone()],
+    };
+
+    values
+        .iter()
+        .filter_map(|value| {
+            let uri = value["uri"]
+                .as_str()
+                .or_else(|| value["targetUri"].as_str())?;
+            let span = if value.get("targetSelectionRange").is_some() {
+                &value["targetSelectionRange"]
+            } else if value.get("targetRange").is_some() {
+                &value["targetRange"]
+            } else {
+                &value["range"]
+            };
+            Some(Location {
+                path: uri::path(uri)?,
+                range: range(span),
+            })
+        })
+        .collect()
+}
+
+/// What a hover says, with the protocol's wrappers taken off.
+fn hover(result: &Value) -> String {
+    let contents = &result["contents"];
+    let text = match contents {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .map(|part| match part {
+                Value::String(text) => text.clone(),
+                part => part["value"].as_str().unwrap_or_default().to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        part => part["value"].as_str().unwrap_or_default().to_owned(),
+    };
+    text.trim().to_owned()
+}
+
+/// What could be written, in the order the server ranked it.
+fn completions(result: &Value) -> Vec<Completion> {
+    let items = match result {
+        Value::Array(items) => items.clone(),
+        value => value["items"].as_array().cloned().unwrap_or_default(),
+    };
+
+    items
+        .iter()
+        .filter_map(|item| {
+            let label = item["label"].as_str()?.trim().to_owned();
+            let edit = &item["textEdit"];
+            let span = edit
+                .get("range")
+                .map(range)
+                .or_else(|| edit.get("replace").map(range));
+            let insert = edit["newText"]
+                .as_str()
+                .or_else(|| item["insertText"].as_str())
+                .unwrap_or(&label)
+                .to_owned();
+            Some(Completion {
+                detail: item["detail"].as_str().unwrap_or_default().to_owned(),
+                kind: completion_kind(item["kind"].as_u64().unwrap_or_default()),
+                insert: plain(&insert, item["insertTextFormat"].as_u64() == Some(2)),
+                range: span,
+                label,
+            })
+        })
+        .collect()
+}
+
+/// A snippet written out as the plain text it would insert.
+///
+/// A snippet's placeholders are a second editing mode of their own; until
+/// there is one, what goes in is the text with the placeholders taken out,
+/// which is what the reader was going to type anyway.
+fn plain(text: &str, snippet: bool) -> String {
+    if !snippet {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => out.extend(chars.next()),
+            '$' if chars.peek() == Some(&'{') => {
+                chars.next();
+                let mut depth = 1;
+                let mut body = String::new();
+                for ch in chars.by_ref() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' if depth == 1 => break,
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                    body.push(ch);
+                }
+                if let Some((_, rest)) = body.split_once(':') {
+                    out.push_str(rest);
+                }
+            }
+            '$' => {
+                while chars.peek().is_some_and(char::is_ascii_digit) {
+                    chars.next();
+                }
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
+}
+
+/// What a completion's numeric kind is called.
+fn completion_kind(kind: u64) -> &'static str {
+    match kind {
+        2 => "method",
+        3 => "function",
+        4 => "constructor",
+        5 => "field",
+        6 => "variable",
+        7 => "class",
+        8 => "interface",
+        9 => "module",
+        10 => "property",
+        13 => "enum",
+        14 => "keyword",
+        15 => "snippet",
+        21 => "constant",
+        22 => "struct",
+        23 => "event",
+        25 => "type",
+        _ => "",
+    }
+}
+
+/// The signature the server is offering, as one line.
+fn signature(result: &Value) -> String {
+    let signatures = result["signatures"].as_array().cloned().unwrap_or_default();
+    let active = result["activeSignature"].as_u64().unwrap_or_default() as usize;
+    signatures
+        .get(active)
+        .or_else(|| signatures.first())
+        .and_then(|signature| signature["label"].as_str())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The fixes and refactors offered, with the ones that are only commands left out.
+fn code_actions(result: &Value) -> Vec<CodeAction> {
+    result
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|action| {
+            let title = action["title"].as_str()?.to_owned();
+            Some(CodeAction {
+                title,
+                edits: workspace_edit(&action["edit"]),
+            })
+        })
+        .collect()
+}
+
+/// The changes a workspace edit asks for, file by file.
+fn workspace_edit(edit: &Value) -> Vec<FileEdit> {
+    let mut files = Vec::new();
+
+    if let Some(changes) = edit["changes"].as_object() {
+        for (uri, edits) in changes {
+            if let Some(path) = uri::path(uri) {
+                files.push(FileEdit {
+                    path,
+                    edits: text_edits(edits),
+                });
+            }
+        }
+    }
+
+    for change in edit["documentChanges"].as_array().unwrap_or(&Vec::new()) {
+        let Some(uri) = change["textDocument"]["uri"].as_str() else {
+            continue;
+        };
+        if let Some(path) = uri::path(uri) {
+            files.push(FileEdit {
+                path,
+                edits: text_edits(&change["edits"]),
+            });
+        }
+    }
+    files
+}
+
+/// The spans one file is asked to replace, and what with.
+pub(super) fn text_edits(edits: &Value) -> Vec<(Range<Position>, String)> {
+    edits
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|edit| {
+            (
+                range(&edit["range"]),
+                edit["newText"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// What a server would write into the lines, in the editor's own terms.
+///
+/// A hint's label is either a string or a run of parts, each of which may
+/// carry a link back into the source; what is drawn is the text of them,
+/// because a hint is a note in the margin of a line and not a control.
+fn hints(result: &Value) -> Vec<crate::hint::Hint> {
+    result
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|hint| {
+            let text = match &hint["label"] {
+                Value::String(text) => text.clone(),
+                Value::Array(parts) => parts
+                    .iter()
+                    .map(|part| part["value"].as_str().unwrap_or_default())
+                    .collect(),
+                _ => return None,
+            };
+            let padded = format!(
+                "{}{}{}",
+                if hint["paddingLeft"] == json!(true) {
+                    " "
+                } else {
+                    ""
+                },
+                text.trim(),
+                if hint["paddingRight"] == json!(true) {
+                    " "
+                } else {
+                    ""
+                },
+            );
+            (!padded.trim().is_empty()).then(|| crate::hint::Hint {
+                position: position(&hint["position"]),
+                text: padded,
+            })
+        })
+        .collect()
+}
+
+/// The symbols a file declares, flattened in the order they appear.
+fn symbols(result: &Value) -> Vec<Symbol> {
+    let mut found = Vec::new();
+    collect_symbols(result, 0, &mut found);
+    found
+}
+
+/// Walks one level of the symbol tree, and the levels under it.
+fn collect_symbols(value: &Value, depth: usize, found: &mut Vec<Symbol>) {
+    for symbol in value.as_array().unwrap_or(&Vec::new()) {
+        let Some(name) = symbol["name"].as_str() else {
+            continue;
+        };
+        let at = if symbol.get("selectionRange").is_some() {
+            position(&symbol["selectionRange"]["start"])
+        } else {
+            position(&symbol["location"]["range"]["start"])
+        };
+        found.push(Symbol {
+            name: name.to_owned(),
+            detail: symbol["detail"].as_str().unwrap_or_default().to_owned(),
+            kind: symbol_kind(symbol["kind"].as_u64().unwrap_or_default()),
+            position: at,
+            depth,
+        });
+        collect_symbols(&symbol["children"], depth + 1, found);
+    }
+}
+
+/// What a symbol's numeric kind is called.
+fn symbol_kind(kind: u64) -> &'static str {
+    match kind {
+        2 => "module",
+        5 => "class",
+        6 => "method",
+        7 => "property",
+        8 => "field",
+        9 => "constructor",
+        10 => "enum",
+        11 => "interface",
+        12 => "function",
+        13 => "variable",
+        14 => "constant",
+        23 => "struct",
+        26 => "type",
+        _ => "",
+    }
+}

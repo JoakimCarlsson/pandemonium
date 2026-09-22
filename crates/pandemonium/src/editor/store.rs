@@ -12,8 +12,18 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use pm_core::ProjectId;
+use pm_core::{Blame, Change, ProjectId};
+use pm_gfx::Point;
 use pm_text::{Buffer, Client, Position, Servers};
+
+use crate::editor::layout::TextLayout;
+use crate::editor::search::Search;
+
+/// How many lines of context the view keeps above and below the cursor.
+const SCROLL_MARGIN: usize = 2;
+
+/// How many columns of context the view keeps left and right of the cursor.
+const SCROLL_MARGIN_X: usize = 4;
 
 /// One open file, shared between the window and the pane drawing it.
 ///
@@ -44,8 +54,12 @@ pub struct Document {
     buffer: Buffer,
     /// The first line the pane shows.
     scroll: usize,
-    /// How many lines the pane last had room for.
-    rows: usize,
+    /// The first column the pane shows, the text being scrolled left by it.
+    column: usize,
+    /// Where the pane last drew the text.
+    layout: TextLayout,
+    /// What is being looked for in the file, and where it was found.
+    search: Search,
     /// Whether the file is only being looked at, not kept open.
     ///
     /// A previewed file holds the one preview tab of the pane it was opened
@@ -54,19 +68,44 @@ pub struct Document {
     preview: bool,
     /// The language server this file is open in, when it has one.
     server: Option<Arc<Client>>,
+    /// What the index holds for this file, when git knows about it.
+    baseline: Option<String>,
+    /// Where the file differs from that, and at which version it was worked out.
+    changes: (i32, Vec<Change>),
+    /// Who last changed each line, once it has been asked for.
+    blame: Vec<Blame>,
+    /// Whether the blame column is being drawn.
+    blame_shown: bool,
+    /// The version the server was last asked what to write into the lines.
+    hinted: Option<i32>,
+    /// The runs of lines that are folded away, in the order they appear.
+    folded: Vec<std::ops::Range<usize>>,
 }
 
 impl Document {
     /// Opens `buffer`, telling `server` that it is open.
-    fn new(buffer: Buffer, preview: bool, server: Option<Arc<Client>>) -> Self {
+    fn new(
+        buffer: Buffer,
+        preview: bool,
+        server: Option<Arc<Client>>,
+        baseline: Option<String>,
+    ) -> Self {
         if let Some(server) = server.as_ref() {
             server.did_open(buffer.path(), buffer.version(), &buffer.contents());
         }
 
         Self {
+            baseline,
+            changes: (-1, Vec::new()),
+            blame: Vec::new(),
+            blame_shown: false,
+            hinted: None,
+            folded: Vec::new(),
             buffer,
             scroll: 0,
-            rows: 0,
+            column: 0,
+            layout: TextLayout::default(),
+            search: Search::default(),
             preview,
             server,
         }
@@ -82,9 +121,206 @@ impl Document {
         &mut self.buffer
     }
 
+    /// Where the file differs from what the index holds.
+    ///
+    /// The comparison is made against the version it was last made at, so a
+    /// frame that has not been typed into since the last one costs nothing.
+    /// A file git has never heard of has nothing to differ from, and is
+    /// marked nowhere rather than marked new from end to end.
+    pub fn changes(&mut self) -> &[Change] {
+        let Some(baseline) = self.baseline.clone() else {
+            return &[];
+        };
+        let version = self.buffer.version();
+        if self.changes.0 != version {
+            self.changes = (
+                version,
+                pm_core::changes(&baseline, &self.buffer.contents()),
+            );
+        }
+        &self.changes.1
+    }
+
+    /// Whether git knows anything about this file at all.
+    pub fn is_tracked(&self) -> bool {
+        self.baseline.is_some()
+    }
+
+    /// Whether `line` is hidden inside a fold.
+    pub fn is_folded(&self, line: usize) -> bool {
+        self.folded.iter().any(|fold| fold.contains(&line))
+    }
+
+    /// Whether the fold under `line` is closed.
+    pub fn is_folded_at(&self, line: usize) -> bool {
+        self.folded.iter().any(|fold| fold.start == line + 1)
+    }
+
+    /// Folds what `line` holds, or unfolds it when it is already folded.
+    pub fn toggle_fold(&mut self, line: usize) {
+        if let Some(index) = self.folded.iter().position(|fold| fold.start == line + 1) {
+            self.folded.remove(index);
+            return;
+        }
+        let Some(fold) = self.buffer.fold_at(line) else {
+            return;
+        };
+        self.folded.push(fold);
+        self.folded.sort_by_key(|fold| fold.start);
+    }
+
+    /// Folds every line that holds something.
+    pub fn fold_all(&mut self) {
+        self.folded = self.buffer.folds();
+        self.folded.sort_by_key(|fold| fold.start);
+    }
+
+    /// Unfolds everything.
+    pub fn unfold_all(&mut self) {
+        self.folded.clear();
+    }
+
+    /// Unfolds whatever is hiding `line`, so the cursor can be seen.
+    pub fn reveal(&mut self, line: usize) {
+        self.folded.retain(|fold| !fold.contains(&line));
+    }
+
+    /// The line `rows` rows below `line`, folded lines skipped.
+    ///
+    /// Everything that counts lines on the screen rather than in the file
+    /// goes through here, so a buffer with nothing folded counts exactly as
+    /// it always did.
+    pub fn line_after(&self, line: usize, rows: isize) -> usize {
+        let last = self.buffer.line_count().saturating_sub(1);
+        let step = if rows >= 0 { 1isize } else { -1 };
+        let mut at = line;
+        let mut left = rows.abs();
+
+        while left > 0 {
+            let Some(next) = at.checked_add_signed(step).filter(|next| *next <= last) else {
+                break;
+            };
+            at = next;
+            if !self.is_folded(at) {
+                left -= 1;
+            }
+        }
+        at
+    }
+
+    /// How many rows below `from` the line `line` is drawn, if it is drawn.
+    pub fn row_of(&self, from: usize, line: usize) -> Option<usize> {
+        if line < from || self.is_folded(line) {
+            return None;
+        }
+        Some((from..line).filter(|line| !self.is_folded(*line)).count())
+    }
+
+    /// The line drawn `row` rows below `from`.
+    pub fn line_at_row(&self, from: usize, row: usize) -> usize {
+        self.line_after(from, row as isize)
+    }
+
+    /// The lines drawn from `from` down, as many as `rows` has room for.
+    pub fn drawn_lines(&self, from: usize, rows: usize) -> Vec<usize> {
+        let last = self.buffer.line_count();
+        (from..last)
+            .filter(|line| !self.is_folded(*line))
+            .take(rows)
+            .collect()
+    }
+
+    /// Whether the server should be asked again what to write into the lines.
+    ///
+    /// Asking is the window's to do and answering the server's; the document
+    /// only says whether what it is showing is still what was asked about.
+    pub fn wants_hints(&mut self) -> bool {
+        let version = self.buffer.version();
+        if self.server.is_none() || self.hinted == Some(version) {
+            return false;
+        }
+        self.hinted = Some(version);
+        true
+    }
+
+    /// Who last changed each line, as far as it has been asked for.
+    pub fn blame(&self) -> &[Blame] {
+        &self.blame
+    }
+
+    /// Whether the blame column is being drawn.
+    pub fn is_blamed(&self) -> bool {
+        self.blame_shown
+    }
+
+    /// Draws the blame column, or stops drawing it.
+    pub fn show_blame(&mut self, shown: bool) {
+        self.blame_shown = shown;
+    }
+
+    /// Takes in who last changed each line.
+    pub fn set_blame(&mut self, blame: Vec<Blame>) {
+        self.blame = blame;
+    }
+
+    /// Reads again what the index holds for this file.
+    pub fn reread_baseline(&mut self, root: &Path) {
+        self.baseline = pm_core::baseline(root, self.buffer.path());
+        self.changes = (-1, Vec::new());
+    }
+
+    /// What is being looked for in the file, and where it was found.
+    pub fn search(&self) -> &Search {
+        &self.search
+    }
+
+    /// The language server this file is open in, when it has one.
+    pub fn server(&self) -> Option<Arc<Client>> {
+        self.server.clone()
+    }
+
+    /// Puts the search through `change`, against the text as it stands.
+    pub fn search_with(&mut self, change: impl FnOnce(&mut Search, &Buffer)) {
+        change(&mut self.search, &self.buffer);
+    }
+
     /// The first line the pane shows.
     pub fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    /// The first column the pane shows.
+    pub fn column(&self) -> usize {
+        self.column
+    }
+
+    /// Where the pane last drew the text.
+    pub fn layout(&self) -> TextLayout {
+        self.layout
+    }
+
+    /// Takes down where the pane drew the text this frame.
+    pub fn set_layout(&mut self, layout: TextLayout) {
+        self.layout = layout;
+    }
+
+    /// The place in the file `point` fell on, as the pane last drew it.
+    pub fn position_at(&self, point: Point) -> Position {
+        let line = self.line_at_row(self.scroll, self.layout.row_at(point));
+        let column = self.layout.column_at(point);
+        self.buffer
+            .clamped(self.buffer.position_at_display(line, column))
+    }
+
+    /// Where on screen `position` was drawn, as the pane last drew it.
+    pub fn point_of(&self, position: Position) -> Point {
+        let row = self
+            .row_of(self.scroll, position.line)
+            .unwrap_or_else(|| position.line.saturating_sub(self.scroll));
+        Point::new(
+            self.layout.x_of(self.buffer.display_column(position)),
+            self.layout.top_at(row),
+        )
     }
 
     /// Shows the file from `line` down, as far as there is file to show.
@@ -95,26 +331,61 @@ impl Document {
 
     /// Scrolls `lines` down, or up when `lines` is negative.
     pub fn scroll_by(&mut self, lines: isize) {
-        self.scroll_to(self.scroll.saturating_add_signed(lines));
+        self.scroll_to(self.line_after(self.scroll, lines));
+    }
+
+    /// Scrolls `columns` right, or left when `columns` is negative.
+    pub fn scroll_columns(&mut self, columns: isize) {
+        self.scroll_to_column(self.column.saturating_add_signed(columns));
+    }
+
+    /// Shows the lines from `column` across.
+    pub fn scroll_to_column(&mut self, column: usize) {
+        self.column = column;
+    }
+
+    /// Goes to the match after the one being looked at, wrapping around.
+    pub fn search_next(&mut self) -> Option<std::ops::Range<Position>> {
+        self.search.next()
+    }
+
+    /// Goes to the match before the one being looked at, wrapping around.
+    pub fn search_previous(&mut self) -> Option<std::ops::Range<Position>> {
+        self.search.previous()
     }
 
     /// How many lines the pane last had room for.
     pub fn rows(&self) -> usize {
-        self.rows
+        self.layout.rows()
     }
 
-    /// Takes down how many lines the pane has room for, and follows the cursor.
+    /// Brings the cursor back into view, having drawn `rows` by `columns`.
     ///
     /// Only the pane knows how tall a line came out, so this is where the
-    /// view told from: a keypress moves the cursor without knowing whether
-    /// the place it moved to is on screen, and the next frame brings it back.
-    pub fn set_rows(&mut self, rows: usize) {
-        self.rows = rows;
-        let head = self.buffer.selection().head.line;
-        if head < self.scroll {
-            self.scroll = head;
-        } else if rows > 0 && head >= self.scroll + rows {
-            self.scroll = head + 1 - rows;
+    /// view is told from: a keypress moves the cursor without knowing
+    /// whether the place it moved to is on screen, and the next frame brings
+    /// it back.
+    pub fn follow_cursor(&mut self, rows: usize, columns: usize) {
+        let head = self.buffer.selection().head;
+        self.reveal(head.line);
+
+        let margin = SCROLL_MARGIN.min(rows.saturating_sub(1) / 2);
+        let first = self.line_after(head.line, -(margin as isize));
+        let last = self.line_after(head.line, margin as isize);
+        if first < self.scroll {
+            self.scroll = first;
+        } else if rows > 0 && self.row_of(self.scroll, last).is_none_or(|row| row >= rows) {
+            self.scroll = self.line_after(last, 1 - rows as isize);
+        }
+
+        let drawn = self.buffer.display_column(head);
+        let margin = SCROLL_MARGIN_X.min(columns.saturating_sub(1) / 2);
+        let left = drawn.saturating_sub(margin);
+        let right = drawn + margin;
+        if left < self.column {
+            self.column = left;
+        } else if columns > 0 && right >= self.column + columns {
+            self.column = right + 1 - columns;
         }
     }
 
@@ -152,6 +423,9 @@ impl Document {
             return;
         }
         self.preview = false;
+        if self.search.is_open() {
+            self.search.refresh(&self.buffer);
+        }
         if let Some(server) = self.server.as_ref() {
             server.did_change(
                 self.buffer.path(),
@@ -244,7 +518,12 @@ impl Files {
             id,
             Entry {
                 project,
-                document: Rc::new(RefCell::new(Document::new(buffer, preview, server))),
+                document: Rc::new(RefCell::new(Document::new(
+                    buffer,
+                    preview,
+                    server,
+                    pm_core::baseline(root, path),
+                ))),
             },
         );
         Some(id)
@@ -258,6 +537,11 @@ impl Files {
                 entry.project == project && entry.document.borrow().buffer().path() == path
             })
             .map(|(id, _)| *id)
+    }
+
+    /// The file `path` is open as in `project`, whether or not it is open.
+    pub fn opened(&self, project: ProjectId, path: &Path) -> Option<FileId> {
+        self.find(project, path)
     }
 
     /// The document `id` names, if it is still open.
@@ -309,17 +593,27 @@ impl Files {
         }
     }
 
-    /// Writes the file `id` names to disk.
-    pub fn save(&mut self, id: FileId) {
+    /// Writes the file `id` names to disk, in the worktree at `root`.
+    ///
+    /// Saving is when the index is read again: what a file is compared
+    /// against only changes when git is given something to change it with,
+    /// and writing the file is the moment that becomes possible.
+    pub fn save(&mut self, id: FileId, root: &Path) {
         if let Some(entry) = self.open.get(&id) {
-            entry.document.borrow_mut().save();
+            let mut document = entry.document.borrow_mut();
+            document.save();
+            document.reread_baseline(root);
         }
     }
 
-    /// Writes every open file to disk.
-    pub fn save_all(&mut self) {
+    /// Writes every open file to disk, each against its own worktree.
+    pub fn save_all(&mut self, root: &dyn Fn(ProjectId) -> Option<PathBuf>) {
         for entry in self.open.values() {
-            entry.document.borrow_mut().save();
+            let mut document = entry.document.borrow_mut();
+            document.save();
+            if let Some(root) = root(entry.project) {
+                document.reread_baseline(&root);
+            }
         }
     }
 

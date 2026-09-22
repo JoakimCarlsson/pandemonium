@@ -6,7 +6,8 @@ use pm_ui::{
 };
 
 use crate::keymap::BaseKeymap;
-use crate::onboarding::setup::{Message, Setup, ThemeMode};
+use crate::message::Message;
+use crate::onboarding::setup::{Setup, ThemeMode};
 
 /// The settings themselves, in the order a first launch wants them.
 pub(super) fn basics(theme: &Theme, setup: &Setup) -> Div<Message> {
@@ -21,6 +22,13 @@ pub(super) fn basics(theme: &Theme, setup: &Setup) -> Div<Message> {
             "Coming from vim? Modal editing is built in, not an extension",
             setup.vim_mode,
             Message::ToggleVimMode,
+        ))
+        .child(switch_field(
+            theme,
+            Some("Format on Save"),
+            "Lay a file out the way its formatter would every time it is written",
+            setup.format_on_save,
+            Message::ToggleFormatOnSave,
         ))
         .child(switch_field(
             theme,
