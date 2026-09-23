@@ -423,6 +423,29 @@ impl Language {
         Self::extended(path.extension()?.to_str()?)
     }
 
+    /// The language a fenced block of markdown tagged `tag` is written in.
+    ///
+    /// A fence is tagged by whoever wrote it, which is sometimes a language's
+    /// name and sometimes its usual extension, so both are accepted.
+    pub fn fenced(tag: &str) -> Option<Self> {
+        let tag = tag.trim().to_ascii_lowercase();
+        let named = match tag.as_str() {
+            "bash" | "shell" | "shellscript" | "zsh" => Some(BASH),
+            "c++" | "cpp" => Some(CPP),
+            "c#" | "csharp" => Some(CSHARP),
+            "golang" => Some(GO),
+            "javascript" => Some(JAVASCRIPT),
+            "kotlin" => Some(KOTLIN),
+            "python" => Some(PYTHON),
+            "ruby" => Some(RUBY),
+            "rust" => Some(RUST),
+            "typescript" => Some(TYPESCRIPT),
+            "typescriptreact" => Some(TSX),
+            _ => None,
+        };
+        named.or_else(|| Self::extended(&tag))
+    }
+
     /// The language a file called `name` is written in, when its whole name
     /// says so rather than its extension.
     fn named(name: &str) -> Option<Self> {

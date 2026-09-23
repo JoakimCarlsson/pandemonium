@@ -19,9 +19,6 @@ use crate::editor::{Completions, FileId, Shown};
 use crate::keymap::Action;
 use crate::picker::{Choice, Kind, Row};
 
-/// How far under the pointer what is said about a place is drawn.
-const HINT_DROP: f32 = 18.0;
-
 /// Why a question was asked, for an answer that is not always acted on.
 ///
 /// The same question serves two purposes: a reader asking to be taken
@@ -122,7 +119,11 @@ impl App {
     /// Asks the server behind the focused file `request`, about the cursor.
     pub(super) fn ask(&mut self, request: Request) {
         if matches!(request, Request::Hover | Request::Signature) {
-            self.hint = Some(Shown::at(self.cursor_point()));
+            let mut hint = Shown::at(self.cursor_point());
+            hint.language = self
+                .active_file()
+                .and_then(|document| document.borrow().buffer().language());
+            self.hint = Some(hint);
         }
         let Some(file) = self.active_file_id() else {
             return;
@@ -317,8 +318,15 @@ impl App {
     ///
     /// A word already being talked about is not asked about again, which is
     /// what lets the panel stay up while the pointer crosses the name it is
-    /// about.
+    /// about, and nothing is asked while the pointer rests on the panel: the
+    /// text under it is not what the reader is looking at.
+    ///
+    /// The panel hangs from the bottom of the line the word is on, so the
+    /// pointer can go straight down onto it without crossing anything else.
     pub(super) fn hover_at(&mut self, point: pm_gfx::Point) {
+        if self.hint.as_ref().is_some_and(|hint| hint.covers(point)) {
+            return;
+        }
         let Some((file, at)) = self.place_under(point) else {
             return self.forget_hint(point);
         };
@@ -336,11 +344,19 @@ impl App {
             .diagnostic_at(at)
             .map(|found| found.message.clone());
 
+        let (line_top, under) = {
+            let document = document.borrow();
+            (
+                document.point_of(about.1.start).y,
+                document.layout().cell.height,
+            )
+        };
         self.hint = Some(Shown {
-            at: pm_gfx::Point::new(point.x, point.y + HINT_DROP),
+            at: pm_gfx::Point::new(point.x, line_top + under),
             fault,
-            said: None,
             about: Some(about),
+            language: document.borrow().buffer().language(),
+            ..Shown::default()
         });
         self.ask_about(file, at, Request::Hover);
         self.request_redraw();
@@ -453,10 +469,16 @@ impl App {
     ///
     /// A panel about the word the pointer is still on stays up: reading a
     /// hover means moving across the name it is about, and one that went
-    /// away at the first pixel of that would never be read at all.
+    /// away at the first pixel of that would never be read at all. So does
+    /// a panel the pointer has moved onto, so that it can be scrolled.
     pub(super) fn forget_hint(&mut self, point: pm_gfx::Point) {
-        let about = self.hint.as_ref().and_then(|hint| hint.about.clone());
-        let Some(about) = about else {
+        let Some(hint) = self.hint.as_ref() else {
+            return;
+        };
+        if hint.covers(point) {
+            return;
+        }
+        let Some(about) = hint.about.clone() else {
             return;
         };
         let over = self

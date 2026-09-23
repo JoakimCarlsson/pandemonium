@@ -27,4 +27,4 @@ pub use lsp::{
     Answer, Asked, Calls, Client, CodeAction, Completion, FileEdit, Handle, Lens, Location,
     NamedLocation, Request, Servers, Symbol, Watched,
 };
-pub use syntax::{Highlight, Highlights, SyntaxNode};
+pub use syntax::{Highlight, Highlights, SyntaxNode, highlight};

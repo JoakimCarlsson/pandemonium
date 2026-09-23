@@ -1777,7 +1777,7 @@ impl App {
         if let Some(hint) = self.hint.as_ref().filter(|hint| !hint.is_empty()) {
             overlays.push(workspace::Overlaid {
                 at: hint.at,
-                content: Box::new(editor::hint(theme, &hint.text())),
+                content: Box::new(editor::hint(theme, hint)),
                 backdrop: None,
             });
         }

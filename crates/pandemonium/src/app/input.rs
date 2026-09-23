@@ -662,6 +662,15 @@ impl App {
     /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
         let text = self.theme().text;
+        if let Some(hint) = self
+            .hint
+            .as_ref()
+            .filter(|hint| self.pointer.is_some_and(|pointer| hint.covers(pointer)))
+        {
+            hint.scroll_by(delta);
+            self.request_redraw();
+            return;
+        }
         if self.secondary_sidebar_open
             && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes
             && self.history_graph_open
