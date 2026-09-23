@@ -148,7 +148,7 @@ pub(crate) enum Motion {
 
 /// The part of the buffer the pane is showing, for the motions that go by it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct View {
+pub struct View<'a> {
     /// The first line the pane shows.
     pub top: usize,
     /// How many lines the pane has room for.
@@ -157,6 +157,8 @@ pub struct View {
     pub margin: usize,
     /// The column `gq` wraps text at.
     pub wrap: usize,
+    /// The runs of lines folded away, which up and down step over.
+    pub folds: &'a [std::ops::Range<usize>],
 }
 
 /// What a motion needs to know besides the buffer and where it starts.
@@ -166,7 +168,7 @@ pub(crate) struct Context<'a> {
     /// The column vertical motions aim at, `usize::MAX` for line ends.
     pub goal: Option<usize>,
     /// The part of the buffer the pane is showing.
-    pub view: View,
+    pub view: View<'a>,
     /// The last character search, for `;` and `,`.
     pub last_find: &'a mut Option<Find>,
     /// The last search, for `n` and `N`.
@@ -224,12 +226,12 @@ impl Motion {
                 None,
             ),
             Self::WrappingRight => (to_position(at(from) + times), Kind::Exclusive, None),
-            Self::Up => return vertical(buffer, from, -(times as isize), cx.goal),
-            Self::Down => return vertical(buffer, from, times as isize, cx.goal),
-            Self::HalfPageDown => return vertical(buffer, from, half, cx.goal),
-            Self::HalfPageUp => return vertical(buffer, from, -half, cx.goal),
-            Self::PageDown => return vertical(buffer, from, page * times as isize, cx.goal),
-            Self::PageUp => return vertical(buffer, from, -page * times as isize, cx.goal),
+            Self::Up => return vertical(buffer, from, -(times as isize), cx),
+            Self::Down => return vertical(buffer, from, times as isize, cx),
+            Self::HalfPageDown => return vertical(buffer, from, half, cx),
+            Self::HalfPageUp => return vertical(buffer, from, -half, cx),
+            Self::PageDown => return vertical(buffer, from, page * times as isize, cx),
+            Self::PageUp => return vertical(buffer, from, -page * times as isize, cx),
             Self::NextWordStart { big } => (
                 to_position(repeat(&|offset| {
                     text::next_word_start(buffer, offset, *big)
@@ -541,14 +543,30 @@ fn find_kind(find: Find) -> Kind {
     }
 }
 
-/// Where `lines` lines below `from` is, or above, keeping the aimed column.
-fn vertical(buffer: &Buffer, from: Position, lines: isize, goal: Option<usize>) -> Option<Moved> {
+/// Where `lines` lines below `from` is, or above, keeping the aimed column
+/// and counting a closed fold as the one line it shows.
+fn vertical(buffer: &Buffer, from: Position, lines: isize, cx: &Context) -> Option<Moved> {
     let last = buffer.line_count().saturating_sub(1);
-    let line = from.line.saturating_add_signed(lines).min(last);
+    let folded = |line: usize| cx.view.folds.iter().any(|fold| fold.contains(&line));
+    let step = if lines >= 0 { 1 } else { -1 };
+    let mut line = from.line;
+    let mut left = lines.unsigned_abs();
+    while left > 0 {
+        let Some(next) = line.checked_add_signed(step).filter(|next| *next <= last) else {
+            break;
+        };
+        line = next;
+        if !folded(line) {
+            left -= 1;
+        }
+    }
+    while line > 0 && folded(line) {
+        line -= 1;
+    }
     if line == from.line {
         return None;
     }
-    let goal = goal.unwrap_or(from.column);
+    let goal = cx.goal.unwrap_or(from.column);
     Some(Moved {
         to: Position::new(line, goal.min(last_column(buffer, line))),
         kind: Kind::Linewise,

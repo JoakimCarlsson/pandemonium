@@ -41,7 +41,7 @@ impl App {
         if !self.preferences.vim_mode || self.search_focused || self.writing.is_some() {
             return false;
         }
-        if self.is_window_chord() {
+        if self.is_window_chord() || !self.resolver.pending().is_empty() {
             return false;
         }
         let Some(file) = self.focused_file() else {
@@ -50,14 +50,20 @@ impl App {
         let Some(key) = editor::keystroke(&event.logical_key, self.modifiers) else {
             return false;
         };
-        let view = {
+        let (top, rows, folds) = {
             let document = file.borrow();
-            View {
-                top: document.scroll(),
-                rows: document.rows(),
-                margin: editor::SCROLL_MARGIN,
-                wrap: self.preferences.display.wrap_guide.unwrap_or(WRAP_COLUMN),
-            }
+            (
+                document.scroll(),
+                document.rows(),
+                document.folds().to_vec(),
+            )
+        };
+        let view = View {
+            top,
+            rows,
+            margin: editor::SCROLL_MARGIN,
+            wrap: self.preferences.display.wrap_guide.unwrap_or(WRAP_COLUMN),
+            folds: &folds,
         };
         let vim = &mut self.vim;
         let outcome = file

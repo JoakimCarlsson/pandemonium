@@ -461,7 +461,7 @@ impl Vim {
         match stage.state.mode {
             Mode::Insert | Mode::Replace => self.finish_typing(stage, true),
             mode if mode.is_visual() => self.leave_visual(stage),
-            _ if !stage.state.pending.shown.is_empty() => {}
+            _ if stage.state.pending.shown.len() > 1 => {}
             _ if stage.state.temporary => {}
             _ => {
                 stage.buffer.collapse_cursors();

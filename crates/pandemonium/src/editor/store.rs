@@ -183,6 +183,11 @@ impl Document {
         self.baseline.is_some()
     }
 
+    /// The runs of lines folded away, in the order they appear.
+    pub fn folds(&self) -> &[std::ops::Range<usize>] {
+        &self.folded
+    }
+
     /// Whether `line` is hidden inside a fold.
     pub fn is_folded(&self, line: usize) -> bool {
         self.folded.iter().any(|fold| fold.contains(&line))

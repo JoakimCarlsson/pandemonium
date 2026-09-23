@@ -289,7 +289,7 @@ pub(crate) struct Stage<'a> {
     /// The buffer.
     pub buffer: &'a mut Buffer,
     /// The part of the buffer the pane shows.
-    pub view: View,
+    pub view: View<'a>,
     /// The system clipboard.
     pub clipboard: &'a mut dyn Clipboard,
     /// What the window has to do.
@@ -351,7 +351,7 @@ impl Vim {
         &mut self,
         state: &mut State,
         buffer: &mut Buffer,
-        view: View,
+        view: View<'_>,
         clipboard: &mut dyn Clipboard,
         key: Keystroke,
     ) -> Outcome {
@@ -485,7 +485,7 @@ impl Vim {
             }
             Action::Push(operator) if stage.state.mode.is_visual() => {
                 self.visual_operator(stage, operator, false);
-                if stage.state.pending.waiting.is_some() || stage.state.mode.is_typing() {
+                if stage.state.pending.waiting.is_some() {
                     return true;
                 }
             }

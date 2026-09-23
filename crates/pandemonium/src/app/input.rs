@@ -187,7 +187,9 @@ impl App {
     ///
     /// Only the keys that work the list are taken: everything else goes on
     /// into the buffer and narrows the list afterwards, which is what makes
-    /// completion happen beside the typing rather than instead of it.
+    /// completion happen beside the typing rather than instead of it. With
+    /// modal editing on, Escape closes the list and goes on to leave insert
+    /// mode as well, so one Escape is enough.
     fn send_to_completions(&mut self, event: &KeyEvent) -> bool {
         if self.completions.is_none() {
             return false;
@@ -195,7 +197,7 @@ impl App {
         let step = match event.logical_key.as_ref() {
             Key::Named(NamedKey::Escape) => {
                 self.completions = None;
-                return true;
+                return !self.preferences.vim_mode;
             }
             Key::Named(NamedKey::ArrowUp) => -1,
             Key::Named(NamedKey::ArrowDown) => 1,
