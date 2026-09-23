@@ -1730,6 +1730,7 @@ impl App {
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
         self.refresh_annotations();
+        self.open_reviewed_files();
         let shell = self
             .bottom_panel_open
             .then(|| self.active_shell())

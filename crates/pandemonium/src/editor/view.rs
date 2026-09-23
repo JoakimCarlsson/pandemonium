@@ -1262,7 +1262,7 @@ fn occurrences(buffer: &Buffer, lines: Range<usize>) -> Vec<Range<Position>> {
 }
 
 /// The colour `highlight` is drawn in.
-fn tint(highlight: Highlight, theme: &Theme) -> Rgba {
+pub fn tint(highlight: Highlight, theme: &Theme) -> Rgba {
     match highlight {
         Highlight::Keyword => theme.syntax.keyword,
         Highlight::String => theme.syntax.string,

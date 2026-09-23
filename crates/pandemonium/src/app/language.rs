@@ -464,6 +464,7 @@ impl App {
                 if let Some(document) = self.editor.get(pending.file) {
                     document.borrow_mut().buffer_mut().set_semantics(spans);
                 }
+                self.repaint_review(pending.file);
             }
             Answer::Symbols(symbols) => {
                 let rows = symbols

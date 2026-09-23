@@ -10,9 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use pm_core::{Changed, Head, Hunk, Side, Status};
+use pm_core::{Changed, Head, Hunk, Line, Side, Status};
+use pm_text::{Buffer, Highlight};
 
 use crate::input::{Input, Submit};
+use crate::review::shade::{Shading, Version};
 
 /// What the commit button says while there is nothing to commit.
 const NOTHING_TO_COMMIT: &str = "Nothing to commit";
@@ -123,6 +125,8 @@ pub struct Review {
     status: Status,
     /// The lines of each file that has changed.
     patches: BTreeMap<PathBuf, Patch>,
+    /// The colour of every character each file's lines are drawn in.
+    shades: BTreeMap<PathBuf, Shading>,
     /// The files whose lines are folded away in the review pane.
     collapsed: BTreeSet<PathBuf>,
     /// What the next commit will say, as a buffer like any other.
@@ -173,6 +177,7 @@ impl Review {
             root: root.to_path_buf(),
             status: Status::default(),
             patches: BTreeMap::new(),
+            shades: BTreeMap::new(),
             collapsed: BTreeSet::new(),
             message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
             trouble: None,
@@ -218,6 +223,11 @@ impl Review {
             let hunks = pm_core::diff(&self.root, &path, Side::Untracked);
             self.patches.entry(path).or_default().unstaged = hunks;
         }
+        self.shades = self
+            .patches
+            .iter()
+            .map(|(path, patch)| (path.clone(), Shading::of(&self.root, path, patch)))
+            .collect();
         self.collapsed
             .retain(|path| self.patches.contains_key(path));
         for path in self.paths(|_| true) {
@@ -585,6 +595,29 @@ impl Review {
     /// The lines `path` has changed, on each side of the index.
     pub fn patch(&self, path: &Path) -> Option<&Patch> {
         self.patches.get(path)
+    }
+
+    /// The highlights of `line`, shown on the `staged` side of `path`'s diff.
+    pub fn shade(&self, path: &Path, staged: bool, line: &Line) -> Option<&[Option<Highlight>]> {
+        let (version, number) = Version::of(staged, line)?;
+        self.shades.get(path)?.line(version, number)
+    }
+
+    /// Colours the worktree's lines of the file `buffer` holds again from
+    /// it, what a language server has said about its names included.
+    ///
+    /// A buffer with edits that are not on disk is not what the diff was
+    /// read from, so its lines are left as the disk had them.
+    pub fn repaint_worktree(&mut self, buffer: &mut Buffer) {
+        if buffer.is_dirty() {
+            return;
+        }
+        let path = buffer.path().to_path_buf();
+        let (Some(patch), Some(shading)) = (self.patches.get(&path), self.shades.get_mut(&path))
+        else {
+            return;
+        };
+        shading.repaint_worktree(patch, buffer);
     }
 
     /// Whether the lines of `path` are folded away in the review pane.

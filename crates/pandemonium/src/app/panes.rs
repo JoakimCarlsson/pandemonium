@@ -483,11 +483,12 @@ impl App {
     /// Closes every file no pane is holding open any more.
     pub(super) fn sweep(&mut self) {
         let held = self.panes.held();
-        let files = held
+        let mut files = held
             .iter()
             .copied()
             .filter_map(Item::file)
             .collect::<BTreeSet<_>>();
+        files.extend(self.reviewed_files());
         let sessions = held
             .iter()
             .copied()

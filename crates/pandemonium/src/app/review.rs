@@ -6,11 +6,15 @@
 //! here decides what a change is — that is git's — and nothing else in the
 //! window writes to the index.
 
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
 use pm_core::{FileStatus, Scope};
-use pm_text::Position;
+use pm_text::{Position, Request};
 
 use crate::app::App;
 use crate::desktop;
+use crate::editor::FileId;
 use crate::panes::Item;
 use crate::prompt::{Answer, Prompt};
 use crate::review::{ChangeId, Group, Review};
@@ -41,6 +45,101 @@ impl App {
             .retain(|scope, _| self.open.get(scope.project()).is_some());
         for review in self.reviews.values_mut() {
             review.reread();
+        }
+        self.repaint_reviews();
+    }
+
+    /// The worktrees a pane is holding the review, or one file's diff, of.
+    fn reviewed_scopes(&self) -> BTreeSet<Scope> {
+        self.panes
+            .held()
+            .into_iter()
+            .filter_map(|item| match item {
+                Item::Review(scope) | Item::Change(scope, _) => Some(scope),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The changed files of `scope`'s review that are on disk to be opened.
+    fn reviewed_paths(&self, scope: Scope) -> Vec<PathBuf> {
+        self.reviews.get(&scope).map_or_else(Vec::new, |review| {
+            review
+                .changed()
+                .iter()
+                .map(|changed| changed.path.clone())
+                .filter(|path| path.is_file())
+                .collect()
+        })
+    }
+
+    /// The documents behind the files the reviews in the panes are showing.
+    ///
+    /// These stay open while a review is, though no tab names them, because
+    /// they are what a language server colours a change's lines through.
+    pub(super) fn reviewed_files(&self) -> BTreeSet<FileId> {
+        self.open_files_of(self.reviewed_scopes())
+    }
+
+    /// The documents open over the changed files of the reviews of `scopes`.
+    fn open_files_of(&self, scopes: impl IntoIterator<Item = Scope>) -> BTreeSet<FileId> {
+        scopes
+            .into_iter()
+            .flat_map(|scope| {
+                self.reviewed_paths(scope)
+                    .into_iter()
+                    .filter_map(move |path| self.editor.opened(scope, &path))
+            })
+            .collect()
+    }
+
+    /// Opens every file the reviews in the panes are showing, and asks their
+    /// servers what the names in them are.
+    ///
+    /// A change is read in the colours its file has in an editor pane, and
+    /// those come from the file's own document, so a review opens the
+    /// documents of what it shows the way a tab would.
+    pub(super) fn open_reviewed_files(&mut self) {
+        for scope in self.reviewed_scopes() {
+            let Some(root) = self
+                .reviews
+                .get(&scope)
+                .map(|review| review.root().to_path_buf())
+            else {
+                continue;
+            };
+            for path in self.reviewed_paths(scope) {
+                let Some(file) = self.editor.open(scope, &root, &path, true) else {
+                    continue;
+                };
+                let wanted = self
+                    .editor
+                    .get(file)
+                    .is_some_and(|document| document.borrow_mut().wants_semantics());
+                if wanted {
+                    self.ask_about(file, Position::default(), Request::Semantics);
+                }
+            }
+        }
+    }
+
+    /// Colours every review's worktree lines again from the documents open
+    /// over them.
+    fn repaint_reviews(&mut self) {
+        for file in self.open_files_of(self.reviews.keys().copied()) {
+            self.repaint_review(file);
+        }
+    }
+
+    /// Colours the lines `file`'s worktree review shows of it again from its
+    /// document, what a language server has said about it included.
+    pub(super) fn repaint_review(&mut self, file: FileId) {
+        let (Some(scope), Some(document)) = (self.editor.scope_of(file), self.editor.get(file))
+        else {
+            return;
+        };
+        if let Some(review) = self.reviews.get_mut(&scope) {
+            review.repaint_worktree(document.borrow_mut().buffer_mut());
         }
     }
 

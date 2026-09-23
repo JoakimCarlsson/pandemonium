@@ -15,11 +15,15 @@
 //! One file's diff on its own is the same rows with the rest left out, which
 //! is what the menu's "Open File Diff" opens.
 
+use std::path::Path;
+
 use pm_core::{Changed, Hunk, Line, LineKind};
+use pm_text::Highlight;
 use pm_ui::{
     Div, IconName, IconSize, Styled, Theme, checkbox, h_flex, icon, icon_button, text, v_flex,
 };
 
+use crate::editor::tint;
 use crate::message::Message;
 use crate::review::action::{primary_face, primary_message};
 use crate::review::commit_editor;
@@ -314,8 +318,9 @@ enum Row<'a> {
     /// Which file it belongs to and which side of the index it is on travel
     /// with it, because staging one hunk is done from its own heading.
     Heading(usize, bool, usize, &'a Hunk),
-    /// One line of a hunk.
-    Line(&'a Line),
+    /// One line of a hunk, with the file it is in and the side of the
+    /// index its hunk is on, which together say what colour it is.
+    Line(&'a Path, bool, &'a Line),
 }
 
 /// Every row of the pane showing `shown`, file by file and hunk by hunk.
@@ -351,7 +356,7 @@ fn rows(review: &Review, shown: Option<ChangeId>) -> Vec<Row<'_>> {
 }
 
 /// The rows of one file's diff: each side of the index, hunk by hunk.
-fn lines<'a>(review: &'a Review, index: usize, changed: &Changed) -> Vec<Row<'a>> {
+fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed) -> Vec<Row<'a>> {
     let Some(patch) = review.patch(&changed.path) else {
         return Vec::new();
     };
@@ -371,7 +376,11 @@ fn lines<'a>(review: &'a Review, index: usize, changed: &Changed) -> Vec<Row<'a>
         }
         for (at, hunk) in hunks.iter().enumerate() {
             rows.push(Row::Heading(index, staged, at, hunk));
-            rows.extend(hunk.lines.iter().map(Row::Line));
+            rows.extend(
+                hunk.lines
+                    .iter()
+                    .map(|line| Row::Line(&changed.path, staged, line)),
+            );
         }
     }
     rows
@@ -385,7 +394,7 @@ fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
         Row::Heading(index, staged, at, hunk) => {
             heading_row(theme, review, index, staged, at, hunk)
         }
-        Row::Line(line) => line_row(theme, line),
+        Row::Line(path, staged, line) => line_row(theme, line, review.shade(path, staged, line)),
     }
 }
 
@@ -536,8 +545,9 @@ fn heading_row(
         })
 }
 
-/// Builds one line of a hunk: its numbers on each side, then the line itself.
-fn line_row(theme: &Theme, line: &Line) -> Div<Message> {
+/// Builds one line of a hunk: its numbers on each side, then the line itself,
+/// coloured by `shade` the way the file it came from is.
+fn line_row(theme: &Theme, line: &Line, shade: Option<&[Option<Highlight>]>) -> Div<Message> {
     let wash = match line.kind {
         LineKind::Added => Some(theme.colors.success.alpha(theme.emphasis.change)),
         LineKind::Removed => Some(theme.colors.danger.alpha(theme.emphasis.change)),
@@ -570,7 +580,27 @@ fn line_row(theme: &Theme, line: &Line) -> Div<Message> {
                 .font_mono()
                 .color(theme.colors.text_subtle),
         )
-        .child(text(line.text.clone()).text_sm().font_mono())
+        .child(shaded(theme, &line.text, shade.unwrap_or_default()))
+}
+
+/// Builds `said` as runs of one colour each, as `shade` colours it.
+///
+/// A character `shade` says nothing about is drawn in the body colour, the
+/// way the editor draws one its grammar says nothing about.
+fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message> {
+    let mut runs: Vec<(Option<Highlight>, String)> = Vec::new();
+    for (column, ch) in said.chars().enumerate() {
+        let highlight = shade.get(column).copied().flatten();
+        match runs.last_mut() {
+            Some((last, run)) if *last == highlight => run.push(ch),
+            _ => runs.push((highlight, ch.to_string())),
+        }
+    }
+
+    h_flex().children(runs.into_iter().map(|(highlight, run)| {
+        let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
+        text(run).text_sm().font_mono().color(color)
+    }))
 }
 
 /// Builds one of a line's numbers, or the blank where it has none.

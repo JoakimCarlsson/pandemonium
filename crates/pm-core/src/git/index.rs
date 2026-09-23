@@ -21,6 +21,17 @@ pub fn baseline(root: &Path, path: &Path) -> Option<String> {
     answer(root, [OsStr::new("show"), &staged(relative)])
 }
 
+/// The text the last commit holds for `path`, in the repository at `root`.
+///
+/// A file the last commit does not have — one added since, or a repository
+/// with no commit yet — has none.
+pub fn committed(root: &Path, path: &Path) -> Option<String> {
+    let relative = within(root, path)?;
+    let mut named = std::ffi::OsString::from("HEAD:");
+    named.push(relative.as_os_str());
+    answer(root, [OsStr::new("show"), &named])
+}
+
 /// Puts what the worktree holds for `paths` into the index.
 ///
 /// Adding is also how a file that has been deleted or renamed is staged:

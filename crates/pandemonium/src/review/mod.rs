@@ -10,6 +10,7 @@ mod action;
 mod editor;
 mod graph;
 mod pane;
+mod shade;
 mod sidebar;
 mod store;
 
