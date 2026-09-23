@@ -128,9 +128,12 @@ impl TextLayout {
         GUTTER_GAP
     }
 
-    /// How wide a gutter numbering `lines` lines needs.
-    pub fn gutter_for(lines: usize, cell: Size) -> f32 {
-        let digits = lines.to_string().len().max(GUTTER_DIGITS);
+    /// How wide a gutter needs to be for `lines` lines, `numbered` or not.
+    pub fn gutter_for(lines: usize, cell: Size, numbered: bool) -> f32 {
+        let digits = match numbered {
+            true => lines.to_string().len().max(GUTTER_DIGITS),
+            false => 0,
+        };
         GUTTER_INSET * 2.0 + digits as f32 * cell.width + GUTTER_GAP + FOLD_WIDTH
     }
 

@@ -30,7 +30,7 @@ const ATTEMPTS: usize = 8;
 /// The declaration is the reader's, kept with the rest of the preferences:
 /// which paths a project needs is a property of the project, not of the
 /// session, and every session of it is cut the same way.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Bootstrap {
     /// Paths symlinked into a fresh worktree, relative to the repository.
     pub link: Vec<PathBuf>,

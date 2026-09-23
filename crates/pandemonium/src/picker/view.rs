@@ -266,6 +266,12 @@ fn hint(theme: &Theme, kind: Kind) -> Div<Message> {
         Kind::Rename => "Enter the new name, everywhere the symbol is used",
         Kind::NewFile | Kind::NewFolder => "A name with slashes in it makes the directories too",
         Kind::RenamePath => "Enter the new name for the file on disk",
+        Kind::LinkedPath | Kind::CopiedPath => {
+            "A path from the repository's root, like .env or web/node_modules"
+        }
+        Kind::PortVariable => "Leave it empty to hand a session no port at all",
+        Kind::ThemeColor(_) => "Leave it as it is to keep the colour the theme gives it",
+        Kind::ThemeName => "Written to the editor's home, and drawn in from now on",
         _ => "This cannot be undone",
     };
 

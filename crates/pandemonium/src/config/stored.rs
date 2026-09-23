@@ -13,9 +13,11 @@ use pm_text::Server;
 use pm_ui::families;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Restored, WindowState};
+use crate::config::fonts::Fonts;
+use crate::config::theme::StoredOverrides;
+use crate::config::{Preferences, Restored, ThemeMode, WindowState};
+use crate::editor::{CursorShape, Display};
 use crate::keymap::BaseKeymap;
-use crate::onboarding::{Setup, ThemeMode};
 use crate::panes::Saved;
 use crate::workspace::{Layout, SidebarView};
 
@@ -27,18 +29,68 @@ pub(super) struct Stored {
     theme_mode: Option<ThemeMode>,
     /// The name of the theme family the editor draws in.
     theme_family: Option<String>,
+    /// The colours repainted over whichever family is chosen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    theme_overrides: Option<StoredOverrides>,
+    /// The family prose and labels are set in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ui_font_family: Option<String>,
+    /// The body size of the interface.
+    ui_font_size: Option<f32>,
+    /// The family code is set in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    buffer_font_family: Option<String>,
+    /// The size code is set in.
+    buffer_font_size: Option<f32>,
+    /// The weight code is set in.
+    buffer_font_weight: Option<u16>,
+    /// The distance between two lines of code, as a multiple of its size.
+    buffer_line_height: Option<f32>,
+    /// The size a terminal is set in.
+    terminal_font_size: Option<f32>,
+    /// How many lines of scrollback a terminal keeps.
+    terminal_scrollback: Option<usize>,
     /// The keymap the editor starts from.
     keymap: Option<BaseKeymap>,
     /// Whether editing starts in vim mode.
     vim_mode: Option<bool>,
+    /// How wide a step of indentation is where a file does not say.
+    tab_size: Option<usize>,
+    /// Whether a step of indentation is a tab where a file does not say.
+    hard_tabs: Option<bool>,
+    /// Whether the gutter numbers the lines.
+    line_numbers: Option<bool>,
+    /// Whether the numbers count away from the cursor's line.
+    relative_line_numbers: Option<bool>,
+    /// Whether the cursor's line is washed.
+    current_line_highlight: Option<bool>,
+    /// Whether the other places the word at the cursor appears are washed.
+    occurrence_highlight: Option<bool>,
+    /// Whether a line is drawn at every step of indentation.
+    indent_guides: Option<bool>,
+    /// Whether the lines the view is inside stay pinned above it.
+    sticky_scroll: Option<bool>,
+    /// Whether the scrollbars are drawn.
+    scrollbars: Option<bool>,
+    /// The column a guide is drawn down, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wrap_guide: Option<usize>,
+    /// Whether a language server's hints are written into the lines.
+    inlay_hints: Option<bool>,
+    /// How the caret is drawn.
+    cursor_shape: Option<StoredCursorShape>,
+    /// Whether the caret blinks.
+    cursor_blink: Option<bool>,
+    /// How far a notch of the wheel scrolls, against its usual distance.
+    scroll_sensitivity: Option<f32>,
     /// Whether a file is laid out the way its formatter would when it is saved.
     format_on_save: Option<bool>,
+    /// Whether the space at the ends of lines goes when a file is saved.
+    remove_trailing_whitespace_on_save: Option<bool>,
+    /// Whether a saved file always ends in a line break.
+    ensure_final_newline_on_save: Option<bool>,
     /// Whether a new session's worktree is trusted without being asked about.
     trust_worktrees: Option<bool>,
-    /// Whether anonymous usage data is sent.
-    metrics: Option<bool>,
-    /// Whether crash reports are sent.
-    crash_reports: Option<bool>,
     /// The servers to run for a language, in place of the ones it names.
     language_servers: Option<BTreeMap<String, Vec<StoredServer>>>,
     /// Paths symlinked into a fresh worktree, relative to the repository.
@@ -47,7 +99,7 @@ pub(super) struct Stored {
     worktree_copy: Option<Vec<PathBuf>>,
     /// The variable a session's own port is handed to a program in.
     worktree_port: Option<String>,
-    /// Whether setup has been finished, which swaps the page.
+    /// Whether the first run's setup has been finished.
     finished: Option<bool>,
     /// The roots of the projects the window had open.
     projects: Option<Vec<PathBuf>>,
@@ -160,8 +212,8 @@ impl Stored {
             window: self.window(),
             panes: self.panes.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
-            bootstrap: self.bootstrap(),
-            setup: self.into_setup(),
+            onboarded: self.finished.unwrap_or_default(),
+            preferences: self.into_preferences(),
         }
     }
 
@@ -236,22 +288,74 @@ impl Stored {
     }
 
     /// The preferences this file stands for, defaulting anything it leaves out.
-    fn into_setup(self) -> Setup {
-        let defaults = Setup::default();
-        Setup {
+    fn into_preferences(self) -> Preferences {
+        let defaults = Preferences::default();
+        let bootstrap = self.bootstrap();
+        Preferences {
             theme_mode: self.theme_mode.unwrap_or(defaults.theme_mode),
             theme_family: self
                 .theme_family
                 .as_deref()
                 .and_then(family_index)
                 .unwrap_or(defaults.theme_family),
+            theme_overrides: self
+                .theme_overrides
+                .map_or(defaults.theme_overrides, StoredOverrides::into_overrides),
+            fonts: Fonts {
+                interface_family: self.ui_font_family.or(defaults.fonts.interface_family),
+                interface_size: self.ui_font_size.unwrap_or(defaults.fonts.interface_size),
+                buffer_family: self.buffer_font_family.or(defaults.fonts.buffer_family),
+                buffer_size: self.buffer_font_size.unwrap_or(defaults.fonts.buffer_size),
+                buffer_weight: self
+                    .buffer_font_weight
+                    .unwrap_or(defaults.fonts.buffer_weight),
+                buffer_line_height: self
+                    .buffer_line_height
+                    .unwrap_or(defaults.fonts.buffer_line_height),
+                terminal_size: self
+                    .terminal_font_size
+                    .unwrap_or(defaults.fonts.terminal_size),
+            },
             keymap: self.keymap.unwrap_or(defaults.keymap),
             vim_mode: self.vim_mode.unwrap_or(defaults.vim_mode),
+            tab_size: self.tab_size.unwrap_or(defaults.tab_size),
+            hard_tabs: self.hard_tabs.unwrap_or(defaults.hard_tabs),
+            display: Display {
+                line_numbers: self.line_numbers.unwrap_or(defaults.display.line_numbers),
+                relative_line_numbers: self
+                    .relative_line_numbers
+                    .unwrap_or(defaults.display.relative_line_numbers),
+                current_line: self
+                    .current_line_highlight
+                    .unwrap_or(defaults.display.current_line),
+                occurrences: self
+                    .occurrence_highlight
+                    .unwrap_or(defaults.display.occurrences),
+                indent_guides: self.indent_guides.unwrap_or(defaults.display.indent_guides),
+                sticky_scroll: self.sticky_scroll.unwrap_or(defaults.display.sticky_scroll),
+                scrollbars: self.scrollbars.unwrap_or(defaults.display.scrollbars),
+                wrap_guide: self.wrap_guide.or(defaults.display.wrap_guide),
+                cursor_shape: self
+                    .cursor_shape
+                    .map_or(defaults.display.cursor_shape, StoredCursorShape::into_shape),
+            },
+            inlay_hints: self.inlay_hints.unwrap_or(defaults.inlay_hints),
+            cursor_blink: self.cursor_blink.unwrap_or(defaults.cursor_blink),
+            scroll_sensitivity: self
+                .scroll_sensitivity
+                .unwrap_or(defaults.scroll_sensitivity),
             format_on_save: self.format_on_save.unwrap_or(defaults.format_on_save),
+            trim_whitespace: self
+                .remove_trailing_whitespace_on_save
+                .unwrap_or(defaults.trim_whitespace),
+            final_newline: self
+                .ensure_final_newline_on_save
+                .unwrap_or(defaults.final_newline),
+            terminal_scrollback: self
+                .terminal_scrollback
+                .unwrap_or(defaults.terminal_scrollback),
             trust_worktrees: self.trust_worktrees.unwrap_or(defaults.trust_worktrees),
-            metrics: self.metrics.unwrap_or(defaults.metrics),
-            crash_reports: self.crash_reports.unwrap_or(defaults.crash_reports),
-            finished: self.finished.unwrap_or(defaults.finished),
+            bootstrap,
         }
     }
 }
@@ -260,25 +364,51 @@ impl Stored {
     /// The file to write for the window as it stands.
     pub(super) fn of(restored: &Restored) -> Self {
         let Restored {
-            setup,
+            preferences,
+            onboarded,
             projects,
             active,
             layout,
             panes,
             window,
             language_servers,
-            bootstrap,
         } = restored;
+        let bootstrap = &preferences.bootstrap;
+        let (fonts, display) = (&preferences.fonts, &preferences.display);
+        let overrides = StoredOverrides::of(&preferences.theme_overrides);
 
         Self {
-            theme_mode: Some(setup.theme_mode),
-            theme_family: Some(pm_ui::family(setup.theme_family).name.to_owned()),
-            keymap: Some(setup.keymap),
-            vim_mode: Some(setup.vim_mode),
-            format_on_save: Some(setup.format_on_save),
-            trust_worktrees: Some(setup.trust_worktrees),
-            metrics: Some(setup.metrics),
-            crash_reports: Some(setup.crash_reports),
+            theme_mode: Some(preferences.theme_mode),
+            theme_family: Some(pm_ui::family(preferences.theme_family).name.to_owned()),
+            theme_overrides: (!overrides.is_empty()).then_some(overrides),
+            ui_font_family: fonts.interface_family.clone(),
+            ui_font_size: Some(fonts.interface_size),
+            buffer_font_family: fonts.buffer_family.clone(),
+            buffer_font_size: Some(fonts.buffer_size),
+            buffer_font_weight: Some(fonts.buffer_weight),
+            buffer_line_height: Some(fonts.buffer_line_height),
+            terminal_font_size: Some(fonts.terminal_size),
+            terminal_scrollback: Some(preferences.terminal_scrollback),
+            keymap: Some(preferences.keymap),
+            vim_mode: Some(preferences.vim_mode),
+            tab_size: Some(preferences.tab_size),
+            hard_tabs: Some(preferences.hard_tabs),
+            line_numbers: Some(display.line_numbers),
+            relative_line_numbers: Some(display.relative_line_numbers),
+            current_line_highlight: Some(display.current_line),
+            occurrence_highlight: Some(display.occurrences),
+            indent_guides: Some(display.indent_guides),
+            sticky_scroll: Some(display.sticky_scroll),
+            scrollbars: Some(display.scrollbars),
+            wrap_guide: display.wrap_guide,
+            inlay_hints: Some(preferences.inlay_hints),
+            cursor_shape: Some(StoredCursorShape::of(display.cursor_shape)),
+            cursor_blink: Some(preferences.cursor_blink),
+            scroll_sensitivity: Some(preferences.scroll_sensitivity),
+            format_on_save: Some(preferences.format_on_save),
+            remove_trailing_whitespace_on_save: Some(preferences.trim_whitespace),
+            ensure_final_newline_on_save: Some(preferences.final_newline),
+            trust_worktrees: Some(preferences.trust_worktrees),
             language_servers: (!language_servers.is_empty()).then(|| {
                 language_servers
                     .iter()
@@ -291,7 +421,7 @@ impl Stored {
             worktree_link: Some(bootstrap.link.clone()),
             worktree_copy: Some(bootstrap.copy.clone()),
             worktree_port: bootstrap.port.clone(),
-            finished: Some(setup.finished),
+            finished: Some(*onboarded),
             projects: Some(projects.clone()),
             active_project: active.clone(),
             panes: Some(panes.clone()),
@@ -341,7 +471,39 @@ impl StoredSidebarView {
     }
 }
 
+/// How the caret is drawn, as it is written down.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredCursorShape {
+    /// A thin upright line between two characters.
+    Bar,
+    /// A cell-wide block over the character after the caret.
+    Block,
+    /// A line under the character after the caret.
+    Underline,
+}
+
+impl StoredCursorShape {
+    /// The written name of `shape`.
+    fn of(shape: CursorShape) -> Self {
+        match shape {
+            CursorShape::Bar => Self::Bar,
+            CursorShape::Block => Self::Block,
+            CursorShape::Underline => Self::Underline,
+        }
+    }
+
+    /// The shape the written name stands for.
+    fn into_shape(self) -> CursorShape {
+        match self {
+            Self::Bar => CursorShape::Bar,
+            Self::Block => CursorShape::Block,
+            Self::Underline => CursorShape::Underline,
+        }
+    }
+}
+
 /// The index of the family called `name`, of the ones on offer.
-fn family_index(name: &str) -> Option<usize> {
+pub(super) fn family_index(name: &str) -> Option<usize> {
     families().iter().position(|family| family.name == name)
 }

@@ -1,84 +1,57 @@
 //! The settings themselves, in the order a first launch wants them.
 
 use pm_ui::{
-    Div, Styled, Theme, families, h_flex, rule, section, space, switch_field, text, theme_preview,
-    toggle_grid, toggle_row, v_flex,
+    Div, Styled, Theme, h_flex, section, space, switch_field, text, theme_gallery, toggle_grid,
+    toggle_row, v_flex,
 };
 
+use crate::config::{Preference, Preferences, ThemeMode};
 use crate::keymap::BaseKeymap;
 use crate::message::Message;
-use crate::onboarding::setup::{Setup, ThemeMode};
 
 /// The settings themselves, in the order a first launch wants them.
-pub(super) fn basics(theme: &Theme, setup: &Setup) -> Div<Message> {
+pub(super) fn basics(theme: &Theme, preferences: &Preferences) -> Div<Message> {
     v_flex()
         .w_full()
         .gap(6)
-        .child(theme_section(theme, setup))
-        .child(keymap_section(theme, setup))
+        .child(theme_section(theme, preferences))
+        .child(keymap_section(theme, preferences))
         .child(switch_field(
             theme,
             Some("Vim Mode"),
             "Coming from vim? Modal editing is built in, not an extension",
-            setup.vim_mode,
-            Message::ToggleVimMode,
+            preferences.vim_mode,
+            Message::TogglePreference(Preference::VimMode),
         ))
         .child(switch_field(
             theme,
             Some("Format on Save"),
             "Lay a file out the way its formatter would every time it is written",
-            setup.format_on_save,
-            Message::ToggleFormatOnSave,
+            preferences.format_on_save,
+            Message::TogglePreference(Preference::FormatOnSave),
         ))
         .child(switch_field(
             theme,
             Some("Trust New Worktrees"),
             "Run language servers and tasks in a session's worktree without asking first",
-            setup.trust_worktrees,
-            Message::ToggleTrustWorktrees,
-        ))
-        .child(rule(theme))
-        .child(switch_field(
-            theme,
-            None,
-            "Help improve Pandemonium by sending anonymous usage data",
-            setup.metrics,
-            Message::ToggleMetrics,
-        ))
-        .child(switch_field(
-            theme,
-            None,
-            "Send crash reports so the crashes you hit get fixed",
-            setup.crash_reports,
-            Message::ToggleCrashReports,
+            preferences.trust_worktrees,
+            Message::TogglePreference(Preference::TrustWorktrees),
         ))
 }
 
 /// The appearance toggle over a row of theme previews.
-fn theme_section(theme: &Theme, setup: &Setup) -> Div<Message> {
-    let modes = [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System];
-    let selected = modes.iter().position(|mode| *mode == setup.theme_mode);
-    let options = modes
+fn theme_section(theme: &Theme, preferences: &Preferences) -> Div<Message> {
+    let selected = ThemeMode::ALL
+        .iter()
+        .position(|mode| *mode == preferences.theme_mode);
+    let options = ThemeMode::ALL
         .into_iter()
         .map(|mode| (mode.label().to_owned(), Message::SetThemeMode(mode)));
 
-    let shown = match setup.theme_mode {
+    let shown = match preferences.theme_mode {
         ThemeMode::System => None,
         _ => Some(theme.appearance),
     };
-    let previews = families()
-        .iter()
-        .enumerate()
-        .map(|(index, family)| {
-            theme_preview(
-                *family,
-                shown,
-                index == setup.theme_family,
-                Message::SetThemeFamily(index),
-            )
-            .flex_1()
-        })
-        .collect::<Vec<_>>();
 
     v_flex()
         .w_full()
@@ -92,11 +65,15 @@ fn theme_section(theme: &Theme, setup: &Setup) -> Div<Message> {
                 .child(text("Theme").font_medium())
                 .child(toggle_row(options, selected).w_px(space(48.0))),
         )
-        .child(h_flex().w_full().gap(2).children(previews))
+        .child(theme_gallery(
+            shown,
+            preferences.theme_family,
+            Message::SetThemeFamily,
+        ))
 }
 
 /// The keymap grid.
-fn keymap_section(theme: &Theme, setup: &Setup) -> Div<Message> {
+fn keymap_section(theme: &Theme, preferences: &Preferences) -> Div<Message> {
     let options = BaseKeymap::ALL
         .into_iter()
         .map(|keymap| (keymap.label().to_owned(), Message::SetKeymap(keymap)));
@@ -105,6 +82,6 @@ fn keymap_section(theme: &Theme, setup: &Setup) -> Div<Message> {
         theme,
         "Base Keymap",
         Some("Keep the bindings your hands already know"),
-        toggle_grid(options, Some(setup.keymap.index()), 4),
+        toggle_grid(options, Some(preferences.keymap.index()), 4),
     )
 }

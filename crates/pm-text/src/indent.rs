@@ -3,7 +3,8 @@
 //! A file indented with tabs stays indented with tabs, and one indented two
 //! spaces at a time keeps to two: the editor's own habits are not worth a
 //! diff on every line somebody else wrote. What it cannot tell from the file
-//! — an empty one, or one with no indentation at all — it falls back on.
+//! — an empty one, or one with no indentation at all — it takes from the
+//! reader's own preference.
 
 use ropey::Rope;
 
@@ -23,7 +24,7 @@ pub struct Indent {
 }
 
 impl Default for Indent {
-    /// Four spaces, which is what a file that does not say gets.
+    /// Four spaces, which is the habit a first launch starts from.
     fn default() -> Self {
         Self {
             width: FALLBACK_WIDTH,
@@ -42,13 +43,15 @@ impl Indent {
         }
     }
 
-    /// How `text` is indented, judged by the lines that are.
+    /// How `text` is indented, judged by the lines that are, and `fallback`
+    /// where none of them says.
     ///
     /// Tabs win outright when the file uses them at all often, because a
-    /// file that mixes them is a file whose author meant tabs. Otherwise the
-    /// step is the commonest distance between one line's indentation and the
-    /// next's, which is the smallest thing every level is a multiple of.
-    pub fn of(text: &Rope) -> Self {
+    /// file that mixes them is a file whose author meant tabs; a tab is then
+    /// as wide as `fallback` says. Otherwise the step is the commonest
+    /// distance between one line's indentation and the next's, which is the
+    /// smallest thing every level is a multiple of.
+    pub fn of(text: &Rope, fallback: Self) -> Self {
         let mut tabbed = 0;
         let mut spaced = 0;
         let mut steps = [0usize; 9];
@@ -85,18 +88,16 @@ impl Indent {
 
         if tabbed > spaced {
             return Self {
-                width: FALLBACK_WIDTH,
+                width: fallback.width,
                 tabs: true,
             };
         }
-        let width = steps
+        steps
             .iter()
             .enumerate()
             .skip(1)
             .max_by_key(|(step, count)| (**count, std::cmp::Reverse(*step)))
             .filter(|(_, count)| **count > 0)
-            .map_or(FALLBACK_WIDTH, |(step, _)| step);
-
-        Self { width, tabs: false }
+            .map_or(fallback, |(width, _)| Self { width, tabs: false })
     }
 }

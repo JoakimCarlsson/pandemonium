@@ -19,8 +19,9 @@ mod syntax;
 mod terminal;
 mod text;
 mod verdant;
+mod vscode;
 
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 pub use colors::Colors;
 pub use emphasis::Emphasis;
@@ -102,32 +103,38 @@ impl ThemeFamily {
 }
 
 /// Every family the editor ships with, in the order the picker offers them.
-pub const BUILT_IN: [ThemeFamily; 4] = [
+pub const BUILT_IN: [ThemeFamily; 5] = [
     pandemonium::family(),
     fathom::family(),
     ember::family(),
     verdant::family(),
+    vscode::family(),
 ];
 
 /// The family a first launch starts in, as an index into [`families`].
 pub const DEFAULT_FAMILY: usize = 0;
 
 /// The families on offer: the built-in ones, and any that were installed.
-static INSTALLED: OnceLock<Vec<ThemeFamily>> = OnceLock::new();
+static INSTALLED: RwLock<&'static [ThemeFamily]> = RwLock::new(&BUILT_IN);
 
-/// Puts `extra` on offer after the built-in families, once.
+/// Puts `extra` on offer after the built-in families, in place of whatever
+/// was installed before.
 ///
 /// Themes read off disk come through here, so the picker, the preferences
-/// and the window all see one list rather than each assembling its own. A
-/// second call is ignored: what the editor is drawing from does not change
-/// under it mid-launch.
+/// and the window all see one list rather than each assembling its own. It
+/// is called at launch and again when the reader saves a theme of their
+/// own; the handful of lists a session installs live as long as it does,
+/// so a frame still holding the last one never sees it go.
 pub fn install(extra: Vec<ThemeFamily>) {
-    let _ = INSTALLED.set(BUILT_IN.into_iter().chain(extra).collect());
+    let installed = BUILT_IN.into_iter().chain(extra).collect::<Vec<_>>().leak();
+    if let Ok(mut families) = INSTALLED.write() {
+        *families = installed;
+    }
 }
 
 /// Every family on offer, in the order the picker offers them.
 pub fn families() -> &'static [ThemeFamily] {
-    INSTALLED.get().map_or(&BUILT_IN, Vec::as_slice)
+    INSTALLED.read().map_or(&BUILT_IN, |families| *families)
 }
 
 /// The family at `index`, or the default one when the index is out of range.

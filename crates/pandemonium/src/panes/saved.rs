@@ -64,6 +64,8 @@ pub enum SavedKind {
     Change,
     /// An agent session over the worktree.
     Agent,
+    /// The settings pane, which is the window's rather than a worktree's.
+    Settings,
 }
 
 /// The axis of a division, named as the file names it.

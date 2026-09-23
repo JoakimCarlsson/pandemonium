@@ -34,7 +34,7 @@ pub use icons::{Icon, IconName, IconSize, LayoutIcon, LayoutIconButton, icon, la
 pub use measured::{Bounds, Measured, measured};
 pub use overlay::{Beside, Overlay, beside, overlay};
 pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
-pub use scroll::Scroll;
+pub use scroll::{Scroll, ScrollArea, Scrolled, scroll_area};
 pub use split::{Split, split};
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
 pub use text::{Text, text};
@@ -47,5 +47,6 @@ pub use ui::{PointerCursor, Ui};
 pub use widgets::{
     Button, ButtonVariant, Field, MenuItem, Switch, Tab, ThemePreview, ToggleState, button,
     checkbox, field, icon_button, menu, menu_entry, menu_separator, menu_submenu, rule, section,
-    switch, switch_field, tab, tab_bar, theme_preview, tinted_icon_button, toggle_grid, toggle_row,
+    switch, switch_field, tab, tab_bar, theme_gallery, theme_preview, tinted_icon_button,
+    toggle_grid, toggle_row,
 };

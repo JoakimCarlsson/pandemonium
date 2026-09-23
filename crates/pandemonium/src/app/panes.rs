@@ -87,7 +87,7 @@ impl App {
 
     /// What the pane with the keyboard is showing.
     pub(super) fn active_tab(&self) -> Option<Item> {
-        self.panes.focused()?.active(self.scope()?)
+        self.panes.focused()?.active(self.scope())
     }
 
     /// The file it is showing, for the commands that are a file's.
@@ -153,7 +153,7 @@ impl App {
         match item {
             Item::File(file) => self.editor.is_preview(file),
             Item::Change(scope, change) => self.is_change_preview(scope, change),
-            Item::Review(_) | Item::Agent(..) => false,
+            Item::Review(_) | Item::Agent(..) | Item::Settings => false,
         }
     }
 
@@ -173,15 +173,14 @@ impl App {
         item: Option<Item>,
         direction: SplitDirection,
     ) {
-        let item = item.or_else(|| {
-            let scope = self.scope()?;
-            self.panes.pane(pane)?.active(scope)
-        });
-        let scope = item.and_then(|item| self.scope_of(item));
+        let item = item.or_else(|| self.panes.pane(pane)?.active(self.scope()));
+        let scope = item
+            .and_then(|item| self.scope_of(item))
+            .or_else(|| self.scope());
         let Some(fresh) = self.panes.split(pane, direction) else {
             return;
         };
-        if let (Some(item), Some(scope), Some(fresh)) = (item, scope, self.panes.pane_mut(fresh)) {
+        if let (Some(item), Some(fresh)) = (item, self.panes.pane_mut(fresh)) {
             fresh.open(scope, item);
         }
         self.editor_focused = true;
@@ -207,11 +206,12 @@ impl App {
         }
     }
 
-    /// The worktree `item` belongs to.
+    /// The worktree `item` belongs to, which is none for the window's own.
     pub(super) fn scope_of(&self, item: Item) -> Option<Scope> {
         match item {
             Item::File(file) => self.editor.scope_of(file),
             Item::Review(scope) | Item::Change(scope, _) | Item::Agent(scope, _) => Some(scope),
+            Item::Settings => None,
         }
     }
 
@@ -368,6 +368,12 @@ impl App {
     /// run gave them, which is the only thing the next launch can act on.
     pub(super) fn saved_panes(&self) -> Saved {
         self.panes.save(&|item| {
+            if item == Item::Settings {
+                return Some(SavedTab {
+                    kind: SavedKind::Settings,
+                    ..SavedTab::default()
+                });
+            }
             let scope = self.scope_of(item)?;
             let project = self.open.get(scope.project())?.root().to_path_buf();
             let worktree = self.root_of(scope)?;
@@ -431,8 +437,11 @@ impl App {
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
         let sessions = &self.sessions;
-        let bootstrap = &self.bootstrap;
+        let bootstrap = &self.preferences.bootstrap;
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
+            if tab.kind == SavedKind::Settings {
+                return Some((None, Item::Settings));
+            }
             let (checkout, project) = projects
                 .iter()
                 .find(|(root, _)| *root == tab.project)
@@ -457,10 +466,10 @@ impl App {
                     true => agents.start(project, session, &root, &env, agent)?,
                     false => agents.resume(project, session, &root, &env, agent, &tab.session)?,
                 };
-                return Some((scope, Item::Agent(scope, talk)));
+                return Some((Some(scope), Item::Agent(scope, talk)));
             }
             if tab.kind == SavedKind::Review {
-                return Some((scope, Item::Review(scope)));
+                return Some((Some(scope), Item::Review(scope)));
             }
             if tab.kind == SavedKind::Change {
                 let review = reviews
@@ -468,14 +477,14 @@ impl App {
                     .or_insert_with(|| crate::review::Review::of(&root));
                 let change = review.name(&tab.path);
                 review.keep(change);
-                return Some((scope, Item::Change(scope, change)));
+                return Some((Some(scope), Item::Change(scope, change)));
             }
             let file = editor.open(scope, &root, &tab.path, tab.preview)?;
             if let Some(document) = editor.get(file) {
                 let mut document = document.borrow_mut();
                 document.restore(tab.line, tab.column, tab.scroll);
             }
-            Some((scope, Item::File(file)))
+            Some((Some(scope), Item::File(file)))
         });
         self.sweep();
     }
@@ -572,7 +581,7 @@ impl App {
             match item {
                 Item::File(file) => self.editor.keep(file),
                 Item::Change(project, change) => self.keep_change(project, change),
-                Item::Review(_) | Item::Agent(..) => {}
+                Item::Review(_) | Item::Agent(..) | Item::Settings => {}
             }
         }
         self.activate_tab(pane, item);
@@ -603,8 +612,9 @@ impl App {
         {
             self.trail.jumped(from);
         }
+        let scope = self.scope();
         if let Some(pane) = self.panes.pane_mut(pane) {
-            pane.activate(item);
+            pane.activate(scope, item);
         }
         self.focus_pane(pane);
         self.store();
@@ -616,9 +626,10 @@ impl App {
     /// the way dragging a tab does everywhere, and the pane it leaves empty
     /// gives its room back to its neighbours.
     fn drop_tab(&mut self, drag: TabDrag) {
-        let (Some((target, place)), Some(scope)) = (drag.target, self.scope()) else {
+        let Some((target, place)) = drag.target else {
             return;
         };
+        let scope = self.scope();
         if target == drag.from
             && let DropPlace::Tab(index) = place
         {
@@ -644,7 +655,7 @@ impl App {
         if let (Some(tab), Some(pane)) = (carried, self.panes.pane_mut(landed)) {
             match index {
                 Some(index) => pane.insert(tab, scope, index),
-                None => pane.append(tab),
+                None => pane.append(tab, scope),
             }
         }
         self.panes.close_empty();
@@ -655,12 +666,9 @@ impl App {
 
     /// What is open in `pane`, in the order its tabs are drawn.
     pub(super) fn tabs_of(&self, pane: PaneId) -> Vec<Item> {
-        let Some(scope) = self.scope() else {
-            return Vec::new();
-        };
         self.panes
             .pane(pane)
-            .map(|pane| pane.tabs(scope))
+            .map(|pane| pane.tabs(self.scope()))
             .unwrap_or_default()
     }
 
@@ -726,6 +734,14 @@ impl App {
                     pinned: false,
                 })
             }
+            Item::Settings => Some(TabEntry {
+                item,
+                name: "Settings".to_owned(),
+                icon: IconName::Settings,
+                dirty: false,
+                preview: false,
+                pinned: false,
+            }),
             Item::Change(project, change) => {
                 let review = self.reviews.get(&project)?;
                 let path = review.path_of(change)?;
@@ -777,7 +793,8 @@ impl App {
         let scope = self.scope();
         let link = self.link_target();
         let talked_about = self.hovered_name();
-        let caret = self.blink.is_solid();
+        let caret = !self.preferences.cursor_blink || self.blink.is_solid();
+        let display = self.preferences.display;
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
         panes::pane_tree(theme, &self.panes, self.editor_focused, &|pane| {
             let (bounds, bar, tab_bounds) = cells
@@ -785,12 +802,11 @@ impl App {
                 .find(|(id, _)| *id == pane.id())
                 .map(|(_, cells)| cells.clone())
                 .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
-            let active = scope.and_then(|scope| pane.active(scope));
+            let active = pane.active(scope);
             let file = active.and_then(Item::file);
             Contents {
-                tabs: scope
-                    .map(|scope| pane.tabs(scope))
-                    .unwrap_or_default()
+                tabs: pane
+                    .tabs(scope)
                     .into_iter()
                     .filter_map(|item| {
                         let mut entry = self.tab_entry(item)?;
@@ -812,6 +828,7 @@ impl App {
                     .filter(|(open, _)| file == Some(*open))
                     .map(|(_, span)| span),
                 caret,
+                display,
             }
         })
     }
@@ -846,6 +863,7 @@ impl App {
                 }
                 None => Content::Empty,
             },
+            Some(Item::Settings) => self.settings_content(theme),
             None => Content::Empty,
         }
     }

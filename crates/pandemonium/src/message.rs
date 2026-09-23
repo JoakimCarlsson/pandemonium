@@ -10,11 +10,12 @@ use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
 use crate::agent::TalkId;
-use crate::editor::{FileId, ScrollAxis, SearchField};
+use crate::config::{FontSlot, Preference, Step, ThemeMode, WorktreePaths};
+use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::{Action, BaseKeymap};
-use crate::onboarding::ThemeMode;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::Group;
+use crate::settings::{SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
 
@@ -27,20 +28,41 @@ pub enum Message {
     SetThemeFamily(usize),
     /// Start from this keymap.
     SetKeymap(BaseKeymap),
-    /// Turn vim mode on or off.
-    ToggleVimMode,
-    /// Turn laying a file out when it is saved on or off.
-    ToggleFormatOnSave,
-    /// Turn worktree auto-trust on or off.
-    ToggleTrustWorktrees,
-    /// Turn anonymous usage data on or off.
-    ToggleMetrics,
-    /// Turn crash reports on or off.
-    ToggleCrashReports,
+    /// Turn this preference, which is a switch, on or off.
+    TogglePreference(Preference),
+    /// Move this preference, which is a number, one step this way.
+    StepPreference(Preference, Step),
+    /// Draw the caret in this shape.
+    SetCursorShape(CursorShape),
+    /// Draw a guide down this column, or none.
+    SetWrapGuide(Option<usize>),
+    /// Ask which family to set this kind of text in.
+    PickFont(FontSlot),
+    /// Ask what to repaint this colour, by index into the theme's tokens, in.
+    EditThemeColor(usize),
+    /// Ask what to call the theme being drawn in, and write it down as one.
+    SaveTheme,
+    /// Read the themes in the editor's home in again.
+    ReloadThemes,
+    /// Ask for a path to add to this list of what a new worktree is given.
+    AddWorktreePath(WorktreePaths),
+    /// Take the path in this place off this list of what a new worktree is
+    /// given.
+    RemoveWorktreePath(WorktreePaths, usize),
+    /// Ask for the variable a session's port is handed to its programs in.
+    EditWorktreePort,
+    /// Put this preference back to what a first launch starts from.
+    ResetPreference(Preference),
     /// Leave the setup flow.
     Finish,
-    /// Come back to the setup flow.
-    Reopen,
+    /// Open the settings pane, or bring it forward where it is open.
+    OpenSettings,
+    /// Show this page of the settings pane, from its top.
+    ShowSettingsPage(SettingsPage),
+    /// Show the page of the settings pane this section is on, scrolled to it.
+    ShowSettingsSection(SettingsSection),
+    /// Open this page's sections out in the settings sidebar, or fold them.
+    ToggleSettingsPage(SettingsPage),
     /// Open the menu of ways a project is added to the window.
     AddProjectMenu,
     /// Ask for a repository and add it to the window as a project.

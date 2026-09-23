@@ -13,8 +13,8 @@ use crate::link::Links;
 use crate::modes::Modes;
 use crate::sgr;
 
-/// How many lines of scrollback the main screen keeps.
-const SCROLLBACK: usize = 10_000;
+/// How many lines of scrollback the main screen keeps unless told otherwise.
+pub const SCROLLBACK: usize = 10_000;
 
 /// Both screens, the modes in force and the replies the program is owed.
 pub struct Emulator {
@@ -32,6 +32,8 @@ pub struct Emulator {
     replies: Vec<u8>,
     /// Whether G0 is the DEC line-drawing set rather than ASCII.
     line_drawing: bool,
+    /// How many lines of scrollback the main screen keeps.
+    scrollback: usize,
     /// Every target the program has marked a link as going to.
     links: Links,
 }
@@ -47,8 +49,15 @@ impl Emulator {
             title: String::new(),
             replies: Vec::new(),
             line_drawing: false,
+            scrollback: SCROLLBACK,
             links: Links::default(),
         }
+    }
+
+    /// Keeps `lines` of scrollback behind the main screen from now on.
+    pub fn set_scrollback(&mut self, lines: usize) {
+        self.scrollback = lines;
+        self.primary.set_scrollback_limit(lines);
     }
 
     /// The screen that is showing.
@@ -146,7 +155,7 @@ impl Emulator {
     /// Returns the terminal to the state it starts a program in.
     fn reset(&mut self) {
         let (cols, rows) = (self.primary.cols(), self.primary.rows());
-        self.primary = Grid::new(cols, rows, SCROLLBACK);
+        self.primary = Grid::new(cols, rows, self.scrollback);
         self.alternate = Grid::new(cols, rows, 0);
         self.on_alternate = false;
         self.modes = Modes::DEFAULT;

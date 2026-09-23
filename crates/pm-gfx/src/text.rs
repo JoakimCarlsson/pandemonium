@@ -1,6 +1,6 @@
 //! Font selection, shaping and the measurement layout asks for.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use cosmic_text::fontdb::Weight;
@@ -150,6 +150,8 @@ pub struct TextSystem {
     sans: FamilyOwned,
     /// The family paths, branches and code are shaped with.
     mono: FamilyOwned,
+    /// The families last asked for by name, prose's then code's.
+    asked: (Option<String>, Option<String>),
     /// Runs already shaped, keyed by their text and style.
     runs: HashMap<RunKey, Arc<ShapedRun>>,
 }
@@ -164,8 +166,47 @@ impl TextSystem {
             fonts,
             sans,
             mono,
+            asked: (None, None),
             runs: HashMap::new(),
         }
+    }
+
+    /// Shapes prose in `sans` and code in `mono` from now on, where they are
+    /// installed, and in the families the editor would pick otherwise.
+    ///
+    /// Asking for the families already in use costs nothing, so a caller can
+    /// ask every frame; asking for others throws away every shaped run.
+    pub fn set_families(&mut self, sans: Option<&str>, mono: Option<&str>) {
+        let asked = (sans.map(str::to_owned), mono.map(str::to_owned));
+        if asked == self.asked {
+            return;
+        }
+        self.sans = choose_family(
+            &self.fonts,
+            sans.into_iter().chain(PREFERRED_SANS),
+            Family::SansSerif,
+        );
+        self.mono = choose_family(
+            &self.fonts,
+            mono.into_iter().chain(PREFERRED_MONO),
+            Family::Monospace,
+        );
+        self.asked = asked;
+        self.runs.clear();
+    }
+
+    /// The name of every family installed, or of every monospaced one, in
+    /// alphabetical order.
+    pub fn families(&self, monospaced: bool) -> Vec<String> {
+        self.fonts
+            .db()
+            .faces()
+            .filter(|face| !monospaced || face.monospaced)
+            .filter_map(|face| face.families.first())
+            .map(|(name, _)| name.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     /// The font system, for the rasterizer that shares it.
@@ -237,7 +278,11 @@ impl Default for TextSystem {
 }
 
 /// Picks the first installed family of `preferred`, else `fallback`.
-fn choose_family(fonts: &FontSystem, preferred: [&str; 5], fallback: Family<'_>) -> FamilyOwned {
+fn choose_family<'a>(
+    fonts: &FontSystem,
+    preferred: impl IntoIterator<Item = &'a str>,
+    fallback: Family<'_>,
+) -> FamilyOwned {
     for wanted in preferred {
         let installed = fonts
             .db()

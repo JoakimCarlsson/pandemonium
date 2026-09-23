@@ -12,6 +12,7 @@ use pm_text::Position;
 
 use crate::app::places::Place;
 use crate::app::{App, RemoteOperation, Wake};
+use crate::config::WorktreePaths;
 use crate::keymap::Action;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Picker, Row};
@@ -107,6 +108,11 @@ impl App {
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::NewSession, _) => self.start_session(&typed),
             (Kind::CloneUrl, _) => self.clone_project(&typed),
+            (Kind::LinkedPath, _) => self.add_worktree_path(WorktreePaths::Linked, &typed),
+            (Kind::CopiedPath, _) => self.add_worktree_path(WorktreePaths::Copied, &typed),
+            (Kind::PortVariable, _) => self.set_worktree_port(&typed),
+            (Kind::ThemeColor(token), _) => self.set_theme_color(token, &typed),
+            (Kind::ThemeName, _) => self.save_theme(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
         }
@@ -145,6 +151,7 @@ impl App {
             Choice::Agent(agent) => self.start_agent(agent),
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
+            Choice::Font(slot, family) => self.set_font(slot, family),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::FetchRemote(project, remote) => {
                 self.run_in(
@@ -202,7 +209,7 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::Knob | Kind::References => Vec::new(),
+            Kind::Knob | Kind::References | Kind::Font(_) => Vec::new(),
             Kind::Search => self.search_rows(query),
             Kind::Symbols
             | Kind::Line
@@ -212,7 +219,12 @@ impl App {
             | Kind::RenamePath
             | Kind::NewBranch
             | Kind::NewSession
-            | Kind::CloneUrl => Vec::new(),
+            | Kind::CloneUrl
+            | Kind::LinkedPath
+            | Kind::CopiedPath
+            | Kind::PortVariable
+            | Kind::ThemeColor(_)
+            | Kind::ThemeName => Vec::new(),
         }
     }
 

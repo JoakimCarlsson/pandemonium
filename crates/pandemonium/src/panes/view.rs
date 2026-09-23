@@ -13,7 +13,7 @@ use pm_ui::{
     measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
-use crate::editor::{OpenFile, buffer_view, search_bar};
+use crate::editor::{Display, OpenFile, buffer_view, search_bar};
 use crate::message::Message;
 use crate::panes::item::Item;
 
@@ -73,6 +73,8 @@ pub struct Contents {
     pub hovered: Option<std::ops::Range<pm_text::Position>>,
     /// Whether the caret is solid this instant, for its blink.
     pub caret: bool,
+    /// What a pane of text draws around its text.
+    pub display: Display,
 }
 
 /// Builds the whole tree of panes, `focused` when the window's own focus is.
@@ -134,6 +136,7 @@ fn pane_view(
     let link = contents.link.clone();
     let hovered = contents.hovered.clone();
     let caret = contents.caret;
+    let display = contents.display;
     let showing = match &contents.content {
         Content::File(file) => Some(file.clone()),
         _ => None,
@@ -165,6 +168,7 @@ fn pane_view(
                     .link(link)
                     .hovered(hovered)
                     .caret(caret)
+                    .display(display)
                     .on_select(move |phase, anchor, head| {
                         Message::SelectText(id, phase, anchor, head)
                     })

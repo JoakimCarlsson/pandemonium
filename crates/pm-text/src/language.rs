@@ -65,14 +65,53 @@ const PYTHON_SERVERS: &[Server] = &[
     plain("pylsp"),
 ];
 
-/// tsserver and vtsls, which serve every TypeScript and JavaScript dialect.
-const TSSERVER: &[Server] = &[stdio("typescript-language-server"), stdio("vtsls")];
+/// The servers that answer for every TypeScript and JavaScript dialect:
+/// tsserver or vtsls for the types, ESLint and Biome for the lints, and
+/// Tailwind for the class names.
+const TSSERVER: &[Server] = &[
+    stdio("typescript-language-server"),
+    stdio("vtsls"),
+    stdio("vscode-eslint-language-server"),
+    Server {
+        command: "biome",
+        arguments: &["lsp-proxy"],
+        options: NO_OPTIONS,
+    },
+    TAILWIND,
+];
 
-/// The CSS server VS Code ships.
-const CSS_SERVER: &[Server] = &[stdio("vscode-css-language-server")];
+/// The Tailwind CSS server, which answers wherever class names are written.
+const TAILWIND: Server = stdio("tailwindcss-language-server");
 
-/// The HTML server VS Code ships.
-const HTML_SERVER: &[Server] = &[stdio("vscode-html-language-server")];
+/// The servers that answer for C#, csharp-ls first and OmniSharp after it.
+const CSHARP_SERVERS: &[Server] = &[
+    plain("csharp-ls"),
+    Server {
+        command: "OmniSharp",
+        arguments: &["-lsp"],
+        options: NO_OPTIONS,
+    },
+];
+
+/// The servers that answer for Kotlin, JetBrains' own first.
+const KOTLIN_SERVERS: &[Server] = &[stdio("kotlin-lsp"), plain("kotlin-language-server")];
+
+/// The servers that answer for SQL: sqls over any database, Postgres Language
+/// Tools over Postgres.
+const SQL_SERVERS: &[Server] = &[
+    plain("sqls"),
+    Server {
+        command: "postgrestools",
+        arguments: &["lsp-proxy"],
+        options: NO_OPTIONS,
+    },
+];
+
+/// The CSS server VS Code ships, and Tailwind for the class names.
+const CSS_SERVER: &[Server] = &[stdio("vscode-css-language-server"), TAILWIND];
+
+/// The HTML server VS Code ships, and Tailwind for the class names.
+const HTML_SERVER: &[Server] = &[stdio("vscode-html-language-server"), TAILWIND];
 
 /// The JSON server VS Code ships, which serves JSON and JSONC alike.
 const JSON_SERVER: &[Server] = &[stdio("vscode-json-language-server")];
@@ -135,6 +174,16 @@ const CPP: Language = Language {
     line_comment: Some("//"),
 };
 
+/// C#: the grammar, its highlights and the C# servers.
+const CSHARP: Language = Language {
+    name: "C#",
+    language_id: "csharp",
+    grammar: tree_sitter_c_sharp::LANGUAGE,
+    highlights: &[tree_sitter_c_sharp::HIGHLIGHTS_QUERY],
+    servers: CSHARP_SERVERS,
+    line_comment: Some("//"),
+};
+
 /// CSS: the grammar, its highlights and the VS Code CSS server.
 const CSS: Language = Language {
     name: "CSS",
@@ -143,6 +192,16 @@ const CSS: Language = Language {
     highlights: &[tree_sitter_css::HIGHLIGHTS_QUERY],
     servers: CSS_SERVER,
     line_comment: None,
+};
+
+/// Dockerfile: the Containerfile grammar, its highlights and the Docker server.
+const DOCKERFILE: Language = Language {
+    name: "Dockerfile",
+    language_id: "dockerfile",
+    grammar: tree_sitter_containerfile::LANGUAGE,
+    highlights: &[tree_sitter_containerfile::HIGHLIGHTS_QUERY],
+    servers: &[stdio("docker-langserver")],
+    line_comment: Some("#"),
 };
 
 /// Go: the grammar, its highlights and gopls.
@@ -167,6 +226,16 @@ const HTML: Language = Language {
     highlights: &[tree_sitter_html::HIGHLIGHTS_QUERY],
     servers: HTML_SERVER,
     line_comment: None,
+};
+
+/// Java: the grammar, its highlights and the Eclipse JDT server.
+const JAVA: Language = Language {
+    name: "Java",
+    language_id: "java",
+    grammar: tree_sitter_java::LANGUAGE,
+    highlights: &[tree_sitter_java::HIGHLIGHTS_QUERY],
+    servers: &[plain("jdtls")],
+    line_comment: Some("//"),
 };
 
 /// JavaScript: the grammar, its highlights with JSX, and tsserver.
@@ -202,14 +271,44 @@ const JSONC: Language = Language {
     line_comment: Some("//"),
 };
 
-/// Markdown: the block grammar and the highlights of its blocks.
+/// Kotlin: the grammar, its highlights and the Kotlin servers.
+const KOTLIN: Language = Language {
+    name: "Kotlin",
+    language_id: "kotlin",
+    grammar: tree_sitter_kotlin_sg::LANGUAGE,
+    highlights: &[tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY],
+    servers: KOTLIN_SERVERS,
+    line_comment: Some("//"),
+};
+
+/// Lua: the grammar, its highlights and lua-language-server.
+const LUA: Language = Language {
+    name: "Lua",
+    language_id: "lua",
+    grammar: tree_sitter_lua::LANGUAGE,
+    highlights: &[tree_sitter_lua::HIGHLIGHTS_QUERY],
+    servers: &[plain("lua-language-server")],
+    line_comment: Some("--"),
+};
+
+/// Markdown: the block grammar, the highlights of its blocks and marksman.
 const MARKDOWN: Language = Language {
     name: "Markdown",
     language_id: "markdown",
     grammar: tree_sitter_md::LANGUAGE,
     highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
-    servers: &[],
+    servers: &[plain("marksman")],
     line_comment: None,
+};
+
+/// PHP: the grammar with its embedded HTML, its highlights and Intelephense.
+const PHP: Language = Language {
+    name: "PHP",
+    language_id: "php",
+    grammar: tree_sitter_php::LANGUAGE_PHP,
+    highlights: &[tree_sitter_php::HIGHLIGHTS_QUERY],
+    servers: &[stdio("intelephense")],
+    line_comment: Some("//"),
 };
 
 /// Python: the grammar, its highlights and the type checkers.
@@ -222,6 +321,16 @@ const PYTHON: Language = Language {
     line_comment: Some("#"),
 };
 
+/// Ruby: the grammar, its highlights and ruby-lsp.
+const RUBY: Language = Language {
+    name: "Ruby",
+    language_id: "ruby",
+    grammar: tree_sitter_ruby::LANGUAGE,
+    highlights: &[tree_sitter_ruby::HIGHLIGHTS_QUERY],
+    servers: &[plain("ruby-lsp")],
+    line_comment: Some("#"),
+};
+
 /// Rust: the grammar, its highlights and rust-analyzer.
 const RUST: Language = Language {
     name: "Rust",
@@ -230,6 +339,16 @@ const RUST: Language = Language {
     highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
     servers: &[plain("rust-analyzer")],
     line_comment: Some("//"),
+};
+
+/// SQL: the grammar, its highlights and the SQL servers.
+const SQL: Language = Language {
+    name: "SQL",
+    language_id: "sql",
+    grammar: tree_sitter_sequel::LANGUAGE,
+    highlights: &[tree_sitter_sequel::HIGHLIGHTS_QUERY],
+    servers: SQL_SERVERS,
+    line_comment: Some("--"),
 };
 
 /// TOML: the grammar, its highlights and taplo.
@@ -310,6 +429,8 @@ impl Language {
         match name {
             ".bashrc" | ".bash_profile" | ".profile" | ".zshrc" | ".zprofile" => Some(BASH),
             "tsconfig.json" | "jsconfig.json" => Some(JSONC),
+            "Containerfile" | "Dockerfile" => Some(DOCKERFILE),
+            "Gemfile" | "Rakefile" => Some(RUBY),
             _ => None,
         }
     }
@@ -320,15 +441,23 @@ impl Language {
             "sh" | "bash" | "zsh" | "ksh" => Some(BASH),
             "c" | "h" => Some(C),
             "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" => Some(CPP),
+            "cs" | "csx" => Some(CSHARP),
             "css" | "scss" => Some(CSS),
+            "containerfile" | "dockerfile" => Some(DOCKERFILE),
             "go" => Some(GO),
             "htm" | "html" => Some(HTML),
+            "java" => Some(JAVA),
             "cjs" | "js" | "jsx" | "mjs" => Some(JAVASCRIPT),
             "json" => Some(JSON),
             "jsonc" => Some(JSONC),
+            "kt" | "kts" => Some(KOTLIN),
+            "lua" => Some(LUA),
             "md" | "markdown" => Some(MARKDOWN),
+            "php" => Some(PHP),
             "py" | "pyi" => Some(PYTHON),
+            "gemspec" | "rake" | "rb" => Some(RUBY),
             "rs" => Some(RUST),
+            "sql" => Some(SQL),
             "toml" => Some(TOML),
             "tsx" => Some(TSX),
             "cts" | "mts" | "ts" => Some(TYPESCRIPT),

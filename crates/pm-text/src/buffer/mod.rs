@@ -26,9 +26,6 @@ use crate::indent::Indent;
 use crate::language::Language;
 use crate::syntax::{Highlight, Highlights, Syntax};
 
-/// How wide a tab character is drawn, in characters.
-pub const TAB_WIDTH: usize = 4;
-
 /// One file, open for reading and editing.
 pub struct Buffer {
     /// Where the file lives.
@@ -41,6 +38,9 @@ pub struct Buffer {
     syntax: Option<Syntax>,
     /// How the file is indented, judged by the lines that are.
     indent: Indent,
+    /// How the reader indents a file that does not say, which is also how
+    /// wide a tab character is drawn.
+    habit: Indent,
     /// What is selected, and where the cursor is.
     selection: Selection,
     /// The other cursors, when the reader has asked for more than one.
@@ -87,7 +87,8 @@ impl Buffer {
         }
 
         Self {
-            indent: Indent::of(&text),
+            indent: Indent::of(&text, Indent::default()),
+            habit: Indent::default(),
             path,
             text,
             language,
@@ -125,6 +126,18 @@ impl Buffer {
     /// How the file is indented.
     pub fn indent(&self) -> Indent {
         self.indent
+    }
+
+    /// Indents the way `habit` says wherever the file does not, and draws a
+    /// tab as wide as it says.
+    pub fn set_habit(&mut self, habit: Indent) {
+        self.habit = habit;
+        self.indent = Indent::of(&self.text, habit);
+    }
+
+    /// How wide a tab character is drawn, in characters.
+    pub fn tab_width(&self) -> usize {
+        self.habit.width.max(1)
     }
 
     /// Whether the text differs from what is on disk.
@@ -223,7 +236,7 @@ impl Buffer {
                 break;
             }
             column += if ch == '\t' {
-                TAB_WIDTH - column % TAB_WIDTH
+                self.tab_width() - column % self.tab_width()
             } else {
                 1
             };
@@ -243,7 +256,7 @@ impl Buffer {
                 .map(Hint::width)
                 .sum::<usize>();
             let width = if ch == '\t' {
-                TAB_WIDTH - drawn % TAB_WIDTH
+                self.tab_width() - drawn % self.tab_width()
             } else {
                 1
             };

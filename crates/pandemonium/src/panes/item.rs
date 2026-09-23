@@ -2,9 +2,9 @@
 //!
 //! Every pane in the window is the same pane: a bar of tabs with one of them
 //! in front. What a tab holds is this — a file, a review of everything a
-//! project has changed, the diff of one of those files — and the tree neither
-//! knows nor cares which, because splitting, tabbing, carrying and closing are
-//! the same four things whichever it is.
+//! project has changed, the diff of one of those files, the editor's own
+//! settings — and the tree neither knows nor cares which, because splitting,
+//! tabbing, carrying and closing are the same four things whichever it is.
 
 use pm_core::Scope;
 
@@ -27,6 +27,8 @@ pub enum Item {
     Change(Scope, ChangeId),
     /// One conversation held in a worktree, with everything said in it.
     Agent(Scope, TalkId),
+    /// The editor's preferences, which belong to the window, not a worktree.
+    Settings,
 }
 
 impl Item {
@@ -34,7 +36,7 @@ impl Item {
     pub fn file(self) -> Option<FileId> {
         match self {
             Self::File(file) => Some(file),
-            Self::Review(_) | Self::Change(..) | Self::Agent(..) => None,
+            Self::Review(_) | Self::Change(..) | Self::Agent(..) | Self::Settings => None,
         }
     }
 
@@ -42,7 +44,7 @@ impl Item {
     pub fn change(self) -> Option<ChangeId> {
         match self {
             Self::Change(_, change) => Some(change),
-            Self::File(_) | Self::Review(_) | Self::Agent(..) => None,
+            Self::File(_) | Self::Review(_) | Self::Agent(..) | Self::Settings => None,
         }
     }
 
@@ -50,7 +52,7 @@ impl Item {
     pub fn review(self) -> Option<Scope> {
         match self {
             Self::Review(scope) => Some(scope),
-            Self::File(_) | Self::Change(..) | Self::Agent(..) => None,
+            Self::File(_) | Self::Change(..) | Self::Agent(..) | Self::Settings => None,
         }
     }
 
@@ -58,7 +60,13 @@ impl Item {
     pub fn session(self) -> Option<TalkId> {
         match self {
             Self::Agent(_, session) => Some(session),
-            Self::File(_) | Self::Review(_) | Self::Change(..) => None,
+            Self::File(_) | Self::Review(_) | Self::Change(..) | Self::Settings => None,
         }
+    }
+
+    /// Whether this belongs to the window rather than to one worktree, and
+    /// so is drawn whichever worktree the window is showing.
+    pub fn is_window_wide(self) -> bool {
+        matches!(self, Self::Settings)
     }
 }

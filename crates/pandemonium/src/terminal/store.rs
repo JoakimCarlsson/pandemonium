@@ -92,12 +92,26 @@ pub struct Terminals {
     next: ShellId,
     /// What a shell calls when it has written something.
     notify: Option<Notify>,
+    /// How many lines of scrollback a shell keeps, once the reader has said.
+    scrollback: Option<usize>,
 }
 
 impl Terminals {
     /// Wakes the window through `notify` whenever a shell writes something.
     pub fn set_notify(&mut self, notify: Notify) {
         self.notify = Some(notify);
+    }
+
+    /// Keeps `lines` of scrollback in every shell from now on, the running
+    /// ones included.
+    pub fn set_scrollback(&mut self, lines: usize) {
+        if self.scrollback == Some(lines) {
+            return;
+        }
+        self.scrollback = Some(lines);
+        for (_, shell) in self.worktrees.values().flat_map(|shells| &shells.running) {
+            shell.borrow_mut().set_scrollback(lines);
+        }
     }
 
     /// The shell `scope` is showing, starting its first one in `root`.
@@ -123,7 +137,7 @@ impl Terminals {
         env: &[(String, String)],
     ) -> Option<ShellId> {
         let notify = self.notify.clone()?;
-        let shell = match Terminal::shell(root, INITIAL_COLS, INITIAL_ROWS, env, notify) {
+        let mut shell = match Terminal::shell(root, INITIAL_COLS, INITIAL_ROWS, env, notify) {
             Ok(shell) => shell,
             Err(error) => {
                 eprintln!("could not start a shell in {}: {error}", root.display());
@@ -131,6 +145,9 @@ impl Terminals {
             }
         };
 
+        if let Some(lines) = self.scrollback {
+            shell.set_scrollback(lines);
+        }
         let id = self.next;
         self.next = ShellId(id.0 + 1);
         let shells = self.worktrees.entry(scope).or_default();

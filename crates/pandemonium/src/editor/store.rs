@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use pm_core::{Blame, Change, ProjectId, Scope};
 use pm_gfx::Point;
-use pm_text::{Buffer, Client, Position, Server, Servers};
+use pm_text::{Buffer, Client, Indent, Position, Server, Servers};
 
 use crate::editor::layout::TextLayout;
 use crate::editor::search::Search;
@@ -48,6 +48,18 @@ pub struct FileEntry {
     pub dirty: bool,
     /// Whether it is only being previewed, and will give its tab up.
     pub preview: bool,
+}
+
+/// How the reader writes a file: how it indents one that does not say,
+/// and what it tidies as it is saved.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Habits {
+    /// How a file that does not say is indented, and how wide a tab is.
+    pub indent: Indent,
+    /// Whether the space at the ends of lines goes when a file is saved.
+    pub trim_whitespace: bool,
+    /// Whether a saved file always ends in a line break.
+    pub final_newline: bool,
 }
 
 /// One open file: its buffer, where the pane is looking, and who serves it.
@@ -262,6 +274,12 @@ impl Document {
         }
         self.hinted = Some(version);
         true
+    }
+
+    /// Takes every hint out of the file, and forgets it asked for them.
+    fn forget_hints(&mut self) {
+        self.buffer.set_hints(Vec::new());
+        self.hinted = None;
     }
 
     /// Whether the server should be asked again what the names in the file are.
@@ -485,8 +503,20 @@ impl Document {
         }
     }
 
-    /// Writes the file to disk and tells the server it was written.
-    pub fn save(&mut self) {
+    /// Tidies the file the way `habits` say, writes it to disk and tells
+    /// the server it was written.
+    ///
+    /// Only a file with changes is tidied: saving everything must not
+    /// rewrite a file nobody touched because it was untidy when it opened.
+    pub fn save(&mut self, habits: Habits) {
+        if self.buffer.is_dirty() {
+            if habits.trim_whitespace {
+                self.edit(Buffer::trim_trailing_whitespace);
+            }
+            if habits.final_newline {
+                self.edit(Buffer::ensure_final_newline);
+            }
+        }
         if self.buffer.save().is_err() {
             return;
         }
@@ -497,7 +527,7 @@ impl Document {
     }
 
     /// Reads this clean document from disk after its worktree changes branch.
-    fn reload(&mut self, root: &Path) {
+    fn reload(&mut self, root: &Path, habits: Habits) {
         if self.buffer.is_dirty() {
             return;
         }
@@ -506,6 +536,7 @@ impl Document {
         let Ok(mut buffer) = Buffer::open(&path) else {
             return;
         };
+        buffer.set_habit(habits.indent);
         buffer.place(selection.head, false);
         for server in &self.servers {
             server.did_close(&path);
@@ -568,6 +599,8 @@ pub struct Files {
     next: FileId,
     /// The language servers those files are open in.
     servers: Servers,
+    /// How the reader writes the files.
+    habits: Habits,
 }
 
 impl Files {
@@ -583,6 +616,29 @@ impl Files {
             .map(|(language, servers)| (&*language.clone().leak(), servers.clone()))
             .collect();
         self.servers.set_overrides(named);
+    }
+
+    /// Writes files the way `habits` say from now on, the open ones
+    /// included.
+    pub fn set_habits(&mut self, habits: Habits) {
+        if habits.indent != self.habits.indent {
+            for entry in self.open.values() {
+                entry
+                    .document
+                    .borrow_mut()
+                    .buffer_mut()
+                    .set_habit(habits.indent);
+            }
+        }
+        self.habits = habits;
+    }
+
+    /// Takes every hint out of the open files, and forgets they were asked
+    /// for, so they are asked for again once hints are wanted.
+    pub fn forget_hints(&mut self) {
+        for entry in self.open.values() {
+            entry.document.borrow_mut().forget_hints();
+        }
     }
 
     /// Opens `path` in `scope`, or hands back the file if it is open already.
@@ -604,7 +660,8 @@ impl Files {
             return Some(id);
         }
 
-        let buffer = Buffer::open(path).ok()?;
+        let mut buffer = Buffer::open(path).ok()?;
+        buffer.set_habit(self.habits.indent);
         let servers = buffer
             .language()
             .map(|language| self.servers.open(root, language))
@@ -698,7 +755,7 @@ impl Files {
     pub fn save(&mut self, id: FileId, root: &Path) {
         if let Some(entry) = self.open.get(&id) {
             let mut document = entry.document.borrow_mut();
-            document.save();
+            document.save(self.habits);
             document.reread_baseline(root);
         }
     }
@@ -707,7 +764,7 @@ impl Files {
     pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<PathBuf>) {
         for entry in self.open.values() {
             let mut document = entry.document.borrow_mut();
-            document.save();
+            document.save(self.habits);
             if let Some(root) = root(entry.scope) {
                 document.reread_baseline(&root);
             }
@@ -725,7 +782,7 @@ impl Files {
     pub fn reload_project(&mut self, scope: Scope, root: &Path) {
         for entry in self.open.values() {
             if entry.scope == scope {
-                entry.document.borrow_mut().reload(root);
+                entry.document.borrow_mut().reload(root, self.habits);
             }
         }
     }
