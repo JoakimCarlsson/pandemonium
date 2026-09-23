@@ -16,6 +16,7 @@ mod picker;
 mod places;
 mod review;
 mod session;
+mod terminal;
 mod tree;
 
 use std::cell::Cell;
@@ -257,6 +258,10 @@ pub struct App {
     menu: Option<TabMenu>,
     /// The last press in the editor pane, for selecting a word.
     text_clicks: Clicks<Position>,
+    /// The last press on the terminal's grid, for telling a double one apart.
+    screen_clicks: Clicks<pm_vt::Place>,
+    /// What the drag over the terminal's grid grows its selection by.
+    screen_unit: pm_vt::Unit,
     /// The last press on a row of the file tree, for keeping a file open.
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
@@ -381,6 +386,8 @@ impl App {
             closing: None,
             blamed: Arc::new(Mutex::new(Vec::new())),
             text_clicks: Clicks::default(),
+            screen_clicks: Clicks::default(),
+            screen_unit: pm_vt::Unit::Cell,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
             menu: None,
@@ -865,10 +872,19 @@ impl App {
             self.request_redraw();
             return;
         }
-        if message == Message::FocusTerminal {
-            self.terminal_focused = true;
-            self.editor_focused = false;
+        if let Message::PointTerminal(phase, anchor, head) = message {
+            self.point_terminal(phase, anchor, head);
             self.request_redraw();
+            return;
+        }
+        if message == Message::ShowScreenMenu {
+            self.focus_terminal();
+            self.open_menu(MenuTarget::Screen);
+            return;
+        }
+        if let Message::ActOnTerminal(action) = message {
+            self.focus_terminal();
+            self.act(action);
             return;
         }
         if let Message::OpenFile(id) = message {
@@ -1719,6 +1735,7 @@ impl App {
             shell,
             shells,
             focused: self.terminal_focused,
+            linking: self.modifiers.control_key(),
         };
         let showing = self.active_file();
         let drop = self.drop_highlight();

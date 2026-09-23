@@ -81,8 +81,12 @@ pub enum Message {
     TogglePrimarySidebar,
     /// Toggle the bottom panel.
     ToggleBottomPanel,
-    /// Send later keystrokes to the terminal.
-    FocusTerminal,
+    /// Press or drag over the terminal's grid, from one cell to another.
+    PointTerminal(ResizePhase, pm_vt::Place, pm_vt::Place),
+    /// Open the menu of things that can be done to what the terminal shows.
+    ShowScreenMenu,
+    /// Carry this command out on the terminal, giving it the keyboard.
+    ActOnTerminal(Action),
     /// Start another shell in the active project's worktree.
     NewTerminal,
     /// Show this shell in the terminal pane.

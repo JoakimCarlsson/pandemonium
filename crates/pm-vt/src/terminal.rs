@@ -12,8 +12,10 @@ use vte::Parser;
 use crate::emulator::Emulator;
 use crate::grid::Grid;
 use crate::keys::{self, Key, Modifiers};
+use crate::link::{self, Link};
 use crate::modes::Modes;
 use crate::pty::{Notify, Pty};
+use crate::selection::{Place, Selection, Unit};
 
 /// A child in a pty and the screen it is drawing on.
 pub struct Terminal {
@@ -128,9 +130,55 @@ impl Terminal {
     }
 
     /// Writes `bytes` to the child, showing the live screen again.
+    ///
+    /// Whatever was picked out is let go of: what is sent is about to change
+    /// the screen under it.
     pub fn send(&mut self, bytes: &[u8]) {
-        self.emulator.grid_mut().scroll_to_bottom();
+        let grid = self.emulator.grid_mut();
+        grid.scroll_to_bottom();
+        grid.set_selection(None);
         self.pty.write(bytes);
+    }
+
+    /// The place of the cell at `row` and `col` of the view.
+    pub fn place_at(&self, row: usize, col: usize) -> Place {
+        self.grid().place_at(row, col)
+    }
+
+    /// Picks out the cells from `anchor` to `head`, grown by `unit`.
+    pub fn select(&mut self, anchor: Place, head: Place, unit: Unit) {
+        self.emulator
+            .grid_mut()
+            .set_selection(Some(Selection { anchor, head, unit }));
+    }
+
+    /// Picks out everything the screen and its scrollback hold.
+    pub fn select_all(&mut self) {
+        let (anchor, head) = self.grid().extent();
+        self.select(anchor, head, Unit::Cell);
+    }
+
+    /// Lets go of what was picked out.
+    pub fn clear_selection(&mut self) {
+        self.emulator.grid_mut().set_selection(None);
+    }
+
+    /// The first and last cells picked out, when anything is.
+    pub fn selection_span(&self) -> Option<(Place, Place)> {
+        let grid = self.grid();
+        grid.selection().map(|selection| selection.span(grid))
+    }
+
+    /// The text picked out, when there is any.
+    pub fn selected_text(&self) -> Option<String> {
+        let grid = self.grid();
+        let text = grid.selection()?.text(grid);
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// The link written across `place`, if one is.
+    pub fn link_at(&self, place: Place) -> Option<Link> {
+        link::link_at(self.grid(), self.emulator.links(), place)
     }
 
     /// Scrolls the view `lines` rows back through the scrollback.

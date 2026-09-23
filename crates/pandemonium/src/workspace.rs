@@ -203,6 +203,8 @@ pub struct Panel {
     pub shells: Vec<ShellEntry>,
     /// Whether keystrokes are going to the pane.
     pub focused: bool,
+    /// Whether the key that follows a link is held.
+    pub linking: bool,
 }
 
 /// What the window's panes are showing, and what is open over them.
@@ -269,6 +271,8 @@ pub enum MenuTarget {
     Session(SessionId),
     /// A shell running in the terminal panel.
     Terminal(ShellId),
+    /// What the terminal panel's shell is showing.
+    Screen,
     /// The text one of the editor panes is showing.
     Text(PaneId),
     /// The box of text that is being written in.
@@ -804,6 +808,7 @@ fn terminal_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
         shell,
         shells,
         focused,
+        linking,
     } = panel;
     let missing = shell.is_none();
 
@@ -815,7 +820,10 @@ fn terminal_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
         .child(terminal_tabs(theme, &shells))
         .when_some(shell, |panel, shell| {
             panel.child(
-                terminal_view(shell, focused, Message::FocusTerminal)
+                terminal_view(shell, focused)
+                    .linking(linking)
+                    .on_point(Message::PointTerminal)
+                    .on_menu(Message::ShowScreenMenu)
                     .on_scroll(Message::ScrollTerminal),
             )
         })

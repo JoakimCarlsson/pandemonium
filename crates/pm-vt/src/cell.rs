@@ -1,5 +1,7 @@
 //! One cell of the grid: the character in it and how it is drawn.
 
+use crate::link::LinkId;
+
 /// A colour a cell is drawn in.
 ///
 /// The emulator never resolves a colour to pixels: indices 0..16 are the
@@ -87,6 +89,8 @@ pub struct Cell {
     pub attrs: Attrs,
     /// How many columns it occupies: zero for the spacer of a wide character.
     pub width: u8,
+    /// The link the program marked it as part of, if it marked one.
+    pub link: Option<LinkId>,
 }
 
 impl Cell {
@@ -96,6 +100,7 @@ impl Cell {
             ch: ' ',
             attrs,
             width: 1,
+            link: None,
         }
     }
 

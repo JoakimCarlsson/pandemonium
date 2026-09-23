@@ -428,14 +428,19 @@ impl App {
     /// belong to the program running in it rather than to the window. What it
     /// does not take are the window's own chords — the ones on the platform
     /// key or on Ctrl-Shift — so the panel can still be closed from the
-    /// keyboard while a program is running in it.
+    /// keyboard while a program is running in it. The clipboard's keys come
+    /// before either, because copy and paste mean the terminal's own text.
     fn send_to_terminal(&mut self, event: &KeyEvent) -> bool {
-        if self.is_window_chord() {
-            return false;
-        }
         let Some(shell) = self.focused_shell() else {
             return false;
         };
+        let selected = shell.borrow().selection_span().is_some();
+        if let Some(action) = terminal::clipboard(&event.logical_key, self.modifiers, selected) {
+            return self.act_on_terminal(action);
+        }
+        if self.is_window_chord() {
+            return false;
+        }
         let Some(key) = terminal::key(&event.logical_key) else {
             return false;
         };

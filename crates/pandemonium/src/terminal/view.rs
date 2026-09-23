@@ -9,10 +9,13 @@ use std::sync::Arc;
 
 use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, Size};
 use pm_ui::{
-    Axis, Element, Glyphs, LayoutContext, PaintContext, ResizeEvent, Style, Styled, Theme,
+    Axis, Element, Glyphs, LayoutContext, MenuItem, PaintContext, PointerCursor, ResizeEvent,
+    ResizePhase, Style, Styled, Theme, menu_entry, menu_separator,
 };
-use pm_vt::{Attrs, Cell, Color, Terminal};
+use pm_vt::{Attrs, Cell, Color, Link, Place, Terminal};
 
+use crate::keymap::Action;
+use crate::message::Message;
 use crate::terminal::Shell;
 
 /// The weight a bold cell is drawn at.
@@ -33,26 +36,35 @@ const SCROLLBAR_PADDING: f32 = 4.0;
 /// Shortest the bar's thumb is drawn, however long the scrollback is.
 const SCROLLBAR_MIN_THUMB: f32 = 25.0;
 
+/// What a press or a drag over the grid sends, given where it began and reached.
+type PointHandler<M> = Arc<dyn Fn(ResizePhase, Place, Place) -> M>;
+
 /// A pane showing one terminal's grid.
 pub struct TerminalView<M> {
     /// The terminal being drawn, resized to whatever the pane comes to.
     shell: Shell,
     /// Whether keystrokes are going to this terminal.
     focused: bool,
-    /// What a click on the grid sends, taken when the region is registered.
-    on_focus: Option<M>,
+    /// Whether the key that follows a link is held, making links pressable.
+    linking: bool,
+    /// What a press or a drag over the grid sends.
+    on_point: Option<PointHandler<M>>,
+    /// What a press of the secondary button over the grid sends.
+    on_menu: Option<M>,
     /// What dragging the scrollbar sends, given the drag and the scale of it.
     on_scroll: Option<Arc<dyn Fn(ResizeEvent, f32) -> M>>,
     /// How the pane is sized within its parent.
     style: Style,
 }
 
-/// A pane showing `shell`, which sends `on_focus` when it is clicked.
-pub fn terminal_view<M>(shell: Shell, focused: bool, on_focus: M) -> TerminalView<M> {
+/// A pane showing `shell`, focused or not.
+pub fn terminal_view<M>(shell: Shell, focused: bool) -> TerminalView<M> {
     TerminalView {
         shell,
         focused,
-        on_focus: Some(on_focus),
+        linking: false,
+        on_point: None,
+        on_menu: None,
         on_scroll: None,
         style: Style::default(),
     }
@@ -60,7 +72,46 @@ pub fn terminal_view<M>(shell: Shell, focused: bool, on_focus: M) -> TerminalVie
     .flex_1()
 }
 
+/// The things that can be done to what a terminal's screen shows.
+///
+/// Copy is offered only while something is picked out: copying nothing is a
+/// command that silently empties the clipboard.
+pub fn screen_menu(selected: bool) -> Vec<MenuItem<Message>> {
+    let act = |action: Action| Message::ActOnTerminal(action);
+    vec![
+        menu_entry("Copy", selected.then_some(act(Action::Copy))),
+        menu_entry("Paste", Some(act(Action::Paste))),
+        menu_separator(),
+        menu_entry("Select All", Some(act(Action::SelectAll))),
+    ]
+}
+
 impl<M> TerminalView<M> {
+    /// Returns this pane selecting and following links through `on_point`.
+    ///
+    /// The handler is given the stage of the gesture and the cells where it
+    /// began and has reached, because only the pane knows how large a cell
+    /// came out and how far back through the scrollback the view is.
+    pub fn on_point(mut self, on_point: impl Fn(ResizePhase, Place, Place) -> M + 'static) -> Self {
+        self.on_point = Some(Arc::new(on_point));
+        self
+    }
+
+    /// Returns this pane opening a menu with `message` on the other button.
+    pub fn on_menu(mut self, message: M) -> Self {
+        self.on_menu = Some(message);
+        self
+    }
+
+    /// Returns this pane with links pressable while `linking` holds.
+    ///
+    /// The link under the pointer is underlined either way; the pointer only
+    /// says it can be pressed while the key that follows it is held.
+    pub fn linking(mut self, linking: bool) -> Self {
+        self.linking = linking;
+        self
+    }
+
     /// Returns this pane with a scrollbar that reports drags through `on_scroll`.
     ///
     /// The handler is given the drag and how many lines one pixel of it is
@@ -78,7 +129,7 @@ impl<M> Styled for TerminalView<M> {
     }
 }
 
-impl<M: 'static> Element<M> for TerminalView<M> {
+impl<M: Clone + 'static> Element<M> for TerminalView<M> {
     /// How the pane is sized within its parent.
     fn layout_style(&self) -> Style {
         self.style
@@ -110,33 +161,95 @@ impl<M: 'static> Element<M> for TerminalView<M> {
         let metrics = Metrics { bounds: grid, cell };
         self.shell.borrow_mut().resize(cols, rows);
 
-        if let Some(message) = self.on_focus.take() {
-            cx.interactive(bounds, message);
-        }
-
         let shell = self.shell.clone();
         let terminal = shell.borrow();
         let theme = *cx.theme();
+        let link = cx
+            .input()
+            .pointer
+            .filter(|pointer| bounds.contains(*pointer))
+            .and_then(|pointer| {
+                let (row, col) = metrics.cell_under(pointer);
+                terminal.link_at(terminal.place_at(row, col))
+            });
+        let screen = Screen {
+            selection: terminal.selection_span(),
+            link: link.as_ref(),
+        };
         let mut glyphs = Glyphs::default();
         cx.push_clip(bounds);
         for row in 0..rows {
-            self.paint_row(&terminal, row, metrics, &theme, &mut glyphs, cx);
+            self.paint_row(&terminal, row, metrics, &screen, &theme, &mut glyphs, cx);
         }
         self.paint_cursor(&terminal, metrics, &theme, cx);
         cx.pop_clip();
-
         drop(terminal);
+
+        self.point_region(bounds, metrics, link.is_some(), cx);
         self.paint_scrollbar(bounds, cell, &theme, cx);
     }
 }
 
+impl<M: Clone + 'static> TerminalView<M> {
+    /// Takes the press and the drag that select text and follow links.
+    ///
+    /// The whole pane answers, margins included: a drag that starts beside
+    /// the first column is aimed at the first column.
+    fn point_region(
+        &mut self,
+        bounds: Rect,
+        metrics: Metrics,
+        over_link: bool,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let Some(on_point) = self.on_point.clone() else {
+            return;
+        };
+        let cursor = match over_link && self.linking {
+            true => PointerCursor::Pointer,
+            false => PointerCursor::Text,
+        };
+        let shell = self.shell.clone();
+        cx.draggable(
+            bounds,
+            cursor,
+            Arc::new(move |event| {
+                let terminal = shell.borrow();
+                let place = |point| {
+                    let (row, col) = metrics.cell_under(point);
+                    terminal.place_at(row, col)
+                };
+                on_point(event.phase, place(event.start), place(event.current))
+            }),
+            self.on_menu.clone(),
+        );
+    }
+}
+
+/// What is drawn over the grid's own cells: the selection and the link.
+struct Screen<'a> {
+    /// The first and last cells picked out, when anything is.
+    selection: Option<(Place, Place)>,
+    /// The link under the pointer, if it is over one.
+    link: Option<&'a Link>,
+}
+
+impl Screen<'_> {
+    /// Whether the cell at `place` is part of the link under the pointer.
+    fn links(&self, place: Place) -> bool {
+        self.link.is_some_and(|link| link.covers(place))
+    }
+}
+
 impl<M> TerminalView<M> {
-    /// Draws the backgrounds and then the characters of one row.
+    /// Draws the backgrounds, the selection and then the characters of one row.
+    #[allow(clippy::too_many_arguments)]
     fn paint_row(
         &self,
         terminal: &Terminal,
         row: usize,
         metrics: Metrics,
+        screen: &Screen<'_>,
         theme: &Theme,
         glyphs: &mut Glyphs,
         cx: &mut PaintContext<'_, '_, M>,
@@ -152,6 +265,10 @@ impl<M> TerminalView<M> {
             .map(|(_, col)| col);
 
         self.paint_backgrounds(line.cells(), row, metrics, theme, cx);
+        let line_number = terminal.place_at(row, 0).line;
+        if let Some(columns) = selected_columns(screen.selection, line_number, line.cells().len()) {
+            fill(cx, metrics, row, columns, theme.terminal.selection);
+        }
 
         for (col, content) in line.cells().iter().enumerate() {
             if content.is_spacer() || content.is_blank() {
@@ -170,7 +287,9 @@ impl<M> TerminalView<M> {
             let origin = metrics.cell_at(row, col).origin;
             let run = glyphs.shape(content.ch, font(content.attrs, theme), cx);
             cx.text(origin, run, color);
-            self.paint_lines(content.attrs, metrics, origin, color, cx);
+            let mut attrs = content.attrs;
+            attrs.underline |= screen.links(Place::new(line_number, col));
+            self.paint_lines(attrs, metrics, origin, color, cx);
         }
     }
 
@@ -338,6 +457,21 @@ struct Metrics {
 }
 
 impl Metrics {
+    /// The row and column of the cell under `point`, clamped to the grid.
+    fn cell_under(&self, point: Point) -> (usize, usize) {
+        let rows = (self.bounds.size.height / self.cell.height)
+            .round()
+            .max(1.0) as usize;
+        let cols = (self.bounds.size.width / self.cell.width).round().max(1.0) as usize;
+        let row = ((point.y - self.bounds.top()) / self.cell.height)
+            .floor()
+            .max(0.0) as usize;
+        let col = ((point.x - self.bounds.left()) / self.cell.width)
+            .floor()
+            .max(0.0) as usize;
+        (row.min(rows - 1), col.min(cols - 1))
+    }
+
     /// The rectangle the cell at `row` and `col` occupies.
     fn cell_at(&self, row: usize, col: usize) -> Rect {
         Rect::from_xywh(
@@ -347,6 +481,21 @@ impl Metrics {
             self.cell.height,
         )
     }
+}
+
+/// The columns of line `line` that `selection` picks out, `cols` wide.
+fn selected_columns(
+    selection: Option<(Place, Place)>,
+    line: usize,
+    cols: usize,
+) -> Option<std::ops::Range<usize>> {
+    let (start, end) = selection?;
+    if line < start.line || line > end.line {
+        return None;
+    }
+    let from = if line == start.line { start.col } else { 0 };
+    let to = if line == end.line { end.col + 1 } else { cols };
+    Some(from..to.min(cols))
 }
 
 /// Fills the `columns` of one row in `color`.

@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
 
 use crate::grid::Grid;
+use crate::link::Links;
 use crate::modes::Modes;
 use crate::sgr;
 
@@ -31,6 +32,8 @@ pub struct Emulator {
     replies: Vec<u8>,
     /// Whether G0 is the DEC line-drawing set rather than ASCII.
     line_drawing: bool,
+    /// Every target the program has marked a link as going to.
+    links: Links,
 }
 
 impl Emulator {
@@ -44,6 +47,7 @@ impl Emulator {
             title: String::new(),
             replies: Vec::new(),
             line_drawing: false,
+            links: Links::default(),
         }
     }
 
@@ -73,6 +77,11 @@ impl Emulator {
     /// The title the program has given the terminal.
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    /// Every target the program has marked a link as going to.
+    pub fn links(&self) -> &Links {
+        &self.links
     }
 
     /// Takes the bytes the terminal owes the program.
@@ -142,6 +151,23 @@ impl Emulator {
         self.on_alternate = false;
         self.modes = Modes::DEFAULT;
         self.line_drawing = false;
+    }
+
+    /// Opens the link OSC 8 names for what is written next, or closes it.
+    ///
+    /// The parser splits the command at every semicolon, and a target may
+    /// hold semicolons of its own, so everything after the parameters is
+    /// joined back into the one target it was sent as. An empty target is
+    /// how a program says the link is over.
+    fn mark_link(&mut self, target: &[&[u8]]) {
+        let target = target
+            .iter()
+            .map(|part| String::from_utf8_lossy(part))
+            .collect::<Vec<_>>()
+            .join(";");
+        let link = (!target.is_empty()).then(|| self.links.intern(&target));
+        self.primary.set_link(link);
+        self.alternate.set_link(link);
     }
 
     /// Answers a Device Status Report.
@@ -298,15 +324,19 @@ impl Perform for Emulator {
         }
     }
 
-    /// Carries out one operating-system command, of which the title is one.
+    /// Carries out one operating-system command: the title, or a link.
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
         let Some(kind) = params.first() else {
             return;
         };
-        if matches!(*kind, b"0" | b"2")
-            && let Some(title) = params.get(1)
-        {
-            self.title = String::from_utf8_lossy(title).into_owned();
+        match *kind {
+            b"0" | b"2" => {
+                if let Some(title) = params.get(1) {
+                    self.title = String::from_utf8_lossy(title).into_owned();
+                }
+            }
+            b"8" => self.mark_link(params.get(2..).unwrap_or_default()),
+            _ => {}
         }
     }
 }

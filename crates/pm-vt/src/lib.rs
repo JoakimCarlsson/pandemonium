@@ -13,8 +13,10 @@ mod color;
 mod emulator;
 mod grid;
 mod keys;
+mod link;
 mod modes;
 mod pty;
+mod selection;
 mod sgr;
 mod terminal;
 
@@ -22,8 +24,10 @@ pub use cell::{Attrs, Cell, Color};
 pub use color::palette;
 pub use grid::{Cursor, Grid, Line};
 pub use keys::{Key, Modifiers, encode, paste};
+pub use link::{Link, LinkId};
 pub use modes::Modes;
 pub use pty::Notify;
+pub use selection::{Place, Selection, Unit};
 pub use terminal::Terminal;
 
 pub use portable_pty::CommandBuilder;

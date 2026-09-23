@@ -8,6 +8,8 @@
 use std::collections::VecDeque;
 
 use crate::cell::{Attrs, Cell};
+use crate::link::LinkId;
+use crate::selection::{Place, Selection};
 
 /// Where the next character goes, and how it will be styled.
 #[derive(Clone, Copy, Debug)]
@@ -20,6 +22,8 @@ pub struct Cursor {
     pub attrs: Attrs,
     /// Whether the last write filled the final column and wrapping is due.
     pub wrap_pending: bool,
+    /// The link the next character is part of, while a program has one open.
+    pub link: Option<LinkId>,
 }
 
 impl Cursor {
@@ -30,6 +34,7 @@ impl Cursor {
             col: 0,
             attrs: Attrs::DEFAULT,
             wrap_pending: false,
+            link: None,
         }
     }
 }
@@ -39,6 +44,8 @@ impl Cursor {
 pub struct Line {
     /// The cells, one per column.
     cells: Vec<Cell>,
+    /// Whether the text runs on into the next line rather than ending here.
+    wrapped: bool,
 }
 
 impl Line {
@@ -46,6 +53,7 @@ impl Line {
     fn blank(cols: usize, attrs: Attrs) -> Self {
         Self {
             cells: vec![Cell::blank(attrs); cols],
+            wrapped: false,
         }
     }
 
@@ -57,6 +65,11 @@ impl Line {
     /// The cell at `col`, if the row is that wide.
     pub fn cell(&self, col: usize) -> Option<&Cell> {
         self.cells.get(col)
+    }
+
+    /// Whether the text runs on into the next line rather than ending here.
+    pub fn is_wrapped(&self) -> bool {
+        self.wrapped
     }
 
     /// Grows or shrinks this row to `cols` cells.
@@ -89,6 +102,13 @@ pub struct Grid {
     tabs: Vec<bool>,
     /// How many lines the view is scrolled back from the screen.
     offset: usize,
+    /// How many lines have fallen off the far end of the scrollback.
+    ///
+    /// A [`Place`] counts from the first line ever kept, so this is what a
+    /// place is measured against once the oldest lines are gone.
+    dropped: usize,
+    /// What the reader has picked out, if anything.
+    selection: Option<Selection>,
 }
 
 impl Grid {
@@ -110,6 +130,8 @@ impl Grid {
             bottom: rows - 1,
             tabs: tab_stops(cols),
             offset: 0,
+            dropped: 0,
+            selection: None,
         }
     }
 
@@ -182,11 +204,102 @@ impl Grid {
         self.offset = 0;
     }
 
+    /// Opens `link` for the characters written from now on, or closes it.
+    pub fn set_link(&mut self, link: Option<LinkId>) {
+        self.cursor.link = link;
+    }
+
+    /// The place of the cell at `row` and `col` of the view.
+    pub fn place_at(&self, row: usize, col: usize) -> Place {
+        let first = self.dropped + self.scrollback.len() - self.offset;
+        Place::new(first + row, col.min(self.cols - 1))
+    }
+
+    /// The row of the view `line` is shown on, if the view is showing it.
+    pub fn view_row(&self, line: usize) -> Option<usize> {
+        let first = self.dropped + self.scrollback.len() - self.offset;
+        line.checked_sub(first).filter(|row| *row < self.rows)
+    }
+
+    /// The line `line` counts to, while it is still kept.
+    pub fn line(&self, line: usize) -> Option<&Line> {
+        let index = line.checked_sub(self.dropped)?;
+        let history = self.scrollback.len();
+        if index < history {
+            self.scrollback.get(index)
+        } else {
+            self.lines.get(index - history)
+        }
+    }
+
+    /// The first place kept and the last, scrollback and screen together.
+    pub fn extent(&self) -> (Place, Place) {
+        let last = self.dropped + self.scrollback.len() + self.rows - 1;
+        (Place::new(self.dropped, 0), Place::new(last, self.cols - 1))
+    }
+
+    /// The cell before `place`, stepping back onto a line that wrapped into it.
+    pub fn step_back(&self, place: Place) -> Option<Place> {
+        if place.col > 0 {
+            return Some(Place::new(place.line, place.col - 1));
+        }
+        let above = place.line.checked_sub(1)?;
+        self.line(above)
+            .filter(|line| line.is_wrapped())
+            .map(|_| Place::new(above, self.cols - 1))
+    }
+
+    /// The cell after `place`, stepping on to the line this one wraps into.
+    pub fn step_forward(&self, place: Place) -> Option<Place> {
+        if place.col + 1 < self.cols {
+            return Some(Place::new(place.line, place.col + 1));
+        }
+        let wraps = self.line(place.line)?.is_wrapped();
+        let below = place.line + 1;
+        (wraps && self.line(below).is_some()).then_some(Place::new(below, 0))
+    }
+
+    /// Every character of the wrapped line `line` is part of, with its place.
+    ///
+    /// The trailing halves of wide characters are left out, so the text reads
+    /// as it was written while each character still knows where it is drawn.
+    pub fn logical_line(&self, line: usize) -> Vec<(char, Place)> {
+        let mut first = line;
+        while first > 0 && self.line(first - 1).is_some_and(Line::is_wrapped) {
+            first -= 1;
+        }
+        let mut text = Vec::new();
+        let mut number = first;
+        while let Some(row) = self.line(number) {
+            text.extend(
+                row.cells()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cell)| !cell.is_spacer())
+                    .map(|(col, cell)| (cell.ch, Place::new(number, col))),
+            );
+            if !row.is_wrapped() {
+                break;
+            }
+            number += 1;
+        }
+        text
+    }
+
+    /// What the reader has picked out, if anything.
+    pub fn selection(&self) -> Option<Selection> {
+        self.selection
+    }
+
+    /// Picks out `selection`, or lets go of what was picked out.
+    pub fn set_selection(&mut self, selection: Option<Selection>) {
+        self.selection = selection;
+    }
+
     /// Writes `ch` at the cursor, wrapping and advancing as the modes ask.
     pub fn write(&mut self, ch: char, width: usize, wrap: bool, insert: bool) {
         if self.cursor.wrap_pending && wrap {
-            self.cursor.col = 0;
-            self.index();
+            self.wrap_line();
         }
         self.cursor.wrap_pending = false;
 
@@ -194,11 +307,10 @@ impl Grid {
             if !wrap {
                 return;
             }
-            self.cursor.col = 0;
-            self.index();
+            self.wrap_line();
         }
 
-        let attrs = self.cursor.attrs;
+        let (attrs, link) = (self.cursor.attrs, self.cursor.link);
         let (row, col) = (self.cursor.row, self.cursor.col.min(self.cols - 1));
         if insert {
             self.insert_chars(width.max(1));
@@ -209,12 +321,14 @@ impl Grid {
             ch,
             attrs,
             width: width as u8,
+            link,
         };
         if width == 2 && col + 1 < self.cols {
             line.cells[col + 1] = Cell {
                 ch: ' ',
                 attrs,
                 width: 0,
+                link,
             };
         }
 
@@ -225,6 +339,14 @@ impl Grid {
         } else {
             self.cursor.col = col + advance;
         }
+    }
+
+    /// Carries the cursor on to the start of the next row, marking this one as
+    /// running on into it.
+    fn wrap_line(&mut self) {
+        self.lines[self.cursor.row].wrapped = true;
+        self.cursor.col = 0;
+        self.index();
     }
 
     /// Moves the cursor down one row, scrolling the region when it is at its foot.
@@ -369,6 +491,9 @@ impl Grid {
         for cell in span {
             line.cells[cell] = Cell::blank(attrs);
         }
+        if mode != 1 {
+            line.wrapped = false;
+        }
         self.cursor.wrap_pending = false;
     }
 
@@ -388,8 +513,7 @@ impl Grid {
                     self.lines[index] = Line::blank(self.cols, attrs);
                 }
                 if mode == 3 {
-                    self.scrollback.clear();
-                    self.offset = 0;
+                    self.clear_scrollback();
                 }
             }
             _ => {
@@ -479,9 +603,7 @@ impl Grid {
                 .expect("region is on the screen");
             if whole_screen && self.limit > 0 {
                 self.scrollback.push_back(line);
-                while self.scrollback.len() > self.limit {
-                    self.scrollback.pop_front();
-                }
+                self.trim_scrollback();
             }
             self.lines
                 .insert(self.bottom, Line::blank(self.cols, attrs));
@@ -503,6 +625,7 @@ impl Grid {
 
     /// Drops the scrollback and the view's offset into it.
     pub fn clear_scrollback(&mut self) {
+        self.dropped += self.scrollback.len();
         self.scrollback.clear();
         self.offset = 0;
     }
@@ -556,8 +679,15 @@ impl Grid {
         self.cursor.row = self.cursor.row.min(rows - 1);
         self.cursor.col = self.cursor.col.min(cols - 1);
         self.offset = self.offset.min(self.scrollback.len());
+        self.trim_scrollback();
+        self.selection = None;
+    }
+
+    /// Drops the oldest lines of the scrollback until it is within its limit.
+    fn trim_scrollback(&mut self) {
         while self.scrollback.len() > self.limit {
             self.scrollback.pop_front();
+            self.dropped += 1;
         }
     }
 }

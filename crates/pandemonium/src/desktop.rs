@@ -1,9 +1,9 @@
 //! What the editor asks the desktop to do on its behalf.
 //!
-//! Copying to the clipboard and showing a file in the desktop's own file
-//! manager are the two places the window steps outside itself. Both are best
-//! effort: a desktop without a clipboard server or without a file manager is
-//! a desktop where nothing happens, not one where the editor reports an
+//! Copying to the clipboard, showing a file in the desktop's own file manager
+//! and opening an address in its browser are the places the window steps
+//! outside itself. All of them are best effort: a desktop without a clipboard
+//! server or without a file manager is a desktop where nothing happens, not one where the editor reports an
 //! error it cannot do anything about.
 
 use std::path::Path;
@@ -43,24 +43,45 @@ pub fn reveal(path: &Path) {
         return;
     };
 
-    let _ = Command::new(FILE_MANAGER)
+    launch(target.as_os_str());
+}
+
+/// The schemes an address must have for [`browse`] to hand it on.
+const BROWSABLE: [&str; 4] = ["https://", "http://", "ftp://", "mailto:"];
+
+/// Opens `address` in the desktop's browser or mail client.
+///
+/// The address may have come from anything a program printed, so only the
+/// schemes a browser or a mail client answers are handed on: a path, a
+/// `file://` pointing at a launcher, or a target that reads as a flag to the
+/// opener is ignored rather than run.
+pub fn browse(address: &str) {
+    let lower = address.to_ascii_lowercase();
+    if BROWSABLE.iter().any(|scheme| lower.starts_with(scheme)) {
+        launch(std::ffi::OsStr::new(address));
+    }
+}
+
+/// Hands `target` to the desktop's opener, without waiting on it.
+fn launch(target: &std::ffi::OsStr) {
+    let _ = Command::new(OPENER)
         .arg(target)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
 }
 
-/// The program that opens a directory in the desktop's file manager.
+/// The program that opens a directory, a file or an address the desktop's way.
 #[cfg(target_os = "linux")]
-const FILE_MANAGER: &str = "xdg-open";
+const OPENER: &str = "xdg-open";
 
-/// The program that opens a directory in the desktop's file manager.
+/// The program that opens a directory, a file or an address the desktop's way.
 #[cfg(target_os = "macos")]
-const FILE_MANAGER: &str = "open";
+const OPENER: &str = "open";
 
-/// The program that opens a directory in the desktop's file manager.
+/// The program that opens a directory, a file or an address the desktop's way.
 #[cfg(target_os = "windows")]
-const FILE_MANAGER: &str = "explorer";
+const OPENER: &str = "explorer";
 
 /// What is on the system clipboard, if anything readable is.
 ///

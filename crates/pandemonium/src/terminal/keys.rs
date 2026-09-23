@@ -7,6 +7,8 @@
 use pm_vt::{Key, Modifiers};
 use winit::keyboard::{Key as LogicalKey, ModifiersState, NamedKey};
 
+use crate::keymap::Action;
+
 /// The terminal key `key` stands for, if a terminal has one for it.
 pub fn key(key: &LogicalKey) -> Option<Key> {
     let named = match key {
@@ -54,5 +56,29 @@ pub fn modifiers(state: ModifiersState) -> Modifiers {
         control: state.control_key(),
         alt: state.alt_key(),
         shift: state.shift_key(),
+    }
+}
+
+/// The clipboard command `key` stands for in a terminal, if it stands for one.
+///
+/// Control-Shift-C and Control-Shift-V are the terminal's own copy and paste,
+/// Shift-Insert pastes as it always has, and Control-V pastes too, the way it
+/// does everywhere else in the window. Plain Control-C copies only while
+/// something is `selected`; otherwise it is the interrupt it has always been.
+pub fn clipboard(key: &LogicalKey, state: ModifiersState, selected: bool) -> Option<Action> {
+    if state.alt_key() || state.super_key() {
+        return None;
+    }
+    let (control, shift) = (state.control_key(), state.shift_key());
+    let letter = match key {
+        LogicalKey::Character(text) => text.chars().next().map(|ch| ch.to_ascii_lowercase()),
+        LogicalKey::Named(NamedKey::Insert) if shift && !control => return Some(Action::Paste),
+        _ => None,
+    }?;
+    match (letter, control, shift) {
+        ('c', true, true) => Some(Action::Copy),
+        ('c', true, false) if selected => Some(Action::Copy),
+        ('v', true, _) => Some(Action::Paste),
+        _ => None,
     }
 }

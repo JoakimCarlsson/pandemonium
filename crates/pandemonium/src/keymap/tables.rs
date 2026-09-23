@@ -87,17 +87,17 @@ pub const BASE: &[Row] = &[
     (
         "primary+c",
         Action::Copy,
-        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit || pane.kind == terminal",
     ),
     (
         "primary+v",
         Action::Paste,
-        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit || pane.kind == terminal",
     ),
     (
         "primary+a",
         Action::SelectAll,
-        "pane.kind == file || pane.kind == prompt || pane.kind == commit",
+        "pane.kind == file || pane.kind == prompt || pane.kind == commit || pane.kind == terminal",
     ),
     ("primary+l", Action::SelectLine, "pane.kind == file"),
     (

@@ -943,6 +943,12 @@ impl App {
                     .unwrap_or_default();
                 crate::workspace::terminal_menu(&shells, shell)
             }
+            MenuTarget::Screen => {
+                let selected = self
+                    .focused_shell()
+                    .is_some_and(|shell| shell.borrow().selection_span().is_some());
+                crate::terminal::screen_menu(selected)
+            }
         };
         Some((open, items))
     }
