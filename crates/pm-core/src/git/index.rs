@@ -92,18 +92,20 @@ pub fn write_index(root: &Path, path: &Path, content: &str) -> Said {
 }
 
 /// The mode git records for `path`: executable, or an ordinary file.
+#[cfg(unix)]
 fn mode(path: &Path) -> &'static str {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::PermissionsExt;
 
-        let executable = std::fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false);
-        if executable {
-            return "100755";
-        }
-    }
+    let executable = std::fs::metadata(path)
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false);
+    if executable { "100755" } else { "100644" }
+}
+
+/// The mode git records for `path`: always an ordinary file, since the
+/// filesystem keeps no executable bit to read.
+#[cfg(not(unix))]
+fn mode(_path: &Path) -> &'static str {
     "100644"
 }
 
