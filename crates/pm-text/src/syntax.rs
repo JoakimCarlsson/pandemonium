@@ -237,6 +237,60 @@ impl Syntax {
         }
         highlights
     }
+
+    /// Every node of the tree whose kind `keep` accepts, outermost first.
+    pub fn nodes(&self, text: &Rope, keep: &dyn Fn(&str) -> bool) -> Vec<SyntaxNode> {
+        let Some(tree) = self.tree.as_ref() else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        let mut cursor = tree.walk();
+        loop {
+            let node = cursor.node();
+            if node.is_named() && keep(node.kind()) {
+                found.push(SyntaxNode::of(node, text));
+            }
+            if cursor.goto_first_child() {
+                continue;
+            }
+            while !cursor.goto_next_sibling() {
+                if !cursor.goto_parent() {
+                    return found;
+                }
+            }
+        }
+    }
+}
+
+/// One node of a syntax tree, as the text it spans.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyntaxNode {
+    /// What the grammar calls it: `function_item`, `class_declaration`.
+    pub kind: String,
+    /// The text it spans.
+    pub range: Range<Position>,
+    /// The text its `body` spans, when the grammar gives it one.
+    pub body: Option<Range<Position>>,
+}
+
+impl SyntaxNode {
+    /// `node` as the text of `text` it spans.
+    fn of(node: Node<'_>, text: &Rope) -> Self {
+        let span =
+            |node: Node<'_>| position(text, node.start_byte())..position(text, node.end_byte());
+        Self {
+            kind: node.kind().to_owned(),
+            range: span(node),
+            body: node.child_by_field_name("body").map(span),
+        }
+    }
+}
+
+/// The position the byte `byte` of `text` falls at.
+fn position(text: &Rope, byte: usize) -> Position {
+    let offset = text.byte_to_char(byte.min(text.len_bytes()));
+    let line = text.char_to_line(offset);
+    Position::new(line, offset - text.line_to_char(line))
 }
 
 /// Writes `highlight` over the characters `range` covers.

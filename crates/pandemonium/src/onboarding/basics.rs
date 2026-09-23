@@ -18,6 +18,13 @@ pub(super) fn basics(theme: &Theme, preferences: &Preferences) -> Div<Message> {
         .child(keymap_section(theme, preferences))
         .child(switch_field(
             theme,
+            Some("Vim Mode"),
+            "Coming from vim? Modal editing is built in, not an extension",
+            preferences.vim_mode,
+            Message::TogglePreference(Preference::VimMode),
+        ))
+        .child(switch_field(
+            theme,
             Some("Format on Save"),
             "Lay a file out the way its formatter would every time it is written",
             preferences.format_on_save,

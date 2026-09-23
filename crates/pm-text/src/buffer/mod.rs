@@ -331,6 +331,14 @@ impl Buffer {
         highlights
     }
 
+    /// Every node of the syntax tree whose kind `keep` accepts, outermost
+    /// first; none when the language has no grammar.
+    pub fn syntax_nodes(&self, keep: &dyn Fn(&str) -> bool) -> Vec<crate::syntax::SyntaxNode> {
+        self.syntax
+            .as_ref()
+            .map_or_else(Vec::new, |syntax| syntax.nodes(&self.text, keep))
+    }
+
     /// The bracket matching the one at or before the cursor, if there is one.
     pub fn matching_bracket(&self) -> Option<(Position, Position)> {
         let head = self.selection.head;
@@ -357,18 +365,23 @@ impl Buffer {
     }
 
     /// How many characters the buffer holds.
-    pub(crate) fn len_chars(&self) -> usize {
+    pub fn len_chars(&self) -> usize {
         self.text.len_chars()
     }
 
+    /// The character `offset` characters in, line breaks counted.
+    pub fn char_at_offset(&self, offset: usize) -> Option<char> {
+        (offset < self.text.len_chars()).then(|| self.text.char(offset))
+    }
+
     /// The character offset `position` comes to.
-    pub(crate) fn char_of(&self, position: Position) -> usize {
+    pub fn char_of(&self, position: Position) -> usize {
         let position = self.clamped(position);
         self.text.line_to_char(position.line) + position.column
     }
 
     /// The place in the text `offset` characters in comes to.
-    pub(crate) fn position_of(&self, offset: usize) -> Position {
+    pub fn position_of(&self, offset: usize) -> Position {
         let offset = offset.min(self.text.len_chars());
         let line = self.text.char_to_line(offset);
         Position::new(line, offset - self.text.line_to_char(line))

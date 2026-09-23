@@ -99,6 +99,10 @@ pub enum Preference {
     BufferLineHeight,
     /// The keymap the editor starts from.
     Keymap,
+    /// Whether editing starts in vim mode.
+    VimMode,
+    /// How much vim's unnamed register shares with the system clipboard.
+    VimClipboard,
     /// How wide a step of indentation is where a file does not say.
     TabSize,
     /// Whether a step of indentation is a tab where a file does not say.
@@ -165,6 +169,18 @@ pub enum WorktreePaths {
     Copied,
 }
 
+/// One of the reader's own vim bindings: keys written the way Zed's vim
+/// keymap writes them, the action they do and when.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VimBinding {
+    /// The keystrokes, apart by spaces: `g h`, `ctrl-w v`.
+    pub keys: String,
+    /// The action, as Zed names it: `Hover`, `NextWordStart`.
+    pub action: String,
+    /// When it applies: `normal`, `visual || operator`, `op=d`.
+    pub when: String,
+}
+
 /// Everything the reader decides about how the editor draws and behaves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
@@ -178,6 +194,12 @@ pub struct Preferences {
     pub fonts: Fonts,
     /// The keymap the editor starts from.
     pub keymap: BaseKeymap,
+    /// Whether editing starts in vim mode.
+    pub vim_mode: bool,
+    /// How much vim's unnamed register shares with the system clipboard.
+    pub vim_clipboard: pm_vim::ClipboardUse,
+    /// The reader's own vim bindings, laid over Zed's.
+    pub vim_bindings: Vec<VimBinding>,
     /// How wide a step of indentation is where a file does not say.
     pub tab_size: usize,
     /// Whether a step of indentation is a tab where a file does not say.
@@ -213,6 +235,9 @@ impl Default for Preferences {
             theme_overrides: ThemeOverrides::default(),
             fonts: Fonts::default(),
             keymap: BaseKeymap::default(),
+            vim_mode: false,
+            vim_clipboard: pm_vim::ClipboardUse::default(),
+            vim_bindings: Vec::new(),
             tab_size: Indent::default().width,
             hard_tabs: false,
             display: Display::default(),
@@ -254,6 +279,7 @@ macro_rules! flags {
 }
 
 flags! {
+    VimMode => vim_mode,
     HardTabs => hard_tabs,
     LineNumbers => display.line_numbers,
     RelativeLineNumbers => display.relative_line_numbers,
@@ -298,6 +324,8 @@ fields! {
     BufferFontWeight => fonts.buffer_weight,
     BufferLineHeight => fonts.buffer_line_height,
     Keymap => keymap,
+    VimMode => vim_mode,
+    VimClipboard => vim_clipboard,
     TabSize => tab_size,
     HardTabs => hard_tabs,
     LineNumbers => display.line_numbers,
@@ -340,6 +368,7 @@ impl Preferences {
             }
             Message::StepPreference(preference, step) => self.step(preference, step),
             Message::SetCursorShape(shape) => self.display.cursor_shape = shape,
+            Message::SetVimClipboard(sharing) => self.vim_clipboard = sharing,
             Message::SetWrapGuide(column) => self.display.wrap_guide = column,
             Message::RemoveWorktreePath(list, index) => {
                 let paths = self.paths_mut(list);

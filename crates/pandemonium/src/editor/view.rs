@@ -110,6 +110,9 @@ pub struct BufferView<M> {
     link: Option<Range<Position>>,
     /// The name the editor is saying something about, while it says it.
     hovered: Option<Range<Position>>,
+    /// The matches of modal editing's search, lit whether or not the search
+    /// bar is open.
+    found: Vec<Range<Position>>,
     /// Whether the caret is solid this instant, for its blink.
     caret: bool,
     /// Whether the pane is the text and nothing else.
@@ -136,6 +139,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_menu: None,
         link: None,
         hovered: None,
+        found: Vec::new(),
         caret: true,
         plain: false,
         display: Display::default(),
@@ -202,6 +206,12 @@ impl<M> BufferView<M> {
     /// underlined, and under a pointer that says it can be pressed.
     pub fn link(mut self, span: Option<Range<Position>>) -> Self {
         self.link = span;
+        self
+    }
+
+    /// Lights `found`, the matches of modal editing's search.
+    pub fn found(mut self, found: Vec<Range<Position>>) -> Self {
+        self.found = found;
         self
     }
 
@@ -359,7 +369,7 @@ impl<M> BufferView<M> {
     /// Marks the line the cursor is on, when nothing is selected.
     fn paint_current_line(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
         let (layout, selection) = (painting.layout, painting.selection);
-        if !selection.is_empty() || !self.focused {
+        if !selection.is_empty() || !self.focused || self.display.whole_lines {
             return;
         }
         let Some(top) = painting.top_of(selection.head.line) else {
@@ -402,6 +412,14 @@ impl<M> BufferView<M> {
 
     /// Lights up every match of what is being looked for on screen.
     fn paint_search(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let found = painting
+            .theme
+            .colors
+            .warning
+            .alpha(painting.theme.emphasis.search);
+        for span in &self.found {
+            self.wash(span.clone(), found, painting, cx);
+        }
         if !painting.search.is_open() {
             return;
         }
@@ -615,10 +633,19 @@ impl<M> BufferView<M> {
             .alpha(painting.theme.emphasis.selection);
 
         for selection in &painting.selections {
-            if selection.is_empty() || !selection.touches(line) {
+            if !selection.touches(line) || (selection.is_empty() && !self.display.whole_lines) {
                 continue;
             }
-            let (start, end) = (selection.start(), selection.end());
+            let (start, end) = match self.display.whole_lines {
+                true => (
+                    Position::new(selection.start().line, 0),
+                    Position::new(
+                        selection.end().line,
+                        painting.buffer.line_len(selection.end().line) + 1,
+                    ),
+                ),
+                false => (selection.start(), selection.end()),
+            };
             let from = if start.line == line {
                 start
             } else {
@@ -944,6 +971,24 @@ impl<M> BufferView<M> {
         ));
     }
 
+    /// The character the cursor of `selection` is drawn over.
+    ///
+    /// A block stands on a character rather than between two, so at the far
+    /// end of a selection running forward it stands on the last character
+    /// selected rather than on the one after it. A selection of whole lines
+    /// has its ends where the cursors are, so it needs no such step back.
+    fn cursor_cell(&self, selection: &Selection) -> Position {
+        let head = selection.head;
+        match self.display.cursor_shape == CursorShape::Block
+            && !self.display.whole_lines
+            && head > selection.anchor
+            && head.column > 0
+        {
+            true => Position::new(head.line, head.column - 1),
+            false => head,
+        }
+    }
+
     /// Draws every cursor: solid while the pane is focused, faint otherwise.
     fn paint_cursor(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
         if !self.caret {
@@ -957,7 +1002,7 @@ impl<M> BufferView<M> {
         };
 
         for selection in &painting.selections {
-            let head = selection.head;
+            let head = self.cursor_cell(selection);
             let Some(top) = painting.top_of(head.line) else {
                 continue;
             };

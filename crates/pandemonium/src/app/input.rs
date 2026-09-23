@@ -66,8 +66,8 @@ impl App {
     ///
     /// The order is what is nearest the reader first: a list open over the
     /// screen, then the completions offered beside the cursor, then a
-    /// terminal, then the window's own chords, then the search bar, then the
-    /// text itself. Only a key nothing wanted becomes focus movement.
+    /// terminal, then modal editing, then the window's own chords, then the
+    /// search bar, then the text itself. Only a key nothing wanted becomes focus movement.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
         if self.send_to_prompt(event) {
@@ -80,6 +80,9 @@ impl App {
             return self.request_redraw();
         }
         if self.send_to_terminal(event) {
+            return self.request_redraw();
+        }
+        if self.send_to_vim(event) {
             return self.request_redraw();
         }
         if let Some(chord) = keymap::chord(event, self.modifiers) {
@@ -184,7 +187,9 @@ impl App {
     ///
     /// Only the keys that work the list are taken: everything else goes on
     /// into the buffer and narrows the list afterwards, which is what makes
-    /// completion happen beside the typing rather than instead of it.
+    /// completion happen beside the typing rather than instead of it. With
+    /// modal editing on, Escape closes the list and goes on to leave insert
+    /// mode as well, so one Escape is enough.
     fn send_to_completions(&mut self, event: &KeyEvent) -> bool {
         if self.completions.is_none() {
             return false;
@@ -192,7 +197,7 @@ impl App {
         let step = match event.logical_key.as_ref() {
             Key::Named(NamedKey::Escape) => {
                 self.completions = None;
-                return true;
+                return !self.preferences.vim_mode;
             }
             Key::Named(NamedKey::ArrowUp) => -1,
             Key::Named(NamedKey::ArrowDown) => 1,
@@ -450,7 +455,7 @@ impl App {
     }
 
     /// Whether the modifiers held mark this keypress as the window's own.
-    fn is_window_chord(&self) -> bool {
+    pub(super) fn is_window_chord(&self) -> bool {
         self.modifiers.super_key() || (self.modifiers.control_key() && self.modifiers.shift_key())
     }
 

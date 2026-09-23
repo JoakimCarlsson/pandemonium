@@ -11,6 +11,7 @@ mod commands;
 mod drag;
 mod input;
 mod language;
+mod modal;
 mod panes;
 mod picker;
 mod places;
@@ -138,6 +139,9 @@ pub struct App {
     settings: Settings,
     /// The keymap a keypress is resolved against.
     resolver: Resolver,
+    /// Modal editing: the registers, the last change and the macros every
+    /// file shares.
+    vim: pm_vim::Vim,
     /// The modifiers held down right now.
     modifiers: ModifiersState,
     /// Last pointer position in logical window coordinates.
@@ -314,6 +318,7 @@ impl App {
             onboarded: restored.onboarded,
             settings: Settings::default(),
             resolver: Resolver::default(),
+            vim: pm_vim::Vim::default(),
             modifiers: ModifiersState::default(),
             pointer: None,
             last_titlebar_click: None,
@@ -1850,6 +1855,7 @@ impl App {
                 layout,
                 Panes {
                     editor,
+                    recording: self.preferences.vim_mode.then(|| self.vim.recording()),
                     showing,
                     drop,
                     carried,

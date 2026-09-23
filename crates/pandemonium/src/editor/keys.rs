@@ -79,6 +79,53 @@ pub fn edit(key: &Key, modifiers: ModifiersState, rows: usize) -> Option<Edit> {
     }
 }
 
+/// `key` as modal editing reads it, given the modifiers held with it.
+///
+/// Alt and the platform key are the window's, so a key held with either is
+/// none of modal editing's business; Ctrl with Alt is how some layouts type
+/// a character, and counts as typing it.
+pub fn keystroke(key: &Key, modifiers: ModifiersState) -> Option<pm_vim::Keystroke> {
+    let composed = modifiers.control_key() && modifiers.alt_key();
+    if modifiers.super_key() || (modifiers.alt_key() && !composed) {
+        return None;
+    }
+    let pressed = match key.as_ref() {
+        Key::Character(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => pm_vim::Key::Char(ch),
+                _ => return None,
+            }
+        }
+        Key::Named(NamedKey::Space) => pm_vim::Key::Char(' '),
+        Key::Named(NamedKey::Escape) => pm_vim::Key::Escape,
+        Key::Named(NamedKey::Enter) => pm_vim::Key::Enter,
+        Key::Named(NamedKey::Backspace) => pm_vim::Key::Backspace,
+        Key::Named(NamedKey::Delete) => pm_vim::Key::Delete,
+        Key::Named(NamedKey::Insert) => pm_vim::Key::Insert,
+        Key::Named(NamedKey::Tab) => pm_vim::Key::Tab,
+        Key::Named(NamedKey::ArrowLeft) => pm_vim::Key::Left,
+        Key::Named(NamedKey::ArrowRight) => pm_vim::Key::Right,
+        Key::Named(NamedKey::ArrowUp) => pm_vim::Key::Up,
+        Key::Named(NamedKey::ArrowDown) => pm_vim::Key::Down,
+        Key::Named(NamedKey::Home) => pm_vim::Key::Home,
+        Key::Named(NamedKey::End) => pm_vim::Key::End,
+        Key::Named(NamedKey::PageUp) => pm_vim::Key::PageUp,
+        Key::Named(NamedKey::PageDown) => pm_vim::Key::PageDown,
+        _ => return None,
+    };
+    let ctrl = modifiers.control_key() && !composed;
+    let pressed = match (pressed, ctrl) {
+        (pm_vim::Key::Char(ch), true) => pm_vim::Key::Char(ch.to_ascii_lowercase()),
+        (pressed, _) => pressed,
+    };
+    Some(pm_vim::Keystroke {
+        key: pressed,
+        ctrl,
+        shift: modifiers.shift_key() && !matches!(pressed, pm_vim::Key::Char(_)),
+    })
+}
+
 /// What typing `text` asks for: one character closes its pair, more do not.
 fn typed(text: &str) -> Edit {
     let mut chars = text.chars();

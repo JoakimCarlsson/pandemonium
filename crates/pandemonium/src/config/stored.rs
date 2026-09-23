@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::fonts::Fonts;
 use crate::config::theme::StoredOverrides;
-use crate::config::{Preferences, Restored, ThemeMode, WindowState};
+use crate::config::{Preferences, Restored, ThemeMode, VimBinding, WindowState};
 use crate::editor::{CursorShape, Display};
 use crate::keymap::BaseKeymap;
 use crate::panes::Saved;
@@ -52,6 +52,13 @@ pub(super) struct Stored {
     terminal_scrollback: Option<usize>,
     /// The keymap the editor starts from.
     keymap: Option<BaseKeymap>,
+    /// Whether editing starts in vim mode.
+    vim_mode: Option<bool>,
+    /// How much vim's unnamed register shares with the system clipboard.
+    vim_clipboard: Option<StoredClipboardUse>,
+    /// The reader's own vim bindings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vim_keymap: Option<Vec<StoredVimBinding>>,
     /// How wide a step of indentation is where a file does not say.
     tab_size: Option<usize>,
     /// Whether a step of indentation is a tab where a file does not say.
@@ -315,6 +322,13 @@ impl Stored {
                     .unwrap_or(defaults.fonts.terminal_size),
             },
             keymap: self.keymap.unwrap_or(defaults.keymap),
+            vim_mode: self.vim_mode.unwrap_or(defaults.vim_mode),
+            vim_clipboard: self
+                .vim_clipboard
+                .map_or(defaults.vim_clipboard, StoredClipboardUse::into_use),
+            vim_bindings: self.vim_keymap.as_ref().map_or_else(Vec::new, |bindings| {
+                bindings.iter().map(StoredVimBinding::to_binding).collect()
+            }),
             tab_size: self.tab_size.unwrap_or(defaults.tab_size),
             hard_tabs: self.hard_tabs.unwrap_or(defaults.hard_tabs),
             display: Display {
@@ -335,6 +349,7 @@ impl Stored {
                 cursor_shape: self
                     .cursor_shape
                     .map_or(defaults.display.cursor_shape, StoredCursorShape::into_shape),
+                whole_lines: false,
             },
             inlay_hints: self.inlay_hints.unwrap_or(defaults.inlay_hints),
             cursor_blink: self.cursor_blink.unwrap_or(defaults.cursor_blink),
@@ -387,6 +402,15 @@ impl Stored {
             terminal_font_size: Some(fonts.terminal_size),
             terminal_scrollback: Some(preferences.terminal_scrollback),
             keymap: Some(preferences.keymap),
+            vim_mode: Some(preferences.vim_mode),
+            vim_clipboard: Some(StoredClipboardUse::of(preferences.vim_clipboard)),
+            vim_keymap: (!preferences.vim_bindings.is_empty()).then(|| {
+                preferences
+                    .vim_bindings
+                    .iter()
+                    .map(StoredVimBinding::of)
+                    .collect()
+            }),
             tab_size: Some(preferences.tab_size),
             hard_tabs: Some(preferences.hard_tabs),
             line_numbers: Some(display.line_numbers),
@@ -465,6 +489,76 @@ impl StoredSidebarView {
             Self::Changes => SidebarView::Changes,
         }
     }
+}
+
+/// How much vim's unnamed register shares with the system clipboard, as it
+/// is written down.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredClipboardUse {
+    /// Every yank and delete.
+    Always,
+    /// Only yanks.
+    OnYank,
+    /// Nothing but `"+` and `"*`.
+    Never,
+}
+
+impl StoredClipboardUse {
+    /// The written name of `sharing`.
+    fn of(sharing: pm_vim::ClipboardUse) -> Self {
+        match sharing {
+            pm_vim::ClipboardUse::Always => Self::Always,
+            pm_vim::ClipboardUse::OnYank => Self::OnYank,
+            pm_vim::ClipboardUse::Never => Self::Never,
+        }
+    }
+
+    /// The choice the written name stands for.
+    fn into_use(self) -> pm_vim::ClipboardUse {
+        match self {
+            Self::Always => pm_vim::ClipboardUse::Always,
+            Self::OnYank => pm_vim::ClipboardUse::OnYank,
+            Self::Never => pm_vim::ClipboardUse::Never,
+        }
+    }
+}
+
+/// One of the reader's vim bindings, as it is written down.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct StoredVimBinding {
+    /// The keystrokes.
+    keys: String,
+    /// The action.
+    action: String,
+    /// When it applies, normal mode when left out.
+    #[serde(default = "normal_mode")]
+    when: String,
+}
+
+impl StoredVimBinding {
+    /// The written form of `binding`.
+    fn of(binding: &VimBinding) -> Self {
+        Self {
+            keys: binding.keys.clone(),
+            action: binding.action.clone(),
+            when: binding.when.clone(),
+        }
+    }
+
+    /// The binding the written form stands for.
+    fn to_binding(&self) -> VimBinding {
+        VimBinding {
+            keys: self.keys.clone(),
+            action: self.action.clone(),
+            when: self.when.clone(),
+        }
+    }
+}
+
+/// The clause a binding written without one applies in.
+fn normal_mode() -> String {
+    "normal".to_owned()
 }
 
 /// How the caret is drawn, as it is written down.
