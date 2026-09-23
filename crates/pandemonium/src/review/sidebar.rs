@@ -16,6 +16,7 @@ use pm_ui::{
 use crate::message::Message;
 use crate::review::action::{primary_face, primary_message};
 use crate::review::commit_editor;
+use crate::review::graph::{graph_cell, lane_color};
 use crate::review::store::{Group, Primary, Review};
 
 /// Window controls and saved layout for the Source Control sidebar.
@@ -123,7 +124,13 @@ fn history_graph(theme: &Theme, review: &Review, controls: SourceControlControls
         .iter()
         .skip(review.history_scroll(controls.history_all, visible))
         .take(visible)
-        .cloned();
+        .cloned()
+        .collect::<Vec<_>>();
+    let columns = commits
+        .iter()
+        .map(|commit| commit.lanes.width)
+        .max()
+        .unwrap_or(1);
     let open = controls.history_graph_open;
     v_flex()
         .w_full()
@@ -178,34 +185,77 @@ fn history_graph(theme: &Theme, review: &Review, controls: SourceControlControls
                 ),
         )
         .when(open, |graph| {
-            graph.children(commits.into_iter().map(|commit| {
-                h_flex()
-                    .w_full()
-                    .h_px(theme.size.row)
-                    .px(1.5)
-                    .gap(0.75)
-                    .items_center()
-                    .overflow_hidden()
-                    .child(
-                        text(commit.graph)
-                            .text_xs()
-                            .font_mono()
-                            .color(theme.colors.accent),
-                    )
-                    .child(
-                        text(commit.id)
-                            .text_xs()
-                            .font_mono()
-                            .color(theme.colors.text_muted),
-                    )
-                    .child(
-                        text(commit.summary)
-                            .text_xs()
-                            .font_light()
-                            .color(theme.colors.text),
-                    )
-            }))
+            graph.children(
+                commits
+                    .into_iter()
+                    .map(|commit| history_row(theme, commit, columns)),
+            )
         })
+}
+
+/// How many branch and tag pills a commit row draws before counting the rest.
+const SHOWN_REFS: usize = 2;
+
+/// Builds one commit of the graph: its lanes, its references and its summary.
+fn history_row(theme: &Theme, commit: pm_core::Commit, columns: usize) -> Div<Message> {
+    let color = lane_color(theme, commit.lanes.color);
+    h_flex()
+        .w_full()
+        .h_px(theme.size.row)
+        .px(1.5)
+        .gap(0.75)
+        .items_center()
+        .overflow_hidden()
+        .child(graph_cell(theme, commit.lanes, columns))
+        .child(
+            text(commit.id)
+                .text_xs()
+                .font_mono()
+                .color(theme.colors.text_muted),
+        )
+        .children(
+            commit
+                .refs
+                .iter()
+                .take(SHOWN_REFS)
+                .map(|name| ref_badge(theme, name, color)),
+        )
+        .when(commit.refs.len() > SHOWN_REFS, |row| {
+            row.child(
+                text(format!("+{}", commit.refs.len() - SHOWN_REFS))
+                    .text_xs()
+                    .color(theme.colors.text_subtle),
+            )
+        })
+        .child(
+            text(commit.summary)
+                .text_xs()
+                .font_light()
+                .color(theme.colors.text),
+        )
+}
+
+/// Builds the pill naming a branch or tag that points at a commit.
+///
+/// Git decorates the checked out branch as `HEAD -> name` and a tag as
+/// `tag: name`; the pill says the name, and the branch HEAD is on is the
+/// one drawn solid.
+fn ref_badge(theme: &Theme, decorated: &str, color: Rgba) -> Div<Message> {
+    let (name, current) = match decorated.strip_prefix("HEAD -> ") {
+        Some(branch) => (branch, true),
+        None => (decorated.strip_prefix("tag: ").unwrap_or(decorated), false),
+    };
+    h_flex()
+        .h_px(theme.size.row - 8.0)
+        .px(1)
+        .items_center()
+        .rounded(theme.radius.sm)
+        .bg(if current { color } else { color.alpha(0.18) })
+        .child(text(name.to_owned()).text_xs().color(if current {
+            theme.colors.background
+        } else {
+            color
+        }))
 }
 
 /// Builds the current history-reference filter beside the Graph actions.

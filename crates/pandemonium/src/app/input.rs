@@ -672,7 +672,7 @@ impl App {
                     .max(1.0) as usize;
                 let all = self.history_all;
                 if let Some(review) = self.review_mut() {
-                    review.scroll_history(all, rows, visible);
+                    review.scroll_history(all, -rows, visible);
                 }
                 self.request_redraw();
                 return;

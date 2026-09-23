@@ -8,15 +8,18 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use crate::git::graph::{Lanes, lanes};
 use crate::git::run::{Said, answer, git};
 
 /// One commit in the recent history of a worktree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Commit {
-    /// The graph lane marks Git draws before the commit.
-    pub graph: String,
+    /// How the commit's row of the graph is drawn.
+    pub lanes: Lanes,
     /// The abbreviated object name.
     pub id: String,
+    /// The branches and tags pointing at the commit, as git decorates them.
+    pub refs: Vec<String>,
     /// The first line of the commit message.
     pub summary: String,
 }
@@ -55,31 +58,76 @@ pub fn last_message(root: &Path) -> Option<String> {
 }
 
 /// The most recent `limit` commits in the worktree at `root`.
+///
+/// Commits come in date order, which still lists every child before its
+/// parents — the one thing laying out the lanes needs of the order.
 pub fn history(root: &Path, limit: usize, all: bool) -> Vec<Commit> {
     let count = format!("-{}", limit.max(1));
     let mut arguments: Vec<&OsStr> = vec![
         OsStr::new("log"),
         OsStr::new(&count),
-        OsStr::new("--graph"),
-        OsStr::new("--pretty=format:%h%x09%s"),
+        OsStr::new("--date-order"),
+        OsStr::new("--pretty=format:%H%x09%P%x09%h%x09%D%x09%s"),
     ];
     if all {
         arguments.push(OsStr::new("--all"));
     }
-    answer(root, arguments)
-        .map(|commits| {
-            commits
-                .lines()
-                .filter_map(|line| {
-                    let (lane, summary) = line.split_once('\t')?;
-                    let (graph, id) = lane.rsplit_once(' ')?;
-                    Some(Commit {
-                        graph: graph.to_owned(),
-                        id: id.to_owned(),
-                        summary: summary.to_owned(),
-                    })
-                })
-                .collect()
+    let listed: Vec<Listed> = answer(root, arguments)
+        .map(|said| said.lines().filter_map(listed).collect())
+        .unwrap_or_default();
+    let rows = lanes(
+        listed
+            .iter()
+            .map(|commit| (commit.object.as_str(), commit.parents.as_slice())),
+    );
+    listed
+        .into_iter()
+        .zip(rows)
+        .map(|(commit, lanes)| Commit {
+            lanes,
+            id: commit.id,
+            refs: commit.refs,
+            summary: commit.summary,
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+/// One line of the history as git lists it, before the lanes are laid out.
+struct Listed {
+    /// The full object name.
+    object: String,
+    /// The full object names of the parents, first parent first.
+    parents: Vec<String>,
+    /// The abbreviated object name.
+    id: String,
+    /// The branches and tags pointing at the commit.
+    refs: Vec<String>,
+    /// The first line of the commit message.
+    summary: String,
+}
+
+/// Reads one tab-separated line of the history.
+fn listed(line: &str) -> Option<Listed> {
+    let mut fields = line.splitn(5, '\t');
+    let object = fields.next()?.to_owned();
+    let parents = fields
+        .next()?
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    let id = fields.next()?.to_owned();
+    let refs = fields
+        .next()?
+        .split(", ")
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let summary = fields.next().unwrap_or_default().to_owned();
+    Some(Listed {
+        object,
+        parents,
+        id,
+        refs,
+        summary,
+    })
 }
