@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::color::Rgba;
 use crate::geometry::{Point, Rect, Size};
+use crate::image::Image;
 use crate::svg::Svg;
 use crate::text::ShapedRun;
 
@@ -88,10 +89,19 @@ pub struct IconRun {
     pub rotation: f32,
 }
 
+/// One picture placed on the screen, in its own colours.
+#[derive(Clone)]
+pub struct ImageRun {
+    /// The rectangle the picture is stretched over.
+    pub bounds: Rect,
+    /// The picture to draw.
+    pub image: Image,
+}
+
 /// Where a primitive sits in the stack of things drawn over each other.
 ///
-/// Within one layer quads are drawn before text, which is what a background
-/// behind a label wants. Between layers nothing of a lower one is drawn over
+/// Within one layer quads are drawn before pictures and pictures before text,
+/// which is what a background behind a label wants. Between layers nothing of a lower one is drawn over
 /// anything of a higher one, which is what a menu over a screen wants.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Layer(pub u32);
@@ -100,7 +110,8 @@ pub struct Layer(pub u32);
 ///
 /// A primitive is drawn over the ones pushed before it in its own layer, and
 /// over everything in every layer below it. Within a layer quads come before
-/// text; drawing a quad over text means opening a layer for it.
+/// pictures and pictures before text; drawing a quad over text means opening
+/// a layer for it.
 pub struct DrawList {
     /// Quads with the clip and layer in force when each was pushed.
     quads: Vec<(Quad, Rect, Layer)>,
@@ -108,6 +119,8 @@ pub struct DrawList {
     texts: Vec<(TextRun, Rect, Layer)>,
     /// Icons with the clip and layer in force when each was pushed.
     icons: Vec<(IconRun, Rect, Layer)>,
+    /// Pictures with the clip and layer in force when each was pushed.
+    images: Vec<(ImageRun, Rect, Layer)>,
     /// The clip stack, never empty; the last entry is in force.
     clips: Vec<Rect>,
     /// The layer primitives are going into.
@@ -125,6 +138,7 @@ impl DrawList {
             quads: Vec::new(),
             texts: Vec::new(),
             icons: Vec::new(),
+            images: Vec::new(),
             clips: vec![Rect::new(Point::default(), size)],
             layer: Layer::default(),
             layers: Vec::new(),
@@ -137,6 +151,7 @@ impl DrawList {
         self.quads.clear();
         self.texts.clear();
         self.icons.clear();
+        self.images.clear();
         self.clips.clear();
         self.clips.push(Rect::new(Point::default(), size));
         self.layer = Layer::default();
@@ -221,6 +236,16 @@ impl DrawList {
         ));
     }
 
+    /// Adds `image` stretched over `bounds`.
+    pub fn image(&mut self, bounds: Rect, image: Image) {
+        if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+            return;
+        }
+        let clip = self.clip();
+        self.images
+            .push((ImageRun { bounds, image }, clip, self.layer));
+    }
+
     /// The quads to draw, each with its clip rectangle and layer.
     pub(crate) fn quads(&self) -> &[(Quad, Rect, Layer)] {
         &self.quads
@@ -239,5 +264,10 @@ impl DrawList {
     /// The icons to draw, each with its clip rectangle.
     pub(crate) fn icons(&self) -> &[(IconRun, Rect, Layer)] {
         &self.icons
+    }
+
+    /// The pictures to draw, each with its clip rectangle and layer.
+    pub(crate) fn images(&self) -> &[(ImageRun, Rect, Layer)] {
+        &self.images
     }
 }

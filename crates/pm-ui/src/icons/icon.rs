@@ -47,6 +47,10 @@ pub enum IconName {
     More,
     /// A file.
     File,
+    /// A file read as it renders rather than as its text.
+    Eye,
+    /// A picture.
+    Image,
     /// The branch a worktree is on.
     GitBranch,
     /// A commit.
@@ -106,6 +110,8 @@ impl IconName {
             Self::Close => Svg::new("close", include_icon!("close")),
             Self::More => Svg::new("more", include_icon!("more")),
             Self::File => Svg::new("file", include_icon!("file")),
+            Self::Eye => Svg::new("eye", include_icon!("eye")),
+            Self::Image => Svg::new("image", include_icon!("image")),
             Self::GitBranch => Svg::new("git_branch", include_icon!("git_branch")),
             Self::GitCommit => Svg::new("git_commit", include_icon!("git_commit")),
             Self::GitCompare => Svg::new("git_compare", include_icon!("git_compare")),

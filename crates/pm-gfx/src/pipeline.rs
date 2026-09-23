@@ -1,7 +1,7 @@
 //! The instance layouts the shaders read, and the pipelines that draw them.
 //!
-//! Both pipelines are the same shape: six vertices a quad, one instance per
-//! thing drawn, one uniform holding the viewport. Adding a third is adding an
+//! Every pipeline is the same shape: six vertices a quad, one instance per
+//! thing drawn, one uniform holding the viewport. Adding another is adding an
 //! instance struct and a shader here, never a render pass in a caller.
 
 /// The viewport size every shader turns pixels into clip space with.
@@ -77,6 +77,27 @@ impl GlyphInstance {
         4 => Float32x4,
         5 => Float32x4,
         6 => Float32x4,
+    ];
+}
+
+/// One picture, in physical pixels, as the image pipeline reads it.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ImageInstance {
+    /// Top-left corner of the rectangle the picture is stretched over.
+    pub(crate) origin: [f32; 2],
+    /// Extent of that rectangle.
+    pub(crate) size: [f32; 2],
+    /// Clip rectangle as left, top, right, bottom.
+    pub(crate) clip: [f32; 4],
+}
+
+impl ImageInstance {
+    /// The vertex attributes the image shader expects, in declaration order.
+    pub(crate) const ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
+        0 => Float32x2,
+        1 => Float32x2,
+        2 => Float32x4,
     ];
 }
 

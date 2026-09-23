@@ -10,8 +10,11 @@ use std::ops::Range;
 use crate::atlas::GlyphAtlas;
 use crate::draw::{DrawList, Layer};
 use crate::geometry::{Rect, Size};
-use crate::pipeline::{GlyphInstance, InstanceBuffer, QuadInstance, Viewport, build_pipeline};
+use crate::pipeline::{
+    GlyphInstance, ImageInstance, InstanceBuffer, QuadInstance, Viewport, build_pipeline,
+};
 use crate::text::TextSystem;
+use crate::textures::Textures;
 
 /// The colour the window is cleared to before anything is drawn.
 const GROUND: wgpu::Color = wgpu::Color {
@@ -37,6 +40,9 @@ pub struct Renderer {
     quad_instances: InstanceBuffer,
     glyph_pipeline: wgpu::RenderPipeline,
     glyph_instances: InstanceBuffer,
+    textures: Textures,
+    image_pipeline: wgpu::RenderPipeline,
+    image_instances: InstanceBuffer,
 }
 
 impl Renderer {
@@ -189,6 +195,17 @@ impl Renderer {
             &GlyphInstance::ATTRIBUTES,
         );
 
+        let textures = Textures::new(&device);
+        let image_pipeline = build_pipeline(
+            &device,
+            format,
+            "image",
+            include_str!("shaders/image.wgsl"),
+            &[Some(&viewport_layout), Some(textures.layout())],
+            size_of::<ImageInstance>() as u64,
+            &ImageInstance::ATTRIBUTES,
+        );
+
         Self {
             surface,
             device,
@@ -204,6 +221,9 @@ impl Renderer {
             quad_instances: InstanceBuffer::new("quad instances"),
             glyph_pipeline,
             glyph_instances: InstanceBuffer::new("glyph instances"),
+            textures,
+            image_pipeline,
+            image_instances: InstanceBuffer::new("image instances"),
         }
     }
 
@@ -256,6 +276,10 @@ impl Renderer {
             .upload(&self.device, &self.queue, bytemuck::cast_slice(&quads));
         self.glyph_instances
             .upload(&self.device, &self.queue, bytemuck::cast_slice(&glyphs));
+        let (images, image_layers) = sorted(self.build_images(list));
+        let (images, pictures): (Vec<_>, Vec<_>) = images.into_iter().unzip();
+        self.image_instances
+            .upload(&self.device, &self.queue, bytemuck::cast_slice(&images));
 
         let view = frame
             .texture
@@ -290,6 +314,19 @@ impl Renderer {
                     pass.set_pipeline(&self.quad_pipeline);
                     pass.set_vertex_buffer(0, buffer.slice(..));
                     pass.draw(0..6, range.clone());
+                }
+                if let Some(buffer) = self.image_instances.buffer()
+                    && let Some(range) = image_layers.get(&layer)
+                {
+                    pass.set_pipeline(&self.image_pipeline);
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    for index in range.clone() {
+                        let Some(group) = self.textures.group(pictures[index as usize]) else {
+                            continue;
+                        };
+                        pass.set_bind_group(1, group, &[]);
+                        pass.draw(0..6, index..index + 1);
+                    }
                 }
                 if let Some(buffer) = self.glyph_instances.buffer()
                     && let Some(range) = glyph_layers.get(&layer)
@@ -417,6 +454,40 @@ impl Renderer {
         }
 
         instances
+    }
+
+    /// Uploads the list's pictures and converts them to image instances, each
+    /// with the identity of the texture it samples.
+    fn build_images(&mut self, list: &DrawList) -> Vec<(Layer, (ImageInstance, u64))> {
+        let drawn = list
+            .images()
+            .iter()
+            .map(|(run, _, _)| &run.image)
+            .collect::<Vec<_>>();
+        self.textures.keep(&self.device, &self.queue, &drawn);
+
+        list.images()
+            .iter()
+            .map(|(run, clip, layer)| {
+                (
+                    *layer,
+                    (
+                        ImageInstance {
+                            origin: [
+                                run.bounds.left() * self.scale,
+                                run.bounds.top() * self.scale,
+                            ],
+                            size: [
+                                run.bounds.size.width * self.scale,
+                                run.bounds.size.height * self.scale,
+                            ],
+                            clip: self.clip(*clip),
+                        },
+                        run.image.id(),
+                    ),
+                )
+            })
+            .collect()
     }
 
     /// Converts a logical clip rectangle to the physical bounds shaders test.
