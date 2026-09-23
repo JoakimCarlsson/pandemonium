@@ -10,11 +10,12 @@ use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
 use crate::agent::TalkId;
+use crate::config::{Preference, ThemeMode};
 use crate::editor::{FileId, ScrollAxis, SearchField};
 use crate::keymap::{Action, BaseKeymap};
-use crate::onboarding::ThemeMode;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::Group;
+use crate::settings::SettingsPage;
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
 
@@ -37,10 +38,14 @@ pub enum Message {
     ToggleMetrics,
     /// Turn crash reports on or off.
     ToggleCrashReports,
+    /// Put this preference back to what a first launch starts from.
+    ResetPreference(Preference),
     /// Leave the setup flow.
     Finish,
-    /// Come back to the setup flow.
-    Reopen,
+    /// Open the settings pane, or bring it forward where it is open.
+    OpenSettings,
+    /// Show this page of the settings pane.
+    ShowSettingsPage(SettingsPage),
     /// Open the menu of ways a project is added to the window.
     AddProjectMenu,
     /// Ask for a repository and add it to the window as a project.

@@ -38,7 +38,7 @@ impl App {
             Action::ShowProblems => self.open_picker(Kind::Problems),
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
-            Action::OpenSettings => return self.apply(Message::Reopen),
+            Action::OpenSettings => return self.apply(Message::OpenSettings),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::NewSession => return self.apply(Message::NewSession),
             Action::RemoveProject => {
@@ -227,7 +227,7 @@ impl App {
         let served = self
             .active_file()
             .is_some_and(|document| document.borrow().is_served());
-        if self.setup.format_on_save && served {
+        if self.preferences.format_on_save && served {
             self.saving = true;
             return self.ask(pm_text::Request::Format);
         }

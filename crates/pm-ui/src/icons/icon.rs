@@ -83,6 +83,8 @@ pub enum IconName {
     Sparkle,
     /// Divide a pane.
     Split,
+    /// The preferences, as a gear.
+    Settings,
     /// A terminal.
     Terminal,
     /// Something the editor wants looked at.
@@ -122,6 +124,7 @@ impl IconName {
             Self::PinFilled => Svg::new("pin_filled", include_icon!("pin_filled")),
             Self::Sparkle => Svg::new("sparkle", include_icon!("sparkle")),
             Self::Split => Svg::new("split", include_icon!("split")),
+            Self::Settings => Svg::new("settings", include_icon!("settings")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),
         }

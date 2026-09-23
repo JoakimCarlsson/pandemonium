@@ -23,6 +23,7 @@ mod panes;
 mod picker;
 mod prompt;
 mod review;
+mod settings;
 mod terminal;
 mod tree;
 mod workspace;

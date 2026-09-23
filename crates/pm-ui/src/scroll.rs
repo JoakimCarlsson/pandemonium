@@ -5,8 +5,18 @@
 //! negative offset, and the offset is clamped against what the last frame
 //! actually painted. One of these belongs to each area that scrolls, so two
 //! of them side by side scroll independently.
+//!
+//! The window scrolls its whole page this way; a part of a screen scrolls
+//! inside a [`ScrollArea`], which shares its [`Scroll`] with the caller so a
+//! wheel turned over it can move the offset the next frame is drawn at.
 
-use pm_gfx::{Point, Size};
+use std::cell::Cell;
+use std::rc::Rc;
+
+use pm_gfx::{Point, Rect, Size};
+
+use crate::element::{Element, IntoElement, LayoutContext, PaintContext};
+use crate::style::{Style, Styled};
 
 /// The scroll offset of one area, and the extents it is clamped against.
 #[derive(Clone, Copy, Debug, Default)]
@@ -52,5 +62,73 @@ impl Scroll {
     fn clamp(&mut self) {
         let limit = (self.content_height - self.viewport.height).max(0.0);
         self.offset = self.offset.clamp(0.0, limit);
+    }
+}
+
+/// The scroll of one area, shared between the caller and the element drawing it.
+pub type Scrolled = Rc<Cell<Scroll>>;
+
+/// An area that shows its child through a window, scrolled by a [`Scroll`].
+///
+/// The child is laid out as tall as it wants and painted shifted up by the
+/// offset, clipped to the area; the area writes back the extents it found,
+/// so the offset the caller moves is clamped against what was really there.
+pub struct ScrollArea<M> {
+    /// The scroll the area is drawn at, and records its extents in.
+    scroll: Scrolled,
+    /// How the area itself is sized.
+    style: Style,
+    /// What is scrolled.
+    child: Box<dyn Element<M>>,
+}
+
+/// `child`, scrolled by `scroll` inside whatever room the area is given.
+pub fn scroll_area<M>(scroll: Scrolled, child: impl IntoElement<M>) -> ScrollArea<M> {
+    ScrollArea {
+        scroll,
+        style: Style::default(),
+        child: child.into_element(),
+    }
+}
+
+impl<M> Styled for ScrollArea<M> {
+    /// How the area is sized in its parent.
+    fn style(&mut self) -> &mut Style {
+        &mut self.style
+    }
+}
+
+impl<M> Element<M> for ScrollArea<M> {
+    /// How the area is sized in its parent.
+    fn layout_style(&self) -> Style {
+        self.style
+    }
+
+    /// The whole of what it is offered: the content scrolls rather than grows.
+    fn measure(&mut self, available: Size, _cx: &mut LayoutContext<'_>) -> Size {
+        available
+    }
+
+    /// Paints the child at the scrolled offset, clipped to the area.
+    fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
+        let content = self.child.measure(bounds.size, &mut cx.layout);
+        let mut scroll = self.scroll.get();
+        scroll.set_viewport(bounds.size);
+        scroll.set_content_height(content.height);
+        self.scroll.set(scroll);
+
+        let first = cx.region_count();
+        cx.push_clip(bounds);
+        self.child.paint(
+            Rect::from_xywh(
+                bounds.left(),
+                bounds.top() + scroll.origin().y,
+                bounds.size.width,
+                content.height.max(bounds.size.height),
+            ),
+            cx,
+        );
+        cx.pop_clip();
+        cx.clip_regions(first, bounds);
     }
 }

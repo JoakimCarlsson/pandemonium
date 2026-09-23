@@ -2,9 +2,9 @@
 
 use pm_ui::{Div, Styled, Theme, button, h_flex, rule, space, text, v_flex};
 
+use crate::config::Preferences;
 use crate::message::Message;
 use crate::onboarding::basics::basics;
-use crate::onboarding::setup::Setup;
 
 /// Width the page is capped at, however wide the window is.
 const PAGE_WIDTH: f32 = 780.0;
@@ -12,8 +12,8 @@ const PAGE_WIDTH: f32 = 780.0;
 /// Width of the button that leaves the setup flow.
 const FINISH_WIDTH: f32 = 200.0;
 
-/// Builds the page for `setup`, drawn in `theme`.
-pub fn page(theme: &Theme, setup: &Setup) -> Div<Message> {
+/// Builds the page for `preferences`, drawn in `theme`.
+pub fn page(theme: &Theme, preferences: &Preferences) -> Div<Message> {
     v_flex().w_full().child(
         v_flex()
             .w_full()
@@ -21,23 +21,17 @@ pub fn page(theme: &Theme, setup: &Setup) -> Div<Message> {
             .mx_auto()
             .p(12)
             .gap(6)
-            .child(header(theme, setup))
+            .child(header(theme))
             .child(rule(theme))
-            .child(basics(theme, setup)),
+            .child(basics(theme, preferences)),
     )
 }
 
 /// The logo, the welcome line and the button out of the flow.
-fn header(theme: &Theme, setup: &Setup) -> Div<Message> {
-    let finish = if setup.finished {
-        button("Back to Setup", Message::Reopen)
-            .outlined()
-            .w_px(FINISH_WIDTH)
-    } else {
-        button("Finish Setup", Message::Finish)
-            .filled()
-            .w_px(FINISH_WIDTH)
-    };
+fn header(theme: &Theme) -> Div<Message> {
+    let finish = button("Finish Setup", Message::Finish)
+        .filled()
+        .w_px(FINISH_WIDTH);
 
     h_flex()
         .w_full()

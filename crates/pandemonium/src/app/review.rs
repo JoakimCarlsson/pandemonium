@@ -632,7 +632,7 @@ impl App {
         match item {
             Item::Review(scope) => Some((scope, None)),
             Item::Change(scope, change) => Some((scope, Some(change))),
-            Item::File(_) | Item::Agent(..) => None,
+            Item::File(_) | Item::Agent(..) | Item::Settings => None,
         }
     }
 }

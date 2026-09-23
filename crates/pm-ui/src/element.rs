@@ -218,6 +218,23 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         self.list.pop_clip();
     }
 
+    /// How many regions have been painted so far this frame.
+    pub fn region_count(&self) -> usize {
+        self.regions.len()
+    }
+
+    /// Cuts every region painted since `first` down to `clip`.
+    ///
+    /// Content scrolled out of sight is not drawn, and must not be clickable
+    /// either: a row scrolled up under a bar of tabs would otherwise take the
+    /// press meant for the tab painted over it. A region cut away entirely
+    /// keeps its place, empty, so the regions after it keep their indices.
+    pub fn clip_regions(&mut self, first: usize, clip: Rect) {
+        for region in self.regions.iter_mut().skip(first) {
+            region.bounds = region.bounds.intersect(clip);
+        }
+    }
+
     /// Draws later primitives over everything drawn so far.
     pub fn push_layer(&mut self) {
         self.list.push_layer();

@@ -761,6 +761,10 @@ fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
             h_flex()
                 .gap(1)
                 .items_center()
+                .child(
+                    icon_button(theme, IconName::Settings, Message::OpenSettings)
+                        .tooltip("Open Settings"),
+                )
                 .child(layout_icon_button(
                     LayoutIcon::PrimarySidebar,
                     layout.primary_sidebar_open,
@@ -1005,7 +1009,7 @@ fn root_label(files: &FileTree) -> String {
 }
 
 /// `path` written the way a prompt writes it, against the home directory.
-fn shortened(path: &std::path::Path) -> String {
+pub fn shortened(path: &std::path::Path) -> String {
     let path = path.display().to_string();
     match std::env::var("HOME") {
         Ok(home) if !home.is_empty() => path.replacen(&home, "~", 1),

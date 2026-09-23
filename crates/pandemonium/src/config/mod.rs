@@ -3,13 +3,14 @@
 //! Every preference the editor remembers between launches lives in one file:
 //! [`load`] answers what the last launch left behind, [`save`] records what
 //! this one decided. Onboarding writes through here on its first run and a
-//! settings surface will edit the same file later — neither keeps a store of
+//! settings pane edits the same file — neither keeps a store of
 //! its own. Themes the reader wrote are read from the same home and put on
 //! offer beside the built-in ones. Nothing fails loudly: a missing, unreadable
 //! or outdated file is a first launch, and a write that cannot land leaves the
 //! running editor alone.
 
 mod paths;
+mod preferences;
 mod stored;
 mod theme;
 
@@ -17,12 +18,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::onboarding::Setup;
 use crate::panes::Saved;
 use crate::workspace::Layout;
 use stored::Stored;
 
-pub use paths::worktrees;
+pub use paths::{settings as settings_file, worktrees};
+pub use preferences::{Preference, Preferences, ThemeMode};
 
 /// The window's own size and state, as a launch leaves it.
 #[derive(Clone, Copy, Debug)]
@@ -50,7 +51,9 @@ impl Default for WindowState {
 #[derive(Debug, Default)]
 pub struct Restored {
     /// The preferences the editor draws and behaves by.
-    pub setup: Setup,
+    pub preferences: Preferences,
+    /// Whether the first run's setup has been finished.
+    pub onboarded: bool,
     /// The roots of the projects the window had open.
     pub projects: Vec<PathBuf>,
     /// The root of the project the window was pointed at.

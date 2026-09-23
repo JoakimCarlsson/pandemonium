@@ -13,9 +13,8 @@ use pm_text::Server;
 use pm_ui::families;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Restored, WindowState};
+use crate::config::{Preferences, Restored, ThemeMode, WindowState};
 use crate::keymap::BaseKeymap;
-use crate::onboarding::{Setup, ThemeMode};
 use crate::panes::Saved;
 use crate::workspace::{Layout, SidebarView};
 
@@ -47,7 +46,7 @@ pub(super) struct Stored {
     worktree_copy: Option<Vec<PathBuf>>,
     /// The variable a session's own port is handed to a program in.
     worktree_port: Option<String>,
-    /// Whether setup has been finished, which swaps the page.
+    /// Whether the first run's setup has been finished.
     finished: Option<bool>,
     /// The roots of the projects the window had open.
     projects: Option<Vec<PathBuf>>,
@@ -161,7 +160,8 @@ impl Stored {
             panes: self.panes.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
             bootstrap: self.bootstrap(),
-            setup: self.into_setup(),
+            onboarded: self.finished.unwrap_or_default(),
+            preferences: self.into_preferences(),
         }
     }
 
@@ -236,9 +236,9 @@ impl Stored {
     }
 
     /// The preferences this file stands for, defaulting anything it leaves out.
-    fn into_setup(self) -> Setup {
-        let defaults = Setup::default();
-        Setup {
+    fn into_preferences(self) -> Preferences {
+        let defaults = Preferences::default();
+        Preferences {
             theme_mode: self.theme_mode.unwrap_or(defaults.theme_mode),
             theme_family: self
                 .theme_family
@@ -251,7 +251,6 @@ impl Stored {
             trust_worktrees: self.trust_worktrees.unwrap_or(defaults.trust_worktrees),
             metrics: self.metrics.unwrap_or(defaults.metrics),
             crash_reports: self.crash_reports.unwrap_or(defaults.crash_reports),
-            finished: self.finished.unwrap_or(defaults.finished),
         }
     }
 }
@@ -260,7 +259,8 @@ impl Stored {
     /// The file to write for the window as it stands.
     pub(super) fn of(restored: &Restored) -> Self {
         let Restored {
-            setup,
+            preferences,
+            onboarded,
             projects,
             active,
             layout,
@@ -271,14 +271,14 @@ impl Stored {
         } = restored;
 
         Self {
-            theme_mode: Some(setup.theme_mode),
-            theme_family: Some(pm_ui::family(setup.theme_family).name.to_owned()),
-            keymap: Some(setup.keymap),
-            vim_mode: Some(setup.vim_mode),
-            format_on_save: Some(setup.format_on_save),
-            trust_worktrees: Some(setup.trust_worktrees),
-            metrics: Some(setup.metrics),
-            crash_reports: Some(setup.crash_reports),
+            theme_mode: Some(preferences.theme_mode),
+            theme_family: Some(pm_ui::family(preferences.theme_family).name.to_owned()),
+            keymap: Some(preferences.keymap),
+            vim_mode: Some(preferences.vim_mode),
+            format_on_save: Some(preferences.format_on_save),
+            trust_worktrees: Some(preferences.trust_worktrees),
+            metrics: Some(preferences.metrics),
+            crash_reports: Some(preferences.crash_reports),
             language_servers: (!language_servers.is_empty()).then(|| {
                 language_servers
                     .iter()
@@ -291,7 +291,7 @@ impl Stored {
             worktree_link: Some(bootstrap.link.clone()),
             worktree_copy: Some(bootstrap.copy.clone()),
             worktree_port: bootstrap.port.clone(),
-            finished: Some(setup.finished),
+            finished: Some(*onboarded),
             projects: Some(projects.clone()),
             active_project: active.clone(),
             panes: Some(panes.clone()),

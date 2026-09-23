@@ -72,28 +72,38 @@ pub struct PaneId(u64);
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SplitId(u64);
 
+/// What reads a written-down tab back into what it held and whose it is,
+/// or into nothing when what it held is gone: the worktree is none for a tab
+/// of the window's own.
+pub type Reopen<'a> = dyn FnMut(&SavedTab) -> Option<(Option<Scope>, Item)> + 'a;
+
 /// One tab of a pane: what it holds, whose it is, and whether it stays.
 ///
 /// A tab belongs to the worktree what it holds was opened from and is drawn
 /// only while that worktree is the one the window is showing, as a shell is.
 /// Pinning is the one way out of that: a pinned tab is drawn in every
-/// worktree, which is how one thing stays in front of every one of them.
+/// worktree, which is how one thing stays in front of every one of them. A
+/// tab holding something of the window's own belongs to no worktree at all,
+/// and is drawn in every one of them, and while there is none.
 #[derive(Clone, Copy, Debug)]
 pub struct Tab {
     /// What the tab holds.
     item: Item,
-    /// The worktree it was opened from.
-    scope: Scope,
+    /// The worktree it was opened from, or none for one of the window's own.
+    scope: Option<Scope>,
     /// Whether the tab is drawn whichever worktree the window is showing.
     pinned: bool,
 }
 
 impl Tab {
     /// A tab holding `item`, which was opened from `scope`.
-    pub fn new(item: Item, scope: Scope) -> Self {
+    ///
+    /// Something of the window's own is not kept by the worktree it happened
+    /// to be opened from: its tab is given no worktree at all.
+    pub fn new(item: Item, scope: Option<Scope>) -> Self {
         Self {
             item,
-            scope,
+            scope: scope.filter(|_| !item.is_window_wide()),
             pinned: false,
         }
     }
@@ -103,9 +113,9 @@ impl Tab {
         self.item
     }
 
-    /// Whether `scope` is a worktree this tab is drawn in.
-    fn shown_in(self, scope: Scope) -> bool {
-        self.pinned || self.scope == scope
+    /// Whether this tab is drawn while the window shows `scope`.
+    fn shown_in(self, scope: Option<Scope>) -> bool {
+        self.pinned || self.scope.is_none() || self.scope == scope
     }
 }
 
@@ -120,8 +130,9 @@ pub struct Pane {
     id: PaneId,
     /// The tabs open in it, in the order their bar is drawn.
     tabs: Vec<Tab>,
-    /// The tab in front in each worktree that has one.
-    active: BTreeMap<Scope, Item>,
+    /// The tab in front in each worktree that has one, and while there is
+    /// no worktree to show.
+    active: BTreeMap<Option<Scope>, Item>,
 }
 
 impl Pane {
@@ -140,8 +151,8 @@ impl Pane {
     }
 
     /// What `scope` sees open in it, in the order their tabs are drawn.
-    pub fn tabs(&self, scope: Scope) -> Vec<Item> {
-        self.shown(scope).map(Tab::item).collect()
+    pub fn tabs(&self, scope: impl Into<Option<Scope>>) -> Vec<Item> {
+        self.shown(scope.into()).map(Tab::item).collect()
     }
 
     /// Everything open in it, whichever worktree it belongs to.
@@ -154,7 +165,8 @@ impl Pane {
     /// A worktree whose tab has closed falls back to the first tab it does
     /// see, so a pane that has something to draw draws it rather than
     /// waiting to be told which one again.
-    pub fn active(&self, scope: Scope) -> Option<Item> {
+    pub fn active(&self, scope: impl Into<Option<Scope>>) -> Option<Item> {
+        let scope = scope.into();
         let front = self.active.get(&scope).copied();
         front
             .filter(|item| self.shown(scope).any(|tab| tab.item == *item))
@@ -179,24 +191,26 @@ impl Pane {
     }
 
     /// Shows `item` of `scope`, opening a tab for it when the pane has none.
-    pub fn open(&mut self, scope: Scope, item: Item) {
+    pub fn open(&mut self, scope: impl Into<Option<Scope>>, item: Item) {
+        let scope = scope.into();
         if !self.tabs.iter().any(|tab| tab.item == item) {
             self.tabs.push(Tab::new(item, scope));
         }
-        self.activate(item);
+        self.activate(scope, item);
     }
 
-    /// Puts `tab` at the end of the bar and shows it.
-    pub fn append(&mut self, tab: Tab) {
+    /// Puts `tab` at the end of the bar and shows it to `scope`.
+    pub fn append(&mut self, tab: Tab, scope: impl Into<Option<Scope>>) {
         self.tabs.push(tab);
-        self.activate(tab.item);
+        self.activate(scope, tab.item);
     }
 
     /// Puts `tab` at `index` among the ones `scope` sees, and shows it.
-    pub fn insert(&mut self, tab: Tab, scope: Scope, index: usize) {
+    pub fn insert(&mut self, tab: Tab, scope: impl Into<Option<Scope>>, index: usize) {
+        let scope = scope.into();
         let at = self.place_for(scope, index);
         self.tabs.insert(at, tab);
-        self.activate(tab.item);
+        self.activate(scope, tab.item);
     }
 
     /// Takes the tab holding `item` out of the pane, to be let go of elsewhere.
@@ -212,7 +226,8 @@ impl Pane {
     ///
     /// A tab already in this pane is moved rather than opened twice, which
     /// is what dragging one along its own bar comes to.
-    pub fn place(&mut self, scope: Scope, item: Item, index: usize) {
+    pub fn place(&mut self, scope: impl Into<Option<Scope>>, item: Item, index: usize) {
+        let scope = scope.into();
         let from = self.shown(scope).position(|tab| tab.item == item);
         let Some(tab) = self.take(item) else {
             return;
@@ -224,16 +239,23 @@ impl Pane {
         self.insert(tab, scope, index);
     }
 
-    /// Shows `item`, if the pane has a tab for it.
-    pub fn activate(&mut self, item: Item) {
-        if let Some(tab) = self.tabs.iter().find(|tab| tab.item == item) {
-            self.active.insert(tab.scope, tab.item);
+    /// Shows `item` while the window shows `scope`, if `scope` sees a tab
+    /// for it.
+    ///
+    /// The worktree being shown is the one that remembers the choice, not
+    /// the one the tab came from: a pinned tab or one of the window's own
+    /// brought forward in one worktree leaves every other as it was.
+    pub fn activate(&mut self, scope: impl Into<Option<Scope>>, item: Item) {
+        let scope = scope.into();
+        if self.shown(scope).any(|tab| tab.item == item) {
+            self.active.insert(scope, item);
         }
     }
 
     /// What is `steps` along the bar `scope` sees from the one in front,
     /// wrapping round at either end of it.
-    pub fn tab_along(&self, scope: Scope, steps: isize) -> Option<Item> {
+    pub fn tab_along(&self, scope: impl Into<Option<Scope>>, steps: isize) -> Option<Item> {
+        let scope = scope.into();
         let shown = self.tabs(scope);
         if shown.is_empty() {
             return None;
@@ -265,7 +287,7 @@ impl Pane {
     }
 
     /// The tabs `scope` sees, in the order they are drawn.
-    fn shown(&self, scope: Scope) -> impl Iterator<Item = Tab> + '_ {
+    fn shown(&self, scope: Option<Scope>) -> impl Iterator<Item = Tab> + '_ {
         self.tabs
             .iter()
             .copied()
@@ -273,7 +295,7 @@ impl Pane {
     }
 
     /// Where `index` among the tabs `scope` sees falls among all of them.
-    fn place_for(&self, scope: Scope, index: usize) -> usize {
+    fn place_for(&self, scope: Option<Scope>, index: usize) -> usize {
         self.tabs
             .iter()
             .enumerate()
@@ -284,7 +306,7 @@ impl Pane {
     }
 
     /// Where the tab in front sits among the ones each worktree sees.
-    fn places(&self) -> Vec<(Scope, usize)> {
+    fn places(&self) -> Vec<(Option<Scope>, usize)> {
         self.active
             .iter()
             .map(|(scope, item)| {
@@ -304,7 +326,7 @@ impl Pane {
     /// one to its right, and the one to its left when the bar has run out on
     /// that side. A project the pane holds nothing for any more is
     /// forgotten rather than left pointing at a tab that closed.
-    fn settle(&mut self, places: &[(Scope, usize)]) {
+    fn settle(&mut self, places: &[(Option<Scope>, usize)]) {
         let open = self
             .tabs
             .iter()
@@ -522,10 +544,7 @@ impl PaneTree {
     /// Panes are given fresh ids as they are read: what was written down is
     /// the shape of the division and what was in it, and the identities this
     /// launch hands out are its own.
-    pub fn restored(
-        saved: &Saved,
-        open: &mut dyn FnMut(&SavedTab) -> Option<(Scope, Item)>,
-    ) -> Self {
+    pub fn restored(saved: &Saved, open: &mut Reopen<'_>) -> Self {
         let mut panes = 0;
         let mut splits = 0;
         let root = read(&saved.root, &mut panes, &mut splits, open);
@@ -827,12 +846,7 @@ fn written(node: &Node, tab: &dyn Fn(Item) -> Option<SavedTab>) -> SavedNode {
 /// whatever it held; a window that says it divides into three panes but only
 /// gives two shares is given the shares it is missing, because a tree the
 /// window cannot draw is worse than one it draws evenly.
-fn read(
-    node: &SavedNode,
-    panes: &mut u64,
-    splits: &mut u64,
-    open: &mut dyn FnMut(&SavedTab) -> Option<(Scope, Item)>,
-) -> Node {
+fn read(node: &SavedNode, panes: &mut u64, splits: &mut u64, open: &mut Reopen<'_>) -> Node {
     match node {
         SavedNode::Pane { tabs } => {
             let id = PaneId(*panes);
@@ -843,9 +857,8 @@ fn read(
                     continue;
                 };
                 pane.tabs.push(Tab {
-                    item,
-                    scope,
                     pinned: saved.pinned,
+                    ..Tab::new(item, scope)
                 });
                 if saved.front {
                     pane.active.insert(scope, item);

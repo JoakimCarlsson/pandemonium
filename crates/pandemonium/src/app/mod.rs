@@ -16,6 +16,7 @@ mod picker;
 mod places;
 mod review;
 mod session;
+mod settings;
 mod terminal;
 mod tree;
 
@@ -43,14 +44,15 @@ use crate::agent::Talks;
 use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
 use crate::app::places::Trail;
-use crate::config::{self, Restored, WindowState};
+use crate::config::{self, Preference, Preferences, Restored, WindowState};
 use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::message::Message;
-use crate::onboarding::{self, Setup};
+use crate::onboarding;
 use crate::panes::{Item, PaneTree, Saved};
 use crate::review::Review;
+use crate::settings::Settings;
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
     self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panel, Panes,
@@ -128,8 +130,12 @@ pub struct App {
     ui: Option<Ui<Message>>,
     /// The draw list, reused every frame.
     list: Option<DrawList>,
-    /// What the onboarding screen has decided so far.
-    setup: Setup,
+    /// The preferences the window draws and behaves by.
+    preferences: Preferences,
+    /// Whether the first run's setup has been finished.
+    onboarded: bool,
+    /// Which page the settings pane shows, and how far down it.
+    settings: Settings,
     /// The keymap a keypress is resolved against.
     resolver: Resolver,
     /// The modifiers held down right now.
@@ -306,7 +312,9 @@ impl App {
             renderer: None,
             ui: None,
             list: None,
-            setup: restored.setup,
+            preferences: restored.preferences,
+            onboarded: restored.onboarded,
+            settings: Settings::default(),
             resolver: Resolver::default(),
             modifiers: ModifiersState::default(),
             pointer: None,
@@ -447,6 +455,7 @@ impl App {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
+            (true, _) if showing(crate::panes::Item::is_window_wide) => Some("settings"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
             _ => None,
@@ -712,8 +721,11 @@ impl App {
     /// The theme this frame is drawn from: the chosen family, in whichever
     /// appearance the theme mode resolves to.
     pub(super) fn theme(&self) -> Theme {
-        let appearance = self.setup.theme_mode.resolve(self.system_appearance());
-        family(self.setup.theme_family)
+        let appearance = self
+            .preferences
+            .theme_mode
+            .resolve(self.system_appearance());
+        family(self.preferences.theme_family)
             .variant(appearance)
             .zoomed(self.zoom)
     }
@@ -1254,9 +1266,25 @@ impl App {
             self.close_requested = true;
             return;
         }
-        self.setup.apply(message);
-        if let Message::SetKeymap(base) = message {
-            self.resolver.set_keymap(base.keymap());
+        if let Message::ShowSettingsPage(page) = message {
+            self.settings.show(page);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::OpenSettings {
+            self.open_settings();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::Finish {
+            self.onboarded = true;
+        }
+        self.preferences.apply(message);
+        if matches!(
+            message,
+            Message::SetKeymap(_) | Message::ResetPreference(Preference::Keymap)
+        ) {
+            self.resolver.set_keymap(self.preferences.keymap.keymap());
         }
         self.store();
         self.request_redraw();
@@ -1520,7 +1548,8 @@ impl App {
     /// The window as it stands, in the shape a launch restores it from.
     fn state(&self) -> Restored {
         Restored {
-            setup: self.setup.clone(),
+            preferences: self.preferences.clone(),
+            onboarded: self.onboarded,
             projects: self.open.roots(),
             active: self
                 .open
@@ -1783,7 +1812,7 @@ impl App {
             theme.colors.background,
         ));
 
-        let page = if self.setup.finished {
+        let page = if self.onboarded {
             workspace::workspace(
                 &theme,
                 &self.open,
@@ -1805,7 +1834,7 @@ impl App {
                 },
             )
         } else {
-            onboarding::page(&theme, &self.setup)
+            onboarding::page(&theme, &self.preferences)
         };
         let painted = ui.draw(
             renderer.text(),
@@ -1933,7 +1962,7 @@ impl ApplicationHandler<Wake> for App {
             scale,
         ));
         self.window = Some(window);
-        self.resolver.set_keymap(self.setup.keymap.keymap());
+        self.resolver.set_keymap(self.preferences.keymap.keymap());
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.agents.set_notify(self.waker(Wake::Agent));

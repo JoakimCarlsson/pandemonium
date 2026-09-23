@@ -54,7 +54,7 @@ impl App {
     /// What is true where a key was pressed, for the `when` clauses to read.
     pub(super) fn context(&self) -> Context {
         let mut context = Context::new();
-        context.flag(keys::SETUP_OPEN, !self.setup.finished);
+        context.flag(keys::SETUP_OPEN, !self.onboarded);
         context.flag(keys::PROJECT_FOCUSED, self.open.active().is_some());
         if let Some(kind) = self.focused_pane_kind() {
             context.set(keys::PANE_KIND, kind);
@@ -509,7 +509,7 @@ impl App {
     /// list open over the screen takes the window's attention first, and the
     /// buttons do nothing while it is up, as the keys they stand in for do.
     pub(super) fn travelled(&mut self, back: bool) {
-        if !self.setup.finished || self.picker.is_some() {
+        if !self.onboarded || self.picker.is_some() {
             return;
         }
         let action = if back {
@@ -613,7 +613,7 @@ impl App {
         }
 
         if state == ElementState::Pressed
-            && self.setup.finished
+            && self.onboarded
             && self
                 .pointer
                 .is_some_and(|pointer| pointer.y < self.theme().size.titlebar)
@@ -681,6 +681,10 @@ impl App {
         if let Some(shell) = self.focused_shell() {
             let lines = (delta / text.terminal.line_height).round() as isize;
             shell.borrow_mut().scroll(lines);
+            self.request_redraw();
+            return;
+        }
+        if self.scroll_settings(delta) {
             self.request_redraw();
             return;
         }
