@@ -587,7 +587,7 @@ fn initialize(root: &Path, server: Server) -> Value {
                 "implementation": { "linkSupport": true },
                 "declaration": { "linkSupport": true },
                 "references": {},
-                "hover": { "contentFormat": ["plaintext", "markdown"] },
+                "hover": { "contentFormat": ["markdown", "plaintext"] },
                 "completion": {
                     "completionItem": { "snippetSupport": true },
                     "contextSupport": false,
