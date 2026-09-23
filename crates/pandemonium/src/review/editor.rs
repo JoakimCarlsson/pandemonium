@@ -12,7 +12,7 @@ use crate::message::Message;
 use crate::review::store::Review;
 
 /// How many lines of the message a box has room for.
-const MESSAGE_LINES: f32 = 1.0;
+const MESSAGE_LINES: f32 = 3.0;
 
 /// Builds the box the commit message is written in.
 ///
