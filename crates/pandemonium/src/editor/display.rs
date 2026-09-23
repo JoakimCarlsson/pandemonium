@@ -61,6 +61,9 @@ pub struct Display {
     pub wrap_guide: Option<usize>,
     /// How the caret is drawn.
     pub cursor_shape: CursorShape,
+    /// Whether the selection stands for the whole lines it touches, as
+    /// modal editing's line selection does.
+    pub whole_lines: bool,
 }
 
 impl Default for Display {
@@ -76,6 +79,7 @@ impl Default for Display {
             scrollbars: true,
             wrap_guide: None,
             cursor_shape: CursorShape::Bar,
+            whole_lines: false,
         }
     }
 }

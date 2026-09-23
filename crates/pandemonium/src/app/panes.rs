@@ -843,9 +843,11 @@ impl App {
         else {
             return display;
         };
-        let shape = document.borrow().modal().shape();
+        let document = document.borrow();
+        let modal = document.modal();
         Display {
-            cursor_shape: display.cursor_shape.modal(shape),
+            cursor_shape: display.cursor_shape.modal(modal.shape()),
+            whole_lines: modal.mode() == pm_vim::Mode::VisualLine,
             ..display
         }
     }

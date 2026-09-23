@@ -338,6 +338,7 @@ impl Stored {
                 cursor_shape: self
                     .cursor_shape
                     .map_or(defaults.display.cursor_shape, StoredCursorShape::into_shape),
+                whole_lines: false,
             },
             inlay_hints: self.inlay_hints.unwrap_or(defaults.inlay_hints),
             cursor_blink: self.cursor_blink.unwrap_or(defaults.cursor_blink),

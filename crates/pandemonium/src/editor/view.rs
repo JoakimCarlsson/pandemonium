@@ -359,7 +359,7 @@ impl<M> BufferView<M> {
     /// Marks the line the cursor is on, when nothing is selected.
     fn paint_current_line(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
         let (layout, selection) = (painting.layout, painting.selection);
-        if !selection.is_empty() || !self.focused {
+        if !selection.is_empty() || !self.focused || self.display.whole_lines {
             return;
         }
         let Some(top) = painting.top_of(selection.head.line) else {
@@ -615,10 +615,19 @@ impl<M> BufferView<M> {
             .alpha(painting.theme.emphasis.selection);
 
         for selection in &painting.selections {
-            if selection.is_empty() || !selection.touches(line) {
+            if !selection.touches(line) || (selection.is_empty() && !self.display.whole_lines) {
                 continue;
             }
-            let (start, end) = (selection.start(), selection.end());
+            let (start, end) = match self.display.whole_lines {
+                true => (
+                    Position::new(selection.start().line, 0),
+                    Position::new(
+                        selection.end().line,
+                        painting.buffer.line_len(selection.end().line) + 1,
+                    ),
+                ),
+                false => (selection.start(), selection.end()),
+            };
             let from = if start.line == line {
                 start
             } else {
@@ -948,10 +957,12 @@ impl<M> BufferView<M> {
     ///
     /// A block stands on a character rather than between two, so at the far
     /// end of a selection running forward it stands on the last character
-    /// selected rather than on the one after it.
+    /// selected rather than on the one after it. A selection of whole lines
+    /// has its ends where the cursors are, so it needs no such step back.
     fn cursor_cell(&self, selection: &Selection) -> Position {
         let head = selection.head;
         match self.display.cursor_shape == CursorShape::Block
+            && !self.display.whole_lines
             && head > selection.anchor
             && head.column > 0
         {

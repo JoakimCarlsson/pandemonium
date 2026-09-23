@@ -959,15 +959,21 @@ fn visual_span(state: &State, buffer: &Buffer, lines: bool) -> Span {
 }
 
 /// Puts the selection visual mode stands for on the buffer.
+///
+/// A selection of whole lines is put on as its two ends where they are, so
+/// the cursor stays in the column it was in; the window draws it as the
+/// whole lines it stands for, since [`State::mode`] says it is linewise.
 fn show_visual(state: &mut State, buffer: &mut Buffer) {
+    if state.mode == Mode::VisualLine {
+        buffer.set_selection(Selection {
+            anchor: state.anchor,
+            head: state.head,
+        });
+        state.shown = Some(buffer.selection());
+        return;
+    }
     let span = visual_span(state, buffer, false);
-    let (start, end) = match span.linewise {
-        true => (
-            Position::new(span.start.line, 0),
-            Position::new(span.end.line, buffer.line_len(span.end.line)),
-        ),
-        false => (span.start, span.end),
-    };
+    let (start, end) = (span.start, span.end);
     let selection = match state.head < state.anchor {
         true => Selection {
             anchor: end,
