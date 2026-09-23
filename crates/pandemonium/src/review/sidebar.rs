@@ -14,8 +14,9 @@ use pm_ui::{
 };
 
 use crate::message::Message;
+use crate::review::action::{primary_face, primary_message};
 use crate::review::commit_editor;
-use crate::review::store::{Group, Review};
+use crate::review::store::{Group, Primary, Review};
 
 /// Window controls and saved layout for the Source Control sidebar.
 #[derive(Clone)]
@@ -51,7 +52,7 @@ pub fn changes_sidebar(
     let Some(review) = review else {
         return empty(theme, width);
     };
-    let (title, stopped) = review.committable();
+    let primary = review.primary();
 
     let groups = Group::ALL.into_iter().flat_map(|listed| {
         let rows = review.grouped(listed);
@@ -82,7 +83,7 @@ pub fn changes_sidebar(
                 .child(message_field(theme, review, typing))
                 .child(measured(
                     controls.commit_bounds.clone(),
-                    commit_button(theme, &title, stopped),
+                    commit_button(theme, &primary),
                 ))
                 .when_some(review.trouble(), |sidebar, said| {
                     sidebar.child(trouble(theme, said))
@@ -346,17 +347,17 @@ fn message_field(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
         .child(commit_editor(theme, review, typing))
 }
 
-/// Builds the control that commits, and says what it would commit.
+/// Builds the control that commits, or syncs once there is nothing to commit.
 ///
 /// What stops it is written where the words would be, so a reader who cannot
 /// commit is told why rather than left pressing a control that does nothing.
-fn commit_button(theme: &Theme, title: &str, stopped: Option<&str>) -> Div<Message> {
-    let committable = stopped.is_none();
-    let color = match committable {
+fn commit_button(theme: &Theme, primary: &Primary) -> Div<Message> {
+    let pressed = primary_message(primary);
+    let enabled = pressed.is_some();
+    let color = match enabled {
         true => theme.colors.text,
         false => theme.colors.text_subtle,
     };
-    let label = stopped.unwrap_or(title).to_owned();
 
     v_flex().w_full().px(1.5).pb(1).child(
         h_flex()
@@ -365,7 +366,7 @@ fn commit_button(theme: &Theme, title: &str, stopped: Option<&str>) -> Div<Messa
             .items_center()
             .rounded(theme.radius.md)
             .bg(theme.colors.surface_selected)
-            .when(committable, |control| {
+            .when(enabled, |control| {
                 control
                     .hover_bg(theme.colors.surface_hover)
                     .active_bg(theme.colors.surface_active)
@@ -374,12 +375,10 @@ fn commit_button(theme: &Theme, title: &str, stopped: Option<&str>) -> Div<Messa
                 h_flex()
                     .h_full()
                     .flex_1()
-                    .gap(0.75)
                     .items_center()
                     .justify_center()
-                    .when(committable, |control| control.on_click(Message::Commit))
-                    .child(icon(IconName::Check).size(IconSize::XSmall).color(color))
-                    .child(text(label).text_sm().font_medium().color(color)),
+                    .when_some(pressed, |control, message| control.on_click(message))
+                    .child(primary_face(theme, primary, IconName::Check)),
             )
             .child(
                 h_flex()
@@ -387,9 +386,7 @@ fn commit_button(theme: &Theme, title: &str, stopped: Option<&str>) -> Div<Messa
                     .px(1)
                     .items_center()
                     .border_1(theme.colors.border)
-                    .when(committable, |control| {
-                        control.on_click(Message::ShowCommitMenu)
-                    })
+                    .when(enabled, |control| control.on_click(Message::ShowCommitMenu))
                     .child(
                         icon(IconName::ChevronDown)
                             .size(IconSize::XSmall)

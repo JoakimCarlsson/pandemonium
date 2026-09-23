@@ -22,6 +22,9 @@ const SEARCH_LIMIT: usize = 500;
 /// Longest a line of context beside a search result is drawn.
 const CONTEXT: usize = 120;
 
+/// How long the spinner holds each frame while a remote is waited on.
+const SPIN_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
+
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
     pub(super) fn open_picker(&mut self, kind: Kind) {
@@ -384,6 +387,20 @@ impl App {
         });
     }
 
+    /// Whether the spinner is owed its next frame, taking it up if so.
+    pub(super) fn spun(&mut self) -> bool {
+        if self.remote_operation.is_none() || self.spun.elapsed() < SPIN_FRAME {
+            return false;
+        }
+        self.spun = std::time::Instant::now();
+        true
+    }
+
+    /// When the spinner next turns, while a remote is being waited on.
+    pub(super) fn next_spin(&self) -> Option<std::time::Instant> {
+        self.remote_operation.map(|_| self.spun + SPIN_FRAME)
+    }
+
     /// Runs a remote Git operation away from the UI thread and wakes on completion.
     pub(super) fn remote_operation(
         &mut self,
@@ -415,6 +432,9 @@ impl App {
         let results = self.git_results.clone();
         let wake = self.waker(Wake::Git);
         self.remote_operation = Some(kind);
+        if let Some(review) = self.reviews.get_mut(&scope) {
+            review.begin(kind.doing());
+        }
         std::thread::spawn(move || {
             let said = operation(&root);
             if let Ok(mut results) = results.lock() {

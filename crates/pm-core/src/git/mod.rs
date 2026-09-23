@@ -25,7 +25,7 @@ mod worktree;
 pub use blame::{Blame, blame};
 pub use branch::{
     Branch, branches, create_branch, fetch, fetch_from, force_push, pull, push_branch, push_to,
-    remotes, switch_branch,
+    remotes, switch_branch, sync,
 };
 pub use changes::{Change, ChangeKind, changes};
 pub use clone::{clone, named};

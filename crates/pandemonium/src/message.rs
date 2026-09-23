@@ -237,6 +237,8 @@ pub enum Message {
     CreateTypedBranch,
     /// Push the active branch, publishing it first when it has no upstream.
     PushBranch,
+    /// Pull the active branch, then push it, as one step.
+    SyncBranch,
     /// Fetch updates from every remote of the active project.
     Fetch,
     /// Pull the active branch with a merge.

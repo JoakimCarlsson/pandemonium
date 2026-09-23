@@ -138,6 +138,17 @@ pub fn pull(root: &Path, rebase: bool) -> Said {
     }
 }
 
+/// Brings the branch level with the one it follows: pulls what it is behind
+/// by, then pushes what it is ahead by.
+///
+/// Pulling first is what lets the push through when both sides have moved;
+/// a pull that stops on a conflict leaves the push unattempted.
+pub fn sync(root: &Path) -> Said {
+    let pulled = pull(root, false)?;
+    let pushed = git(root, ["push"])?;
+    Ok(pulled + &pushed)
+}
+
 /// Force-pushes the checked-out branch without overwriting unseen remote work.
 pub fn force_push(root: &Path) -> Said {
     git(root, ["push", "--force-with-lease"])

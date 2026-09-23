@@ -6,6 +6,7 @@
 //! that lists the changes and the pane the changes are read in — one thing
 //! seen twice, never two stores.
 
+mod action;
 mod editor;
 mod pane;
 mod sidebar;

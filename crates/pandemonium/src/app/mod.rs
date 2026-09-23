@@ -101,6 +101,20 @@ pub(super) enum RemoteOperation {
     Pull,
     /// Sending local commits to a remote.
     Push,
+    /// Bringing remote commits in and sending local ones out, in that order.
+    Sync,
+}
+
+impl RemoteOperation {
+    /// What the commit button says while this runs.
+    pub(super) fn doing(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetching…",
+            Self::Pull => "Pulling…",
+            Self::Push => "Pushing…",
+            Self::Sync => "Syncing…",
+        }
+    }
 }
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
@@ -211,6 +225,8 @@ pub struct App {
     history_all: bool,
     /// Remote Git work currently running away from the UI thread.
     remote_operation: Option<RemoteOperation>,
+    /// When the spinner shown while a remote is waited on last turned.
+    spun: std::time::Instant,
     /// Completed remote Git work waiting for the event loop.
     git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
     /// The repositories a clone has finished with, and where they landed.
@@ -350,6 +366,7 @@ impl App {
             history_graph_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_all: layout.history_all,
             remote_operation: None,
+            spun: std::time::Instant::now(),
             git_results: Arc::new(Mutex::new(Vec::new())),
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
@@ -1104,6 +1121,11 @@ impl App {
             self.request_redraw();
             return;
         }
+        if message == Message::SyncBranch {
+            self.remote_operation(RemoteOperation::Sync, pm_core::sync);
+            self.request_redraw();
+            return;
+        }
         if message == Message::Fetch {
             self.remote_operation(RemoteOperation::Fetch, pm_core::fetch);
             self.request_redraw();
@@ -1776,16 +1798,16 @@ impl App {
 
 impl ApplicationHandler<Wake> for App {
     /// Waits for the next event, for the pointer to have rested long enough,
-    /// or for the caret to turn over.
+    /// for the caret to turn over, or for the spinner's next frame.
     ///
     /// The window is otherwise woken only by something happening; a pointer
-    /// holding still and a caret blinking are the two things it has to
-    /// notice by the clock.
+    /// holding still, a caret blinking and a remote being waited on are the
+    /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.rested() || self.blinked() {
+        if self.rested() || self.blinked() || self.spun() {
             self.request_redraw();
         }
-        let next = [self.next_rest(), self.next_blink()]
+        let next = [self.next_rest(), self.next_blink(), self.next_spin()]
             .into_iter()
             .flatten()
             .min();
@@ -1833,6 +1855,7 @@ impl ApplicationHandler<Wake> for App {
                     .unwrap_or_default();
                 for (scope, said) in finished {
                     if let Some(review) = self.reviews.get_mut(&scope) {
+                        review.finish();
                         review.report(said);
                     }
                 }

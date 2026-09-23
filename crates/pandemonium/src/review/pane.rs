@@ -21,6 +21,7 @@ use pm_ui::{
 };
 
 use crate::message::Message;
+use crate::review::action::{primary_face, primary_message};
 use crate::review::commit_editor;
 use crate::review::sidebar::{staged_state, status_color};
 use crate::review::store::{ChangeId, Review};
@@ -224,15 +225,11 @@ fn worded(theme: &Theme, label: &str, enabled: bool, message: Message) -> Div<Me
         .child(text(label.to_owned()).text_xs().font_light().color(color))
 }
 
-/// Builds the bar below the changes: the message, and what it commits.
+/// Builds the bar below the changes: the message, and what it commits or
+/// syncs.
 fn commit_bar(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
-    let (title, stopped) = review.committable();
-    let committable = stopped.is_none();
-    let label = stopped.unwrap_or(&title).to_owned();
-    let color = match committable {
-        true => theme.colors.text,
-        false => theme.colors.text_subtle,
-    };
+    let primary = review.primary();
+    let pressed = primary_message(&primary);
 
     h_flex()
         .w_full()
@@ -250,22 +247,16 @@ fn commit_bar(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
             h_flex()
                 .h_px(theme.size.control)
                 .px(1.5)
-                .gap(0.75)
                 .items_center()
                 .rounded(theme.radius.md)
                 .bg(theme.colors.surface_selected)
-                .when(committable, |control| {
+                .when_some(pressed, |control, message| {
                     control
                         .hover_bg(theme.colors.surface_hover)
                         .active_bg(theme.colors.surface_active)
-                        .on_click(Message::Commit)
+                        .on_click(message)
                 })
-                .child(
-                    icon(IconName::GitCommit)
-                        .size(IconSize::XSmall)
-                        .color(color),
-                )
-                .child(text(label).text_sm().font_medium().color(color)),
+                .child(primary_face(theme, &primary, IconName::GitCommit)),
         )
 }
 

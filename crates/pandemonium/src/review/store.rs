@@ -8,10 +8,43 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use pm_core::{Changed, Head, Hunk, Side, Status};
 
 use crate::input::{Input, Submit};
+
+/// What the commit button says while there is nothing to commit.
+const NOTHING_TO_COMMIT: &str = "Nothing to commit";
+
+/// What the button under the commit message does.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Primary {
+    /// Commits, under `title`, unless `stopped` says why it cannot.
+    Commit {
+        /// What the button calls the commit it would make.
+        title: String,
+        /// Why it cannot commit, when it cannot.
+        stopped: Option<&'static str>,
+    },
+    /// Pulls what the branch is behind by and pushes what it is ahead by.
+    Sync {
+        /// Commits this branch has that the one it follows has not.
+        ahead: usize,
+        /// Commits the branch it follows has that this one has not.
+        behind: usize,
+    },
+    /// Pushes a branch that follows nothing, and makes it follow what it
+    /// was pushed to.
+    Publish,
+    /// Waits on a remote, saying what it is `doing`.
+    Busy {
+        /// What is being done, as the button words it: "Syncing…".
+        doing: &'static str,
+        /// When it began, which the spinner turns from.
+        since: Instant,
+    },
+}
 
 /// One changed file's identity for as long as the window is open.
 ///
@@ -101,6 +134,8 @@ pub struct Review {
     message: Input,
     /// What git said when it last would not do something.
     trouble: Option<String>,
+    /// What is being done with a remote right now, and since when.
+    busy: Option<(&'static str, Instant)>,
     /// Commits on the checked out branch.
     history_auto: Vec<pm_core::Commit>,
     /// Commits reachable from every reference.
@@ -141,6 +176,7 @@ impl Review {
             collapsed: BTreeSet::new(),
             message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
             trouble: None,
+            busy: None,
             history_auto: Vec::new(),
             history_all: Vec::new(),
             history_scrolls: [0; 2],
@@ -290,13 +326,40 @@ impl Review {
         let stopped = if self.changed().iter().any(Changed::is_conflicted) {
             Some("Resolve the conflicts before committing")
         } else if staged == 0 && self.tracked() == 0 {
-            Some("Nothing to commit")
+            Some(NOTHING_TO_COMMIT)
         } else if self.unsaid() {
             Some("No commit message")
         } else {
             None
         };
         (title, stopped)
+    }
+
+    /// What the button under the message does now.
+    ///
+    /// The words are VS Code's: while there is something to commit it
+    /// commits, and once there is nothing it offers to bring the branch level
+    /// with the one it follows — to sync what the two have drifted apart by,
+    /// or to publish a branch that follows nothing yet. While a remote is
+    /// being talked to, it says so and waits.
+    pub fn primary(&self) -> Primary {
+        if let Some((doing, since)) = self.busy {
+            return Primary::Busy { doing, since };
+        }
+        let (title, stopped) = self.committable();
+        if stopped != Some(NOTHING_TO_COMMIT) {
+            return Primary::Commit { title, stopped };
+        }
+
+        let head = self.head();
+        match (&head.branch, &head.upstream) {
+            (Some(_), None) if head.commit.is_some() => Primary::Publish,
+            (Some(_), Some(_)) if head.ahead + head.behind > 0 => Primary::Sync {
+                ahead: head.ahead,
+                behind: head.behind,
+            },
+            _ => Primary::Commit { title, stopped },
+        }
     }
 
     /// How many files have something staged for the next commit.
@@ -562,6 +625,16 @@ impl Review {
     /// What git said when it last would not do something.
     pub fn trouble(&self) -> Option<&str> {
         self.trouble.as_deref()
+    }
+
+    /// Marks a remote as being talked to, worded as `doing`.
+    pub fn begin(&mut self, doing: &'static str) {
+        self.busy = Some((doing, Instant::now()));
+    }
+
+    /// Marks the remote as no longer being talked to.
+    pub fn finish(&mut self) {
+        self.busy = None;
     }
 
     /// Records what a Git operation outside the review said and rereads it.
