@@ -163,6 +163,7 @@ impl SettingsSection {
                 Preference::StickyScroll,
                 Preference::Scrollbars,
                 Preference::InlayHints,
+                Preference::CodeLens,
                 Preference::ScrollSensitivity,
             ],
             Self::Saving => &[

@@ -24,7 +24,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use answer::{Answer, CodeAction, Completion, FileEdit, Location, Request, Symbol};
+pub use answer::{
+    Answer, Calls, CodeAction, Completion, FileEdit, Handle, Lens, Location, NamedLocation,
+    Request, Symbol,
+};
 pub use client::{Asked, Client};
 pub use watch::Watched;
 
@@ -89,6 +92,15 @@ impl Servers {
     /// Ends every server started for `root`.
     pub fn close(&mut self, root: &Path) {
         self.running.retain(|(started, _), _| started != root);
+    }
+
+    /// Every server running over `root`, whichever language it serves.
+    pub fn over(&self, root: &Path) -> Vec<Arc<Client>> {
+        self.running
+            .iter()
+            .filter(|((started, _), _)| started == root)
+            .filter_map(|(_, client)| client.clone())
+            .collect()
     }
 
     /// Tells every server running over `root` what changed on disk under it.

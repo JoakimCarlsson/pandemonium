@@ -94,6 +94,10 @@ pub struct Document {
     hinted: Option<i32>,
     /// The version the server was last asked what the names in the file are.
     named: Option<i32>,
+    /// The version the server was last asked for the notes above declarations.
+    lensed: Option<i32>,
+    /// The version and cursor the server was last asked where the symbol is used.
+    used: Option<(i32, Position)>,
     /// The runs of lines that are folded away, in the order they appear.
     folded: Vec<std::ops::Range<usize>>,
     /// The mode modal editing has the file in, and the keys gathered towards
@@ -127,6 +131,8 @@ impl Document {
             blame_shown: false,
             hinted: None,
             named: None,
+            lensed: None,
+            used: None,
             folded: Vec::new(),
             buffer,
             scroll: 0,
@@ -298,6 +304,38 @@ impl Document {
             return false;
         }
         self.named = Some(version);
+        true
+    }
+
+    /// Whether the server should be asked again for the notes above declarations.
+    pub fn wants_lenses(&mut self) -> bool {
+        let version = self.buffer.version();
+        if self.servers.is_empty() || self.lensed == Some(version) {
+            return false;
+        }
+        self.lensed = Some(version);
+        true
+    }
+
+    /// Takes every note above a declaration out, and forgets it asked for them.
+    fn forget_lenses(&mut self) {
+        self.buffer.set_lenses(Vec::new());
+        self.lensed = None;
+    }
+
+    /// Whether the server should be asked again where the symbol at the cursor
+    /// is used.
+    ///
+    /// Nothing is asked while text is selected: the selection lights up the
+    /// other places it appears itself, and two answers to one question would
+    /// be drawn over each other.
+    pub fn wants_uses(&mut self) -> bool {
+        let selection = self.buffer.selection();
+        let asked = (self.buffer.version(), selection.head);
+        if self.servers.is_empty() || !selection.is_empty() || self.used == Some(asked) {
+            return false;
+        }
+        self.used = Some(asked);
         true
     }
 
@@ -553,6 +591,9 @@ impl Document {
                 self.edit(Buffer::ensure_final_newline);
             }
         }
+        for server in &self.servers {
+            server.will_save(self.buffer.path());
+        }
         if self.buffer.save().is_err() {
             return;
         }
@@ -672,6 +713,19 @@ impl Files {
         for entry in self.open.values() {
             entry.document.borrow_mut().forget_hints();
         }
+    }
+
+    /// Takes every note above a declaration out of the open files, and
+    /// forgets they were asked for, so they are asked for again once wanted.
+    pub fn forget_lenses(&mut self) {
+        for entry in self.open.values() {
+            entry.document.borrow_mut().forget_lenses();
+        }
+    }
+
+    /// Every language server running over the worktree at `root`.
+    pub fn servers_over(&self, root: &Path) -> Vec<Arc<Client>> {
+        self.servers.over(root)
     }
 
     /// Opens `path` in `scope`, or hands back the file if it is open already.

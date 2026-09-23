@@ -90,6 +90,8 @@ struct State {
     texts: HashMap<PathBuf, Rope>,
     /// The files on disk the server has asked to hear about.
     watchers: Watchers,
+    /// What the server said it can do, once the handshake has said it.
+    capabilities: Option<Value>,
 }
 
 /// A language server the editor is talking to.
@@ -200,6 +202,35 @@ impl Client {
                 "text": text,
             },
         }));
+    }
+
+    /// Tells the server a file is about to be written to disk, if it asked.
+    pub fn will_save(&self, path: &Path) {
+        let asked = self.state.lock().ok().is_some_and(|state| {
+            state.capabilities.as_ref().is_some_and(|capabilities| {
+                capabilities["textDocumentSync"]["willSave"] == json!(true)
+            })
+        });
+        if asked {
+            self.notify(&json!({
+                "method": "textDocument/willSave",
+                "params": { "textDocument": { "uri": uri::of(path) }, "reason": 1 },
+            }));
+        }
+    }
+
+    /// Whether the server offers to answer `request`.
+    ///
+    /// A server still starting up has not said, and is taken to offer it:
+    /// what is asked before the handshake is answered waits for it, and a
+    /// server that turns out not to answer refuses it then.
+    pub fn offers(&self, request: &Request) -> bool {
+        self.state.lock().ok().is_none_or(|state| {
+            state
+                .capabilities
+                .as_ref()
+                .is_none_or(|capabilities| request.is_offered(capabilities))
+        })
     }
 
     /// Tells the server a file is no longer open.
@@ -411,6 +442,7 @@ impl Reader {
                 state.ready = true;
                 state.legend = answer::legend(&result["capabilities"]);
                 state.encoding = Encoding::of(&result["capabilities"]);
+                state.capabilities = Some(result["capabilities"].clone());
                 std::mem::take(&mut state.queued)
             }
             Err(_) => return,
@@ -454,15 +486,23 @@ impl Reader {
         (self.notify)();
     }
 
-    /// Forgets a question the server answered with an error.
+    /// Takes down that the server answered a question with an error.
     ///
     /// An error is not a short answer: a rename the server refused has not
     /// renamed nothing, it has failed, and reporting it as no edits would be
-    /// reporting a refusal as a success.
+    /// reporting a refusal as a success. It is still an answer, though, and
+    /// a save waiting on the server hears it and goes ahead.
     fn gave_up(&self, id: i64) {
-        if let Ok(mut state) = self.state.lock() {
-            state.asked.remove(&id);
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.asked.remove(&id).is_none() {
+            return;
         }
+        state.answers.insert(id, Answer::Refused);
+        state.fresh = true;
+        drop(state);
+        (self.notify)();
     }
 
     /// Takes down what the server has said about one file.
@@ -535,7 +575,12 @@ fn initialize(root: &Path, server: Server) -> Value {
         "general": { "positionEncodings": ["utf-8", "utf-16"] },
         "capabilities": {
             "textDocument": {
-                "synchronization": { "didSave": true, "dynamicRegistration": false },
+                "synchronization": {
+                    "didSave": true,
+                    "willSave": true,
+                    "willSaveWaitUntil": true,
+                    "dynamicRegistration": false,
+                },
                 "publishDiagnostics": { "relatedInformation": false },
                 "definition": { "linkSupport": true },
                 "typeDefinition": { "linkSupport": true },
@@ -552,6 +597,9 @@ fn initialize(root: &Path, server: Server) -> Value {
                 "rename": { "prepareSupport": false },
                 "formatting": {},
                 "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+                "documentHighlight": {},
+                "codeLens": {},
+                "callHierarchy": {},
                 "inlayHint": { "resolveSupport": { "properties": [] } },
                 "semanticTokens": {
                     "requests": { "full": true },
@@ -562,6 +610,7 @@ fn initialize(root: &Path, server: Server) -> Value {
             },
             "workspace": {
                 "workspaceEdit": { "documentChanges": true },
+                "symbol": {},
                 "didChangeWatchedFiles": {
                     "dynamicRegistration": true,
                     "relativePatternSupport": true,

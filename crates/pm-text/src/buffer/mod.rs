@@ -24,6 +24,7 @@ use crate::hint::Hint;
 use crate::history::History;
 use crate::indent::Indent;
 use crate::language::Language;
+use crate::lsp::Lens;
 use crate::syntax::{Highlight, Highlights, Syntax};
 
 /// One file, open for reading and editing.
@@ -59,6 +60,10 @@ pub struct Buffer {
     hints: Vec<Hint>,
     /// What a language server makes of every name in the file.
     semantics: Vec<(Range<Position>, Highlight)>,
+    /// Where the symbol at the cursor is used, and the version it was found in.
+    uses: (i32, Vec<Range<Position>>),
+    /// The notes a server puts above the file's declarations.
+    lenses: Vec<Lens>,
 }
 
 impl Buffer {
@@ -102,6 +107,8 @@ impl Buffer {
             diagnostics: Vec::new(),
             hints: Vec::new(),
             semantics: Vec::new(),
+            uses: (-1, Vec::new()),
+            lenses: Vec::new(),
         }
     }
 
@@ -218,6 +225,58 @@ impl Buffer {
         self.hints
             .iter()
             .filter(move |hint| hint.position.line == line)
+    }
+
+    /// Replaces where a server said the symbol at the cursor is used.
+    pub fn set_uses(&mut self, spans: Vec<Range<Position>>) {
+        self.uses = (self.version, spans);
+    }
+
+    /// Where the symbol at the cursor is used, while that is still true.
+    ///
+    /// What a server said stops holding the moment the text changes or the
+    /// cursor leaves the symbol it was about, and both are checked here
+    /// rather than cleared on every edit and every motion.
+    pub fn uses(&self) -> &[Range<Position>] {
+        let (version, spans) = &self.uses;
+        let head = self.selection.head;
+        let about = spans
+            .iter()
+            .any(|span| span.start <= head && head <= span.end);
+        match *version == self.version && about {
+            true => spans,
+            false => &[],
+        }
+    }
+
+    /// Replaces the notes a server put above the file's declarations.
+    pub fn set_lenses(&mut self, lenses: Vec<Lens>) {
+        self.lenses = lenses;
+        self.lenses.sort_by_key(|lens| lens.position);
+    }
+
+    /// Fills in what one note says, once the server has resolved it.
+    pub fn resolve_lens(&mut self, resolved: Lens) {
+        let unsaid = self
+            .lenses
+            .iter_mut()
+            .find(|lens| lens.title.is_none() && lens.position == resolved.position);
+        if let Some(lens) = unsaid {
+            *lens = resolved;
+        }
+    }
+
+    /// Every note a server put above the file's declarations.
+    pub fn lenses(&self) -> &[Lens] {
+        &self.lenses
+    }
+
+    /// What the notes about the declaration on `line` say, in order.
+    pub fn lenses_on(&self, line: usize) -> impl Iterator<Item = &str> {
+        self.lenses
+            .iter()
+            .filter(move |lens| lens.position.line == line)
+            .filter_map(|lens| lens.title.as_deref())
     }
 
     /// How many columns the hints in front of `position` take.

@@ -46,7 +46,38 @@ pub enum Request {
     Hints(Range<Position>),
     /// What the server makes of every name in the file.
     Semantics,
+    /// Every place in the file the symbol here is read or written.
+    Occurrences,
+    /// The notes the server would put above the file's declarations.
+    Lenses,
+    /// What one of those notes says, for a server that sent it unsaid.
+    ResolveLens(Handle),
+    /// The symbol here, as something whose calls can be followed.
+    PrepareCalls(Calls),
+    /// The calls into or out of a symbol the server named.
+    Calls(Calls, Handle),
+    /// The symbols of the whole workspace whose names match this.
+    WorkspaceSymbols(String),
+    /// What the server would change in the file before it is saved.
+    WillSave,
 }
+
+/// Which way along a symbol's calls to follow.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Calls {
+    /// Whatever calls the symbol.
+    Incoming,
+    /// Whatever the symbol calls.
+    Outgoing,
+}
+
+/// Something a server handed out to be handed back to it as it was.
+///
+/// A code lens to resolve and a symbol whose calls are to be followed are
+/// both the server's own records: the editor keeps them without reading
+/// them and returns them to the server that made them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Handle(Value);
 
 impl Request {
     /// The method a server is asked by.
@@ -66,7 +97,45 @@ impl Request {
             Self::Symbols => "textDocument/documentSymbol",
             Self::Hints(_) => "textDocument/inlayHint",
             Self::Semantics => "textDocument/semanticTokens/full",
+            Self::Occurrences => "textDocument/documentHighlight",
+            Self::Lenses => "textDocument/codeLens",
+            Self::ResolveLens(_) => "codeLens/resolve",
+            Self::PrepareCalls(_) => "textDocument/prepareCallHierarchy",
+            Self::Calls(Calls::Incoming, _) => "callHierarchy/incomingCalls",
+            Self::Calls(Calls::Outgoing, _) => "callHierarchy/outgoingCalls",
+            Self::WorkspaceSymbols(_) => "workspace/symbol",
+            Self::WillSave => "textDocument/willSaveWaitUntil",
         }
+    }
+
+    /// Whether a server that declared `capabilities` answers this request.
+    ///
+    /// A server asked what it never offered answers with an error at best,
+    /// and a save that waits on the answer waits on a refusal.
+    pub(super) fn is_offered(&self, capabilities: &Value) -> bool {
+        let offered = match self {
+            Self::Definition => &capabilities["definitionProvider"],
+            Self::TypeDefinition => &capabilities["typeDefinitionProvider"],
+            Self::Implementation => &capabilities["implementationProvider"],
+            Self::Declaration => &capabilities["declarationProvider"],
+            Self::References => &capabilities["referencesProvider"],
+            Self::Hover => &capabilities["hoverProvider"],
+            Self::Completions => &capabilities["completionProvider"],
+            Self::Signature => &capabilities["signatureHelpProvider"],
+            Self::CodeActions => &capabilities["codeActionProvider"],
+            Self::Rename(_) => &capabilities["renameProvider"],
+            Self::Format => &capabilities["documentFormattingProvider"],
+            Self::Symbols => &capabilities["documentSymbolProvider"],
+            Self::Hints(_) => &capabilities["inlayHintProvider"],
+            Self::Semantics => &capabilities["semanticTokensProvider"],
+            Self::Occurrences => &capabilities["documentHighlightProvider"],
+            Self::Lenses => &capabilities["codeLensProvider"],
+            Self::ResolveLens(_) => &capabilities["codeLensProvider"]["resolveProvider"],
+            Self::PrepareCalls(_) | Self::Calls(..) => &capabilities["callHierarchyProvider"],
+            Self::WorkspaceSymbols(_) => &capabilities["workspaceSymbolProvider"],
+            Self::WillSave => &capabilities["textDocumentSync"]["willSaveWaitUntil"],
+        };
+        !matches!(offered, Value::Null | Value::Bool(false))
     }
 
     /// This request with every place named in it counted the server's way.
@@ -108,7 +177,11 @@ impl Request {
                 "textDocument": document,
                 "options": { "tabSize": 4, "insertSpaces": true },
             }),
-            Self::Symbols | Self::Semantics => json!({ "textDocument": document }),
+            Self::Symbols | Self::Semantics | Self::Lenses => json!({ "textDocument": document }),
+            Self::ResolveLens(Handle(lens)) => lens.clone(),
+            Self::Calls(_, Handle(item)) => json!({ "item": item }),
+            Self::WorkspaceSymbols(query) => json!({ "query": query }),
+            Self::WillSave => json!({ "textDocument": document, "reason": 1 }),
             Self::Hints(span) => json!({
                 "textDocument": document,
                 "range": {
@@ -148,6 +221,24 @@ impl Request {
             Self::Symbols => Answer::Symbols(symbols(result)),
             Self::Hints(_) => Answer::Hints(hints(result)),
             Self::Semantics => Answer::Semantics(semantics(result, legend)),
+            Self::Occurrences => Answer::Occurrences(spans(result)),
+            Self::Lenses => Answer::Lenses(lenses(result)),
+            Self::ResolveLens(_) => Answer::Lenses(lens(result).into_iter().collect()),
+            Self::PrepareCalls(_) => Answer::CallItems(
+                result
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Handle)
+                    .collect(),
+            ),
+            Self::Calls(direction, _) => Answer::Named(calls(*direction, result)),
+            Self::WorkspaceSymbols(_) => Answer::Named(workspace_symbols(result)),
+            Self::WillSave => Answer::Edits(vec![FileEdit {
+                path: path.to_path_buf(),
+                edits: text_edits(result),
+            }]),
         }
     }
 }
@@ -173,6 +264,16 @@ pub enum Answer {
     Hints(Vec<crate::hint::Hint>),
     /// What the server makes of every name in the file, as spans to colour.
     Semantics(Vec<(Range<Position>, Highlight)>),
+    /// Every place in the file the symbol asked about is read or written.
+    Occurrences(Vec<Range<Position>>),
+    /// The notes above the file's declarations, or one of them resolved.
+    Lenses(Vec<Lens>),
+    /// The symbols a place names, as the server will follow their calls.
+    CallItems(Vec<Handle>),
+    /// Named places in any file: callers, callees, symbols of the workspace.
+    Named(Vec<NamedLocation>),
+    /// The server answered with an error, and so with nothing to act on.
+    Refused,
 }
 
 impl Answer {
@@ -220,6 +321,23 @@ impl Answer {
                     *span = files.decode_span(path, span.clone());
                 }
             }
+            Self::Occurrences(spans) => {
+                for span in spans {
+                    *span = files.decode_span(path, span.clone());
+                }
+            }
+            Self::Lenses(lenses) => {
+                for lens in lenses {
+                    lens.position = files.decode(path, lens.position);
+                }
+            }
+            Self::Named(found) => {
+                for named in found {
+                    let at = named.location.path.clone();
+                    named.location.range = files.decode_span(&at, named.location.range.clone());
+                }
+            }
+            Self::CallItems(_) | Self::Refused => {}
         }
     }
 
@@ -238,6 +356,11 @@ impl Answer {
             Self::Symbols(symbols) => symbols.is_empty(),
             Self::Hints(hints) => hints.is_empty(),
             Self::Semantics(spans) => spans.is_empty(),
+            Self::Occurrences(spans) => spans.is_empty(),
+            Self::Lenses(lenses) => lenses.is_empty(),
+            Self::CallItems(items) => items.is_empty(),
+            Self::Named(found) => found.is_empty(),
+            Self::Refused => true,
         }
     }
 }
@@ -315,6 +438,30 @@ pub struct Symbol {
     pub depth: usize,
 }
 
+/// A place in some file, and what is found there.
+#[derive(Clone, Debug)]
+pub struct NamedLocation {
+    /// What is found there.
+    pub name: String,
+    /// What is said beside it: a signature, or the symbol that holds it.
+    pub detail: String,
+    /// What kind of thing it is, as one word.
+    pub kind: &'static str,
+    /// Where it is.
+    pub location: Location,
+}
+
+/// A note a server puts above a declaration: a count of uses, a way to run it.
+#[derive(Clone, Debug)]
+pub struct Lens {
+    /// Where the declaration it is about begins.
+    pub position: Position,
+    /// What it says, once the server has said it.
+    pub title: Option<String>,
+    /// The server's own record of it, to resolve it by.
+    pub handle: Handle,
+}
+
 /// One end of a span, in the editor's own terms.
 fn position(value: &Value) -> Position {
     Position::new(
@@ -326,6 +473,97 @@ fn position(value: &Value) -> Position {
 /// One span, in the editor's own terms.
 fn range(value: &Value) -> Range<Position> {
     position(&value["start"])..position(&value["end"])
+}
+
+/// The spans a list of ranged things covers, whatever else each says.
+fn spans(result: &Value) -> Vec<Range<Position>> {
+    result
+        .as_array()
+        .map(|found| found.iter().map(|each| range(&each["range"])).collect())
+        .unwrap_or_default()
+}
+
+/// The notes a server would put above a file's declarations.
+fn lenses(result: &Value) -> Vec<Lens> {
+    result
+        .as_array()
+        .map(|found| found.iter().filter_map(lens).collect())
+        .unwrap_or_default()
+}
+
+/// One note, said or waiting to be resolved.
+fn lens(value: &Value) -> Option<Lens> {
+    value.get("range")?;
+    Some(Lens {
+        position: position(&value["range"]["start"]),
+        title: value["command"]["title"].as_str().map(str::to_owned),
+        handle: Handle(value.clone()),
+    })
+}
+
+/// The symbol a call hierarchy item names, and where it is.
+fn call_item(item: &Value, span: &Value) -> Option<NamedLocation> {
+    Some(NamedLocation {
+        name: item["name"].as_str()?.to_owned(),
+        detail: item["detail"].as_str().unwrap_or_default().to_owned(),
+        kind: symbol_kind(item["kind"].as_u64().unwrap_or_default()),
+        location: Location {
+            path: uri::path(item["uri"].as_str()?)?,
+            range: range(span),
+            origin: None,
+        },
+    })
+}
+
+/// The calls into or out of a symbol, each as the symbol at its other end.
+///
+/// A caller is shown where it makes the call, which is what a reader
+/// following calls upward wants to read; a callee is shown where it is
+/// declared, since the call itself is in the file already open.
+fn calls(direction: Calls, result: &Value) -> Vec<NamedLocation> {
+    result
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|call| match direction {
+            Calls::Incoming => {
+                let item = &call["from"];
+                let span = call["fromRanges"].get(0).unwrap_or(&item["selectionRange"]);
+                call_item(item, span)
+            }
+            Calls::Outgoing => call_item(&call["to"], &call["to"]["selectionRange"]),
+        })
+        .collect()
+}
+
+/// The symbols of a workspace a query matched, in the order the server ranked them.
+///
+/// A symbol whose location names only its file, which a server may send to
+/// have it resolved later, is taken to be at the top of that file.
+fn workspace_symbols(result: &Value) -> Vec<NamedLocation> {
+    result
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|symbol| {
+            let location = &symbol["location"];
+            Some(NamedLocation {
+                name: symbol["name"].as_str()?.to_owned(),
+                detail: symbol["containerName"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                kind: symbol_kind(symbol["kind"].as_u64().unwrap_or_default()),
+                location: Location {
+                    path: uri::path(location["uri"].as_str()?)?,
+                    range: range(&location["range"]),
+                    origin: None,
+                },
+            })
+        })
+        .collect()
 }
 
 /// The places a location, a link or a list of either names.

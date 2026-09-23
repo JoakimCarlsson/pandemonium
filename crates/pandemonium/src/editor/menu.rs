@@ -47,6 +47,8 @@ pub fn text_menu(target: &TextMenu) -> Vec<MenuItem<Message>> {
         ),
         menu_entry("Go to Implementation", language(Action::GoToImplementation)),
         menu_entry("Find All References", language(Action::FindReferences)),
+        menu_entry("Show Incoming Calls", language(Action::ShowIncomingCalls)),
+        menu_entry("Show Outgoing Calls", language(Action::ShowOutgoingCalls)),
         menu_separator(),
         menu_entry("Rename Symbol", language(Action::Rename)),
         menu_entry("Format Document", language(Action::Format)),

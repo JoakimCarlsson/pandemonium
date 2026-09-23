@@ -308,6 +308,7 @@ const DEFAULT: &[(&str, &str, &str)] = &[
     ("g a", "editor::SelectAllMatches", "normal || visual"),
     ("g s", "outline::Toggle", "normal"),
     ("g O", "outline::Toggle", "normal"),
+    ("g S", "project_symbols::Toggle", "normal"),
     ("g .", "ToggleCodeActions", "normal"),
     ("g A", "FindAllReferences", "normal"),
     ("g *", "MoveToNext partial_word", MOTION),

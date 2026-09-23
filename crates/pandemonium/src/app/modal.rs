@@ -163,6 +163,7 @@ fn action_for(command: Command) -> Action {
         Command::FoldAll => Action::FoldAll,
         Command::UnfoldAll => Action::UnfoldAll,
         Command::ShowSymbols => Action::ShowSymbols,
+        Command::ShowWorkspaceSymbols => Action::ShowWorkspaceSymbols,
         Command::ShowFiles => Action::ShowFiles,
         Command::SearchProject => Action::SearchProject,
         Command::MoveLineUp => Action::MoveLineUp,

@@ -125,6 +125,8 @@ pub enum Preference {
     WrapGuide,
     /// Whether a language server's hints are written into the lines.
     InlayHints,
+    /// Whether a language server's notes are written after declarations.
+    CodeLens,
     /// How the caret is drawn.
     CursorShape,
     /// Whether the caret blinks.
@@ -208,6 +210,8 @@ pub struct Preferences {
     pub display: Display,
     /// Whether a language server's hints are written into the lines.
     pub inlay_hints: bool,
+    /// Whether a language server's notes are written after declarations.
+    pub code_lens: bool,
     /// Whether the caret blinks.
     pub cursor_blink: bool,
     /// How far a notch of the wheel scrolls, against its usual distance.
@@ -242,6 +246,7 @@ impl Default for Preferences {
             hard_tabs: false,
             display: Display::default(),
             inlay_hints: true,
+            code_lens: true,
             cursor_blink: true,
             scroll_sensitivity: 1.0,
             format_on_save: false,
@@ -289,6 +294,7 @@ flags! {
     StickyScroll => display.sticky_scroll,
     Scrollbars => display.scrollbars,
     InlayHints => inlay_hints,
+    CodeLens => code_lens,
     CursorBlink => cursor_blink,
     FormatOnSave => format_on_save,
     TrimWhitespace => trim_whitespace,
@@ -337,6 +343,7 @@ fields! {
     Scrollbars => display.scrollbars,
     WrapGuide => display.wrap_guide,
     InlayHints => inlay_hints,
+    CodeLens => code_lens,
     CursorShape => display.cursor_shape,
     CursorBlink => cursor_blink,
     ScrollSensitivity => scroll_sensitivity,

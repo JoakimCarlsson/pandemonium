@@ -41,6 +41,10 @@ pub enum Kind {
     Problems,
     /// Everywhere the symbol under the cursor is used.
     References,
+    /// The symbols of the focused file's workspace whose names match the query.
+    WorkspaceSymbols,
+    /// Whatever calls, or is called by, the symbol under the cursor.
+    Calls,
     /// Every place a query was found across the open projects.
     Search,
     /// A line number to go to, which is a prompt rather than a list.
@@ -92,6 +96,8 @@ impl Kind {
             Self::Symbols => "Go to a symbol",
             Self::Problems => "Go to a problem",
             Self::References => "Go to a use of this symbol",
+            Self::WorkspaceSymbols => "Go to a symbol in the workspace",
+            Self::Calls => "Go to a call",
             Self::Search => "Search every open project",
             Self::Line => "Go to line",
             Self::Rename => "New name",
@@ -228,11 +234,10 @@ impl Picker {
         self.filter();
     }
 
-    /// Offers `rows` instead, keeping what has been typed.
+    /// Offers `rows` instead, narrowed by what has been typed.
     pub fn refill(&mut self, rows: Vec<Row>) {
         self.rows = rows;
-        self.matched = (0..self.rows.len()).take(SHOWN).collect();
-        self.selected = 0;
+        self.filter();
     }
 
     /// The rows the query leaves, best match first.

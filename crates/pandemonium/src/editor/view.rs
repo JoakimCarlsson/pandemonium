@@ -49,6 +49,12 @@ const SCROLLBAR_MIN_THUMB: f32 = 25.0;
 /// Longest a selection may be and still light up where else it appears.
 const OCCURRENCE_LIMIT: usize = 64;
 
+/// How many columns past the end of a line its code lenses begin.
+const LENS_GAP: usize = 2;
+
+/// What stands between two code lenses on one line.
+const LENS_SEPARATOR: &str = " | ";
+
 /// Most lines kept in sight at the top of a pane while their body scrolls.
 const STICKY_LIMIT: usize = 4;
 
@@ -591,6 +597,11 @@ impl<M> BufferView<M> {
         for hint in hints {
             column = self.paint_hint(hint, column, top, painting, glyphs, cx);
         }
+        let lenses = buffer.lenses_on(line).collect::<Vec<_>>();
+        if !lenses.is_empty() {
+            let said = lenses.join(LENS_SEPARATOR);
+            self.paint_note(&said, column + LENS_GAP, top, painting, glyphs, cx);
+        }
         for diagnostic in buffer.diagnostics() {
             self.paint_diagnostic(diagnostic, line, top, painting, cx);
         }
@@ -607,16 +618,32 @@ impl<M> BufferView<M> {
         glyphs: &mut Glyphs,
         cx: &mut PaintContext<'_, '_, M>,
     ) -> usize {
+        self.paint_note(&hint.text, column, top, painting, glyphs, cx);
+        column + hint.width()
+    }
+
+    /// Writes what a server said, not the file, into a line from `column` on.
+    fn paint_note(
+        &self,
+        text: &str,
+        column: usize,
+        top: f32,
+        painting: &Painting<'_>,
+        glyphs: &mut Glyphs,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
         let layout = painting.layout;
-        for (index, ch) in hint.text.chars().enumerate() {
+        for (index, ch) in text.chars().enumerate() {
             if ch.is_whitespace() {
                 continue;
             }
-            let run = glyphs.shape(ch, painting.font, cx);
             let x = layout.x_of(column + index);
+            if x > layout.bounds.right() {
+                break;
+            }
+            let run = glyphs.shape(ch, painting.font, cx);
             cx.text(Point::new(x, top), run, painting.theme.colors.text_subtle);
         }
-        column + hint.width()
     }
 
     /// Fills what every cursor has selected on one line.
@@ -1321,19 +1348,26 @@ fn markers(painting: &Painting<'_>) -> Vec<(usize, Rgba)> {
     marks
 }
 
-/// Where else in `lines` the selected text appears.
+/// Where else in `lines` the selected text, or the symbol at the cursor, appears.
 ///
 /// A word is lit where it appears again the moment it is selected, which is
 /// how selecting an identifier answers "where else is this used" without
 /// being asked. A selection that spans lines, or that is long enough to be
-/// prose rather than a name, lights nothing.
+/// prose rather than a name, lights nothing. With nothing selected, what is
+/// lit is where a language server said the symbol at the cursor is used,
+/// which knows a shadowed name from its namesake where matching text cannot.
 fn occurrences(buffer: &Buffer, lines: Range<usize>) -> Vec<Range<Position>> {
     let selection = buffer.selection();
     let (start, end) = (selection.start(), selection.end());
-    if selection.is_empty()
-        || start.line != end.line
-        || end.column - start.column > OCCURRENCE_LIMIT
-    {
+    if selection.is_empty() {
+        return buffer
+            .uses()
+            .iter()
+            .filter(|span| lines.contains(&span.start.line))
+            .cloned()
+            .collect();
+    }
+    if start.line != end.line || end.column - start.column > OCCURRENCE_LIMIT {
         return Vec::new();
     }
     let needle = buffer.text_in(start..end);

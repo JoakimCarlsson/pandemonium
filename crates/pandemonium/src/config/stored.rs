@@ -82,6 +82,8 @@ pub(super) struct Stored {
     wrap_guide: Option<usize>,
     /// Whether a language server's hints are written into the lines.
     inlay_hints: Option<bool>,
+    /// Whether a language server's notes are written after declarations.
+    code_lens: Option<bool>,
     /// How the caret is drawn.
     cursor_shape: Option<StoredCursorShape>,
     /// Whether the caret blinks.
@@ -352,6 +354,7 @@ impl Stored {
                 whole_lines: false,
             },
             inlay_hints: self.inlay_hints.unwrap_or(defaults.inlay_hints),
+            code_lens: self.code_lens.unwrap_or(defaults.code_lens),
             cursor_blink: self.cursor_blink.unwrap_or(defaults.cursor_blink),
             scroll_sensitivity: self
                 .scroll_sensitivity
@@ -422,6 +425,7 @@ impl Stored {
             scrollbars: Some(display.scrollbars),
             wrap_guide: display.wrap_guide,
             inlay_hints: Some(preferences.inlay_hints),
+            code_lens: Some(preferences.code_lens),
             cursor_shape: Some(StoredCursorShape::of(display.cursor_shape)),
             cursor_blink: Some(preferences.cursor_blink),
             scroll_sensitivity: Some(preferences.scroll_sensitivity),

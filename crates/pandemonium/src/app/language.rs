@@ -9,7 +9,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pm_text::{Answer, Asked, Client, FileEdit, Location, Position, Request};
+use pm_text::{
+    Answer, Asked, Calls, Client, FileEdit, Lens, Location, NamedLocation, Position, Request,
+};
 
 use crate::app::App;
 use crate::app::places::Place;
@@ -79,6 +81,9 @@ impl App {
             Action::ShowCodeActions => Request::CodeActions,
             Action::Format => Request::Format,
             Action::ShowSymbols => Request::Symbols,
+            Action::ShowIncomingCalls => Request::PrepareCalls(Calls::Incoming),
+            Action::ShowOutgoingCalls => Request::PrepareCalls(Calls::Outgoing),
+            Action::ShowWorkspaceSymbols => return self.open_workspace_symbols(),
             Action::Rename => return self.open_prompt(Action::Rename),
             _ => return,
         };
@@ -158,21 +163,92 @@ impl App {
         let Some(document) = self.editor.get(file) else {
             return;
         };
-        let document = document.borrow();
-        let clients = document.servers();
-        let path = document.buffer().path().to_path_buf();
-        drop(document);
-
+        let clients = document.borrow().servers();
         for client in clients {
-            let asked = client.ask(request.clone(), &path, at);
-            self.asked.push(Pending {
+            self.ask_of(client, file, at, request.clone(), purpose);
+        }
+    }
+
+    /// Asks `client` alone `request`, about `at` in `file`, if it answers it.
+    ///
+    /// A question that carries what one server handed out goes back to that
+    /// server and no other: a symbol rust-analyzer named means nothing to a
+    /// linter running beside it.
+    fn ask_of(
+        &mut self,
+        client: Arc<Client>,
+        file: FileId,
+        at: Position,
+        request: Request,
+        purpose: Purpose,
+    ) {
+        let Some(path) = self.editor.path(file) else {
+            return;
+        };
+        if !client.offers(&request) {
+            return;
+        }
+        let asked = client.ask(request.clone(), &path, at);
+        self.asked.push(Pending {
+            client,
+            asked,
+            file,
+            at,
+            request,
+            purpose,
+        });
+    }
+
+    /// Whether a question of `request`'s kind about `file` is unanswered.
+    fn awaits(&self, file: FileId, request: &Request) -> bool {
+        let kind = std::mem::discriminant(request);
+        self.asked
+            .iter()
+            .any(|pending| pending.file == file && std::mem::discriminant(&pending.request) == kind)
+    }
+
+    /// Opens the picker over the symbols of the focused file's workspace.
+    ///
+    /// The list is the servers' to fill, not the picker's: a workspace has
+    /// too many symbols to gather up front, so each query is asked anew and
+    /// the list is filled as the answers come in.
+    fn open_workspace_symbols(&mut self) {
+        if self.say_unserved() {
+            return;
+        }
+        self.workspace_symbols = (None, Vec::new());
+        self.open_picker_with(Kind::WorkspaceSymbols, Vec::new(), String::new());
+        self.ask_workspace_symbols(String::new());
+    }
+
+    /// Asks every server over the focused file's worktree for the symbols
+    /// `query` names.
+    ///
+    /// Every server of the worktree is asked rather than the file's own: a
+    /// symbol of the workspace may be declared in any of its languages. A
+    /// query already asked is not asked again, which is what moving the caret
+    /// along the field would otherwise do.
+    pub(super) fn ask_workspace_symbols(&mut self, query: String) {
+        if self.workspace_symbols.0.as_ref() == Some(&query) {
+            return;
+        }
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        self.workspace_symbols = (Some(query.clone()), Vec::new());
+        let Some(root) = self.worktree_of(file) else {
+            return;
+        };
+        let request = Request::WorkspaceSymbols(query);
+        self.forget(file, &request, Purpose::Act);
+        for client in self.editor.servers_over(&root) {
+            self.ask_of(
                 client,
-                asked,
                 file,
-                at,
-                request: request.clone(),
-                purpose,
-            });
+                Position::default(),
+                request.clone(),
+                Purpose::Act,
+            );
         }
     }
 
@@ -193,12 +269,18 @@ impl App {
             .filter_map(|pane| self.panes.pane(pane)?.active(scope)?.file())
             .collect::<Vec<_>>();
 
+        if let Some(file) = self.active_file_id() {
+            self.refresh_uses(file);
+        }
         for file in showing {
             let Some(document) = self.editor.get(file) else {
                 continue;
             };
             if document.borrow_mut().wants_semantics() {
                 self.ask_about(file, Position::default(), Request::Semantics);
+            }
+            if self.preferences.code_lens && document.borrow_mut().wants_lenses() {
+                self.ask_about(file, Position::default(), Request::Lenses);
             }
             let wanted = self.preferences.inlay_hints && document.borrow_mut().wants_hints();
             if !wanted {
@@ -208,6 +290,22 @@ impl App {
             let span = Position::default()..Position::new(last, 0);
             self.ask_about(file, Position::default(), Request::Hints(span));
         }
+    }
+
+    /// Asks where the symbol at the cursor of `file` is used, once it has
+    /// moved or the text has changed.
+    fn refresh_uses(&mut self, file: FileId) {
+        if !self.preferences.display.occurrences {
+            return;
+        }
+        let Some(document) = self.editor.get(file) else {
+            return;
+        };
+        if !document.borrow_mut().wants_uses() {
+            return;
+        }
+        let at = document.borrow().buffer().selection().head;
+        self.ask_about(file, at, Request::Occurrences);
     }
 
     /// Says what the editor knows about the place the pointer has stopped on.
@@ -466,6 +564,21 @@ impl App {
                 }
                 self.repaint_review(pending.file);
             }
+            Answer::Occurrences(spans) => {
+                if let Some(document) = self.editor.get(pending.file) {
+                    document.borrow_mut().buffer_mut().set_uses(spans);
+                }
+            }
+            Answer::Lenses(lenses) => self.take_lenses(pending, lenses),
+            Answer::CallItems(items) => self.follow_calls(pending, items),
+            Answer::Named(found) => match &pending.request {
+                Request::WorkspaceSymbols(query) => self.show_workspace_symbols(query, found),
+                _ => {
+                    let rows = self.named_rows(found);
+                    self.open_picker_with(Kind::Calls, rows, String::new());
+                }
+            },
+            Answer::Refused => {}
             Answer::Symbols(symbols) => {
                 let rows = symbols
                     .into_iter()
@@ -491,24 +604,160 @@ impl App {
         self.request_redraw();
     }
 
-    /// Saves a file that was formatted on its way to being saved.
+    /// Takes the next step of a save, once every server has answered the last.
     ///
-    /// The save waits for the last server to answer, not the first: a
-    /// formatter that has changes to make must have made them before the
-    /// file they are made to goes to disk.
+    /// A save the servers take part in is three steps: the formatter's
+    /// changes, then whatever each server wants changed before the file is
+    /// written, then the writing. Each step waits for the last server to
+    /// answer, not the first, and each is asked about the text the one before
+    /// it left, so that two servers' changes never land on each other.
     fn save_once_formatted(&mut self, pending: &Pending) {
-        if pending.request != Request::Format || !self.saving {
+        if !self.saving || !matches!(pending.request, Request::Format | Request::WillSave) {
             return;
         }
-        let awaited = self
-            .asked
-            .iter()
-            .any(|other| other.file == pending.file && other.request == Request::Format);
-        if awaited {
+        if self.awaits(pending.file, &pending.request) {
             return;
         }
+        match pending.request {
+            Request::Format => self.ask_before_save(pending.file),
+            _ => self.finish_save(),
+        }
+    }
+
+    /// Starts a save the servers behind the focused file take part in.
+    ///
+    /// A save with no server to wait on is written at once.
+    pub(super) fn begin_save(&mut self, format: bool) {
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        self.saving = true;
+        if format {
+            self.ask(Request::Format);
+            if self.awaits(file, &Request::Format) {
+                return;
+            }
+        }
+        self.ask_before_save(file);
+    }
+
+    /// Asks each server what it would change in `file` before it is saved.
+    fn ask_before_save(&mut self, file: FileId) {
+        let at = self
+            .editor
+            .get(file)
+            .map(|document| document.borrow().buffer().selection().head)
+            .unwrap_or_default();
+        self.ask_about(file, at, Request::WillSave);
+        if !self.awaits(file, &Request::WillSave) {
+            self.finish_save();
+        }
+    }
+
+    /// Writes the file a save was waiting on the servers for.
+    fn finish_save(&mut self) {
         self.saving = false;
         self.save_active();
+    }
+
+    /// Takes down the notes a server put above the file's declarations.
+    ///
+    /// A note the server sent without saying what it says is resolved by
+    /// the same server, one question each: which of them need it is the
+    /// server's to decide, and a count of uses is only worked out on asking.
+    fn take_lenses(&mut self, pending: &Pending, lenses: Vec<Lens>) {
+        let Some(document) = self.editor.get(pending.file) else {
+            return;
+        };
+        if matches!(pending.request, Request::ResolveLens(_)) {
+            for lens in lenses {
+                document.borrow_mut().buffer_mut().resolve_lens(lens);
+            }
+            return;
+        }
+        document
+            .borrow_mut()
+            .buffer_mut()
+            .set_lenses(lenses.clone());
+        for lens in lenses.into_iter().filter(|lens| lens.title.is_none()) {
+            self.ask_of(
+                pending.client.clone(),
+                pending.file,
+                lens.position,
+                Request::ResolveLens(lens.handle),
+                pending.purpose,
+            );
+        }
+    }
+
+    /// Asks the server that named the symbol under the cursor for its calls.
+    fn follow_calls(&mut self, pending: &Pending, items: Vec<pm_text::Handle>) {
+        let Request::PrepareCalls(direction) = pending.request else {
+            return;
+        };
+        let Some(item) = items.into_iter().next() else {
+            return;
+        };
+        let request = Request::Calls(direction, item);
+        self.forget(pending.file, &request, pending.purpose);
+        self.ask_of(
+            pending.client.clone(),
+            pending.file,
+            pending.at,
+            request,
+            pending.purpose,
+        );
+    }
+
+    /// Fills the workspace symbol picker with what a server found for `query`.
+    ///
+    /// What each server finds is added to what the others found for the
+    /// same query, and a query the reader has typed past is dropped.
+    fn show_workspace_symbols(&mut self, query: &str, found: Vec<NamedLocation>) {
+        let open = self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.kind() == Kind::WorkspaceSymbols);
+        if !open || self.workspace_symbols.0.as_deref() != Some(query) {
+            return;
+        }
+        let rows = self.named_rows(found);
+        self.workspace_symbols.1.extend(rows);
+        let rows = self.workspace_symbols.1.clone();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.refill(rows);
+        }
+    }
+
+    /// The picker rows of named places: a symbol and where it is.
+    fn named_rows(&self, found: Vec<NamedLocation>) -> Vec<Row> {
+        found
+            .into_iter()
+            .filter_map(|named| {
+                let location = named.location;
+                let place = self.place_of(&location.path, location.range.start)?;
+                let file = format!(
+                    "{}:{}",
+                    self.relative_to(place.scope, &location.path),
+                    place.position.line + 1
+                );
+                let about = if named.detail.is_empty() {
+                    named.kind
+                } else {
+                    named.detail.as_str()
+                };
+                Some(Row {
+                    section: None,
+                    label: named.name,
+                    detail: match about.is_empty() {
+                        true => file,
+                        false => format!("{about} · {file}"),
+                    },
+                    choice: Choice::OpenAt(place.scope, place.path, place.position),
+                    enabled: true,
+                })
+            })
+            .collect()
     }
 
     /// Goes to the first place a server named, taking down where the cursor was.
