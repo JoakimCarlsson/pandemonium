@@ -485,15 +485,12 @@ fn group(theme: &Theme, review: &Review, listed: Group) -> Div<Message> {
 
 /// Builds one row: the file's name, where it lives, and what it is marked.
 ///
-/// A click selects the row and opens its diff; the secondary modifier marks
-/// it alongside whatever else is marked, and shift marks everything between.
-/// The lit row is the one the keyboard is on, and the marked ones are lit
-/// more quietly beside it.
+/// A click takes the reader to the file in the review and leaves the row as
+/// it was; the secondary modifier marks it alongside whatever else is marked,
+/// and shift marks everything between. Only marked rows are lit.
 fn change_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -> Div<Message> {
     let mark = changed.mark();
-    let id = review.id_of(index);
-    let selected = id.is_some_and(|id| review.selected() == Some(id));
-    let marked = id.is_some_and(|id| review.is_marked(id));
+    let marked = review.id_of(index).is_some_and(|id| review.is_marked(id));
 
     h_flex()
         .w_full()
@@ -503,10 +500,6 @@ fn change_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -
         .items_center()
         .overflow_hidden()
         .when(marked, |row| row.bg(theme.colors.surface_selected))
-        .when(selected, |row| {
-            row.bg(theme.colors.surface_active)
-                .border_1(theme.colors.border_selected)
-        })
         .hover_bg(theme.colors.surface_hover)
         .on_click(Message::SelectChange(index))
         .on_secondary_click(Message::ShowChangeMenu(index))

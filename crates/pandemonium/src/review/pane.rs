@@ -391,15 +391,13 @@ fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
 
 /// Builds the heading of one file: its path, its counts and its controls.
 ///
-/// The heading is a row of the same list the sidebar draws, so clicking it
-/// selects the file — which is what the toolbar's staging then acts on — and
-/// the chevron beside it is what folds its lines away.
+/// The heading is a row of the same list the sidebar draws and is lit only
+/// when marked; a click anywhere on it folds its lines away or back out, and
+/// the chevron shows which way it is.
 fn file_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -> Div<Message> {
     let collapsed = review.is_collapsed(&changed.path);
     let (added, removed) = counts(review, changed);
-    let id = review.id_of(index);
-    let selected = id.is_some_and(|id| review.selected() == Some(id));
-    let marked = id.is_some_and(|id| review.is_marked(id));
+    let marked = review.id_of(index).is_some_and(|id| review.is_marked(id));
 
     h_flex()
         .w_full()
@@ -410,21 +408,14 @@ fn file_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -> 
         .overflow_hidden()
         .bg(theme.colors.surface)
         .when(marked, |row| row.bg(theme.colors.surface_selected))
-        .when(selected, |row| {
-            row.bg(theme.colors.surface_active)
-                .border_1(theme.colors.border_selected)
-        })
         .hover_bg(theme.colors.surface_hover)
-        .on_click(Message::SelectChange(index))
+        .on_click(Message::ExpandChange(index))
         .on_secondary_click(Message::ShowChangeMenu(index))
         .child(
             v_flex()
                 .size_px(theme.size.icon_control)
                 .items_center()
                 .justify_center()
-                .rounded(theme.radius.md)
-                .hover_bg(theme.colors.surface_hover)
-                .on_click(Message::ExpandChange(index))
                 .child(
                     icon(match collapsed {
                         true => IconName::ChevronRight,

@@ -82,8 +82,9 @@ impl App {
     /// Puts the list's selection on the `index`-th change.
     ///
     /// This is the one place a click on a row is read: marking with the
-    /// secondary modifier, marking a range with shift, and selecting alone
-    /// otherwise — which also opens the file's diff, because that is what
+    /// secondary modifier and marking a range with shift. A plain click
+    /// selects nothing and leaves the list unfocused; it forgets the marks and
+    /// takes the reader to the file in the review, because that is what
     /// clicking a change is for.
     pub(super) fn select_change(&mut self, index: usize, marking: bool, ranging: bool) {
         let Some(scope) = self.scope() else {
@@ -100,15 +101,15 @@ impl App {
             return;
         };
 
-        self.changes_focused = true;
         match (ranging, marking) {
             (true, _) => review.mark_to(id),
             (_, true) => review.toggle_mark(id),
             _ => {
-                review.select(id);
-                self.open_change(index);
+                review.clear_marks();
+                return self.open_change(index);
             }
         }
+        self.changes_focused = true;
     }
 
     /// Opens the diff of the row the list's keyboard is on.

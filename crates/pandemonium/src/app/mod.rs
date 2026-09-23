@@ -1306,8 +1306,15 @@ impl App {
             Message::CopyChangeRelativePath(index) => self.copy_changed_path(index, true),
             Message::RevealChange(index) => self.reveal_change(index),
             Message::ExpandChange(index) => {
-                if let Some(review) = self.review_mut() {
-                    review.toggle(index);
+                let marking = self.modifiers.super_key() || self.modifiers.control_key();
+                let ranging = self.modifiers.shift_key();
+                match marking || ranging {
+                    true => self.select_change(index, marking, ranging),
+                    false => {
+                        if let Some(review) = self.review_mut() {
+                            review.toggle(index);
+                        }
+                    }
                 }
             }
             Message::ShowInputMenu => self.open_menu(MenuTarget::Input),

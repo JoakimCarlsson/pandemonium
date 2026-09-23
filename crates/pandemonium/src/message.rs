@@ -302,7 +302,8 @@ pub enum Message {
     CopyChangeRelativePath(usize),
     /// Show the file this change is to in the desktop's file manager.
     RevealChange(usize),
-    /// Show or hide the lines this change covers.
+    /// Show or hide the lines this change covers, or mark it when a modifier
+    /// is held.
     ExpandChange(usize),
     /// Put everything the active project has changed into the index.
     StageAll,
