@@ -219,6 +219,8 @@ pub struct Panes {
     pub editor: Box<dyn Element<Message>>,
     /// The file the focused pane is showing, for the status bar to read.
     pub showing: Option<OpenFile>,
+    /// While modal editing is on, the register being recorded into, if any.
+    pub recording: Option<Option<char>>,
     /// The part of the window a tab being carried would take over.
     pub drop: Option<Rect>,
     /// The tab the pointer is carrying, where it is and what it is called.
@@ -514,6 +516,9 @@ struct Status {
     indent: Option<String>,
     /// What that file is written in.
     language: Option<&'static str>,
+    /// The mode modal editing has that file in, with the keys typed towards
+    /// a command and the register being recorded into.
+    modal: Option<String>,
     /// How many errors and warnings a server has reported in it.
     problems: (usize, usize),
 }
@@ -553,6 +558,20 @@ impl Status {
                     false => format!("Spaces: {}", indent.width),
                 }
             }),
+            modal: panes
+                .recording
+                .zip(showing.as_ref())
+                .map(|(recording, document)| {
+                    let state = document.modal();
+                    let mode = state.mode().label();
+                    let recording = recording.map(|name| format!(" · recording @{name}"));
+                    match state.pending() {
+                        Some(pending) => {
+                            format!("{mode} · {pending}{}", recording.unwrap_or_default())
+                        }
+                        None => format!("{mode}{}", recording.unwrap_or_default()),
+                    }
+                }),
             language: buffer.map(|buffer| {
                 buffer
                     .language()
@@ -594,6 +613,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         indent,
         language,
         problems,
+        modal,
     } = status;
 
     h_flex()
@@ -659,6 +679,9 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
             ))
         })
         .child(h_flex().flex_1())
+        .when_some(modal, |bar, modal| {
+            bar.child(status_item(theme, None, modal, None, true))
+        })
         .when_some(cursor, |bar, (line, column)| {
             bar.child(status_item(
                 theme,

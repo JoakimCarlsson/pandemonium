@@ -96,6 +96,9 @@ pub struct Document {
     named: Option<i32>,
     /// The runs of lines that are folded away, in the order they appear.
     folded: Vec<std::ops::Range<usize>>,
+    /// The mode modal editing has the file in, and the keys gathered towards
+    /// a command.
+    modal: pm_vim::State,
 }
 
 impl Document {
@@ -132,6 +135,7 @@ impl Document {
             search: Search::default(),
             preview,
             servers,
+            modal: pm_vim::State::default(),
         }
     }
 
@@ -400,6 +404,16 @@ impl Document {
         self.scroll = line.min(last);
     }
 
+    /// Scrolls so that the cursor's line has `rows` rows above it, as near
+    /// as the margin kept around the cursor allows.
+    pub fn scroll_cursor_to(&mut self, rows: usize) {
+        let shown = self.rows();
+        let margin = SCROLL_MARGIN.min(shown.saturating_sub(1) / 2);
+        let rows = rows.clamp(margin, shown.saturating_sub(margin + 1).max(margin));
+        let head = self.buffer.selection().head.line;
+        self.scroll_to(self.line_after(head, -(rows as isize)));
+    }
+
     /// Scrolls `lines` down, or up when `lines` is negative.
     pub fn scroll_by(&mut self, lines: isize) {
         self.scroll_to(self.line_after(self.scroll, lines));
@@ -488,10 +502,21 @@ impl Document {
     /// text also keeps the file: what has been written in is not something
     /// the next file previewed may close.
     pub fn edit(&mut self, edit: impl FnOnce(&mut Buffer)) {
+        self.edit_modal(|buffer, _| edit(buffer));
+    }
+
+    /// The mode modal editing has the file in.
+    pub fn modal(&self) -> &pm_vim::State {
+        &self.modal
+    }
+
+    /// Applies `edit` to the buffer and the modal state beside it, as
+    /// [`Self::edit`] does to the buffer alone, answering what `edit` did.
+    pub fn edit_modal<R>(&mut self, edit: impl FnOnce(&mut Buffer, &mut pm_vim::State) -> R) -> R {
         let version = self.buffer.version();
-        edit(&mut self.buffer);
+        let result = edit(&mut self.buffer, &mut self.modal);
         if version == self.buffer.version() {
-            return;
+            return result;
         }
         self.preview = false;
         if self.search.is_open() {
@@ -501,6 +526,7 @@ impl Document {
         for server in &self.servers {
             server.did_change(self.buffer.path(), self.buffer.version(), &contents);
         }
+        result
     }
 
     /// Tidies the file the way `habits` say, writes it to disk and tells

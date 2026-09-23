@@ -99,6 +99,8 @@ pub enum Preference {
     BufferLineHeight,
     /// The keymap the editor starts from.
     Keymap,
+    /// Whether editing starts in vim mode.
+    VimMode,
     /// How wide a step of indentation is where a file does not say.
     TabSize,
     /// Whether a step of indentation is a tab where a file does not say.
@@ -178,6 +180,8 @@ pub struct Preferences {
     pub fonts: Fonts,
     /// The keymap the editor starts from.
     pub keymap: BaseKeymap,
+    /// Whether editing starts in vim mode.
+    pub vim_mode: bool,
     /// How wide a step of indentation is where a file does not say.
     pub tab_size: usize,
     /// Whether a step of indentation is a tab where a file does not say.
@@ -213,6 +217,7 @@ impl Default for Preferences {
             theme_overrides: ThemeOverrides::default(),
             fonts: Fonts::default(),
             keymap: BaseKeymap::default(),
+            vim_mode: false,
             tab_size: Indent::default().width,
             hard_tabs: false,
             display: Display::default(),
@@ -254,6 +259,7 @@ macro_rules! flags {
 }
 
 flags! {
+    VimMode => vim_mode,
     HardTabs => hard_tabs,
     LineNumbers => display.line_numbers,
     RelativeLineNumbers => display.relative_line_numbers,
@@ -298,6 +304,7 @@ fields! {
     BufferFontWeight => fonts.buffer_weight,
     BufferLineHeight => fonts.buffer_line_height,
     Keymap => keymap,
+    VimMode => vim_mode,
     TabSize => tab_size,
     HardTabs => hard_tabs,
     LineNumbers => display.line_numbers,

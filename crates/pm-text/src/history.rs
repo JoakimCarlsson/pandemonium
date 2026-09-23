@@ -217,6 +217,29 @@ impl History {
         Some(replay)
     }
 
+    /// Makes every step after the first `depth` one step.
+    ///
+    /// Nothing happens when fewer than two steps have been made since, as
+    /// there is nothing to join.
+    pub fn squash(&mut self, depth: usize) {
+        if self.done.len() <= depth + 1 {
+            return;
+        }
+        let steps = self.done.split_off(depth);
+        let before = steps[0].before;
+        let last = &steps[steps.len() - 1];
+        let (after, at) = (last.after, last.at);
+        let changes = steps.into_iter().flat_map(|step| step.changes).collect();
+        self.done.push(Step {
+            changes,
+            before,
+            after,
+            at,
+            kind: Kind::Other,
+        });
+        self.open = false;
+    }
+
     /// Whether there is a step to take back.
     pub fn can_undo(&self) -> bool {
         !self.done.is_empty()

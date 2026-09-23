@@ -38,6 +38,10 @@ the domain; nothing in it knows that a UI exists.
   as data; it neither lays out nor draws.
 - `pm-vt` — terminal emulation: escape-sequence parser, cell grid, scrollback.
   Drives a plain shell and an agent CLI alike; it knows nothing about either.
+- `pm-vim` — modal editing: the key grammar, motions, text objects,
+  operators, registers, `.` and macros, over a `pm-text` buffer. It takes
+  keystrokes of its own and answers with effects; it knows neither winit
+  nor the window.
 - `pm-ui` — the element tree, the layout pass, hit testing, focus and input
   routing, over `pm-gfx`'s draw list. Widgets are extracted from real screens
   as they repeat; there is no widget catalogue built ahead of them.
@@ -77,8 +81,9 @@ which of them callers may name.
 - **Everything is a pane.** Files, diffs, agent sessions and terminals are the
   same kind of item in the same pane tree: splittable, tabbable, closable. No
   bespoke docks, no panel that only one feature can live in.
-- **The layers point one way.** `pm-core` depends on nothing of ours; `pm-ui`
-  knows `pm-gfx` and not the binary; the binary knows everyone. A layer never
+- **The layers point one way.** `pm-core` depends on nothing of ours; `pm-vim`
+  knows `pm-text` alone; `pm-ui` knows `pm-gfx` and not the binary; the binary
+  knows everyone. A layer never
   reaches back up.
 - **One seam, one place.** Creating a session, resolving a project, tearing a
   worktree down: each has exactly one implementation, and every caller — the

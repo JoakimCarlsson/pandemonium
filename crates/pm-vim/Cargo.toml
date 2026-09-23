@@ -1,0 +1,8 @@
+[package]
+name = "pm-vim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-text.workspace = true

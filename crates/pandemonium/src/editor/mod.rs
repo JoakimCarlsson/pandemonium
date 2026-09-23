@@ -24,7 +24,7 @@ pub use caret::Blink;
 pub use completions::{Completions, completion_list};
 pub use display::{CursorShape, Display};
 pub use hint::{Shown, hint};
-pub use keys::{Edit, edit};
+pub use keys::{Edit, edit, keystroke};
 pub use menu::{TextMenu, text_menu};
 pub use search::{Search, SearchField};
 pub use store::{Document, FileEntry, FileId, Files, Habits, OpenFile};

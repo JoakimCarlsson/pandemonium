@@ -944,6 +944,22 @@ impl<M> BufferView<M> {
         ));
     }
 
+    /// The character the cursor of `selection` is drawn over.
+    ///
+    /// A block stands on a character rather than between two, so at the far
+    /// end of a selection running forward it stands on the last character
+    /// selected rather than on the one after it.
+    fn cursor_cell(&self, selection: &Selection) -> Position {
+        let head = selection.head;
+        match self.display.cursor_shape == CursorShape::Block
+            && head > selection.anchor
+            && head.column > 0
+        {
+            true => Position::new(head.line, head.column - 1),
+            false => head,
+        }
+    }
+
     /// Draws every cursor: solid while the pane is focused, faint otherwise.
     fn paint_cursor(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
         if !self.caret {
@@ -957,7 +973,7 @@ impl<M> BufferView<M> {
         };
 
         for selection in &painting.selections {
-            let head = selection.head;
+            let head = self.cursor_cell(selection);
             let Some(top) = painting.top_of(head.line) else {
                 continue;
             };

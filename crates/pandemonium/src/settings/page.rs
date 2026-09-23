@@ -472,14 +472,21 @@ fn section_rows(
                 "End a file with a line break when it is saved",
             ),
         ],
-        SettingsSection::Keymap => vec![below(
-            theme,
-            preferences,
-            Preference::Keymap,
-            "Base Keymap",
-            "Keep the bindings your hands already know",
-            toggle_grid(keymaps(), Some(preferences.keymap.index()), 4),
-        )],
+        SettingsSection::Keymap => vec![
+            below(
+                theme,
+                preferences,
+                Preference::Keymap,
+                "Base Keymap",
+                "Keep the bindings your hands already know",
+                toggle_grid(keymaps(), Some(preferences.keymap.index()), 4),
+            ),
+            toggle(
+                Preference::VimMode,
+                "Vim Mode",
+                "Modal editing, built in rather than an extension",
+            ),
+        ],
         SettingsSection::Terminal => vec![
             stepper(
                 Preference::TerminalFontSize,

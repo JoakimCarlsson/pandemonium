@@ -20,6 +20,16 @@ impl CursorShape {
     /// Every shape, in the order a toggle offers them.
     pub const ALL: [Self; 3] = [Self::Bar, Self::Block, Self::Underline];
 
+    /// The shape to draw in a mode that asks for `shape`, this being the
+    /// one the reader chose for typing.
+    pub const fn modal(self, shape: pm_vim::Shape) -> Self {
+        match shape {
+            pm_vim::Shape::Typing => self,
+            pm_vim::Shape::Block => Self::Block,
+            pm_vim::Shape::Underline => Self::Underline,
+        }
+    }
+
     /// The shape's label in the toggle that picks it.
     pub const fn label(self) -> &'static str {
         match self {

@@ -15,7 +15,7 @@ use pm_ui::{Axis, Element, IconName, MenuItem, ResizeEvent, ResizePhase, Theme};
 
 use crate::app::App;
 use crate::app::drag::{DropPlace, TabDrag, highlight, unmeasured};
-use crate::editor::{FileEntry, FileId, OpenFile};
+use crate::editor::{Display, FileEntry, FileId, OpenFile};
 use crate::message::Message;
 use crate::panes::{
     self, Content, Contents, Item, PaneId, Saved, SavedKind, SavedTab, SplitDirection, TabEntry,
@@ -804,6 +804,7 @@ impl App {
                 .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
             let active = pane.active(scope);
             let file = active.and_then(Item::file);
+            let display = self.display_of(file, display);
             Contents {
                 tabs: pane
                     .tabs(scope)
@@ -831,6 +832,22 @@ impl App {
                 display,
             }
         })
+    }
+
+    /// What a pane showing `file` draws around its text: `display`, with the
+    /// cursor shaped by the file's mode while modal editing is on.
+    fn display_of(&self, file: Option<FileId>, display: Display) -> Display {
+        let Some(document) = file
+            .filter(|_| self.preferences.vim_mode)
+            .and_then(|file| self.editor.get(file))
+        else {
+            return display;
+        };
+        let shape = document.borrow().modal().shape();
+        Display {
+            cursor_shape: display.cursor_shape.modal(shape),
+            ..display
+        }
     }
 
     /// What a pane showing `item` draws beneath its bar of tabs.

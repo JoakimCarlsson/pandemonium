@@ -1632,6 +1632,7 @@ dependencies = [
  "pm-gfx",
  "pm-text",
  "pm-ui",
+ "pm-vim",
  "pm-vt",
  "rfd",
  "serde",
@@ -1785,6 +1786,13 @@ name = "pm-ui"
 version = "0.1.0"
 dependencies = [
  "pm-gfx",
+]
+
+[[package]]
+name = "pm-vim"
+version = "0.1.0"
+dependencies = [
+ "pm-text",
 ]
 
 [[package]]

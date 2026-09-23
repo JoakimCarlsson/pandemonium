@@ -577,6 +577,19 @@ impl Buffer {
         self.history.commit();
     }
 
+    /// How many undo steps have been made, for [`Self::squash_since`].
+    pub fn undo_depth(&self) -> usize {
+        self.history.depth()
+    }
+
+    /// Makes every undo step since the history was `depth` deep one step.
+    ///
+    /// A stretch of typing that began with a command is one thing the reader
+    /// did, however many pauses it took: taking it back is one keypress.
+    pub fn squash_since(&mut self, depth: usize) {
+        self.history.squash(depth);
+    }
+
     /// Replaces the text `range` covers with `text`, cursor and history included.
     pub fn replace(&mut self, range: Range<Position>, text: &str) {
         let before = self.selection();
@@ -657,7 +670,7 @@ impl Buffer {
     }
 
     /// Runs `change`, gathering everything it does into one undo step.
-    pub(crate) fn grouped(&mut self, change: impl FnOnce(&mut Self)) {
+    pub fn grouped(&mut self, change: impl FnOnce(&mut Self)) {
         self.history.begin();
         change(self);
         self.history.end();
