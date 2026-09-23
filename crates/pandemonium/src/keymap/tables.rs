@@ -135,6 +135,11 @@ pub const BASE: &[Row] = &[
     ("primary+shift+f", Action::SearchProject, "true"),
     ("primary+g", Action::GoToLine, "pane.kind == file"),
     ("primary+r", Action::ShowSymbols, "pane.kind == file"),
+    (
+        "primary+t",
+        Action::ShowWorkspaceSymbols,
+        "pane.kind == file",
+    ),
     ("primary+shift+m", Action::ShowProblems, "true"),
     ("f12", Action::GoToDefinition, "pane.kind == file"),
     (
@@ -143,6 +148,11 @@ pub const BASE: &[Row] = &[
         "pane.kind == file",
     ),
     ("shift+f12", Action::FindReferences, "pane.kind == file"),
+    (
+        "shift+alt+h",
+        Action::ShowIncomingCalls,
+        "pane.kind == file",
+    ),
     ("alt+left", Action::GoBack, "true"),
     ("alt+right", Action::GoForward, "true"),
     ("f8", Action::NextDiagnostic, "pane.kind == file"),

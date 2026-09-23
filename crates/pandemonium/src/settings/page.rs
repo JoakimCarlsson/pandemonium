@@ -449,6 +449,11 @@ fn section_rows(
                 "Inlay Hints",
                 "Let a language server write types and parameter names into the lines",
             ),
+            toggle(
+                Preference::CodeLens,
+                "Code Lens",
+                "Let a language server write counts of uses and ways to run a declaration after it",
+            ),
             stepper(
                 Preference::ScrollSensitivity,
                 "Scroll Sensitivity",

@@ -130,6 +130,9 @@ impl App {
         if !preferences.inlay_hints {
             self.editor.forget_hints();
         }
+        if !preferences.code_lens {
+            self.editor.forget_lenses();
+        }
         self.vim.share_clipboard(self.preferences.vim_clipboard);
         self.bind_vim_keys();
     }

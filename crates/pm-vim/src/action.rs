@@ -120,6 +120,8 @@ pub enum Command {
     UnfoldAll,
     /// List the symbols of the file.
     ShowSymbols,
+    /// List the symbols of the workspace.
+    ShowWorkspaceSymbols,
     /// Open the file finder.
     ShowFiles,
     /// Search every file.
@@ -596,6 +598,7 @@ impl Action {
             "FoldAll" | "editor::FoldAll" => app(Command::FoldAll),
             "UnfoldAll" | "editor::UnfoldAll" => app(Command::UnfoldAll),
             "outline::Toggle" => app(Command::ShowSymbols),
+            "project_symbols::Toggle" => app(Command::ShowWorkspaceSymbols),
             "file_finder::Toggle" => app(Command::ShowFiles),
             "pane::DeploySearch" => app(Command::SearchProject),
             "editor::MoveLineUp" => app(Command::MoveLineUp),

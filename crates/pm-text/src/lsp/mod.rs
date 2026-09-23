@@ -24,7 +24,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use answer::{Answer, CodeAction, Completion, FileEdit, Location, Request, Symbol};
+pub use answer::{
+    Answer, Calls, CodeAction, Completion, FileEdit, Handle, Lens, Location, NamedLocation,
+    Request, Symbol,
+};
 pub use client::{Asked, Client};
 pub use watch::Watched;
 
@@ -91,6 +94,15 @@ impl Servers {
         self.running.retain(|(started, _), _| started != root);
     }
 
+    /// Every server running over `root`, whichever language it serves.
+    pub fn over(&self, root: &Path) -> Vec<Arc<Client>> {
+        self.running
+            .iter()
+            .filter(|((started, _), _)| started == root)
+            .filter_map(|(_, client)| client.clone())
+            .collect()
+    }
+
     /// Tells every server running over `root` what changed on disk under it.
     pub fn watched(&self, root: &Path, changes: &[(PathBuf, Watched)]) {
         self.running
@@ -118,7 +130,7 @@ impl Servers {
 /// their programs somewhere that only a shell profile ever hears about. A
 /// server the reader has installed is a server the editor runs, whether or
 /// not the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 7] = [
+const TOOL_DIRECTORIES: [&str; 8] = [
     ".cargo/bin",
     ".local/bin",
     "go/bin",
@@ -126,6 +138,7 @@ const TOOL_DIRECTORIES: [&str; 7] = [
     ".deno/bin",
     ".npm-global/bin",
     ".volta/bin",
+    ".local/share/fnm/aliases/default/bin",
 ];
 
 /// Where `command` is installed, on the path or in the usual places beside it.

@@ -66,9 +66,15 @@ const PYTHON_SERVERS: &[Server] = &[
 ];
 
 /// The servers that answer for every TypeScript and JavaScript dialect:
-/// tsserver or vtsls for the types, ESLint and Biome for the lints, and
-/// Tailwind for the class names.
+/// TypeScript 7's own server, or tsserver or vtsls over an older TypeScript,
+/// for the types, ESLint and Biome for the lints, and Tailwind for the class
+/// names.
 const TSSERVER: &[Server] = &[
+    Server {
+        command: "tsc",
+        arguments: &["--lsp", "--stdio"],
+        options: NO_OPTIONS,
+    },
     stdio("typescript-language-server"),
     stdio("vtsls"),
     stdio("vscode-eslint-language-server"),
@@ -251,6 +257,17 @@ const JAVASCRIPT: Language = Language {
     line_comment: Some("//"),
 };
 
+/// JSX: JavaScript's grammar and highlights with JSX, told apart for tsserver.
+///
+/// The grammar is the same one plain JavaScript is parsed with, but a server
+/// reads a `javascriptreact` document with JSX switched on and a
+/// `javascript` one without it.
+const JSX: Language = Language {
+    name: "JSX",
+    language_id: "javascriptreact",
+    ..JAVASCRIPT
+};
+
 /// JSON: the grammar, its highlights and the VS Code JSON server.
 const JSON: Language = Language {
     name: "JSON",
@@ -423,6 +440,30 @@ impl Language {
         Self::extended(path.extension()?.to_str()?)
     }
 
+    /// The language a fenced block of markdown tagged `tag` is written in.
+    ///
+    /// A fence is tagged by whoever wrote it, which is sometimes a language's
+    /// name and sometimes its usual extension, so both are accepted.
+    pub fn fenced(tag: &str) -> Option<Self> {
+        let tag = tag.trim().to_ascii_lowercase();
+        let named = match tag.as_str() {
+            "bash" | "shell" | "shellscript" | "zsh" => Some(BASH),
+            "c++" | "cpp" => Some(CPP),
+            "c#" | "csharp" => Some(CSHARP),
+            "golang" => Some(GO),
+            "javascript" => Some(JAVASCRIPT),
+            "javascriptreact" => Some(JSX),
+            "kotlin" => Some(KOTLIN),
+            "python" => Some(PYTHON),
+            "ruby" => Some(RUBY),
+            "rust" => Some(RUST),
+            "typescript" => Some(TYPESCRIPT),
+            "typescriptreact" => Some(TSX),
+            _ => None,
+        };
+        named.or_else(|| Self::extended(&tag))
+    }
+
     /// The language a file called `name` is written in, when its whole name
     /// says so rather than its extension.
     fn named(name: &str) -> Option<Self> {
@@ -447,7 +488,8 @@ impl Language {
             "go" => Some(GO),
             "htm" | "html" => Some(HTML),
             "java" => Some(JAVA),
-            "cjs" | "js" | "jsx" | "mjs" => Some(JAVASCRIPT),
+            "cjs" | "js" | "mjs" => Some(JAVASCRIPT),
+            "jsx" => Some(JSX),
             "json" => Some(JSON),
             "jsonc" => Some(JSONC),
             "kt" | "kts" => Some(KOTLIN),

@@ -261,8 +261,11 @@ pub struct App {
     code_actions: Vec<pm_text::CodeAction>,
     /// The questions asked of servers and not yet answered.
     asked: Vec<language::Pending>,
-    /// Whether the formatting being waited on was asked for by a save.
+    /// Whether the servers being waited on were asked by a save.
     saving: bool,
+    /// The query the servers were last asked for workspace symbols, and the
+    /// rows their answers have come to so far.
+    workspace_symbols: (Option<String>, Vec<crate::picker::Row>),
     /// The pane whose tabs are being closed, while one of them is asked about.
     closing: Option<crate::panes::PaneId>,
     /// The blames that have come back and not yet been taken in.
@@ -399,6 +402,7 @@ impl App {
             code_actions: Vec::new(),
             asked: Vec::new(),
             saving: false,
+            workspace_symbols: (None, Vec::new()),
             closing: None,
             blamed: Arc::new(Mutex::new(Vec::new())),
             text_clicks: Clicks::default(),
@@ -1773,7 +1777,7 @@ impl App {
         if let Some(hint) = self.hint.as_ref().filter(|hint| !hint.is_empty()) {
             overlays.push(workspace::Overlaid {
                 at: hint.at,
-                content: Box::new(editor::hint(theme, &hint.text())),
+                content: Box::new(editor::hint(theme, hint)),
                 backdrop: None,
             });
         }

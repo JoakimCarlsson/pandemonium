@@ -154,6 +154,19 @@ impl Highlights {
     }
 }
 
+/// The highlights of `text` read as `language`, for text that is no file's.
+///
+/// A signature a server wrote into a hover is code without a buffer, and it
+/// is coloured the way the same code is coloured in the file beside it.
+pub fn highlight(language: Language, text: &str) -> Highlights {
+    let Some(mut syntax) = Syntax::new(language) else {
+        return Highlights::default();
+    };
+    let rope = Rope::from_str(text);
+    syntax.parse(&rope);
+    syntax.highlights(&rope, 0..rope.len_lines())
+}
+
 /// A parsed buffer: the grammar, the query and the tree as it stands.
 pub struct Syntax {
     /// The parser the tree is produced by.

@@ -23,6 +23,8 @@ pub enum Action {
     ShowSessions,
     /// Open the palette of symbols in the focused file.
     ShowSymbols,
+    /// Open the palette of symbols across the focused file's workspace.
+    ShowWorkspaceSymbols,
     /// Open the list of every error and warning in the open files.
     ShowProblems,
     /// Add a repository to the window as a project.
@@ -143,6 +145,10 @@ pub enum Action {
     GoToDeclaration,
     /// List everywhere the symbol under the cursor is used.
     FindReferences,
+    /// List whatever calls the symbol under the cursor.
+    ShowIncomingCalls,
+    /// List whatever the symbol under the cursor calls.
+    ShowOutgoingCalls,
     /// Go back to where the cursor was before the last jump.
     GoBack,
     /// Go forward again to where the cursor was before going back.
@@ -225,6 +231,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::ShowProjects, "palette.projects", "Go to Project"),
     (Action::ShowSessions, "palette.sessions", "Go to Session"),
     (Action::ShowSymbols, "palette.symbols", "Go to Symbol"),
+    (
+        Action::ShowWorkspaceSymbols,
+        "palette.workspace_symbols",
+        "Go to Symbol in Workspace",
+    ),
     (Action::ShowProblems, "palette.problems", "Go to Problem"),
     (Action::AddProject, "project.add", "Add Project"),
     (Action::RemoveProject, "project.remove", "Remove Project"),
@@ -348,6 +359,16 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::FindReferences,
         "go.references",
         "Find All References",
+    ),
+    (
+        Action::ShowIncomingCalls,
+        "go.incoming_calls",
+        "Show Incoming Calls",
+    ),
+    (
+        Action::ShowOutgoingCalls,
+        "go.outgoing_calls",
+        "Show Outgoing Calls",
     ),
     (Action::GoBack, "go.back", "Go Back"),
     (Action::GoForward, "go.forward", "Go Forward"),
@@ -493,11 +514,14 @@ impl Action {
                 | Self::ReplaceAll
                 | Self::GoToLine
                 | Self::ShowSymbols
+                | Self::ShowWorkspaceSymbols
                 | Self::GoToDefinition
                 | Self::GoToTypeDefinition
                 | Self::GoToImplementation
                 | Self::GoToDeclaration
                 | Self::FindReferences
+                | Self::ShowIncomingCalls
+                | Self::ShowOutgoingCalls
                 | Self::NextDiagnostic
                 | Self::PreviousDiagnostic
                 | Self::ShowHover

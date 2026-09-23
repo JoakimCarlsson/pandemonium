@@ -79,6 +79,10 @@ impl App {
         let Some(picker) = self.picker.as_ref() else {
             return;
         };
+        if picker.kind() == Kind::WorkspaceSymbols {
+            let query = picker.field().value().to_owned();
+            return self.ask_workspace_symbols(query);
+        }
         if !picker.kind().is_queried() {
             return;
         }
@@ -209,7 +213,11 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::Knob | Kind::References | Kind::Font(_) => Vec::new(),
+            Kind::Knob
+            | Kind::References
+            | Kind::WorkspaceSymbols
+            | Kind::Calls
+            | Kind::Font(_) => Vec::new(),
             Kind::Search => self.search_rows(query),
             Kind::Symbols
             | Kind::Line

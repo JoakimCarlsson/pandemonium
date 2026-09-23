@@ -217,19 +217,18 @@ impl App {
         }
     }
 
-    /// Lays the focused file out if it should be, and writes it to disk.
+    /// Lets the servers behind the focused file change it, and writes it to disk.
     ///
-    /// Formatting is asked of a server and answered later, so a save that
-    /// formats is two steps: the question now, and the writing when the
-    /// answer lands. Only the first step is taken here, or the writing would
-    /// ask again and never settle.
+    /// What a server changes before a save is asked of it and answered
+    /// later, so a save it takes part in is the questions now and the writing
+    /// when the answers land. Only the first step is taken here, or the
+    /// writing would ask again and never settle.
     fn save_or_format(&mut self) {
         let served = self
             .active_file()
             .is_some_and(|document| document.borrow().is_served());
-        if self.preferences.format_on_save && served {
-            self.saving = true;
-            return self.ask(pm_text::Request::Format);
+        if served {
+            return self.begin_save(self.preferences.format_on_save);
         }
         self.save_active();
     }
