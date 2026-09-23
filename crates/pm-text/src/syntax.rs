@@ -251,6 +251,27 @@ impl Syntax {
         highlights
     }
 
+    /// The nodes whose kind `keep` accepts that hold the character at
+    /// `byte`, outermost first.
+    ///
+    /// Only the one path from the root down to that character is walked, so
+    /// asking this of a large file costs its depth rather than its size.
+    pub fn around(&self, text: &Rope, byte: usize, keep: &dyn Fn(&str) -> bool) -> Vec<SyntaxNode> {
+        let Some(tree) = self.tree.as_ref() else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        let mut node = tree.root_node().descendant_for_byte_range(byte, byte);
+        while let Some(held) = node {
+            if held.is_named() && keep(held.kind()) {
+                found.push(SyntaxNode::of(held, text));
+            }
+            node = held.parent();
+        }
+        found.reverse();
+        found
+    }
+
     /// Every node of the tree whose kind `keep` accepts, outermost first.
     pub fn nodes(&self, text: &Rope, keep: &dyn Fn(&str) -> bool) -> Vec<SyntaxNode> {
         let Some(tree) = self.tree.as_ref() else {
@@ -284,6 +305,9 @@ pub struct SyntaxNode {
     pub range: Range<Position>,
     /// The text its `body` spans, when the grammar gives it one.
     pub body: Option<Range<Position>>,
+    /// What it is called, when the grammar gives it a `name`, or the `type`
+    /// an implementation is of.
+    pub name: Option<String>,
 }
 
 impl SyntaxNode {
@@ -295,6 +319,13 @@ impl SyntaxNode {
             kind: node.kind().to_owned(),
             range: span(node),
             body: node.child_by_field_name("body").map(span),
+            name: node
+                .child_by_field_name("name")
+                .or_else(|| node.child_by_field_name("type"))
+                .map(|name| {
+                    text.byte_slice(name.start_byte()..name.end_byte())
+                        .to_string()
+                }),
         }
     }
 }

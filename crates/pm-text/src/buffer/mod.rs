@@ -398,6 +398,20 @@ impl Buffer {
             .map_or_else(Vec::new, |syntax| syntax.nodes(&self.text, keep))
     }
 
+    /// The nodes of the syntax tree whose kind `keep` accepts that hold
+    /// `position`, outermost first; none when the language has no grammar.
+    pub fn syntax_around(
+        &self,
+        position: Position,
+        keep: &dyn Fn(&str) -> bool,
+    ) -> Vec<crate::syntax::SyntaxNode> {
+        let position = self.clamped(position);
+        let byte = self.text.char_to_byte(self.char_of(position));
+        self.syntax
+            .as_ref()
+            .map_or_else(Vec::new, |syntax| syntax.around(&self.text, byte, keep))
+    }
+
     /// The bracket matching the one at or before the cursor, if there is one.
     pub fn matching_bracket(&self) -> Option<(Position, Position)> {
         let head = self.selection.head;
