@@ -191,6 +191,11 @@ impl Terminal {
         self.emulator.grid_mut().scroll_to(lines);
     }
 
+    /// Keeps `lines` of scrollback behind the main screen from now on.
+    pub fn set_scrollback(&mut self, lines: usize) {
+        self.emulator.set_scrollback(lines);
+    }
+
     /// The screen that is showing.
     pub fn grid(&self) -> &Grid {
         self.emulator.grid()

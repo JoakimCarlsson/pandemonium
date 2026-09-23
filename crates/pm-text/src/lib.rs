@@ -17,7 +17,7 @@ mod language;
 mod lsp;
 mod syntax;
 
-pub use buffer::{Buffer, TAB_WIDTH};
+pub use buffer::Buffer;
 pub use cursor::{Motion, Position, Selection};
 pub use diagnostic::{Diagnostic, Severity};
 pub use hint::Hint;

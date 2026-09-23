@@ -13,20 +13,23 @@ use std::sync::Arc;
 
 use pm_core::{Blame, Change, ChangeKind};
 use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, Size};
-use pm_text::{
-    Buffer, Diagnostic, Highlight, Highlights, Position, Selection, Severity, TAB_WIDTH,
-};
+use pm_text::{Buffer, Diagnostic, Highlight, Highlights, Position, Selection, Severity};
 use pm_ui::{
     Element, Glyphs, IconName, IconSize, LayoutContext, PaintContext, PointerCursor, ResizeEvent,
     ResizePhase, Style, Styled, Theme,
 };
 
 use crate::editor::OpenFile;
+use crate::editor::display::{CursorShape, Display};
 use crate::editor::layout::{GUTTER_GAP, GUTTER_INSET, TextLayout};
 use crate::editor::search::Search;
 
 /// Width of the cursor while the pane is focused.
 const CURSOR_WIDTH: f32 = 2.0;
+
+/// How strongly a block caret covers the character under it, which has to
+/// stay legible through it.
+const BLOCK_ALPHA: f32 = 0.6;
 
 /// Thickness of the line under a diagnostic.
 const SQUIGGLE_WIDTH: f32 = 1.5;
@@ -115,6 +118,8 @@ pub struct BufferView<M> {
     /// what surrounds a file belongs around it: it has no line numbers to
     /// give, nothing to fold, nothing to blame and nowhere to scroll to.
     plain: bool,
+    /// Which of the things drawn around the text it draws.
+    display: Display,
     /// How the pane is sized within its parent.
     style: Style,
 }
@@ -133,6 +138,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         hovered: None,
         caret: true,
         plain: false,
+        display: Display::default(),
         style: Style::default(),
     }
     .w_full()
@@ -214,6 +220,12 @@ impl<M> BufferView<M> {
         self.caret = solid;
         self
     }
+
+    /// Returns this pane drawing what `display` asks for around its text.
+    pub fn display(mut self, display: Display) -> Self {
+        self.display = display;
+        self
+    }
 }
 
 impl<M> Styled for BufferView<M> {
@@ -246,7 +258,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         let blame = TextLayout::blame_for(document.is_blamed(), cell);
         let gutter = match self.plain {
             true => TextLayout::plain_gutter(),
-            false => TextLayout::gutter_for(count, cell) + blame,
+            false => TextLayout::gutter_for(count, cell, self.display.line_numbers) + blame,
         };
 
         let sizing = TextLayout {
@@ -296,14 +308,19 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         };
 
         cx.push_clip(bounds);
-        if !self.plain {
+        if !self.plain && self.display.current_line {
             self.paint_current_line(&painting, cx);
         }
         self.paint_search(&painting, cx);
-        self.paint_occurrences(&painting, cx);
+        if self.display.occurrences {
+            self.paint_occurrences(&painting, cx);
+        }
         self.paint_talked_about(&painting, cx);
-        if !self.plain {
+        if !self.plain && self.display.indent_guides {
             self.paint_guides(&painting, cx);
+        }
+        if !self.plain {
+            self.paint_wrap_guide(&painting, cx);
         }
 
         let mut glyphs = Glyphs::default();
@@ -317,7 +334,9 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             self.paint_changes(&painting, cx);
             self.paint_blame(&painting, &mut glyphs, cx);
             self.paint_folds(&painting, cx);
-            self.paint_sticky(&painting, &mut glyphs, cx);
+            if self.display.sticky_scroll {
+                self.paint_sticky(&painting, &mut glyphs, cx);
+            }
         }
         cx.pop_clip();
 
@@ -329,7 +348,9 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         if !self.plain {
             self.gutter_region(layout, cx);
             self.fold_region(layout, cx);
-            self.paint_scrollbars(layout, count, widest, &marks, &theme, cx);
+            if self.display.scrollbars {
+                self.paint_scrollbars(layout, count, widest, &marks, &theme, cx);
+            }
         }
     }
 }
@@ -429,6 +450,21 @@ impl<M> BufferView<M> {
         cx.pop_clip();
     }
 
+    /// Draws a line down the column the reader keeps lines short of.
+    fn paint_wrap_guide(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(column) = self.display.wrap_guide else {
+            return;
+        };
+        let layout = painting.layout;
+        let area = layout.text_area();
+        cx.push_clip(area);
+        cx.quad(Quad::filled(
+            Rect::from_xywh(layout.x_of(column), area.top(), 1.0, area.size.height),
+            painting.theme.colors.border_variant,
+        ));
+        cx.pop_clip();
+    }
+
     /// Outlines the bracket at the cursor and the one that answers it.
     fn paint_brackets(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
         let Some((here, there)) = painting.brackets else {
@@ -498,7 +534,7 @@ impl<M> BufferView<M> {
         let buffer = painting.buffer;
 
         self.paint_selection(line, painting, cx);
-        if !self.plain {
+        if !self.plain && self.display.line_numbers {
             self.paint_number(line, painting, glyphs, cx);
         }
 
@@ -510,7 +546,7 @@ impl<M> BufferView<M> {
                 column = self.paint_hint(hint, column, top, painting, glyphs, cx);
             }
             let width = if ch == '\t' {
-                TAB_WIDTH - column % TAB_WIDTH
+                painting.buffer.tab_width() - column % painting.buffer.tab_width()
             } else {
                 1
             };
@@ -609,12 +645,16 @@ impl<M> BufferView<M> {
         let Some(top) = painting.top_of(line) else {
             return;
         };
-        let color = if line == painting.selection.head.line {
+        let head = painting.selection.head.line;
+        let color = if line == head {
             painting.theme.colors.text_muted
         } else {
             painting.theme.colors.text_subtle
         };
-        let number = (line + 1).to_string();
+        let number = match self.display.relative_line_numbers && line != head {
+            true => line.abs_diff(head).to_string(),
+            false => (line + 1).to_string(),
+        };
         let right = layout.blame_left() - GUTTER_GAP;
 
         for (index, digit) in number.chars().rev().enumerate() {
@@ -692,7 +732,8 @@ impl<M> BufferView<M> {
         let layout = painting.layout;
         let number = (line + 1).to_string();
         let right = layout.blame_left() - GUTTER_GAP;
-        for (index, digit) in number.chars().rev().enumerate() {
+        let digits = number.chars().rev().filter(|_| self.display.line_numbers);
+        for (index, digit) in digits.enumerate() {
             let run = glyphs.shape(digit, painting.font, cx);
             let x = right - (index + 1) as f32 * layout.cell.width;
             cx.text(Point::new(x, top), run, painting.theme.colors.text_subtle);
@@ -702,7 +743,7 @@ impl<M> BufferView<M> {
         let mut column = 0;
         for ch in painting.buffer.line_chars(line) {
             let width = if ch == '\t' {
-                TAB_WIDTH - column % TAB_WIDTH
+                painting.buffer.tab_width() - column % painting.buffer.tab_width()
             } else {
                 1
             };
@@ -920,15 +961,24 @@ impl<M> BufferView<M> {
             let Some(top) = painting.top_of(head.line) else {
                 continue;
             };
-            cx.quad(Quad::filled(
-                Rect::from_xywh(
-                    layout.x_of(painting.column_of(head)),
-                    top,
-                    CURSOR_WIDTH,
-                    layout.cell.height,
+            let (x, cell) = (layout.x_of(painting.column_of(head)), layout.cell);
+            let (rect, color) = match self.display.cursor_shape {
+                CursorShape::Bar => (Rect::from_xywh(x, top, CURSOR_WIDTH, cell.height), color),
+                CursorShape::Block => (
+                    Rect::from_xywh(x, top, cell.width, cell.height),
+                    color.alpha(BLOCK_ALPHA),
                 ),
-                color,
-            ));
+                CursorShape::Underline => (
+                    Rect::from_xywh(
+                        x,
+                        top + cell.height - CURSOR_WIDTH,
+                        cell.width,
+                        CURSOR_WIDTH,
+                    ),
+                    color,
+                ),
+            };
+            cx.quad(Quad::filled(rect, color));
         }
     }
 }

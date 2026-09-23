@@ -793,7 +793,8 @@ impl App {
         let scope = self.scope();
         let link = self.link_target();
         let talked_about = self.hovered_name();
-        let caret = self.blink.is_solid();
+        let caret = !self.preferences.cursor_blink || self.blink.is_solid();
+        let display = self.preferences.display;
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
         panes::pane_tree(theme, &self.panes, self.editor_focused, &|pane| {
             let (bounds, bar, tab_bounds) = cells
@@ -827,6 +828,7 @@ impl App {
                     .filter(|(open, _)| file == Some(*open))
                     .map(|(_, span)| span),
                 caret,
+                display,
             }
         })
     }

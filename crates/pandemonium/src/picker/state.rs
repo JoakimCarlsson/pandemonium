@@ -13,6 +13,7 @@ use pm_core::{ProjectId, Scope};
 use pm_text::Position;
 
 use crate::agent::TalkId;
+use crate::config::FontSlot;
 use crate::field::Field;
 use crate::keymap::Action;
 
@@ -66,6 +67,12 @@ pub enum Kind {
     CopiedPath,
     /// The variable a session's port is handed to its programs in.
     PortVariable,
+    /// The family one kind of text is set in.
+    Font(FontSlot),
+    /// What to repaint one colour of the theme in, by index into its tokens.
+    ThemeColor(usize),
+    /// What to call the theme about to be written down.
+    ThemeName,
     /// The modes the agent of the session in hand can be put into.
     Modes,
     /// The values one of that agent's knobs takes: its models, say.
@@ -97,6 +104,9 @@ impl Kind {
             Self::LinkedPath => "Path to link into new worktrees",
             Self::CopiedPath => "Path to copy into new worktrees",
             Self::PortVariable => "Variable to hand a session's port in",
+            Self::Font(slot) => slot.placeholder(),
+            Self::ThemeColor(_) => "#rrggbb, or #rrggbbaa",
+            Self::ThemeName => "What the theme is called",
             Self::Agents => "Start an agent in this worktree",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
@@ -118,6 +128,8 @@ impl Kind {
                 | Self::LinkedPath
                 | Self::CopiedPath
                 | Self::PortVariable
+                | Self::ThemeColor(_)
+                | Self::ThemeName
         )
     }
 
@@ -153,6 +165,8 @@ pub enum Choice {
     Mode(TalkId, String),
     /// Set this session's knob to the value this names.
     Knob(TalkId, String, String),
+    /// Set this kind of text in this family, or in the editor's pick.
+    Font(FontSlot, Option<String>),
 }
 
 /// One thing the picker is offering.

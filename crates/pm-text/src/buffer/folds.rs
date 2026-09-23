@@ -87,7 +87,7 @@ impl Buffer {
         for ch in self.line_chars(line) {
             match ch {
                 ' ' => indent += 1,
-                '\t' => indent += crate::buffer::TAB_WIDTH,
+                '\t' => indent += self.tab_width(),
                 _ => return Some(indent),
             }
         }

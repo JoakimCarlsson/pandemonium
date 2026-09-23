@@ -572,12 +572,12 @@ impl App {
     /// Only a pane with the keyboard has a caret to blink; a window whose
     /// text is not being edited is a window that stays still.
     pub(super) fn blinked(&mut self) -> bool {
-        self.editor_focused && self.blink.changed()
+        self.preferences.cursor_blink && self.editor_focused && self.blink.changed()
     }
 
     /// When the caret next turns over, while there is one to turn.
     pub(super) fn next_blink(&self) -> Option<std::time::Instant> {
-        self.editor_focused.then(|| self.blink.next_change())
+        (self.preferences.cursor_blink && self.editor_focused).then(|| self.blink.next_change())
     }
 
     /// Tells the element tree the pointer has left the window.

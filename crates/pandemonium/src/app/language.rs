@@ -200,7 +200,7 @@ impl App {
             if document.borrow_mut().wants_semantics() {
                 self.ask_about(file, Position::default(), Request::Semantics);
             }
-            let wanted = document.borrow_mut().wants_hints();
+            let wanted = self.preferences.inlay_hints && document.borrow_mut().wants_hints();
             if !wanted {
                 continue;
             }

@@ -15,4 +15,4 @@ mod page;
 mod state;
 
 pub use page::{SettingsPane, settings_pane};
-pub use state::{Settings, SettingsPage};
+pub use state::{Settings, SettingsPage, SettingsSection};

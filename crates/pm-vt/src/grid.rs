@@ -683,6 +683,14 @@ impl Grid {
         self.selection = None;
     }
 
+    /// Keeps `limit` lines of scrollback from now on, dropping the oldest of
+    /// what it already has when that is more.
+    pub fn set_scrollback_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        self.trim_scrollback();
+        self.offset = self.offset.min(self.scrollback.len());
+    }
+
     /// Drops the oldest lines of the scrollback until it is within its limit.
     fn trim_scrollback(&mut self) {
         while self.scrollback.len() > self.limit {

@@ -625,6 +625,37 @@ impl Buffer {
         });
     }
 
+    /// Takes the spaces and tabs off the end of every line, as one step.
+    pub fn trim_trailing_whitespace(&mut self) {
+        let edits = (0..self.line_count())
+            .filter_map(|line| {
+                let len = self.line_len(line);
+                let text = self.line_text(line);
+                let kept = text.trim_end_matches([' ', '\t']).chars().count();
+                (kept < len).then(|| {
+                    (
+                        Position::new(line, kept)..Position::new(line, len),
+                        String::new(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        if !edits.is_empty() {
+            self.apply_edits(edits);
+        }
+    }
+
+    /// Ends the text with a line break, when it holds any and does not.
+    pub fn ensure_final_newline(&mut self) {
+        let last = self.line_count().saturating_sub(1);
+        let len = self.line_len(last);
+        if len == 0 {
+            return;
+        }
+        let end = Position::new(last, len);
+        self.apply_edits(vec![(end..end, "\n".to_owned())]);
+    }
+
     /// Runs `change`, gathering everything it does into one undo step.
     pub(crate) fn grouped(&mut self, change: impl FnOnce(&mut Self)) {
         self.history.begin();

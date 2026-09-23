@@ -5,7 +5,7 @@ use pm_ui::{
     toggle_row, v_flex,
 };
 
-use crate::config::{Preferences, ThemeMode};
+use crate::config::{Preference, Preferences, ThemeMode};
 use crate::keymap::BaseKeymap;
 use crate::message::Message;
 
@@ -21,21 +21,21 @@ pub(super) fn basics(theme: &Theme, preferences: &Preferences) -> Div<Message> {
             Some("Vim Mode"),
             "Coming from vim? Modal editing is built in, not an extension",
             preferences.vim_mode,
-            Message::ToggleVimMode,
+            Message::TogglePreference(Preference::VimMode),
         ))
         .child(switch_field(
             theme,
             Some("Format on Save"),
             "Lay a file out the way its formatter would every time it is written",
             preferences.format_on_save,
-            Message::ToggleFormatOnSave,
+            Message::TogglePreference(Preference::FormatOnSave),
         ))
         .child(switch_field(
             theme,
             Some("Trust New Worktrees"),
             "Run language servers and tasks in a session's worktree without asking first",
             preferences.trust_worktrees,
-            Message::ToggleTrustWorktrees,
+            Message::TogglePreference(Preference::TrustWorktrees),
         ))
 }
 

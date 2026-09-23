@@ -22,6 +22,7 @@ mod terminal;
 
 pub use cell::{Attrs, Cell, Color};
 pub use color::palette;
+pub use emulator::SCROLLBACK;
 pub use grid::{Cursor, Grid, Line};
 pub use keys::{Key, Modifiers, encode, paste};
 pub use link::{Link, LinkId};

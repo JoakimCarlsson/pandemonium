@@ -5,14 +5,18 @@
 //! this one decided. Onboarding writes through here on its first run and a
 //! settings pane edits the same file — neither keeps a store of
 //! its own. Themes the reader wrote are read from the same home and put on
-//! offer beside the built-in ones. Nothing fails loudly: a missing, unreadable
+//! offer beside the built-in ones, and a theme the reader makes in the
+//! settings pane is written there. Nothing fails loudly: a missing, unreadable
 //! or outdated file is a first launch, and a write that cannot land leaves the
 //! running editor alone.
 
+mod fonts;
+mod overrides;
 mod paths;
 mod preferences;
 mod stored;
 mod theme;
+mod tokens;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -22,8 +26,11 @@ use crate::panes::Saved;
 use crate::workspace::Layout;
 use stored::Stored;
 
-pub use paths::{settings as settings_file, worktrees};
-pub use preferences::{Preference, Preferences, ThemeMode, WorktreePaths};
+pub use fonts::FontSlot;
+pub use overrides::ThemeOverrides;
+pub use paths::{settings as settings_file, themes as themes_directory, worktrees};
+pub use preferences::{Preference, Preferences, Step, ThemeMode, WorktreePaths};
+pub use tokens::{Group, TOKENS, from_hex, hex, in_group};
 
 /// The window's own size and state, as a launch leaves it.
 #[derive(Clone, Copy, Debug)]
@@ -80,6 +87,51 @@ pub fn load() -> Restored {
         .and_then(|text| serde_norway::from_str::<Stored>(&text).ok())
         .map(Stored::into_restored)
         .unwrap_or_default()
+}
+
+/// Reads the reader's themes in again, still drawing in the family
+/// `preferences` names wherever it now sits among them.
+pub fn reload_themes(preferences: &mut Preferences) {
+    let drawn = pm_ui::family(preferences.theme_family).name;
+    pm_ui::install_themes(theme::installed());
+    preferences.theme_family = stored::family_index(drawn).unwrap_or(pm_ui::DEFAULT_FAMILY);
+}
+
+/// Writes the family `preferences` draw in, with their overrides painted
+/// over it, as a theme of the reader's own called `name`, and draws in it
+/// from now on, saying whether it could be written.
+///
+/// The overrides are the theme now, so they are cleared rather than being
+/// painted over it a second time. A name a family already has is numbered
+/// rather than shadowing that family.
+pub fn save_theme(preferences: &mut Preferences, name: &str) -> bool {
+    let base = pm_ui::family(preferences.theme_family);
+    let overrides = &preferences.theme_overrides;
+    let name = unused_family_name(name.trim());
+    let (dark, light) = (overrides.apply(base.dark), overrides.apply(base.light));
+    if theme::write(&name, &dark, &light).is_none() {
+        return false;
+    }
+    pm_ui::install_themes(theme::installed());
+    preferences.theme_family = stored::family_index(&name).unwrap_or(preferences.theme_family);
+    preferences.theme_overrides = ThemeOverrides::default();
+    true
+}
+
+/// `wanted`, or `wanted` numbered, whichever no family on offer is called.
+fn unused_family_name(wanted: &str) -> String {
+    let wanted = match wanted.is_empty() {
+        true => "My Theme",
+        false => wanted,
+    };
+    let taken = |name: &str| pm_ui::families().iter().any(|family| family.name == name);
+    (1..)
+        .map(|count| match count {
+            1 => wanted.to_owned(),
+            _ => format!("{wanted} {count}"),
+        })
+        .find(|name| !taken(name))
+        .unwrap_or_else(|| wanted.to_owned())
 }
 
 /// Writes the window down, ignoring a file system that will not have it.

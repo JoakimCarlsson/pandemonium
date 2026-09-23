@@ -44,7 +44,7 @@ use crate::agent::Talks;
 use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
 use crate::app::places::Trail;
-use crate::config::{self, Preference, Preferences, Restored, WindowState};
+use crate::config::{self, FontSlot, Preference, Preferences, Restored, WindowState};
 use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
@@ -716,15 +716,17 @@ impl App {
     }
 
     /// The theme this frame is drawn from: the chosen family, in whichever
-    /// appearance the theme mode resolves to.
+    /// appearance the theme mode resolves to, with the reader's colours
+    /// painted over it and set in the reader's fonts.
     pub(super) fn theme(&self) -> Theme {
-        let appearance = self
-            .preferences
-            .theme_mode
-            .resolve(self.system_appearance());
-        family(self.preferences.theme_family)
-            .variant(appearance)
-            .zoomed(self.zoom)
+        let preferences = &self.preferences;
+        let appearance = preferences.theme_mode.resolve(self.system_appearance());
+        let chosen = family(preferences.theme_family).variant(appearance);
+        Theme {
+            text: preferences.fonts.scale(chosen.text),
+            ..preferences.theme_overrides.apply(chosen)
+        }
+        .zoomed(self.zoom)
     }
 
     /// The appearance the desktop asks for, defaulting to dark.
@@ -1268,6 +1270,16 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::ShowSettingsSection(section) = message {
+            self.settings.show_section(section);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleSettingsPage(page) = message {
+            self.settings.toggle(page);
+            self.request_redraw();
+            return;
+        }
         if message == Message::OpenSettings {
             self.open_settings();
             self.request_redraw();
@@ -1283,10 +1295,16 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.settings_command(message) {
+            self.request_redraw();
+            return;
+        }
         if message == Message::Finish {
             self.onboarded = true;
         }
-        self.preferences.apply(message);
+        if self.preferences.apply(message) {
+            self.follow_preferences();
+        }
         if matches!(
             message,
             Message::SetKeymap(_) | Message::ResetPreference(Preference::Keymap)
@@ -1809,6 +1827,11 @@ impl App {
         };
 
         ui.set_theme(theme);
+        let fonts = &self.preferences.fonts;
+        renderer.text().set_families(
+            fonts.family(FontSlot::Interface),
+            fonts.family(FontSlot::Buffer),
+        );
 
         let size = renderer.size();
         self.scroll.set_viewport(size);
@@ -1974,6 +1997,7 @@ impl ApplicationHandler<Wake> for App {
         self.agents.set_notify(self.waker(Wake::Agent));
         self.editor.set_notify(self.waker(Wake::Language));
         self.editor.set_language_servers(&self.language_servers);
+        self.follow_preferences();
         self.reread_changes();
 
         let saved = std::mem::take(&mut self.saved);
@@ -2043,6 +2067,8 @@ impl ApplicationHandler<Wake> for App {
                         (position.x as f32 / scale, position.y as f32 / scale)
                     }
                 };
+                let sensitivity = self.preferences.scroll_sensitivity;
+                let (across, down) = (across * sensitivity, down * sensitivity);
                 if self.modifiers.shift_key() {
                     self.scroll_across(-down);
                 } else if across != 0.0 {

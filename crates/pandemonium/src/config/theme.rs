@@ -1,26 +1,37 @@
-//! The shape a theme takes on disk, and how one is read in.
+//! The shape a theme takes on disk, how one is read in, and how one is
+//! written out.
 //!
 //! A theme file names a family and gives either appearance of it. Every
-//! token is optional and falls back to the family the editor starts in, so a
-//! file that renames three colours is a theme, and a token added to the
-//! editor later does not invalidate the files written before it.
+//! colour is optional and falls back to the family the editor starts in, so a
+//! file that renames three colours is a theme, and a colour added to the
+//! editor later does not invalidate the files written before it. Colours are
+//! named as [`crate::config::tokens`] names them, and written the way they
+//! are written everywhere else: `"#rrggbb"`, or `"#rrggbbaa"` when a colour
+//! is translucent.
 //!
-//! Colours are written the way they are written everywhere else: `"#rrggbb"`,
-//! or `"#rrggbbaa"` when a token is translucent.
+//! The reader's overrides are written in the same shape, one appearance at
+//! a time, so a set of overrides pasted into a theme file is a theme.
 
+use std::collections::BTreeMap;
 use std::fs;
+use std::path::PathBuf;
 
 use pm_gfx::Rgba;
-use pm_ui::{Appearance, Colors, DEFAULT_FAMILY, Syntax, Terminal, Theme, ThemeFamily};
-use serde::Deserialize;
+use pm_ui::{Appearance, DEFAULT_FAMILY, Theme, ThemeFamily};
+use serde::{Deserialize, Serialize};
 
+use crate::config::overrides::ThemeOverrides;
 use crate::config::paths;
+use crate::config::tokens::{self, Group, TOKENS};
 
 /// How many colours an ANSI palette has.
 const ANSI: usize = 16;
 
+/// The extension a theme file has.
+const EXTENSION: &str = "yaml";
+
 /// A theme family as it is written down.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(super) struct StoredFamily {
     /// The name the picker shows, which both appearances are named after.
     name: String,
@@ -30,112 +41,43 @@ pub(super) struct StoredFamily {
     light: Option<StoredTheme>,
 }
 
+/// The reader's overrides, as they are written down.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub(super) struct StoredOverrides {
+    /// What is repainted over a dark variant.
+    #[serde(skip_serializing_if = "StoredTheme::is_empty")]
+    dark: StoredTheme,
+    /// What is repainted over a light variant.
+    #[serde(skip_serializing_if = "StoredTheme::is_empty")]
+    light: StoredTheme,
+}
+
 /// One appearance of a family, as it is written down.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct StoredTheme {
-    /// The semantic colours.
-    colors: StoredColors,
-    /// The colours code is highlighted in.
-    syntax: StoredSyntax,
+    /// The semantic colours, by key.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    colors: BTreeMap<String, String>,
+    /// The colours code is highlighted in, by key.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    syntax: BTreeMap<String, String>,
     /// The colours a terminal grid is drawn in.
+    #[serde(skip_serializing_if = "StoredTerminal::is_empty")]
     terminal: StoredTerminal,
 }
 
-/// The semantic colours, as they are written down.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct StoredColors {
-    /// The background colour.
-    background: Option<String>,
-    /// The surface colour.
-    surface: Option<String>,
-    /// The surface hover colour.
-    surface_hover: Option<String>,
-    /// The surface active colour.
-    surface_active: Option<String>,
-    /// The surface selected colour.
-    surface_selected: Option<String>,
-    /// The border colour.
-    border: Option<String>,
-    /// The border variant colour.
-    border_variant: Option<String>,
-    /// The border focused colour.
-    border_focused: Option<String>,
-    /// The border selected colour.
-    border_selected: Option<String>,
-    /// The drop target colour.
-    drop_target: Option<String>,
-    /// The text colour.
-    text: Option<String>,
-    /// The text muted colour.
-    text_muted: Option<String>,
-    /// The text subtle colour.
-    text_subtle: Option<String>,
-    /// The text on accent colour.
-    text_on_accent: Option<String>,
-    /// The cursor colour.
-    cursor: Option<String>,
-    /// The selection colour.
-    selection: Option<String>,
-    /// The colour a name that can be followed is drawn in.
-    link: Option<String>,
-    /// The accent colour.
-    accent: Option<String>,
-    /// The accent hover colour.
-    accent_hover: Option<String>,
-    /// The accent active colour.
-    accent_active: Option<String>,
-    /// The success colour.
-    success: Option<String>,
-    /// The warning colour.
-    warning: Option<String>,
-    /// The danger colour.
-    danger: Option<String>,
-}
-
-/// The colours code is highlighted in, as they are written down.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct StoredSyntax {
-    /// The colour keyword is drawn in.
-    keyword: Option<String>,
-    /// The colour string is drawn in.
-    string: Option<String>,
-    /// The colour function is drawn in.
-    function: Option<String>,
-    /// The colour comment is drawn in.
-    comment: Option<String>,
-    /// The colour number is drawn in.
-    number: Option<String>,
-    /// The colour type name is drawn in.
-    type_name: Option<String>,
-    /// The colour punctuation is drawn in.
-    punctuation: Option<String>,
-    /// The colour variable is drawn in.
-    variable: Option<String>,
-    /// The colour property is drawn in.
-    property: Option<String>,
-    /// The colour constant is drawn in.
-    constant: Option<String>,
-    /// The colour operator is drawn in.
-    operator: Option<String>,
-    /// The colour tag is drawn in.
-    tag: Option<String>,
-    /// The colour attribute is drawn in.
-    attribute: Option<String>,
-}
-
 /// The colours a terminal grid is drawn in, as they are written down.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct StoredTerminal {
     /// The sixteen ANSI colours, in the order a terminal numbers them.
+    #[serde(skip_serializing_if = "Option::is_none")]
     ansi: Option<Vec<String>>,
-    /// The colour the terminal cursor is drawn in.
-    cursor: Option<String>,
-    /// The colour a terminal selection is washed in.
-    selection: Option<String>,
+    /// The cursor and the selection, by key.
+    #[serde(flatten)]
+    named: BTreeMap<String, String>,
 }
 
 /// Every theme written in the editor's home, in the order their files sort.
@@ -153,7 +95,7 @@ pub(super) fn installed() -> Vec<ThemeFamily> {
     let mut paths = entries
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|kind| kind == "yaml"))
+        .filter(|path| path.extension().is_some_and(|kind| kind == EXTENSION))
         .collect::<Vec<_>>();
     paths.sort();
 
@@ -163,6 +105,44 @@ pub(super) fn installed() -> Vec<ThemeFamily> {
         .filter_map(|text| serde_norway::from_str::<StoredFamily>(&text).ok())
         .map(StoredFamily::into_family)
         .collect()
+}
+
+/// Writes a family called `name`, drawn `dark` and `light`, into the
+/// editor's home as a theme of its own, saying where it went.
+///
+/// The file is named after the family, and a file already there is left
+/// alone: a second theme of the same name is written beside it instead.
+pub(super) fn write(name: &str, dark: &Theme, light: &Theme) -> Option<PathBuf> {
+    let directory = paths::themes()?;
+    fs::create_dir_all(&directory).ok()?;
+    let stem = slug(name);
+    let path = (1..)
+        .map(|count| match count {
+            1 => directory.join(format!("{stem}.{EXTENSION}")),
+            _ => directory.join(format!("{stem}-{count}.{EXTENSION}")),
+        })
+        .find(|path| !path.exists())?;
+    let family = StoredFamily {
+        name: name.to_owned(),
+        dark: Some(StoredTheme::of(dark)),
+        light: Some(StoredTheme::of(light)),
+    };
+    let text = serde_norway::to_string(&family).ok()?;
+    fs::write(&path, text).ok()?;
+    Some(path)
+}
+
+/// `name` as the stem of a file: lower case, words joined by hyphens.
+fn slug(name: &str) -> String {
+    let words = name
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>();
+    match words.is_empty() {
+        true => "theme".to_owned(),
+        false => words.join("-"),
+    }
 }
 
 impl StoredFamily {
@@ -179,6 +159,26 @@ impl StoredFamily {
     }
 }
 
+impl StoredOverrides {
+    /// The overrides this stands for, less any colour it misnames.
+    pub(super) fn into_overrides(self) -> ThemeOverrides {
+        ThemeOverrides::of(self.dark.colors(), self.light.colors())
+    }
+
+    /// How `overrides` are written down.
+    pub(super) fn of(overrides: &ThemeOverrides) -> Self {
+        Self {
+            dark: StoredTheme::written(overrides.colors(Appearance::Dark)),
+            light: StoredTheme::written(overrides.colors(Appearance::Light)),
+        }
+    }
+
+    /// Whether nothing is repainted in either appearance.
+    pub(super) fn is_empty(&self) -> bool {
+        self.dark.is_empty() && self.light.is_empty()
+    }
+}
+
 impl StoredTheme {
     /// This appearance over `base`, named after the family it belongs to.
     fn into_theme(self, base: Theme, family: &str, appearance: Appearance) -> Theme {
@@ -186,101 +186,93 @@ impl StoredTheme {
             Appearance::Dark => "Dark",
             Appearance::Light => "Light",
         };
-        Theme {
+        let mut theme = Theme {
             name: leak(format!("{family} {suffix}")),
             appearance,
-            colors: self.colors.into_colors(base.colors),
-            syntax: self.syntax.into_syntax(base.syntax),
-            terminal: self.terminal.into_terminal(base.terminal),
             ..base
+        };
+        for (token, color) in self.colors() {
+            TOKENS[token].write(&mut theme, color);
         }
+        if let Some(ansi) = self.terminal.palette() {
+            theme.terminal.ansi = ansi;
+        }
+        theme
     }
-}
 
-impl StoredColors {
-    /// These colours over `base`.
-    fn into_colors(self, base: Colors) -> Colors {
-        Colors {
-            background: color(self.background.as_deref(), base.background),
-            surface: color(self.surface.as_deref(), base.surface),
-            surface_hover: color(self.surface_hover.as_deref(), base.surface_hover),
-            surface_active: color(self.surface_active.as_deref(), base.surface_active),
-            surface_selected: color(self.surface_selected.as_deref(), base.surface_selected),
-            border: color(self.border.as_deref(), base.border),
-            border_variant: color(self.border_variant.as_deref(), base.border_variant),
-            border_focused: color(self.border_focused.as_deref(), base.border_focused),
-            border_selected: color(self.border_selected.as_deref(), base.border_selected),
-            drop_target: color(self.drop_target.as_deref(), base.drop_target),
-            text: color(self.text.as_deref(), base.text),
-            text_muted: color(self.text_muted.as_deref(), base.text_muted),
-            text_subtle: color(self.text_subtle.as_deref(), base.text_subtle),
-            text_on_accent: color(self.text_on_accent.as_deref(), base.text_on_accent),
-            cursor: color(self.cursor.as_deref(), base.cursor),
-            selection: color(self.selection.as_deref(), base.selection),
-            link: color(self.link.as_deref(), base.link),
-            accent: color(self.accent.as_deref(), base.accent),
-            accent_hover: color(self.accent_hover.as_deref(), base.accent_hover),
-            accent_active: color(self.accent_active.as_deref(), base.accent_active),
-            success: color(self.success.as_deref(), base.success),
-            warning: color(self.warning.as_deref(), base.warning),
-            danger: color(self.danger.as_deref(), base.danger),
-        }
+    /// `theme` written out in full, its palette included.
+    fn of(theme: &Theme) -> Self {
+        let colors = (0..TOKENS.len())
+            .map(|token| (token, TOKENS[token].read(theme)))
+            .collect();
+        let mut stored = Self::written(&colors);
+        stored.terminal.ansi = Some(
+            theme
+                .terminal
+                .ansi
+                .iter()
+                .copied()
+                .map(tokens::hex)
+                .collect(),
+        );
+        stored
     }
-}
 
-impl StoredSyntax {
-    /// These colours over `base`.
-    fn into_syntax(self, base: Syntax) -> Syntax {
-        Syntax {
-            keyword: color(self.keyword.as_deref(), base.keyword),
-            string: color(self.string.as_deref(), base.string),
-            function: color(self.function.as_deref(), base.function),
-            comment: color(self.comment.as_deref(), base.comment),
-            number: color(self.number.as_deref(), base.number),
-            type_name: color(self.type_name.as_deref(), base.type_name),
-            punctuation: color(self.punctuation.as_deref(), base.punctuation),
-            variable: color(self.variable.as_deref(), base.variable),
-            property: color(self.property.as_deref(), base.property),
-            constant: color(self.constant.as_deref(), base.constant),
-            operator: color(self.operator.as_deref(), base.operator),
-            tag: color(self.tag.as_deref(), base.tag),
-            attribute: color(self.attribute.as_deref(), base.attribute),
+    /// `colors` written under the groups and keys that name them.
+    fn written(colors: &BTreeMap<usize, Rgba>) -> Self {
+        let mut stored = Self::default();
+        for (token, color) in colors {
+            let token = &TOKENS[*token];
+            let group = match token.group {
+                Group::Colors => &mut stored.colors,
+                Group::Syntax => &mut stored.syntax,
+                Group::Terminal => &mut stored.terminal.named,
+            };
+            group.insert(token.key.to_owned(), tokens::hex(*color));
         }
+        stored
+    }
+
+    /// Every colour this names that parses, by index into [`TOKENS`].
+    fn colors(&self) -> BTreeMap<usize, Rgba> {
+        [
+            (Group::Colors, &self.colors),
+            (Group::Syntax, &self.syntax),
+            (Group::Terminal, &self.terminal.named),
+        ]
+        .into_iter()
+        .flat_map(|(group, written)| {
+            written.iter().filter_map(move |(key, hex)| {
+                Some((tokens::find(group, key)?, tokens::from_hex(hex)?))
+            })
+        })
+        .collect()
+    }
+
+    /// Whether this names no colour at all.
+    fn is_empty(&self) -> bool {
+        self.colors.is_empty() && self.syntax.is_empty() && self.terminal.is_empty()
     }
 }
 
 impl StoredTerminal {
-    /// These colours over `base`.
+    /// The palette this writes, when it writes a whole one.
     ///
-    /// A palette of any length but sixteen is not a palette, and the one
-    /// underneath is kept instead of being half overwritten.
-    fn into_terminal(self, base: Terminal) -> Terminal {
-        let mut ansi = base.ansi;
-        if let Some(written) = self.ansi.filter(|written| written.len() == ANSI) {
-            for (slot, hex) in ansi.iter_mut().zip(written) {
-                *slot = color(Some(&hex), *slot);
-            }
-        }
-        Terminal {
-            ansi,
-            cursor: color(self.cursor.as_deref(), base.cursor),
-            selection: color(self.selection.as_deref(), base.selection),
-        }
+    /// A palette of any length but sixteen is not a palette, and one with a
+    /// colour that does not parse is not one either: the palette underneath
+    /// is kept instead of being half overwritten.
+    fn palette(&self) -> Option<[Rgba; ANSI]> {
+        let written = self.ansi.as_ref().filter(|written| written.len() == ANSI)?;
+        let parsed = written
+            .iter()
+            .map(|hex| tokens::from_hex(hex))
+            .collect::<Option<Vec<_>>>()?;
+        parsed.try_into().ok()
     }
-}
 
-/// `hex` as a colour, or `base` when it is absent or not one.
-fn color(hex: Option<&str>, base: Rgba) -> Rgba {
-    hex.and_then(parse).unwrap_or(base)
-}
-
-/// `"#rrggbb"` or `"#rrggbbaa"` as a colour.
-fn parse(hex: &str) -> Option<Rgba> {
-    let digits = hex.strip_prefix('#').unwrap_or(hex);
-    match digits.len() {
-        6 => u32::from_str_radix(digits, 16).ok().map(Rgba::hex),
-        8 => u32::from_str_radix(digits, 16).ok().map(Rgba::hexa),
-        _ => None,
+    /// Whether this names no colour at all.
+    fn is_empty(&self) -> bool {
+        self.ansi.is_none() && self.named.is_empty()
     }
 }
 
