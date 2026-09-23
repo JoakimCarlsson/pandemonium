@@ -10,6 +10,17 @@ use std::path::Path;
 
 use crate::git::run::{Said, answer, git};
 
+/// One commit in the recent history of a worktree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Commit {
+    /// The graph lane marks Git draws before the commit.
+    pub graph: String,
+    /// The abbreviated object name.
+    pub id: String,
+    /// The first line of the commit message.
+    pub summary: String,
+}
+
 /// Commits in the worktree at `root`, saying `message`.
 ///
 /// With nothing staged there is nothing for a commit to take, so `tracked`
@@ -41,4 +52,34 @@ pub fn last_message(root: &Path) -> Option<String> {
     let said = answer(root, ["log", "-1", "--pretty=%B"])?;
     let trimmed = said.trim().to_owned();
     (!trimmed.is_empty()).then_some(trimmed)
+}
+
+/// The most recent `limit` commits in the worktree at `root`.
+pub fn history(root: &Path, limit: usize, all: bool) -> Vec<Commit> {
+    let count = format!("-{}", limit.max(1));
+    let mut arguments: Vec<&OsStr> = vec![
+        OsStr::new("log"),
+        OsStr::new(&count),
+        OsStr::new("--graph"),
+        OsStr::new("--pretty=format:%h%x09%s"),
+    ];
+    if all {
+        arguments.push(OsStr::new("--all"));
+    }
+    answer(root, arguments)
+        .map(|commits| {
+            commits
+                .lines()
+                .filter_map(|line| {
+                    let (lane, summary) = line.split_once('\t')?;
+                    let (graph, id) = lane.rsplit_once(' ')?;
+                    Some(Commit {
+                        graph: graph.to_owned(),
+                        id: id.to_owned(),
+                        summary: summary.to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }

@@ -97,6 +97,16 @@ pub enum Message {
     ResizeBottomPanel(ResizeEvent),
     /// Resize the secondary sidebar.
     ResizeSecondarySidebar(ResizeEvent),
+    /// Resize the Source Control graph.
+    ResizeHistoryGraph(ResizeEvent),
+    /// Show or hide the Source Control graph.
+    ToggleHistoryGraph,
+    /// Expand or collapse the Source Control changes section.
+    ToggleChangesSection,
+    /// Show the available Source Control commit actions.
+    ShowCommitMenu,
+    /// Show the Source Control action menu.
+    ShowSourceControlMenu,
     /// Open this entry of the file tree in the pane that has the keyboard.
     OpenFile(EntryId),
     /// Show this tab of this pane.
@@ -221,8 +231,6 @@ pub enum Message {
     OpenReview,
     /// Ask git again what it makes of every open worktree.
     RefreshChanges,
-    /// Open the active project's branch selector.
-    ShowBranches,
     /// Open the branch selector from the window-wide status bar.
     ShowStatusBranches,
     /// Create the branch currently typed into the branch selector.
@@ -237,8 +245,12 @@ pub enum Message {
     PullRebase,
     /// Push the active branch with a force-with-lease safeguard.
     ForcePush,
-    /// Open the menu of remote Git operations.
-    ShowRemoteMenu,
+    /// Show the Graph history-reference filter.
+    ShowHistoryRefsMenu,
+    /// Set the Graph history-reference filter to Auto or All.
+    SetHistoryFilter(bool),
+    /// Return the Graph to the checked-out commit.
+    RevealCurrentHistoryItem,
     /// Ask which configured remote to fetch from.
     ChooseFetchRemote,
     /// Ask which configured remote to push to.
@@ -297,6 +309,8 @@ pub enum Message {
     WriteCommit(ResizePhase, Position, Position),
     /// Commit what the index holds, saying what the message field holds.
     Commit,
+    /// Commit what the index holds, then push the active branch.
+    CommitAndPush,
     /// Ask which agent to start in the active project's worktree.
     NewAgentSession,
     /// Put the prompt's cursor where a press landed, selecting to it.

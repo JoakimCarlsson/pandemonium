@@ -112,6 +112,8 @@ pub struct PaintContext<'a, 'b, M> {
     focused: Option<usize>,
     /// The regions painted so far this frame.
     regions: &'a mut Vec<Region<M>>,
+    /// The last hovered element that asked for a tooltip.
+    tooltip: Option<(Rect, String)>,
 }
 
 impl<'a, 'b, M> PaintContext<'a, 'b, M> {
@@ -129,6 +131,7 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
             input,
             focused,
             regions,
+            tooltip: None,
         }
     }
 
@@ -150,6 +153,44 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
     /// Adds a quad to the frame.
     pub fn quad(&mut self, quad: Quad) {
         self.list.quad(quad);
+    }
+
+    /// Records a tooltip to paint above the element after the whole tree.
+    pub fn tooltip(&mut self, bounds: Rect, text: String) {
+        self.tooltip = Some((bounds, text));
+    }
+
+    /// Paints the tooltip over the completed element tree.
+    pub fn paint_tooltip(&mut self) {
+        let Some((bounds, text)) = self.tooltip.take() else {
+            return;
+        };
+        let theme = *self.layout.theme;
+        let font = theme.text.sm;
+        let size = self.measure(&text, font);
+        let padding = 6.0;
+        let width = size.width + padding * 2.0;
+        let height = size.height + padding;
+        let viewport = self.viewport();
+        let left = bounds
+            .left()
+            .min(viewport.right() - width)
+            .max(viewport.left());
+        let top = (bounds.top() - height - 4.0).max(viewport.top());
+        let tooltip = Rect::from_xywh(left, top, width, height);
+        self.push_layer();
+        self.quad(
+            Quad::filled(tooltip, theme.colors.surface)
+                .corner_radius(theme.radius.sm)
+                .border(1.0, theme.colors.border),
+        );
+        let run = self.shape(&text, font);
+        self.text(
+            Point::new(left + padding, top + padding * 0.5),
+            run,
+            theme.colors.text,
+        );
+        self.pop_layer();
     }
 
     /// Draws a shaped run with its line box starting at `origin`.

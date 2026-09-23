@@ -92,7 +92,7 @@ pub enum Wake {
     Clone,
 }
 
-/// The remote operation currently represented by the Source Control button.
+/// The remote operation currently running for the active project.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RemoteOperation {
     /// Updating remote references.
@@ -101,17 +101,6 @@ pub(super) enum RemoteOperation {
     Pull,
     /// Sending local commits to a remote.
     Push,
-}
-
-impl RemoteOperation {
-    /// Present-progress label used by the split button.
-    fn label(self) -> &'static str {
-        match self {
-            Self::Fetch => "Fetching…",
-            Self::Pull => "Pulling…",
-            Self::Push => "Pushing…",
-        }
-    }
 }
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
@@ -164,6 +153,8 @@ pub struct App {
     sidebar: ResizeState,
     /// Current height and drag state of the bottom panel.
     bottom_panel: ResizeState,
+    /// Current height and drag state of the Source Control graph.
+    history_graph: ResizeState,
     /// Current width and drag state of the secondary sidebar.
     secondary_sidebar: ResizeState,
     /// Whether the primary sidebar is visible.
@@ -174,6 +165,10 @@ pub struct App {
     secondary_sidebar_open: bool,
     /// Which of the worktree's two lists that sidebar is showing.
     secondary_sidebar_view: SidebarView,
+    /// Whether the Source Control graph is visible.
+    history_graph_open: bool,
+    /// Whether the Source Control changes section is expanded.
+    changes_section_open: bool,
     /// The box of text keystrokes go to, if they go to one.
     writing: Option<Writing>,
     /// The size and state the window is written down with.
@@ -206,20 +201,20 @@ pub struct App {
     picker: Option<crate::picker::Picker>,
     /// Pointer position of the status-bar branch control anchoring its popover.
     branch_picker_at: Option<Point>,
-    /// Bounds of the Source Control branch control from the last frame.
-    branch_bounds: pm_ui::Bounds,
-    /// Bounds of the Source Control remote split button from the last frame.
-    remote_bounds: pm_ui::Bounds,
+    /// Bounds of the Source Control commit split button from the last frame.
+    commit_bounds: pm_ui::Bounds,
+    /// Bounds of the Graph history-reference filter from the last frame.
+    history_refs_bounds: pm_ui::Bounds,
+    /// Bounds of the Source Control Graph from the last frame.
+    history_graph_bounds: pm_ui::Bounds,
+    /// Whether the Graph includes all history references.
+    history_all: bool,
     /// Remote Git work currently running away from the UI thread.
     remote_operation: Option<RemoteOperation>,
     /// Completed remote Git work waiting for the event loop.
     git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
     /// The repositories a clone has finished with, and where they landed.
     cloned: Arc<Mutex<Vec<Result<std::path::PathBuf, String>>>>,
-    /// Next time the remote-operation spinner advances.
-    remote_tick: Instant,
-    /// Frame of the animated remote-operation spinner.
-    remote_phase: usize,
     /// The question the window is asking before it acts, if it is asking one.
     prompt: Option<crate::prompt::Prompt>,
     /// What could be written where the cursor is, while the list is up.
@@ -318,6 +313,11 @@ impl App {
                 BOTTOM_PANEL_RANGE.0,
                 BOTTOM_PANEL_RANGE.1,
             ),
+            history_graph: ResizeState::new(
+                layout.history_graph_height,
+                workspace::HISTORY_GRAPH_RANGE.0,
+                workspace::HISTORY_GRAPH_RANGE.1,
+            ),
             secondary_sidebar: ResizeState::new(
                 layout.secondary_sidebar_width,
                 SECONDARY_SIDEBAR_RANGE.0,
@@ -327,6 +327,8 @@ impl App {
             bottom_panel_open: layout.bottom_panel_open,
             secondary_sidebar_open: layout.secondary_sidebar_open,
             secondary_sidebar_view: layout.secondary_sidebar_view,
+            history_graph_open: layout.history_graph_open,
+            changes_section_open: layout.changes_section_open,
             writing: None,
             window_state: restored.window,
             close_requested: false,
@@ -343,13 +345,13 @@ impl App {
             trail: Trail::default(),
             picker: None,
             branch_picker_at: None,
-            branch_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
-            remote_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            commit_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            history_refs_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            history_graph_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            history_all: layout.history_all,
             remote_operation: None,
             git_results: Arc::new(Mutex::new(Vec::new())),
             cloned: Arc::new(Mutex::new(Vec::new())),
-            remote_tick: Instant::now(),
-            remote_phase: 0,
             prompt: None,
             completions: None,
             hint: None,
@@ -754,13 +756,38 @@ impl App {
             self.request_redraw();
             return;
         }
-        if message == Message::ShowRemoteMenu {
-            let bounds = self.remote_bounds.get();
+        if message == Message::ShowHistoryRefsMenu {
+            let bounds = self.history_refs_bounds.get();
             self.menu = Some(TabMenu {
                 at: Point::new((bounds.right() - 190.0).max(8.0), bounds.bottom() + 2.0),
-                target: MenuTarget::Remote,
+                target: MenuTarget::HistoryRefs,
             });
             self.request_redraw();
+            return;
+        }
+        if let Message::SetHistoryFilter(all) = message {
+            self.history_all = all;
+            self.store();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::RevealCurrentHistoryItem {
+            self.history_all = false;
+            self.store();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ShowCommitMenu {
+            let bounds = self.commit_bounds.get();
+            self.menu = Some(TabMenu {
+                at: Point::new((bounds.right() - 190.0).max(8.0), bounds.bottom() + 2.0),
+                target: MenuTarget::Commit,
+            });
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ShowSourceControlMenu {
+            self.open_menu(MenuTarget::SourceControl);
             return;
         }
         self.menu = None;
@@ -786,6 +813,25 @@ impl App {
             self.secondary_sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::Start);
             self.store_settled(event);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ResizeHistoryGraph(event) = message {
+            self.history_graph
+                .resize(event, Axis::Vertical, ResizeEdge::Start);
+            self.store_settled(event);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ToggleHistoryGraph {
+            self.history_graph_open = !self.history_graph_open;
+            self.store();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ToggleChangesSection {
+            self.changes_section_open = !self.changes_section_open;
+            self.store();
             self.request_redraw();
             return;
         }
@@ -1036,13 +1082,6 @@ impl App {
             self.request_redraw();
             return;
         }
-        if message == Message::ShowBranches {
-            let bounds = self.branch_bounds.get();
-            self.branch_picker_at = Some(Point::new(bounds.left(), bounds.top()));
-            self.open_picker(crate::picker::Kind::Branches);
-            self.request_redraw();
-            return;
-        }
         if message == Message::ShowStatusBranches {
             self.branch_picker_at = self.pointer;
             self.open_picker(crate::picker::Kind::Branches);
@@ -1211,6 +1250,15 @@ impl App {
             Message::StageAll => self.change_by(Review::stage_all),
             Message::UnstageAll => self.change_by(Review::unstage_all),
             Message::Commit => self.change_by(Review::commit),
+            Message::CommitAndPush => {
+                self.change_by(Review::commit);
+                if self
+                    .review()
+                    .is_some_and(|review| review.trouble().is_none())
+                {
+                    self.push_branch();
+                }
+            }
             Message::OpenChange(index) => self.open_change(index),
             Message::OpenChangeDiff(index) => self.open_change_diff(index),
             Message::PreviousHunk => self.step_hunk(false),
@@ -1451,6 +1499,10 @@ impl App {
             secondary_sidebar_open: self.secondary_sidebar_open,
             secondary_sidebar_width: self.secondary_sidebar.extent(),
             secondary_sidebar_view: self.secondary_sidebar_view,
+            history_graph_height: self.history_graph.extent(),
+            history_graph_open: self.history_graph_open,
+            changes_section_open: self.changes_section_open,
+            history_all: self.history_all,
         }
     }
 
@@ -1660,12 +1712,13 @@ impl App {
             tree: scope.and_then(|scope| self.files.get(&scope)),
             review: scope.and_then(|scope| self.reviews.get(&scope)),
             committing: self.writing == Some(Writing::Commit),
-            branch_bounds: self.branch_bounds.clone(),
-            remote_bounds: self.remote_bounds.clone(),
-            remote_operation: self.remote_operation.map(|operation| {
-                let rotation = self.remote_phase as f32 * std::f32::consts::TAU / 20.0;
-                (operation.label(), rotation)
-            }),
+            commit_bounds: self.commit_bounds.clone(),
+            history_refs_bounds: self.history_refs_bounds.clone(),
+            history_graph_bounds: self.history_graph_bounds.clone(),
+            history_all: self.history_all,
+            history_graph_height: layout.history_graph_height,
+            history_graph_open: layout.history_graph_open,
+            changes_section_open: layout.changes_section_open,
         };
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
@@ -1729,17 +1782,10 @@ impl ApplicationHandler<Wake> for App {
     /// holding still and a caret blinking are the two things it has to
     /// notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let now = Instant::now();
-        let remote_ticked = self.remote_operation.is_some() && now >= self.remote_tick;
-        if remote_ticked {
-            self.remote_tick = now + std::time::Duration::from_millis(100);
-            self.remote_phase = self.remote_phase.wrapping_add(1);
-        }
-        if self.rested() || self.blinked() || remote_ticked {
+        if self.rested() || self.blinked() {
             self.request_redraw();
         }
-        let remote_tick = self.remote_operation.map(|_| self.remote_tick);
-        let next = [self.next_rest(), self.next_blink(), remote_tick]
+        let next = [self.next_rest(), self.next_blink()]
             .into_iter()
             .flatten()
             .min();

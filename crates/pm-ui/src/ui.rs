@@ -199,6 +199,7 @@ impl<M> Ui<M> {
 
         let mut cx = PaintContext::new(layout, list, self.input, self.focus, &mut self.regions);
         root.paint(Rect::new(origin, size), &mut cx);
+        cx.paint_tooltip();
 
         if self.focus.is_some_and(|index| index >= self.regions.len()) {
             self.focus = None;

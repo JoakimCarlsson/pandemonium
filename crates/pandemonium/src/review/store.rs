@@ -101,6 +101,12 @@ pub struct Review {
     message: Input,
     /// What git said when it last would not do something.
     trouble: Option<String>,
+    /// Commits on the checked out branch.
+    history_auto: Vec<pm_core::Commit>,
+    /// Commits reachable from every reference.
+    history_all: Vec<pm_core::Commit>,
+    /// First visible commit in each history filter.
+    history_scrolls: [usize; 2],
     /// The id each file that has ever changed here was given.
     ///
     /// A path keeps its id for as long as the window is open, whether or not
@@ -135,6 +141,9 @@ impl Review {
             collapsed: BTreeSet::new(),
             message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
             trouble: None,
+            history_auto: Vec::new(),
+            history_all: Vec::new(),
+            history_scrolls: [0; 2],
             ids: BTreeMap::new(),
             next: 0,
             kept: BTreeSet::new(),
@@ -154,6 +163,8 @@ impl Review {
     /// a list as long as the change is.
     pub fn reread(&mut self) {
         self.status = Status::of(&self.root);
+        self.history_auto = pm_core::history(&self.root, 500, false);
+        self.history_all = pm_core::history(&self.root, 500, true);
         self.patches = pm_core::diffs(&self.root, Side::Staged)
             .into_iter()
             .map(|(path, hunks)| {
@@ -183,6 +194,30 @@ impl Review {
             .filter(|id| listed.contains(id))
             .or_else(|| listed.first().copied());
         self.gesture = None;
+    }
+
+    /// The cached commits selected by the Source Control graph filter.
+    pub fn history(&self, all: bool) -> &[pm_core::Commit] {
+        match all {
+            true => &self.history_all,
+            false => &self.history_auto,
+        }
+    }
+
+    /// The first visible commit under the selected history filter.
+    pub fn history_scroll(&self, all: bool, visible: usize) -> usize {
+        let total = self.history(all).len();
+        self.history_scrolls[usize::from(all)].min(total.saturating_sub(visible.max(1)))
+    }
+
+    /// Scrolls the selected history filter within the commits it has read.
+    pub fn scroll_history(&mut self, all: bool, rows: isize, visible: usize) {
+        let index = usize::from(all);
+        let total = self.history(all).len();
+        let last = total.saturating_sub(visible.max(1));
+        self.history_scrolls[index] = self.history_scrolls[index]
+            .saturating_add_signed(rows)
+            .min(last);
     }
 
     /// The id `path` goes by, giving it one if it has never had one.

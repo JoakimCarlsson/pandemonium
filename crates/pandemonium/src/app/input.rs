@@ -652,6 +652,27 @@ impl App {
     /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
         let text = self.theme().text;
+        if self.secondary_sidebar_open
+            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes
+            && self.history_graph_open
+            && self
+                .pointer
+                .is_some_and(|pointer| self.history_graph_bounds.get().contains(pointer))
+        {
+            let row_height = self.theme().size.row;
+            let rows = (delta / row_height).round() as isize;
+            if rows != 0 {
+                let visible = ((self.history_graph.extent() - row_height) / row_height)
+                    .floor()
+                    .max(1.0) as usize;
+                let all = self.history_all;
+                if let Some(review) = self.review_mut() {
+                    review.scroll_history(all, rows, visible);
+                }
+                self.request_redraw();
+                return;
+            }
+        }
         if let Some(shell) = self.focused_shell() {
             let lines = (delta / text.terminal.line_height).round() as isize;
             shell.borrow_mut().scroll(lines);

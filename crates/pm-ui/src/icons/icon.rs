@@ -43,6 +43,8 @@ pub enum IconName {
     Check,
     /// Close what the control is on.
     Close,
+    /// Open the remaining actions for the control.
+    More,
     /// A file.
     File,
     /// The branch a worktree is on.
@@ -53,6 +55,14 @@ pub enum IconName {
     GitCompare,
     /// A worktree branched off another.
     GitFork,
+    /// Fetch updates from a remote repository.
+    GitFetch,
+    /// Pull remote commits into the current branch.
+    GitPull,
+    /// Push local commits to a remote repository.
+    GitPush,
+    /// The current target in a history graph.
+    Target,
     /// A directory.
     Folder,
     /// A directory that is open.
@@ -92,11 +102,16 @@ impl IconName {
             Self::ArrowUp => Svg::new("arrow_up", include_icon!("arrow_up")),
             Self::Check => Svg::new("check", include_icon!("check")),
             Self::Close => Svg::new("close", include_icon!("close")),
+            Self::More => Svg::new("more", include_icon!("more")),
             Self::File => Svg::new("file", include_icon!("file")),
             Self::GitBranch => Svg::new("git_branch", include_icon!("git_branch")),
             Self::GitCommit => Svg::new("git_commit", include_icon!("git_commit")),
             Self::GitCompare => Svg::new("git_compare", include_icon!("git_compare")),
             Self::GitFork => Svg::new("git_fork", include_icon!("git_fork")),
+            Self::GitFetch => Svg::new("git_fetch", include_icon!("git_fetch")),
+            Self::GitPull => Svg::new("git_pull", include_icon!("git_pull")),
+            Self::GitPush => Svg::new("git_push", include_icon!("git_push")),
+            Self::Target => Svg::new("target", include_icon!("target")),
             Self::Folder => Svg::new("folder", include_icon!("folder")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
             Self::Minus => Svg::new("minus", include_icon!("minus")),

@@ -415,8 +415,6 @@ impl App {
         let results = self.git_results.clone();
         let wake = self.waker(Wake::Git);
         self.remote_operation = Some(kind);
-        self.remote_phase = 0;
-        self.remote_tick = std::time::Instant::now();
         std::thread::spawn(move || {
             let said = operation(&root);
             if let Ok(mut results) = results.lock() {

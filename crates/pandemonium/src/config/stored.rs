@@ -69,6 +69,14 @@ pub(super) struct Stored {
     secondary_sidebar_width: Option<f32>,
     /// Which of the worktree's two lists that sidebar was showing.
     secondary_sidebar_view: Option<StoredSidebarView>,
+    /// Height of the Source Control graph.
+    history_graph_height: Option<f32>,
+    /// Whether the Source Control graph was visible.
+    history_graph_open: Option<bool>,
+    /// Whether the Source Control changes section was expanded.
+    changes_section_open: Option<bool>,
+    /// Whether the Graph includes every history reference.
+    history_all: Option<bool>,
     /// Logical width of the window when it is not maximized.
     window_width: Option<f32>,
     /// Logical height of the window when it is not maximized.
@@ -204,6 +212,16 @@ impl Stored {
                 defaults.secondary_sidebar_view,
                 StoredSidebarView::into_view,
             ),
+            history_graph_height: self
+                .history_graph_height
+                .unwrap_or(defaults.history_graph_height),
+            history_graph_open: self
+                .history_graph_open
+                .unwrap_or(defaults.history_graph_open),
+            changes_section_open: self
+                .changes_section_open
+                .unwrap_or(defaults.changes_section_open),
+            history_all: self.history_all.unwrap_or(defaults.history_all),
         }
     }
 
@@ -284,6 +302,10 @@ impl Stored {
             secondary_sidebar_open: Some(layout.secondary_sidebar_open),
             secondary_sidebar_width: Some(layout.secondary_sidebar_width),
             secondary_sidebar_view: Some(StoredSidebarView::of(layout.secondary_sidebar_view)),
+            history_graph_height: Some(layout.history_graph_height),
+            history_graph_open: Some(layout.history_graph_open),
+            changes_section_open: Some(layout.changes_section_open),
+            history_all: Some(layout.history_all),
             window_width: Some(window.width),
             window_height: Some(window.height),
             window_maximized: Some(window.maximized),

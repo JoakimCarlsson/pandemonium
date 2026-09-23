@@ -1,4 +1,4 @@
-//! The sidebar that lists what a project has changed.
+//! The sidebar that lists what a project has changed and its recent history.
 //!
 //! The list is the same shape every editor with git in it has settled on: a
 //! message to commit with at the top, then what is staged, then what is not,
@@ -6,18 +6,37 @@
 //! drawn on the row rather than waiting for the pointer, because a control
 //! that only exists while it is hovered is a control nobody finds.
 
-use pm_core::{Changed, FileStatus, Head};
+use pm_core::{Changed, FileStatus};
 use pm_gfx::Rgba;
 use pm_ui::{
-    Bounds, Div, IconName, IconSize, MenuItem, Styled, Theme, ToggleState, checkbox, h_flex, icon,
-    icon_button, measured, menu_entry, menu_separator, text, v_flex,
+    Axis, Bounds, Div, IconName, IconSize, MenuItem, Styled, Theme, ToggleState, checkbox, h_flex,
+    icon, icon_button, measured, menu_entry, menu_separator, sash, text, v_flex,
 };
 
 use crate::message::Message;
 use crate::review::commit_editor;
 use crate::review::store::{Group, Review};
 
-/// Builds the sidebar: the commit message, then the changes under it.
+/// Window controls and saved layout for the Source Control sidebar.
+#[derive(Clone)]
+pub struct SourceControlControls {
+    /// Where the commit split button was drawn in the last frame.
+    pub commit_bounds: Bounds,
+    /// Where the history reference filter was drawn in the last frame.
+    pub history_refs_bounds: Bounds,
+    /// Bounds of the Graph panel from the last frame.
+    pub history_graph_bounds: Bounds,
+    /// Whether the graph includes every reference.
+    pub history_all: bool,
+    /// Height of the graph panel.
+    pub history_graph_height: f32,
+    /// Whether the graph panel is open.
+    pub history_graph_open: bool,
+    /// Whether the changes section is expanded.
+    pub changes_section_open: bool,
+}
+
+/// Builds the sidebar: commit controls, changes, and recent history.
 ///
 /// A window with no project open still draws the sidebar, because the
 /// sidebar is a region of the window rather than a property of a project:
@@ -27,53 +46,188 @@ pub fn changes_sidebar(
     review: Option<&Review>,
     typing: bool,
     width: f32,
-    branch_bounds: Bounds,
-    remote_bounds: Bounds,
-    remote_operation: Option<(&'static str, f32)>,
+    controls: SourceControlControls,
 ) -> Div<Message> {
     let Some(review) = review else {
         return empty(theme, width);
     };
     let (title, stopped) = review.committable();
 
+    let groups = Group::ALL.into_iter().flat_map(|listed| {
+        let rows = review.grouped(listed);
+        let mut built = Vec::new();
+        if rows.is_empty() {
+            return built;
+        }
+        built.push(group(theme, review, listed));
+        built.extend(
+            rows.into_iter()
+                .filter_map(|index| Some(change_row(theme, review, index, review.change(index)?))),
+        );
+        built
+    });
+
     v_flex()
         .w_px(width)
         .flex_1()
         .overflow_hidden()
         .child(heading(theme, review))
-        .child(measured(
-            branch_bounds,
-            branch_row(theme, review.head(), remote_bounds, remote_operation),
+        .child(section_heading(
+            theme,
+            review,
+            controls.changes_section_open,
         ))
-        .child(message_field(theme, review, typing))
-        .child(commit_button(theme, &title, stopped))
-        .when_some(review.trouble(), |sidebar, said| {
-            sidebar.child(trouble(theme, said))
+        .when(controls.changes_section_open, |sidebar| {
+            sidebar
+                .child(message_field(theme, review, typing))
+                .child(measured(
+                    controls.commit_bounds.clone(),
+                    commit_button(theme, &title, stopped),
+                ))
+                .when_some(review.trouble(), |sidebar, said| {
+                    sidebar.child(trouble(theme, said))
+                })
+                .when(review.changed().is_empty(), |sidebar| {
+                    sidebar.child(
+                        text("No changes in this worktree")
+                            .text_sm()
+                            .font_light()
+                            .color(theme.colors.text_subtle)
+                            .px(1.5)
+                            .py(1.5),
+                    )
+                })
+                .child(v_flex().flex_1().overflow_hidden().children(groups))
         })
-        .when(review.changed().is_empty(), |sidebar| {
-            sidebar.child(
-                text("No changes in this worktree")
-                    .text_sm()
-                    .font_light()
-                    .color(theme.colors.text_subtle)
+        .when(!controls.changes_section_open, |sidebar| {
+            sidebar.child(v_flex().flex_1())
+        })
+        .when(controls.history_graph_open, |sidebar| {
+            sidebar.child(sash(Axis::Vertical, Message::ResizeHistoryGraph))
+        })
+        .child(measured(
+            controls.history_graph_bounds.clone(),
+            history_graph(theme, review, controls),
+        ))
+}
+
+/// Builds the compact commit graph pinned below the change list.
+fn history_graph(theme: &Theme, review: &Review, controls: SourceControlControls) -> Div<Message> {
+    let row_height = theme.size.row;
+    let visible = ((controls.history_graph_height - row_height) / row_height)
+        .floor()
+        .max(1.0) as usize;
+    let commits = review
+        .history(controls.history_all)
+        .iter()
+        .skip(review.history_scroll(controls.history_all, visible))
+        .take(visible)
+        .cloned();
+    let open = controls.history_graph_open;
+    v_flex()
+        .w_full()
+        .h_px(if open {
+            controls.history_graph_height
+        } else {
+            theme.size.row
+        })
+        .overflow_hidden()
+        .border_1(theme.colors.border)
+        .child(
+            h_flex()
+                .w_full()
+                .h_px(theme.size.row)
+                .px(1.5)
+                .items_center()
+                .child(
+                    icon_button(
+                        theme,
+                        match open {
+                            true => IconName::ChevronDown,
+                            false => IconName::ChevronRight,
+                        },
+                        Message::ToggleHistoryGraph,
+                    )
+                    .tooltip(if open {
+                        "Collapse Graph"
+                    } else {
+                        "Expand Graph"
+                    }),
+                )
+                .child(text("Graph".to_owned()).text_sm().font_light())
+                .child(h_flex().flex_1())
+                .child(measured(
+                    controls.history_refs_bounds.clone(),
+                    history_ref_picker(theme, controls.history_all)
+                        .tooltip("Choose history references"),
+                ))
+                .child(
+                    icon_button(theme, IconName::Target, Message::RevealCurrentHistoryItem)
+                        .tooltip("Go to current history item"),
+                )
+                .child(
+                    icon_button(theme, IconName::GitFetch, Message::Fetch)
+                        .tooltip("Fetch from all remotes"),
+                )
+                .child(icon_button(theme, IconName::GitPull, Message::Pull).tooltip("Pull"))
+                .child(icon_button(theme, IconName::GitPush, Message::PushBranch).tooltip("Push"))
+                .child(
+                    icon_button(theme, IconName::Refresh, Message::RefreshChanges)
+                        .tooltip("Refresh"),
+                ),
+        )
+        .when(open, |graph| {
+            graph.children(commits.into_iter().map(|commit| {
+                h_flex()
+                    .w_full()
+                    .h_px(theme.size.row)
                     .px(1.5)
-                    .py(1.5),
-            )
+                    .gap(0.75)
+                    .items_center()
+                    .overflow_hidden()
+                    .child(
+                        text(commit.graph)
+                            .text_xs()
+                            .font_mono()
+                            .color(theme.colors.accent),
+                    )
+                    .child(
+                        text(commit.id)
+                            .text_xs()
+                            .font_mono()
+                            .color(theme.colors.text_muted),
+                    )
+                    .child(
+                        text(commit.summary)
+                            .text_xs()
+                            .font_light()
+                            .color(theme.colors.text),
+                    )
+            }))
         })
-        .children(Group::ALL.into_iter().flat_map(|listed| {
-            let rows = review.grouped(listed);
-            let mut built = Vec::new();
-            if rows.is_empty() {
-                return built;
-            }
-            built.push(group(theme, review, listed));
-            built.extend(
-                rows.into_iter().filter_map(|index| {
-                    Some(change_row(theme, review, index, review.change(index)?))
-                }),
-            );
-            built
-        }))
+}
+
+/// Builds the current history-reference filter beside the Graph actions.
+fn history_ref_picker(theme: &Theme, all: bool) -> Div<Message> {
+    h_flex()
+        .h_px(theme.size.icon_control)
+        .px(0.5)
+        .gap(0.5)
+        .items_center()
+        .rounded(theme.radius.sm)
+        .hover_bg(theme.colors.surface_hover)
+        .on_click(Message::ShowHistoryRefsMenu)
+        .child(
+            icon(IconName::GitBranch)
+                .size(IconSize::XSmall)
+                .color(theme.colors.text_subtle),
+        )
+        .child(text(if all { "All" } else { "Auto" }).text_xs())
+        .child(
+            icon(IconName::ChevronDown)
+                .size(IconSize::XSmall)
+                .color(theme.colors.text_subtle),
+        )
 }
 
 /// Builds what the sidebar says when the window has no project open.
@@ -100,10 +254,10 @@ fn heading(theme: &Theme, review: &Review) -> Div<Message> {
         .items_center()
         .justify_between()
         .child(
-            text("SOURCE CONTROL")
-                .text_xs()
+            text("Source Control".to_owned())
+                .text_sm()
                 .font_light()
-                .color(theme.colors.text_subtle),
+                .color(theme.colors.text),
         )
         .child(
             h_flex()
@@ -119,124 +273,71 @@ fn heading(theme: &Theme, review: &Review) -> Div<Message> {
         )
 }
 
-/// Builds the line saying which branch the worktree is on, and how it stands.
-fn branch_row(
-    theme: &Theme,
-    head: &Head,
-    remote_bounds: Bounds,
-    remote_operation: Option<(&'static str, f32)>,
-) -> Div<Message> {
-    let name = head.name();
-    let (remote_label, remote_action) = match (&head.upstream, head.ahead, head.behind) {
-        (None, _, _) => ("Publish", Message::PushBranch),
-        (Some(_), 0, 0) => ("Fetch", Message::Fetch),
-        (Some(_), _, 0) => ("Push", Message::PushBranch),
-        (Some(_), _, _) => ("Pull", Message::Pull),
-    };
-    let remote_icon = match remote_label {
-        "Publish" => Some(IconName::ArrowUp),
-        "Fetch" => Some(IconName::Refresh),
-        _ => None,
-    };
-    let busy = remote_operation.is_some();
-    let remote_color = match busy {
-        true => theme.colors.text_subtle,
-        false => theme.colors.text,
-    };
-
+/// Builds the label for the change list below the commit controls.
+fn section_heading(theme: &Theme, review: &Review, open: bool) -> Div<Message> {
+    let (_, stopped) = review.committable();
     h_flex()
         .w_full()
         .h_px(theme.size.row)
         .px(1.5)
-        .gap(0.75)
+        .gap(0.5)
         .items_center()
-        .overflow_hidden()
-        .hover_bg(theme.colors.surface_hover)
-        .active_bg(theme.colors.surface_active)
-        .on_click(Message::ShowBranches)
+        .on_click(Message::ToggleChangesSection)
         .child(
-            icon(IconName::GitBranch)
-                .size(IconSize::XSmall)
-                .color(theme.colors.text_subtle),
+            icon(match open {
+                true => IconName::ChevronDown,
+                false => IconName::ChevronRight,
+            })
+            .size(IconSize::XSmall)
+            .color(theme.colors.text_subtle),
         )
-        .child(text(name).text_sm().font_light())
+        .child(text("Changes".to_owned()).text_sm().font_light())
         .child(h_flex().flex_1())
-        .child(measured(
-            remote_bounds,
-            h_flex()
-                .h_px(theme.size.control)
-                .items_center()
-                .rounded(theme.radius.sm)
-                .bg(theme.colors.surface_selected)
-                .border_1(theme.colors.border)
-                .child(
-                    h_flex()
-                        .h_full()
-                        .px(1)
-                        .gap(0.5)
-                        .items_center()
-                        .hover_bg(theme.colors.surface_hover)
-                        .active_bg(theme.colors.surface_active)
-                        .when(!busy, |control| control.on_click(remote_action))
-                        .when(remote_icon.is_none() && head.behind > 0, |control| {
-                            control
-                                .child(
-                                    icon(IconName::ArrowDown)
-                                        .size(IconSize::XSmall)
-                                        .color(theme.colors.text_subtle),
-                                )
-                                .child(text(head.behind.to_string()).text_xs())
-                        })
-                        .when(remote_icon.is_none() && head.ahead > 0, |control| {
-                            control
-                                .child(
-                                    icon(IconName::ArrowUp)
-                                        .size(IconSize::XSmall)
-                                        .color(theme.colors.text_subtle),
-                                )
-                                .child(text(head.ahead.to_string()).text_xs())
-                        })
-                        .when_some(
-                            remote_operation.filter(|_| remote_icon.is_some()),
-                            |control, (_, rotation)| {
-                                control.child(
-                                    icon(IconName::LoadCircle)
-                                        .size(IconSize::XSmall)
-                                        .color(theme.colors.text_subtle)
-                                        .rotate(rotation),
-                                )
-                            },
-                        )
-                        .when_some(remote_icon.filter(|_| !busy), |control, name| {
-                            control.child(
-                                icon(name)
-                                    .size(IconSize::XSmall)
-                                    .color(theme.colors.text_subtle),
-                            )
-                        })
-                        .child(text(remote_label).text_sm().color(remote_color)),
-                )
-                .child(
-                    h_flex()
-                        .h_full()
-                        .px(0.75)
-                        .items_center()
-                        .hover_bg(theme.colors.surface_hover)
-                        .active_bg(theme.colors.surface_active)
-                        .on_click(Message::ShowRemoteMenu)
-                        .child(
-                            icon(IconName::ChevronDown)
-                                .size(IconSize::XSmall)
-                                .color(theme.colors.text_subtle),
-                        ),
-                ),
+        .child(toolbar_action(
+            theme,
+            IconName::GitCommit,
+            stopped.is_none(),
+            Message::Commit,
+        ))
+        .child(icon_button(
+            theme,
+            IconName::Refresh,
+            Message::RefreshChanges,
+        ))
+        .child(icon_button(
+            theme,
+            IconName::More,
+            Message::ShowSourceControlMenu,
         ))
 }
 
+/// Builds one compact toolbar action, disabling it when `enabled` is false.
+fn toolbar_action(
+    theme: &Theme,
+    symbol: IconName,
+    enabled: bool,
+    message: Message,
+) -> Div<Message> {
+    h_flex()
+        .size_px(theme.size.icon_control)
+        .items_center()
+        .justify_center()
+        .rounded(theme.radius.md)
+        .when(enabled, |action| {
+            action
+                .hover_bg(theme.colors.surface_hover)
+                .active_bg(theme.colors.surface_active)
+                .on_click(message)
+        })
+        .child(icon(symbol).size(IconSize::Medium).color(match enabled {
+            true => theme.colors.text_subtle,
+            false => theme.colors.text_subtle.alpha(0.5),
+        }))
+}
 /// Builds the box the commit message is written in.
 ///
-/// It is the editor, not a line: several lines, a cursor that moves, text
-/// that selects — the same buffer the panes draw, in a box of its own.
+/// It is the editor, not a line: several lines, a cursor that moves about and
+/// text that selects — the same buffer the panes draw, in a box of its own.
 fn message_field(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
     v_flex()
         .w_full()
@@ -261,23 +362,40 @@ fn commit_button(theme: &Theme, title: &str, stopped: Option<&str>) -> Div<Messa
         h_flex()
             .w_full()
             .h_px(theme.size.control)
-            .gap(0.75)
             .items_center()
-            .justify_center()
             .rounded(theme.radius.md)
             .bg(theme.colors.surface_selected)
             .when(committable, |control| {
                 control
                     .hover_bg(theme.colors.surface_hover)
                     .active_bg(theme.colors.surface_active)
-                    .on_click(Message::Commit)
             })
             .child(
-                icon(IconName::GitCommit)
-                    .size(IconSize::XSmall)
-                    .color(color),
+                h_flex()
+                    .h_full()
+                    .flex_1()
+                    .gap(0.75)
+                    .items_center()
+                    .justify_center()
+                    .when(committable, |control| control.on_click(Message::Commit))
+                    .child(icon(IconName::Check).size(IconSize::XSmall).color(color))
+                    .child(text(label).text_sm().font_medium().color(color)),
             )
-            .child(text(label).text_sm().font_medium().color(color)),
+            .child(
+                h_flex()
+                    .h_full()
+                    .px(1)
+                    .items_center()
+                    .border_1(theme.colors.border)
+                    .when(committable, |control| {
+                        control.on_click(Message::ShowCommitMenu)
+                    })
+                    .child(
+                        icon(IconName::ChevronDown)
+                            .size(IconSize::XSmall)
+                            .color(color),
+                    ),
+            ),
     )
 }
 

@@ -14,7 +14,7 @@ use pm_ui::{
 use crate::editor::{FileId, OpenFile};
 use crate::message::Message;
 use crate::panes::{Item, PaneId};
-use crate::review::{Review, changes_sidebar, status_color};
+use crate::review::{Review, SourceControlControls, changes_sidebar, status_color};
 use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
 
 /// How far the tab under the pointer sits from the pointer itself.
@@ -59,6 +59,12 @@ pub const SECONDARY_SIDEBAR_WIDTH: f32 = 252.0;
 /// Smallest and largest width the secondary sidebar resizes to.
 pub const SECONDARY_SIDEBAR_RANGE: (f32, f32) = (160.0, 480.0);
 
+/// Height the Source Control graph opens at.
+pub const HISTORY_GRAPH_HEIGHT: f32 = 190.0;
+
+/// Smallest and largest height the Source Control graph resizes to.
+pub const HISTORY_GRAPH_RANGE: (f32, f32) = (80.0, 520.0);
+
 /// Which workspace regions are visible and how large they are.
 ///
 /// This is what the window remembers of itself between launches, so it is
@@ -79,6 +85,14 @@ pub struct Layout {
     pub secondary_sidebar_width: f32,
     /// Which of the worktree's two lists that sidebar is showing.
     pub secondary_sidebar_view: SidebarView,
+    /// Height of the Source Control graph.
+    pub history_graph_height: f32,
+    /// Whether the Source Control graph is visible.
+    pub history_graph_open: bool,
+    /// Whether the Source Control changes section is expanded.
+    pub changes_section_open: bool,
+    /// Whether the Graph includes every history reference.
+    pub history_all: bool,
 }
 
 /// What the sidebar beside the panes is listing.
@@ -119,6 +133,10 @@ impl Default for Layout {
             secondary_sidebar_open: true,
             secondary_sidebar_width: SECONDARY_SIDEBAR_WIDTH,
             secondary_sidebar_view: SidebarView::default(),
+            history_graph_height: HISTORY_GRAPH_HEIGHT,
+            history_graph_open: true,
+            changes_section_open: true,
+            history_all: false,
         }
     }
 }
@@ -131,12 +149,20 @@ pub struct Worktree<'a> {
     pub review: Option<&'a Review>,
     /// Whether the commit message is where keystrokes are going.
     pub committing: bool,
-    /// Where the Source Control branch row was drawn in the last frame.
-    pub branch_bounds: Bounds,
-    /// Where the Source Control remote split button was drawn last frame.
-    pub remote_bounds: Bounds,
-    /// Remote operation label and animated spinner frame, while one runs.
-    pub remote_operation: Option<(&'static str, f32)>,
+    /// Where the Source Control commit split button was drawn last frame.
+    pub commit_bounds: Bounds,
+    /// Where the Graph reference filter was drawn last frame.
+    pub history_refs_bounds: Bounds,
+    /// Bounds of the Graph panel from the last frame.
+    pub history_graph_bounds: Bounds,
+    /// Whether the Graph shows every history reference.
+    pub history_all: bool,
+    /// Height of the Source Control graph.
+    pub history_graph_height: f32,
+    /// Whether the Source Control graph is visible.
+    pub history_graph_open: bool,
+    /// Whether the Source Control changes section is expanded.
+    pub changes_section_open: bool,
 }
 
 /// The sessions belonging to one open project.
@@ -255,8 +281,12 @@ pub enum MenuTarget {
     Unsaved(PaneId, FileId),
     /// The list of what a project has changed, on the rows it is acting on.
     Change,
-    /// The split button beside the Source Control branch row.
-    Remote,
+    /// The split button beside the Source Control commit message.
+    Commit,
+    /// The Source Control action menu.
+    SourceControl,
+    /// The Graph history-reference filter.
+    HistoryRefs,
 }
 
 /// Builds the workspace with its resizable sessions sidebar.
@@ -870,9 +900,15 @@ fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<
                 files.review,
                 files.committing,
                 width,
-                files.branch_bounds.clone(),
-                files.remote_bounds.clone(),
-                files.remote_operation,
+                SourceControlControls {
+                    commit_bounds: files.commit_bounds.clone(),
+                    history_refs_bounds: files.history_refs_bounds.clone(),
+                    history_graph_bounds: files.history_graph_bounds.clone(),
+                    history_all: files.history_all,
+                    history_graph_height: files.history_graph_height,
+                    history_graph_open: files.history_graph_open,
+                    changes_section_open: files.changes_section_open,
+                },
             ),
         })
 }

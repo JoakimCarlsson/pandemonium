@@ -21,6 +21,8 @@ pub struct Div<M> {
     on_secondary_click: Option<M>,
     /// What dragging it sends, when it is something that can be carried.
     on_drag: Option<Arc<dyn Fn(ResizeEvent) -> M>>,
+    /// What this element tells the reader while it is hovered.
+    tooltip: Option<String>,
 }
 
 /// An empty container stacking children top to bottom.
@@ -31,6 +33,7 @@ pub fn div<M>() -> Div<M> {
         on_click: None,
         on_secondary_click: None,
         on_drag: None,
+        tooltip: None,
     }
 }
 
@@ -83,6 +86,12 @@ impl<M> Div<M> {
     /// Makes this container answer to a secondary click by sending `message`.
     pub fn on_secondary_click(mut self, message: M) -> Self {
         self.on_secondary_click = Some(message);
+        self
+    }
+
+    /// Shows `text` over this element while the pointer rests on it.
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
 
@@ -277,6 +286,12 @@ impl<M: Clone> Element<M> for Div<M> {
             (None, None, None) => Interaction::default(),
             (None, on_click, on_secondary) => cx.clickable(bounds, on_click, on_secondary),
         };
+
+        if interaction.hovered
+            && let Some(text) = &self.tooltip
+        {
+            cx.tooltip(bounds, text.clone());
+        }
 
         cx.quad(
             Quad::filled(bounds, self.background(interaction))

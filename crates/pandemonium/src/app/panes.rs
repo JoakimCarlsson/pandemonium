@@ -896,15 +896,29 @@ impl App {
                 crate::input::input_menu(selected)
             }
             MenuTarget::Change => crate::review::change_menu(self.review()?),
-            MenuTarget::Remote => vec![
-                pm_ui::menu_entry("Fetch", Some(Message::Fetch)),
-                pm_ui::menu_entry("Fetch From", Some(Message::ChooseFetchRemote)),
+            MenuTarget::Commit => vec![
+                pm_ui::menu_entry("Commit", Some(Message::Commit)),
+                pm_ui::menu_entry("Commit and Push", Some(Message::CommitAndPush)),
+            ],
+            MenuTarget::SourceControl => vec![
                 pm_ui::menu_entry("Pull", Some(Message::Pull)),
-                pm_ui::menu_entry("Pull (Rebase)", Some(Message::PullRebase)),
-                pm_ui::menu_separator(),
                 pm_ui::menu_entry("Push", Some(Message::PushBranch)),
-                pm_ui::menu_entry("Push To", Some(Message::ChoosePushRemote)),
+                pm_ui::menu_entry("Clone Repository…", Some(Message::CloneProject)),
+                pm_ui::menu_entry("Checkout…", Some(Message::ShowStatusBranches)),
+                pm_ui::menu_entry("Fetch", Some(Message::Fetch)),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Stage All Changes", Some(Message::StageAll)),
+                pm_ui::menu_entry("Unstage All Changes", Some(Message::UnstageAll)),
+                pm_ui::menu_entry("Pull (Rebase)", Some(Message::PullRebase)),
                 pm_ui::menu_entry("Force Push", Some(Message::ForcePush)),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Commit", Some(Message::Commit)),
+                pm_ui::menu_entry("Commit and Push", Some(Message::CommitAndPush)),
+                pm_ui::menu_entry("Refresh", Some(Message::RefreshChanges)),
+            ],
+            MenuTarget::HistoryRefs => vec![
+                pm_ui::menu_entry("Auto", Some(Message::SetHistoryFilter(false))),
+                pm_ui::menu_entry("All", Some(Message::SetHistoryFilter(true))),
             ],
             MenuTarget::Unsaved(pane, file) => {
                 let name = self.editor.entry(file)?.name;
