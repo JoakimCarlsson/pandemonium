@@ -120,6 +120,7 @@ impl Client {
     ) -> std::io::Result<Self> {
         let mut process = Command::new(program)
             .args(server.arguments)
+            .env("PATH", path_beside(program))
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -380,11 +381,27 @@ struct Reader {
 }
 
 impl Reader {
-    /// Reads until the server stops talking.
+    /// Reads until the server stops talking, then refuses what it left unanswered.
+    ///
+    /// A server that exits has answered everything it will: a question still
+    /// waiting on it is a refusal, and so is every question asked of it after.
+    /// A `tsc` too old to know `--lsp` exits at once, and a save must not wait
+    /// on it for ever.
     fn run(mut self) {
         while let Ok(Some(message)) = transport::read(&mut self.stdout) {
             self.dispatch(&message);
         }
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        state.capabilities = Some(Value::Null);
+        let unanswered = state.asked.drain().map(|(id, _)| id).collect::<Vec<_>>();
+        for id in unanswered {
+            state.answers.insert(id, Answer::Refused);
+        }
+        state.fresh = true;
+        drop(state);
+        (self.notify)();
     }
 
     /// Acts on one message: a handshake answer, a diagnostic or a request.
@@ -558,6 +575,18 @@ fn diagnostic(published: &lsp_types::Diagnostic) -> Diagnostic {
 /// One end of a published range, in the editor's own terms.
 fn position(published: lsp_types::Position) -> Position {
     Position::new(published.line as usize, published.character as usize)
+}
+
+/// The path a server at `program` runs with: its own directory first.
+///
+/// A server written in JavaScript starts through `env node`, and the node it
+/// means is the one installed beside it, which a window started from a
+/// desktop session is not told about the way a shell is.
+fn path_beside(program: &Path) -> std::ffi::OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let beside = program.parent().map(Path::to_path_buf);
+    std::env::join_paths(beside.into_iter().chain(std::env::split_paths(&inherited)))
+        .unwrap_or(inherited)
 }
 
 /// What the editor tells a server about itself when it starts one.

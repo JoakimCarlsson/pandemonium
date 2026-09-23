@@ -66,9 +66,15 @@ const PYTHON_SERVERS: &[Server] = &[
 ];
 
 /// The servers that answer for every TypeScript and JavaScript dialect:
-/// tsserver or vtsls for the types, ESLint and Biome for the lints, and
-/// Tailwind for the class names.
+/// TypeScript 7's own server, or tsserver or vtsls over an older TypeScript,
+/// for the types, ESLint and Biome for the lints, and Tailwind for the class
+/// names.
 const TSSERVER: &[Server] = &[
+    Server {
+        command: "tsc",
+        arguments: &["--lsp", "--stdio"],
+        options: NO_OPTIONS,
+    },
     stdio("typescript-language-server"),
     stdio("vtsls"),
     stdio("vscode-eslint-language-server"),
@@ -249,6 +255,17 @@ const JAVASCRIPT: Language = Language {
     ],
     servers: TSSERVER,
     line_comment: Some("//"),
+};
+
+/// JSX: JavaScript's grammar and highlights with JSX, told apart for tsserver.
+///
+/// The grammar is the same one plain JavaScript is parsed with, but a server
+/// reads a `javascriptreact` document with JSX switched on and a
+/// `javascript` one without it.
+const JSX: Language = Language {
+    name: "JSX",
+    language_id: "javascriptreact",
+    ..JAVASCRIPT
 };
 
 /// JSON: the grammar, its highlights and the VS Code JSON server.
@@ -435,6 +452,7 @@ impl Language {
             "c#" | "csharp" => Some(CSHARP),
             "golang" => Some(GO),
             "javascript" => Some(JAVASCRIPT),
+            "javascriptreact" => Some(JSX),
             "kotlin" => Some(KOTLIN),
             "python" => Some(PYTHON),
             "ruby" => Some(RUBY),
@@ -470,7 +488,8 @@ impl Language {
             "go" => Some(GO),
             "htm" | "html" => Some(HTML),
             "java" => Some(JAVA),
-            "cjs" | "js" | "jsx" | "mjs" => Some(JAVASCRIPT),
+            "cjs" | "js" | "mjs" => Some(JAVASCRIPT),
+            "jsx" => Some(JSX),
             "json" => Some(JSON),
             "jsonc" => Some(JSONC),
             "kt" | "kts" => Some(KOTLIN),

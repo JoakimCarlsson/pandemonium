@@ -130,7 +130,7 @@ impl Servers {
 /// their programs somewhere that only a shell profile ever hears about. A
 /// server the reader has installed is a server the editor runs, whether or
 /// not the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 7] = [
+const TOOL_DIRECTORIES: [&str; 8] = [
     ".cargo/bin",
     ".local/bin",
     "go/bin",
@@ -138,6 +138,7 @@ const TOOL_DIRECTORIES: [&str; 7] = [
     ".deno/bin",
     ".npm-global/bin",
     ".volta/bin",
+    ".local/share/fnm/aliases/default/bin",
 ];
 
 /// Where `command` is installed, on the path or in the usual places beside it.
