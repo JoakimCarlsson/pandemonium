@@ -254,20 +254,6 @@ pub const JETBRAINS: &[Row] = &[
     ("alt+f12", Action::NewTerminal, "true"),
 ];
 
-/// What Vim does differently: the window commands under `ctrl+w`.
-pub const VIM: &[Row] = &[
-    ("ctrl+w v", Action::SplitRight, "true"),
-    ("ctrl+w s", Action::SplitDown, "true"),
-    ("ctrl+w c", Action::ClosePane, "true"),
-    ("ctrl+w h", Action::FocusLeft, "true"),
-    ("ctrl+w l", Action::FocusRight, "true"),
-    ("ctrl+w k", Action::FocusUp, "true"),
-    ("ctrl+w j", Action::FocusDown, "true"),
-    ("ctrl+w t", Action::NewTerminal, "true"),
-    ("g t", Action::NextTab, "pane.kind != input"),
-    ("g shift+t", Action::PreviousTab, "pane.kind != input"),
-];
-
 /// What Emacs does differently: the window commands under `ctrl+x`.
 pub const EMACS: &[Row] = &[
     ("alt+x", Action::ShowCommands, "true"),

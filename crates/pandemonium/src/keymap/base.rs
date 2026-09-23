@@ -20,8 +20,6 @@ pub enum BaseKeymap {
     Zed,
     /// JetBrains' bindings.
     JetBrains,
-    /// Vim's window commands.
-    Vim,
     /// Emacs' window commands.
     Emacs,
     /// Helix's space menu and window commands.
@@ -32,12 +30,11 @@ pub enum BaseKeymap {
 
 impl BaseKeymap {
     /// Every keymap, in the order the setup screen offers them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Pandemonium,
         Self::VsCode,
         Self::Zed,
         Self::JetBrains,
-        Self::Vim,
         Self::Emacs,
         Self::Helix,
         Self::SublimeText,
@@ -50,7 +47,6 @@ impl BaseKeymap {
             Self::VsCode => "VS Code",
             Self::Zed => "Zed",
             Self::JetBrains => "JetBrains",
-            Self::Vim => "Vim",
             Self::Emacs => "Emacs",
             Self::Helix => "Helix",
             Self::SublimeText => "Sublime Text",
@@ -64,7 +60,6 @@ impl BaseKeymap {
             Self::VsCode => tables::VS_CODE,
             Self::Zed => tables::ZED,
             Self::JetBrains => tables::JETBRAINS,
-            Self::Vim => tables::VIM,
             Self::Emacs => tables::EMACS,
             Self::Helix => tables::HELIX,
             Self::SublimeText => tables::SUBLIME,

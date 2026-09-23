@@ -52,8 +52,6 @@ pub(super) struct Stored {
     terminal_scrollback: Option<usize>,
     /// The keymap the editor starts from.
     keymap: Option<BaseKeymap>,
-    /// Whether editing starts in vim mode.
-    vim_mode: Option<bool>,
     /// How wide a step of indentation is where a file does not say.
     tab_size: Option<usize>,
     /// Whether a step of indentation is a tab where a file does not say.
@@ -317,7 +315,6 @@ impl Stored {
                     .unwrap_or(defaults.fonts.terminal_size),
             },
             keymap: self.keymap.unwrap_or(defaults.keymap),
-            vim_mode: self.vim_mode.unwrap_or(defaults.vim_mode),
             tab_size: self.tab_size.unwrap_or(defaults.tab_size),
             hard_tabs: self.hard_tabs.unwrap_or(defaults.hard_tabs),
             display: Display {
@@ -390,7 +387,6 @@ impl Stored {
             terminal_font_size: Some(fonts.terminal_size),
             terminal_scrollback: Some(preferences.terminal_scrollback),
             keymap: Some(preferences.keymap),
-            vim_mode: Some(preferences.vim_mode),
             tab_size: Some(preferences.tab_size),
             hard_tabs: Some(preferences.hard_tabs),
             line_numbers: Some(display.line_numbers),

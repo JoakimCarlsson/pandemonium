@@ -98,7 +98,7 @@ pub enum SettingsSection {
     Display,
     /// What happens to a file as it is written.
     Saving,
-    /// The keymap the editor starts from, and vim mode.
+    /// The keymap the editor starts from.
     Keymap,
     /// How a terminal is set and how much it remembers.
     Terminal,
@@ -170,7 +170,7 @@ impl SettingsSection {
                 Preference::TrimWhitespace,
                 Preference::FinalNewline,
             ],
-            Self::Keymap => &[Preference::Keymap, Preference::VimMode],
+            Self::Keymap => &[Preference::Keymap],
             Self::Terminal => &[Preference::TerminalFontSize, Preference::TerminalScrollback],
             Self::Sessions => &[
                 Preference::TrustWorktrees,
