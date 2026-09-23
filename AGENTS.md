@@ -38,10 +38,11 @@ the domain; nothing in it knows that a UI exists.
   as data; it neither lays out nor draws.
 - `pm-vt` — terminal emulation: escape-sequence parser, cell grid, scrollback.
   Drives a plain shell and an agent CLI alike; it knows nothing about either.
-- `pm-vim` — modal editing: the key grammar, motions, text objects,
-  operators, registers, `.` and macros, over a `pm-text` buffer. It takes
-  keystrokes of its own and answers with effects; it knows neither winit
-  nor the window.
+- `pm-vim` — modal editing over a `pm-text` buffer: a binding table written
+  like Zed's `vim.json` (keys, action, `when`), and the motions, objects,
+  operators, registers, `.`, macros and command line the actions name. It
+  takes keystrokes of its own and answers with effects for the window —
+  save, split, go to definition; it knows neither winit nor the window.
 - `pm-ui` — the element tree, the layout pass, hit testing, focus and input
   routing, over `pm-gfx`'s draw list. Widgets are extracted from real screens
   as they repeat; there is no widget catalogue built ahead of them.

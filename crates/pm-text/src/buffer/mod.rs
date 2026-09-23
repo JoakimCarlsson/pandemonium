@@ -331,6 +331,14 @@ impl Buffer {
         highlights
     }
 
+    /// Every node of the syntax tree whose kind `keep` accepts, outermost
+    /// first; none when the language has no grammar.
+    pub fn syntax_nodes(&self, keep: &dyn Fn(&str) -> bool) -> Vec<crate::syntax::SyntaxNode> {
+        self.syntax
+            .as_ref()
+            .map_or_else(Vec::new, |syntax| syntax.nodes(&self.text, keep))
+    }
+
     /// The bracket matching the one at or before the cursor, if there is one.
     pub fn matching_bracket(&self) -> Option<(Position, Position)> {
         let head = self.selection.head;

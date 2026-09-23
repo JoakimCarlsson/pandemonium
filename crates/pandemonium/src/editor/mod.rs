@@ -27,5 +27,5 @@ pub use hint::{Shown, hint};
 pub use keys::{Edit, edit, keystroke};
 pub use menu::{TextMenu, text_menu};
 pub use search::{Search, SearchField};
-pub use store::{Document, FileEntry, FileId, Files, Habits, OpenFile};
+pub use store::{Document, FileEntry, FileId, Files, Habits, OpenFile, SCROLL_MARGIN};
 pub use view::{ScrollAxis, buffer_view, plain_view, tint};

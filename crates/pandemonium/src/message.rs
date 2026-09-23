@@ -34,6 +34,8 @@ pub enum Message {
     StepPreference(Preference, Step),
     /// Draw the caret in this shape.
     SetCursorShape(CursorShape),
+    /// Share vim's unnamed register with the system clipboard this much.
+    SetVimClipboard(pm_vim::ClipboardUse),
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.

@@ -486,6 +486,14 @@ fn section_rows(
                 "Vim Mode",
                 "Modal editing, built in rather than an extension",
             ),
+            inline(
+                theme,
+                preferences,
+                Preference::VimClipboard,
+                "System Clipboard",
+                "When vim's yanks and deletes go to the system clipboard",
+                vim_clipboards(preferences).w_px(space(CHOICE_WIDTH)),
+            ),
         ],
         SettingsSection::Terminal => vec![
             stepper(
@@ -925,6 +933,22 @@ fn cursor_shapes(preferences: &Preferences) -> Div<Message> {
         CursorShape::ALL
             .into_iter()
             .map(|shape| (shape.label().to_owned(), Message::SetCursorShape(shape))),
+        selected,
+    )
+}
+
+/// How much vim's register shares with the clipboard, the chosen one lit.
+fn vim_clipboards(preferences: &Preferences) -> Div<Message> {
+    let selected = pm_vim::ClipboardUse::ALL
+        .iter()
+        .position(|sharing| *sharing == preferences.vim_clipboard);
+    toggle_row(
+        pm_vim::ClipboardUse::ALL.into_iter().map(|sharing| {
+            (
+                sharing.label().to_owned(),
+                Message::SetVimClipboard(sharing),
+            )
+        }),
         selected,
     )
 }

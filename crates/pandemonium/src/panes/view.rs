@@ -71,6 +71,8 @@ pub struct Contents {
     pub link: Option<std::ops::Range<pm_text::Position>>,
     /// The name the editor is saying something about, while it says it.
     pub hovered: Option<std::ops::Range<pm_text::Position>>,
+    /// The matches of modal editing's search, to light on screen.
+    pub found: Vec<std::ops::Range<pm_text::Position>>,
     /// Whether the caret is solid this instant, for its blink.
     pub caret: bool,
     /// What a pane of text draws around its text.
@@ -135,6 +137,7 @@ fn pane_view(
     let empty = matches!(contents.content, Content::Empty);
     let link = contents.link.clone();
     let hovered = contents.hovered.clone();
+    let found = contents.found.clone();
     let caret = contents.caret;
     let display = contents.display;
     let showing = match &contents.content {
@@ -167,6 +170,7 @@ fn pane_view(
                 buffer_view(file, focused)
                     .link(link)
                     .hovered(hovered)
+                    .found(found)
                     .caret(caret)
                     .display(display)
                     .on_select(move |phase, anchor, head| {

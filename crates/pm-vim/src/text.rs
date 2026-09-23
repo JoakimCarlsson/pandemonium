@@ -208,3 +208,79 @@ pub(crate) fn enclosing_close(
     }
     None
 }
+
+/// How wide the indentation of `line` is drawn, tabs counted as the buffer
+/// draws them.
+pub(crate) fn indent_width(buffer: &Buffer, line: usize) -> usize {
+    buffer.display_column(Position::new(line, first_non_blank(buffer, line)))
+}
+
+/// The offset of the character before `position`, onto the line above at
+/// the start of one.
+pub(crate) fn before(buffer: &Buffer, position: Position) -> Position {
+    buffer.position_of(buffer.char_of(position).saturating_sub(1))
+}
+
+/// Whether a sentence starts at `offset`: after an empty line, at an empty
+/// line after text, or after a `.`, `!` or `?` and the blanks that follow.
+fn starts_sentence(buffer: &Buffer, offset: usize) -> bool {
+    let Some(ch) = buffer.char_at_offset(offset) else {
+        return false;
+    };
+    if starts_empty_line(buffer, offset) {
+        let line = buffer.position_of(offset).line;
+        return line == 0 || !is_empty_line(buffer, line - 1);
+    }
+    if ch.is_whitespace() {
+        return false;
+    }
+    let mut at = offset;
+    let mut breaks = 0;
+    let mut blanks = 0;
+    while at > 0 {
+        match buffer.char_at_offset(at - 1) {
+            Some('\n') => breaks += 1,
+            Some(ch) if ch.is_whitespace() => {}
+            _ => break,
+        }
+        blanks += 1;
+        at -= 1;
+    }
+    if at == 0 || breaks >= 2 {
+        return true;
+    }
+    if blanks == 0 {
+        return false;
+    }
+    while at > 0 && matches!(buffer.char_at_offset(at - 1), Some(')' | ']' | '"' | '\'')) {
+        at -= 1;
+    }
+    matches!(
+        buffer.char_at_offset(at.wrapping_sub(1)),
+        Some('.' | '!' | '?')
+    )
+}
+
+/// The offset the next sentence starts at, after `offset`.
+pub(crate) fn next_sentence(buffer: &Buffer, offset: usize) -> usize {
+    let len = buffer.len_chars();
+    (offset + 1..len)
+        .find(|at| starts_sentence(buffer, *at))
+        .unwrap_or(len.saturating_sub(1))
+}
+
+/// The offset the sentence before `offset` starts at.
+pub(crate) fn previous_sentence(buffer: &Buffer, offset: usize) -> usize {
+    (0..offset)
+        .rev()
+        .find(|at| starts_sentence(buffer, *at))
+        .unwrap_or(0)
+}
+
+/// The offset the sentence `offset` is in starts at.
+pub(crate) fn sentence_start(buffer: &Buffer, offset: usize) -> usize {
+    match starts_sentence(buffer, offset) {
+        true => offset,
+        false => previous_sentence(buffer, offset),
+    }
+}

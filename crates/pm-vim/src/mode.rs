@@ -1,7 +1,7 @@
 //! Which mode a buffer is in, and what each one looks like.
 
 /// The mode a buffer is being edited in.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum Mode {
     /// Keys are commands: they move the cursor and operate on the text.
     #[default]
@@ -14,6 +14,8 @@ pub enum Mode {
     Visual,
     /// Whole lines are selected, and keys move the far end.
     VisualLine,
+    /// A rectangle of columns is selected, one span on every line.
+    VisualBlock,
 }
 
 /// How the cursor is drawn in a mode.
@@ -36,12 +38,13 @@ impl Mode {
             Self::Replace => "REPLACE",
             Self::Visual => "VISUAL",
             Self::VisualLine => "VISUAL LINE",
+            Self::VisualBlock => "VISUAL BLOCK",
         }
     }
 
     /// Whether the mode selects text.
     pub const fn is_visual(self) -> bool {
-        matches!(self, Self::Visual | Self::VisualLine)
+        matches!(self, Self::Visual | Self::VisualLine | Self::VisualBlock)
     }
 
     /// Whether keys typed in the mode put text in.

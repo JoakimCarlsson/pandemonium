@@ -20,7 +20,7 @@ use crate::editor::layout::TextLayout;
 use crate::editor::search::Search;
 
 /// How many lines of context the view keeps above and below the cursor.
-const SCROLL_MARGIN: usize = 2;
+pub const SCROLL_MARGIN: usize = 2;
 
 /// How many columns of context the view keeps left and right of the cursor.
 const SCROLL_MARGIN_X: usize = 4;

@@ -11,7 +11,8 @@ use std::collections::HashMap;
 use pm_text::{Buffer, Position};
 
 use crate::search::{LastSearch, Pattern};
-use crate::text::{self, first_non_blank, is_empty_line, last_column};
+use crate::syntax;
+use crate::text::{self, first_non_blank, indent_width, is_empty_line, last_column};
 
 /// How much of the text between the cursor and a motion's place it covers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +34,17 @@ pub(crate) struct Find {
     pub forward: bool,
     /// Whether it stops one short of the character.
     pub till: bool,
+}
+
+/// Which way an indentation jump compares the lines it passes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Indentation {
+    /// To a line indented less than this one.
+    Lesser,
+    /// To a line indented more.
+    Greater,
+    /// To a line indented the same.
+    Same,
 }
 
 /// Where a key sends the cursor.
@@ -66,6 +78,8 @@ pub(crate) enum Motion {
     LineEnd,
     /// `g_`: to the last character of the line that is not blank.
     LastNonBlank,
+    /// `gM`: to the middle of the line.
+    MiddleOfLine,
     /// `+` or Enter: to the first non-blank of the next line.
     NextLineStart,
     /// `-`: to the first non-blank of the previous line.
@@ -78,6 +92,8 @@ pub(crate) enum Motion {
     FirstLine,
     /// `G`: to the last line, or the line counted.
     LastLine,
+    /// `N%`: to the line that far through the file.
+    Percent,
     /// `f`, `F`, `t` or `T`: to a character on this line.
     Find(Find),
     /// `;` or `,`: the last character search again, reversed for `,`.
@@ -88,6 +104,23 @@ pub(crate) enum Motion {
     ParagraphForward,
     /// `{`: to the previous empty line.
     ParagraphBackward,
+    /// `)`: to the start of the next sentence.
+    SentenceForward,
+    /// `(`: to the start of this sentence, or the one before.
+    SentenceBackward,
+    /// `]]`, `][`, `[[` or `[]`: to the start or end of a top-level block.
+    Section { forward: bool, end: bool },
+    /// `]m`, `]M`, `[m` or `[M`: to the start or end of a function.
+    Method { forward: bool, end: bool },
+    /// `]/` or `[/`: to the next or previous comment.
+    Comment { forward: bool },
+    /// `]-`, `]+`, `]=` and their `[` twins: to a line indented differently.
+    Indent {
+        forward: bool,
+        indentation: Indentation,
+    },
+    /// `])`, `]}`, `[(` or `[{`: to the bracket that encloses the cursor.
+    Unmatched { forward: bool, bracket: char },
     /// `H`: to the top line of the view.
     ViewTop,
     /// `M`: to the middle line of the view.
@@ -98,16 +131,17 @@ pub(crate) enum Motion {
     HalfPageDown,
     /// Ctrl-U: half a view up.
     HalfPageUp,
-    /// Page Down: a view down.
+    /// Ctrl-F or Page Down: a view down.
     PageDown,
-    /// Page Up: a view up.
+    /// Ctrl-B or Page Up: a view up.
     PageUp,
     /// `/` or `?`: to the next match of typed text.
     Search { text: String, forward: bool },
     /// `n` or `N`: the last search again, reversed for `N`.
     SearchNext { reverse: bool },
-    /// `*` or `#`: to the next match of the word under the cursor.
-    SearchWord { forward: bool },
+    /// `*`, `#`, `g*` or `g#`: to the next match of the word under the
+    /// cursor, as a whole word unless `partial`.
+    SearchWord { forward: bool, partial: bool },
     /// `'` or `` ` ``: to a mark, its line for `'`.
     Mark { name: char, line: bool },
 }
@@ -119,6 +153,10 @@ pub struct View {
     pub top: usize,
     /// How many lines the pane has room for.
     pub rows: usize,
+    /// How many lines the pane keeps between the cursor and its edges.
+    pub margin: usize,
+    /// The column `gq` wraps text at.
+    pub wrap: usize,
 }
 
 /// What a motion needs to know besides the buffer and where it starts.
@@ -161,7 +199,10 @@ impl Motion {
         let at = |position: Position| buffer.char_of(position);
         let to_position = |offset: usize| buffer.position_of(offset.min(buffer.len_chars()));
         let line_start = |line: usize| Position::new(line, first_non_blank(buffer, line));
-        let half = (cx.view.rows / 2).max(1);
+        let half = (cx.view.rows / 2).max(1) as isize;
+        let page = cx.view.rows.max(1) as isize;
+        let repeat =
+            |step: &dyn Fn(usize) -> usize| (0..times).fold(at(from), |offset, _| step(offset));
 
         let (to, kind, goal) = match self {
             Self::Left => (
@@ -185,36 +226,36 @@ impl Motion {
             Self::WrappingRight => (to_position(at(from) + times), Kind::Exclusive, None),
             Self::Up => return vertical(buffer, from, -(times as isize), cx.goal),
             Self::Down => return vertical(buffer, from, times as isize, cx.goal),
-            Self::HalfPageDown => return vertical(buffer, from, half as isize, cx.goal),
-            Self::HalfPageUp => return vertical(buffer, from, -(half as isize), cx.goal),
-            Self::PageDown => return vertical(buffer, from, cx.view.rows.max(1) as isize, cx.goal),
-            Self::PageUp => {
-                return vertical(buffer, from, -(cx.view.rows.max(1) as isize), cx.goal);
-            }
-            Self::NextWordStart { big } => {
-                let offset = (0..times).fold(at(from), |offset, _| {
+            Self::HalfPageDown => return vertical(buffer, from, half, cx.goal),
+            Self::HalfPageUp => return vertical(buffer, from, -half, cx.goal),
+            Self::PageDown => return vertical(buffer, from, page * times as isize, cx.goal),
+            Self::PageUp => return vertical(buffer, from, -page * times as isize, cx.goal),
+            Self::NextWordStart { big } => (
+                to_position(repeat(&|offset| {
                     text::next_word_start(buffer, offset, *big)
-                });
-                (to_position(offset), Kind::Exclusive, None)
-            }
-            Self::NextWordEnd { big } => {
-                let offset = (0..times).fold(at(from), |offset, _| {
-                    text::next_word_end(buffer, offset, *big)
-                });
-                (to_position(offset), Kind::Inclusive, None)
-            }
-            Self::PreviousWordStart { big } => {
-                let offset = (0..times).fold(at(from), |offset, _| {
+                })),
+                Kind::Exclusive,
+                None,
+            ),
+            Self::NextWordEnd { big } => (
+                to_position(repeat(&|offset| text::next_word_end(buffer, offset, *big))),
+                Kind::Inclusive,
+                None,
+            ),
+            Self::PreviousWordStart { big } => (
+                to_position(repeat(&|offset| {
                     text::previous_word_start(buffer, offset, *big)
-                });
-                (to_position(offset), Kind::Exclusive, None)
-            }
-            Self::PreviousWordEnd { big } => {
-                let offset = (0..times).fold(at(from), |offset, _| {
+                })),
+                Kind::Exclusive,
+                None,
+            ),
+            Self::PreviousWordEnd { big } => (
+                to_position(repeat(&|offset| {
                     text::previous_word_end(buffer, offset, *big)
-                });
-                (to_position(offset), Kind::Inclusive, None)
-            }
+                })),
+                Kind::Inclusive,
+                None,
+            ),
             Self::LineStart => (Position::new(from.line, 0), Kind::Exclusive, None),
             Self::FirstNonBlank => (line_start(from.line), Kind::Exclusive, None),
             Self::LineEnd => {
@@ -231,6 +272,18 @@ impl Motion {
                 (
                     Position::new(line, kept.saturating_sub(1)),
                     Kind::Inclusive,
+                    None,
+                )
+            }
+            Self::MiddleOfLine => {
+                let len = buffer.line_len(from.line);
+                let percent = cx.count.unwrap_or(50).min(100);
+                (
+                    Position::new(
+                        from.line,
+                        (len * percent / 100).min(last_column(buffer, from.line)),
+                    ),
+                    Kind::Exclusive,
                     None,
                 )
             }
@@ -265,6 +318,14 @@ impl Motion {
                 let line = cx
                     .count
                     .map_or(last, |count| count.saturating_sub(1))
+                    .min(last);
+                (line_start(line), Kind::Linewise, None)
+            }
+            Self::Percent => {
+                let lines = buffer.line_count();
+                let line = (times.min(100) * lines)
+                    .div_ceil(100)
+                    .saturating_sub(1)
                     .min(last);
                 (line_start(line), Kind::Linewise, None)
             }
@@ -306,6 +367,60 @@ impl Motion {
                 let line = (0..times).fold(from.line, |line, _| paragraph_backward(buffer, line));
                 (Position::new(line, 0), Kind::Exclusive, None)
             }
+            Self::SentenceForward => (
+                to_position(repeat(&|offset| text::next_sentence(buffer, offset))),
+                Kind::Exclusive,
+                None,
+            ),
+            Self::SentenceBackward => (
+                to_position(repeat(&|offset| text::previous_sentence(buffer, offset))),
+                Kind::Exclusive,
+                None,
+            ),
+            Self::Section { forward, end } => {
+                let places = syntax::sections(buffer, *end);
+                (
+                    step_through(&places, from, *forward, times)?,
+                    Kind::Exclusive,
+                    None,
+                )
+            }
+            Self::Method { forward, end } => {
+                let places = syntax::functions(buffer, *end);
+                (
+                    step_through(&places, from, *forward, times)?,
+                    Kind::Exclusive,
+                    None,
+                )
+            }
+            Self::Comment { forward } => {
+                let places = syntax::comments(buffer);
+                (
+                    step_through(&places, from, *forward, times)?,
+                    Kind::Exclusive,
+                    None,
+                )
+            }
+            Self::Indent {
+                forward,
+                indentation,
+            } => {
+                let line = (0..times).try_fold(from.line, |line, _| {
+                    indent_jump(buffer, line, *forward, *indentation)
+                })?;
+                (line_start(line), Kind::Linewise, None)
+            }
+            Self::Unmatched { forward, bracket } => {
+                let (open, close) = match bracket {
+                    '(' | ')' => ('(', ')'),
+                    _ => ('{', '}'),
+                };
+                let offset = (0..times).try_fold(at(from), |offset, _| match forward {
+                    true => text::enclosing_close(buffer, offset + 1, open, close),
+                    false => text::enclosing_open(buffer, offset, open, close),
+                })?;
+                (to_position(offset), Kind::Exclusive, None)
+            }
             Self::ViewTop => {
                 let line = (cx.view.top + times - 1).min(last);
                 (line_start(line), Kind::Linewise, None)
@@ -324,10 +439,7 @@ impl Motion {
             }
             Self::Search { text, forward } => {
                 let search = LastSearch {
-                    pattern: Pattern {
-                        text: text.clone(),
-                        whole_word: false,
-                    },
+                    pattern: Pattern::typed(text),
                     forward: *forward,
                 };
                 *cx.last_search = Some(search.clone());
@@ -346,17 +458,18 @@ impl Motion {
                     None,
                 )
             }
-            Self::SearchWord { forward } => {
+            Self::SearchWord { forward, partial } => {
                 let word = buffer.word_at(from);
                 let text = buffer.text_in(word.clone());
                 if text.is_empty() {
                     return None;
                 }
+                let pattern = match partial {
+                    true => Pattern::typed(&regex::escape(&text)),
+                    false => Pattern::word(&text),
+                };
                 let search = LastSearch {
-                    pattern: Pattern {
-                        text,
-                        whole_word: true,
-                    },
+                    pattern,
                     forward: *forward,
                 };
                 *cx.last_search = Some(search.clone());
@@ -385,7 +498,37 @@ impl Motion {
     pub(crate) fn always_moves(&self) -> bool {
         matches!(
             self,
-            Self::FirstLine | Self::LastLine | Self::LineEnd | Self::CurrentLineStart
+            Self::FirstLine
+                | Self::LastLine
+                | Self::LineEnd
+                | Self::CurrentLineStart
+                | Self::Percent
+                | Self::Find(_)
+                | Self::RepeatFind { .. }
+        )
+    }
+
+    /// Whether the motion is a jump, which the jump list remembers the
+    /// place it left.
+    pub(crate) fn is_jump(&self) -> bool {
+        matches!(
+            self,
+            Self::FirstLine
+                | Self::LastLine
+                | Self::Percent
+                | Self::Matching
+                | Self::ParagraphForward
+                | Self::ParagraphBackward
+                | Self::SentenceForward
+                | Self::SentenceBackward
+                | Self::Section { .. }
+                | Self::ViewTop
+                | Self::ViewMiddle
+                | Self::ViewBottom
+                | Self::Search { .. }
+                | Self::SearchNext { .. }
+                | Self::SearchWord { .. }
+                | Self::Mark { .. }
         )
     }
 }
@@ -471,6 +614,52 @@ fn paragraph_backward(buffer: &Buffer, line: usize) -> usize {
         line -= 1;
     }
     line
+}
+
+/// The `times`-th of `places` after `from`, or before it.
+fn step_through(
+    places: &[Position],
+    from: Position,
+    forward: bool,
+    times: usize,
+) -> Option<Position> {
+    match forward {
+        true => places
+            .iter()
+            .filter(|place| **place > from)
+            .nth(times - 1)
+            .copied(),
+        false => places
+            .iter()
+            .rev()
+            .filter(|place| **place < from)
+            .nth(times - 1)
+            .copied(),
+    }
+}
+
+/// The next line from `line` in `forward`'s direction, skipping empty ones,
+/// whose indentation compares with `line`'s as `indentation` asks.
+fn indent_jump(
+    buffer: &Buffer,
+    line: usize,
+    forward: bool,
+    indentation: Indentation,
+) -> Option<usize> {
+    let width = indent_width(buffer, line);
+    let lines: Box<dyn Iterator<Item = usize>> = match forward {
+        true => Box::new(line + 1..buffer.line_count()),
+        false => Box::new((0..line).rev()),
+    };
+    let mut lines = lines.filter(|candidate| !buffer.line_text(*candidate).trim().is_empty());
+    lines.find(|candidate| {
+        let other = indent_width(buffer, *candidate);
+        match indentation {
+            Indentation::Lesser => other < width,
+            Indentation::Greater => other > width,
+            Indentation::Same => other == width,
+        }
+    })
 }
 
 /// Where the `times`-th match of `search` from `from` is.

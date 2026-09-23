@@ -170,7 +170,11 @@ impl SettingsSection {
                 Preference::TrimWhitespace,
                 Preference::FinalNewline,
             ],
-            Self::Keymap => &[Preference::Keymap, Preference::VimMode],
+            Self::Keymap => &[
+                Preference::Keymap,
+                Preference::VimMode,
+                Preference::VimClipboard,
+            ],
             Self::Terminal => &[Preference::TerminalFontSize, Preference::TerminalScrollback],
             Self::Sessions => &[
                 Preference::TrustWorktrees,

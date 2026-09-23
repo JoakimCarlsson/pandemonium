@@ -102,6 +102,7 @@ pub fn keystroke(key: &Key, modifiers: ModifiersState) -> Option<pm_vim::Keystro
         Key::Named(NamedKey::Enter) => pm_vim::Key::Enter,
         Key::Named(NamedKey::Backspace) => pm_vim::Key::Backspace,
         Key::Named(NamedKey::Delete) => pm_vim::Key::Delete,
+        Key::Named(NamedKey::Insert) => pm_vim::Key::Insert,
         Key::Named(NamedKey::Tab) => pm_vim::Key::Tab,
         Key::Named(NamedKey::ArrowLeft) => pm_vim::Key::Left,
         Key::Named(NamedKey::ArrowRight) => pm_vim::Key::Right,
@@ -113,9 +114,15 @@ pub fn keystroke(key: &Key, modifiers: ModifiersState) -> Option<pm_vim::Keystro
         Key::Named(NamedKey::PageDown) => pm_vim::Key::PageDown,
         _ => return None,
     };
+    let ctrl = modifiers.control_key() && !composed;
+    let pressed = match (pressed, ctrl) {
+        (pm_vim::Key::Char(ch), true) => pm_vim::Key::Char(ch.to_ascii_lowercase()),
+        (pressed, _) => pressed,
+    };
     Some(pm_vim::Keystroke {
         key: pressed,
-        ctrl: modifiers.control_key() && !composed,
+        ctrl,
+        shift: modifiers.shift_key() && !matches!(pressed, pm_vim::Key::Char(_)),
     })
 }
 

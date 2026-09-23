@@ -828,10 +828,24 @@ impl App {
                     .clone()
                     .filter(|(open, _)| file == Some(*open))
                     .map(|(_, span)| span),
+                found: self.found_in(file),
                 caret,
                 display,
             }
         })
+    }
+
+    /// The matches of modal editing's search on the lines `file`'s pane
+    /// shows, none when the pane shows no file.
+    fn found_in(&self, file: Option<FileId>) -> Vec<std::ops::Range<pm_text::Position>> {
+        let Some(document) = file.and_then(|file| self.editor.get(file)) else {
+            return Vec::new();
+        };
+        let (top, rows) = {
+            let document = document.borrow();
+            (document.scroll(), document.rows())
+        };
+        self.vim_matches(&document, top..top + rows.max(1) * 2 + 1)
     }
 
     /// What a pane showing `file` draws around its text: `display`, with the

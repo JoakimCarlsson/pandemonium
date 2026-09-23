@@ -110,6 +110,9 @@ pub struct BufferView<M> {
     link: Option<Range<Position>>,
     /// The name the editor is saying something about, while it says it.
     hovered: Option<Range<Position>>,
+    /// The matches of modal editing's search, lit whether or not the search
+    /// bar is open.
+    found: Vec<Range<Position>>,
     /// Whether the caret is solid this instant, for its blink.
     caret: bool,
     /// Whether the pane is the text and nothing else.
@@ -136,6 +139,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_menu: None,
         link: None,
         hovered: None,
+        found: Vec::new(),
         caret: true,
         plain: false,
         display: Display::default(),
@@ -202,6 +206,12 @@ impl<M> BufferView<M> {
     /// underlined, and under a pointer that says it can be pressed.
     pub fn link(mut self, span: Option<Range<Position>>) -> Self {
         self.link = span;
+        self
+    }
+
+    /// Lights `found`, the matches of modal editing's search.
+    pub fn found(mut self, found: Vec<Range<Position>>) -> Self {
+        self.found = found;
         self
     }
 
@@ -402,6 +412,14 @@ impl<M> BufferView<M> {
 
     /// Lights up every match of what is being looked for on screen.
     fn paint_search(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let found = painting
+            .theme
+            .colors
+            .warning
+            .alpha(painting.theme.emphasis.search);
+        for span in &self.found {
+            self.wash(span.clone(), found, painting, cx);
+        }
         if !painting.search.is_open() {
             return;
         }
