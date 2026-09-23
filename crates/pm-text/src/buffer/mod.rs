@@ -358,6 +358,25 @@ impl Buffer {
         Ok(())
     }
 
+    /// Reads the file again, saying whether what it holds had changed.
+    ///
+    /// The new text comes in as one edit rather than as a new buffer, so
+    /// what somebody else wrote can be taken back like anything else, and
+    /// the cursor stays as near to where it was as the new text allows. A
+    /// file that reads the same as the buffer is left alone, which is what
+    /// the editor's own save looks like when the disk reports it back.
+    pub fn reread(&mut self) -> io::Result<bool> {
+        let text = std::fs::read_to_string(&self.path)?;
+        if self.text == text.as_str() {
+            return Ok(false);
+        }
+        self.set_contents(&text);
+        self.history.commit();
+        self.saved_depth = self.history.depth();
+        self.indent = Indent::of(&self.text, self.habit);
+        Ok(true)
+    }
+
     /// `position` brought inside the text it points into.
     pub fn clamped(&self, position: Position) -> Position {
         let line = position.line.min(self.line_count().saturating_sub(1));

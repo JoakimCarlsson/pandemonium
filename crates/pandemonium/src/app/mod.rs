@@ -8,6 +8,7 @@
 mod agent;
 mod clicks;
 mod commands;
+mod disk;
 mod drag;
 mod input;
 mod language;
@@ -94,6 +95,8 @@ pub enum Wake {
     Git,
     /// A repository being cloned has finished being cloned.
     Clone,
+    /// Something wrote into a worktree the window is watching.
+    Disk,
 }
 
 /// The remote operation currently running for the active project.
@@ -168,6 +171,8 @@ pub struct App {
     files: BTreeMap<Scope, FileTree>,
     /// What each of those worktrees has changed, and what git said about it.
     reviews: BTreeMap<Scope, Review>,
+    /// Each of those worktrees followed on disk, for what others write into it.
+    watchers: BTreeMap<Scope, pm_core::Watcher>,
     /// The changes the reader is being asked whether to throw away.
     discarding: Vec<crate::review::ChangeId>,
     /// Whether keystrokes go to the list of changes.
@@ -332,6 +337,7 @@ impl App {
             open,
             files,
             reviews: BTreeMap::new(),
+            watchers: BTreeMap::new(),
             discarding: Vec::new(),
             changes_focused: false,
             path_target: None,
@@ -1954,6 +1960,11 @@ impl ApplicationHandler<Wake> for App {
             Wake::Clone => {
                 self.take_clones();
                 self.request_redraw();
+            }
+            Wake::Disk => {
+                if self.take_disk() {
+                    self.request_redraw();
+                }
             }
         }
     }

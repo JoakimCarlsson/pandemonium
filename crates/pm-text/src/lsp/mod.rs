@@ -17,6 +17,7 @@ mod client;
 mod encoding;
 mod transport;
 mod uri;
+mod watch;
 
 use std::collections::HashMap;
 use std::env;
@@ -25,6 +26,7 @@ use std::sync::Arc;
 
 pub use answer::{Answer, CodeAction, Completion, FileEdit, Location, Request, Symbol};
 pub use client::{Asked, Client};
+pub use watch::Watched;
 
 use crate::language::{Language, Server};
 
@@ -87,6 +89,15 @@ impl Servers {
     /// Ends every server started for `root`.
     pub fn close(&mut self, root: &Path) {
         self.running.retain(|(started, _), _| started != root);
+    }
+
+    /// Tells every server running over `root` what changed on disk under it.
+    pub fn watched(&self, root: &Path, changes: &[(PathBuf, Watched)]) {
+        self.running
+            .iter()
+            .filter(|((started, _), _)| started == root)
+            .filter_map(|(_, client)| client.as_ref())
+            .for_each(|client| client.watched(changes));
     }
 
     /// Whether any server has said something since this was last asked.

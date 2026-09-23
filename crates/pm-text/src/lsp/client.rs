@@ -22,6 +22,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 use crate::language::Server;
 use crate::lsp::answer::{self, Answer, Request};
 use crate::lsp::encoding::{Encoding, Files};
+use crate::lsp::watch::{Watched, Watchers};
 use crate::lsp::{transport, uri};
 use crate::syntax::Highlight;
 
@@ -87,6 +88,8 @@ struct State {
     encoding: Encoding,
     /// The text of each open file, as the server was last told it.
     texts: HashMap<PathBuf, Rope>,
+    /// The files on disk the server has asked to hear about.
+    watchers: Watchers,
 }
 
 /// A language server the editor is talking to.
@@ -208,6 +211,19 @@ impl Client {
             "method": "textDocument/didClose",
             "params": { "textDocument": { "uri": uri::of(path) } },
         }));
+    }
+
+    /// Tells the server which of `changes` on disk it asked to hear about.
+    ///
+    /// A server that registered for none of them is sent nothing.
+    pub fn watched(&self, changes: &[(PathBuf, Watched)]) {
+        let notification = match self.state.lock() {
+            Ok(state) => state.watchers.notification(changes),
+            Err(_) => None,
+        };
+        if let Some(notification) = notification {
+            self.notify(&notification);
+        }
     }
 
     /// Asks the server `request` about `at` in the file at `path`.
@@ -359,12 +375,32 @@ impl Reader {
         }
         match message["method"].as_str() {
             Some("textDocument/publishDiagnostics") => self.publish(message["params"].clone()),
-            Some(_) if message.get("id").is_some() => self.answers.send(&json!({
-                "jsonrpc": "2.0",
-                "id": message["id"].clone(),
-                "result": Value::Null,
-            })),
+            Some("client/registerCapability") => {
+                self.with_watchers(|watchers| watchers.register(&message["params"]));
+                self.acknowledge(message);
+            }
+            Some("client/unregisterCapability") => {
+                self.with_watchers(|watchers| watchers.unregister(&message["params"]));
+                self.acknowledge(message);
+            }
+            Some(_) if message.get("id").is_some() => self.acknowledge(message),
             _ => {}
+        }
+    }
+
+    /// Answers the request `message` with nothing, which is all it needs.
+    fn acknowledge(&self, message: &Value) {
+        self.answers.send(&json!({
+            "jsonrpc": "2.0",
+            "id": message["id"].clone(),
+            "result": Value::Null,
+        }));
+    }
+
+    /// Runs `change` over the files the server has asked to hear about.
+    fn with_watchers(&self, change: impl FnOnce(&mut Watchers)) {
+        if let Ok(mut state) = self.state.lock() {
+            change(&mut state.watchers);
         }
     }
 
@@ -524,7 +560,13 @@ fn initialize(root: &Path, server: Server) -> Value {
                     "tokenModifiers": [],
                 },
             },
-            "workspace": { "workspaceEdit": { "documentChanges": true } },
+            "workspace": {
+                "workspaceEdit": { "documentChanges": true },
+                "didChangeWatchedFiles": {
+                    "dynamicRegistration": true,
+                    "relativePatternSupport": true,
+                },
+            },
             "window": { "workDoneProgress": true },
         },
     })

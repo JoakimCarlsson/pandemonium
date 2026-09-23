@@ -25,5 +25,6 @@ pub use indent::Indent;
 pub use language::{Language, NO_OPTIONS, Server};
 pub use lsp::{
     Answer, Asked, Client, CodeAction, Completion, FileEdit, Location, Request, Servers, Symbol,
+    Watched,
 };
 pub use syntax::{Highlight, Highlights, SyntaxNode};

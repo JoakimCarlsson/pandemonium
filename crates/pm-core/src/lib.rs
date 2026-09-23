@@ -6,7 +6,7 @@ mod project;
 mod scope;
 mod session;
 
-pub use files::{Entry, EntryId, FileTree, Row, walk};
+pub use files::{Disk, Entry, EntryId, FileTree, Row, Touch, Touched, Watcher, walk};
 pub use git::{
     Blame, Branch, Change, ChangeKind, Changed, Commit, Edge, FileStatus, Half, Head, Hunk, Lanes,
     Line, LineKind, Said, Side, Status, Summary, add_worktree, baseline, blame, branches, changes,

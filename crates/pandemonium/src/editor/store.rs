@@ -524,6 +524,12 @@ impl Document {
             return result;
         }
         self.preview = false;
+        self.changed();
+        result
+    }
+
+    /// Brings the search and the servers up to the text as it now stands.
+    fn changed(&mut self) {
         if self.search.is_open() {
             self.search.refresh(&self.buffer);
         }
@@ -531,7 +537,6 @@ impl Document {
         for server in &self.servers {
             server.did_change(self.buffer.path(), self.buffer.version(), &contents);
         }
-        result
     }
 
     /// Tidies the file the way `habits` say, writes it to disk and tells
@@ -557,34 +562,31 @@ impl Document {
         }
     }
 
-    /// Reads this clean document from disk after its worktree changes branch.
-    fn reload(&mut self, root: &Path, habits: Habits) {
+    /// Reads this document from disk again, when it has nothing unsaved.
+    ///
+    /// Whatever wrote the file — a branch change, an agent, a formatter run
+    /// from a shell — the servers hear the new text the way they hear an
+    /// edit, and the comparison against the index is made again. A document
+    /// with unsaved changes keeps them: the reader's edits are not something
+    /// a write they did not see may throw away. Answers whether it changed.
+    fn reread(&mut self, root: &Path) -> bool {
         if self.buffer.is_dirty() {
-            return;
+            return false;
         }
-        let path = self.buffer.path().to_path_buf();
-        let selection = self.buffer.selection();
-        let Ok(mut buffer) = Buffer::open(&path) else {
-            return;
-        };
-        buffer.set_habit(habits.indent);
-        buffer.place(selection.head, false);
-        for server in &self.servers {
-            server.did_close(&path);
-            if let Some(language) = buffer.language() {
-                server.did_open(
-                    &path,
-                    language.language_id(),
-                    buffer.version(),
-                    &buffer.contents(),
-                );
-            }
+        let version = self.buffer.version();
+        let changed = self.buffer.reread().unwrap_or(false);
+        if version != self.buffer.version() {
+            self.changed();
         }
-        self.buffer = buffer;
-        self.baseline = pm_core::baseline(root, &path);
+        self.baseline = pm_core::baseline(root, self.buffer.path());
         self.changes = (-1, Vec::new());
-        self.blame.clear();
-        self.folded.clear();
+        if changed {
+            let lines = self.buffer.line_count();
+            self.folded.retain(|fold| fold.end <= lines);
+            self.blame.clear();
+            self.blame_shown = false;
+        }
+        changed
     }
 
     /// Takes in what the servers have last said about this file.
@@ -811,11 +813,34 @@ impl Files {
 
     /// Reads every clean open document of `scope` from its changed worktree.
     pub fn reload_project(&mut self, scope: Scope, root: &Path) {
+        self.reread(scope, root, |_| true);
+    }
+
+    /// Reads the clean open documents of `scope` at `paths` from disk again,
+    /// answering whether any of them changed.
+    pub fn reread_paths(&mut self, scope: Scope, root: &Path, paths: &BTreeSet<PathBuf>) -> bool {
+        self.reread(scope, root, |path| paths.contains(path))
+    }
+
+    /// Reads the clean open documents of `scope` that `wanted` picks from
+    /// disk again, answering whether any of them changed.
+    fn reread(&mut self, scope: Scope, root: &Path, wanted: impl Fn(&Path) -> bool) -> bool {
+        let mut changed = false;
         for entry in self.open.values() {
-            if entry.scope == scope {
-                entry.document.borrow_mut().reload(root, self.habits);
+            if entry.scope != scope {
+                continue;
+            }
+            let mut document = entry.document.borrow_mut();
+            if wanted(document.buffer().path()) {
+                changed |= document.reread(root);
             }
         }
+        changed
+    }
+
+    /// Tells the servers over `root` what changed on disk under it.
+    pub fn watched(&self, root: &Path, changes: &[(PathBuf, pm_text::Watched)]) {
+        self.servers.watched(root, changes);
     }
 
     /// Where the file `id` names lives, if it is open at all.
