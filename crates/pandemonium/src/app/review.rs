@@ -41,6 +41,7 @@ impl App {
         if let Some(scope) = self.scope() {
             self.point_at(scope);
         }
+        self.watch_worktrees();
         self.reviews
             .retain(|scope, _| self.open.get(scope.project()).is_some());
         for review in self.reviews.values_mut() {
@@ -125,7 +126,7 @@ impl App {
 
     /// Colours every review's worktree lines again from the documents open
     /// over them.
-    fn repaint_reviews(&mut self) {
+    pub(super) fn repaint_reviews(&mut self) {
         for file in self.open_files_of(self.reviews.keys().copied()) {
             self.repaint_review(file);
         }

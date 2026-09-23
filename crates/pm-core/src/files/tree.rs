@@ -70,6 +70,15 @@ impl FileTree {
         self.expanded.retain(|path| path.is_dir());
     }
 
+    /// Whether a path made or taken away at `path` changes what the tree lists.
+    ///
+    /// Only a directory the tree has read can show the difference; one that
+    /// has never been opened is read afresh whenever it is.
+    pub fn lists_beside(&self, path: &Path) -> bool {
+        path.parent()
+            .is_some_and(|parent| self.children.contains_key(parent))
+    }
+
     /// The visible lines of the tree, in the order they are drawn.
     pub fn rows(&self) -> Vec<Row<'_>> {
         let mut rows = Vec::new();
