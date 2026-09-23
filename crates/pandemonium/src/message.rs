@@ -10,7 +10,7 @@ use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
 use crate::agent::TalkId;
-use crate::config::{Preference, ThemeMode};
+use crate::config::{Preference, ThemeMode, WorktreePaths};
 use crate::editor::{FileId, ScrollAxis, SearchField};
 use crate::keymap::{Action, BaseKeymap};
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
@@ -34,10 +34,13 @@ pub enum Message {
     ToggleFormatOnSave,
     /// Turn worktree auto-trust on or off.
     ToggleTrustWorktrees,
-    /// Turn anonymous usage data on or off.
-    ToggleMetrics,
-    /// Turn crash reports on or off.
-    ToggleCrashReports,
+    /// Ask for a path to add to this list of what a new worktree is given.
+    AddWorktreePath(WorktreePaths),
+    /// Take the path in this place off this list of what a new worktree is
+    /// given.
+    RemoveWorktreePath(WorktreePaths, usize),
+    /// Ask for the variable a session's port is handed to its programs in.
+    EditWorktreePort,
     /// Put this preference back to what a first launch starts from.
     ResetPreference(Preference),
     /// Leave the setup flow.

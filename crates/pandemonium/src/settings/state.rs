@@ -16,19 +16,11 @@ pub enum SettingsPage {
     Editor,
     /// How a session's worktree is made and treated.
     Sessions,
-    /// What the editor sends home.
-    Privacy,
 }
 
 impl SettingsPage {
     /// Every page, in the order the sidebar lists them.
-    pub const ALL: [Self; 5] = [
-        Self::Appearance,
-        Self::Keymap,
-        Self::Editor,
-        Self::Sessions,
-        Self::Privacy,
-    ];
+    pub const ALL: [Self; 4] = [Self::Appearance, Self::Keymap, Self::Editor, Self::Sessions];
 
     /// What the sidebar and the page's heading call it.
     pub const fn label(self) -> &'static str {
@@ -37,7 +29,6 @@ impl SettingsPage {
             Self::Keymap => "Keymap",
             Self::Editor => "Editor",
             Self::Sessions => "Sessions",
-            Self::Privacy => "Privacy",
         }
     }
 
@@ -48,8 +39,12 @@ impl SettingsPage {
             Self::Appearance => &[Preference::ThemeMode, Preference::ThemeFamily],
             Self::Keymap => &[Preference::Keymap, Preference::VimMode],
             Self::Editor => &[Preference::FormatOnSave],
-            Self::Sessions => &[Preference::TrustWorktrees],
-            Self::Privacy => &[Preference::Metrics, Preference::CrashReports],
+            Self::Sessions => &[
+                Preference::TrustWorktrees,
+                Preference::WorktreeLink,
+                Preference::WorktreeCopy,
+                Preference::WorktreePort,
+            ],
         }
     }
 }

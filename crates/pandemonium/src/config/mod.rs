@@ -23,7 +23,7 @@ use crate::workspace::Layout;
 use stored::Stored;
 
 pub use paths::{settings as settings_file, worktrees};
-pub use preferences::{Preference, Preferences, ThemeMode};
+pub use preferences::{Preference, Preferences, ThemeMode, WorktreePaths};
 
 /// The window's own size and state, as a launch leaves it.
 #[derive(Clone, Copy, Debug)]
@@ -66,8 +66,6 @@ pub struct Restored {
     pub window: WindowState,
     /// The servers to run for a language, in place of the ones it names.
     pub language_servers: BTreeMap<String, Vec<pm_text::Server>>,
-    /// What a session's fresh worktree is given, git having left it out.
-    pub bootstrap: pm_core::Bootstrap,
 }
 
 /// What the last launch left behind, or a first launch's defaults.

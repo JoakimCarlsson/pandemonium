@@ -1,8 +1,8 @@
 //! The settings themselves, in the order a first launch wants them.
 
 use pm_ui::{
-    Div, Styled, Theme, h_flex, rule, section, space, switch_field, text, theme_gallery,
-    toggle_grid, toggle_row, v_flex,
+    Div, Styled, Theme, h_flex, section, space, switch_field, text, theme_gallery, toggle_grid,
+    toggle_row, v_flex,
 };
 
 use crate::config::{Preferences, ThemeMode};
@@ -36,21 +36,6 @@ pub(super) fn basics(theme: &Theme, preferences: &Preferences) -> Div<Message> {
             "Run language servers and tasks in a session's worktree without asking first",
             preferences.trust_worktrees,
             Message::ToggleTrustWorktrees,
-        ))
-        .child(rule(theme))
-        .child(switch_field(
-            theme,
-            None,
-            "Help improve Pandemonium by sending anonymous usage data",
-            preferences.metrics,
-            Message::ToggleMetrics,
-        ))
-        .child(switch_field(
-            theme,
-            None,
-            "Send crash reports so the crashes you hit get fixed",
-            preferences.crash_reports,
-            Message::ToggleCrashReports,
         ))
 }
 

@@ -5,6 +5,9 @@
 //! build their screens from it, both answer with the same [`Message`], and
 //! [`Preferences::apply`] is the one place either of them changes it.
 
+use std::path::PathBuf;
+
+use pm_core::Bootstrap;
 use pm_ui::{Appearance, DEFAULT_FAMILY, families};
 use serde::{Deserialize, Serialize};
 
@@ -60,10 +63,21 @@ pub enum Preference {
     FormatOnSave,
     /// Whether a new session's worktree is trusted without being asked about.
     TrustWorktrees,
-    /// Whether anonymous usage data is sent.
-    Metrics,
-    /// Whether crash reports are sent.
-    CrashReports,
+    /// The paths symlinked into a new session's worktree.
+    WorktreeLink,
+    /// The paths copied into it.
+    WorktreeCopy,
+    /// The variable a session's own port is handed to its programs in.
+    WorktreePort,
+}
+
+/// Which of a new worktree's two lists of paths is meant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorktreePaths {
+    /// The paths symlinked in from the repository.
+    Linked,
+    /// The paths copied in from it.
+    Copied,
 }
 
 /// Everything the reader decides about how the editor draws and behaves.
@@ -81,10 +95,8 @@ pub struct Preferences {
     pub format_on_save: bool,
     /// Whether a new session's worktree is trusted without being asked about.
     pub trust_worktrees: bool,
-    /// Whether anonymous usage data is sent.
-    pub metrics: bool,
-    /// Whether crash reports are sent.
-    pub crash_reports: bool,
+    /// What a session's fresh worktree is given, git having left it out.
+    pub bootstrap: Bootstrap,
 }
 
 impl Default for Preferences {
@@ -97,8 +109,7 @@ impl Default for Preferences {
             vim_mode: false,
             format_on_save: false,
             trust_worktrees: false,
-            metrics: true,
-            crash_reports: true,
+            bootstrap: Bootstrap::default(),
         }
     }
 }
@@ -116,12 +127,56 @@ impl Preferences {
             Message::ToggleVimMode => self.vim_mode = !self.vim_mode,
             Message::ToggleFormatOnSave => self.format_on_save = !self.format_on_save,
             Message::ToggleTrustWorktrees => self.trust_worktrees = !self.trust_worktrees,
-            Message::ToggleMetrics => self.metrics = !self.metrics,
-            Message::ToggleCrashReports => self.crash_reports = !self.crash_reports,
+            Message::RemoveWorktreePath(list, index) => {
+                let paths = self.paths_mut(list);
+                if index < paths.len() {
+                    paths.remove(index);
+                }
+            }
             Message::ResetPreference(preference) => self.reset(preference),
             _ => return false,
         }
         true
+    }
+
+    /// Adds `typed` to the `list` of paths a new worktree is given.
+    ///
+    /// The path is the repository's, so it is kept as it was typed, less the
+    /// space and slashes at either end; one already listed is not listed
+    /// twice.
+    pub fn add_worktree_path(&mut self, list: WorktreePaths, typed: &str) {
+        let trimmed = typed.trim().trim_matches('/');
+        if trimmed.is_empty() {
+            return;
+        }
+        let path = PathBuf::from(trimmed);
+        let paths = self.paths_mut(list);
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+
+    /// Names the variable a session's port is handed in, or none for
+    /// nothing typed.
+    pub fn set_worktree_port(&mut self, typed: &str) {
+        let name = typed.trim();
+        self.bootstrap.port = (!name.is_empty()).then(|| name.to_owned());
+    }
+
+    /// The `list` of paths a new worktree is given.
+    pub fn worktree_paths(&self, list: WorktreePaths) -> &[PathBuf] {
+        match list {
+            WorktreePaths::Linked => &self.bootstrap.link,
+            WorktreePaths::Copied => &self.bootstrap.copy,
+        }
+    }
+
+    /// The `list` of paths a new worktree is given, to change.
+    fn paths_mut(&mut self, list: WorktreePaths) -> &mut Vec<PathBuf> {
+        match list {
+            WorktreePaths::Linked => &mut self.bootstrap.link,
+            WorktreePaths::Copied => &mut self.bootstrap.copy,
+        }
     }
 
     /// Whether `preference` is set to something other than its default.
@@ -141,8 +196,9 @@ impl Preferences {
             Preference::VimMode => self.vim_mode = defaults.vim_mode,
             Preference::FormatOnSave => self.format_on_save = defaults.format_on_save,
             Preference::TrustWorktrees => self.trust_worktrees = defaults.trust_worktrees,
-            Preference::Metrics => self.metrics = defaults.metrics,
-            Preference::CrashReports => self.crash_reports = defaults.crash_reports,
+            Preference::WorktreeLink => self.bootstrap.link = defaults.bootstrap.link,
+            Preference::WorktreeCopy => self.bootstrap.copy = defaults.bootstrap.copy,
+            Preference::WorktreePort => self.bootstrap.port = defaults.bootstrap.port,
         }
     }
 }

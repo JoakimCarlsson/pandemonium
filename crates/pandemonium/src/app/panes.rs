@@ -437,7 +437,7 @@ impl App {
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
         let sessions = &self.sessions;
-        let bootstrap = &self.bootstrap;
+        let bootstrap = &self.preferences.bootstrap;
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
             if tab.kind == SavedKind::Settings {
                 return Some((None, Item::Settings));

@@ -60,6 +60,12 @@ pub enum Kind {
     NewSession,
     /// The URL of a repository to clone and open.
     CloneUrl,
+    /// A path to symlink into every new worktree.
+    LinkedPath,
+    /// A path to copy into every new worktree.
+    CopiedPath,
+    /// The variable a session's port is handed to its programs in.
+    PortVariable,
     /// The modes the agent of the session in hand can be put into.
     Modes,
     /// The values one of that agent's knobs takes: its models, say.
@@ -88,6 +94,9 @@ impl Kind {
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::CloneUrl => "The repository to clone",
+            Self::LinkedPath => "Path to link into new worktrees",
+            Self::CopiedPath => "Path to copy into new worktrees",
+            Self::PortVariable => "Variable to hand a session's port in",
             Self::Agents => "Start an agent in this worktree",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
@@ -106,6 +115,9 @@ impl Kind {
                 | Self::NewBranch
                 | Self::NewSession
                 | Self::CloneUrl
+                | Self::LinkedPath
+                | Self::CopiedPath
+                | Self::PortVariable
         )
     }
 

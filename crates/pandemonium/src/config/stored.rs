@@ -34,10 +34,6 @@ pub(super) struct Stored {
     format_on_save: Option<bool>,
     /// Whether a new session's worktree is trusted without being asked about.
     trust_worktrees: Option<bool>,
-    /// Whether anonymous usage data is sent.
-    metrics: Option<bool>,
-    /// Whether crash reports are sent.
-    crash_reports: Option<bool>,
     /// The servers to run for a language, in place of the ones it names.
     language_servers: Option<BTreeMap<String, Vec<StoredServer>>>,
     /// Paths symlinked into a fresh worktree, relative to the repository.
@@ -159,7 +155,6 @@ impl Stored {
             window: self.window(),
             panes: self.panes.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
-            bootstrap: self.bootstrap(),
             onboarded: self.finished.unwrap_or_default(),
             preferences: self.into_preferences(),
         }
@@ -249,8 +244,7 @@ impl Stored {
             vim_mode: self.vim_mode.unwrap_or(defaults.vim_mode),
             format_on_save: self.format_on_save.unwrap_or(defaults.format_on_save),
             trust_worktrees: self.trust_worktrees.unwrap_or(defaults.trust_worktrees),
-            metrics: self.metrics.unwrap_or(defaults.metrics),
-            crash_reports: self.crash_reports.unwrap_or(defaults.crash_reports),
+            bootstrap: self.bootstrap(),
         }
     }
 }
@@ -267,8 +261,8 @@ impl Stored {
             panes,
             window,
             language_servers,
-            bootstrap,
         } = restored;
+        let bootstrap = &preferences.bootstrap;
 
         Self {
             theme_mode: Some(preferences.theme_mode),
@@ -277,8 +271,6 @@ impl Stored {
             vim_mode: Some(preferences.vim_mode),
             format_on_save: Some(preferences.format_on_save),
             trust_worktrees: Some(preferences.trust_worktrees),
-            metrics: Some(preferences.metrics),
-            crash_reports: Some(preferences.crash_reports),
             language_servers: (!language_servers.is_empty()).then(|| {
                 language_servers
                     .iter()

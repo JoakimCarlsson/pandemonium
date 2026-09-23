@@ -7,13 +7,13 @@
 
 use std::path::PathBuf;
 
-use pm_core::Bootstrap;
 use pm_ui::{
-    Div, Element, IconName, IntoElement, Styled, Theme, h_flex, icon_button, rule, scroll_area,
-    space, switch, text, theme_gallery, toggle_grid, toggle_row, v_flex,
+    Div, Element, IconName, IconSize, IntoElement, Styled, Theme, button, h_flex, icon,
+    icon_button, rule, scroll_area, space, switch, text, theme_gallery, toggle_grid, toggle_row,
+    v_flex,
 };
 
-use crate::config::{Preference, Preferences, ThemeMode};
+use crate::config::{Preference, Preferences, ThemeMode, WorktreePaths};
 use crate::keymap::BaseKeymap;
 use crate::message::Message;
 use crate::settings::state::{Settings, SettingsPage};
@@ -28,6 +28,9 @@ const PAGE_WIDTH: f32 = 760.0;
 /// Width of the theme mode toggle.
 const MODE_WIDTH: f32 = 48.0;
 
+/// Width of the button naming the port variable.
+const PORT_WIDTH: f32 = 32.0;
+
 /// Diameter of the dot marking a page with something set on it.
 const DOT_SIZE: f32 = 6.0;
 
@@ -37,8 +40,6 @@ pub struct SettingsPane<'a> {
     pub settings: &'a Settings,
     /// The preferences the pane edits.
     pub preferences: &'a Preferences,
-    /// What a session's fresh worktree is given, which the pane only shows.
-    pub bootstrap: &'a Bootstrap,
     /// The file the preferences are written to, when there is one.
     pub file: Option<PathBuf>,
 }
@@ -230,65 +231,109 @@ fn sections(theme: &Theme, pane: &SettingsPane<'_>, page: SettingsPage) -> Vec<D
                     Message::ToggleTrustWorktrees,
                 )],
             ),
-            section(
-                theme,
-                "New Worktrees",
-                bootstrap_rows(theme, pane.bootstrap),
-            ),
+            section(theme, "New Worktrees", bootstrap_rows(theme, preferences)),
         ],
-        SettingsPage::Privacy => vec![section(
-            theme,
-            "Telemetry",
-            vec![
-                toggle(
-                    theme,
-                    preferences,
-                    Preference::Metrics,
-                    "Usage Data",
-                    "Help improve Pandemonium by sending anonymous usage data",
-                    preferences.metrics,
-                    Message::ToggleMetrics,
-                ),
-                toggle(
-                    theme,
-                    preferences,
-                    Preference::CrashReports,
-                    "Crash Reports",
-                    "Send crash reports so the crashes you hit get fixed",
-                    preferences.crash_reports,
-                    Message::ToggleCrashReports,
-                ),
-            ],
-        )],
     }
 }
 
-/// What a fresh worktree is given, shown as it is written in the file.
-///
-/// These are lists of paths, which the pane has no control for yet: it says
-/// what they are and the key each is written under, and the file is where
-/// they are changed.
-fn bootstrap_rows(theme: &Theme, bootstrap: &Bootstrap) -> Vec<Div<Message>> {
+/// What a fresh worktree is given: the paths linked and copied into it,
+/// and the variable its port is handed in.
+fn bootstrap_rows(theme: &Theme, preferences: &Preferences) -> Vec<Div<Message>> {
     vec![
-        value(
+        below(
             theme,
+            preferences,
+            Preference::WorktreeLink,
             "Linked In",
-            "Symlinked from the repository into every new worktree · worktree_link",
-            paths(&bootstrap.link),
+            "Symlinked from the repository into every new worktree, so they share one copy",
+            path_list(theme, preferences, WorktreePaths::Linked),
         ),
-        value(
+        below(
             theme,
+            preferences,
+            Preference::WorktreeCopy,
             "Copied In",
-            "Copied from the repository into every new worktree · worktree_copy",
-            paths(&bootstrap.copy),
+            "Copied from the repository into every new worktree, so each can change its own",
+            path_list(theme, preferences, WorktreePaths::Copied),
         ),
-        value(
+        inline(
             theme,
+            preferences,
+            Preference::WorktreePort,
             "Port Variable",
-            "The variable a session's own port is handed to its programs in · worktree_port",
-            bootstrap.port.clone().unwrap_or_else(|| "None".to_owned()),
+            "The variable a session's own port is handed to its programs in",
+            button(
+                preferences
+                    .bootstrap
+                    .port
+                    .clone()
+                    .unwrap_or_else(|| "None".to_owned()),
+                Message::EditWorktreePort,
+            )
+            .outlined()
+            .w_px(space(PORT_WIDTH)),
         ),
     ]
+}
+
+/// One list of paths a new worktree is given, each with a way off it, and
+/// a way to add another.
+fn path_list(theme: &Theme, preferences: &Preferences, list: WorktreePaths) -> Div<Message> {
+    let paths = preferences.worktree_paths(list);
+    let entries = paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            h_flex()
+                .w_full()
+                .h_px(theme.size.row)
+                .pl(2)
+                .pr(1)
+                .items_center()
+                .justify_between()
+                .rounded(theme.radius.md)
+                .bg(theme.colors.surface)
+                .child(text(path.display().to_string()).text_sm().font_mono())
+                .child(
+                    icon_button(
+                        theme,
+                        IconName::Close,
+                        Message::RemoveWorktreePath(list, index),
+                    )
+                    .tooltip("Remove"),
+                )
+        })
+        .collect::<Vec<_>>();
+
+    v_flex()
+        .w_full()
+        .gap(1)
+        .when(paths.is_empty(), |list| {
+            list.child(
+                text("Nothing yet")
+                    .text_sm()
+                    .color(theme.colors.text_subtle),
+            )
+        })
+        .children(entries)
+        .child(
+            h_flex()
+                .w_fit()
+                .h_px(theme.size.row)
+                .px(2)
+                .gap(1.5)
+                .items_center()
+                .rounded(theme.radius.md)
+                .hover_bg(theme.colors.surface_hover)
+                .active_bg(theme.colors.surface_active)
+                .on_click(Message::AddWorktreePath(list))
+                .child(
+                    icon(IconName::Plus)
+                        .size(IconSize::Small)
+                        .color(theme.colors.text_muted),
+                )
+                .child(text("Add Path").text_sm().color(theme.colors.text_muted)),
+        )
 }
 
 /// A heading over rows, with a hairline between each row and the next.
@@ -369,22 +414,6 @@ fn below(
         .child(control)
 }
 
-/// A row that says what a value is, where the pane cannot change it.
-fn value(theme: &Theme, title: &str, description: &str, shown: String) -> Div<Message> {
-    v_flex()
-        .w_full()
-        .py(3)
-        .gap(1)
-        .child(
-            h_flex()
-                .h_px(theme.size.icon_control)
-                .items_center()
-                .child(text(title).font_medium()),
-        )
-        .child(text(description).text_sm().color(theme.colors.text_muted))
-        .child(text(shown).text_sm().font_mono().color(theme.colors.text))
-}
-
 /// A row's name, the undo mark while it is set, and what it does.
 fn labels(
     theme: &Theme,
@@ -437,16 +466,4 @@ fn keymaps() -> impl Iterator<Item = (String, Message)> {
     BaseKeymap::ALL
         .into_iter()
         .map(|keymap| (keymap.label().to_owned(), Message::SetKeymap(keymap)))
-}
-
-/// A list of paths as one line, or a word saying there are none.
-fn paths(paths: &[PathBuf]) -> String {
-    if paths.is_empty() {
-        return "None".to_owned();
-    }
-    paths
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
 }

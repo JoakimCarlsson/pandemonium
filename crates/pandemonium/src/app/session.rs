@@ -103,7 +103,7 @@ impl App {
 
         match self
             .sessions
-            .start(&project, name, &base, &under, &self.bootstrap)
+            .start(&project, name, &base, &under, &self.preferences.bootstrap)
         {
             Ok(started) => {
                 self.select_session(started.id);
@@ -277,7 +277,7 @@ impl App {
             .session()
             .and_then(|session| self.sessions.get(session))
             .and_then(Session::port);
-        self.bootstrap.env(port)
+        self.preferences.bootstrap.env(port)
     }
 
     /// The worktree an agent started now would work in, if a session's.

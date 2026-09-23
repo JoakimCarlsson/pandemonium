@@ -12,6 +12,7 @@ use pm_text::Position;
 
 use crate::app::places::Place;
 use crate::app::{App, RemoteOperation, Wake};
+use crate::config::WorktreePaths;
 use crate::keymap::Action;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Picker, Row};
@@ -107,6 +108,9 @@ impl App {
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::NewSession, _) => self.start_session(&typed),
             (Kind::CloneUrl, _) => self.clone_project(&typed),
+            (Kind::LinkedPath, _) => self.add_worktree_path(WorktreePaths::Linked, &typed),
+            (Kind::CopiedPath, _) => self.add_worktree_path(WorktreePaths::Copied, &typed),
+            (Kind::PortVariable, _) => self.set_worktree_port(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
         }
@@ -212,7 +216,10 @@ impl App {
             | Kind::RenamePath
             | Kind::NewBranch
             | Kind::NewSession
-            | Kind::CloneUrl => Vec::new(),
+            | Kind::CloneUrl
+            | Kind::LinkedPath
+            | Kind::CopiedPath
+            | Kind::PortVariable => Vec::new(),
         }
     }
 

@@ -200,8 +200,6 @@ pub struct App {
     editor: Files,
     /// The servers to run for a language, in place of the ones it names.
     language_servers: BTreeMap<String, Vec<pm_text::Server>>,
-    /// What a session's fresh worktree is given, git having left it out.
-    bootstrap: pm_core::Bootstrap,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
@@ -363,7 +361,6 @@ impl App {
             close_requested: false,
             editor: Files::default(),
             language_servers: restored.language_servers,
-            bootstrap: restored.bootstrap,
             panes: PaneTree::default(),
             saved,
             geometry: Geometry::default(),
@@ -1276,6 +1273,16 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::AddWorktreePath(list) = message {
+            self.ask_worktree_path(list);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::EditWorktreePort {
+            self.ask_worktree_port();
+            self.request_redraw();
+            return;
+        }
         if message == Message::Finish {
             self.onboarded = true;
         }
@@ -1559,7 +1566,6 @@ impl App {
             panes: self.saved_panes(),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
-            bootstrap: self.bootstrap.clone(),
         }
     }
 

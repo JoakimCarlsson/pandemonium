@@ -3,7 +3,9 @@
 use pm_ui::Theme;
 
 use crate::app::App;
+use crate::config::WorktreePaths;
 use crate::panes::{Content, Item};
+use crate::picker::Kind;
 use crate::settings::{SettingsPane, settings_pane};
 
 impl App {
@@ -43,10 +45,37 @@ impl App {
             &SettingsPane {
                 settings: &self.settings,
                 preferences: &self.preferences,
-                bootstrap: &self.bootstrap,
                 file: crate::config::settings_file(),
             },
         ))
+    }
+
+    /// Asks for a path to add to the `list` a new worktree is given.
+    pub(super) fn ask_worktree_path(&mut self, list: WorktreePaths) {
+        let kind = match list {
+            WorktreePaths::Linked => Kind::LinkedPath,
+            WorktreePaths::Copied => Kind::CopiedPath,
+        };
+        self.open_picker_with(kind, Vec::new(), String::new());
+    }
+
+    /// Asks for the variable a session's port is handed in, starting from
+    /// the one it is handed in now.
+    pub(super) fn ask_worktree_port(&mut self) {
+        let named = self.preferences.bootstrap.port.clone().unwrap_or_default();
+        self.open_picker_with(Kind::PortVariable, Vec::new(), named);
+    }
+
+    /// Adds what was typed to the `list` a new worktree is given.
+    pub(super) fn add_worktree_path(&mut self, list: WorktreePaths, typed: &str) {
+        self.preferences.add_worktree_path(list, typed);
+        self.store();
+    }
+
+    /// Hands a session's port in the variable that was typed.
+    pub(super) fn set_worktree_port(&mut self, typed: &str) {
+        self.preferences.set_worktree_port(typed);
+        self.store();
     }
 
     /// Scrolls the settings pane by `delta` logical pixels when the pointer
