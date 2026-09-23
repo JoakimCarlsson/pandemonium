@@ -11,7 +11,7 @@
 pub struct Sizes {
     /// 20px: a square control carrying nothing but an icon.
     pub icon_control: f32,
-    /// 24px: a bar of status along an edge of the window.
+    /// 27px: a bar of status along an edge of the window.
     pub bar: f32,
     /// 26px: one row of a list or a tree.
     pub row: f32,
@@ -29,7 +29,7 @@ impl Sizes {
     /// The sizes every theme uses.
     pub const DEFAULT: Self = Self {
         icon_control: 20.0,
-        bar: 24.0,
+        bar: 27.0,
         row: 26.0,
         control: 28.0,
         field: 32.0,
