@@ -445,6 +445,21 @@ fn section_rows(
                 "Draw a scrollbar along each edge the text runs past",
             ),
             toggle(
+                Preference::Minimap,
+                "Minimap",
+                "Draw the whole file in miniature down the right edge",
+            ),
+            toggle(
+                Preference::Breadcrumbs,
+                "Breadcrumbs",
+                "Name the file's path and the blocks the cursor is inside above the text",
+            ),
+            toggle(
+                Preference::SplitDiff,
+                "Side-by-Side Diff",
+                "Set the old and the new side of a diff beside each other",
+            ),
+            toggle(
                 Preference::InlayHints,
                 "Inlay Hints",
                 "Let a language server write types and parameter names into the lines",

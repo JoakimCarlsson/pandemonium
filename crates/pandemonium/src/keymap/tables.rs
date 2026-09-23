@@ -59,6 +59,16 @@ pub const BASE: &[Row] = &[
     ("primary+`", Action::NewTerminal, "true"),
     ("primary+shift+g", Action::ShowChanges, "true"),
     ("primary+k primary+g", Action::OpenReview, "project.focused"),
+    (
+        "primary+k primary+e",
+        Action::EditChanges,
+        "project.focused",
+    ),
+    (
+        "primary+k v",
+        Action::OpenMarkdownPreview,
+        "pane.kind == file",
+    ),
     ("primary+s", Action::Save, "pane.kind == file"),
     ("primary+alt+s", Action::SaveAll, "true"),
     ("primary+,", Action::OpenSettings, "true"),

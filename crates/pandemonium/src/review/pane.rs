@@ -14,6 +14,11 @@
 //!
 //! One file's diff on its own is the same rows with the rest left out, which
 //! is what the menu's "Open File Diff" opens.
+//!
+//! Either pane reads a hunk one of two ways, the reader's to choose: as one
+//! column, a line taken out above the line put in its place, or as two, the
+//! old side set beside the new so a line and what became of it are read
+//! across rather than down.
 
 use std::path::Path;
 
@@ -23,6 +28,7 @@ use pm_ui::{
     Div, IconName, IconSize, Styled, Theme, checkbox, h_flex, icon, icon_button, text, v_flex,
 };
 
+use crate::config::Preference;
 use crate::editor::tint;
 use crate::message::Message;
 use crate::review::action::{primary_face, primary_message};
@@ -40,13 +46,16 @@ const DRAWN: usize = 400;
 /// How wide the column of line numbers is drawn.
 const NUMBERS: f32 = 76.0;
 
+/// How wide the one number of a side of a split diff is drawn.
+const SIDE_NUMBER: f32 = 40.0;
+
 /// Builds the review of everything one project has changed.
 ///
 /// `typing` says the commit message at the foot of it has the keyboard, so
 /// that the caret is drawn in the field the reader is actually in — the same
 /// message the sidebar shows, because there is one message and two places it
-/// can be written.
-pub fn review_pane(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
+/// can be written. `split` sets each hunk's two sides beside each other.
+pub fn review_pane(theme: &Theme, review: &Review, typing: bool, split: bool) -> Div<Message> {
     let empty = review.changed().is_empty();
 
     v_flex()
@@ -54,7 +63,7 @@ pub fn review_pane(theme: &Theme, review: &Review, typing: bool) -> Div<Message>
         .h_full()
         .overflow_hidden()
         .bg(theme.colors.background)
-        .child(toolbar(theme, review))
+        .child(toolbar(theme, review, split))
         .child(
             v_flex()
                 .w_full()
@@ -63,7 +72,7 @@ pub fn review_pane(theme: &Theme, review: &Review, typing: bool) -> Div<Message>
                 .when(empty, |pane| {
                     pane.child(nothing(theme, "No uncommitted changes"))
                 })
-                .children(drawn(theme, review, None)),
+                .children(drawn(theme, review, None, split)),
         )
         .when(!empty, |pane| pane.child(commit_bar(theme, review, typing)))
 }
@@ -73,7 +82,7 @@ pub fn review_pane(theme: &Theme, review: &Review, typing: bool) -> Div<Message>
 /// A file that has stopped differing — committed, or put back the way it was
 /// — keeps its pane and says so, rather than the tab closing itself under a
 /// reader who was in the middle of it.
-pub fn change_pane(theme: &Theme, review: &Review, id: ChangeId) -> Div<Message> {
+pub fn change_pane(theme: &Theme, review: &Review, id: ChangeId, split: bool) -> Div<Message> {
     let name = review
         .path_of(id)
         .map(|path| relative(review, path))
@@ -88,17 +97,23 @@ pub fn change_pane(theme: &Theme, review: &Review, id: ChangeId) -> Div<Message>
         .child(
             bar(theme)
                 .child(text(name).text_xs().font_mono())
-                .child(h_flex().flex_1()),
+                .child(h_flex().flex_1())
+                .child(layout_toggle(theme, split)),
         )
         .when(place.is_none(), |pane| {
             pane.child(nothing(theme, "This file no longer differs from the index"))
         })
-        .children(drawn(theme, review, Some(id)))
+        .children(drawn(theme, review, Some(id), split))
 }
 
 /// The rows of the pane showing `shown`, from where it is scrolled to.
-fn drawn(theme: &Theme, review: &Review, shown: Option<ChangeId>) -> Vec<Div<Message>> {
-    rows(review, shown)
+fn drawn(
+    theme: &Theme,
+    review: &Review,
+    shown: Option<ChangeId>,
+    split: bool,
+) -> Vec<Div<Message>> {
+    rows(review, shown, split)
         .into_iter()
         .skip(review.scroll(shown))
         .take(DRAWN)
@@ -111,12 +126,14 @@ fn drawn(theme: &Theme, review: &Review, shown: Option<ChangeId>) -> Vec<Div<Mes
 /// This is what moving the review to a file comes to: the row its heading is
 /// on is the row the pane is scrolled to, so the file the reader asked for is
 /// the first thing under the toolbar.
-pub fn row_of(review: &Review, id: ChangeId) -> Option<usize> {
+pub fn row_of(review: &Review, id: ChangeId, split: bool) -> Option<usize> {
     let wanted = review.place_of(id)?;
-    rows(review, None).into_iter().position(|row| match row {
-        Row::File(index, _) => index == wanted,
-        _ => false,
-    })
+    rows(review, None, split)
+        .into_iter()
+        .position(|row| match row {
+            Row::File(index, _) => index == wanted,
+            _ => false,
+        })
 }
 
 /// The row of the hunk before or after the one the pane is scrolled to.
@@ -124,9 +141,9 @@ pub fn row_of(review: &Review, id: ChangeId) -> Option<usize> {
 /// The headings are what the eye lands on, so they are what the arrows move
 /// between: a file's own heading counts as one, because the top of a file is
 /// somewhere to stop as much as the first change in it is.
-pub fn hunk_row(review: &Review, forward: bool) -> Option<usize> {
+pub fn hunk_row(review: &Review, forward: bool, split: bool) -> Option<usize> {
     let at = review.scroll(None);
-    let stops = rows(review, None)
+    let stops = rows(review, None, split)
         .into_iter()
         .enumerate()
         .filter(|(_, row)| matches!(row, Row::File(..) | Row::Heading(..)))
@@ -144,7 +161,7 @@ pub fn hunk_row(review: &Review, forward: bool) -> Option<usize> {
 /// This is Zed's project-diff toolbar: what has changed as a reading, the two
 /// arrows through the hunks, then staging — worded, because "Stage" says what
 /// it does and a symbol does not.
-fn toolbar(theme: &Theme, review: &Review) -> Div<Message> {
+fn toolbar(theme: &Theme, review: &Review, split: bool) -> Div<Message> {
     let (added, removed) = totals(review);
     let files = review.changed().len();
     let counted = match files {
@@ -169,6 +186,8 @@ fn toolbar(theme: &Theme, review: &Review) -> Div<Message> {
         )
         .child(diff_stat(theme, added, removed))
         .child(h_flex().flex_1())
+        .child(layout_toggle(theme, split))
+        .child(worded(theme, "Edit", files > 0, Message::OpenExcerpts))
         .child(icon_button(theme, IconName::ArrowUp, Message::PreviousHunk))
         .child(icon_button(theme, IconName::ArrowDown, Message::NextHunk))
         .child(worded(theme, "Stage", acting > 0, Message::StageSelection))
@@ -206,6 +225,23 @@ fn diff_stat(theme: &Theme, added: usize, removed: usize) -> Div<Message> {
                 .font_mono()
                 .color(theme.colors.danger),
         )
+}
+
+/// Builds the control that sets a diff's two sides beside each other, or
+/// back into one column.
+///
+/// It says what pressing it does rather than what the diff is now, the way
+/// the staging controls beside it do.
+fn layout_toggle(theme: &Theme, split: bool) -> Div<Message> {
+    worded(
+        theme,
+        match split {
+            true => "Unified",
+            false => "Side by Side",
+        },
+        true,
+        Message::TogglePreference(Preference::SplitDiff),
+    )
 }
 
 /// Builds one of the worded controls a bar of them is made of.
@@ -276,8 +312,8 @@ fn totals(review: &Review) -> (usize, usize) {
 }
 
 /// How far down the pane showing `shown` the scrolling can reach.
-pub fn row_count(review: &Review, shown: Option<ChangeId>) -> usize {
-    rows(review, shown).len()
+pub fn row_count(review: &Review, shown: Option<ChangeId>, split: bool) -> usize {
+    rows(review, shown, split).len()
 }
 
 /// Builds the bar along the top of either pane, around what it holds.
@@ -321,6 +357,9 @@ enum Row<'a> {
     /// One line of a hunk, with the file it is in and the side of the
     /// index its hunk is on, which together say what colour it is.
     Line(&'a Path, bool, &'a Line),
+    /// One row of a hunk set out on two sides: the old line on the left and
+    /// the new on the right, either missing where the other side has more.
+    Pair(&'a Path, bool, Option<&'a Line>, Option<&'a Line>),
 }
 
 /// Every row of the pane showing `shown`, file by file and hunk by hunk.
@@ -330,7 +369,7 @@ enum Row<'a> {
 /// well, because the heading is what says it changed at all. A pane showing
 /// one file draws no heading for it, because its own bar already names it,
 /// and folding it away there would leave a pane with nothing in it.
-fn rows(review: &Review, shown: Option<ChangeId>) -> Vec<Row<'_>> {
+fn rows(review: &Review, shown: Option<ChangeId>, split: bool) -> Vec<Row<'_>> {
     let Some(id) = shown else {
         return review
             .changed()
@@ -340,7 +379,7 @@ fn rows(review: &Review, shown: Option<ChangeId>) -> Vec<Row<'_>> {
                 let folded = review.is_collapsed(&changed.path);
                 let mut rows = vec![Row::File(index, changed)];
                 if !folded {
-                    rows.extend(lines(review, index, changed));
+                    rows.extend(lines(review, index, changed, split));
                 }
                 rows
             })
@@ -351,12 +390,12 @@ fn rows(review: &Review, shown: Option<ChangeId>) -> Vec<Row<'_>> {
     };
     review
         .change(index)
-        .map(|changed| lines(review, index, changed))
+        .map(|changed| lines(review, index, changed, split))
         .unwrap_or_default()
 }
 
 /// The rows of one file's diff: each side of the index, hunk by hunk.
-fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed) -> Vec<Row<'a>> {
+fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed, split: bool) -> Vec<Row<'a>> {
     let Some(patch) = review.patch(&changed.path) else {
         return Vec::new();
     };
@@ -376,13 +415,59 @@ fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed) -> Vec<Row<
         }
         for (at, hunk) in hunks.iter().enumerate() {
             rows.push(Row::Heading(index, staged, at, hunk));
-            rows.extend(
-                hunk.lines
-                    .iter()
-                    .map(|line| Row::Line(&changed.path, staged, line)),
-            );
+            match split {
+                true => rows.extend(paired(&changed.path, staged, hunk)),
+                false => rows.extend(
+                    hunk.lines
+                        .iter()
+                        .map(|line| Row::Line(&changed.path, staged, line)),
+                ),
+            }
         }
     }
+    rows
+}
+
+/// The rows of `hunk` set out on two sides.
+///
+/// A line on both sides is one row, drawn on both. A run of lines taken out
+/// and the run put in their place are read against each other, the first
+/// taken out beside the first put in, and whichever run is longer goes on
+/// alone below the other.
+fn paired<'a>(path: &'a Path, staged: bool, hunk: &'a Hunk) -> Vec<Row<'a>> {
+    let mut rows = Vec::new();
+    let mut removed: Vec<&Line> = Vec::new();
+    let mut added: Vec<&Line> = Vec::new();
+    let flush =
+        |rows: &mut Vec<Row<'a>>, removed: &mut Vec<&'a Line>, added: &mut Vec<&'a Line>| {
+            let length = removed.len().max(added.len());
+            for at in 0..length {
+                rows.push(Row::Pair(
+                    path,
+                    staged,
+                    removed.get(at).copied(),
+                    added.get(at).copied(),
+                ));
+            }
+            removed.clear();
+            added.clear();
+        };
+
+    for line in &hunk.lines {
+        match line.kind {
+            LineKind::Removed if !added.is_empty() => {
+                flush(&mut rows, &mut removed, &mut added);
+                removed.push(line);
+            }
+            LineKind::Removed => removed.push(line),
+            LineKind::Added => added.push(line),
+            LineKind::Context => {
+                flush(&mut rows, &mut removed, &mut added);
+                rows.push(Row::Pair(path, staged, Some(line), Some(line)));
+            }
+        }
+    }
+    flush(&mut rows, &mut removed, &mut added);
     rows
 }
 
@@ -395,6 +480,13 @@ fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
             heading_row(theme, review, index, staged, at, hunk)
         }
         Row::Line(path, staged, line) => line_row(theme, line, review.shade(path, staged, line)),
+        Row::Pair(path, staged, old, new) => h_flex()
+            .w_full()
+            .items_stretch()
+            .overflow_hidden()
+            .child(half(theme, review, path, staged, old, false))
+            .child(v_flex().w_px(1.0).bg(theme.colors.border_variant))
+            .child(half(theme, review, path, staged, new, true)),
     }
 }
 
@@ -581,6 +673,57 @@ fn line_row(theme: &Theme, line: &Line, shade: Option<&[Option<Highlight>]>) -> 
                 .color(theme.colors.text_subtle),
         )
         .child(shaded(theme, &line.text, shade.unwrap_or_default()))
+}
+
+/// Builds one side of a row of a split diff: the line's number on that
+/// side, then the line, or a blank where that side has no line here.
+///
+/// A line on both sides is washed on neither, since nothing happened to it;
+/// the new side of a line taken out and the old side of a line put in are
+/// left empty rather than washed, which is what says the other side has it.
+fn half(
+    theme: &Theme,
+    review: &Review,
+    path: &Path,
+    staged: bool,
+    line: Option<&Line>,
+    new: bool,
+) -> Div<Message> {
+    let wash = line.and_then(|line| match line.kind {
+        LineKind::Added => Some(theme.colors.success.alpha(theme.emphasis.change)),
+        LineKind::Removed => Some(theme.colors.danger.alpha(theme.emphasis.change)),
+        LineKind::Context => None,
+    });
+    let number = line.and_then(|line| match new {
+        true => line.new,
+        false => line.old,
+    });
+    let shade = line.and_then(|line| review.shade(path, staged, line));
+
+    h_flex()
+        .flex_1()
+        .px(1)
+        .gap(0.5)
+        .items_center()
+        .overflow_hidden()
+        .when_some(wash, Div::bg)
+        .child(
+            h_flex()
+                .w_px(SIDE_NUMBER)
+                .justify_end()
+                .when_some(number, |slot, number| {
+                    slot.child(
+                        text(number.to_string())
+                            .text_xs()
+                            .font_mono()
+                            .color(theme.colors.text_subtle),
+                    )
+                }),
+        )
+        .child(match line {
+            Some(line) => shaded(theme, &line.text, shade.unwrap_or_default()),
+            None => h_flex().child(text(" ").text_sm().font_mono()),
+        })
 }
 
 /// Builds `said` as runs of one colour each, as `shade` colours it.

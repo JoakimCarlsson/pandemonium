@@ -48,6 +48,7 @@ impl App {
             review.reread();
         }
         self.repaint_reviews();
+        self.refresh_excerpts();
     }
 
     /// The worktrees a pane is holding the review, or one file's diff, of.
@@ -168,10 +169,9 @@ impl App {
 
     /// Moves the review to the hunk before or after the one it is showing.
     pub(super) fn step_hunk(&mut self, forward: bool) {
-        let Some(row) = self
-            .review()
-            .and_then(|review| crate::review::hunk_row(review, forward))
-        else {
+        let Some(row) = self.review().and_then(|review| {
+            crate::review::hunk_row(review, forward, self.preferences.split_diff)
+        }) else {
             return;
         };
         if let Some(review) = self.review_mut() {
@@ -412,8 +412,9 @@ impl App {
         };
 
         self.open_review();
+        let split = self.preferences.split_diff;
         if let Some(review) = self.reviews.get_mut(&scope) {
-            let row = crate::review::row_of(review, id).unwrap_or_default();
+            let row = crate::review::row_of(review, id, split).unwrap_or_default();
             review.scroll_to(None, row);
         }
     }
@@ -614,10 +615,11 @@ impl App {
         let Some((scope, shown)) = self.review_under() else {
             return false;
         };
+        let split = self.preferences.split_diff;
         let Some(review) = self.reviews.get_mut(&scope) else {
             return false;
         };
-        let total = crate::review::row_count(review, shown);
+        let total = crate::review::row_count(review, shown, split);
         review.scroll_by(shown, rows, total);
         true
     }
@@ -633,7 +635,12 @@ impl App {
         match item {
             Item::Review(scope) => Some((scope, None)),
             Item::Change(scope, change) => Some((scope, Some(change))),
-            Item::File(_) | Item::Agent(..) | Item::Settings => None,
+            Item::File(_)
+            | Item::Image(_)
+            | Item::Rendered(_)
+            | Item::Excerpts(_)
+            | Item::Agent(..)
+            | Item::Settings => None,
         }
     }
 }

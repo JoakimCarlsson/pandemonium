@@ -13,7 +13,8 @@ use pm_ui::{
     measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
-use crate::editor::{Display, OpenFile, buffer_view, search_bar};
+use crate::editor::{Crumbs, Display, OpenFile, buffer_view, crumb_bar, search_bar};
+use crate::excerpts::{OpenExcerpts, excerpts_view};
 use crate::message::Message;
 use crate::panes::item::Item;
 
@@ -49,6 +50,8 @@ pub enum Content {
     Empty,
     /// A file, drawn from the document the window has open.
     File(OpenFile),
+    /// A worktree's changes as excerpts, drawn from the documents behind them.
+    Excerpts(OpenExcerpts),
     /// A screen the window built, drawn as it arrived.
     Built(Box<dyn Element<Message>>),
 }
@@ -77,6 +80,8 @@ pub struct Contents {
     pub caret: bool,
     /// What a pane of text draws around its text.
     pub display: Display,
+    /// Where the text in front is, for the bar above it, when it is drawn.
+    pub crumbs: Option<Crumbs>,
 }
 
 /// Builds the whole tree of panes, `focused` when the window's own focus is.
@@ -144,6 +149,10 @@ fn pane_view(
         Content::File(file) => Some(file.clone()),
         _ => None,
     };
+    let excerpted = match &contents.content {
+        Content::Excerpts(excerpts) => Some(excerpts.clone()),
+        _ => None,
+    };
     let searching = showing
         .as_ref()
         .map(|file| file.borrow())
@@ -164,6 +173,10 @@ fn pane_view(
                 tab_bar(theme, tabs, pane_actions(theme, id, divided)),
             ))
         })
+        .when_some(
+            contents.crumbs.filter(|_| showing.is_some()),
+            |view, crumbs| view.child(crumb_bar(theme, id, &crumbs)),
+        )
         .when_some(searching, Div::child)
         .when_some(showing, |view, file| {
             view.child(
@@ -181,7 +194,18 @@ fn pane_view(
                     .on_scroll(move |axis, event, step| {
                         Message::ScrollEditor(id, axis, event, step)
                     })
+                    .on_minimap(move |line| Message::ScrollEditorTo(id, line))
                     .on_menu(Message::ShowEditorMenu(id)),
+            )
+        })
+        .when_some(excerpted, |view, excerpts| {
+            view.child(
+                excerpts_view(excerpts, focused)
+                    .caret(caret)
+                    .on_select(move |phase, file, anchor, head| {
+                        Message::SelectExcerpt(id, phase, file, anchor, head)
+                    })
+                    .on_open(move |index| Message::OpenExcerptFile(id, index)),
             )
         })
         .when(empty, |view| view.child(placeholder(theme, id)))
@@ -194,7 +218,7 @@ fn pane_view(
 fn built(content: Content) -> Option<Box<dyn Element<Message>>> {
     match content {
         Content::Built(screen) => Some(screen),
-        Content::Empty | Content::File(_) => None,
+        Content::Empty | Content::File(_) | Content::Excerpts(_) => None,
     }
 }
 

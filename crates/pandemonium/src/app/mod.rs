@@ -10,6 +10,7 @@ mod clicks;
 mod commands;
 mod disk;
 mod drag;
+mod excerpts;
 mod input;
 mod language;
 mod modal;
@@ -21,6 +22,7 @@ mod session;
 mod settings;
 mod terminal;
 mod tree;
+mod views;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -207,6 +209,12 @@ pub struct App {
     close_requested: bool,
     /// The files the window has open, and the servers behind them.
     editor: Files,
+    /// The pictures the window has open.
+    images: crate::image::Images,
+    /// What the markdown the panes are rendering keeps between frames.
+    renders: crate::markdown::Renders,
+    /// Each worktree's changes as excerpts, for the panes editing them.
+    excerpts: BTreeMap<Scope, crate::excerpts::OpenExcerpts>,
     /// The servers to run for a language, in place of the ones it names.
     language_servers: BTreeMap<String, Vec<pm_text::Server>>,
     /// How the window is divided into panes, and which of them has the keyboard.
@@ -374,6 +382,9 @@ impl App {
             window_state: restored.window,
             close_requested: false,
             editor: Files::default(),
+            images: crate::image::Images::default(),
+            renders: crate::markdown::Renders::default(),
+            excerpts: BTreeMap::new(),
             language_servers: restored.language_servers,
             panes: PaneTree::default(),
             saved,
@@ -504,6 +515,9 @@ impl App {
             return;
         };
 
+        if self.open_picture(self.panes.focus(), scope, &path, preview) {
+            return;
+        }
         if let Some(file) = self.editor.open(scope, &root, &path, preview) {
             if self.active_tab() != Some(crate::panes::Item::File(file))
                 && let Some(from) = self.here()
@@ -982,6 +996,34 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::SelectExcerpt(pane, phase, file, anchor, head) = message {
+            self.select_excerpt(pane, phase, file, anchor, head);
+            self.request_redraw();
+            return;
+        }
+        if let Message::OpenExcerptFile(pane, index) = message {
+            self.open_excerpt_file(pane, index);
+            self.request_redraw();
+            return;
+        }
+        if let Message::JumpTo(pane, at) = message {
+            self.focus_pane(pane);
+            if let Some(from) = self.here() {
+                self.trail.jumped(from);
+            }
+            self.place_cursor(at, false);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ScrollEditorTo(pane, line) = message {
+            self.focus_pane(pane);
+            self.with_document(|document| {
+                let half = document.rows() / 2;
+                document.scroll_to(line.saturating_sub(half));
+            });
+            self.request_redraw();
+            return;
+        }
         if let Message::SelectLines(pane, anchor, head) = message {
             self.select_lines(pane, anchor, head);
             self.request_redraw();
@@ -1235,10 +1277,12 @@ impl App {
                 .map(|project| project.root().to_path_buf())
             {
                 self.editor.close_project(id, &root);
+                self.images.close_project(id);
             }
             self.open.remove(id);
             self.files.retain(|scope, _| scope.project() != id);
             self.reviews.retain(|scope, _| scope.project() != id);
+            self.excerpts.retain(|scope, _| scope.project() != id);
             self.trail.close_project(id);
             self.terminals.close(id);
             self.agents.close_project(id);
@@ -1339,6 +1383,7 @@ impl App {
     fn review_command(&mut self, message: Message) -> bool {
         match message {
             Message::OpenReview => self.open_review(),
+            Message::OpenExcerpts => self.open_excerpts(),
             Message::RefreshChanges => self.reread_worktree(),
             Message::ToggleChangeStaged(index) => self.toggle_change_staged(index),
             Message::ToggleGroupStaged(group) => self.toggle_group_staged(group),
@@ -1786,6 +1831,14 @@ impl App {
 
     /// Where on screen the cursor of the focused pane last came out.
     pub(super) fn cursor_point(&self) -> Point {
+        if let Some(Item::Excerpts(scope)) = self.active_tab()
+            && let Some(caret) = self
+                .excerpts
+                .get(&scope)
+                .and_then(|excerpts| excerpts.borrow().caret())
+        {
+            return caret;
+        }
         let Some(file) = self.active_file() else {
             return Point::new(0.0, 0.0);
         };
@@ -1797,6 +1850,7 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
+        self.settle_excerpts();
         self.refresh_annotations();
         self.open_reviewed_files();
         let shell = self

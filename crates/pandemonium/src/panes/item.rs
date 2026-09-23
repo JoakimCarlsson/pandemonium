@@ -10,6 +10,7 @@ use pm_core::Scope;
 
 use crate::agent::TalkId;
 use crate::editor::FileId;
+use crate::image::ImageId;
 use crate::review::ChangeId;
 
 /// One thing a pane can hold in a tab.
@@ -17,6 +18,11 @@ use crate::review::ChangeId;
 pub enum Item {
     /// A file, open in the editor.
     File(FileId),
+    /// A picture, open to be looked at.
+    Image(ImageId),
+    /// An open file read as it renders — markdown as its headings, lists
+    /// and code — beside the text it is rendered from.
+    Rendered(FileId),
     /// Everything that has changed in one worktree, gathered for review.
     ///
     /// The review is the worktree's rather than the tab's: two panes showing
@@ -25,6 +31,9 @@ pub enum Item {
     Review(Scope),
     /// The diff of one changed file, which is what a row of that list opens.
     Change(Scope, ChangeId),
+    /// Everything that has changed in one worktree, as excerpts of the files
+    /// themselves, edited in place in one pane.
+    Excerpts(Scope),
     /// One conversation held in a worktree, with everything said in it.
     Agent(Scope, TalkId),
     /// The editor's preferences, which belong to the window, not a worktree.
@@ -36,7 +45,23 @@ impl Item {
     pub fn file(self) -> Option<FileId> {
         match self {
             Self::File(file) => Some(file),
-            Self::Review(_) | Self::Change(..) | Self::Agent(..) | Self::Settings => None,
+            _ => None,
+        }
+    }
+
+    /// The picture this holds, when what it holds is one.
+    pub fn image(self) -> Option<ImageId> {
+        match self {
+            Self::Image(image) => Some(image),
+            _ => None,
+        }
+    }
+
+    /// The file this reads as it renders, when that is what it holds.
+    pub fn rendered(self) -> Option<FileId> {
+        match self {
+            Self::Rendered(file) => Some(file),
+            _ => None,
         }
     }
 
@@ -44,7 +69,7 @@ impl Item {
     pub fn change(self) -> Option<ChangeId> {
         match self {
             Self::Change(_, change) => Some(change),
-            Self::File(_) | Self::Review(_) | Self::Agent(..) | Self::Settings => None,
+            _ => None,
         }
     }
 
@@ -52,7 +77,15 @@ impl Item {
     pub fn review(self) -> Option<Scope> {
         match self {
             Self::Review(scope) => Some(scope),
-            Self::File(_) | Self::Change(..) | Self::Agent(..) | Self::Settings => None,
+            _ => None,
+        }
+    }
+
+    /// The worktree whose changes this holds as excerpts, when it does.
+    pub fn excerpts(self) -> Option<Scope> {
+        match self {
+            Self::Excerpts(scope) => Some(scope),
+            _ => None,
         }
     }
 
@@ -60,7 +93,7 @@ impl Item {
     pub fn session(self) -> Option<TalkId> {
         match self {
             Self::Agent(_, session) => Some(session),
-            Self::File(_) | Self::Review(_) | Self::Change(..) | Self::Settings => None,
+            _ => None,
         }
     }
 

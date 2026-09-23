@@ -711,6 +711,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.scroll_excerpts(-rows) || self.scroll_rendered(delta) {
+            self.request_redraw();
+            return;
+        }
         let under = self
             .pointer
             .and_then(|pointer| self.document_at(pointer))

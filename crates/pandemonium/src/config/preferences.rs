@@ -121,6 +121,13 @@ pub enum Preference {
     StickyScroll,
     /// Whether the scrollbars are drawn.
     Scrollbars,
+    /// Whether the whole file is drawn in miniature beside the text.
+    Minimap,
+    /// Whether the file's path and the blocks the cursor is in are named
+    /// above the text.
+    Breadcrumbs,
+    /// Whether a diff sets the old side and the new side beside each other.
+    SplitDiff,
     /// The column a guide is drawn down.
     WrapGuide,
     /// Whether a language server's hints are written into the lines.
@@ -208,6 +215,8 @@ pub struct Preferences {
     pub hard_tabs: bool,
     /// What a pane of text draws around and over its text.
     pub display: Display,
+    /// Whether a diff sets the old side and the new side beside each other.
+    pub split_diff: bool,
     /// Whether a language server's hints are written into the lines.
     pub inlay_hints: bool,
     /// Whether a language server's notes are written after declarations.
@@ -245,6 +254,7 @@ impl Default for Preferences {
             tab_size: Indent::default().width,
             hard_tabs: false,
             display: Display::default(),
+            split_diff: false,
             inlay_hints: true,
             code_lens: true,
             cursor_blink: true,
@@ -293,6 +303,9 @@ flags! {
     IndentGuides => display.indent_guides,
     StickyScroll => display.sticky_scroll,
     Scrollbars => display.scrollbars,
+    Minimap => display.minimap,
+    Breadcrumbs => display.breadcrumbs,
+    SplitDiff => split_diff,
     InlayHints => inlay_hints,
     CodeLens => code_lens,
     CursorBlink => cursor_blink,
@@ -341,6 +354,9 @@ fields! {
     IndentGuides => display.indent_guides,
     StickyScroll => display.sticky_scroll,
     Scrollbars => display.scrollbars,
+    Minimap => display.minimap,
+    Breadcrumbs => display.breadcrumbs,
+    SplitDiff => split_diff,
     WrapGuide => display.wrap_guide,
     InlayHints => inlay_hints,
     CodeLens => code_lens,

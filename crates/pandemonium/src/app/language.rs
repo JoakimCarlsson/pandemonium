@@ -267,7 +267,7 @@ impl App {
             .panes
             .panes()
             .into_iter()
-            .filter_map(|pane| self.panes.pane(pane)?.active(scope)?.file())
+            .filter_map(|pane| self.file_in(self.panes.pane(pane)?.active(scope)?))
             .collect::<Vec<_>>();
 
         if let Some(file) = self.active_file_id() {

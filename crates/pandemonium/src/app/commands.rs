@@ -77,6 +77,10 @@ impl App {
                 ));
             }
             Action::OpenReview => return self.apply(Message::OpenReview),
+            Action::EditChanges | Action::ReviewSession => {
+                return self.apply(Message::OpenExcerpts);
+            }
+            Action::OpenMarkdownPreview => self.open_rendered(),
             Action::NewAgentSession => return self.apply(Message::NewAgentSession),
             Action::FinishSession => {
                 if let Some(session) = self.selected_session() {
@@ -566,6 +570,9 @@ impl App {
         let Some(root) = self.root_of(place.scope) else {
             return;
         };
+        if self.open_picture(self.panes.focus(), place.scope, &place.path, false) {
+            return;
+        }
         let Some(file) = self.editor.open(place.scope, &root, &place.path, false) else {
             return;
         };

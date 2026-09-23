@@ -181,6 +181,10 @@ pub enum Action {
     ShowChanges,
     /// Open those changes for review, in a pane.
     OpenReview,
+    /// Open those changes as excerpts of their files, edited in one pane.
+    EditChanges,
+    /// Open the focused markdown file rendered, in a pane beside it.
+    OpenMarkdownPreview,
     /// Start an agent in the active project's worktree, in a pane.
     NewAgentSession,
     /// Finish the session in hand, which takes its worktree away.
@@ -406,6 +410,12 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::RevertChange, "git.revert_change", "Revert Change"),
     (Action::ShowChanges, "git.changes", "Show Source Control"),
     (Action::OpenReview, "git.review", "Review Changes"),
+    (Action::EditChanges, "git.edit_changes", "Edit Changes"),
+    (
+        Action::OpenMarkdownPreview,
+        "markdown.preview",
+        "Open Markdown Preview",
+    ),
     (Action::NewAgentSession, "agent.new", "New Agent Session"),
     (Action::FinishSession, "session.finish", "Finish Session"),
     (Action::ChangeAgentMode, "agent.mode", "Change Agent Mode"),
@@ -534,6 +544,7 @@ impl Action {
                 | Self::NextChange
                 | Self::PreviousChange
                 | Self::RevertChange
+                | Self::OpenMarkdownPreview
         )
     }
 

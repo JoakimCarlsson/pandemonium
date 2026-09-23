@@ -82,7 +82,7 @@ impl App {
 
     /// The file the pane with the keyboard is showing, when it shows one.
     pub(super) fn active_file(&self) -> Option<OpenFile> {
-        self.editor.get(self.active_tab()?.file()?)
+        self.editor.get(self.active_file_id()?)
     }
 
     /// What the pane with the keyboard is showing.
@@ -91,8 +91,19 @@ impl App {
     }
 
     /// The file it is showing, for the commands that are a file's.
+    ///
+    /// A pane of excerpts is showing many files and editing one of them —
+    /// the one its cursor is in — so that is the file a command means there.
     pub(super) fn active_file_id(&self) -> Option<FileId> {
-        self.active_tab()?.file()
+        self.file_in(self.active_tab()?)
+    }
+
+    /// The file keystrokes go to in a pane showing `item`, if they go to one.
+    pub(super) fn file_in(&self, item: Item) -> Option<FileId> {
+        match item {
+            Item::Excerpts(scope) => self.excerpts.get(&scope)?.borrow().active(),
+            item => item.file(),
+        }
     }
 
     /// Gives the keyboard to `pane`, taking it from the terminal.
@@ -152,14 +163,33 @@ impl App {
     fn is_preview(&self, item: Item) -> bool {
         match item {
             Item::File(file) => self.editor.is_preview(file),
+            Item::Image(image) => self.images.is_preview(image),
             Item::Change(scope, change) => self.is_change_preview(scope, change),
-            Item::Review(_) | Item::Agent(..) | Item::Settings => false,
+            Item::Rendered(_)
+            | Item::Review(_)
+            | Item::Excerpts(_)
+            | Item::Agent(..)
+            | Item::Settings => false,
         }
     }
 
     /// Whether `item` holds changes that are not on disk.
     fn is_dirty(&self, item: Item) -> bool {
-        item.file().is_some_and(|file| self.editor.is_dirty(file))
+        match item {
+            Item::Excerpts(scope) => self.excerpts_dirty(scope),
+            item => item.file().is_some_and(|file| self.editor.is_dirty(file)),
+        }
+    }
+
+    /// Whether any file `scope`'s excerpts show has changes not on disk.
+    fn excerpts_dirty(&self, scope: Scope) -> bool {
+        self.excerpts.get(&scope).is_some_and(|excerpts| {
+            excerpts
+                .borrow()
+                .files()
+                .iter()
+                .any(|excerpted| self.editor.is_dirty(excerpted.file))
+        })
     }
 
     /// Divides `pane` that way, showing `file` in the pane that opens.
@@ -209,8 +239,12 @@ impl App {
     /// The worktree `item` belongs to, which is none for the window's own.
     pub(super) fn scope_of(&self, item: Item) -> Option<Scope> {
         match item {
-            Item::File(file) => self.editor.scope_of(file),
-            Item::Review(scope) | Item::Change(scope, _) | Item::Agent(scope, _) => Some(scope),
+            Item::File(file) | Item::Rendered(file) => self.editor.scope_of(file),
+            Item::Image(image) => self.images.scope_of(image),
+            Item::Review(scope)
+            | Item::Change(scope, _)
+            | Item::Excerpts(scope)
+            | Item::Agent(scope, _) => Some(scope),
             Item::Settings => None,
         }
     }
@@ -397,6 +431,33 @@ impl App {
                     ..SavedTab::default()
                 });
             }
+            if let Some(image) = item.image() {
+                return Some(SavedTab {
+                    kind: SavedKind::Image,
+                    project,
+                    worktree,
+                    path: self.images.path_of(image)?.to_path_buf(),
+                    preview: self.images.is_preview(image),
+                    ..SavedTab::default()
+                });
+            }
+            if let Some(file) = item.rendered() {
+                return Some(SavedTab {
+                    kind: SavedKind::Rendered,
+                    project,
+                    worktree,
+                    path: self.editor.path(file)?,
+                    ..SavedTab::default()
+                });
+            }
+            if item.excerpts().is_some() {
+                return Some(SavedTab {
+                    kind: SavedKind::Excerpts,
+                    project,
+                    worktree,
+                    ..SavedTab::default()
+                });
+            }
             let Some(file) = item.file() else {
                 return Some(SavedTab {
                     kind: SavedKind::Review,
@@ -434,6 +495,8 @@ impl App {
             .map(|project| (project.root().to_path_buf(), project.id()))
             .collect::<Vec<_>>();
         let editor = &mut self.editor;
+        let images = &mut self.images;
+        let excerpts = &mut self.excerpts;
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
         let sessions = &self.sessions;
@@ -471,6 +534,23 @@ impl App {
             if tab.kind == SavedKind::Review {
                 return Some((Some(scope), Item::Review(scope)));
             }
+            if tab.kind == SavedKind::Excerpts {
+                reviews
+                    .entry(scope)
+                    .or_insert_with(|| crate::review::Review::of(&root));
+                excerpts.entry(scope).or_insert_with(|| {
+                    std::rc::Rc::new(std::cell::RefCell::new(crate::excerpts::Excerpts::default()))
+                });
+                return Some((Some(scope), Item::Excerpts(scope)));
+            }
+            if tab.kind == SavedKind::Image {
+                let image = images.open(scope, &tab.path, tab.preview);
+                return Some((Some(scope), Item::Image(image)));
+            }
+            if tab.kind == SavedKind::Rendered {
+                let file = editor.open(scope, &root, &tab.path, false)?;
+                return Some((Some(scope), Item::Rendered(file)));
+            }
             if tab.kind == SavedKind::Change {
                 let review = reviews
                     .entry(scope)
@@ -486,18 +566,35 @@ impl App {
             }
             Some((Some(scope), Item::File(file)))
         });
+        self.refresh_excerpts();
         self.sweep();
     }
 
     /// Closes every file no pane is holding open any more.
     pub(super) fn sweep(&mut self) {
         let held = self.panes.held();
+        self.excerpts
+            .retain(|scope, _| held.contains(&Item::Excerpts(*scope)));
+        let rendered = held
+            .iter()
+            .copied()
+            .filter_map(Item::rendered)
+            .collect::<BTreeSet<_>>();
+        let images = held
+            .iter()
+            .copied()
+            .filter_map(Item::image)
+            .collect::<BTreeSet<_>>();
         let mut files = held
             .iter()
             .copied()
             .filter_map(Item::file)
             .collect::<BTreeSet<_>>();
+        files.extend(&rendered);
         files.extend(self.reviewed_files());
+        files.extend(self.excerpted_files());
+        self.images.retain(&images);
+        self.renders.retain(&rendered);
         let sessions = held
             .iter()
             .copied()
@@ -580,8 +677,13 @@ impl App {
         if self.tab_clicks.press(item) >= 2 {
             match item {
                 Item::File(file) => self.editor.keep(file),
+                Item::Image(image) => self.images.keep(image),
                 Item::Change(project, change) => self.keep_change(project, change),
-                Item::Review(_) | Item::Agent(..) | Item::Settings => {}
+                Item::Rendered(_)
+                | Item::Review(_)
+                | Item::Excerpts(_)
+                | Item::Agent(..)
+                | Item::Settings => {}
             }
         }
         self.activate_tab(pane, item);
@@ -712,6 +814,33 @@ impl App {
                     pinned: false,
                 })
             }
+            Item::Image(image) => Some(TabEntry {
+                item,
+                name: self.images.name(image)?,
+                icon: IconName::Image,
+                dirty: false,
+                preview: self.images.is_preview(image),
+                pinned: false,
+            }),
+            Item::Rendered(file) => Some(TabEntry {
+                item,
+                name: format!("Preview {}", self.editor.entry(file)?.name),
+                icon: IconName::Eye,
+                dirty: false,
+                preview: false,
+                pinned: false,
+            }),
+            Item::Excerpts(scope) => Some(TabEntry {
+                item,
+                name: match self.open.get(scope.project()) {
+                    Some(_) => "Edit Changes".to_owned(),
+                    None => return None,
+                },
+                icon: IconName::GitCompare,
+                dirty: self.excerpts_dirty(scope),
+                preview: false,
+                pinned: false,
+            }),
             Item::Review(scope) => Some(TabEntry {
                 item,
                 name: match self.open.get(scope.project()) {
@@ -831,8 +960,19 @@ impl App {
                 found: self.found_in(file),
                 caret,
                 display,
+                crumbs: file
+                    .filter(|_| display.breadcrumbs)
+                    .and_then(|file| self.crumbs_of(file)),
             }
         })
+    }
+
+    /// Where `file` is in its worktree, and where its cursor is in it.
+    fn crumbs_of(&self, file: FileId) -> Option<crate::editor::Crumbs> {
+        let root = self.worktree_of(file)?;
+        let document = self.editor.get(file)?;
+        let document = document.borrow();
+        Some(crate::editor::Crumbs::of(document.buffer(), &root))
     }
 
     /// The matches of modal editing's search on the lines `file`'s pane
@@ -878,6 +1018,7 @@ impl App {
                     theme,
                     review,
                     self.writing == Some(crate::app::Writing::Commit),
+                    self.preferences.split_diff,
                 ))),
                 None => Content::Empty,
             },
@@ -891,9 +1032,44 @@ impl App {
                 None => Content::Empty,
             },
             Some(Item::Change(project, change)) => match self.reviews.get(&project) {
-                Some(review) => {
-                    Content::Built(Box::new(crate::review::change_pane(theme, review, change)))
+                Some(review) => Content::Built(Box::new(crate::review::change_pane(
+                    theme,
+                    review,
+                    change,
+                    self.preferences.split_diff,
+                ))),
+                None => Content::Empty,
+            },
+            Some(Item::Image(image)) => {
+                let shown = self
+                    .images
+                    .scope_of(image)
+                    .and_then(|scope| self.root_of(scope))
+                    .and_then(|root| self.images.shown(image, &root));
+                match shown {
+                    Some(shown) => Content::Built(Box::new(crate::image::image_pane(theme, shown))),
+                    None => Content::Empty,
                 }
+            }
+            Some(Item::Rendered(file)) => match self.editor.get(file) {
+                Some(document) => {
+                    let document = document.borrow();
+                    let buffer = document.buffer();
+                    let blocks = self
+                        .renders
+                        .blocks(file, buffer.version(), &buffer.contents());
+                    Content::Built(Box::new(crate::markdown::rendered_pane(
+                        theme,
+                        &blocks,
+                        self.renders.scroll(file),
+                        buffer.path(),
+                        &self.renders,
+                    )))
+                }
+                None => Content::Empty,
+            },
+            Some(Item::Excerpts(scope)) => match self.excerpts.get(&scope) {
+                Some(excerpts) => Content::Excerpts(excerpts.clone()),
                 None => Content::Empty,
             },
             Some(Item::Settings) => self.settings_content(theme),
@@ -930,7 +1106,7 @@ impl App {
             MenuTarget::Projects => crate::workspace::add_project_items(),
             MenuTarget::Session(session) => crate::workspace::session_menu_items(session),
             MenuTarget::Text(pane) => {
-                let file = self.panes.pane(pane)?.active(self.scope()?)?.file()?;
+                let file = self.file_in(self.panes.pane(pane)?.active(self.scope()?)?)?;
                 let document = self.editor.get(file)?;
                 let document = document.borrow();
                 crate::editor::text_menu(&crate::editor::TextMenu {

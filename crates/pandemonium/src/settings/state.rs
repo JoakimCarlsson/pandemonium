@@ -162,6 +162,9 @@ impl SettingsSection {
             Self::Display => &[
                 Preference::StickyScroll,
                 Preference::Scrollbars,
+                Preference::Minimap,
+                Preference::Breadcrumbs,
+                Preference::SplitDiff,
                 Preference::InlayHints,
                 Preference::CodeLens,
                 Preference::ScrollSensitivity,

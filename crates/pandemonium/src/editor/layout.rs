@@ -34,6 +34,8 @@ pub struct TextLayout {
     pub gutter: f32,
     /// How much of that gutter the blame column took, at its right edge.
     pub blame: f32,
+    /// How much of the pane the minimap took on the right.
+    pub minimap: f32,
     /// The first line the pane showed.
     pub first: usize,
     /// The first column the pane showed, the text being scrolled left by it.
@@ -67,7 +69,7 @@ impl TextLayout {
         Rect::from_xywh(
             self.text_left(),
             self.bounds.top(),
-            (self.bounds.size.width - self.gutter).max(0.0),
+            (self.bounds.size.width - self.gutter - self.minimap).max(0.0),
             self.bounds.size.height,
         )
     }

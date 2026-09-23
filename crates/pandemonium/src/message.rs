@@ -167,6 +167,16 @@ pub enum Message {
     SelectText(PaneId, ResizePhase, Position, Position),
     /// Drag one of this pane's scrollbars, so much of it to a pixel of travel.
     ScrollEditor(PaneId, ScrollAxis, ResizeEvent, f32),
+    /// Put the cursor of this pane of excerpts in this file, where a press
+    /// landed, selecting to where it reached.
+    SelectExcerpt(PaneId, ResizePhase, FileId, Position, Position),
+    /// Open the file in this place of this pane's excerpts on its own.
+    OpenExcerptFile(PaneId, usize),
+    /// Scroll this pane so the line a press on its minimap reached is in the
+    /// middle of it.
+    ScrollEditorTo(PaneId, usize),
+    /// Put this pane's cursor at this place, the way a jump does.
+    JumpTo(PaneId, Position),
     /// Select every line a drag down this pane's gutter reaches.
     SelectLines(PaneId, Position, Position),
     /// Open the menu of things that can be done to the text in this pane.
@@ -257,6 +267,9 @@ pub enum Message {
     SetSidebarView(SidebarView),
     /// Open the active project's changes for review, in a pane.
     OpenReview,
+    /// Open the active worktree's changes as excerpts of their files, to be
+    /// edited in one pane.
+    OpenExcerpts,
     /// Ask git again what it makes of every open worktree.
     RefreshChanges,
     /// Open the branch selector from the window-wide status bar.

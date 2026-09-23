@@ -57,6 +57,11 @@ pub struct Display {
     pub sticky_scroll: bool,
     /// Whether the scrollbars are drawn.
     pub scrollbars: bool,
+    /// Whether the whole file is drawn in miniature down the right edge.
+    pub minimap: bool,
+    /// Whether the path of the file and the blocks the cursor is inside are
+    /// named in a bar above the text.
+    pub breadcrumbs: bool,
     /// The column a guide is drawn down, if any.
     pub wrap_guide: Option<usize>,
     /// How the caret is drawn.
@@ -67,7 +72,7 @@ pub struct Display {
 }
 
 impl Default for Display {
-    /// Everything on, and the caret a bar.
+    /// Everything on but the minimap, and the caret a bar.
     fn default() -> Self {
         Self {
             line_numbers: true,
@@ -77,6 +82,8 @@ impl Default for Display {
             indent_guides: true,
             sticky_scroll: true,
             scrollbars: true,
+            minimap: false,
+            breadcrumbs: true,
             wrap_guide: None,
             cursor_shape: CursorShape::Bar,
             whole_lines: false,

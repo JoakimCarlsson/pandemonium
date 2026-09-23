@@ -102,8 +102,8 @@ impl Shown {
     }
 }
 
-/// One line of the panel, as runs of text in the colour each is drawn in.
-type Line = Vec<(String, Rgba)>;
+/// One line of code, as runs of text in the colour each is drawn in.
+pub type Line = Vec<(String, Rgba)>;
 
 /// Builds the panel saying what `shown` holds, beside the place it is about.
 ///
@@ -197,7 +197,8 @@ fn lines(theme: &Theme, content: &str, language: Option<Language>) -> Vec<Line> 
 ///
 /// A block in a language the editor has no grammar for is drawn the way
 /// the text of a file with no grammar is drawn: in the plain text colour.
-fn code_lines(theme: &Theme, language: Option<Language>, code: &[&str]) -> Vec<Line> {
+/// A rendered document's code blocks are coloured by the same hand.
+pub fn code_lines(theme: &Theme, language: Option<Language>, code: &[&str]) -> Vec<Line> {
     let highlights = language.map(|language| pm_text::highlight(language, &code.join("\n")));
     code.iter()
         .enumerate()

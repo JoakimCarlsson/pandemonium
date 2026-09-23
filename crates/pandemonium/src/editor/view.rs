@@ -22,6 +22,7 @@ use pm_ui::{
 use crate::editor::OpenFile;
 use crate::editor::display::{CursorShape, Display};
 use crate::editor::layout::{GUTTER_GAP, GUTTER_INSET, TextLayout};
+use crate::editor::minimap::{MINIMAP_WIDTH, Minimap};
 use crate::editor::search::Search;
 
 /// Width of the cursor while the pane is focused.
@@ -73,6 +74,9 @@ const REMOVED_HEIGHT: f32 = 3.0;
 /// What a drag on a scrollbar reports, given the axis and the scale of it.
 type ScrollHandler<M> = Arc<dyn Fn(ScrollAxis, ResizeEvent, f32) -> M>;
 
+/// Narrowest a pane is and still gives room to a minimap.
+const MINIMAP_ROOM: f32 = 480.0;
+
 /// What a gesture over the text reports: its stage, and the places it spans.
 type SelectHandler<M> = Arc<dyn Fn(ResizePhase, Position, Position) -> M>;
 
@@ -110,6 +114,8 @@ pub struct BufferView<M> {
     on_scroll: Option<ScrollHandler<M>>,
     /// What a press in the fold column sends, given the line it landed on.
     on_fold: Option<Arc<dyn Fn(Position) -> M>>,
+    /// What a press or a drag on the minimap sends, given the line it is on.
+    on_minimap: Option<Arc<dyn Fn(usize) -> M>>,
     /// What a press of the secondary button over the pane sends.
     on_menu: Option<M>,
     /// The name the pointer is over, while the key that links it is held.
@@ -142,6 +148,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_gutter: None,
         on_fold: None,
         on_scroll: None,
+        on_minimap: None,
         on_menu: None,
         link: None,
         hovered: None,
@@ -196,6 +203,13 @@ impl<M> BufferView<M> {
         on_scroll: impl Fn(ScrollAxis, ResizeEvent, f32) -> M + 'static,
     ) -> Self {
         self.on_scroll = Some(Arc::new(on_scroll));
+        self
+    }
+
+    /// Returns this pane scrolling to the line a press on its minimap lands
+    /// on, through `on_minimap`.
+    pub fn on_minimap(mut self, on_minimap: impl Fn(usize) -> M + 'static) -> Self {
+        self.on_minimap = Some(Arc::new(on_minimap));
         self
     }
 
@@ -277,11 +291,17 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             false => TextLayout::gutter_for(count, cell, self.display.line_numbers) + blame,
         };
 
+        let minimap = match !self.plain && self.display.minimap && bounds.size.width > MINIMAP_ROOM
+        {
+            true => MINIMAP_WIDTH,
+            false => 0.0,
+        };
         let sizing = TextLayout {
             bounds,
             cell,
             gutter,
             blame,
+            minimap,
             first: document.scroll(),
             column: document.column(),
         };
@@ -314,7 +334,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             highlights: &highlights,
             brackets: document.buffer().matching_bracket(),
             occurrences: occurrences(document.buffer(), span.clone()),
-            changes,
+            changes: changes.clone(),
             blame: document.blame(),
             drawn,
             folded,
@@ -358,12 +378,21 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
 
         let widest = painting.buffer.widest(span);
         let marks = markers(&painting);
+        let strip = (minimap > 0.0).then(|| Minimap::of(bounds, count, layout.first, rows));
+        if let Some(strip) = strip {
+            let view = layout.first..layout.first + rows;
+            let lit = cx.input().is_over(strip.area);
+            strip.paint(document.buffer_mut(), &changes, view, lit, &theme, cx);
+        }
         drop(document);
 
         self.select_region(layout, cx);
         if !self.plain {
             self.gutter_region(layout, cx);
             self.fold_region(layout, cx);
+            if let Some(strip) = strip {
+                self.minimap_region(strip, cx);
+            }
             if self.display.scrollbars {
                 self.paint_scrollbars(layout, count, widest, &marks, &theme, cx);
             }
@@ -1127,6 +1156,19 @@ impl<M: Clone + 'static> BufferView<M> {
         cx.clickable(column, pressed, self.on_menu.clone());
     }
 
+    /// Takes the press and the drag on the minimap that move the view.
+    fn minimap_region(&mut self, strip: Minimap, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(on_minimap) = self.on_minimap.clone() else {
+            return;
+        };
+        cx.draggable(
+            strip.area,
+            PointerCursor::Default,
+            Arc::new(move |event| on_minimap(strip.line_at(event.current.y))),
+            None,
+        );
+    }
+
     /// Draws the scrollbars, and takes the drags on them the caller asked for.
     fn paint_scrollbars(
         &mut self,
@@ -1160,7 +1202,8 @@ impl<M: Clone + 'static> BufferView<M> {
             let track = Rect::from_xywh(
                 layout.text_left() + SCROLLBAR_PADDING,
                 bounds.bottom() - SCROLLBAR_PADDING - SCROLLBAR_WIDTH,
-                (bounds.right() - layout.text_left() - SCROLLBAR_PADDING * 2.0).max(0.0),
+                (layout.text_area().right() - layout.text_left() - SCROLLBAR_PADDING * 2.0)
+                    .max(0.0),
                 SCROLLBAR_WIDTH,
             );
             let reach = Reach {

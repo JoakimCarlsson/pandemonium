@@ -171,6 +171,9 @@ impl App {
         let Some((scope, root)) = self.worktree_holding(path) else {
             return;
         };
+        if self.open_picture(self.panes.focus(), scope, path, false) {
+            return;
+        }
         if let Some(file) = self.editor.open(scope, &root, path, false) {
             self.show_file(self.panes.focus(), file, false);
         }

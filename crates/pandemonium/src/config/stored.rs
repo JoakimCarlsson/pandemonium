@@ -77,6 +77,13 @@ pub(super) struct Stored {
     sticky_scroll: Option<bool>,
     /// Whether the scrollbars are drawn.
     scrollbars: Option<bool>,
+    /// Whether the whole file is drawn in miniature beside the text.
+    minimap: Option<bool>,
+    /// Whether the file's path and the blocks the cursor is in are named
+    /// above the text.
+    breadcrumbs: Option<bool>,
+    /// Whether a diff sets its two sides beside each other.
+    split_diff: Option<bool>,
     /// The column a guide is drawn down, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     wrap_guide: Option<usize>,
@@ -347,12 +354,15 @@ impl Stored {
                 indent_guides: self.indent_guides.unwrap_or(defaults.display.indent_guides),
                 sticky_scroll: self.sticky_scroll.unwrap_or(defaults.display.sticky_scroll),
                 scrollbars: self.scrollbars.unwrap_or(defaults.display.scrollbars),
+                minimap: self.minimap.unwrap_or(defaults.display.minimap),
+                breadcrumbs: self.breadcrumbs.unwrap_or(defaults.display.breadcrumbs),
                 wrap_guide: self.wrap_guide.or(defaults.display.wrap_guide),
                 cursor_shape: self
                     .cursor_shape
                     .map_or(defaults.display.cursor_shape, StoredCursorShape::into_shape),
                 whole_lines: false,
             },
+            split_diff: self.split_diff.unwrap_or(defaults.split_diff),
             inlay_hints: self.inlay_hints.unwrap_or(defaults.inlay_hints),
             code_lens: self.code_lens.unwrap_or(defaults.code_lens),
             cursor_blink: self.cursor_blink.unwrap_or(defaults.cursor_blink),
@@ -423,6 +433,9 @@ impl Stored {
             indent_guides: Some(display.indent_guides),
             sticky_scroll: Some(display.sticky_scroll),
             scrollbars: Some(display.scrollbars),
+            minimap: Some(display.minimap),
+            breadcrumbs: Some(display.breadcrumbs),
+            split_diff: Some(preferences.split_diff),
             wrap_guide: display.wrap_guide,
             inlay_hints: Some(preferences.inlay_hints),
             code_lens: Some(preferences.code_lens),

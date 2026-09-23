@@ -69,6 +69,7 @@ impl App {
             .map(|touched| touched.path.clone())
             .collect::<BTreeSet<_>>();
         self.editor.reread_paths(scope, root, &written);
+        self.images.reread_paths(scope, &written);
 
         let followed = disk
             .touched
@@ -84,6 +85,7 @@ impl App {
             review.reread();
         }
         self.repaint_reviews();
+        self.refresh_excerpts();
     }
 }
 

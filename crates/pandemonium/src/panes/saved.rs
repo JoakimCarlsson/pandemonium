@@ -58,6 +58,12 @@ pub enum SavedKind {
     /// A file of the worktree.
     #[default]
     File,
+    /// A picture of the worktree.
+    Image,
+    /// A markdown file of the worktree, read as it renders.
+    Rendered,
+    /// The worktree's changes, as excerpts to edit.
+    Excerpts,
     /// The worktree's changes, gathered for review.
     Review,
     /// The diff of one file of the worktree.

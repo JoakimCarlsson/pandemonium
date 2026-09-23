@@ -5,7 +5,9 @@ mod app;
 mod config;
 mod desktop;
 mod editor;
+mod excerpts;
 mod field;
+mod image;
 #[allow(
     dead_code,
     reason = "a box of text is offered whole — one line or many — before every box in the window has been moved onto it"
@@ -17,6 +19,7 @@ mod input;
     reason = "the keymap is a schema in full before the panes that press it exist"
 )]
 mod keymap;
+mod markdown;
 mod message;
 mod onboarding;
 mod panes;
