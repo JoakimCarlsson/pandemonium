@@ -19,6 +19,7 @@ mod syntax;
 mod terminal;
 mod text;
 mod verdant;
+mod vscode;
 
 use std::sync::RwLock;
 
@@ -102,11 +103,12 @@ impl ThemeFamily {
 }
 
 /// Every family the editor ships with, in the order the picker offers them.
-pub const BUILT_IN: [ThemeFamily; 4] = [
+pub const BUILT_IN: [ThemeFamily; 5] = [
     pandemonium::family(),
     fathom::family(),
     ember::family(),
     verdant::family(),
+    vscode::family(),
 ];
 
 /// The family a first launch starts in, as an index into [`families`].
