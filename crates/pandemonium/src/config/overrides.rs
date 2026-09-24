@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use pm_gfx::Rgba;
 use pm_ui::{Appearance, Theme};
 
-use crate::config::tokens::TOKENS;
+use crate::theme::TOKENS;
 
 /// The repainted colours, by index into [`TOKENS`], one set per appearance.
 #[derive(Clone, Debug, Default, PartialEq)]

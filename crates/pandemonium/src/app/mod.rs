@@ -35,7 +35,7 @@ use pm_core::{FileTree, Projects, Scope, Sessions};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
 use pm_text::Position;
 use pm_ui::{
-    Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Theme, Ui, family,
+    Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Theme, Ui,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -740,7 +740,7 @@ impl App {
     pub(super) fn theme(&self) -> Theme {
         let preferences = &self.preferences;
         let appearance = preferences.theme_mode.resolve(self.system_appearance());
-        let chosen = family(preferences.theme_family).variant(appearance);
+        let chosen = crate::theme::family(preferences.theme_family).variant(appearance);
         Theme {
             text: preferences.fonts.scale(chosen.text),
             ..preferences.theme_overrides.apply(chosen)

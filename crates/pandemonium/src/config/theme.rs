@@ -1,44 +1,74 @@
 //! The shape a theme takes on disk, how one is read in, and how one is
 //! written out.
 //!
-//! A theme file names a family and gives either appearance of it. Every
-//! colour is optional and falls back to the family the editor starts in, so a
-//! file that renames three colours is a theme, and a colour added to the
-//! editor later does not invalidate the files written before it. Colours are
-//! named as [`crate::config::tokens`] names them, and written the way they
-//! are written everywhere else: `"#rrggbb"`, or `"#rrggbbaa"` when a colour
-//! is translucent.
+//! A theme file names its family, may name a family it builds on, and gives
+//! what it paints in either appearance:
 //!
-//! The reader's overrides are written in the same shape, one appearance at
-//! a time, so a set of overrides pasted into a theme file is a theme.
+//! ```yaml
+//! name: My Theme
+//! extends: Ember
+//! dark:
+//!   colors:
+//!     background: "#101010"
+//!   syntax:
+//!     keyword: "#ff7b72"
+//!   terminal:
+//!     ansi: ["#000000", ...]
+//!     cursor: "#bfbfbf"
+//!   emphasis:
+//!     selection: 0.5
+//! ```
+//!
+//! Everything is optional and falls back to the family beneath, so a file
+//! that repaints three colours is a theme, and a colour added to the editor
+//! later does not invalidate the files written before it. Colours are named
+//! as [`crate::theme::TOKENS`] names them, and written the way they are
+//! written everywhere else: `"#rrggbb"`, or `"#rrggbbaa"` when a colour is
+//! translucent. The families the editor ships are written the same way and
+//! compiled in, and the reader's overrides are one appearance's colours at a
+//! time in the same shape, so a set of overrides pasted into a theme file is
+//! a theme. A colour that will not read is skipped, like a binding in a
+//! keymap that will not: a theme half written must not stop the editor
+//! opening.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
 use pm_gfx::Rgba;
-use pm_ui::{Appearance, DEFAULT_FAMILY, Theme, ThemeFamily};
+use pm_ui::Appearance;
 use serde::{Deserialize, Serialize};
 
 use crate::config::overrides::ThemeOverrides;
 use crate::config::paths;
-use crate::config::tokens::{self, Group, TOKENS};
-
-/// How many colours an ANSI palette has.
-const ANSI: usize = 16;
+use crate::theme::{self, ANSI, Group, Paint, TOKENS, ThemeFile};
 
 /// The extension a theme file has.
 const EXTENSION: &str = "yaml";
 
+/// The families the editor ships, in the order they are offered.
+const SHIPPED: [&str; 5] = [
+    include_str!("../../themes/pandemonium.yaml"),
+    include_str!("../../themes/fathom.yaml"),
+    include_str!("../../themes/ember.yaml"),
+    include_str!("../../themes/verdant.yaml"),
+    include_str!("../../themes/vs-code.yaml"),
+];
+
 /// A theme family as it is written down.
 #[derive(Debug, Deserialize, Serialize)]
-pub(super) struct StoredFamily {
+struct StoredFamily {
     /// The name the picker shows, which both appearances are named after.
     name: String,
-    /// The dark appearance, where it differs from the default family's.
-    dark: Option<StoredTheme>,
-    /// The light appearance, where it differs from the default family's.
-    light: Option<StoredTheme>,
+    /// The family it builds on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    extends: Option<String>,
+    /// What it paints over the dark appearance beneath.
+    #[serde(default, skip_serializing_if = "StoredTheme::is_empty")]
+    dark: StoredTheme,
+    /// What it paints over the light appearance beneath.
+    #[serde(default, skip_serializing_if = "StoredTheme::is_empty")]
+    light: StoredTheme,
 }
 
 /// The reader's overrides, as they are written down.
@@ -66,6 +96,9 @@ struct StoredTheme {
     /// The colours a terminal grid is drawn in.
     #[serde(skip_serializing_if = "StoredTerminal::is_empty")]
     terminal: StoredTerminal,
+    /// How strongly the translucent parts of the window are drawn, by key.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    emphasis: BTreeMap<String, f32>,
 }
 
 /// The colours a terminal grid is drawn in, as they are written down.
@@ -80,30 +113,42 @@ struct StoredTerminal {
     named: BTreeMap<String, String>,
 }
 
-/// Every theme written in the editor's home, in the order their files sort.
+/// The families the editor ships.
 ///
-/// A file that will not read or will not parse is skipped rather than
-/// argued with: a theme the reader is halfway through writing must not stop
-/// the editor opening.
-pub(super) fn installed() -> Vec<ThemeFamily> {
-    paths::texts(paths::themes(), EXTENSION)
+/// # Panics
+///
+/// Panics if one of them will not parse as a theme at all, which is a file
+/// compiled into the binary that nothing running can repair.
+pub(super) fn shipped() -> Vec<ThemeFile> {
+    SHIPPED
         .iter()
-        .filter_map(|text| serde_norway::from_str::<StoredFamily>(text).ok())
-        .map(StoredFamily::into_family)
+        .map(|text| {
+            serde_norway::from_str::<StoredFamily>(text)
+                .unwrap_or_else(|error| panic!("a shipped theme does not parse: {error}"))
+                .into_file()
+        })
         .collect()
 }
 
-/// Writes a family called `name`, drawn `dark` and `light`, into the
-/// editor's home as a theme of its own, saying where it went.
-///
-/// The file is named after the family, and a file already there is left
-/// alone: a second theme of the same name is written beside it instead.
-pub(super) fn write(name: &str, dark: &Theme, light: &Theme) -> Option<PathBuf> {
+/// Every theme written in the editor's home, in the order their files sort.
+pub(super) fn installed() -> Vec<ThemeFile> {
+    paths::texts(paths::themes(), EXTENSION)
+        .iter()
+        .filter_map(|text| serde_norway::from_str::<StoredFamily>(text).ok())
+        .map(StoredFamily::into_file)
+        .collect()
+}
+
+/// Writes a family called `name` that builds on `extends` with `overrides`
+/// painted over it into the editor's home, saying where it went.
+pub(super) fn write(name: &str, extends: &str, overrides: &ThemeOverrides) -> Option<PathBuf> {
     let path = paths::unused_file(&paths::themes()?, name, "theme", EXTENSION)?;
+    let written = StoredOverrides::of(overrides);
     let family = StoredFamily {
         name: name.to_owned(),
-        dark: Some(StoredTheme::of(dark)),
-        light: Some(StoredTheme::of(light)),
+        extends: Some(extends.to_owned()),
+        dark: written.dark,
+        light: written.light,
     };
     let text = serde_norway::to_string(&family).ok()?;
     fs::write(&path, text).ok()?;
@@ -111,15 +156,13 @@ pub(super) fn write(name: &str, dark: &Theme, light: &Theme) -> Option<PathBuf> 
 }
 
 impl StoredFamily {
-    /// The family this file describes, over the family the editor starts in.
-    fn into_family(self) -> ThemeFamily {
-        let base = pm_ui::family(DEFAULT_FAMILY);
-        let dark = self.dark.unwrap_or_default();
-        let light = self.light.unwrap_or_default();
-        ThemeFamily {
-            name: leak(self.name.clone()),
-            dark: dark.into_theme(base.dark, &self.name, Appearance::Dark),
-            light: light.into_theme(base.light, &self.name, Appearance::Light),
+    /// The family this file describes.
+    fn into_file(self) -> ThemeFile {
+        ThemeFile {
+            name: self.name.leak(),
+            extends: self.extends,
+            dark: self.dark.paint(),
+            light: self.light.paint(),
         }
     }
 }
@@ -145,42 +188,17 @@ impl StoredOverrides {
 }
 
 impl StoredTheme {
-    /// This appearance over `base`, named after the family it belongs to.
-    fn into_theme(self, base: Theme, family: &str, appearance: Appearance) -> Theme {
-        let suffix = match appearance {
-            Appearance::Dark => "Dark",
-            Appearance::Light => "Light",
-        };
-        let mut theme = Theme {
-            name: leak(format!("{family} {suffix}")),
-            appearance,
-            ..base
-        };
-        for (token, color) in self.colors() {
-            TOKENS[token].write(&mut theme, color);
-        }
-        if let Some(ansi) = self.terminal.palette() {
-            theme.terminal.ansi = ansi;
-        }
-        theme
-    }
-
-    /// `theme` written out in full, its palette included.
-    fn of(theme: &Theme) -> Self {
-        let colors = (0..TOKENS.len())
-            .map(|token| (token, TOKENS[token].read(theme)))
-            .collect();
-        let mut stored = Self::written(&colors);
-        stored.terminal.ansi = Some(
-            theme
-                .terminal
-                .ansi
+    /// What this appearance paints, less anything it cannot read.
+    fn paint(&self) -> Paint {
+        Paint {
+            colors: self.colors(),
+            palette: self.terminal.palette(),
+            weights: self
+                .emphasis
                 .iter()
-                .copied()
-                .map(tokens::hex)
+                .filter_map(|(key, value)| Some((theme::weight(key)?, *value)))
                 .collect(),
-        );
-        stored
+        }
     }
 
     /// `colors` written under the groups and keys that name them.
@@ -193,7 +211,7 @@ impl StoredTheme {
                 Group::Syntax => &mut stored.syntax,
                 Group::Terminal => &mut stored.terminal.named,
             };
-            group.insert(token.key.to_owned(), tokens::hex(*color));
+            group.insert(token.key.to_owned(), theme::hex(*color));
         }
         stored
     }
@@ -208,15 +226,18 @@ impl StoredTheme {
         .into_iter()
         .flat_map(|(group, written)| {
             written.iter().filter_map(move |(key, hex)| {
-                Some((tokens::find(group, key)?, tokens::from_hex(hex)?))
+                Some((theme::token(group, key)?, theme::from_hex(hex)?))
             })
         })
         .collect()
     }
 
-    /// Whether this names no colour at all.
+    /// Whether this names nothing at all.
     fn is_empty(&self) -> bool {
-        self.colors.is_empty() && self.syntax.is_empty() && self.terminal.is_empty()
+        self.colors.is_empty()
+            && self.syntax.is_empty()
+            && self.terminal.is_empty()
+            && self.emphasis.is_empty()
     }
 }
 
@@ -230,7 +251,7 @@ impl StoredTerminal {
         let written = self.ansi.as_ref().filter(|written| written.len() == ANSI)?;
         let parsed = written
             .iter()
-            .map(|hex| tokens::from_hex(hex))
+            .map(|hex| theme::from_hex(hex))
             .collect::<Option<Vec<_>>>()?;
         parsed.try_into().ok()
     }
@@ -239,13 +260,4 @@ impl StoredTerminal {
     fn is_empty(&self) -> bool {
         self.ansi.is_none() && self.named.is_empty()
     }
-}
-
-/// `name` as a name that lives as long as the editor does.
-///
-/// A theme is read once at launch and drawn from until the window closes, so
-/// the handful of names a reader's themes bring are given the lifetime the
-/// built-in ones already have rather than making every theme own its text.
-fn leak(name: String) -> &'static str {
-    name.leak()
 }

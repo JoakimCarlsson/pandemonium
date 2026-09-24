@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use pm_core::Bootstrap;
 use pm_text::Indent;
-use pm_ui::{Appearance, DEFAULT_FAMILY, families};
+use pm_ui::Appearance;
 use serde::{Deserialize, Serialize};
 
 use crate::config::fonts::Fonts;
@@ -18,6 +18,7 @@ use crate::config::overrides::ThemeOverrides;
 use crate::editor::Display;
 use crate::keymap::{self, Action, Changes, DEFAULT_KEYMAP, Keymap, Sequence};
 use crate::message::Message;
+use crate::theme::{DEFAULT_FAMILY, families};
 
 /// The sizes a font can be set at, in logical pixels.
 const FONT_SIZES: RangeInclusive<f32> = 8.0..=40.0;
@@ -388,7 +389,7 @@ impl Preferences {
         match message {
             Message::SetThemeMode(mode) => self.theme_mode = mode,
             Message::SetThemeFamily(index) => {
-                self.theme_family = index.min(families().len() - 1);
+                self.theme_family = index.min(families().len().saturating_sub(1));
             }
             Message::SetKeymap(index) => {
                 self.keymap = index.min(keymap::keymaps().len().saturating_sub(1));

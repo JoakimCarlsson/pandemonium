@@ -5,12 +5,13 @@
 use pm_ui::Theme;
 
 use crate::app::App;
-use crate::config::{self, FontSlot, TOKENS, WorktreePaths};
+use crate::config::{self, FontSlot, WorktreePaths};
 use crate::editor::Habits;
 use crate::message::Message;
 use crate::panes::{Content, Item};
 use crate::picker::{Choice, Kind, Row};
 use crate::settings::{SettingsPane, settings_pane};
+use crate::theme::{self, TOKENS};
 
 impl App {
     /// Brings the settings pane forward, opening it in the pane with the
@@ -187,7 +188,7 @@ impl App {
         let Some(color) = TOKENS.get(token).map(|found| found.read(&self.theme())) else {
             return;
         };
-        self.open_picker_with(Kind::ThemeColor(token), Vec::new(), config::hex(color));
+        self.open_picker_with(Kind::ThemeColor(token), Vec::new(), theme::hex(color));
     }
 
     /// Repaints `token` in the colour typed, over the appearance in front.
@@ -196,11 +197,11 @@ impl App {
     /// colour the family itself gives it is no override at all, so typing
     /// that takes the override away rather than writing it down.
     pub(super) fn set_theme_color(&mut self, token: usize, typed: &str) {
-        let (Some(color), Some(found)) = (config::from_hex(typed), TOKENS.get(token)) else {
+        let (Some(color), Some(found)) = (theme::from_hex(typed), TOKENS.get(token)) else {
             return;
         };
         let appearance = self.theme().appearance;
-        let family = pm_ui::family(self.preferences.theme_family).variant(appearance);
+        let family = theme::family(self.preferences.theme_family).variant(appearance);
         let overrides = &mut self.preferences.theme_overrides;
         match found.read(&family) == color {
             true => overrides.clear(appearance, token),
@@ -213,7 +214,7 @@ impl App {
     fn ask_theme_name(&mut self) {
         let named = format!(
             "{} Custom",
-            pm_ui::family(self.preferences.theme_family).name
+            theme::family(self.preferences.theme_family).name
         );
         self.open_picker_with(Kind::ThemeName, Vec::new(), named);
     }

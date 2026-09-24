@@ -16,13 +16,12 @@ use pm_ui::{
     v_flex,
 };
 
-use crate::config::{
-    FontSlot, Group, Preference, Preferences, Step, TOKENS, ThemeMode, WorktreePaths, hex, in_group,
-};
+use crate::config::{FontSlot, Preference, Preferences, Step, ThemeMode, WorktreePaths};
 use crate::editor::CursorShape;
 use crate::keymap::{Action, Keymap};
 use crate::message::Message;
 use crate::settings::state::{Recording, Settings, SettingsPage, SettingsSection, SettingsView};
+use crate::theme::{self, Group, TOKENS, hex, in_group};
 use crate::workspace::shortened;
 
 /// Width of the sidebar listing the pages.
@@ -321,6 +320,7 @@ fn section_rows(
                 "Family",
                 "The family the editor is painted in; themes in the editor's home are listed too",
                 theme_gallery(
+                    theme::families(),
                     shown_appearance(theme, preferences),
                     preferences.theme_family,
                     Message::SetThemeFamily,
@@ -556,7 +556,7 @@ fn theme_color_rows(theme: &Theme, preferences: &Preferences) -> Vec<Div<Message
         Appearance::Dark => "dark",
         Appearance::Light => "light",
     };
-    let family = pm_ui::family(preferences.theme_family).name;
+    let family = theme::family(preferences.theme_family).name;
     let summary = inline(
         theme,
         preferences,

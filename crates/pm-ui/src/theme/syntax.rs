@@ -3,7 +3,7 @@
 use pm_gfx::Rgba;
 
 /// The colours code is highlighted in.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Syntax {
     /// Keywords.
     pub keyword: Rgba,

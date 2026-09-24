@@ -9,19 +9,12 @@
 //! never against a value baked in when the element was built.
 
 mod colors;
-mod ember;
 mod emphasis;
-mod fathom;
-mod pandemonium;
 mod radii;
 mod sizes;
 mod syntax;
 mod terminal;
 mod text;
-mod verdant;
-mod vscode;
-
-use std::sync::RwLock;
 
 pub use colors::Colors;
 pub use emphasis::Emphasis;
@@ -64,6 +57,22 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// A theme with every colour left black and every other token at its
+    /// default: what a theme file is painted over when it builds on nothing.
+    pub fn unpainted(appearance: Appearance) -> Self {
+        Self {
+            name: "",
+            appearance,
+            colors: Colors::default(),
+            syntax: Syntax::default(),
+            terminal: Terminal::default(),
+            text: TextScale::DEFAULT,
+            size: Sizes::DEFAULT,
+            radius: Radii::DEFAULT,
+            emphasis: Emphasis::DEFAULT,
+        }
+    }
+
     /// This theme with the grid a file is edited in scaled by `factor`.
     ///
     /// Zooming an editor is zooming its text and nothing else: the bars, the
@@ -100,45 +109,4 @@ impl ThemeFamily {
             Appearance::Light => self.light,
         }
     }
-}
-
-/// Every family the editor ships with, in the order the picker offers them.
-pub const BUILT_IN: [ThemeFamily; 5] = [
-    pandemonium::family(),
-    fathom::family(),
-    ember::family(),
-    verdant::family(),
-    vscode::family(),
-];
-
-/// The family a first launch starts in, as an index into [`families`].
-pub const DEFAULT_FAMILY: usize = 0;
-
-/// The families on offer: the built-in ones, and any that were installed.
-static INSTALLED: RwLock<&'static [ThemeFamily]> = RwLock::new(&BUILT_IN);
-
-/// Puts `extra` on offer after the built-in families, in place of whatever
-/// was installed before.
-///
-/// Themes read off disk come through here, so the picker, the preferences
-/// and the window all see one list rather than each assembling its own. It
-/// is called at launch and again when the reader saves a theme of their
-/// own; the handful of lists a session installs live as long as it does,
-/// so a frame still holding the last one never sees it go.
-pub fn install(extra: Vec<ThemeFamily>) {
-    let installed = BUILT_IN.into_iter().chain(extra).collect::<Vec<_>>().leak();
-    if let Ok(mut families) = INSTALLED.write() {
-        *families = installed;
-    }
-}
-
-/// Every family on offer, in the order the picker offers them.
-pub fn families() -> &'static [ThemeFamily] {
-    INSTALLED.read().map_or(&BUILT_IN, |families| *families)
-}
-
-/// The family at `index`, or the default one when the index is out of range.
-pub fn family(index: usize) -> ThemeFamily {
-    let families = families();
-    *families.get(index).unwrap_or(&families[DEFAULT_FAMILY])
 }

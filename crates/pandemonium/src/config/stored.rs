@@ -10,7 +10,6 @@ use std::path::PathBuf;
 
 use pm_core::Bootstrap;
 use pm_text::Server;
-use pm_ui::families;
 use serde::{Deserialize, Serialize};
 
 use crate::config::fonts::Fonts;
@@ -313,7 +312,7 @@ impl Stored {
             theme_family: self
                 .theme_family
                 .as_deref()
-                .and_then(family_index)
+                .and_then(crate::theme::find)
                 .unwrap_or(defaults.theme_family),
             theme_overrides: self
                 .theme_overrides
@@ -414,7 +413,11 @@ impl Stored {
 
         Self {
             theme_mode: Some(preferences.theme_mode),
-            theme_family: Some(pm_ui::family(preferences.theme_family).name.to_owned()),
+            theme_family: Some(
+                crate::theme::family(preferences.theme_family)
+                    .name
+                    .to_owned(),
+            ),
             theme_overrides: (!overrides.is_empty()).then_some(overrides),
             ui_font_family: fonts.interface_family.clone(),
             ui_font_size: Some(fonts.interface_size),
@@ -620,9 +623,4 @@ impl StoredCursorShape {
             Self::Underline => CursorShape::Underline,
         }
     }
-}
-
-/// The index of the family called `name`, of the ones on offer.
-pub(super) fn family_index(name: &str) -> Option<usize> {
-    families().iter().position(|family| family.name == name)
 }

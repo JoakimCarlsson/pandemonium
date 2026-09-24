@@ -4,7 +4,7 @@
 use pm_gfx::Rgba;
 
 /// The semantic colours elements are painted in.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Colors {
     /// The window behind everything.
     pub background: Rgba,

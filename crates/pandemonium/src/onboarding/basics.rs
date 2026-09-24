@@ -7,6 +7,7 @@ use pm_ui::{
 
 use crate::config::{Preference, Preferences, ThemeMode};
 use crate::message::Message;
+use crate::theme;
 
 /// The settings themselves, in the order a first launch wants them.
 pub(super) fn basics(theme: &Theme, preferences: &Preferences) -> Div<Message> {
@@ -65,6 +66,7 @@ fn theme_section(theme: &Theme, preferences: &Preferences) -> Div<Message> {
                 .child(toggle_row(options, selected).w_px(space(48.0))),
         )
         .child(theme_gallery(
+            theme::families(),
             shown,
             preferences.theme_family,
             Message::SetThemeFamily,

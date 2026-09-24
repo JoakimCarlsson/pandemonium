@@ -42,10 +42,9 @@ pub use scroll::{Scroll, ScrollArea, Scrolled, scroll_area};
 pub use split::{Split, split};
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Style, Styled, space};
 pub use text::{Text, text};
-pub use theme::install as install_themes;
 pub use theme::{
-    Appearance, BUILT_IN, Colors, DEFAULT_FAMILY, Emphasis, Font, Radii, Sizes, Syntax, Terminal,
-    TextScale, TextSize, Theme, ThemeFamily, families, family,
+    Appearance, Colors, Emphasis, Font, Radii, Sizes, Syntax, Terminal, TextScale, TextSize, Theme,
+    ThemeFamily,
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{

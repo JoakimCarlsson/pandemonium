@@ -128,7 +128,7 @@ tokens! {
 }
 
 /// The index into [`TOKENS`] of the colour `key` names in `group`.
-pub fn find(group: Group, key: &str) -> Option<usize> {
+pub fn token(group: Group, key: &str) -> Option<usize> {
     TOKENS
         .iter()
         .position(|token| token.group == group && token.key == key)

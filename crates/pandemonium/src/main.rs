@@ -30,6 +30,7 @@ mod prompt;
 mod review;
 mod settings;
 mod terminal;
+mod theme;
 mod tree;
 mod workspace;
 
