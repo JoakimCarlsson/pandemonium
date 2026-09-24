@@ -10,11 +10,13 @@
 mod buffer;
 mod cursor;
 mod diagnostic;
+pub mod frame;
 mod hint;
 mod history;
 mod indent;
 mod language;
 mod lsp;
+pub mod program;
 mod syntax;
 
 pub use buffer::Buffer;

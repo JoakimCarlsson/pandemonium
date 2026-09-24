@@ -19,11 +19,13 @@ use serde_json::{Value, json};
 
 use crate::cursor::Position;
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::frame;
 use crate::language::Server;
 use crate::lsp::answer::{self, Answer, Request};
 use crate::lsp::encoding::{Encoding, Files};
+use crate::lsp::uri;
 use crate::lsp::watch::{Watched, Watchers};
-use crate::lsp::{transport, uri};
+use crate::program::path_beside;
 use crate::syntax::Highlight;
 
 /// The request identifier the handshake is sent under.
@@ -337,7 +339,7 @@ impl Client {
     /// Writes one message to the server, dropping it if the pipe has gone.
     fn send(&self, message: &Value) {
         if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = transport::write(&mut *stdin, message);
+            let _ = frame::write(&mut *stdin, message);
         }
     }
 }
@@ -363,7 +365,7 @@ impl Answers {
     /// Writes one message, dropping it if the pipe has gone.
     fn send(&self, message: &Value) {
         if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = transport::write(&mut *stdin, message);
+            let _ = frame::write(&mut *stdin, message);
         }
     }
 }
@@ -388,7 +390,7 @@ impl Reader {
     /// A `tsc` too old to know `--lsp` exits at once, and a save must not wait
     /// on it for ever.
     fn run(mut self) {
-        while let Ok(Some(message)) = transport::read(&mut self.stdout) {
+        while let Ok(Some(message)) = frame::read(&mut self.stdout) {
             self.dispatch(&message);
         }
         let Ok(mut state) = self.state.lock() else {
@@ -575,18 +577,6 @@ fn diagnostic(published: &lsp_types::Diagnostic) -> Diagnostic {
 /// One end of a published range, in the editor's own terms.
 fn position(published: lsp_types::Position) -> Position {
     Position::new(published.line as usize, published.character as usize)
-}
-
-/// The path a server at `program` runs with: its own directory first.
-///
-/// A server written in JavaScript starts through `env node`, and the node it
-/// means is the one installed beside it, which a window started from a
-/// desktop session is not told about the way a shell is.
-fn path_beside(program: &Path) -> std::ffi::OsString {
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    let beside = program.parent().map(Path::to_path_buf);
-    std::env::join_paths(beside.into_iter().chain(std::env::split_paths(&inherited)))
-        .unwrap_or(inherited)
 }
 
 /// What the editor tells a server about itself when it starts one.

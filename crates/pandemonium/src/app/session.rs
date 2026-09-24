@@ -187,6 +187,7 @@ impl App {
 
         self.drop_tabs(&|held| held == scope);
         self.terminals.stop_all(scope);
+        self.debuggers.forget(|held| held == scope);
         self.files.remove(&scope);
         self.reviews.remove(&scope);
         self.sweep();

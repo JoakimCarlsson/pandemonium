@@ -8,6 +8,7 @@
 mod agent;
 mod clicks;
 mod commands;
+mod debug;
 mod disk;
 mod drag;
 mod excerpts;
@@ -80,6 +81,8 @@ pub(super) enum Writing {
     Commit,
     /// The prompt of one agent session.
     Prompt(crate::agent::TalkId),
+    /// The console of the program one worktree is debugging.
+    Console(Scope),
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -99,6 +102,8 @@ pub enum Wake {
     Clone,
     /// Something wrote into a worktree the window is watching.
     Disk,
+    /// A debug adapter has said something about the program it is debugging.
+    Debug,
 }
 
 /// The remote operation currently running for the active project.
@@ -312,6 +317,8 @@ pub struct App {
     agents: Talks,
     /// The shells the window is running, one per project.
     terminals: Terminals,
+    /// The breakpoints each worktree keeps, and the program each debugs.
+    debuggers: crate::debug::Debuggers,
     /// Whether keystrokes go to the terminal rather than to the window.
     terminal_focused: bool,
     /// How far back the terminal was scrolled when a scrollbar drag began.
@@ -451,6 +458,7 @@ impl App {
             menu: None,
             agents: Talks::default(),
             terminals: Terminals::default(),
+            debuggers: crate::debug::Debuggers::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
             editor_scroll_origin: None,
@@ -499,6 +507,7 @@ impl App {
 
         match self.writing {
             Some(Writing::Prompt(_)) => return Some("prompt"),
+            Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
             None => {}
         }
@@ -506,6 +515,7 @@ impl App {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
+            (true, _) if showing(|item| item.debugged().is_some()) => Some("debug"),
             (true, _) if showing(crate::panes::Item::is_window_wide) => Some("settings"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
@@ -845,6 +855,10 @@ impl App {
         }
         self.menu = None;
         if self.tree_command(message) {
+            return;
+        }
+        if self.debug_command(message) {
+            self.request_redraw();
             return;
         }
         if self.tab_command(message) {
@@ -1228,6 +1242,7 @@ impl App {
             self.excerpts.retain(|scope, _| scope.project() != id);
             self.trail.close_project(id);
             self.terminals.close(id);
+            self.debuggers.forget(|scope| scope.project() == id);
             self.agents.close_project(id);
             self.sessions.close_project(id);
             self.drop_project_tabs(id);
@@ -1637,6 +1652,10 @@ impl App {
                 .agents
                 .get_mut(session)
                 .map(crate::agent::Talk::prompt_mut),
+            Writing::Console(scope) => self
+                .debuggers
+                .get_mut(scope)
+                .map(crate::debug::Debugger::console_mut),
         }
     }
 
@@ -1983,6 +2002,11 @@ impl ApplicationHandler<Wake> for App {
                     self.request_redraw();
                 }
             }
+            Wake::Debug => {
+                if self.take_debugged() {
+                    self.request_redraw();
+                }
+            }
         }
     }
 
@@ -2029,6 +2053,7 @@ impl ApplicationHandler<Wake> for App {
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.agents.set_notify(self.waker(Wake::Agent));
+        self.debuggers.set_notify(self.waker(Wake::Debug));
         self.editor.set_notify(self.waker(Wake::Language));
         self.editor.set_language_servers(&self.language_servers);
         self.follow_preferences();

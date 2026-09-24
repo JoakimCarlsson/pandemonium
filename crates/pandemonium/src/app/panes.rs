@@ -170,6 +170,7 @@ impl App {
             | Item::Review(_)
             | Item::Excerpts(_)
             | Item::Agent(..)
+            | Item::Debug(_)
             | Item::Settings => false,
         }
     }
@@ -245,7 +246,8 @@ impl App {
             Item::Review(scope)
             | Item::Change(scope, _)
             | Item::Excerpts(scope)
-            | Item::Agent(scope, _) => Some(scope),
+            | Item::Agent(scope, _)
+            | Item::Debug(scope) => Some(scope),
             Item::Settings => None,
         }
     }
@@ -357,6 +359,9 @@ impl App {
         match self.writing? {
             crate::app::Writing::Commit => Some(self.review()?.message().text()),
             crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
+            crate::app::Writing::Console(scope) => {
+                Some(self.debuggers.get(scope)?.console().text())
+            }
         }
     }
 
@@ -408,6 +413,9 @@ impl App {
                     kind: SavedKind::Settings,
                     ..SavedTab::default()
                 });
+            }
+            if item.debugged().is_some() {
+                return None;
             }
             let scope = self.scope_of(item)?;
             let project = self.open.get(scope.project())?.root().to_path_buf();
@@ -684,6 +692,7 @@ impl App {
                 | Item::Review(_)
                 | Item::Excerpts(_)
                 | Item::Agent(..)
+                | Item::Debug(_)
                 | Item::Settings => {}
             }
         }
@@ -864,6 +873,17 @@ impl App {
                     pinned: false,
                 })
             }
+            Item::Debug(scope) => Some(TabEntry {
+                item,
+                name: self.debuggers.get(scope).map_or_else(
+                    || "Debug".to_owned(),
+                    |debugger| debugger.session().scenario().label.clone(),
+                ),
+                icon: IconName::Debug,
+                dirty: false,
+                preview: false,
+                pinned: false,
+            }),
             Item::Settings => Some(TabEntry {
                 item,
                 name: "Settings".to_owned(),
@@ -959,6 +979,10 @@ impl App {
                     .filter(|(open, _)| file == Some(*open))
                     .map(|(_, span)| span),
                 found: self.found_in(file),
+                breakpoints: file
+                    .map(|file| self.breakpoints_of(file))
+                    .unwrap_or_default(),
+                stopped: file.and_then(|file| self.stopped_in(file)),
                 caret,
                 display,
                 crumbs: file
@@ -1073,6 +1097,12 @@ impl App {
                 Some(excerpts) => Content::Excerpts(excerpts.clone()),
                 None => Content::Empty,
             },
+            Some(Item::Debug(scope)) => Content::Built(Box::new(crate::debug::debug_pane(
+                theme,
+                self.debuggers.get(scope),
+                self.writing == Some(crate::app::Writing::Console(scope)),
+                width,
+            ))),
             Some(Item::Settings) => self.settings_content(theme),
             None => Content::Empty,
         }

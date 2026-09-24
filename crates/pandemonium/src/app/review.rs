@@ -640,6 +640,7 @@ impl App {
             | Item::Rendered(_)
             | Item::Excerpts(_)
             | Item::Agent(..)
+            | Item::Debug(_)
             | Item::Settings => None,
         }
     }

@@ -36,6 +36,11 @@ the domain; nothing in it knows that a UI exists.
   a queue, an encoder or a bind group.
 - `pm-text` — rope storage, syntax trees and the language-server client. Text
   as data; it neither lays out nor draws.
+- `pm-dap` — the debug adapter client: gdb, lldb-dap, debugpy and delve
+  started beside a worktree, the Debug Adapter Protocol on their pipe or
+  socket, and the scenarios a worktree's `.vscode/launch.json` or
+  `.zed/debug.json` describe. It borrows `pm-text`'s frame and program
+  lookup and knows nothing of panes or gutters.
 - `pm-vt` — terminal emulation: escape-sequence parser, cell grid, scrollback.
   Drives a plain shell and an agent CLI alike; it knows nothing about either.
 - `pm-vim` — modal editing over a `pm-text` buffer: a binding table written
@@ -83,7 +88,7 @@ which of them callers may name.
   same kind of item in the same pane tree: splittable, tabbable, closable. No
   bespoke docks, no panel that only one feature can live in.
 - **The layers point one way.** `pm-core` depends on nothing of ours; `pm-vim`
-  knows `pm-text` alone; `pm-ui` knows `pm-gfx` and not the binary; the binary
+  and `pm-dap` know `pm-text` alone; `pm-ui` knows `pm-gfx` and not the binary; the binary
   knows everyone. A layer never
   reaches back up.
 - **One seam, one place.** Creating a session, resolving a project, tearing a

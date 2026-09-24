@@ -72,6 +72,12 @@ impl App {
         );
         context.flag(keys::CHANGES_FOCUSED, self.changes_focused);
         context.set(keys::OS, keymap::platform());
+        let debugged = self.scope().and_then(|scope| self.debuggers.live(scope));
+        context.flag(keys::DEBUG_ACTIVE, debugged.is_some());
+        context.flag(
+            keys::DEBUG_STOPPED,
+            debugged.is_some_and(|session| session.standing() == pm_dap::Standing::Stopped),
+        );
         if let Some(extension) = self.focused_extension() {
             context.set(keys::FILE_EXTENSION, &extension);
         }
@@ -336,6 +342,11 @@ impl App {
         match writing {
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
+            Writing::Console(scope) => {
+                if let Some(debugger) = self.debuggers.get_mut(scope) {
+                    debugger.evaluate();
+                }
+            }
         }
     }
 
@@ -738,6 +749,10 @@ impl App {
         if let Some(shell) = self.focused_shell() {
             let lines = (delta / text.terminal.line_height).round() as isize;
             shell.borrow_mut().scroll(lines);
+            self.request_redraw();
+            return;
+        }
+        if self.scroll_debugger(delta) {
             self.request_redraw();
             return;
         }

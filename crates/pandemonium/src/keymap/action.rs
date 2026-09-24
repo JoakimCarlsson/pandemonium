@@ -326,6 +326,28 @@ pub enum Action {
     CloseWindow,
     /// Dismiss whatever is open on top: a palette, a prompt, a search.
     Cancel,
+    /// Choose what to debug in the worktree in front, and start it.
+    DebugStart,
+    /// Run the paused program on, or start debugging when nothing is.
+    DebugContinue,
+    /// Pause the running program.
+    DebugPause,
+    /// Run the paused program to the next line.
+    DebugStepOver,
+    /// Run it into the call on the line it paused on.
+    DebugStepInto,
+    /// Run it out of the call it paused in.
+    DebugStepOut,
+    /// Debug the program again from the start.
+    DebugRestart,
+    /// Stop debugging it.
+    DebugStop,
+    /// Set a breakpoint on the cursor's line, or clear the one there.
+    ToggleBreakpoint,
+    /// Clear every breakpoint of the worktree in front.
+    ClearBreakpoints,
+    /// Show the pane of the program being debugged.
+    OpenDebugger,
 }
 
 /// Every action, the name a keymap binds it by and the title a palette shows.
@@ -785,6 +807,29 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     ),
     (Action::CloseWindow, "window.close", "Close Window"),
     (Action::Cancel, "window.cancel", "Cancel"),
+    (Action::DebugStart, "debug.start", "Debug: Start Debugging"),
+    (
+        Action::DebugContinue,
+        "debug.continue",
+        "Debug: Start or Continue",
+    ),
+    (Action::DebugPause, "debug.pause", "Debug: Pause"),
+    (Action::DebugStepOver, "debug.step_over", "Debug: Step Over"),
+    (Action::DebugStepInto, "debug.step_into", "Debug: Step Into"),
+    (Action::DebugStepOut, "debug.step_out", "Debug: Step Out"),
+    (Action::DebugRestart, "debug.restart", "Debug: Restart"),
+    (Action::DebugStop, "debug.stop", "Debug: Stop"),
+    (
+        Action::ToggleBreakpoint,
+        "debug.toggle_breakpoint",
+        "Debug: Toggle Breakpoint",
+    ),
+    (
+        Action::ClearBreakpoints,
+        "debug.clear_breakpoints",
+        "Debug: Remove All Breakpoints",
+    ),
+    (Action::OpenDebugger, "debug.open", "Debug: Show Debugger"),
 ];
 
 /// The prefix of an action's name, and the heading its actions sit under.
@@ -804,6 +849,7 @@ const GROUPS: &[(&str, &str)] = &[
     ("go", "Navigation"),
     ("language", "Language"),
     ("git", "Git"),
+    ("debug", "Debug"),
     ("markdown", "Markdown"),
     ("window", "Window"),
 ];
@@ -915,6 +961,7 @@ impl Action {
                 | Self::PreviousChange
                 | Self::RevertChange
                 | Self::OpenMarkdownPreview
+                | Self::ToggleBreakpoint
         )
     }
 

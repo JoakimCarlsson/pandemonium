@@ -1780,6 +1780,7 @@ dependencies = [
  "arboard",
  "pm-acp",
  "pm-core",
+ "pm-dap",
  "pm-gfx",
  "pm-text",
  "pm-ui",
@@ -1890,6 +1891,14 @@ version = "0.1.0"
 dependencies = [
  "notify",
  "trash",
+]
+
+[[package]]
+name = "pm-dap"
+version = "0.1.0"
+dependencies = [
+ "pm-text",
+ "serde_json",
 ]
 
 [[package]]

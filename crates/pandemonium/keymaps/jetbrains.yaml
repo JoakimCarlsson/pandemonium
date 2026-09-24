@@ -498,3 +498,17 @@ bindings:
   - when: "search.focused && !search.replacing"
     keys:
       shift+enter: search.previous
+  - when: "true"
+    keys:
+      shift+f9: debug.start
+  - when: editor.focused
+    keys:
+      primary+f8: debug.toggle_breakpoint
+  - when: debug.active
+    keys:
+      f9: debug.continue
+      primary+f2: debug.stop
+      primary+f5: debug.restart
+      f8: debug.step_over
+      f7: debug.step_into
+      shift+f8: debug.step_out

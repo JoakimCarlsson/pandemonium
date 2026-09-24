@@ -187,6 +187,18 @@ pub enum Message {
     ShowEditorMenu(PaneId),
     /// Fold what this line of this pane holds, or unfold it.
     ToggleFold(PaneId, Position),
+    /// Set a breakpoint on this line of the file in this pane, or clear it.
+    ToggleBreakpoint(PaneId, Position),
+    /// Carry this debugging command out on the worktree's program.
+    ActOnDebugger(Action),
+    /// Look at the frame of the paused program's stack this names.
+    SelectFrame(i64),
+    /// Open the variable of the paused program this names, or close it.
+    ToggleVariable(i64),
+    /// Open the scope in this place of the selected frame's, or close it.
+    ToggleDebugScope(usize),
+    /// Put the debug console's cursor where a press landed, selecting to it.
+    WriteDebugConsole(ResizePhase, Position, Position),
     /// Give this pane the keyboard, then carry out this command in it.
     PaneAction(PaneId, Action),
     /// Send later keystrokes to this field of this pane's search bar.

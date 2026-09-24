@@ -5,6 +5,7 @@
 mod agent;
 mod app;
 mod config;
+mod debug;
 mod desktop;
 mod editor;
 mod excerpts;
