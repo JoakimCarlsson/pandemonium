@@ -100,6 +100,7 @@ impl App {
         let kind = picker.kind();
         let typed = picker.field().value().to_owned();
         let chosen = picker.chosen().cloned();
+        let place = picker.selected();
 
         self.picker = None;
         match (kind, chosen) {
@@ -108,6 +109,9 @@ impl App {
             (Kind::Rename, _) => self.rename_to(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::NewSession, _) => self.start_session(&typed),
+            (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
+                self.toggle_session_repository(root, typed, place);
+            }
             (Kind::CloneUrl, _) => self.clone_project(&typed),
             (Kind::LinkedPath, _) => self.add_worktree_path(WorktreePaths::Linked, &typed),
             (Kind::CopiedPath, _) => self.add_worktree_path(WorktreePaths::Copied, &typed),
@@ -155,17 +159,19 @@ impl App {
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
             Choice::Debug(scope, scenario) => self.start_debugging(scope, *scenario),
+            Choice::SessionRepository(_) => {}
+            Choice::StartSession => self.cut_session(),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::FetchRemote(project, remote) => {
                 self.run_in(
-                    pm_core::Scope::checkout(project),
+                    self.git_scope(project),
                     RemoteOperation::Fetch,
                     move |root| pm_core::fetch_from(root, &remote),
                 );
             }
             Choice::PushRemote(project, remote) => {
                 self.run_in(
-                    pm_core::Scope::checkout(project),
+                    self.git_scope(project),
                     RemoteOperation::Push,
                     move |root| pm_core::push_to(root, &remote),
                 );
@@ -210,6 +216,7 @@ impl App {
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
             Kind::Debug => self.debug_rows(),
+            Kind::SessionRepositories => self.session_repository_rows(),
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
@@ -284,20 +291,23 @@ impl App {
             .map(|project| Row {
                 section: None,
                 label: project.name().to_owned(),
-                detail: project.branch().to_owned(),
+                detail: project.branch().unwrap_or_default().to_owned(),
                 choice: Choice::Project(project.id()),
                 enabled: true,
             })
             .collect()
     }
 
-    /// Every local branch of the active project, current branch first.
+    /// Every local branch of the active project's active repository, current
+    /// branch first.
     fn branch_rows(&self) -> Vec<Row> {
-        let Some(project) = self.open.active() else {
+        let Some(id) = self.open.active().map(pm_core::Project::id) else {
             return Vec::new();
         };
-        let id = project.id();
-        pm_core::branches(project.root())
+        let Some(root) = self.repository_root(self.git_scope(id)) else {
+            return Vec::new();
+        };
+        pm_core::branches(&root)
             .into_iter()
             .map(|branch| {
                 let remote = branch.is_remote();
@@ -320,13 +330,16 @@ impl App {
             .collect()
     }
 
-    /// Every configured remote of the active project for fetching or pushing.
+    /// Every configured remote of the active project's active repository, for
+    /// fetching or pushing.
     fn remote_rows(&self, fetching: bool) -> Vec<Row> {
-        let Some(project) = self.open.active() else {
+        let Some(id) = self.open.active().map(pm_core::Project::id) else {
             return Vec::new();
         };
-        let id = project.id();
-        pm_core::remotes(project.root())
+        let Some(root) = self.repository_root(self.git_scope(id)) else {
+            return Vec::new();
+        };
+        pm_core::remotes(&root)
             .into_iter()
             .map(|remote| Row {
                 section: None,
@@ -355,20 +368,18 @@ impl App {
         self.change_branch(project, |root| pm_core::create_branch(root, name));
     }
 
-    /// Runs one branch-changing operation and refreshes every view of its project.
+    /// Runs one branch-changing operation in the active repository of
+    /// `project`, and refreshes every view of the project.
     fn change_branch(&mut self, project: ProjectId, change: impl FnOnce(&Path) -> pm_core::Said) {
-        let Some(root) = self
-            .open
-            .get(project)
-            .map(|project| project.root().to_path_buf())
+        let scope = self.git_scope(project);
+        let (Some(root), Some(repository)) = (self.root_of(scope), self.repository_root(scope))
         else {
             return;
         };
-        let scope = pm_core::Scope::checkout(project);
         let said = if self.editor.project_is_dirty(project) {
             Err("save or discard open editor changes before changing branch".to_owned())
         } else {
-            change(&root)
+            change(&repository)
         };
         let changed = said.is_ok();
         if let Some(review) = self.reviews.get_mut(&scope) {
@@ -391,14 +402,13 @@ impl App {
 
     /// Pushes the active branch, establishing its upstream when necessary.
     pub(super) fn push_branch(&mut self) {
-        let Some(project) = self.open.active() else {
+        let Some(scope) = self.scope() else {
             return;
         };
-        let id = pm_core::Scope::checkout(project.id());
         let upstream = self
             .reviews
-            .get(&id)
-            .and_then(|review| review.head().upstream.as_ref())
+            .get(&scope)
+            .and_then(|review| review.head()?.upstream.as_ref())
             .is_some();
         self.remote_operation(RemoteOperation::Push, move |root| {
             pm_core::push_branch(root, upstream)
@@ -444,7 +454,7 @@ impl App {
         if self.remote_operation.is_some() {
             return;
         }
-        let Some(root) = self.root_of(scope) else {
+        let Some(root) = self.repository_root(scope) else {
             return;
         };
         let results = self.git_results.clone();

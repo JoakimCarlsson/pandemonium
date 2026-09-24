@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::git::run::holding;
+
 /// How much of a commit hash names it.
 const SHORT_HASH: usize = 8;
 
@@ -28,19 +30,21 @@ pub struct Blame {
     pub uncommitted: bool,
 }
 
-/// Who last changed each line of `path`, in the repository at `root`.
+/// Who last changed each line of `path`, in the repository holding it at or
+/// below `root`.
 ///
 /// The lines come back in the order they are in the file, so the nth entry
 /// is what to say about the nth line. A file git will not blame — one that
 /// is not tracked, or a git that is not there — comes back empty.
 pub fn blame(root: &Path, path: &Path) -> Vec<Blame> {
-    let Ok(relative) = path.strip_prefix(root) else {
+    let root = holding(root, path);
+    let Ok(relative) = path.strip_prefix(&root) else {
         return Vec::new();
     };
     let Ok(output) = Command::new("git")
         .args(["blame", "--porcelain", "--"])
         .arg(relative)
-        .current_dir(root)
+        .current_dir(&root)
         .stderr(Stdio::null())
         .output()
     else {

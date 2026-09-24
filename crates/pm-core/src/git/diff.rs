@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::git::run::{within, written};
+use crate::git::run::{holding, within, written};
 
 /// How many unchanged lines are shown either side of a change.
 const CONTEXT: usize = 3;
@@ -117,14 +117,16 @@ impl Hunk {
     }
 }
 
-/// How `path` differs on `side`, in the worktree at `root`.
+/// How `path` differs on `side`, in the repository holding it at or below
+/// `root`.
 ///
 /// A file git will not diff — one outside the worktree, one whose side of
 /// the index holds nothing — comes back with nothing to show rather than as
 /// an error, because a diff with no hunks and a file that cannot be diffed
 /// read the same on the screen.
 pub fn diff(root: &Path, path: &Path, side: Side) -> Vec<Hunk> {
-    let Some(relative) = within(root, path) else {
+    let root = holding(root, path);
+    let Some(relative) = within(&root, path) else {
         return Vec::new();
     };
     let context = format!("-U{CONTEXT}");
@@ -145,7 +147,7 @@ pub fn diff(root: &Path, path: &Path, side: Side) -> Vec<Hunk> {
     }
     arguments.push(relative.as_os_str());
 
-    read(&written(root, arguments))
+    read(&written(&root, arguments))
 }
 
 /// How every file of the worktree at `root` differs on `side`.

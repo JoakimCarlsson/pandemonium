@@ -31,7 +31,8 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use pm_core::{FileTree, Projects, Scope, Sessions};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
@@ -170,6 +171,10 @@ pub struct App {
     working: usize,
     /// What a session being named is cut from, while one is being named.
     session_base: Option<String>,
+    /// What the session whose repositories are being picked is called.
+    session_name: String,
+    /// The repositories ticked for that session.
+    session_picks: BTreeSet<PathBuf>,
     /// The branches the open project menu offers to cut a session from.
     session_bases: Vec<String>,
     /// Whether that menu is showing them.
@@ -376,6 +381,8 @@ impl App {
             session: None,
             working: 0,
             session_base: None,
+            session_name: String::new(),
+            session_picks: BTreeSet::new(),
             session_bases: Vec::new(),
             showing_bases: false,
             open,
@@ -1349,7 +1356,9 @@ impl App {
             Message::OpenExcerpts => self.open_excerpts(),
             Message::RefreshChanges => self.reread_worktree(),
             Message::ToggleChangeStaged(index) => self.toggle_change_staged(index),
-            Message::ToggleGroupStaged(group) => self.toggle_group_staged(group),
+            Message::ToggleGroupStaged(repository, group) => {
+                self.toggle_group_staged(repository, group);
+            }
             Message::ToggleHunkStaged(index, staged, hunk) => {
                 self.toggle_hunk_staged(index, staged, hunk);
             }
@@ -1395,9 +1404,13 @@ impl App {
             }
             Message::ShowInputMenu => self.open_menu(MenuTarget::Input),
             Message::EditText(action) => self.act(action),
-            Message::WriteCommit(phase, anchor, head) => {
+            Message::WriteCommit(repository, phase, anchor, head) => {
+                if let Some(review) = self.review_mut() {
+                    review.activate(repository);
+                }
                 self.point_in(Writing::Commit, phase, anchor, head);
             }
+            Message::InRepository(repository, action) => self.in_repository(repository, action),
             _ => return false,
         }
         true
@@ -1519,14 +1532,14 @@ impl App {
         self.editor_focused = false;
     }
 
-    /// Asks for a repository and adds the one that comes back to the window.
+    /// Asks for a folder and adds the project it belongs to to the window.
     ///
     /// The picker is the platform's own, so there is nothing to do when it is
-    /// dismissed, and nothing to say when the folder it answers with is not in
-    /// a repository — the set of open projects simply does not change.
+    /// dismissed. A folder inside a repository opens that repository; any
+    /// other folder opens as a project of its own.
     fn open_project(&mut self) {
         let Some(root) = rfd::FileDialog::new()
-            .set_title("Open a repository")
+            .set_title("Open a folder")
             .pick_folder()
         else {
             return;
@@ -1658,7 +1671,7 @@ impl App {
     /// The box of text that has the keyboard, to write in.
     pub(super) fn written_in(&mut self) -> Option<&mut crate::input::Input> {
         match self.writing? {
-            Writing::Commit => self.review_mut().map(crate::review::Review::message_mut),
+            Writing::Commit => self.review_mut()?.message_mut(),
             Writing::Prompt(session) => self
                 .agents
                 .get_mut(session)
@@ -2002,8 +2015,7 @@ impl ApplicationHandler<Wake> for App {
                     .unwrap_or_default();
                 for (scope, said) in finished {
                     if let Some(review) = self.reviews.get_mut(&scope) {
-                        review.finish();
-                        review.report(said);
+                        review.settle(said);
                     }
                 }
                 self.remote_operation = None;

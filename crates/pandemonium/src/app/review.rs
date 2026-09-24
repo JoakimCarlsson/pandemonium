@@ -17,12 +17,29 @@ use crate::desktop;
 use crate::editor::FileId;
 use crate::panes::Item;
 use crate::prompt::{Answer, Prompt};
-use crate::review::{ChangeId, Group, Review};
+use crate::review::{ChangeId, Group, RepositoryAction, Review};
 
 impl App {
     /// The review of the project the window is pointed at.
     pub(super) fn review(&self) -> Option<&Review> {
         self.reviews.get(&self.scope()?)
+    }
+
+    /// Where the active repository of `scope`'s review sits: the one a branch
+    /// is switched in, and a fetch, a pull or a push is made from.
+    pub(super) fn repository_root(&self, scope: Scope) -> Option<PathBuf> {
+        self.reviews
+            .get(&scope)?
+            .active_root()
+            .map(std::path::Path::to_path_buf)
+    }
+
+    /// The worktree of `project` a branch or remote command is carried out in:
+    /// the one the window is pointed at, when it is one of `project`'s.
+    pub(super) fn git_scope(&self, project: pm_core::ProjectId) -> Scope {
+        self.scope()
+            .filter(|scope| scope.project() == project)
+            .unwrap_or_else(|| Scope::checkout(project))
     }
 
     /// That review, to stage, throw away or commit through.
@@ -36,7 +53,17 @@ impl App {
     /// A worktree the window has just been pointed at is read for the first
     /// time here; one whose project has closed is forgotten, because a review
     /// of a worktree nobody is looking at answers a question nobody asked.
+    /// Each project's repositories are looked for again first, so a session
+    /// is cut from the repositories that are there now.
     pub(super) fn reread_changes(&mut self) {
+        let projects = self
+            .open
+            .iter()
+            .map(pm_core::Project::id)
+            .collect::<Vec<_>>();
+        for project in projects {
+            self.open.refresh(project);
+        }
         self.reread_sessions();
         if let Some(scope) = self.scope() {
             self.point_at(scope);
@@ -164,6 +191,26 @@ impl App {
         match holder {
             Some(pane) => self.activate_tab(pane, item),
             None => self.show_item(self.panes.focus(), scope, item, false),
+        }
+    }
+
+    /// Makes the `repository`-th repository of the review the active one,
+    /// then carries out what its control asked for there.
+    ///
+    /// A menu asked for from a repository that was not already active opens
+    /// where the pointer is: the one it would anchor to was measured beside
+    /// the repository that was.
+    pub(super) fn in_repository(&mut self, repository: usize, action: RepositoryAction) {
+        let Some(review) = self.review_mut() else {
+            return;
+        };
+        let moved = review.active() != repository;
+        review.activate(repository);
+        if moved && action == RepositoryAction::ShowCommitMenu {
+            return self.open_menu(crate::app::MenuTarget::Commit);
+        }
+        if let Some(message) = action.message() {
+            self.apply(message);
         }
     }
 
@@ -350,14 +397,15 @@ impl App {
         self.reread_worktree();
     }
 
-    /// Puts a whole group into the index, or takes the whole of it back out.
-    pub(super) fn toggle_group_staged(&mut self, group: Group) {
+    /// Puts a whole group of the `repository`-th repository into the index,
+    /// or takes the whole of it back out.
+    pub(super) fn toggle_group_staged(&mut self, repository: usize, group: Group) {
         let Some(review) = self.review() else {
             return;
         };
-        let (staged, count) = review.staged_in(group);
+        let (staged, count) = review.staged_in(repository, group);
         let ids = review
-            .grouped(group)
+            .grouped(repository, group)
             .into_iter()
             .filter_map(|index| review.id_of(index))
             .collect::<Vec<_>>();

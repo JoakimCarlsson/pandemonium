@@ -1,9 +1,14 @@
-//! What makes a path a repository: its root, and the branch it has out.
+//! What makes a path a repository: its root, the branch it has out, and the
+//! repositories a folder holds.
 //!
 //! Only as much git as opening a project needs, read straight off the files
 //! rather than shelled out to, so opening one is a handful of reads and never
 //! waits on a subprocess. Anything richer belongs to the session and worktree
 //! code, not here.
+//!
+//! A folder is searched a couple of levels down, the way VS Code looks for
+//! repositories: a folder of services, each its own repository, is one
+//! project holding several of them, not several projects.
 
 use std::path::{Path, PathBuf};
 
@@ -28,11 +33,65 @@ const UNKNOWN: &str = "unknown";
 /// How much of a commit hash names it in place of a branch.
 const SHORT_HASH: usize = 7;
 
+/// How many directories below a project's root a repository is looked for.
+const DEPTH: usize = 2;
+
+/// Directories never searched for a repository: the trees every ecosystem
+/// regenerates, which are large and never hold one worth reviewing.
+const UNSEARCHED: &[&str] = &["node_modules", "target", "vendor", "venv", "dist", "build"];
+
 /// The working-copy root at or above `path`, if one of them is a repository.
 pub fn root(path: &Path) -> Option<PathBuf> {
     path.ancestors()
-        .find(|ancestor| ancestor.join(GIT).exists())
+        .find(|ancestor| is_root(ancestor))
         .map(Path::to_path_buf)
+}
+
+/// Whether `root` is itself the root of a repository's working copy.
+fn is_root(root: &Path) -> bool {
+    root.join(GIT).exists()
+}
+
+/// Every repository at or below `root`, the root's own first.
+///
+/// The rest come in path order. A repository inside another one is listed as
+/// well, since git treats it as a repository of its own; a hidden directory,
+/// a symlink and a dependency tree are never searched.
+pub fn repositories(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    search(root, DEPTH, &mut found);
+    found
+}
+
+/// Adds the repositories at or below `directory`, `depth` levels down, to
+/// `found`.
+fn search(directory: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+    if is_root(directory) {
+        found.push(directory.to_path_buf());
+    }
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let mut children = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path())
+        .filter(|path| searched(path))
+        .collect::<Vec<_>>();
+    children.sort();
+    for child in children {
+        search(&child, depth - 1, found);
+    }
+}
+
+/// Whether the directory at `path` is worth looking inside for a repository.
+fn searched(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| !name.starts_with('.') && !UNSEARCHED.contains(&name))
 }
 
 /// The branch checked out in the repository at `root`.

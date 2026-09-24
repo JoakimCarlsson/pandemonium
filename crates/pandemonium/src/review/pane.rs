@@ -173,7 +173,7 @@ fn toolbar(theme: &Theme, review: &Review, split: bool) -> Div<Message> {
 
     bar(theme)
         .child(
-            text(review.head().name())
+            text(review.head().map(pm_core::Head::name).unwrap_or_default())
                 .text_xs()
                 .font_mono()
                 .color(theme.colors.text_muted),
@@ -268,8 +268,9 @@ fn worded(theme: &Theme, label: &str, enabled: bool, message: Message) -> Div<Me
 /// Builds the bar below the changes: the message, and what it commits or
 /// syncs.
 fn commit_bar(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
-    let primary = review.primary();
-    let pressed = primary_message(&primary);
+    let active = review.active();
+    let primary = review.primary(active);
+    let pressed = primary_message(active, &primary);
 
     h_flex()
         .w_full()
@@ -279,9 +280,11 @@ fn commit_bar(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
         .items_center()
         .bg(theme.colors.surface)
         .child(
-            h_flex()
-                .flex_1()
-                .child(commit_editor(theme, review, typing)),
+            h_flex().flex_1().children(
+                review
+                    .repository(active)
+                    .map(|held| commit_editor(theme, active, held, typing)),
+            ),
         )
         .child(
             h_flex()

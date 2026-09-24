@@ -242,7 +242,7 @@ fn file_row(theme: &Theme, listing: &Listing<'_>, row: &Row<'_>) -> Div<Message>
     let dropping = listing
         .dropping
         .is_some_and(|target| target != listing.tree.root() && path.starts_with(target));
-    let status = listing.review.and_then(|review| review.status().mark(path));
+    let status = listing.review.and_then(|review| review.mark(path));
     let chevron = match (directory, row.expanded) {
         (false, _) => None,
         (true, true) => Some(IconName::ChevronDown),

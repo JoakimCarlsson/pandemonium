@@ -4,9 +4,11 @@
 //! A session's worktree is git's own, made and removed by git rather than by
 //! copying files about, so everything here is one `git worktree` run in the
 //! repository the worktree belongs to. What a worktree remembers of itself —
-//! what it was cut from, what it is called — is kept in its own git config,
-//! because git already carries it from one launch to the next and a file of
-//! ours beside it would be a second answer to the same question.
+//! what it was cut from, what it is called — is kept in a config file inside
+//! its own git directory, which git carries from one launch to the next and
+//! takes away with the worktree. The repository's config is not the place:
+//! every worktree of a repository shares it, and a second session would
+//! overwrite what the first had written down.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -25,6 +27,9 @@ const PORT_KEY: &str = "pandemonium.port";
 
 /// The line of `git worktree list --porcelain` naming a worktree's path.
 const WORKTREE_LINE: &str = "worktree ";
+
+/// The file inside a worktree's own git directory its memory is kept in.
+const MEMORY: &str = "pandemonium.config";
 
 /// How much of a commit hash names it where one is written down.
 const SHORT_HASH: usize = 7;
@@ -144,8 +149,8 @@ pub fn since(root: &Path, base: &str) -> Summary {
 
 /// Writes down what the worktree at `root` was cut from and is called.
 pub fn remember(root: &Path, base: &str, name: &str) {
-    let _ = answer(root, ["config", BASE_KEY, base]);
-    let _ = answer(root, ["config", NAME_KEY, name]);
+    write(root, BASE_KEY, base);
+    write(root, NAME_KEY, name);
 }
 
 /// Writes down the port the worktree at `root` was given.
@@ -154,7 +159,7 @@ pub fn remember(root: &Path, base: &str, name: &str) {
 /// where the rest of what a worktree knows about itself is kept: a launch
 /// that finds the worktree again hands its server the same port.
 pub fn remember_port(root: &Path, port: u16) {
-    let _ = answer(root, ["config", PORT_KEY, &port.to_string()]);
+    write(root, PORT_KEY, &port.to_string());
 }
 
 /// The port the worktree at `root` was given, as it wrote it down.
@@ -172,9 +177,46 @@ pub fn remembered_name(root: &Path) -> Option<String> {
     read(root, NAME_KEY)
 }
 
-/// The config value `key` holds in the worktree at `root`, if it holds one.
+/// The file the worktree at `root` keeps its memory in, inside the git
+/// directory that is its alone.
+fn memory(root: &Path) -> Option<PathBuf> {
+    let directory = answer(root, ["rev-parse", "--absolute-git-dir"])?;
+    let directory = directory.trim();
+    match directory.is_empty() {
+        true => None,
+        false => Some(Path::new(directory).join(MEMORY)),
+    }
+}
+
+/// Writes `value` under `key` in the memory of the worktree at `root`.
+fn write(root: &Path, key: &str, value: &str) {
+    if let Some(file) = memory(root) {
+        let _ = answer(
+            root,
+            [
+                OsStr::new("config"),
+                OsStr::new("--file"),
+                file.as_os_str(),
+                OsStr::new(key),
+                OsStr::new(value),
+            ],
+        );
+    }
+}
+
+/// The value `key` holds in the memory of the worktree at `root`, if any.
 fn read(root: &Path, key: &str) -> Option<String> {
-    let value = answer(root, ["config", "--get", key])?;
+    let file = memory(root)?;
+    let value = answer(
+        root,
+        [
+            OsStr::new("config"),
+            OsStr::new("--file"),
+            file.as_os_str(),
+            OsStr::new("--get"),
+            OsStr::new(key),
+        ],
+    )?;
     let value = value.trim();
     match value.is_empty() {
         true => None,

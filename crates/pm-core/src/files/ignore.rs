@@ -15,29 +15,38 @@ const ALWAYS_SKIPPED: &[&str] = &[".git", ".hg", ".svn"];
 /// it decides what to commit. What a file palette needs is the common case —
 /// a name, a directory or a suffix — and to be wrong quietly when the file
 /// really is ignored but is listed anyway.
+///
+/// The worktree's own `.gitignore` is read, and so is the one at the root of
+/// every repository inside it: a folder of several repositories keeps what
+/// each of them ignores in each of them.
 pub(super) struct Ignore {
-    /// The worktree the patterns were read from.
+    /// The worktree the patterns were read for.
     root: PathBuf,
-    /// The patterns themselves, as written.
-    patterns: Vec<String>,
+    /// Each directory a `.gitignore` was read from, with its patterns.
+    rules: Vec<(PathBuf, Vec<String>)>,
 }
 
 impl Ignore {
-    /// The rules of the repository at `root`.
+    /// The rules of the worktree at `root` and the repositories inside it.
     pub(super) fn read(root: &Path) -> Self {
-        let patterns = std::fs::read_to_string(root.join(".gitignore"))
-            .unwrap_or_default()
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with('!'))
-            .map(|line| line.trim_start_matches('/').to_owned())
-            .filter(|line| line != "/")
-            .filter(|line| !line.is_empty())
+        let mut directories = vec![root.to_path_buf()];
+        directories.extend(
+            crate::project::repositories(root)
+                .into_iter()
+                .filter(|repository| repository != root),
+        );
+        let rules = directories
+            .into_iter()
+            .map(|directory| {
+                let patterns = patterns(&directory);
+                (directory, patterns)
+            })
+            .filter(|(_, patterns)| !patterns.is_empty())
             .collect();
 
         Self {
             root: root.to_path_buf(),
-            patterns,
+            rules,
         }
     }
 
@@ -49,15 +58,15 @@ impl Ignore {
         if ALWAYS_SKIPPED.contains(&name) {
             return true;
         }
-        let relative = path
-            .strip_prefix(&self.root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned();
-
-        self.patterns
-            .iter()
-            .any(|pattern| matches(pattern, name, &relative, directory))
+        self.rules.iter().any(|(base, patterns)| {
+            let Ok(relative) = path.strip_prefix(base) else {
+                return false;
+            };
+            let relative = relative.to_string_lossy();
+            patterns
+                .iter()
+                .any(|pattern| matches(pattern, name, &relative, directory))
+        })
     }
 
     /// Whether `path`, or any directory between it and the root, is skipped.
@@ -80,6 +89,18 @@ impl Ignore {
         }
         false
     }
+}
+
+/// The patterns the `.gitignore` in `directory` holds, as written.
+fn patterns(directory: &Path) -> Vec<String> {
+    std::fs::read_to_string(directory.join(".gitignore"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with('!'))
+        .map(|line| line.trim_start_matches('/').to_owned())
+        .filter(|line| !line.is_empty())
+        .collect()
 }
 
 /// Whether `pattern` covers a file called `name` at `relative`.

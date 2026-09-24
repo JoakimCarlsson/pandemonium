@@ -5,6 +5,11 @@
 //! each file a row with the letter git marks it with. What a row can do is
 //! drawn on the row rather than waiting for the pointer, because a control
 //! that only exists while it is hovered is a control nobody finds.
+//!
+//! A worktree holding several repositories draws that list once per
+//! repository, the way VS Code does: a heading naming the repository and the
+//! branch it has out, then its own message, its own button and its own
+//! changes.
 
 use pm_core::{Changed, FileStatus};
 use pm_gfx::Rgba;
@@ -14,9 +19,11 @@ use pm_ui::{
 };
 
 use crate::message::Message;
+use crate::review::RepositoryAction;
 use crate::review::action::{primary_face, primary_message};
 use crate::review::commit_editor;
 use crate::review::graph::{graph_cell, lane_color};
+use crate::review::repository::Repository;
 use crate::review::store::{Group, Primary, Review};
 
 /// Window controls and saved layout for the Source Control sidebar.
@@ -51,23 +58,18 @@ pub fn changes_sidebar(
     controls: SourceControlControls,
 ) -> Div<Message> {
     let Some(review) = review else {
-        return empty(theme, width);
+        return empty(theme, width, "No project open");
     };
-    let primary = review.primary();
-
-    let groups = Group::ALL.into_iter().flat_map(|listed| {
-        let rows = review.grouped(listed);
-        let mut built = Vec::new();
-        if rows.is_empty() {
-            return built;
-        }
-        built.push(group(theme, review, listed));
-        built.extend(
-            rows.into_iter()
-                .filter_map(|index| Some(change_row(theme, review, index, review.change(index)?))),
-        );
-        built
-    });
+    if review.repositories().is_empty() {
+        return empty(theme, width, "This folder is not a git repository");
+    }
+    let several = review.repositories().len() > 1;
+    let sections = review
+        .repositories()
+        .iter()
+        .enumerate()
+        .map(|(index, held)| section(theme, review, index, held, several, typing, &controls))
+        .collect::<Vec<_>>();
 
     v_flex()
         .w_px(width)
@@ -77,29 +79,11 @@ pub fn changes_sidebar(
         .child(section_heading(
             theme,
             review,
+            several,
             controls.changes_section_open,
         ))
         .when(controls.changes_section_open, |sidebar| {
-            sidebar
-                .child(message_field(theme, review, typing))
-                .child(measured(
-                    controls.commit_bounds.clone(),
-                    commit_button(theme, &primary),
-                ))
-                .when_some(review.trouble(), |sidebar, said| {
-                    sidebar.child(trouble(theme, said))
-                })
-                .when(review.changed().is_empty(), |sidebar| {
-                    sidebar.child(
-                        text("No changes in this worktree")
-                            .text_sm()
-                            .font_light()
-                            .color(theme.colors.text_subtle)
-                            .px(1.5)
-                            .py(1.5),
-                    )
-                })
-                .child(v_flex().flex_1().overflow_hidden().children(groups))
+            sidebar.child(v_flex().flex_1().overflow_hidden().children(sections))
         })
         .when(!controls.changes_section_open, |sidebar| {
             sidebar.child(v_flex().flex_1())
@@ -109,12 +93,163 @@ pub fn changes_sidebar(
         })
         .child(measured(
             controls.history_graph_bounds.clone(),
-            history_graph(theme, review, controls),
+            history_graph(theme, review, several, controls),
+        ))
+}
+
+/// Builds everything the sidebar lists for the `index`-th repository: its
+/// heading, when there are several, then its message, its button and its
+/// changes.
+///
+/// Only the active repository's button is measured, because the menu under
+/// it opens where it was drawn and there is one such menu at a time.
+fn section(
+    theme: &Theme,
+    review: &Review,
+    index: usize,
+    held: &Repository,
+    several: bool,
+    typing: bool,
+    controls: &SourceControlControls,
+) -> Div<Message> {
+    let active = index == review.active();
+    let primary = review.primary(index);
+    let groups = Group::ALL.into_iter().flat_map(|listed| {
+        let rows = review.grouped(index, listed);
+        let mut built = Vec::new();
+        if rows.is_empty() {
+            return built;
+        }
+        built.push(group(theme, review, index, listed));
+        built.extend(
+            rows.into_iter()
+                .filter_map(|row| Some(change_row(theme, review, row, review.change(row)?))),
+        );
+        built
+    });
+    let unchanged = review.grouped_count(index) == 0;
+
+    v_flex()
+        .w_full()
+        .when(several, |section| {
+            section.child(repository_heading(theme, review, index, held, active))
+        })
+        .child(message_field(theme, index, held, typing && active))
+        .when(active, |section| {
+            section.child(measured(
+                controls.commit_bounds.clone(),
+                commit_button(theme, index, &primary),
+            ))
+        })
+        .when(!active, |section| {
+            section.child(commit_button(theme, index, &primary))
+        })
+        .when_some(held.trouble(), |section, said| {
+            section.child(trouble(theme, said))
+        })
+        .when(unchanged && !several, |section| {
+            section.child(
+                text("No changes in this worktree")
+                    .text_sm()
+                    .font_light()
+                    .color(theme.colors.text_subtle)
+                    .px(1.5)
+                    .py(1.5),
+            )
+        })
+        .children(groups)
+}
+
+/// Builds the line naming one repository of several, the branch it has out,
+/// and what can be done to it alone.
+///
+/// A press anywhere on it makes it the active repository — the one the
+/// graph below shows, and the one a keybinding commits in.
+fn repository_heading(
+    theme: &Theme,
+    review: &Review,
+    index: usize,
+    held: &Repository,
+    active: bool,
+) -> Div<Message> {
+    let (_, stopped) = review.committable(index);
+    let in_it = |action| Message::InRepository(index, action);
+
+    h_flex()
+        .w_full()
+        .h_px(theme.size.row)
+        .px(1.5)
+        .gap(0.5)
+        .items_center()
+        .overflow_hidden()
+        .hover_bg(theme.colors.surface_hover)
+        .on_click(in_it(RepositoryAction::Activate))
+        .child(
+            icon(IconName::Folder)
+                .size(IconSize::XSmall)
+                .color(theme.colors.text_subtle),
+        )
+        .child(match active {
+            true => text(held.name().to_owned())
+                .text_sm()
+                .font_medium()
+                .color(theme.colors.text),
+            false => text(held.name().to_owned())
+                .text_sm()
+                .font_light()
+                .color(theme.colors.text_muted),
+        })
+        .child(h_flex().flex_1())
+        .child(
+            h_flex()
+                .h_px(theme.size.icon_control)
+                .px(0.5)
+                .gap(0.5)
+                .items_center()
+                .rounded(theme.radius.sm)
+                .hover_bg(theme.colors.surface_active)
+                .on_click(in_it(RepositoryAction::ShowBranches))
+                .child(
+                    icon(IconName::GitBranch)
+                        .size(IconSize::XSmall)
+                        .color(theme.colors.text_subtle),
+                )
+                .child(
+                    text(held.head().name())
+                        .text_xs()
+                        .font_light()
+                        .color(theme.colors.text_muted),
+                ),
+        )
+        .child(toolbar_action(
+            theme,
+            IconName::GitCommit,
+            stopped.is_none(),
+            in_it(RepositoryAction::Commit),
+        ))
+        .child(icon_button(
+            theme,
+            IconName::Refresh,
+            in_it(RepositoryAction::SyncBranch),
+        ))
+        .child(icon_button(
+            theme,
+            IconName::More,
+            in_it(RepositoryAction::ShowSourceControlMenu),
         ))
 }
 
 /// Builds the compact commit graph pinned below the change list.
-fn history_graph(theme: &Theme, review: &Review, controls: SourceControlControls) -> Div<Message> {
+fn history_graph(
+    theme: &Theme,
+    review: &Review,
+    several: bool,
+    controls: SourceControlControls,
+) -> Div<Message> {
+    let title = match review.repository(review.active()).filter(|_| several) {
+        Some(held) => format!("Graph · {}", held.name()),
+        None => "Graph".to_owned(),
+    };
     let row_height = theme.size.row;
     let visible = ((controls.history_graph_height - row_height) / row_height)
         .floor()
@@ -162,7 +297,7 @@ fn history_graph(theme: &Theme, review: &Review, controls: SourceControlControls
                         "Expand Graph"
                     }),
                 )
-                .child(text("Graph".to_owned()).text_sm().font_light())
+                .child(text(title).text_sm().font_light())
                 .child(h_flex().flex_1())
                 .child(measured(
                     controls.history_refs_bounds.clone(),
@@ -281,10 +416,11 @@ fn history_ref_picker(theme: &Theme, all: bool) -> Div<Message> {
         )
 }
 
-/// Builds what the sidebar says when the window has no project open.
-fn empty(theme: &Theme, width: f32) -> Div<Message> {
+/// Builds what the sidebar says in place of a review: `said`, which is why
+/// there is nothing to review.
+fn empty(theme: &Theme, width: f32, said: &str) -> Div<Message> {
     v_flex().w_px(width).flex_1().overflow_hidden().child(
-        text("No project open")
+        text(said.to_owned())
             .text_sm()
             .font_light()
             .color(theme.colors.text_subtle)
@@ -325,8 +461,11 @@ fn heading(theme: &Theme, review: &Review) -> Div<Message> {
 }
 
 /// Builds the label for the change list below the commit controls.
-fn section_heading(theme: &Theme, review: &Review, open: bool) -> Div<Message> {
-    let (_, stopped) = review.committable();
+///
+/// With one repository its commit is offered here; with several, each
+/// repository's heading offers its own.
+fn section_heading(theme: &Theme, review: &Review, several: bool, open: bool) -> Div<Message> {
+    let (_, stopped) = review.committable(review.active());
     h_flex()
         .w_full()
         .h_px(theme.size.row)
@@ -344,22 +483,26 @@ fn section_heading(theme: &Theme, review: &Review, open: bool) -> Div<Message> {
         )
         .child(text("Changes".to_owned()).text_sm().font_light())
         .child(h_flex().flex_1())
-        .child(toolbar_action(
-            theme,
-            IconName::GitCommit,
-            stopped.is_none(),
-            Message::Commit,
-        ))
+        .when(!several, |heading| {
+            heading.child(toolbar_action(
+                theme,
+                IconName::GitCommit,
+                stopped.is_none(),
+                Message::Commit,
+            ))
+        })
         .child(icon_button(
             theme,
             IconName::Refresh,
             Message::RefreshChanges,
         ))
-        .child(icon_button(
-            theme,
-            IconName::More,
-            Message::ShowSourceControlMenu,
-        ))
+        .when(!several, |heading| {
+            heading.child(icon_button(
+                theme,
+                IconName::More,
+                Message::ShowSourceControlMenu,
+            ))
+        })
 }
 
 /// Builds one compact toolbar action, disabling it when `enabled` is false.
@@ -385,24 +528,24 @@ fn toolbar_action(
             false => theme.colors.text_subtle.alpha(0.5),
         }))
 }
-/// Builds the box the commit message is written in.
+/// Builds the box the `index`-th repository's commit message is written in.
 ///
 /// It is the editor, not a line: several lines, a cursor that moves about and
 /// text that selects — the same buffer the panes draw, in a box of its own.
-fn message_field(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
+fn message_field(theme: &Theme, index: usize, held: &Repository, typing: bool) -> Div<Message> {
     v_flex()
         .w_full()
         .px(1.5)
         .py(1)
-        .child(commit_editor(theme, review, typing))
+        .child(commit_editor(theme, index, held, typing))
 }
 
 /// Builds the control that commits, or syncs once there is nothing to commit.
 ///
 /// What stops it is written where the words would be, so a reader who cannot
 /// commit is told why rather than left pressing a control that does nothing.
-fn commit_button(theme: &Theme, primary: &Primary) -> Div<Message> {
-    let pressed = primary_message(primary);
+fn commit_button(theme: &Theme, index: usize, primary: &Primary) -> Div<Message> {
+    let pressed = primary_message(index, primary);
     let enabled = pressed.is_some();
     let color = match enabled {
         true => theme.colors.text,
@@ -436,7 +579,12 @@ fn commit_button(theme: &Theme, primary: &Primary) -> Div<Message> {
                     .px(1)
                     .items_center()
                     .border_1(theme.colors.border)
-                    .when(enabled, |control| control.on_click(Message::ShowCommitMenu))
+                    .when(enabled, |control| {
+                        control.on_click(Message::InRepository(
+                            index,
+                            RepositoryAction::ShowCommitMenu,
+                        ))
+                    })
                     .child(
                         icon(IconName::ChevronDown)
                             .size(IconSize::XSmall)
@@ -460,8 +608,8 @@ fn trouble(theme: &Theme, said: &str) -> Div<Message> {
 ///
 /// The box says how much of the group is in the index — none of it, all of
 /// it, or some — and clicking it puts the rest in or takes the lot back out.
-fn group(theme: &Theme, review: &Review, listed: Group) -> Div<Message> {
-    let (staged, count) = review.staged_in(listed);
+fn group(theme: &Theme, review: &Review, index: usize, listed: Group) -> Div<Message> {
+    let (staged, count) = review.staged_in(index, listed);
     let name = listed.label();
     let all = Some(ToggleState::of(staged, count));
 
@@ -479,7 +627,11 @@ fn group(theme: &Theme, review: &Review, listed: Group) -> Div<Message> {
                 .color(theme.colors.text_subtle),
         )
         .when_some(all, |heading, state| {
-            heading.child(checkbox(theme, state, Message::ToggleGroupStaged(listed)))
+            heading.child(checkbox(
+                theme,
+                state,
+                Message::ToggleGroupStaged(index, listed),
+            ))
         })
 }
 
@@ -606,12 +758,16 @@ pub fn change_menu(review: &Review) -> Vec<MenuItem<Message>> {
     ]
 }
 
-/// Where the file sits in the worktree, for the row that names it.
+/// Where the file sits in its repository, for the row that names it.
 fn directory(review: &Review, changed: &Changed) -> String {
-    let relative = changed
-        .path
-        .strip_prefix(review.root())
-        .unwrap_or(&changed.path);
+    let root = review
+        .repositories()
+        .iter()
+        .rev()
+        .map(Repository::root)
+        .find(|root| changed.path.starts_with(root))
+        .unwrap_or(review.root());
+    let relative = changed.path.strip_prefix(root).unwrap_or(&changed.path);
     relative
         .parent()
         .map(|directory| directory.display().to_string())

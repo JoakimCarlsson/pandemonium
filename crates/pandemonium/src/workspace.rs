@@ -402,7 +402,7 @@ fn backdrop(message: Message) -> Div<Message> {
 /// window — so both are offered from the one control that adds one.
 pub fn add_project_items() -> Vec<MenuItem<Message>> {
     vec![
-        menu_entry("Open a Repository…", Some(Message::OpenProject)),
+        menu_entry("Open Folder…", Some(Message::OpenProject)),
         menu_entry("Clone from a URL…", Some(Message::CloneProject)),
     ]
 }
@@ -421,10 +421,12 @@ pub fn session_menu_items(session: SessionId) -> Vec<MenuItem<Message>> {
 
 /// The things that can be done to one project.
 ///
-/// Cutting a session is the whole of it, and there is one way to do it: the
-/// line opens onto every branch there is to cut one from, the checked-out
-/// one first. Nothing here starts an agent — a session is a worktree first,
-/// and what is run in it comes after.
+/// Cutting a session is the whole of it. For one repository the line opens
+/// onto every branch there is to cut one from, the checked-out one first. A
+/// folder of several has no one set of branches to offer, so its line asks
+/// for the session's name and the repositories it works in, each cut from
+/// what it has checked out. Nothing here starts an agent — a session is a
+/// worktree first, and what is run in it comes after.
 pub fn project_menu_items(
     project: &Project,
     bases: &[String],
@@ -442,13 +444,18 @@ pub fn project_menu_items(
         })
         .collect::<Vec<_>>();
 
-    vec![
-        pm_ui::menu_submenu(
+    let session = match project.repositories().len() > 1 {
+        true => menu_entry("New Session…", Some(Message::NewSession)),
+        false => pm_ui::menu_submenu(
             "New Session From…",
             (!from.is_empty()).then_some(Message::ShowSessionBases),
             showing_bases,
             from,
         ),
+    };
+
+    vec![
+        session,
         menu_separator(),
         menu_entry("Open Project…", Some(Message::OpenProject)),
         menu_entry("Close Project", Some(Message::CloseProject(id))),
@@ -520,7 +527,12 @@ impl Status {
 
         Self {
             project: project.map(|project| project.name().to_owned()),
-            branch: pointed,
+            branch: pointed.or_else(|| {
+                files
+                    .review
+                    .and_then(crate::review::Review::head)
+                    .map(pm_core::Head::name)
+            }),
             sessions: project.map_or(0, |project| sessions_of(project, sessions).len()),
             changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.panel.shells.len(),
@@ -1003,7 +1015,7 @@ fn pointed_at<'a>(
 
     (
         Some(project),
-        Some(session.unwrap_or_else(|| project.branch().to_owned())),
+        session.or_else(|| project.branch().map(str::to_owned)),
     )
 }
 
@@ -1032,7 +1044,9 @@ fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div
 ///
 /// The project is the worktree its sessions were cut from, so its row names
 /// it and states the branch it has out — `main`, most of the time — and the
-/// sessions under it are read against that.
+/// sessions under it are read against that. A folder of several
+/// repositories states how many it holds, and a plain folder states nothing
+/// beside its name.
 fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message> {
     row(theme, selected)
         .on_click(Message::ActivateProject(project.id()))
@@ -1045,7 +1059,17 @@ fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message>
                 .font_medium()
                 .color(theme.colors.text),
         ))
-        .child(reading(theme, project.branch().to_owned()))
+        .children(project_reading(project).map(|said| reading(theme, said)))
+}
+
+/// What a project's row states beside its name: the branch it has out, or
+/// how many repositories it holds when it holds several.
+fn project_reading(project: &Project) -> Option<String> {
+    match (project.branch(), project.repositories().len()) {
+        (Some(branch), _) => Some(branch.to_owned()),
+        (None, 0) => None,
+        (None, count) => Some(format!("{count} repositories")),
+    }
 }
 
 /// Builds one session row: its state, what it is called, how far it has gone.

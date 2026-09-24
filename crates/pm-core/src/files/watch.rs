@@ -8,6 +8,7 @@
 //! window rather than ten.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -196,7 +197,7 @@ impl Watching {
             }
             if batch
                 .iter()
-                .any(|(path, _)| *path == self.root.join(".gitignore"))
+                .any(|(path, _)| path.file_name() == Some(OsStr::new(".gitignore")))
             {
                 ignore = Ignore::read(&self.root);
             }
@@ -232,9 +233,13 @@ impl Watching {
         }
     }
 
-    /// Where `path` is inside the worktree's git directory, if it is inside it.
+    /// Where `path` is inside a git directory of the worktree, if it is inside
+    /// one: the worktree's own, or that of a repository inside it.
     fn git_part<'a>(&self, path: &'a Path) -> Option<&'a Path> {
-        path.strip_prefix(self.root.join(".git")).ok()
+        let git = path.ancestors().find(|ancestor| {
+            ancestor.file_name() == Some(OsStr::new(".git")) && ancestor.starts_with(&self.root)
+        })?;
+        path.strip_prefix(git).ok()
     }
 }
 

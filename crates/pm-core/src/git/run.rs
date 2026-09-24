@@ -8,7 +8,7 @@
 
 use std::ffi::OsStr;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// What git wrote, or what it complained about when it would not.
@@ -108,4 +108,19 @@ where
 /// one that is not under it at all is not git's to answer about.
 pub fn within<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
     path.strip_prefix(root).ok()
+}
+
+/// The repository holding `path`, looked for from `path` up to `root`.
+///
+/// A worktree can be a folder of several repositories, each with its own
+/// index and its own history, so a question about one file is asked of the
+/// repository the file is in. A path in none of them is asked of `root`, and
+/// gets the nothing a folder outside a repository answers with.
+pub fn holding(root: &Path, path: &Path) -> PathBuf {
+    path.ancestors()
+        .skip(1)
+        .take_while(|ancestor| ancestor.starts_with(root))
+        .find(|ancestor| ancestor.join(".git").exists())
+        .unwrap_or(root)
+        .to_path_buf()
 }
