@@ -388,6 +388,12 @@ impl App {
                         name: session.name().to_owned(),
                         drift: session.summary().line(),
                         status_color: self.session_color(&theme, session.id()),
+                        errors: self
+                            .editor
+                            .servers_over(session.root())
+                            .iter()
+                            .map(|server| server.errors())
+                            .sum(),
                         selected: selected == Some(session.id()),
                     })
                     .collect(),

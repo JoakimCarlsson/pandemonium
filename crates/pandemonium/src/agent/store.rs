@@ -18,7 +18,7 @@ use crate::input::Input;
 use pm_acp::{
     About, Agent, Ask, Command, Event, Knob, Mode, Notify, Session, Setting, Stop, Voice,
 };
-use pm_core::{ProjectId, SessionId};
+use pm_core::{ProjectId, Scope, SessionId};
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -106,6 +106,14 @@ impl Talk {
     /// Which agent is running.
     pub fn agent(&self) -> Agent {
         self.conversation.agent()
+    }
+
+    /// The worktree the conversation belongs to, as the panes name it.
+    pub fn scope(&self) -> Scope {
+        match self.session {
+            Some(session) => Scope::of(self.project, session),
+            None => Scope::checkout(self.project),
+        }
     }
 
     /// The worktree the agent is working in.
@@ -501,6 +509,8 @@ pub struct Talks {
     notify: Option<Notify>,
     /// Whether a session has opened its conversation since this was asked.
     opened: bool,
+    /// The sessions whose agent went away on its own since this was asked.
+    ended: Vec<TalkId>,
 }
 
 impl Talks {
@@ -644,6 +654,14 @@ impl Talks {
             })
     }
 
+    /// The sessions whose agent went away on its own since this was asked.
+    ///
+    /// Ending a session is closing its tab, which drops it without a word:
+    /// an agent that is heard ending is one that stopped by itself.
+    pub fn take_ended(&mut self) -> Vec<TalkId> {
+        std::mem::take(&mut self.ended)
+    }
+
     /// How many of the conversations are in the middle of a turn.
     pub fn working(&self) -> usize {
         self.talks.values().filter(|talk| talk.is_busy()).count()
@@ -659,6 +677,9 @@ impl Talks {
         for talk in self.talks.values_mut() {
             for event in talk.conversation.drain() {
                 self.opened |= matches!(event, Event::Ready);
+                if matches!(event, Event::Ended) {
+                    self.ended.push(talk.id);
+                }
                 talk.take(event);
                 changed = true;
             }

@@ -15,6 +15,7 @@ mod excerpts;
 mod input;
 mod language;
 mod modal;
+mod notice;
 mod panel;
 mod panes;
 mod picker;
@@ -56,6 +57,7 @@ use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::message::Message;
+use crate::notice::Notices;
 use crate::onboarding;
 use crate::panel::{Panel, PanelView};
 use crate::panes::{Item, PaneTree, Saved};
@@ -130,6 +132,26 @@ impl RemoteOperation {
             Self::Pull => "Pulling…",
             Self::Push => "Pushing…",
             Self::Sync => "Syncing…",
+        }
+    }
+
+    /// What a notice says once this has gone through.
+    pub(super) fn done(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetched",
+            Self::Pull => "Pulled",
+            Self::Push => "Pushed",
+            Self::Sync => "Synced",
+        }
+    }
+
+    /// What a notice says when this has not.
+    pub(super) fn failed(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetch failed in",
+            Self::Pull => "Pull failed in",
+            Self::Push => "Push failed in",
+            Self::Sync => "Sync failed in",
         }
     }
 }
@@ -333,6 +355,8 @@ pub struct App {
     agents: Talks,
     /// The shells the window is running, one per project.
     terminals: Terminals,
+    /// What the reader is being told about in the status bar.
+    notices: Notices,
     /// The breakpoints each worktree keeps, and the program each debugs.
     debuggers: crate::debug::Debuggers,
     /// Whether keystrokes go to the terminal rather than to the window.
@@ -480,6 +504,7 @@ impl App {
             menu: None,
             agents: Talks::default(),
             terminals: Terminals::default(),
+            notices: Notices::default(),
             debuggers: crate::debug::Debuggers::default(),
             terminal_focused: false,
             terminal_scroll_origin: None,
@@ -1223,6 +1248,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.notice_command(message) {
+            self.request_redraw();
+            return;
+        }
         if self.session_command(message) {
             self.request_redraw();
             return;
@@ -1941,6 +1970,7 @@ impl App {
                         .active()
                         .map_or(0, |project| self.agents.count(project.id())),
                     tally: self.agents.tally(),
+                    notice: self.notices.shown(),
                     menu,
                     overlays,
                 },
@@ -1970,13 +2000,19 @@ impl ApplicationHandler<Wake> for App {
     /// holding still, a caret blinking and a remote being waited on are the
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.rested() || self.blinked() || self.spun() {
+        let expired = self.notices.expire(Instant::now());
+        if self.rested() || self.blinked() || self.spun() || expired {
             self.request_redraw();
         }
-        let next = [self.next_rest(), self.next_blink(), self.next_spin()]
-            .into_iter()
-            .flatten()
-            .min();
+        let next = [
+            self.next_rest(),
+            self.next_blink(),
+            self.next_spin(),
+            self.notices.next_expiry(),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         event_loop.set_control_flow(match next {
             Some(when) => winit::event_loop::ControlFlow::WaitUntil(when),
             None => winit::event_loop::ControlFlow::Wait,
@@ -1988,6 +2024,7 @@ impl ApplicationHandler<Wake> for App {
         match event {
             Wake::Terminal => {
                 if self.terminals.pump() {
+                    self.hear_failed_shells();
                     self.close_empty_panel();
                     self.request_redraw();
                 }
@@ -1995,6 +2032,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Agent => {
                 let before = self.agents.tally();
                 if self.agents.pump() {
+                    self.hear_ended_agents();
                     self.call_reader(before);
                     self.follow_agents();
                     self.reread_worked_sessions();
@@ -2022,6 +2060,9 @@ impl ApplicationHandler<Wake> for App {
                     .map(|mut results| std::mem::take(&mut *results))
                     .unwrap_or_default();
                 for (scope, said) in finished {
+                    if let Some(kind) = self.remote_operation {
+                        self.hear_remote(scope, kind, &said);
+                    }
                     if let Some(review) = self.reviews.get_mut(&scope) {
                         review.settle(said);
                     }

@@ -51,6 +51,7 @@ impl App {
                     talk.cancel();
                 }
             }
+            Message::ShowAgent(session) => self.show_agent(session),
             _ => return false,
         }
         true
@@ -325,7 +326,8 @@ impl App {
     }
 
     /// Asks the desktop to point the reader at the window when an agent has
-    /// started waiting on them or finished a turn while they were elsewhere.
+    /// started waiting on them, stopped or finished a turn while they were
+    /// elsewhere.
     ///
     /// A question blocks the agent until it is answered, so it is asked for
     /// until the window is focused; a finished turn is mentioned once.
@@ -336,6 +338,7 @@ impl App {
         let after = self.agents.tally();
         let urgency = match () {
             () if after.waiting > before.waiting => UserAttentionType::Critical,
+            () if after.stopped > before.stopped => UserAttentionType::Informational,
             () if after.done > before.done => UserAttentionType::Informational,
             () => return,
         };

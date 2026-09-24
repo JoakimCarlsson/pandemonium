@@ -225,4 +225,9 @@ impl Terminal {
     pub fn is_running(&mut self) -> bool {
         self.pty.is_running()
     }
+
+    /// The code the child exited with, once it has exited.
+    pub fn exit_code(&mut self) -> Option<u32> {
+        self.pty.exit_code()
+    }
 }
