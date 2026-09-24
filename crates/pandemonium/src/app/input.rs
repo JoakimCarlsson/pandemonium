@@ -59,7 +59,36 @@ impl App {
         if let Some(kind) = self.focused_pane_kind() {
             context.set(keys::PANE_KIND, kind);
         }
+        let editing = self.focused_file().is_some()
+            && self.writing.is_none()
+            && !self.search_focused
+            && !self.changes_focused;
+        context.flag(keys::EDITOR_FOCUSED, editing);
+        context.flag(keys::TEXT_FOCUSED, editing || self.writing.is_some());
+        context.flag(keys::SEARCH_FOCUSED, self.search_focused);
+        context.flag(
+            keys::SEARCH_REPLACING,
+            self.search_focused && self.replacing(),
+        );
+        context.flag(keys::CHANGES_FOCUSED, self.changes_focused);
+        context.set(keys::OS, keymap::platform());
+        if let Some(extension) = self.focused_extension() {
+            context.set(keys::FILE_EXTENSION, &extension);
+        }
         context
+    }
+
+    /// Whether the search bar's replacement field is the one being typed in.
+    fn replacing(&self) -> bool {
+        self.active_file().is_some_and(|file| {
+            file.borrow().search().field() == crate::editor::SearchField::Replacement
+        })
+    }
+
+    /// The extension of the file the focused pane shows, without its dot.
+    fn focused_extension(&self) -> Option<String> {
+        let path = self.editor.path(self.active_file_id()?)?;
+        Some(path.extension()?.to_string_lossy().into_owned())
     }
 
     /// Resolves a keypress against whatever has the keyboard.
@@ -68,8 +97,12 @@ impl App {
     /// screen, then the completions offered beside the cursor, then a
     /// terminal, then modal editing, then the window's own chords, then the
     /// search bar, then the text itself. Only a key nothing wanted becomes focus movement.
+    /// A binding being recorded in the keymap screen comes before all of them.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
+        if self.record_key(event) {
+            return self.request_redraw();
+        }
         if self.send_to_prompt(event) {
             return self.request_redraw();
         }
@@ -404,25 +437,19 @@ impl App {
         let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
             return false;
         };
+        self.apply_edit(edit);
+        true
+    }
 
+    /// Does `edit` to the text that has the keyboard, at every cursor.
+    pub(super) fn apply_edit(&mut self, edit: editor::Edit) {
         let typed = match edit {
             editor::Edit::Type(ch) => Some(ch),
             _ => None,
         };
         let line_wise = matches!(edit, editor::Edit::Indent | editor::Edit::Outdent);
         self.edit_active(|buffer| {
-            let apply = |buffer: &mut pm_text::Buffer| match edit.clone() {
-                editor::Edit::Type(ch) => buffer.insert_typed(ch),
-                editor::Edit::Insert(text) => buffer.insert(&text),
-                editor::Edit::Newline => buffer.insert_newline(),
-                editor::Edit::Indent => buffer.insert_indent(),
-                editor::Edit::Outdent => buffer.outdent_lines(),
-                editor::Edit::Backspace => buffer.backspace(),
-                editor::Edit::Delete => buffer.delete(),
-                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
-                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
-                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
-            };
+            let apply = |buffer: &mut pm_text::Buffer| edit.apply(buffer);
             if line_wise {
                 buffer.on_each_line(apply);
             } else {
@@ -430,7 +457,6 @@ impl App {
             }
         });
         self.after_typing(typed);
-        true
     }
 
     /// Sends a keypress to the terminal, when the terminal has the keyboard.

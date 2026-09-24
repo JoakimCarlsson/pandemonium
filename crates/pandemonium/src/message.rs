@@ -12,7 +12,7 @@ use pm_ui::{ResizeEvent, ResizePhase};
 use crate::agent::TalkId;
 use crate::config::{FontSlot, Preference, Step, ThemeMode, WorktreePaths};
 use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
-use crate::keymap::{Action, BaseKeymap};
+use crate::keymap::Action;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::Group;
 use crate::settings::{SettingsPage, SettingsSection};
@@ -26,8 +26,16 @@ pub enum Message {
     SetThemeMode(ThemeMode),
     /// Draw in this theme family, by index into `pm_ui::families`.
     SetThemeFamily(usize),
-    /// Start from this keymap.
-    SetKeymap(BaseKeymap),
+    /// Start from this keymap, by index into `keymap::keymaps`.
+    SetKeymap(usize),
+    /// Listen for the chords to bind this action to.
+    RecordBinding(Action),
+    /// Take every chord this action is pressed as away.
+    UnbindAction(Action),
+    /// Ask what to call the keymap being pressed, and write it down as one.
+    SaveKeymap,
+    /// Read the keymaps in the editor's home in again.
+    ReloadKeymaps,
     /// Turn this preference, which is a switch, on or off.
     TogglePreference(Preference),
     /// Move this preference, which is a number, one step this way.

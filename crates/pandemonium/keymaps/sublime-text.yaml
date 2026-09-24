@@ -1,0 +1,489 @@
+# Sublime Text's bindings.
+name: Sublime Text
+bindings:
+  - when: "true"
+    keys:
+      primary+alt+j: palette.sessions
+      "primary+,": window.settings
+      escape: window.cancel
+      primary+shift+w: window.close
+      primary+=: view.zoom_in
+      primary+shift+=: view.zoom_in
+      "primary+-": view.zoom_out
+      primary+0: view.zoom_reset
+      primary+q: window.close
+      primary+alt+o: palette.projects
+      primary+s: file.save
+      primary+k s: file.save_without_format
+      primary+alt+b: window.toggle_secondary_sidebar
+      primary+j: window.toggle_panel
+      primary+shift+t: pane.reopen
+      primary+k primary+s: window.keymap
+      primary+p: palette.files
+      primary+shift+p: palette.commands
+      primary+shift+m: palette.problems
+      primary+shift+e: files.focus
+  - when: project.focused
+    keys:
+      primary+shift+n: session.new
+      primary+k primary+shift+o: project.remove
+      primary+k primary+g: git.review
+      primary+k primary+e: git.edit_changes
+  - when: session.focused
+    keys:
+      primary+shift+d: session.review
+      primary+shift+/: session.agent
+      primary+k primary+shift+e: session.end
+  - when: "os != macos"
+    keys:
+      primary+k primary+o: project.add
+      f11: window.fullscreen
+      primary+r: palette.projects
+      primary+alt+shift+b: git.switch_branch
+      "primary+shift+`": terminal.new
+      primary+n: files.new_file
+      "primary+`": terminal.new
+  - when: os == macos
+    keys:
+      primary+o: project.add
+      primary+ctrl+f: window.fullscreen
+      ctrl+r: palette.projects
+      primary+ctrl+b: git.switch_branch
+      "ctrl+shift+`": terminal.new
+      "ctrl+`": terminal.new
+      primary+b: window.toggle_sidebar
+      primary+r: window.toggle_secondary_sidebar
+      ctrl+shift+g: git.changes
+      ctrl+pageup: pane.previous_tab
+      ctrl+pagedown: pane.next_tab
+  - when: "os != macos"
+    keys:
+      primary+b: window.toggle_sidebar
+      primary+shift+h: search.project
+      primary+t: palette.workspace_symbols
+      primary+e: palette.files
+      f1: palette.commands
+      primary+shift+g: git.changes
+      "primary+shift+[": pane.previous_tab
+      "primary+shift+]": pane.next_tab
+      alt+0: pane.last_tab
+      primary+pageup: pane.previous_tab
+      primary+pagedown: pane.next_tab
+      primary+f4: pane.close
+      "primary+alt+-": go.back
+      "primary+alt+shift+-": go.forward
+      primary+alt+g: search.next
+      f3: search.next
+      primary+alt+shift+g: search.previous
+      shift+f3: search.previous
+      primary+alt+shift+h: search.toggle_replace
+  - when: "true"
+    keys:
+      primary+shift+/: session.agent
+      primary+alt+s: file.save_all
+      primary+k primary+left: pane.focus_left
+      primary+k primary+right: pane.focus_right
+      primary+k primary+up: pane.focus_up
+      primary+k primary+down: pane.focus_down
+      primary+k primary+b: window.toggle_sidebar
+      primary+shift+r: palette.workspace_symbols
+      primary+w: pane.close
+      primary+alt+t: pane.close_others
+      primary+k e: pane.close_left
+      primary+k t: pane.close_right
+      primary+k u: pane.close_saved
+      primary+k w: pane.close_all
+      primary+shift+f: search.project
+      primary+k up: pane.split_up
+      primary+k down: pane.split_down
+      primary+k left: pane.split_left
+      primary+k right: pane.split_right
+      f4: search.next
+      shift+f4: search.previous
+  - when: os == macos
+    keys:
+      primary+t: palette.files
+      primary+alt+left: pane.previous_tab
+      "primary+shift+[": pane.previous_tab
+      primary+alt+right: pane.next_tab
+      "primary+shift+]": pane.next_tab
+      primary+f: search.project
+      primary+g: search.next
+      primary+shift+g: search.previous
+      primary+shift+h: search.toggle_replace
+      alt+enter: edit.select_all_matches
+      primary+alt+c: search.toggle_case
+      primary+alt+w: search.toggle_word
+      primary+k shift+enter: pane.toggle_pin
+      ctrl+1: pane.tab_1
+      ctrl+2: pane.tab_2
+      ctrl+3: pane.tab_3
+      ctrl+4: pane.tab_4
+      ctrl+5: pane.tab_5
+      ctrl+6: pane.tab_6
+      ctrl+7: pane.tab_7
+      ctrl+8: pane.tab_8
+      ctrl+9: pane.tab_9
+      ctrl+0: pane.last_tab
+      "ctrl+-": go.back
+      "ctrl+shift+-": go.forward
+      primary+1: pane.tab_1
+      primary+2: pane.tab_2
+      primary+3: pane.tab_3
+      primary+4: pane.tab_4
+      primary+5: pane.tab_5
+      primary+6: pane.tab_6
+      primary+7: pane.tab_7
+      primary+8: pane.tab_8
+      primary+9: pane.last_tab
+  - when: pane.kind == file
+    keys:
+      primary+f3: search.selection
+  - when: "os != macos"
+    keys:
+      alt+enter: edit.select_all_matches
+      alt+c: search.toggle_case
+      alt+w: search.toggle_word
+      primary+k shift+enter: pane.toggle_pin
+      alt+1: pane.tab_1
+      alt+2: pane.tab_2
+      alt+3: pane.tab_3
+      alt+4: pane.tab_4
+      alt+5: pane.tab_5
+      alt+6: pane.tab_6
+      alt+7: pane.tab_7
+      alt+8: pane.tab_8
+      alt+9: pane.last_tab
+  - when: "pane.kind == agent || pane.kind == prompt"
+    keys:
+      primary+shift+m: agent.mode
+      primary+shift+e: files.focus
+      primary+n: agent.new
+  - when: editor.focused
+    keys:
+      escape: window.cancel
+      shift+backspace: edit.backspace
+      backspace: edit.backspace
+      delete: edit.delete
+      tab: edit.tab
+      shift+tab: edit.outdent
+      up: cursor.up
+      pageup: cursor.page_up
+      shift+pageup: cursor.select_page_up
+      down: cursor.down
+      pagedown: cursor.page_down
+      shift+pagedown: cursor.select_page_down
+      end: cursor.line_end
+      primary+home: cursor.buffer_start
+      primary+end: cursor.buffer_end
+      shift+up: cursor.select_up
+      shift+down: cursor.select_down
+      shift+left: cursor.select_left
+      shift+right: cursor.select_right
+      primary+l: edit.select_line
+      primary+shift+i: language.format
+      shift+home: cursor.select_line_start
+      shift+end: cursor.select_line_end
+      primary+i: language.signature
+      shift+enter: edit.newline
+      enter: edit.newline
+      primary+enter: edit.line_below
+      primary+shift+enter: edit.line_above
+      primary+f: search.find
+      "primary+[": edit.outdent
+      "primary+]": edit.indent
+      primary+shift+k: edit.delete_line
+      alt+up: edit.move_line_up
+      alt+down: edit.move_line_down
+      primary+shift+l: edit.select_all_matches
+      primary+f2: edit.select_all_matches
+      primary+k primary+i: language.hover
+      primary+/: edit.toggle_comment
+      f8: go.next_problem
+      shift+f8: go.previous_problem
+      f2: language.rename
+      primary+f12: go.type_definition
+      alt+shift+f12: go.references
+      primary+k primary+h: go.incoming_calls
+      primary+k primary+l: view.toggle_fold
+      primary+k primary+0: view.fold_all
+      primary+k primary+j: view.unfold_all
+      primary+k r: file.reveal
+      primary+k p: file.copy_path
+      "primary+\\": pane.split_right
+      primary+shift+o: palette.symbols
+      primary+shift+e: files.focus
+      primary+f8: git.next_change
+      primary+shift+f8: git.previous_change
+  - when: "os == macos && editor.focused"
+    keys:
+      ctrl+h: edit.backspace
+      ctrl+d: edit.delete
+      ctrl+k: edit.delete_to_line_end
+      primary+backspace: edit.delete_to_line_start
+      primary+delete: edit.delete_to_line_end
+      alt+backspace: edit.delete_word_left
+      ctrl+w: edit.delete_word_left
+      alt+delete: edit.delete_word_right
+      ctrl+p: cursor.up
+      ctrl+n: cursor.down
+      ctrl+b: cursor.left
+      left: cursor.left
+      ctrl+f: cursor.right
+      right: cursor.right
+      alt+left: cursor.word_left
+      alt+right: cursor.word_right
+      primary+left: cursor.line_start
+      ctrl+a: cursor.line_start
+  - when: "os != macos && text.focused"
+    keys:
+      shift+delete: edit.cut
+      primary+insert: edit.copy
+      shift+insert: edit.paste
+      primary+y: edit.redo
+  - when: text.focused
+    keys:
+      primary+x: edit.cut
+      primary+c: edit.copy
+      primary+v: edit.paste
+      primary+z: edit.undo
+      primary+shift+z: edit.redo
+      primary+a: edit.select_all
+  - when: "os != macos && editor.focused"
+    keys:
+      home: cursor.line_start
+      left: cursor.left
+      right: cursor.right
+      primary+left: cursor.word_left
+  - when: "os == macos && editor.focused"
+    keys:
+      home: cursor.line_start
+      primary+right: cursor.line_end
+      ctrl+e: cursor.line_end
+      primary+up: cursor.buffer_start
+      primary+down: cursor.buffer_end
+      ctrl+shift+p: cursor.select_up
+      ctrl+shift+n: cursor.select_down
+      ctrl+shift+b: cursor.select_left
+      ctrl+shift+f: cursor.select_right
+      alt+shift+left: cursor.select_word_left
+      alt+shift+right: cursor.select_word_right
+      primary+shift+up: cursor.select_buffer_start
+      primary+shift+down: cursor.select_buffer_end
+  - when: "os != macos && editor.focused"
+    keys:
+      primary+right: cursor.word_right
+      primary+shift+left: cursor.select_word_left
+      primary+shift+right: cursor.select_word_right
+      primary+shift+home: cursor.select_buffer_start
+      primary+shift+end: cursor.select_buffer_end
+      alt+g b: git.blame
+      alt+g m: git.edit_changes
+      alt+g r: git.review
+      primary+h: search.replace
+      primary+k primary+r: git.revert_change
+      alt+shift+up: edit.cursor_above
+      alt+shift+down: edit.cursor_below
+      primary+alt+shift+up: edit.duplicate_line
+      primary+alt+shift+down: edit.duplicate_line
+  - when: "os == macos && editor.focused"
+    keys:
+      primary+shift+left: cursor.select_line_start
+      ctrl+shift+a: cursor.select_line_start
+      primary+shift+right: cursor.select_line_end
+      ctrl+shift+e: cursor.select_line_end
+      ctrl+v: cursor.page_down
+      ctrl+shift+v: cursor.page_up
+      primary+alt+g b: git.blame
+      primary+alt+g m: git.edit_changes
+      primary+alt+g r: git.review
+      ctrl+f12: go.declaration
+      primary+alt+l: search.find
+      primary+ctrl+p: edit.cursor_above
+      primary+alt+up: edit.cursor_above
+      primary+ctrl+n: edit.cursor_below
+      alt+shift+up: edit.duplicate_line
+      alt+shift+down: edit.duplicate_line
+      primary+ctrl+right: edit.expand_selection
+      primary+d: edit.add_next_match
+      f12: go.definition
+      "primary+alt+[": view.toggle_fold
+      "primary+alt+]": view.toggle_fold
+      ctrl+space: language.completions
+      primary+.: language.code_actions
+      ctrl+g: go.line
+      ctrl+j: edit.join_lines
+      ctrl+alt+backspace: edit.delete_word_left
+      ctrl+alt+h: edit.delete_word_left
+      ctrl+alt+delete: edit.delete_word_right
+      ctrl+alt+d: edit.delete_word_right
+      ctrl+alt+left: cursor.word_left
+      ctrl+alt+b: cursor.word_left
+      ctrl+alt+right: cursor.word_right
+      ctrl+alt+f: cursor.word_right
+      ctrl+alt+shift+left: cursor.select_word_left
+      ctrl+alt+shift+b: cursor.select_word_left
+      ctrl+alt+shift+right: cursor.select_word_right
+      ctrl+alt+shift+f: cursor.select_word_right
+      ctrl+shift+up: edit.cursor_above
+      ctrl+shift+down: edit.cursor_below
+      primary+ctrl+up: edit.move_line_up
+      primary+ctrl+down: edit.move_line_down
+      ctrl+shift+m: edit.expand_selection
+      primary+ctrl+g: edit.select_all_matches
+  - when: "os != macos && (pane.kind == agent || pane.kind == prompt)"
+    keys:
+      "primary+-": go.back
+      alt+c: search.toggle_case
+      alt+w: search.toggle_word
+  - when: "os == macos && (pane.kind == agent || pane.kind == prompt)"
+    keys:
+      "ctrl+-": go.back
+      primary+alt+c: search.toggle_case
+      primary+alt+w: search.toggle_word
+  - when: "pane.kind == agent || pane.kind == prompt"
+    keys:
+      shift+tab: agent.cycle_mode
+      primary+alt+/: agent.model
+  - when: "os != macos && editor.focused"
+    keys:
+      primary+d: edit.add_next_match
+      primary+k primary+c: edit.toggle_comment
+      "primary+shift+[": view.toggle_fold
+      "primary+shift+]": view.toggle_fold
+      primary+space: language.completions
+      alt+.: git.next_change
+      "alt+,": git.previous_change
+      primary+g: go.line
+      primary+shift+j: edit.join_lines
+      primary+alt+backspace: edit.delete_word_left
+      primary+alt+h: edit.delete_word_left
+      primary+alt+delete: edit.delete_word_right
+      primary+alt+d: edit.delete_word_right
+      primary+alt+left: cursor.word_left
+      primary+alt+right: cursor.word_right
+      primary+alt+shift+left: cursor.select_word_left
+      primary+alt+shift+b: cursor.select_word_left
+      primary+alt+shift+right: cursor.select_word_right
+      primary+alt+shift+f: cursor.select_word_right
+      primary+alt+up: edit.cursor_above
+      primary+alt+down: edit.cursor_below
+      primary+shift+up: edit.move_line_up
+      primary+shift+down: edit.move_line_down
+      primary+shift+m: edit.expand_selection
+      alt+f3: edit.select_all_matches
+      f12: go.definition
+      primary+shift+f12: go.references
+      primary+.: git.next_change
+      "primary+,": git.previous_change
+      primary+backspace: edit.delete_word_left
+      primary+delete: edit.delete_word_right
+      alt+right: cursor.word_right
+      alt+left: cursor.word_left
+      alt+shift+right: cursor.select_word_right
+      alt+shift+left: cursor.select_word_left
+  - when: "os != macos && (changes.focused || pane.kind == commit)"
+    keys:
+      primary+space: git.stage_all
+      primary+shift+space: git.unstage_all
+  - when: "os == macos && (changes.focused || pane.kind == commit)"
+    keys:
+      primary+ctrl+y: git.stage_all
+      primary+ctrl+shift+y: git.unstage_all
+  - when: "changes.focused || pane.kind == commit"
+    keys:
+      primary+enter: git.commit
+  - when: "os != macos && pane.kind == terminal"
+    keys:
+      primary+insert: edit.copy
+      primary+shift+c: edit.copy
+      shift+insert: edit.paste
+      primary+shift+v: edit.paste
+      primary+shift+a: edit.select_all
+      primary+shift+f: search.find
+      primary+shift+w: pane.close
+      primary+shift+5: pane.split_right
+  - when: "os == macos && pane.kind == terminal"
+    keys:
+      primary+c: edit.copy
+      primary+v: edit.paste
+      primary+f: search.find
+      primary+a: edit.select_all
+      primary+n: terminal.new
+      "ctrl+shift+-": null
+      ctrl+alt+up: pane.split_up
+      ctrl+alt+down: pane.split_down
+      ctrl+alt+left: pane.split_left
+      ctrl+alt+right: pane.split_right
+      primary+d: pane.split_right
+  - when: "os == macos && text.focused"
+    keys:
+      primary+shift+space: edit.select_all
+  - when: editor.focused
+    keys:
+      primary+shift+a: edit.expand_selection
+      primary+shift+d: edit.duplicate_line
+      shift+f12: go.references
+      alt+shift+m: markdown.preview
+      primary+r: palette.symbols
+      primary+k primary+z: git.revert_change
+  - when: "os == macos && editor.focused"
+    keys:
+      primary+alt+down: go.definition
+      primary+alt+shift+down: go.references
+      ctrl+.: git.next_change
+      "ctrl+,": git.previous_change
+      primary+shift+j: edit.join_lines
+      ctrl+backspace: edit.delete_word_left
+      ctrl+delete: edit.delete_word_right
+      ctrl+right: cursor.word_right
+      ctrl+left: cursor.word_left
+      ctrl+shift+right: cursor.select_word_right
+      ctrl+shift+left: cursor.select_word_left
+  - when: pane.kind == prompt
+    keys:
+      shift+tab: agent.cycle_mode
+  - when: search.focused
+    keys:
+      escape: window.cancel
+      enter: search.next
+      shift+enter: search.previous
+      alt+enter: edit.select_all_matches
+  - when: "os != macos && search.focused"
+    keys:
+      primary+h: search.toggle_replace
+  - when: "os == macos && search.focused"
+    keys:
+      primary+shift+o: palette.symbols
+  - when: "editor.focused && file.extension == md"
+    keys:
+      primary+k v: markdown.preview
+      primary+shift+v: markdown.preview
+  - when: "os != macos && changes.focused"
+    keys:
+      alt+y: git.stage
+      alt+shift+y: git.unstage
+  - when: "os == macos && changes.focused"
+    keys:
+      primary+y: git.stage
+      primary+shift+y: git.unstage
+      backspace: git.discard
+  - when: changes.focused
+    keys:
+      delete: git.discard
+      primary+backspace: git.discard
+      primary+delete: git.discard
+  - when: "os != macos && changes.focused"
+    keys:
+      backspace: git.discard
+      shift+delete: git.discard
+  - when: pane.kind == commit
+    keys:
+      primary+enter: git.commit
+  - when: "search.focused && search.replacing"
+    keys:
+      enter: search.replace_match
+      primary+enter: search.replace_all
+  - when: "search.focused && !search.replacing"
+    keys:
+      shift+enter: search.previous

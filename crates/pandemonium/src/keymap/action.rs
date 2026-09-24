@@ -10,6 +10,35 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+/// Where a cursor is sent, moving it or selecting as it goes.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Travel {
+    /// One character back.
+    Left,
+    /// One character on.
+    Right,
+    /// One line up.
+    Up,
+    /// One line down.
+    Down,
+    /// To the start of the word before the cursor.
+    WordLeft,
+    /// To the end of the word after the cursor.
+    WordRight,
+    /// To the start of the line.
+    LineStart,
+    /// To the end of the line.
+    LineEnd,
+    /// To the start of the buffer.
+    BufferStart,
+    /// To the end of the buffer.
+    BufferEnd,
+    /// Up by as many lines as the pane holds.
+    PageUp,
+    /// Down by as many lines as the pane holds.
+    PageDown,
+}
+
 /// Something the window can be asked to do.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Action {
@@ -43,8 +72,28 @@ pub enum Action {
     SplitRight,
     /// Split the focused pane below it.
     SplitDown,
+    /// Split the focused pane to its left.
+    SplitLeft,
+    /// Split the focused pane above it.
+    SplitUp,
     /// Close the focused pane's current tab.
     ClosePane,
+    /// Close every tab of the focused pane but the current one.
+    CloseOtherTabs,
+    /// Close the tabs of the focused pane left of the current one.
+    CloseTabsLeft,
+    /// Close the tabs of the focused pane right of the current one.
+    CloseTabsRight,
+    /// Close the tabs of the focused pane that are the same as on disk.
+    CloseSavedTabs,
+    /// Close every tab of the focused pane.
+    CloseAllTabs,
+    /// Pin the current tab of the focused pane, or unpin it.
+    TogglePin,
+    /// Show the tab in this place of the focused pane, counted from zero.
+    ActivateTab(u8),
+    /// Show the last tab of the focused pane.
+    ActivateLastTab,
     /// Open again the tab that was closed last.
     ReopenTab,
     /// Move to the next tab in the focused pane.
@@ -65,6 +114,34 @@ pub enum Action {
     Save,
     /// Write every changed buffer to disk.
     SaveAll,
+    /// Write the focused buffer to disk without formatting it first.
+    SaveWithoutFormat,
+    /// Put the focused file's path on the clipboard.
+    CopyPath,
+    /// Put the focused file's path, from its worktree, on the clipboard.
+    CopyRelativePath,
+    /// Show the focused file in the desktop's file manager.
+    RevealFile,
+    /// Move the cursor, dropping the selection.
+    Move(Travel),
+    /// Move the cursor, carrying the selection with it.
+    Select(Travel),
+    /// Put a line break in, indented as the line before it is.
+    Newline,
+    /// Take out what is selected, or the character before the cursor.
+    Backspace,
+    /// Take out what is selected, or the character after the cursor.
+    Delete,
+    /// Take out the word before the cursor.
+    DeleteWordLeft,
+    /// Take out the word after the cursor.
+    DeleteWordRight,
+    /// Take out everything from the start of the line to the cursor.
+    DeleteToLineStart,
+    /// Take out everything from the cursor to the end of the line.
+    DeleteToLineEnd,
+    /// Put one step of indentation in, or indent what is selected.
+    Tab,
     /// Take back the last change to the focused buffer.
     Undo,
     /// Put back the change that was taken back last.
@@ -131,6 +208,12 @@ pub enum Action {
     ReplaceMatch,
     /// Replace every match at once.
     ReplaceAll,
+    /// Match case in the focused pane's search, or stop matching it.
+    ToggleSearchCase,
+    /// Match whole words in the focused pane's search, or stop.
+    ToggleSearchWord,
+    /// Show the focused pane's replacement field, or hide it.
+    ToggleSearchReplace,
     /// Search every file of every open project.
     SearchProject,
     /// Go to a line of the focused file by number.
@@ -229,6 +312,18 @@ pub enum Action {
     CollapseFiles,
     /// Open the settings screen.
     OpenSettings,
+    /// Open the settings screen at its keymap.
+    OpenKeymap,
+    /// Show the primary sidebar, or hide it.
+    ToggleSidebar,
+    /// Show the bottom panel, or hide it.
+    TogglePanel,
+    /// Show the secondary sidebar, or hide it.
+    ToggleSecondarySidebar,
+    /// Fill the screen with the window, or give the screen back.
+    ToggleFullscreen,
+    /// Close the window.
+    CloseWindow,
     /// Dismiss whatever is open on top: a palette, a prompt, a search.
     Cancel,
 }
@@ -257,7 +352,41 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::EndSession, "session.end", "End Session"),
     (Action::SplitRight, "pane.split_right", "Split Right"),
     (Action::SplitDown, "pane.split_down", "Split Down"),
+    (Action::SplitLeft, "pane.split_left", "Split Left"),
+    (Action::SplitUp, "pane.split_up", "Split Up"),
     (Action::ClosePane, "pane.close", "Close Tab"),
+    (
+        Action::CloseOtherTabs,
+        "pane.close_others",
+        "Close Other Tabs",
+    ),
+    (
+        Action::CloseTabsLeft,
+        "pane.close_left",
+        "Close Tabs to the Left",
+    ),
+    (
+        Action::CloseTabsRight,
+        "pane.close_right",
+        "Close Tabs to the Right",
+    ),
+    (
+        Action::CloseSavedTabs,
+        "pane.close_saved",
+        "Close Saved Tabs",
+    ),
+    (Action::CloseAllTabs, "pane.close_all", "Close All Tabs"),
+    (Action::TogglePin, "pane.toggle_pin", "Pin Tab"),
+    (Action::ActivateTab(0), "pane.tab_1", "Go to Tab 1"),
+    (Action::ActivateTab(1), "pane.tab_2", "Go to Tab 2"),
+    (Action::ActivateTab(2), "pane.tab_3", "Go to Tab 3"),
+    (Action::ActivateTab(3), "pane.tab_4", "Go to Tab 4"),
+    (Action::ActivateTab(4), "pane.tab_5", "Go to Tab 5"),
+    (Action::ActivateTab(5), "pane.tab_6", "Go to Tab 6"),
+    (Action::ActivateTab(6), "pane.tab_7", "Go to Tab 7"),
+    (Action::ActivateTab(7), "pane.tab_8", "Go to Tab 8"),
+    (Action::ActivateTab(8), "pane.tab_9", "Go to Tab 9"),
+    (Action::ActivateLastTab, "pane.last_tab", "Go to Last Tab"),
     (Action::ReopenTab, "pane.reopen", "Reopen Closed Tab"),
     (Action::NextTab, "pane.next_tab", "Next Tab"),
     (Action::PreviousTab, "pane.previous_tab", "Previous Tab"),
@@ -268,6 +397,142 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::NewTerminal, "terminal.new", "New Terminal"),
     (Action::Save, "file.save", "Save"),
     (Action::SaveAll, "file.save_all", "Save All"),
+    (
+        Action::SaveWithoutFormat,
+        "file.save_without_format",
+        "Save Without Formatting",
+    ),
+    (Action::CopyPath, "file.copy_path", "Copy Path"),
+    (
+        Action::CopyRelativePath,
+        "file.copy_relative_path",
+        "Copy Relative Path",
+    ),
+    (Action::RevealFile, "file.reveal", "Reveal in File Manager"),
+    (Action::Move(Travel::Left), "cursor.left", "Move Left"),
+    (Action::Move(Travel::Right), "cursor.right", "Move Right"),
+    (Action::Move(Travel::Up), "cursor.up", "Move Up"),
+    (Action::Move(Travel::Down), "cursor.down", "Move Down"),
+    (
+        Action::Move(Travel::WordLeft),
+        "cursor.word_left",
+        "Move to Previous Word Start",
+    ),
+    (
+        Action::Move(Travel::WordRight),
+        "cursor.word_right",
+        "Move to Next Word End",
+    ),
+    (
+        Action::Move(Travel::LineStart),
+        "cursor.line_start",
+        "Move to Line Start",
+    ),
+    (
+        Action::Move(Travel::LineEnd),
+        "cursor.line_end",
+        "Move to Line End",
+    ),
+    (
+        Action::Move(Travel::BufferStart),
+        "cursor.buffer_start",
+        "Move to Beginning",
+    ),
+    (
+        Action::Move(Travel::BufferEnd),
+        "cursor.buffer_end",
+        "Move to End",
+    ),
+    (
+        Action::Move(Travel::PageUp),
+        "cursor.page_up",
+        "Move Page Up",
+    ),
+    (
+        Action::Move(Travel::PageDown),
+        "cursor.page_down",
+        "Move Page Down",
+    ),
+    (
+        Action::Select(Travel::Left),
+        "cursor.select_left",
+        "Select Left",
+    ),
+    (
+        Action::Select(Travel::Right),
+        "cursor.select_right",
+        "Select Right",
+    ),
+    (Action::Select(Travel::Up), "cursor.select_up", "Select Up"),
+    (
+        Action::Select(Travel::Down),
+        "cursor.select_down",
+        "Select Down",
+    ),
+    (
+        Action::Select(Travel::WordLeft),
+        "cursor.select_word_left",
+        "Select to Previous Word Start",
+    ),
+    (
+        Action::Select(Travel::WordRight),
+        "cursor.select_word_right",
+        "Select to Next Word End",
+    ),
+    (
+        Action::Select(Travel::LineStart),
+        "cursor.select_line_start",
+        "Select to Line Start",
+    ),
+    (
+        Action::Select(Travel::LineEnd),
+        "cursor.select_line_end",
+        "Select to Line End",
+    ),
+    (
+        Action::Select(Travel::BufferStart),
+        "cursor.select_buffer_start",
+        "Select to Beginning",
+    ),
+    (
+        Action::Select(Travel::BufferEnd),
+        "cursor.select_buffer_end",
+        "Select to End",
+    ),
+    (
+        Action::Select(Travel::PageUp),
+        "cursor.select_page_up",
+        "Select Page Up",
+    ),
+    (
+        Action::Select(Travel::PageDown),
+        "cursor.select_page_down",
+        "Select Page Down",
+    ),
+    (Action::Newline, "edit.newline", "Newline"),
+    (Action::Backspace, "edit.backspace", "Backspace"),
+    (Action::Delete, "edit.delete", "Delete"),
+    (
+        Action::DeleteWordLeft,
+        "edit.delete_word_left",
+        "Delete to Previous Word Start",
+    ),
+    (
+        Action::DeleteWordRight,
+        "edit.delete_word_right",
+        "Delete to Next Word End",
+    ),
+    (
+        Action::DeleteToLineStart,
+        "edit.delete_to_line_start",
+        "Delete to Line Start",
+    ),
+    (
+        Action::DeleteToLineEnd,
+        "edit.delete_to_line_end",
+        "Delete to Line End",
+    ),
+    (Action::Tab, "edit.tab", "Tab"),
     (Action::Undo, "edit.undo", "Undo"),
     (Action::Redo, "edit.redo", "Redo"),
     (Action::Cut, "edit.cut", "Cut"),
@@ -349,6 +614,21 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "Replace Match",
     ),
     (Action::ReplaceAll, "search.replace_all", "Replace All"),
+    (
+        Action::ToggleSearchCase,
+        "search.toggle_case",
+        "Toggle Match Case",
+    ),
+    (
+        Action::ToggleSearchWord,
+        "search.toggle_word",
+        "Toggle Whole Word",
+    ),
+    (
+        Action::ToggleSearchReplace,
+        "search.toggle_replace",
+        "Toggle Replace",
+    ),
     (Action::SearchProject, "search.project", "Search Project"),
     (Action::GoToLine, "go.line", "Go to Line"),
     (Action::GoToDefinition, "go.definition", "Go to Definition"),
@@ -432,6 +712,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "agent.cycle_mode",
         "Cycle Agent Mode",
     ),
+    (
+        Action::ChangeAgentModel,
+        "agent.model",
+        "Change Agent Model",
+    ),
     (Action::StageSelectedChanges, "git.stage", "Stage Changes"),
     (
         Action::UnstageSelectedChanges,
@@ -477,7 +762,50 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "Collapse Folders in File Tree",
     ),
     (Action::OpenSettings, "window.settings", "Open Settings"),
+    (Action::OpenKeymap, "window.keymap", "Open Keymap"),
+    (
+        Action::ToggleSidebar,
+        "window.toggle_sidebar",
+        "Toggle Sidebar",
+    ),
+    (
+        Action::TogglePanel,
+        "window.toggle_panel",
+        "Toggle Bottom Panel",
+    ),
+    (
+        Action::ToggleSecondarySidebar,
+        "window.toggle_secondary_sidebar",
+        "Toggle Secondary Sidebar",
+    ),
+    (
+        Action::ToggleFullscreen,
+        "window.fullscreen",
+        "Toggle Full Screen",
+    ),
+    (Action::CloseWindow, "window.close", "Close Window"),
     (Action::Cancel, "window.cancel", "Cancel"),
+];
+
+/// The prefix of an action's name, and the heading its actions sit under.
+const GROUPS: &[(&str, &str)] = &[
+    ("palette", "Palettes"),
+    ("project", "Projects"),
+    ("session", "Sessions"),
+    ("agent", "Agents"),
+    ("pane", "Panes and Tabs"),
+    ("terminal", "Terminal"),
+    ("file", "Files"),
+    ("files", "File Tree"),
+    ("cursor", "Cursor"),
+    ("edit", "Editing"),
+    ("view", "View"),
+    ("search", "Search"),
+    ("go", "Navigation"),
+    ("language", "Language"),
+    ("git", "Git"),
+    ("markdown", "Markdown"),
+    ("window", "Window"),
 ];
 
 impl Action {
@@ -496,6 +824,15 @@ impl Action {
         self.entry().2
     }
 
+    /// The heading the keymap screen lists the action under.
+    pub fn group(self) -> &'static str {
+        let prefix = self.id().split('.').next().unwrap_or_default();
+        GROUPS
+            .iter()
+            .find(|(named, _)| *named == prefix)
+            .map_or("Other", |(_, label)| label)
+    }
+
     /// Whether the action is one a pane showing a file carries out.
     ///
     /// The palette greys out what does not apply where the keyboard is, and
@@ -505,6 +842,23 @@ impl Action {
         matches!(
             self,
             Self::Save
+                | Self::SaveWithoutFormat
+                | Self::CopyPath
+                | Self::CopyRelativePath
+                | Self::RevealFile
+                | Self::Move(_)
+                | Self::Select(_)
+                | Self::Newline
+                | Self::Backspace
+                | Self::Delete
+                | Self::DeleteWordLeft
+                | Self::DeleteWordRight
+                | Self::DeleteToLineStart
+                | Self::DeleteToLineEnd
+                | Self::Tab
+                | Self::ToggleSearchCase
+                | Self::ToggleSearchWord
+                | Self::ToggleSearchReplace
                 | Self::Undo
                 | Self::Redo
                 | Self::Cut

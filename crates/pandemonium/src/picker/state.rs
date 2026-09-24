@@ -71,6 +71,8 @@ pub enum Kind {
     ThemeColor(usize),
     /// What to call the theme about to be written down.
     ThemeName,
+    /// What to call the keymap about to be written down.
+    KeymapName,
     /// The modes the agent of the session in hand can be put into.
     Modes,
     /// The values one of that agent's knobs takes: its models, say.
@@ -104,6 +106,7 @@ impl Kind {
             Self::Font(slot) => slot.placeholder(),
             Self::ThemeColor(_) => "#rrggbb, or #rrggbbaa",
             Self::ThemeName => "What the theme is called",
+            Self::KeymapName => "What the keymap is called",
             Self::Agents => "Start an agent in this worktree",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
@@ -124,6 +127,7 @@ impl Kind {
                 | Self::PortVariable
                 | Self::ThemeColor(_)
                 | Self::ThemeName
+                | Self::KeymapName
         )
     }
 

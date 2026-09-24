@@ -86,23 +86,9 @@ struct StoredTerminal {
 /// argued with: a theme the reader is halfway through writing must not stop
 /// the editor opening.
 pub(super) fn installed() -> Vec<ThemeFamily> {
-    let Some(directory) = paths::themes() else {
-        return Vec::new();
-    };
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    let mut paths = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|kind| kind == EXTENSION))
-        .collect::<Vec<_>>();
-    paths.sort();
-
-    paths
-        .into_iter()
-        .filter_map(|path| fs::read_to_string(path).ok())
-        .filter_map(|text| serde_norway::from_str::<StoredFamily>(&text).ok())
+    paths::texts(paths::themes(), EXTENSION)
+        .iter()
+        .filter_map(|text| serde_norway::from_str::<StoredFamily>(text).ok())
         .map(StoredFamily::into_family)
         .collect()
 }
@@ -113,15 +99,7 @@ pub(super) fn installed() -> Vec<ThemeFamily> {
 /// The file is named after the family, and a file already there is left
 /// alone: a second theme of the same name is written beside it instead.
 pub(super) fn write(name: &str, dark: &Theme, light: &Theme) -> Option<PathBuf> {
-    let directory = paths::themes()?;
-    fs::create_dir_all(&directory).ok()?;
-    let stem = slug(name);
-    let path = (1..)
-        .map(|count| match count {
-            1 => directory.join(format!("{stem}.{EXTENSION}")),
-            _ => directory.join(format!("{stem}-{count}.{EXTENSION}")),
-        })
-        .find(|path| !path.exists())?;
+    let path = paths::unused_file(&paths::themes()?, name, "theme", EXTENSION)?;
     let family = StoredFamily {
         name: name.to_owned(),
         dark: Some(StoredTheme::of(dark)),
@@ -130,19 +108,6 @@ pub(super) fn write(name: &str, dark: &Theme, light: &Theme) -> Option<PathBuf> 
     let text = serde_norway::to_string(&family).ok()?;
     fs::write(&path, text).ok()?;
     Some(path)
-}
-
-/// `name` as the stem of a file: lower case, words joined by hyphens.
-fn slug(name: &str) -> String {
-    let words = name
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .map(str::to_lowercase)
-        .collect::<Vec<_>>();
-    match words.is_empty() {
-        true => "theme".to_owned(),
-        false => words.join("-"),
-    }
 }
 
 impl StoredFamily {

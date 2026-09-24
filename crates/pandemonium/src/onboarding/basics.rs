@@ -6,7 +6,6 @@ use pm_ui::{
 };
 
 use crate::config::{Preference, Preferences, ThemeMode};
-use crate::keymap::BaseKeymap;
 use crate::message::Message;
 
 /// The settings themselves, in the order a first launch wants them.
@@ -74,14 +73,12 @@ fn theme_section(theme: &Theme, preferences: &Preferences) -> Div<Message> {
 
 /// The keymap grid.
 fn keymap_section(theme: &Theme, preferences: &Preferences) -> Div<Message> {
-    let options = BaseKeymap::ALL
-        .into_iter()
-        .map(|keymap| (keymap.label().to_owned(), Message::SetKeymap(keymap)));
+    let options = crate::config::keymap_choices();
 
     section(
         theme,
         "Base Keymap",
         Some("Keep the bindings your hands already know"),
-        toggle_grid(options, Some(preferences.keymap.index()), 4),
+        toggle_grid(options, Some(preferences.keymap), 4),
     )
 }

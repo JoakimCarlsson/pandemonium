@@ -79,6 +79,61 @@ impl When {
             Self::Any(clauses) => clauses.iter().any(|clause| clause.evaluate(context)),
         }
     }
+
+    /// The clause with `key` known to carry `value`, folded as far as that
+    /// takes it.
+    ///
+    /// A keymap is written once for every platform and read on one, so the
+    /// platform's own key is settled as the keymap is put in force: a
+    /// binding for another platform settles to [`When::Never`] and is left
+    /// out, and one for this platform loses the part that said so.
+    pub fn settle(self, key: &str, value: &str) -> Self {
+        match self {
+            Self::Defined(named) if named == key => match value {
+                "false" => Self::Never,
+                _ => Self::Always,
+            },
+            Self::Equals(named, wanted) if named == key => match wanted == value {
+                true => Self::Always,
+                false => Self::Never,
+            },
+            Self::Not(clause) => match clause.settle(key, value) {
+                Self::Always => Self::Never,
+                Self::Never => Self::Always,
+                clause => Self::Not(Box::new(clause)),
+            },
+            Self::All(clauses) => fold(clauses, key, value, Self::Always, Self::Never, Self::All),
+            Self::Any(clauses) => fold(clauses, key, value, Self::Never, Self::Always, Self::Any),
+            clause => clause,
+        }
+    }
+}
+
+/// `clauses` settled one by one and joined again by `combine`.
+///
+/// A clause that settles to `neutral` drops out, one that settles to
+/// `decisive` decides the whole, and what is left collapses to its one
+/// clause or to `neutral` when nothing is.
+fn fold(
+    clauses: Vec<When>,
+    key: &str,
+    value: &str,
+    neutral: When,
+    decisive: When,
+    combine: fn(Vec<When>) -> When,
+) -> When {
+    let mut kept = Vec::new();
+    for clause in clauses {
+        match clause.settle(key, value) {
+            settled if settled == decisive => return decisive,
+            settled if settled == neutral => {}
+            settled => kept.push(settled),
+        }
+    }
+    match kept.len() {
+        0 => neutral,
+        _ => collapse(kept, combine),
+    }
 }
 
 impl Display for When {
@@ -270,4 +325,20 @@ pub mod keys {
     pub const PALETTE_OPEN: &str = "palette.open";
     /// Set while the setup screen is up.
     pub const SETUP_OPEN: &str = "setup.open";
+    /// Set while a file's text has the keyboard: not its search bar, not a
+    /// box of text beside it.
+    pub const EDITOR_FOCUSED: &str = "editor.focused";
+    /// Set while any text has the keyboard: a file's, an agent's prompt or
+    /// a commit message.
+    pub const TEXT_FOCUSED: &str = "text.focused";
+    /// Set while a pane's search bar has the keyboard.
+    pub const SEARCH_FOCUSED: &str = "search.focused";
+    /// Set while it is the search bar's replacement field that has it.
+    pub const SEARCH_REPLACING: &str = "search.replacing";
+    /// Set while the list of changes has the keyboard.
+    pub const CHANGES_FOCUSED: &str = "changes.focused";
+    /// The extension of the file the focused pane shows, without its dot.
+    pub const FILE_EXTENSION: &str = "file.extension";
+    /// The platform the editor runs on: `macos`, `linux` or `windows`.
+    pub const OS: &str = "os";
 }

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::fonts::Fonts;
 use crate::config::overrides::ThemeOverrides;
 use crate::editor::Display;
-use crate::keymap::BaseKeymap;
+use crate::keymap::{self, Action, Changes, DEFAULT_KEYMAP, Keymap, Sequence};
 use crate::message::Message;
 
 /// The sizes a font can be set at, in logical pixels.
@@ -99,6 +99,10 @@ pub enum Preference {
     BufferLineHeight,
     /// The keymap the editor starts from.
     Keymap,
+    /// Every binding the reader changed over that keymap.
+    Keybindings,
+    /// What the reader changed about one action's bindings.
+    Binding(Action),
     /// Whether editing starts in vim mode.
     VimMode,
     /// How much vim's unnamed register shares with the system clipboard.
@@ -201,8 +205,10 @@ pub struct Preferences {
     pub theme_overrides: ThemeOverrides,
     /// The faces and sizes the window's text is set in.
     pub fonts: Fonts,
-    /// The keymap the editor starts from.
-    pub keymap: BaseKeymap,
+    /// Index into `keymap::keymaps` of the keymap the editor starts from.
+    pub keymap: usize,
+    /// The reader's own bindings, over that keymap.
+    pub keybindings: Changes,
     /// Whether editing starts in vim mode.
     pub vim_mode: bool,
     /// How much vim's unnamed register shares with the system clipboard.
@@ -247,7 +253,8 @@ impl Default for Preferences {
             theme_family: DEFAULT_FAMILY,
             theme_overrides: ThemeOverrides::default(),
             fonts: Fonts::default(),
-            keymap: BaseKeymap::default(),
+            keymap: DEFAULT_KEYMAP,
+            keybindings: Changes::default(),
             vim_mode: false,
             vim_clipboard: pm_vim::ClipboardUse::default(),
             vim_bindings: Vec::new(),
@@ -383,7 +390,9 @@ impl Preferences {
             Message::SetThemeFamily(index) => {
                 self.theme_family = index.min(families().len() - 1);
             }
-            Message::SetKeymap(keymap) => self.keymap = keymap,
+            Message::SetKeymap(index) => {
+                self.keymap = index.min(keymap::keymaps().len().saturating_sub(1));
+            }
             Message::TogglePreference(preference) => {
                 if let Some(flag) = self.flag_mut(preference) {
                     *flag = !*flag;
@@ -506,6 +515,24 @@ impl Preferences {
         }
     }
 
+    /// The keymap in force: the chosen one, with the reader's own bindings
+    /// over it.
+    pub fn keymap_in_force(&self) -> Keymap {
+        keymap::resolve(self.keymap, &self.keybindings)
+    }
+
+    /// Binds `action` to `sequence` alone, over the chosen keymap.
+    pub fn rebind(&mut self, action: Action, sequence: Sequence) {
+        let beneath = keymap::resolve(self.keymap, &Changes::default());
+        self.keybindings.rebind(&beneath, action, sequence);
+    }
+
+    /// Takes every chord of `action` away, over the chosen keymap.
+    pub fn unbind(&mut self, action: Action) {
+        let beneath = keymap::resolve(self.keymap, &Changes::default());
+        self.keybindings.clear(&beneath, action);
+    }
+
     /// Whether `preference` is set to something other than its default.
     pub fn is_modified(&self, preference: Preference) -> bool {
         let mut reset = self.clone();
@@ -525,6 +552,8 @@ impl Preferences {
             Preference::ThemeOverrides(appearance) => {
                 self.theme_overrides.clear_all(appearance);
             }
+            Preference::Keybindings => self.keybindings = Changes::default(),
+            Preference::Binding(action) => self.keybindings.reset(action),
             _ => {}
         }
     }

@@ -118,6 +118,18 @@ fn function_key(code: KeyCode) -> Option<Key> {
         KeyCode::F10 => 10,
         KeyCode::F11 => 11,
         KeyCode::F12 => 12,
+        KeyCode::F13 => 13,
+        KeyCode::F14 => 14,
+        KeyCode::F15 => 15,
+        KeyCode::F16 => 16,
+        KeyCode::F17 => 17,
+        KeyCode::F18 => 18,
+        KeyCode::F19 => 19,
+        KeyCode::F20 => 20,
+        KeyCode::F21 => 21,
+        KeyCode::F22 => 22,
+        KeyCode::F23 => 23,
+        KeyCode::F24 => 24,
         _ => return None,
     };
 

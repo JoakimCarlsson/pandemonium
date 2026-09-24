@@ -6,9 +6,6 @@ use crate::keymap::action::Action;
 use crate::keymap::chord::{Chord, Sequence};
 use crate::keymap::context::{Context, When};
 
-/// One row of a static keymap table: a sequence, an action and a `when` clause.
-pub type Row = (&'static str, Action, &'static str);
-
 /// A sequence of chords, what it does and when it does it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Binding {
@@ -21,21 +18,27 @@ pub struct Binding {
 }
 
 impl Binding {
-    /// Binds `sequence` to `action` under `when`, all written as a keymap spells them.
+    /// Binds `sequence` to the action named `action`, or to nothing, under
+    /// `when`, all written as a keymap spells them.
     ///
     /// The three are parsed together because a binding is only ever written as
-    /// the three of them; a failure names the row that could not be read.
-    pub fn parse(sequence: &str, action: Action, when: &str) -> Result<Self, BadBinding> {
+    /// the three of them; a failure names the part that could not be read.
+    pub fn parse(sequence: &str, action: Option<&str>, when: &str) -> Result<Self, BadBinding> {
+        let bad = |row: &str, reason: String| BadBinding {
+            row: row.to_owned(),
+            reason,
+        };
         Ok(Self {
-            sequence: sequence.parse().map_err(|error| BadBinding {
-                row: sequence.to_owned(),
-                reason: format!("{error}"),
-            })?,
-            action: Some(action),
-            when: when.parse().map_err(|error| BadBinding {
-                row: when.to_owned(),
-                reason: format!("{error}"),
-            })?,
+            sequence: sequence
+                .parse()
+                .map_err(|error| bad(sequence, format!("{error}")))?,
+            action: action
+                .map(|named| named.parse::<Action>())
+                .transpose()
+                .map_err(|error| bad(sequence, format!("{error}")))?,
+            when: when
+                .parse()
+                .map_err(|error| bad(when, format!("{error}")))?,
         })
     }
 
@@ -79,8 +82,8 @@ impl std::error::Error for BadBinding {}
 
 /// Every binding the window resolves against, in order of precedence.
 ///
-/// Later bindings win: a keymap is built by laying a base table down and
-/// layering the chosen base keymap, and then the user's own, on top of it.
+/// Later bindings win: a keymap is built by laying the keymap it extends
+/// down, its own bindings over that, and the reader's own over those.
 #[derive(Clone, Debug, Default)]
 pub struct Keymap {
     /// The bindings, lowest precedence first.
@@ -93,19 +96,8 @@ impl Keymap {
         Self::default()
     }
 
-    /// The keymap a static table spells out.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a row cannot be read; a table compiled into the binary is
-    /// not something a running window can recover from.
-    pub fn from_table(rows: &[Row]) -> Self {
-        let bindings = rows
-            .iter()
-            .map(|(sequence, action, when)| {
-                Binding::parse(sequence, *action, when).unwrap_or_else(|error| panic!("{error}"))
-            })
-            .collect();
+    /// The keymap of `bindings`, lowest precedence first.
+    pub fn of(bindings: Vec<Binding>) -> Self {
         Self { bindings }
     }
 
@@ -130,6 +122,30 @@ impl Keymap {
         self
     }
 
+    /// Takes every binding of `sequence` to `action` out, whatever its
+    /// `when`, leaving what the sequence does elsewhere alone.
+    pub fn remove(&mut self, sequence: &Sequence, action: Action) -> &mut Self {
+        self.bindings
+            .retain(|binding| !(binding.sequence == *sequence && binding.action == Some(action)));
+        self
+    }
+
+    /// The keymap with `key` known to carry `value`: every clause is
+    /// settled against it, and a binding that can then never apply is left
+    /// out.
+    pub fn settle(self, key: &str, value: &str) -> Self {
+        let bindings = self
+            .bindings
+            .into_iter()
+            .map(|binding| Binding {
+                when: binding.when.settle(key, value),
+                ..binding
+            })
+            .filter(|binding| binding.when != When::Never)
+            .collect();
+        Self { bindings }
+    }
+
     /// Every binding, lowest precedence first.
     pub fn bindings(&self) -> &[Binding] {
         &self.bindings
@@ -144,6 +160,22 @@ impl Keymap {
         self.bindings.iter().filter(move |binding| {
             binding.sequence.starts_with(pressed) && binding.applies(context)
         })
+    }
+
+    /// Every binding of `action` still in force somewhere: one a later
+    /// binding of the same sequence under the same clause has not replaced.
+    pub fn bindings_of(&self, action: Action) -> Vec<&Binding> {
+        self.bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, binding)| binding.action == Some(action))
+            .filter(|(at, binding)| {
+                !self.bindings[at + 1..]
+                    .iter()
+                    .any(|later| later.sequence == binding.sequence && later.when == binding.when)
+            })
+            .map(|(_, binding)| binding)
+            .collect()
     }
 
     /// The chords `action` is pressed as in `context`, as a palette shows them.

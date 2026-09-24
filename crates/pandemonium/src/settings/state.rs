@@ -8,6 +8,10 @@
 use pm_ui::{Appearance, Scroll, Scrolled};
 
 use crate::config::Preference;
+use crate::keymap::{Action, Chord, Sequence};
+
+/// The most chords a binding recorded in the keymap screen is pressed as.
+const LONGEST_RECORDING: usize = 4;
 
 /// One page of the settings pane, as its sidebar lists them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -17,7 +21,7 @@ pub enum SettingsPage {
     Appearance,
     /// How text is edited, drawn and written down.
     Editor,
-    /// The bindings the editor starts from, and modal editing.
+    /// The keymap the editor starts from, modal editing, and every binding.
     Keymap,
     /// How a terminal is drawn and how much it remembers.
     Terminal,
@@ -62,7 +66,7 @@ impl SettingsPage {
                 SettingsSection::Display,
                 SettingsSection::Saving,
             ],
-            Self::Keymap => &[SettingsSection::Keymap],
+            Self::Keymap => &[SettingsSection::Keymap, SettingsSection::Keybindings],
             Self::Terminal => &[SettingsSection::Terminal],
             Self::Sessions => &[SettingsSection::Sessions],
         }
@@ -100,6 +104,8 @@ pub enum SettingsSection {
     Saving,
     /// The keymap the editor starts from, and vim mode.
     Keymap,
+    /// Every action, the chords it is pressed as, and the way to change them.
+    Keybindings,
     /// How a terminal is set and how much it remembers.
     Terminal,
     /// Whether a session's worktree is trusted, and what a new one is given.
@@ -120,6 +126,7 @@ impl SettingsSection {
             Self::Display => "Display",
             Self::Saving => "Saving",
             Self::Keymap => "Keymap",
+            Self::Keybindings => "Keybindings",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
         }
@@ -179,6 +186,7 @@ impl SettingsSection {
                 Preference::VimMode,
                 Preference::VimClipboard,
             ],
+            Self::Keybindings => &[Preference::Keybindings],
             Self::Terminal => &[Preference::TerminalFontSize, Preference::TerminalScrollback],
             Self::Sessions => &[
                 Preference::TrustWorktrees,
@@ -237,6 +245,30 @@ pub struct Settings {
     scroll: Scrolled,
     /// The pages the sidebar has opened out to list their sections.
     expanded: Vec<SettingsPage>,
+    /// The binding being recorded, while one is.
+    recording: Option<Recording>,
+}
+
+/// The chords pressed so far for an action being bound.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Recording {
+    /// The action the chords are for.
+    pub action: Action,
+    /// The chords pressed, in order.
+    pub chords: Vec<Chord>,
+}
+
+impl Recording {
+    /// The chords pressed, as the sequence they bind, once there is one.
+    pub fn sequence(&self) -> Option<Sequence> {
+        self.chords
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .parse()
+            .ok()
+    }
 }
 
 impl Default for Settings {
@@ -247,6 +279,7 @@ impl Default for Settings {
             view: SettingsView::Page(page),
             scroll: Scrolled::default(),
             expanded: vec![page],
+            recording: None,
         }
     }
 }
@@ -285,6 +318,41 @@ impl Settings {
             }
             None => self.expanded.push(page),
         }
+    }
+
+    /// The binding being recorded, while one is.
+    pub fn recording(&self) -> Option<&Recording> {
+        self.recording.as_ref()
+    }
+
+    /// Starts listening for the chords to bind `action` to.
+    pub fn record(&mut self, action: Action) {
+        self.recording = Some(Recording {
+            action,
+            chords: Vec::new(),
+        });
+    }
+
+    /// Adds `chord` to the binding being recorded, up to the longest a
+    /// binding is let be.
+    pub fn press(&mut self, chord: Chord) {
+        if let Some(recording) = self.recording.as_mut()
+            && recording.chords.len() < LONGEST_RECORDING
+        {
+            recording.chords.push(chord);
+        }
+    }
+
+    /// Takes the last chord off the binding being recorded.
+    pub fn erase(&mut self) {
+        if let Some(recording) = self.recording.as_mut() {
+            recording.chords.pop();
+        }
+    }
+
+    /// Stops listening, handing back what was recorded.
+    pub fn stop_recording(&mut self) -> Option<Recording> {
+        self.recording.take()
     }
 
     /// Scrolls the view by `delta` logical pixels, positive being towards
