@@ -1519,14 +1519,14 @@ impl App {
         self.editor_focused = false;
     }
 
-    /// Asks for a repository and adds the one that comes back to the window.
+    /// Asks for a folder and adds the project it belongs to to the window.
     ///
     /// The picker is the platform's own, so there is nothing to do when it is
-    /// dismissed, and nothing to say when the folder it answers with is not in
-    /// a repository — the set of open projects simply does not change.
+    /// dismissed. A folder inside a repository opens that repository; any
+    /// other folder opens as a project of its own.
     fn open_project(&mut self) {
         let Some(root) = rfd::FileDialog::new()
-            .set_title("Open a repository")
+            .set_title("Open a folder")
             .pick_folder()
         else {
             return;

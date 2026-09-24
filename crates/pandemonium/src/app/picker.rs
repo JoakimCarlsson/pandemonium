@@ -284,7 +284,7 @@ impl App {
             .map(|project| Row {
                 section: None,
                 label: project.name().to_owned(),
-                detail: project.branch().to_owned(),
+                detail: project.branch().unwrap_or_default().to_owned(),
                 choice: Choice::Project(project.id()),
                 enabled: true,
             })

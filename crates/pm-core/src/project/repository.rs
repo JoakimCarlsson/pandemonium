@@ -31,8 +31,13 @@ const SHORT_HASH: usize = 7;
 /// The working-copy root at or above `path`, if one of them is a repository.
 pub fn root(path: &Path) -> Option<PathBuf> {
     path.ancestors()
-        .find(|ancestor| ancestor.join(GIT).exists())
+        .find(|ancestor| is_root(ancestor))
         .map(Path::to_path_buf)
+}
+
+/// Whether `root` is itself the root of a repository's working copy.
+pub fn is_root(root: &Path) -> bool {
+    root.join(GIT).exists()
 }
 
 /// The branch checked out in the repository at `root`.

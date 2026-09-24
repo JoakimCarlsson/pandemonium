@@ -28,7 +28,12 @@ impl Projects {
         Self::default()
     }
 
-    /// Opens the repository containing `path` and makes it the active project.
+    /// Opens `path` as a project and makes it the active project.
+    ///
+    /// A path inside a repository opens that repository's working copy, the
+    /// way a file dropped on the window opens the project it belongs to. A
+    /// folder no repository contains opens as itself. A file outside every
+    /// repository opens the folder holding it.
     ///
     /// A path already open resolves to the project that is already there
     /// instead of being held twice, so a menu entry, a keybinding and a
@@ -38,7 +43,7 @@ impl Projects {
         let path = std::fs::canonicalize(path).map_err(|_| OpenError::Missing {
             path: path.to_path_buf(),
         })?;
-        let root = repository::root(&path).ok_or(OpenError::NotARepository { path })?;
+        let root = repository::root(&path).unwrap_or_else(|| folder_of(path));
 
         if let Some(project) = self.open.iter().find(|project| project.root() == root) {
             let id = project.id();
@@ -121,17 +126,20 @@ impl Projects {
     }
 }
 
+/// The folder `path` names, or the one holding it when it names a file.
+fn folder_of(path: PathBuf) -> PathBuf {
+    match path.is_dir() {
+        true => path,
+        false => path.parent().map_or(path.clone(), Path::to_path_buf),
+    }
+}
+
 /// Why a path could not be opened as a project.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OpenError {
     /// Nothing on disk answers to this path.
     Missing {
         /// The path that answered to nothing.
-        path: PathBuf,
-    },
-    /// The path exists, but neither it nor anything above it is a repository.
-    NotARepository {
-        /// The path that no repository contains.
         path: PathBuf,
     },
 }
@@ -141,9 +149,6 @@ impl Display for OpenError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Missing { path } => write!(formatter, "`{}` does not exist", path.display()),
-            Self::NotARepository { path } => {
-                write!(formatter, "`{}` is not in a repository", path.display())
-            }
         }
     }
 }

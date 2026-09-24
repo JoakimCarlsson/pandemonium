@@ -402,7 +402,7 @@ fn backdrop(message: Message) -> Div<Message> {
 /// window — so both are offered from the one control that adds one.
 pub fn add_project_items() -> Vec<MenuItem<Message>> {
     vec![
-        menu_entry("Open a Repository…", Some(Message::OpenProject)),
+        menu_entry("Open Folder…", Some(Message::OpenProject)),
         menu_entry("Clone from a URL…", Some(Message::CloneProject)),
     ]
 }
@@ -1003,7 +1003,7 @@ fn pointed_at<'a>(
 
     (
         Some(project),
-        Some(session.unwrap_or_else(|| project.branch().to_owned())),
+        session.or_else(|| project.branch().map(str::to_owned)),
     )
 }
 
@@ -1032,7 +1032,8 @@ fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div
 ///
 /// The project is the worktree its sessions were cut from, so its row names
 /// it and states the branch it has out — `main`, most of the time — and the
-/// sessions under it are read against that.
+/// sessions under it are read against that. A plain folder has no branch,
+/// and its row states nothing beside its name.
 fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message> {
     row(theme, selected)
         .on_click(Message::ActivateProject(project.id()))
@@ -1045,7 +1046,11 @@ fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message>
                 .font_medium()
                 .color(theme.colors.text),
         ))
-        .child(reading(theme, project.branch().to_owned()))
+        .children(
+            project
+                .branch()
+                .map(|branch| reading(theme, branch.to_owned())),
+        )
 }
 
 /// Builds one session row: its state, what it is called, how far it has gone.

@@ -48,6 +48,9 @@ impl Sessions {
         under: &Path,
         wanted: &Bootstrap,
     ) -> Result<Started, StartError> {
+        if !project.is_repository() {
+            return Err(StartError::NotARepository);
+        }
         let origin = project.root().to_path_buf();
         let cut_from = match base.is_empty() {
             true => "HEAD",
@@ -192,6 +195,8 @@ fn named(root: &Path) -> String {
 /// Why a session could not be started or finished.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StartError {
+    /// The project is a plain folder, with no repository to cut a worktree of.
+    NotARepository,
     /// The project has no commit to cut a worktree from.
     NoCommit,
     /// The directory the worktree would go in could not be made.
@@ -209,6 +214,7 @@ impl Display for StartError {
     /// Says why the session could not be started or finished.
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NotARepository => write!(formatter, "the project is not a git repository"),
             Self::NoCommit => write!(formatter, "the project has no commits yet"),
             Self::Place { path, trouble } => {
                 write!(
