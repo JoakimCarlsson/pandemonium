@@ -524,7 +524,7 @@ impl App {
     }
 
     /// Every file the window has open, with the worktree and path it is in.
-    fn open_files(&self) -> Vec<(pm_core::Scope, PathBuf, crate::editor::FileId)> {
+    pub(super) fn open_files(&self) -> Vec<(pm_core::Scope, PathBuf, crate::editor::FileId)> {
         self.panes
             .held()
             .into_iter()

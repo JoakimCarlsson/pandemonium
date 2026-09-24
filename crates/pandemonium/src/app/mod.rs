@@ -15,6 +15,7 @@ mod excerpts;
 mod input;
 mod language;
 mod modal;
+mod panel;
 mod panes;
 mod picker;
 mod places;
@@ -55,12 +56,13 @@ use crate::editor::{self, Files};
 use crate::keymap::Resolver;
 use crate::message::Message;
 use crate::onboarding;
+use crate::panel::{Panel, PanelView};
 use crate::panes::{Item, PaneTree, Saved};
 use crate::review::Review;
 use crate::settings::Settings;
 use crate::terminal::{Shell, Terminals};
 use crate::workspace::{
-    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panel, Panes,
+    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panes,
     SECONDARY_SIDEBAR_RANGE, SidebarView, TabMenu,
 };
 
@@ -216,6 +218,12 @@ pub struct App {
     primary_sidebar_open: bool,
     /// Whether the bottom panel is visible.
     bottom_panel_open: bool,
+    /// Which of the bottom panel's views is in front.
+    panel_view: PanelView,
+    /// How far the bottom panel's list of problems is scrolled.
+    problems_scroll: pm_ui::Scrolled,
+    /// Where the bottom panel's list of problems came out last frame.
+    problems_area: pm_ui::Bounds,
     /// Whether the secondary sidebar is visible.
     secondary_sidebar_open: bool,
     /// Which of the worktree's two lists that sidebar is showing.
@@ -408,6 +416,9 @@ impl App {
             ),
             primary_sidebar_open: layout.primary_sidebar_open,
             bottom_panel_open: layout.bottom_panel_open,
+            panel_view: PanelView::default(),
+            problems_scroll: pm_ui::Scrolled::default(),
+            problems_area: pm_ui::Bounds::default(),
             secondary_sidebar_open: layout.secondary_sidebar_open,
             secondary_sidebar_view: layout.secondary_sidebar_view,
             history_graph_open: layout.history_graph_open,
@@ -483,7 +494,7 @@ impl App {
         let Some(scope) = self.scope() else {
             return;
         };
-        if self.bottom_panel_open && self.terminals.count(scope) == 0 {
+        if self.showing_terminals() && self.terminals.count(scope) == 0 {
             self.bottom_panel_open = false;
             self.terminal_focused = false;
         }
@@ -515,7 +526,6 @@ impl App {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
-            (true, _) if showing(|item| item.debugged().is_some()) => Some("debug"),
             (true, _) if showing(crate::panes::Item::is_window_wide) => Some("settings"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
@@ -691,7 +701,7 @@ impl App {
         };
         let env = self.worktree_env(scope);
         self.terminals.start(scope, &root, &env);
-        self.bottom_panel_open = true;
+        self.show_panel(PanelView::Terminal);
     }
 
     /// Ends one shell, closing the panel when it was the worktree's last.
@@ -703,10 +713,7 @@ impl App {
             return;
         };
         self.terminals.stop(scope, shell);
-        if self.terminals.count(scope) == 0 {
-            self.bottom_panel_open = false;
-            self.terminal_focused = false;
-        }
+        self.close_empty_panel();
     }
 
     /// Scrolls the terminal by a drag on its scrollbar.
@@ -738,7 +745,7 @@ impl App {
 
     /// The shell keystrokes are going to, if any is focused.
     pub(super) fn focused_shell(&self) -> Option<Shell> {
-        if !self.terminal_focused || !self.bottom_panel_open {
+        if !self.terminal_focused || !self.showing_terminals() {
             return None;
         }
         self.terminals.active(self.scope()?)
@@ -913,8 +920,12 @@ impl App {
         }
         if message == Message::ToggleBottomPanel {
             self.bottom_panel_open = !self.bottom_panel_open;
-            self.terminal_focused = self.bottom_panel_open;
+            self.terminal_focused = self.showing_terminals();
             self.store();
+            self.request_redraw();
+            return;
+        }
+        if self.panel_command(message) {
             self.request_redraw();
             return;
         }
@@ -1503,7 +1514,7 @@ impl App {
         };
         let env = self.worktree_env(scope);
         self.terminals.start(scope, &directory, &env);
-        self.bottom_panel_open = true;
+        self.show_panel(PanelView::Terminal);
         self.terminal_focused = true;
         self.editor_focused = false;
     }
@@ -1810,18 +1821,24 @@ impl App {
         self.refresh_annotations();
         self.open_reviewed_files();
         let shell = self
-            .bottom_panel_open
+            .showing_terminals()
             .then(|| self.active_shell())
             .flatten();
         let shells = self
             .scope()
             .map(|scope| self.terminals.list(scope))
             .unwrap_or_default();
+        let theme = self.theme();
         let panel = Panel {
+            view: self.panel_view,
             shell,
             shells,
             focused: self.terminal_focused,
             linking: self.modifiers.control_key(),
+            problems: self.problems(),
+            problems_scroll: self.problems_scroll.clone(),
+            problems_area: self.problems_area.clone(),
+            debug: self.debug_in_panel(&theme),
         };
         let showing = self.active_file();
         let drop = self.drop_highlight().or_else(|| {
@@ -1831,7 +1848,6 @@ impl App {
         let carried = self.carried_tab().or_else(|| self.carried_entries());
         let tree_scroll = self.tree_scroll();
         let layout = self.layout();
-        let theme = self.theme();
         let editor = self.pane_view(&theme);
         let menu = self.menu_items();
         let overlays = self.overlays(&theme);
@@ -1901,7 +1917,7 @@ impl App {
                     showing,
                     drop,
                     carried,
-                    terminal: panel,
+                    panel,
                     agents: self
                         .open
                         .active()

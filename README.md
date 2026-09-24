@@ -33,10 +33,11 @@ side of the real work. pandemonium treats it as the real work.
 - **Source control that you can actually read.** A Source Control sidebar, a
   lane-coloured commit graph, and review diffs highlighted with tree-sitter and
   semantic tokens.
-- **A debugger in a pane.** Breakpoints in the gutter, a call stack,
-  variables and a console, over the Debug Adapter Protocol with gdb,
-  lldb-dap, debugpy or delve. Your existing `.vscode/launch.json` or
-  `.zed/debug.json` is read as it is; F5 starts or continues.
+- **A debugger in the bottom panel.** Breakpoints in the gutter, a call
+  stack, variables and a console beside Problems and Terminal, over the
+  Debug Adapter Protocol with gdb, lldb-dap, debugpy or delve. Your existing
+  `.vscode/launch.json` or `.zed/debug.json` is read as it is; F5 starts or
+  continues.
 - **GPU-native.** Rendered with wgpu, windowed with winit, with a UI layer
   written from scratch. No web view, no Electron, no UI framework.
 

@@ -1,14 +1,15 @@
-//! The program being debugged, in a pane: where it stands, and what it holds.
+//! The program being debugged, in the bottom panel: where it stands, and
+//! what it holds.
 //!
 //! Along the top is what is being debugged and the controls that run it on —
 //! continue or pause, the three steps, restart and stop — in the order every
-//! debugger puts them. Beneath is the paused thread's stack beside what the
-//! selected frame's variables hold, opened and closed like a file tree; at
-//! the foot is the console, where the program's output lands and where an
-//! expression is typed to be asked about.
+//! debugger puts them. Beneath, side by side because the panel is wide and
+//! short, are the paused thread's stack, what the selected frame's variables
+//! hold, opened and closed like a file tree, and the console, where the
+//! program's output lands and where an expression is typed to be asked about.
 //!
-//! A pane is as tall as the window made it, so the console shows as many of
-//! its last lines as the last frame had room for, and the wheel walks back
+//! The panel is as tall as the reader made it, so the console shows as many
+//! of its last lines as the last frame had room for, and the wheel walks back
 //! through the rest.
 
 use std::path::Path;
@@ -25,27 +26,21 @@ use crate::input::input_view;
 use crate::keymap::Action;
 use crate::message::Message;
 
-/// How many lines tall the console is, the box under it aside.
-const CONSOLE_LINES: f32 = 9.0;
-
 /// How far one level of a variable's members is indented.
 const INDENT: f32 = 1.25;
 
 /// How deep the variables tree is drawn, however far it has been opened.
 const DEEPEST: usize = 12;
 
-/// How wide the call stack is, as a share of the pane's width.
-const STACK_SHARE: f32 = 0.4;
+/// How wide the call stack is.
+const STACK_WIDTH: f32 = 280.0;
 
-/// Builds the pane showing `debugger`, or offering to start one where there
-/// is none; `typing` says its console has the keyboard, and `width` is what
-/// the pane came out at last frame.
-pub fn debug_pane(
-    theme: &Theme,
-    debugger: Option<&Debugger>,
-    typing: bool,
-    width: f32,
-) -> Div<Message> {
+/// How wide the variables are.
+const VARIABLES_WIDTH: f32 = 360.0;
+
+/// Builds the view showing `debugger`, or offering to start one where there
+/// is none; `typing` says its console has the keyboard.
+pub fn debug_view(theme: &Theme, debugger: Option<&Debugger>, typing: bool) -> Div<Message> {
     let Some(debugger) = debugger else {
         return idle(theme);
     };
@@ -65,7 +60,7 @@ pub fn debug_pane(
                 .overflow_hidden()
                 .child(
                     v_flex()
-                        .w_px(width * STACK_SHARE)
+                        .w_px(STACK_WIDTH)
                         .h_full()
                         .overflow_hidden()
                         .child(heading(theme, "CALL STACK"))
@@ -76,10 +71,10 @@ pub fn debug_pane(
                                 .flex_1(),
                         )),
                 )
-                .child(v_flex().w_px(1.0).h_full().bg(theme.colors.border))
+                .child(divider(theme))
                 .child(
                     v_flex()
-                        .flex_1()
+                        .w_px(VARIABLES_WIDTH)
                         .h_full()
                         .overflow_hidden()
                         .child(heading(theme, "VARIABLES"))
@@ -89,13 +84,18 @@ pub fn debug_pane(
                                 .w_full()
                                 .flex_1(),
                         )),
-                ),
+                )
+                .child(divider(theme))
+                .child(console(theme, debugger, typing)),
         )
-        .child(rule(theme))
-        .child(console(theme, debugger, typing))
 }
 
-/// Builds what the pane says while nothing is being debugged.
+/// Builds the line standing between two of the view's columns.
+fn divider(theme: &Theme) -> Div<Message> {
+    v_flex().w_px(1.0).h_full().bg(theme.colors.border)
+}
+
+/// Builds what the view says while nothing is being debugged.
 fn idle(theme: &Theme) -> Div<Message> {
     v_flex()
         .w_full()
@@ -224,7 +224,7 @@ fn chip(theme: &Theme, label: impl Into<String>) -> Div<Message> {
         )
 }
 
-/// Builds the heading over one of the pane's lists.
+/// Builds the heading over one of the view's lists.
 fn heading(theme: &Theme, title: &str) -> Div<Message> {
     h_flex().w_full().px(1.5).py(0.5).child(
         text(title.to_owned())
@@ -398,12 +398,15 @@ fn console(theme: &Theme, debugger: &Debugger, typing: bool) -> Div<Message> {
     let start = end.saturating_sub(room);
 
     v_flex()
-        .w_full()
+        .flex_1()
+        .h_full()
+        .overflow_hidden()
+        .child(heading(theme, "CONSOLE"))
         .child(measured(
             debugger.console_area(),
             v_flex()
                 .w_full()
-                .h_px(line_height * CONSOLE_LINES)
+                .flex_1()
                 .px(1.5)
                 .py(0.5)
                 .overflow_hidden()

@@ -8,14 +8,15 @@ use pm_ui::button;
 use pm_ui::{
     Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Text, Theme,
     h_flex, icon, icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule,
-    sash, tab, tab_bar, text, v_flex,
+    sash, text, v_flex,
 };
 
 use crate::editor::{FileId, OpenFile};
 use crate::message::Message;
+use crate::panel::{Panel, PanelView, bottom_panel};
 use crate::panes::{Item, PaneId};
 use crate::review::{Review, SourceControlControls, changes_sidebar};
-use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
+use crate::terminal::{ShellEntry, ShellId};
 
 /// How far the tab under the pointer sits from the pointer itself.
 const CARRIED_OFFSET: f32 = 8.0;
@@ -186,21 +187,6 @@ pub struct SidebarSession {
     pub selected: bool,
 }
 
-/// What the terminal panel is showing.
-///
-/// The panel is one pane and a list of what else could be in it, which is one
-/// thing to pass around rather than three.
-pub struct Panel {
-    /// The shell the pane draws, when the project has one running.
-    pub shell: Option<Shell>,
-    /// Every shell of the project, for the list beside the pane.
-    pub shells: Vec<ShellEntry>,
-    /// Whether keystrokes are going to the pane.
-    pub focused: bool,
-    /// Whether the key that follows a link is held.
-    pub linking: bool,
-}
-
 /// What the window's panes are showing, and what is open over them.
 ///
 /// The panes travel together because the screen is one arrangement of them,
@@ -219,8 +205,8 @@ pub struct Panes {
     pub drop: Option<Rect>,
     /// The tab the pointer is carrying, where it is and what it is called.
     pub carried: Option<(Point, String)>,
-    /// The terminal panel and the shells running in it.
-    pub terminal: Panel,
+    /// The bottom panel and the views in it.
+    pub panel: Panel,
     /// How many agents are running in the active project's worktree.
     pub agents: usize,
     /// The tab menu that is open, and what it holds.
@@ -265,9 +251,9 @@ pub enum MenuTarget {
     Project(ProjectId),
     /// One of the sessions hanging under one of them.
     Session(SessionId),
-    /// A shell running in the terminal panel.
+    /// A shell running in the bottom panel.
     Terminal(ShellId),
-    /// What the terminal panel's shell is showing.
+    /// What the bottom panel's shell is showing.
     Screen,
     /// The text one of the editor panes is showing.
     Text(PaneId),
@@ -305,7 +291,7 @@ pub fn workspace(
         editor,
         drop,
         carried,
-        terminal: panel,
+        panel,
         menu: open_menu,
         overlays,
         ..
@@ -537,7 +523,7 @@ impl Status {
             branch: pointed,
             sessions: project.map_or(0, |project| sessions_of(project, sessions).len()),
             changes: files.review.map_or(0, |review| review.changed().len()),
-            shells: panes.terminal.shells.len(),
+            shells: panes.panel.shells.len(),
             agents: panes.agents,
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
@@ -670,7 +656,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                 theme,
                 Some(IconName::Warning),
                 format!("{} · {}", problems.0, problems.1),
-                None,
+                Some(Message::TogglePanelView(PanelView::Problems)),
                 false,
             ))
         })
@@ -716,7 +702,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
             theme,
             Some(IconName::Terminal),
             counted(shells, "shell"),
-            Some(Message::ToggleBottomPanel),
+            Some(Message::TogglePanelView(PanelView::Terminal)),
             panel_open,
         ))
 }
@@ -817,79 +803,8 @@ fn main_area(
         .child(v_flex().w_full().flex_1().overflow_hidden().child(editor))
         .when(layout.bottom_panel_open, |main| {
             main.child(sash(Axis::Vertical, Message::ResizeBottomPanel))
-                .child(terminal_panel(theme, layout.bottom_panel_height, panel))
+                .child(bottom_panel(theme, layout.bottom_panel_height, panel))
         })
-}
-
-/// Builds the bottom panel: the shells of the worktree the window is pointed at.
-///
-/// A terminal is a tab in a bar of tabs with the pane beneath it, which is
-/// what every other pane in the window will look like: the panel is where
-/// terminals happen to live today, not a dock of its own with its own rules.
-fn terminal_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
-    let Panel {
-        shell,
-        shells,
-        focused,
-        linking,
-    } = panel;
-    let missing = shell.is_none();
-
-    v_flex()
-        .w_full()
-        .h_px(height)
-        .overflow_hidden()
-        .bg(theme.colors.background)
-        .child(terminal_tabs(theme, &shells))
-        .when_some(shell, |panel, shell| {
-            panel.child(
-                terminal_view(shell, focused)
-                    .linking(linking)
-                    .on_point(Message::PointTerminal)
-                    .on_menu(Message::ShowScreenMenu)
-                    .on_scroll(Message::ScrollTerminal),
-            )
-        })
-        .when(missing, |panel| {
-            panel.child(
-                text("No shell is running in this worktree")
-                    .text_sm()
-                    .font_light()
-                    .color(theme.colors.text_subtle)
-                    .px(2)
-                    .py(1.5),
-            )
-        })
-}
-
-/// Builds the terminal panel's bar of tabs and its own actions.
-fn terminal_tabs(theme: &Theme, shells: &[ShellEntry]) -> Div<Message> {
-    let tabs = shells
-        .iter()
-        .map(|shell| {
-            tab(
-                IconName::Terminal,
-                shell.name.clone(),
-                Message::SelectTerminal(shell.id),
-                Message::CloseTerminal(shell.id),
-                Message::ShowTerminalMenu(shell.id),
-            )
-            .active(shell.active)
-        })
-        .collect();
-    let actions = h_flex()
-        .h_full()
-        .px(1.5)
-        .gap(1)
-        .items_center()
-        .child(icon_button(theme, IconName::Plus, Message::NewTerminal))
-        .child(icon_button(
-            theme,
-            IconName::Close,
-            Message::ToggleBottomPanel,
-        ));
-
-    tab_bar(theme, tabs, actions)
 }
 
 /// Builds native-style controls for undecorated Linux and Windows windows.

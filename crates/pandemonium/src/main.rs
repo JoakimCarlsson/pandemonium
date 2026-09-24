@@ -25,6 +25,7 @@ mod keymap;
 mod markdown;
 mod message;
 mod onboarding;
+mod panel;
 mod panes;
 mod picker;
 mod prompt;

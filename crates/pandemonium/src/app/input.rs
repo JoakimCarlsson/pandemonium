@@ -756,6 +756,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.scroll_problems(delta) {
+            self.request_redraw();
+            return;
+        }
         if self.scroll_settings(delta) {
             self.request_redraw();
             return;

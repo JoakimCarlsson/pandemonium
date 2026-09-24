@@ -2,9 +2,8 @@
 //!
 //! The view walks the tree the window keeps and asks for each pane's
 //! contents as it reaches it, so what is drawn is the tree itself rather
-//! than a copy of it made beforehand. A pane is the same bar of tabs the
-//! terminal panel wears, with whatever is in front beneath it and a ring
-//! around it while it has the keyboard. Its tabs are carried by the pointer,
+//! than a copy of it made beforehand. A pane is a bar of tabs with whatever
+//! is in front beneath it and a ring around it while it has the keyboard. Its tabs are carried by the pointer,
 //! and both they and the pane leave their bounds behind as they paint,
 //! because where a carried tab is let go of is the window's to answer.
 

@@ -3,9 +3,9 @@
 //!
 //! A breakpoint is set in the gutter of a file and belongs to the worktree
 //! the file was opened from; a program is debugged in the worktree the window
-//! is pointed at. Which pane shows the debugger, which file a paused program
-//! is brought up in and who has the keyboard meanwhile are the window's, and
-//! they are here. Every debugging command goes through [`App::debug_action`]
+//! is pointed at, and read in the bottom panel's debug view. Which file a
+//! paused program is brought up in and who has the keyboard meanwhile are
+//! the window's, and they are here. Every debugging command goes through [`App::debug_action`]
 //! or [`App::debug_command`].
 
 use pm_core::Scope;
@@ -17,7 +17,8 @@ use crate::app::{App, Writing};
 use crate::editor::{Breakpoint, FileId};
 use crate::keymap::Action;
 use crate::message::Message;
-use crate::panes::{Item, PaneId, SplitDirection};
+use crate::panel::PanelView;
+use crate::panes::PaneId;
 use crate::picker::{Choice, Kind, Row};
 
 impl App {
@@ -59,7 +60,7 @@ impl App {
         true
     }
 
-    /// Carries out the messages the gutter and the debugger's pane send.
+    /// Carries out the messages the gutter and the debugger's view send.
     pub(super) fn debug_command(&mut self, message: Message) -> bool {
         match message {
             Message::ToggleBreakpoint(pane, at) => {
@@ -157,9 +158,9 @@ impl App {
     /// Takes in what the debug adapters have said, answering whether there
     /// is anything new to draw.
     ///
-    /// A program that pauses is brought up where it paused, in a pane that
-    /// is not the debugger's own, so the reader is looking at the line as
-    /// soon as it is the line that matters.
+    /// A program that pauses is brought up where it paused, in the pane in
+    /// front, so the reader is looking at the line as soon as it is the line
+    /// that matters.
     pub(super) fn take_debugged(&mut self) -> bool {
         let (changed, events) = self.debuggers.pump();
         for (scope, event) in events {
@@ -180,13 +181,7 @@ impl App {
         let (Some(pointer), Some(scope)) = (self.pointer, self.scope()) else {
             return false;
         };
-        let shown = self
-            .panes
-            .panes()
-            .into_iter()
-            .filter_map(|pane| self.panes.pane(pane)?.active(Some(scope)))
-            .any(|item| item == Item::Debug(scope));
-        shown
+        self.showing_debugger()
             && self
                 .debuggers
                 .get_mut(scope)
@@ -306,31 +301,11 @@ impl App {
         }
     }
 
-    /// Opens the file `frame` is in at its line, in a pane that is not the
-    /// debugger's.
+    /// Opens the file `frame` is in at its line, in the pane in front.
     fn bring_up(&mut self, scope: Scope, frame: &pm_dap::Frame) {
         let Some(path) = frame.path.clone() else {
             return;
         };
-        let focus = self.panes.focus();
-        let beside = std::iter::once(focus)
-            .chain(self.panes.panes())
-            .find(|pane| {
-                self.panes
-                    .pane(*pane)
-                    .and_then(|held| held.active(Some(scope)))
-                    .and_then(Item::debugged)
-                    .is_none()
-            });
-        match beside {
-            Some(pane) => self.focus_pane(pane),
-            None => {
-                let Some(fresh) = self.panes.split(focus, SplitDirection::Up) else {
-                    return;
-                };
-                self.focus_pane(fresh);
-            }
-        }
         self.jump_to(&Place {
             scope,
             path,
@@ -338,29 +313,11 @@ impl App {
         });
     }
 
-    /// Shows the debugger of `scope`: where a pane holds it already, that
-    /// tab is brought forward; otherwise the pane in front is divided and
-    /// the debugger takes the lower half, the file staying where it was.
+    /// Shows the debugger of `scope` in the bottom panel, the file staying
+    /// where it was.
     fn show_debugger(&mut self, scope: Scope) {
-        let item = Item::Debug(scope);
-        let holding = self.panes.panes().into_iter().find(|pane| {
-            self.panes
-                .pane(*pane)
-                .is_some_and(|held| held.items().any(|open| open == item))
-        });
-        let focus = self.panes.focus();
-        let pane = match holding {
-            Some(pane) => pane,
-            None => match self.panes.split(focus, SplitDirection::Down) {
-                Some(fresh) => fresh,
-                None => return,
-            },
-        };
-        if let Some(held) = self.panes.pane_mut(pane) {
-            held.open(Some(scope), item);
-            held.activate(Some(scope), item);
+        if self.scope() == Some(scope) {
+            self.show_panel(PanelView::Debug);
         }
-        self.panes.set_focus(focus);
-        self.store();
     }
 }

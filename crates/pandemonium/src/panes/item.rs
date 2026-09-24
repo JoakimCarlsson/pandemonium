@@ -36,9 +36,6 @@ pub enum Item {
     Excerpts(Scope),
     /// One conversation held in a worktree, with everything said in it.
     Agent(Scope, TalkId),
-    /// The program a worktree is debugging: its stack, its variables and
-    /// its console.
-    Debug(Scope),
     /// The editor's preferences, which belong to the window, not a worktree.
     Settings,
 }
@@ -96,14 +93,6 @@ impl Item {
     pub fn session(self) -> Option<TalkId> {
         match self {
             Self::Agent(_, session) => Some(session),
-            _ => None,
-        }
-    }
-
-    /// The worktree whose program this debugs, when that is what it holds.
-    pub fn debugged(self) -> Option<Scope> {
-        match self {
-            Self::Debug(scope) => Some(scope),
             _ => None,
         }
     }

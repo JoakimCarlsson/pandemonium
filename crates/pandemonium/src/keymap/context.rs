@@ -315,8 +315,8 @@ impl std::error::Error for ParseWhenError {}
 /// that fills the context in spell the same key.
 pub mod keys {
     /// What the focused pane holds: `file`, `diff`, `review`, `agent`,
-    /// `debug`, `terminal`, `prompt` — an agent's prompt — `console` — the
-    /// debug console — or `commit`.
+    /// `terminal`, `prompt` — an agent's prompt — `console` — the debug
+    /// console — or `commit`.
     pub const PANE_KIND: &str = "pane.kind";
     /// Set while a project has the focus.
     pub const PROJECT_FOCUSED: &str = "project.focused";
