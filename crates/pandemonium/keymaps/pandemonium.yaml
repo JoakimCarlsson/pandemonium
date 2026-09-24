@@ -450,3 +450,17 @@ bindings:
       primary+alt+p: git.previous_change
       primary+alt+up: edit.cursor_above
       primary+alt+down: edit.cursor_below
+  - when: "true"
+    keys:
+      f5: debug.continue
+      shift+f5: debug.stop
+      primary+shift+f5: debug.restart
+  - when: editor.focused
+    keys:
+      f9: debug.toggle_breakpoint
+  - when: debug.active
+    keys:
+      f6: debug.pause
+      f10: debug.step_over
+      f11: debug.step_into
+      shift+f11: debug.step_out

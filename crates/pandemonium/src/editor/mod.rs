@@ -31,4 +31,4 @@ pub use keys::{Edit, edit, keystroke, motion};
 pub use menu::{TextMenu, text_menu};
 pub use search::{Search, SearchField};
 pub use store::{Document, FileEntry, FileId, Files, Habits, OpenFile, SCROLL_MARGIN};
-pub use view::{ScrollAxis, buffer_view, plain_view, tint};
+pub use view::{Breakpoint, ScrollAxis, buffer_view, plain_view, tint};

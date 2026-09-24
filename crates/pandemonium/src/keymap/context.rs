@@ -315,7 +315,8 @@ impl std::error::Error for ParseWhenError {}
 /// that fills the context in spell the same key.
 pub mod keys {
     /// What the focused pane holds: `file`, `diff`, `review`, `agent`,
-    /// `terminal`, `prompt` — an agent's prompt — or `commit`.
+    /// `terminal`, `prompt` — an agent's prompt — `console` — the debug
+    /// console — or `commit`.
     pub const PANE_KIND: &str = "pane.kind";
     /// Set while a project has the focus.
     pub const PROJECT_FOCUSED: &str = "project.focused";
@@ -341,4 +342,8 @@ pub mod keys {
     pub const FILE_EXTENSION: &str = "file.extension";
     /// The platform the editor runs on: `macos`, `linux` or `windows`.
     pub const OS: &str = "os";
+    /// Set while the worktree in front is debugging a program.
+    pub const DEBUG_ACTIVE: &str = "debug.active";
+    /// Set while that program is paused.
+    pub const DEBUG_STOPPED: &str = "debug.stopped";
 }

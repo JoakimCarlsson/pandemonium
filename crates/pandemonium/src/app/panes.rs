@@ -357,6 +357,9 @@ impl App {
         match self.writing? {
             crate::app::Writing::Commit => Some(self.review()?.message().text()),
             crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
+            crate::app::Writing::Console(scope) => {
+                Some(self.debuggers.get(scope)?.console().text())
+            }
         }
     }
 
@@ -959,6 +962,10 @@ impl App {
                     .filter(|(open, _)| file == Some(*open))
                     .map(|(_, span)| span),
                 found: self.found_in(file),
+                breakpoints: file
+                    .map(|file| self.breakpoints_of(file))
+                    .unwrap_or_default(),
+                stopped: file.and_then(|file| self.stopped_in(file)),
                 caret,
                 display,
                 crumbs: file

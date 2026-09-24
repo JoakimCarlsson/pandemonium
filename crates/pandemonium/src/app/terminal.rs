@@ -1,4 +1,4 @@
-//! What the pointer and the clipboard do to the terminal panel's shell.
+//! What the pointer and the clipboard do to the bottom panel's shell.
 //!
 //! The pane reports presses and drags as cells of its grid; this is where a
 //! press becomes a selection, a double press a word, a triple press a line
@@ -12,7 +12,7 @@ use crate::desktop;
 use crate::keymap::Action;
 
 impl App {
-    /// Gives the keyboard to the terminal panel.
+    /// Gives the keyboard to the bottom panel's shell.
     pub(super) fn focus_terminal(&mut self) {
         self.terminal_focused = true;
         self.editor_focused = false;

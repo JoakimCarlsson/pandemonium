@@ -154,6 +154,7 @@ impl App {
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
+            Choice::Debug(scope, scenario) => self.start_debugging(scope, *scenario),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::FetchRemote(project, remote) => {
                 self.run_in(
@@ -208,6 +209,7 @@ impl App {
             Kind::PushRemotes => self.remote_rows(false),
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
+            Kind::Debug => self.debug_rows(),
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
@@ -522,7 +524,7 @@ impl App {
     }
 
     /// Every file the window has open, with the worktree and path it is in.
-    fn open_files(&self) -> Vec<(pm_core::Scope, PathBuf, crate::editor::FileId)> {
+    pub(super) fn open_files(&self) -> Vec<(pm_core::Scope, PathBuf, crate::editor::FileId)> {
         self.panes
             .held()
             .into_iter()

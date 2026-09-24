@@ -15,12 +15,10 @@
 mod answer;
 mod client;
 mod encoding;
-mod transport;
 mod uri;
 mod watch;
 
 use std::collections::HashMap;
-use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -32,6 +30,7 @@ pub use client::{Asked, Client};
 pub use watch::Watched;
 
 use crate::language::{Language, Server};
+use crate::program::installed;
 
 /// The language servers a window is running.
 #[derive(Default)]
@@ -121,44 +120,4 @@ impl Servers {
             .count()
             > 0
     }
-}
-
-/// The directories a server is looked for in besides the path.
-///
-/// A window started from a desktop session inherits the path that session
-/// was given, which is not the one a shell has: rustup, go and npm each put
-/// their programs somewhere that only a shell profile ever hears about. A
-/// server the reader has installed is a server the editor runs, whether or
-/// not the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 8] = [
-    ".cargo/bin",
-    ".local/bin",
-    "go/bin",
-    ".bun/bin",
-    ".deno/bin",
-    ".npm-global/bin",
-    ".volta/bin",
-    ".local/share/fnm/aliases/default/bin",
-];
-
-/// Where `command` is installed, on the path or in the usual places beside it.
-///
-/// Nothing is started to find out: a server that is nowhere is one the
-/// reader does not have, and the editor does not try to run it.
-fn installed(command: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH").unwrap_or_default();
-    let home = env::var_os("HOME").map(PathBuf::from);
-
-    env::split_paths(&path)
-        .chain(
-            TOOL_DIRECTORIES
-                .iter()
-                .filter_map(|directory| Some(home.as_ref()?.join(directory))),
-        )
-        .chain([
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/opt/homebrew/bin"),
-        ])
-        .map(|directory| directory.join(command))
-        .find(|program| program.is_file())
 }

@@ -1,8 +1,10 @@
-//! The wire: JSON-RPC messages in `Content-Length` frames.
+//! The wire: JSON messages in `Content-Length` frames.
 //!
-//! This is the whole of what the protocol looks like on a pipe — a header
-//! block, a blank line and a JSON body. Nothing above this module reads or
-//! writes a byte of it.
+//! This is the whole of what a language server and a debug adapter look like
+//! on a pipe — a header block, a blank line and a JSON body. The two
+//! protocols say different things in those bodies and frame them the same
+//! way, so both of their clients read and write through here and nothing
+//! else reads or writes a byte of it.
 
 use std::io::{self, BufRead, Write};
 
@@ -21,8 +23,8 @@ pub fn write(writer: &mut impl Write, message: &Value) -> io::Result<()> {
 
 /// Reads one frame, or `None` once the pipe has closed.
 ///
-/// A frame whose body is not JSON is skipped rather than fatal: a server
-/// that writes a malformed message is still a server worth listening to.
+/// A frame whose body is not JSON is skipped rather than fatal: a peer that
+/// writes a malformed message is still a peer worth listening to.
 pub fn read(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
     let mut length = None;
     loop {

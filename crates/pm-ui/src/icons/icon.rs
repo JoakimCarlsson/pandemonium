@@ -99,6 +99,22 @@ pub enum IconName {
     Terminal,
     /// Something the editor wants looked at.
     Warning,
+    /// A program being debugged.
+    Debug,
+    /// Running a paused program on.
+    DebugContinue,
+    /// Pausing a running one.
+    DebugPause,
+    /// Running to the next line.
+    DebugStepOver,
+    /// Running into the call on this line.
+    DebugStepInto,
+    /// Running out of this call.
+    DebugStepOut,
+    /// Ending what is running.
+    Stop,
+    /// Starting it over.
+    Restart,
 }
 
 impl IconName {
@@ -142,6 +158,14 @@ impl IconName {
             Self::Settings => Svg::new("settings", include_icon!("settings")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),
+            Self::Debug => Svg::new("debug", include_icon!("debug")),
+            Self::DebugContinue => Svg::new("debug_continue", include_icon!("debug_continue")),
+            Self::DebugPause => Svg::new("debug_pause", include_icon!("debug_pause")),
+            Self::DebugStepOver => Svg::new("debug_step_over", include_icon!("debug_step_over")),
+            Self::DebugStepInto => Svg::new("debug_step_into", include_icon!("debug_step_into")),
+            Self::DebugStepOut => Svg::new("debug_step_out", include_icon!("debug_step_out")),
+            Self::Stop => Svg::new("stop", include_icon!("stop")),
+            Self::Restart => Svg::new("rotate_cw", include_icon!("rotate_cw")),
         }
     }
 }

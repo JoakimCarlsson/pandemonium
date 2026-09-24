@@ -727,7 +727,7 @@ impl App {
         };
         let env = self.worktree_env(scope);
         self.terminals.start(scope, &directory, &env);
-        self.bottom_panel_open = true;
+        self.show_panel(crate::panel::PanelView::Terminal);
         self.terminal_focused = true;
         self.tree_focused = false;
         self.editor_focused = false;

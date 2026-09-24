@@ -2,9 +2,8 @@
 //!
 //! The view walks the tree the window keeps and asks for each pane's
 //! contents as it reaches it, so what is drawn is the tree itself rather
-//! than a copy of it made beforehand. A pane is the same bar of tabs the
-//! terminal panel wears, with whatever is in front beneath it and a ring
-//! around it while it has the keyboard. Its tabs are carried by the pointer,
+//! than a copy of it made beforehand. A pane is a bar of tabs with whatever
+//! is in front beneath it and a ring around it while it has the keyboard. Its tabs are carried by the pointer,
 //! and both they and the pane leave their bounds behind as they paint,
 //! because where a carried tab is let go of is the window's to answer.
 
@@ -13,7 +12,7 @@ use pm_ui::{
     measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
-use crate::editor::{Crumbs, Display, OpenFile, buffer_view, crumb_bar, search_bar};
+use crate::editor::{Breakpoint, Crumbs, Display, OpenFile, buffer_view, crumb_bar, search_bar};
 use crate::excerpts::{OpenExcerpts, excerpts_view};
 use crate::message::Message;
 use crate::panes::item::Item;
@@ -76,6 +75,10 @@ pub struct Contents {
     pub hovered: Option<std::ops::Range<pm_text::Position>>,
     /// The matches of modal editing's search, to light on screen.
     pub found: Vec<std::ops::Range<pm_text::Position>>,
+    /// The breakpoints of the file in front, to mark in its gutter.
+    pub breakpoints: Vec<Breakpoint>,
+    /// The line a paused program stands on in the file in front, if it does.
+    pub stopped: Option<usize>,
     /// Whether the caret is solid this instant, for its blink.
     pub caret: bool,
     /// What a pane of text draws around its text.
@@ -143,6 +146,8 @@ fn pane_view(
     let link = contents.link.clone();
     let hovered = contents.hovered.clone();
     let found = contents.found.clone();
+    let breakpoints = contents.breakpoints.clone();
+    let stopped = contents.stopped;
     let caret = contents.caret;
     let display = contents.display;
     let showing = match &contents.content {
@@ -184,6 +189,8 @@ fn pane_view(
                     .link(link)
                     .hovered(hovered)
                     .found(found)
+                    .breakpoints(breakpoints)
+                    .stopped(stopped)
                     .caret(caret)
                     .display(display)
                     .on_select(move |phase, anchor, head| {
@@ -191,6 +198,7 @@ fn pane_view(
                     })
                     .on_gutter(move |anchor, head| Message::SelectLines(id, anchor, head))
                     .on_fold(move |at| Message::ToggleFold(id, at))
+                    .on_breakpoint(move |at| Message::ToggleBreakpoint(id, at))
                     .on_scroll(move |axis, event, step| {
                         Message::ScrollEditor(id, axis, event, step)
                     })

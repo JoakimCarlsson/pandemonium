@@ -80,6 +80,27 @@ const MINIMAP_ROOM: f32 = 480.0;
 /// What a gesture over the text reports: its stage, and the places it spans.
 type SelectHandler<M> = Arc<dyn Fn(ResizePhase, Position, Position) -> M>;
 
+/// How wide a breakpoint's dot is, as a share of a line's height.
+const BREAKPOINT_SIZE: f32 = 0.55;
+
+/// How strongly the line a paused program stands on is washed.
+const STOPPED_ALPHA: f32 = 0.18;
+
+/// How strongly the breakpoint the pointer would set is drawn.
+const BREAKPOINT_HINT_ALPHA: f32 = 0.35;
+
+/// How thick the ring of a breakpoint the debugger could not place is.
+const BREAKPOINT_RING: f32 = 1.5;
+
+/// One breakpoint, as the gutter marks it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Breakpoint {
+    /// The line it is on, counted from zero.
+    pub line: usize,
+    /// Whether the debugger could put it there, or has not been asked yet.
+    pub placed: bool,
+}
+
 /// How much there is to scroll through, and how far in the view has reached.
 #[derive(Clone, Copy)]
 struct Reach {
@@ -114,6 +135,13 @@ pub struct BufferView<M> {
     on_scroll: Option<ScrollHandler<M>>,
     /// What a press in the fold column sends, given the line it landed on.
     on_fold: Option<Arc<dyn Fn(Position) -> M>>,
+    /// What a press in the breakpoint column sends, given the line it
+    /// landed on.
+    on_breakpoint: Option<Arc<dyn Fn(Position) -> M>>,
+    /// The breakpoints of the file, to mark in the gutter.
+    breakpoints: Vec<Breakpoint>,
+    /// The line a paused program stands on in this file, if it does.
+    stopped: Option<usize>,
     /// What a press or a drag on the minimap sends, given the line it is on.
     on_minimap: Option<Arc<dyn Fn(usize) -> M>>,
     /// What a press of the secondary button over the pane sends.
@@ -147,6 +175,9 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_select: None,
         on_gutter: None,
         on_fold: None,
+        on_breakpoint: None,
+        breakpoints: Vec::new(),
+        stopped: None,
         on_scroll: None,
         on_minimap: None,
         on_menu: None,
@@ -194,6 +225,25 @@ impl<M> BufferView<M> {
     /// Returns this pane folding and unfolding through `on_fold`.
     pub fn on_fold(mut self, on_fold: impl Fn(Position) -> M + 'static) -> Self {
         self.on_fold = Some(Arc::new(on_fold));
+        self
+    }
+
+    /// Returns this pane setting and clearing breakpoints through
+    /// `on_breakpoint`, by presses left of the line numbers.
+    pub fn on_breakpoint(mut self, on_breakpoint: impl Fn(Position) -> M + 'static) -> Self {
+        self.on_breakpoint = Some(Arc::new(on_breakpoint));
+        self
+    }
+
+    /// Returns this pane marking `breakpoints` in its gutter.
+    pub fn breakpoints(mut self, breakpoints: Vec<Breakpoint>) -> Self {
+        self.breakpoints = breakpoints;
+        self
+    }
+
+    /// Returns this pane marking `line` as where a paused program stands.
+    pub fn stopped(mut self, line: Option<usize>) -> Self {
+        self.stopped = line;
         self
     }
 
@@ -347,6 +397,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         if !self.plain && self.display.current_line {
             self.paint_current_line(&painting, cx);
         }
+        self.paint_stopped(&painting, cx);
         self.paint_search(&painting, cx);
         if self.display.occurrences {
             self.paint_occurrences(&painting, cx);
@@ -368,6 +419,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         self.paint_cursor(&painting, cx);
         if !self.plain {
             self.paint_changes(&painting, cx);
+            self.paint_breakpoints(&painting, cx);
             self.paint_blame(&painting, &mut glyphs, cx);
             self.paint_folds(&painting, cx);
             if self.display.sticky_scroll {
@@ -390,6 +442,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         if !self.plain {
             self.gutter_region(layout, cx);
             self.fold_region(layout, cx);
+            self.breakpoint_region(layout, cx);
             if let Some(strip) = strip {
                 self.minimap_region(strip, cx);
             }
@@ -423,6 +476,80 @@ impl<M> BufferView<M> {
                 .text
                 .alpha(painting.theme.emphasis.current_line),
         ));
+    }
+
+    /// Washes the line a paused program stands on.
+    fn paint_stopped(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(top) = self.stopped.and_then(|line| painting.top_of(line)) else {
+            return;
+        };
+        let layout = painting.layout;
+        cx.quad(Quad::filled(
+            Rect::from_xywh(
+                layout.bounds.left(),
+                top,
+                layout.bounds.size.width,
+                layout.cell.height,
+            ),
+            painting.theme.colors.warning.alpha(STOPPED_ALPHA),
+        ));
+    }
+
+    /// Marks the breakpoints left of the numbers, the line a paused program
+    /// stands on, and — faintly — the line the pointer would set one on.
+    fn paint_breakpoints(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        if self.on_breakpoint.is_none() {
+            return;
+        }
+        let layout = painting.layout;
+        let column = layout.breakpoint_column();
+        let size = (layout.cell.height * BREAKPOINT_SIZE).min(column.size.width);
+        let dot = |top: f32| {
+            Rect::from_xywh(
+                column.left() + (column.size.width - size) / 2.0,
+                top + (layout.cell.height - size) / 2.0,
+                size,
+                size,
+            )
+        };
+        let danger = painting.theme.colors.danger;
+
+        let hovered = cx
+            .input()
+            .pointer
+            .filter(|at| column.contains(*at))
+            .and_then(|at| painting.drawn.get(layout.row_at(at)).copied())
+            .filter(|line| !self.breakpoints.iter().any(|mark| mark.line == *line));
+        if let Some(top) = hovered.and_then(|line| painting.top_of(line)) {
+            cx.quad(
+                Quad::filled(dot(top), danger.alpha(BREAKPOINT_HINT_ALPHA))
+                    .corner_radius(size / 2.0),
+            );
+        }
+        for mark in &self.breakpoints {
+            let Some(top) = painting.top_of(mark.line) else {
+                continue;
+            };
+            let quad = match mark.placed {
+                true => Quad::filled(dot(top), danger),
+                false => Quad::filled(dot(top), Rgba::TRANSPARENT).border(BREAKPOINT_RING, danger),
+            };
+            cx.quad(quad.corner_radius(size / 2.0));
+        }
+        if let Some(top) = self.stopped.and_then(|line| painting.top_of(line)) {
+            let icon = IconSize::XSmall.pixels();
+            let bounds = Rect::from_xywh(
+                column.left() + (column.size.width - icon) / 2.0,
+                top + (layout.cell.height - icon) / 2.0,
+                icon,
+                icon,
+            );
+            cx.icon(
+                bounds,
+                IconName::ArrowRight.svg(),
+                painting.theme.colors.warning,
+            );
+        }
     }
 
     /// Lights up every place the selected word also appears on screen.
@@ -1154,6 +1281,20 @@ impl<M: Clone + 'static> BufferView<M> {
         let pointer = cx.input().pointer;
         let pressed = pointer.map(|at| on_fold(file.borrow().position_at(at)));
         cx.clickable(column, pressed, self.on_menu.clone());
+    }
+
+    /// Takes the press in the breakpoint column that sets or clears one.
+    ///
+    /// It is registered after the gutter it sits inside, so a press there
+    /// sets a breakpoint rather than selecting the line.
+    fn breakpoint_region(&mut self, layout: TextLayout, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(on_breakpoint) = self.on_breakpoint.clone() else {
+            return;
+        };
+        let file = self.file.clone();
+        let pointer = cx.input().pointer;
+        let pressed = pointer.map(|at| on_breakpoint(file.borrow().position_at(at)));
+        cx.clickable(layout.breakpoint_column(), pressed, self.on_menu.clone());
     }
 
     /// Takes the press and the drag on the minimap that move the view.

@@ -30,6 +30,9 @@ impl App {
         if self.act_on_terminal(action) {
             return self.request_redraw();
         }
+        if self.debug_action(action) {
+            return self.request_redraw();
+        }
         match action {
             Action::ShowCommands => self.open_picker(Kind::Commands),
             Action::ShowFiles => self.open_picker(Kind::Files),

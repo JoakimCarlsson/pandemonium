@@ -13,6 +13,7 @@ use crate::agent::TalkId;
 use crate::config::{FontSlot, Preference, Step, ThemeMode, WorktreePaths};
 use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::Action;
+use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::Group;
 use crate::settings::{SettingsPage, SettingsSection};
@@ -111,6 +112,13 @@ pub enum Message {
     TogglePrimarySidebar,
     /// Toggle the bottom panel.
     ToggleBottomPanel,
+    /// Bring this view of the bottom panel to the front, opening the panel.
+    ShowPanelView(PanelView),
+    /// Close the bottom panel when this view is in front of it, and bring
+    /// the view to the front of the opened panel otherwise.
+    TogglePanelView(PanelView),
+    /// Go to where this problem of this open file is.
+    OpenProblem(FileId, Position),
     /// Press or drag over the terminal's grid, from one cell to another.
     PointTerminal(ResizePhase, pm_vt::Place, pm_vt::Place),
     /// Open the menu of things that can be done to what the terminal shows.
@@ -187,6 +195,18 @@ pub enum Message {
     ShowEditorMenu(PaneId),
     /// Fold what this line of this pane holds, or unfold it.
     ToggleFold(PaneId, Position),
+    /// Set a breakpoint on this line of the file in this pane, or clear it.
+    ToggleBreakpoint(PaneId, Position),
+    /// Carry this debugging command out on the worktree's program.
+    ActOnDebugger(Action),
+    /// Look at the frame of the paused program's stack this names.
+    SelectFrame(i64),
+    /// Open the variable of the paused program this names, or close it.
+    ToggleVariable(i64),
+    /// Open the scope in this place of the selected frame's, or close it.
+    ToggleDebugScope(usize),
+    /// Put the debug console's cursor where a press landed, selecting to it.
+    WriteDebugConsole(ResizePhase, Position, Position),
     /// Give this pane the keyboard, then carry out this command in it.
     PaneAction(PaneId, Action),
     /// Send later keystrokes to this field of this pane's search bar.

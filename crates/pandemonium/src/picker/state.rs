@@ -77,6 +77,8 @@ pub enum Kind {
     Modes,
     /// The values one of that agent's knobs takes: its models, say.
     Knob,
+    /// What the worktree in front can be debugged as.
+    Debug,
 }
 
 impl Kind {
@@ -110,6 +112,7 @@ impl Kind {
             Self::Agents => "Start an agent in this worktree",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
+            Self::Debug => "Debug this worktree as",
         }
     }
 
@@ -165,6 +168,8 @@ pub enum Choice {
     Knob(TalkId, String, String),
     /// Set this kind of text in this family, or in the editor's pick.
     Font(FontSlot, Option<String>),
+    /// Debug this worktree as this scenario.
+    Debug(Scope, Box<pm_dap::Scenario>),
 }
 
 /// One thing the picker is offering.

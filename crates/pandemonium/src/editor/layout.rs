@@ -23,6 +23,13 @@ pub const BLAME_WIDTH: usize = 26;
 /// How wide the column holding the fold markers is.
 pub const FOLD_WIDTH: f32 = 14.0;
 
+/// How far the column holding breakpoints sits from the edge of the pane,
+/// clear of the bar that marks a change and the dot that marks a fault.
+pub const BREAKPOINT_OFFSET: f32 = 14.0;
+
+/// How wide the column holding breakpoints is.
+pub const BREAKPOINT_WIDTH: f32 = 14.0;
+
 /// Where a document was drawn, and what one character of it came to.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TextLayout {
@@ -123,6 +130,16 @@ impl TextLayout {
     /// Whether `point` is over that column rather than over the numbers.
     pub fn over_folds(&self, point: Point) -> bool {
         point.x >= self.fold_left() && point.x < self.blame_left()
+    }
+
+    /// The column holding breakpoints, left of the numbers.
+    pub fn breakpoint_column(&self) -> Rect {
+        Rect::from_xywh(
+            self.bounds.left() + BREAKPOINT_OFFSET,
+            self.bounds.top(),
+            BREAKPOINT_WIDTH,
+            self.bounds.size.height,
+        )
     }
 
     /// How far the text sits from the edge when there is no gutter at all.
