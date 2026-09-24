@@ -1,6 +1,6 @@
 # pandemonium
 
-Yet another code editor you don't need.
+Yet another text editor you don't need.
 
 There are already plenty of good ones. This one exists because I wanted an
 editor shaped exactly like the way I work, and it is quite opinionated about

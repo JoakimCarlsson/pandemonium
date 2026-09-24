@@ -1,6 +1,6 @@
 # AGENTS.md — pandemonium
 
-A GPU-native code editor for conducting agents. Several **projects** live in one
+A GPU-native text editor for conducting agents. Several **projects** live in one
 window; a **session** is an agent working in its own git worktree of one of
 them; the editor shows both as first-class items — files, worktrees, diffs and
 the agent's own CLI, in panes, not in a terminal beside the editor.
