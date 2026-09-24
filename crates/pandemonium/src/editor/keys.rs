@@ -8,6 +8,8 @@
 
 use pm_text::Motion;
 use winit::keyboard::ModifiersState;
+
+use crate::keymap::Travel;
 use winit::keyboard::{Key, NamedKey};
 
 /// One thing a keypress asks of the buffer it lands in.
@@ -31,8 +33,52 @@ pub enum Edit {
     DeleteWordLeft,
     /// Take out the word after the cursor.
     DeleteWordRight,
+    /// Take out what lies between the cursor and where this motion takes it.
+    DeleteTo(Motion),
     /// Move the cursor, extending the selection when asked.
     Move(Motion, bool),
+}
+
+impl Edit {
+    /// Does the edit to `buffer` at its cursor.
+    pub fn apply(&self, buffer: &mut pm_text::Buffer) {
+        match self {
+            Self::Type(ch) => buffer.insert_typed(*ch),
+            Self::Insert(text) => buffer.insert(text),
+            Self::Newline => buffer.insert_newline(),
+            Self::Indent => buffer.insert_indent(),
+            Self::Outdent => buffer.outdent_lines(),
+            Self::Backspace => buffer.backspace(),
+            Self::Delete => buffer.delete(),
+            Self::DeleteWordLeft => buffer.delete_word_left(),
+            Self::DeleteWordRight => buffer.delete_word_right(),
+            Self::DeleteTo(motion) => {
+                buffer.move_cursor(*motion, true);
+                if !buffer.selection().is_empty() {
+                    buffer.backspace();
+                }
+            }
+            Self::Move(motion, extend) => buffer.move_cursor(*motion, *extend),
+        }
+    }
+}
+
+/// The motion `travel` names, a page being `rows` lines.
+pub fn motion(travel: Travel, rows: usize) -> Motion {
+    match travel {
+        Travel::Left => Motion::Left,
+        Travel::Right => Motion::Right,
+        Travel::Up => Motion::Up,
+        Travel::Down => Motion::Down,
+        Travel::WordLeft => Motion::WordLeft,
+        Travel::WordRight => Motion::WordRight,
+        Travel::LineStart => Motion::LineStart,
+        Travel::LineEnd => Motion::LineEnd,
+        Travel::BufferStart => Motion::BufferStart,
+        Travel::BufferEnd => Motion::BufferEnd,
+        Travel::PageUp => Motion::PageUp(rows),
+        Travel::PageDown => Motion::PageDown(rows),
+    }
 }
 
 /// What `key` asks of the buffer, given the modifiers held with it.

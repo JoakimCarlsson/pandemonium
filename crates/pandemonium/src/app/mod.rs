@@ -1300,9 +1300,12 @@ impl App {
         }
         if matches!(
             message,
-            Message::SetKeymap(_) | Message::ResetPreference(Preference::Keymap)
+            Message::SetKeymap(_)
+                | Message::ResetPreference(
+                    Preference::Keymap | Preference::Keybindings | Preference::Binding(_)
+                )
         ) {
-            self.resolver.set_keymap(self.preferences.keymap.keymap());
+            self.resolver.set_keymap(self.preferences.keymap_in_force());
         }
         self.store();
         self.request_redraw();
@@ -2022,7 +2025,7 @@ impl ApplicationHandler<Wake> for App {
             scale,
         ));
         self.window = Some(window);
-        self.resolver.set_keymap(self.preferences.keymap.keymap());
+        self.resolver.set_keymap(self.preferences.keymap_in_force());
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.agents.set_notify(self.waker(Wake::Agent));

@@ -114,6 +114,7 @@ impl App {
             (Kind::PortVariable, _) => self.set_worktree_port(&typed),
             (Kind::ThemeColor(token), _) => self.set_theme_color(token, &typed),
             (Kind::ThemeName, _) => self.save_theme(&typed),
+            (Kind::KeymapName, _) => self.save_keymap(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
         }
@@ -226,7 +227,8 @@ impl App {
             | Kind::CopiedPath
             | Kind::PortVariable
             | Kind::ThemeColor(_)
-            | Kind::ThemeName => Vec::new(),
+            | Kind::ThemeName
+            | Kind::KeymapName => Vec::new(),
         }
     }
 

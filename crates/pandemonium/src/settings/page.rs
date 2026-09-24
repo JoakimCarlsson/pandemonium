@@ -20,9 +20,9 @@ use crate::config::{
     FontSlot, Group, Preference, Preferences, Step, TOKENS, ThemeMode, WorktreePaths, hex, in_group,
 };
 use crate::editor::CursorShape;
-use crate::keymap::BaseKeymap;
+use crate::keymap::{Action, Keymap};
 use crate::message::Message;
-use crate::settings::state::{Settings, SettingsPage, SettingsSection, SettingsView};
+use crate::settings::state::{Recording, Settings, SettingsPage, SettingsSection, SettingsView};
 use crate::workspace::shortened;
 
 /// Width of the sidebar listing the pages.
@@ -49,6 +49,12 @@ const VALUE_WIDTH: f32 = 14.0;
 /// Width of the button naming a colour.
 const HEX_WIDTH: f32 = 26.0;
 
+/// Width of the button naming the chords an action is pressed as.
+const CHORDS_WIDTH: f32 = 64.0;
+
+/// How many of an action's bindings its row names before it stops.
+const CHORDS_SHOWN: usize = 2;
+
 /// Side of the square a colour is shown in.
 const SWATCH_SIZE: f32 = 20.0;
 
@@ -70,6 +76,8 @@ pub struct SettingsPane<'a> {
     pub settings: &'a Settings,
     /// The preferences the pane edits.
     pub preferences: &'a Preferences,
+    /// The keymap in force, which the keybindings are read from.
+    pub keymap: &'a Keymap,
     /// The file the preferences are written to, when there is one.
     pub file: Option<PathBuf>,
 }
@@ -83,7 +91,7 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
         .sections()
         .iter()
         .map(|section| {
-            let rows = section_rows(theme, pane.preferences, *section);
+            let rows = section_rows(theme, pane, *section);
             match alone {
                 true => self::rows(theme, rows),
                 false => self::section(theme, section.label(), rows),
@@ -287,9 +295,10 @@ fn heading(theme: &Theme, view: SettingsView, file: Option<&PathBuf>) -> Div<Mes
 /// The rows of one section, top to bottom.
 fn section_rows(
     theme: &Theme,
-    preferences: &Preferences,
+    pane: &SettingsPane<'_>,
     section: SettingsSection,
 ) -> Vec<Div<Message>> {
+    let preferences = pane.preferences;
     let toggle =
         |preference, title, description| toggle(theme, preferences, preference, title, description);
     let stepper = |preference, title, description| {
@@ -498,8 +507,8 @@ fn section_rows(
                 preferences,
                 Preference::Keymap,
                 "Base Keymap",
-                "Keep the bindings your hands already know",
-                toggle_grid(keymaps(), Some(preferences.keymap.index()), 4),
+                "Keep the bindings your hands already know; keymaps in the editor's home are listed too",
+                toggle_grid(crate::config::keymap_choices(), Some(preferences.keymap), 4),
             ),
             toggle(
                 Preference::VimMode,
@@ -514,7 +523,9 @@ fn section_rows(
                 "When vim's yanks and deletes go to the system clipboard",
                 vim_clipboards(preferences).w_px(space(CHOICE_WIDTH)),
             ),
+            keymap_folder_row(theme),
         ],
+        SettingsSection::Keybindings => keybinding_rows(theme, pane),
         SettingsSection::Terminal => vec![
             stepper(
                 Preference::TerminalFontSize,
@@ -576,6 +587,111 @@ fn theme_color_rows(theme: &Theme, preferences: &Preferences) -> Vec<Div<Message
         }))
         .chain(std::iter::once(reload))
         .collect()
+}
+
+/// The row that reads the keymaps in the editor's home again.
+fn keymap_folder_row(theme: &Theme) -> Div<Message> {
+    let folder = crate::config::keymaps_directory()
+        .map(|folder| shortened(&folder))
+        .unwrap_or_default();
+    action(
+        theme,
+        "Reload Keymaps",
+        &format!("Read the keymaps in {folder} again, after editing one by hand"),
+        button("Reload", Message::ReloadKeymaps).outlined(),
+    )
+}
+
+/// Every action, a group at a time, with the chords it is pressed as and
+/// the way to press it as something else.
+fn keybinding_rows(theme: &Theme, pane: &SettingsPane<'_>) -> Vec<Div<Message>> {
+    let preferences = pane.preferences;
+    let keymap = crate::keymap::name(preferences.keymap);
+    let summary = inline(
+        theme,
+        preferences,
+        Preference::Keybindings,
+        &format!("Changing {keymap}"),
+        "Click a binding and press the chords for it; Enter keeps them, Escape lets go, Backspace takes one back",
+        button("Save as Keymap…", Message::SaveKeymap).outlined(),
+    );
+    let recording = pane.settings.recording();
+    let mut groups: Vec<(&str, Vec<Div<Message>>)> = Vec::new();
+    for action in Action::all() {
+        let row = binding_row(theme, preferences, pane.keymap, recording, action);
+        match groups.last_mut() {
+            Some((group, rows)) if *group == action.group() => rows.push(row),
+            _ => groups.push((action.group(), vec![row])),
+        }
+    }
+    std::iter::once(summary)
+        .chain(
+            groups
+                .into_iter()
+                .map(|(label, rows)| self::group(theme, label, rows)),
+        )
+        .collect()
+}
+
+/// One action: its title and name, the undo mark while the reader has
+/// changed its bindings, and the chords it is pressed as.
+fn binding_row(
+    theme: &Theme,
+    preferences: &Preferences,
+    keymap: &Keymap,
+    recording: Option<&Recording>,
+    action: Action,
+) -> Div<Message> {
+    let bound = keymap.bindings_of(action);
+    let listening = recording.filter(|recording| recording.action == action);
+    let label = match listening {
+        Some(recording) if recording.chords.is_empty() => "Press keys…".to_owned(),
+        Some(recording) => recording
+            .sequence()
+            .map_or_else(String::new, |sequence| format!("{sequence} …")),
+        None if bound.is_empty() => "Unbound".to_owned(),
+        None => bound
+            .iter()
+            .take(CHORDS_SHOWN)
+            .map(|binding| binding.sequence.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+    let chords = button(label, Message::RecordBinding(action));
+    let chords = match listening {
+        Some(_) => chords,
+        None => chords.outlined(),
+    };
+    h_flex()
+        .w_full()
+        .py(1.5)
+        .gap(6)
+        .items_center()
+        .justify_between()
+        .child(
+            h_flex()
+                .h_px(theme.size.icon_control)
+                .gap(2)
+                .items_center()
+                .child(text(action.title()).text_sm())
+                .child(text(action.id()).text_sm().color(theme.colors.text_muted))
+                .when_some(
+                    reset_mark(theme, preferences, Preference::Binding(action)),
+                    Div::child,
+                ),
+        )
+        .child(
+            h_flex()
+                .gap(1)
+                .items_center()
+                .when(!bound.is_empty() && listening.is_none(), |row| {
+                    row.child(
+                        icon_button(theme, IconName::Close, Message::UnbindAction(action))
+                            .tooltip("Remove Binding"),
+                    )
+                })
+                .child(chords.w_px(space(CHORDS_WIDTH))),
+        )
 }
 
 /// A run of rows under a small heading of their own, inside a section.
@@ -1006,11 +1122,4 @@ fn shown_appearance(theme: &Theme, preferences: &Preferences) -> Option<pm_ui::A
         ThemeMode::System => None,
         _ => Some(theme.appearance),
     }
-}
-
-/// Every keymap, with the message that picks it.
-fn keymaps() -> impl Iterator<Item = (String, Message)> {
-    BaseKeymap::ALL
-        .into_iter()
-        .map(|keymap| (keymap.label().to_owned(), Message::SetKeymap(keymap)))
 }

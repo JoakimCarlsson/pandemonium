@@ -49,6 +49,7 @@ impl App {
             &SettingsPane {
                 settings: &self.settings,
                 preferences: &self.preferences,
+                keymap: self.resolver.keymap(),
                 file: crate::config::settings_file(),
             },
         ))
@@ -110,6 +111,16 @@ impl App {
             Message::ReloadThemes => {
                 config::reload_themes(&mut self.preferences);
                 self.store();
+            }
+            Message::SaveKeymap => self.ask_keymap_name(),
+            Message::ReloadKeymaps => {
+                config::reload_keymaps(&mut self.preferences);
+                self.follow_keymap();
+            }
+            Message::RecordBinding(action) => self.settings.record(action),
+            Message::UnbindAction(action) => {
+                self.preferences.unbind(action);
+                self.follow_keymap();
             }
             _ => return false,
         }
@@ -205,6 +216,62 @@ impl App {
             pm_ui::family(self.preferences.theme_family).name
         );
         self.open_picker_with(Kind::ThemeName, Vec::new(), named);
+    }
+
+    /// Asks what to call the keymap being pressed, before writing it down.
+    fn ask_keymap_name(&mut self) {
+        let named = format!("{} Custom", crate::keymap::name(self.preferences.keymap));
+        self.open_picker_with(Kind::KeymapName, Vec::new(), named);
+    }
+
+    /// Writes the keymap being pressed down as one called `typed`.
+    pub(super) fn save_keymap(&mut self, typed: &str) {
+        if config::save_keymap(&mut self.preferences, typed) {
+            self.follow_keymap();
+        }
+    }
+
+    /// Puts the keymap the preferences name in force, and writes them down.
+    pub(super) fn follow_keymap(&mut self) {
+        self.resolver.set_keymap(self.preferences.keymap_in_force());
+        self.store();
+    }
+
+    /// Takes a keypress while a binding is being recorded, saying whether
+    /// one is.
+    ///
+    /// Every chord is the binding's, bar three unmodified keys: Enter keeps
+    /// what was pressed, Escape lets it go, and Backspace takes the last
+    /// chord back. Those three can still be bound by writing a keymap. A
+    /// recording the reader has left the settings pane behind is let go.
+    pub(super) fn record_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        if self.settings.recording().is_none() {
+            return false;
+        }
+        if self.active_tab() != Some(Item::Settings) {
+            self.settings.stop_recording();
+            return false;
+        }
+        let Some(chord) = crate::keymap::chord(event, self.modifiers) else {
+            return true;
+        };
+        let plain = |named| chord == crate::keymap::Chord::plain(crate::keymap::Key::Named(named));
+        if plain(crate::keymap::Named::Escape) {
+            self.settings.stop_recording();
+        } else if plain(crate::keymap::Named::Backspace) {
+            self.settings.erase();
+        } else if plain(crate::keymap::Named::Enter) {
+            let recorded = self.settings.stop_recording();
+            if let Some((action, sequence)) =
+                recorded.and_then(|recorded| Some((recorded.action, recorded.sequence()?)))
+            {
+                self.preferences.rebind(action, sequence);
+                self.follow_keymap();
+            }
+        } else {
+            self.settings.press(chord);
+        }
+        true
     }
 
     /// Writes the theme being drawn in down as one called `typed`.

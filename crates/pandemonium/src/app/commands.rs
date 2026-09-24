@@ -12,8 +12,8 @@ use pm_ui::Axis;
 use crate::app::App;
 use crate::app::places::Place;
 use crate::desktop;
-use crate::editor::{Completions, Document, SearchField};
-use crate::keymap::Action;
+use crate::editor::{self, Completions, Document, Edit, SearchField};
+use crate::keymap::{Action, Travel};
 use crate::message::Message;
 use crate::panes::{PaneId, SplitDirection};
 use crate::picker::Kind;
@@ -39,6 +39,15 @@ impl App {
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
             Action::OpenSettings => return self.apply(Message::OpenSettings),
+            Action::OpenKeymap => {
+                self.open_settings();
+                self.settings.show(crate::settings::SettingsPage::Keymap);
+            }
+            Action::ToggleSidebar => return self.apply(Message::TogglePrimarySidebar),
+            Action::TogglePanel => return self.apply(Message::ToggleBottomPanel),
+            Action::ToggleSecondarySidebar => return self.apply(Message::ToggleSecondarySidebar),
+            Action::CloseWindow => return self.apply(Message::CloseWindow),
+            Action::ToggleFullscreen => self.toggle_fullscreen(),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::NewSession => return self.apply(Message::NewSession),
             Action::RemoveProject => {
@@ -47,9 +56,40 @@ impl App {
                 }
             }
             Action::Save => self.save_or_format(),
+            Action::SaveWithoutFormat => self.save_unformatted(),
+            Action::CopyPath | Action::CopyRelativePath | Action::RevealFile => {
+                if let Some(message) = self.file_message(action) {
+                    return self.apply(message);
+                }
+            }
+            Action::ToggleSearchCase => {
+                return self.apply(Message::ToggleSearchCase(self.panes.focus()));
+            }
+            Action::ToggleSearchWord => {
+                return self.apply(Message::ToggleSearchWord(self.panes.focus()));
+            }
+            Action::ToggleSearchReplace => {
+                return self.apply(Message::ToggleSearchReplace(self.panes.focus()));
+            }
             Action::SaveAll => self.save_all(),
             Action::SplitRight => self.split_pane(self.panes.focus(), None, SplitDirection::Right),
             Action::SplitDown => self.split_pane(self.panes.focus(), None, SplitDirection::Down),
+            Action::SplitLeft => self.split_pane(self.panes.focus(), None, SplitDirection::Left),
+            Action::SplitUp => self.split_pane(self.panes.focus(), None, SplitDirection::Up),
+            Action::CloseSavedTabs => {
+                return self.apply(Message::CloseSavedTabs(self.panes.focus()));
+            }
+            Action::CloseAllTabs => return self.apply(Message::CloseAllTabs(self.panes.focus())),
+            Action::CloseOtherTabs
+            | Action::CloseTabsLeft
+            | Action::CloseTabsRight
+            | Action::TogglePin => {
+                if let Some(message) = self.tab_message(action) {
+                    return self.apply(message);
+                }
+            }
+            Action::ActivateTab(place) => self.activate_tab_at(Some(usize::from(place))),
+            Action::ActivateLastTab => self.activate_tab_at(None),
             Action::ClosePane => self.close_active_tab(),
             Action::ReopenTab => self.reopen_tab(),
             Action::NextTab | Action::PreviousTab => {
@@ -124,9 +164,77 @@ impl App {
         self.request_redraw();
     }
 
+    /// What asking for `action` of the tab the focused pane is showing
+    /// tells the window, when the pane is showing one.
+    fn tab_message(&self, action: Action) -> Option<Message> {
+        let pane = self.panes.focus();
+        let item = self.active_tab()?;
+        Some(match action {
+            Action::CloseOtherTabs => Message::CloseOtherTabs(pane, item),
+            Action::CloseTabsLeft => Message::CloseTabsLeft(pane, item),
+            Action::CloseTabsRight => Message::CloseTabsRight(pane, item),
+            _ => Message::TogglePin(pane, item),
+        })
+    }
+
+    /// What asking for `action` of the file the focused pane is showing
+    /// tells the window, when the pane is showing one.
+    fn file_message(&self, action: Action) -> Option<Message> {
+        let file = self.active_file_id()?;
+        Some(match action {
+            Action::CopyPath => Message::CopyFilePath(file),
+            Action::CopyRelativePath => Message::CopyFileRelativePath(file),
+            _ => Message::RevealFile(file),
+        })
+    }
+
+    /// Shows the tab in `place` of the focused pane, or its last tab for
+    /// no place.
+    fn activate_tab_at(&mut self, place: Option<usize>) {
+        let pane = self.panes.focus();
+        let Some(tabs) = self.panes.pane(pane).map(|held| held.tabs(self.scope())) else {
+            return;
+        };
+        let chosen = match place {
+            Some(place) => tabs.get(place),
+            None => tabs.last(),
+        };
+        if let Some(item) = chosen.copied() {
+            self.activate_tab(pane, item);
+        }
+    }
+
+    /// Fills the screen with the window, or gives the screen back.
+    fn toggle_fullscreen(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let filling = match window.fullscreen() {
+            Some(_) => None,
+            None => Some(winit::window::Fullscreen::Borderless(None)),
+        };
+        window.set_fullscreen(filling);
+    }
+
     /// Carries out a command that acts on the file the focused pane shows.
     fn act_on_buffer(&mut self, action: Action) {
         match action {
+            Action::Move(travel) | Action::Select(travel) => {
+                let motion = editor::motion(travel, self.page_rows());
+                self.apply_edit(Edit::Move(motion, matches!(action, Action::Select(_))));
+            }
+            Action::Newline => self.apply_edit(Edit::Newline),
+            Action::Backspace => self.apply_edit(Edit::Backspace),
+            Action::Delete => self.apply_edit(Edit::Delete),
+            Action::DeleteWordLeft => self.apply_edit(Edit::DeleteWordLeft),
+            Action::DeleteWordRight => self.apply_edit(Edit::DeleteWordRight),
+            Action::DeleteToLineStart => {
+                self.apply_edit(Edit::DeleteTo(editor::motion(Travel::LineStart, 0)));
+            }
+            Action::DeleteToLineEnd => {
+                self.apply_edit(Edit::DeleteTo(editor::motion(Travel::LineEnd, 0)));
+            }
+            Action::Tab => self.apply_edit(Edit::Indent),
             Action::Undo => self.edit_active(|buffer| {
                 buffer.undo();
             }),
@@ -239,6 +347,23 @@ impl App {
             return self.begin_save(self.preferences.format_on_save);
         }
         self.save_active();
+    }
+
+    /// Lets the servers behind the focused file change it without laying it
+    /// out, and writes it to disk.
+    fn save_unformatted(&mut self) {
+        let served = self
+            .active_file()
+            .is_some_and(|document| document.borrow().is_served());
+        if served {
+            return self.begin_save(false);
+        }
+        self.save_active();
+    }
+
+    /// How many lines a page of the focused file is.
+    fn page_rows(&self) -> usize {
+        self.active_file().map_or(1, |file| file.borrow().rows())
     }
 
     /// Writes the file the focused pane is showing to disk.

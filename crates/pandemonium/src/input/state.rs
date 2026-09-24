@@ -128,20 +128,7 @@ impl Input {
             return Typed::Ignored;
         }
 
-        self.edit(|buffer| {
-            buffer.at_each(|buffer| match edit.clone() {
-                editor::Edit::Type(ch) => buffer.insert_typed(ch),
-                editor::Edit::Insert(text) => buffer.insert(&text),
-                editor::Edit::Newline => buffer.insert_newline(),
-                editor::Edit::Indent => buffer.insert_indent(),
-                editor::Edit::Outdent => buffer.outdent_lines(),
-                editor::Edit::Backspace => buffer.backspace(),
-                editor::Edit::Delete => buffer.delete(),
-                editor::Edit::DeleteWordLeft => buffer.delete_word_left(),
-                editor::Edit::DeleteWordRight => buffer.delete_word_right(),
-                editor::Edit::Move(motion, extend) => buffer.move_cursor(motion, extend),
-            });
-        });
+        self.edit(|buffer| buffer.at_each(|buffer| edit.apply(buffer)));
         Typed::Taken
     }
 

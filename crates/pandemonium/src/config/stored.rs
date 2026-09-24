@@ -14,10 +14,10 @@ use pm_ui::families;
 use serde::{Deserialize, Serialize};
 
 use crate::config::fonts::Fonts;
+use crate::config::keymap::StoredChanges;
 use crate::config::theme::StoredOverrides;
 use crate::config::{Preferences, Restored, ThemeMode, VimBinding, WindowState};
 use crate::editor::{CursorShape, Display};
-use crate::keymap::BaseKeymap;
 use crate::panes::Saved;
 use crate::workspace::{Layout, SidebarView};
 
@@ -50,8 +50,11 @@ pub(super) struct Stored {
     terminal_font_size: Option<f32>,
     /// How many lines of scrollback a terminal keeps.
     terminal_scrollback: Option<usize>,
-    /// The keymap the editor starts from.
-    keymap: Option<BaseKeymap>,
+    /// The name of the keymap the editor starts from.
+    keymap: Option<String>,
+    /// The reader's own bindings, over that keymap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keybindings: Option<StoredChanges>,
     /// Whether editing starts in vim mode.
     vim_mode: Option<bool>,
     /// How much vim's unnamed register shares with the system clipboard.
@@ -330,7 +333,14 @@ impl Stored {
                     .terminal_font_size
                     .unwrap_or(defaults.fonts.terminal_size),
             },
-            keymap: self.keymap.unwrap_or(defaults.keymap),
+            keymap: self
+                .keymap
+                .as_deref()
+                .and_then(crate::keymap::find)
+                .unwrap_or(defaults.keymap),
+            keybindings: self
+                .keybindings
+                .map_or(defaults.keybindings, StoredChanges::into_changes),
             vim_mode: self.vim_mode.unwrap_or(defaults.vim_mode),
             vim_clipboard: self
                 .vim_clipboard
@@ -414,7 +424,9 @@ impl Stored {
             buffer_line_height: Some(fonts.buffer_line_height),
             terminal_font_size: Some(fonts.terminal_size),
             terminal_scrollback: Some(preferences.terminal_scrollback),
-            keymap: Some(preferences.keymap),
+            keymap: Some(crate::keymap::name(preferences.keymap).to_owned()),
+            keybindings: Some(StoredChanges::of(&preferences.keybindings))
+                .filter(|written| !written.is_empty()),
             vim_mode: Some(preferences.vim_mode),
             vim_clipboard: Some(StoredClipboardUse::of(preferences.vim_clipboard)),
             vim_keymap: (!preferences.vim_bindings.is_empty()).then(|| {
