@@ -1935,6 +1935,7 @@ impl App {
                         .open
                         .active()
                         .map_or(0, |project| self.agents.count(project.id())),
+                    tally: self.agents.tally(),
                     menu,
                     overlays,
                 },

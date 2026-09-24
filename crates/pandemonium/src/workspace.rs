@@ -11,6 +11,7 @@ use pm_ui::{
     sash, text, v_flex,
 };
 
+use crate::agent::{Standing, Tally, standing_color};
 use crate::editor::{FileId, OpenFile};
 use crate::message::Message;
 use crate::panel::{Panel, PanelView, bottom_panel};
@@ -209,6 +210,8 @@ pub struct Panes {
     pub panel: Panel,
     /// How many agents are running in the active project's worktree.
     pub agents: usize,
+    /// How every agent in the window stands, across all its projects.
+    pub tally: Tally,
     /// The tab menu that is open, and what it holds.
     pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
     /// What is drawn over the panes, each at a point of its own.
@@ -495,6 +498,8 @@ struct Status {
     shells: usize,
     /// How many agents are running in it.
     agents: usize,
+    /// How every agent in the window stands, whichever project it is in.
+    tally: Tally,
     /// Whether the panel those shells are shown in is open.
     panel_open: bool,
     /// Where the cursor is in the file the pane is showing.
@@ -537,6 +542,7 @@ impl Status {
             changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.panel.shells.len(),
             agents: panes.agents,
+            tally: panes.tally,
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
@@ -601,6 +607,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         changes,
         shells,
         agents,
+        tally,
         panel_open,
         cursor,
         cursors,
@@ -673,6 +680,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
             ))
         })
         .child(h_flex().flex_1())
+        .children(agent_tally(theme, tally))
         .when_some(modal, |bar, modal| {
             bar.child(status_item(theme, None, modal, None, true))
         })
@@ -717,6 +725,38 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
             Some(Message::TogglePanelView(PanelView::Terminal)),
             panel_open,
         ))
+}
+
+/// Builds the status bar's count of agents by how they stand, one reading
+/// per state that any agent is in.
+///
+/// The count is the window's, not the active project's: an agent waiting on
+/// the reader in a project nobody is looking at is the one most worth
+/// knowing about.
+fn agent_tally(theme: &Theme, tally: Tally) -> Vec<Div<Message>> {
+    [
+        (Standing::Working, tally.working, "working"),
+        (Standing::Waiting, tally.waiting, "needs you"),
+        (Standing::Idle, tally.idle, "idle"),
+        (Standing::Stopped, tally.stopped, "stopped"),
+    ]
+    .into_iter()
+    .filter(|(_, count, _)| *count > 0)
+    .map(|(standing, count, label)| {
+        h_flex()
+            .h_px(theme.size.bar - BAR_INSET)
+            .px(1)
+            .gap(0.75)
+            .items_center()
+            .child(text("●").text_xs().color(standing_color(theme, standing)))
+            .child(
+                text(format!("{count} {label}"))
+                    .text_xs()
+                    .font_light()
+                    .color(theme.colors.text_muted),
+            )
+    })
+    .collect()
 }
 
 /// Builds one reading in the status bar: its icon, its text, its action.

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use pm_core::{FileTree, ProjectId, Scope, Session, SessionId};
 use pm_ui::Theme;
 
+use crate::agent::standing_color;
 use crate::app::App;
 use crate::config;
 use crate::message::Message;
@@ -396,23 +397,17 @@ impl App {
 
     /// What colour the dot beside `session` is drawn in.
     ///
-    /// The three states are the agent's, read off the conversation running in
-    /// the worktree: it is working, it is waiting on the reader, or it is
-    /// doing neither. A session with no agent in it is one nobody is waiting
-    /// for either way.
+    /// The state is the agent's, read off the conversation running in the
+    /// worktree: stopped, waiting on the reader, working, or doing none of
+    /// those. A session with no agent in it is one nobody is waiting for
+    /// either way.
     fn session_color(&self, theme: &Theme, session: SessionId) -> pm_gfx::Rgba {
-        let Some(talk) = self
-            .agents
+        self.agents
             .of_session(session)
             .and_then(|id| self.agents.get(id))
-        else {
-            return theme.colors.text_subtle;
-        };
-        match () {
-            () if !talk.asks().is_empty() => theme.colors.warning,
-            () if talk.is_busy() => theme.colors.success,
-            () => theme.colors.text_subtle,
-        }
+            .map_or(theme.colors.text_subtle, |talk| {
+                standing_color(theme, talk.standing())
+            })
     }
 
     /// Says what could not be brought into a worktree that was cut anyway.

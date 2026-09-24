@@ -28,6 +28,32 @@ use pm_core::{ProjectId, SessionId};
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TalkId(u64);
 
+/// How a conversation is doing, as a reader deciding where to look reads it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Standing {
+    /// The agent's process has gone.
+    Stopped,
+    /// It is waiting on the reader to allow something.
+    Waiting,
+    /// A turn is running.
+    Working,
+    /// It is doing nothing and waiting on nobody.
+    Idle,
+}
+
+/// How many of the window's conversations stand each way.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Tally {
+    /// How many have stopped.
+    pub stopped: usize,
+    /// How many are waiting on the reader.
+    pub waiting: usize,
+    /// How many are in the middle of a turn.
+    pub working: usize,
+    /// How many are doing nothing.
+    pub idle: usize,
+}
+
 /// One conversation: what is running, what has been said, what it is owed.
 pub struct Talk {
     /// Which session this is.
@@ -325,6 +351,19 @@ impl Talk {
         self.conversation.is_running()
     }
 
+    /// How the conversation is doing.
+    ///
+    /// A stopped agent outranks a question it left behind, and a question
+    /// outranks a running turn: each is the more urgent thing to read.
+    pub fn standing(&self) -> Standing {
+        match (self.is_running(), self.asks.is_empty(), self.busy) {
+            (false, ..) => Standing::Stopped,
+            (_, false, _) => Standing::Waiting,
+            (_, _, true) => Standing::Working,
+            _ => Standing::Idle,
+        }
+    }
+
     /// The first row the pane is drawn from.
     pub fn scroll(&self) -> usize {
         self.scroll
@@ -565,6 +604,22 @@ impl Talks {
     /// Ends every session of `project`, for a project leaving the window.
     pub fn close_project(&mut self, project: ProjectId) {
         self.talks.retain(|_, talk| talk.project != project);
+    }
+
+    /// How many of the window's conversations stand each way, across every
+    /// project.
+    pub fn tally(&self) -> Tally {
+        self.talks
+            .values()
+            .fold(Tally::default(), |mut tally, talk| {
+                match talk.standing() {
+                    Standing::Stopped => tally.stopped += 1,
+                    Standing::Waiting => tally.waiting += 1,
+                    Standing::Working => tally.working += 1,
+                    Standing::Idle => tally.idle += 1,
+                }
+                tally
+            })
     }
 
     /// How many of the conversations are in the middle of a turn.

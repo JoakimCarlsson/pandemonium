@@ -15,6 +15,6 @@ mod pane;
 mod store;
 mod transcript;
 
-pub use pane::{agent_pane, row_count};
-pub use store::{Talk, TalkId, Talks};
+pub use pane::{agent_pane, row_count, standing_color};
+pub use store::{Standing, Talk, TalkId, Talks, Tally};
 pub use transcript::Block;
