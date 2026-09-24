@@ -11,8 +11,10 @@ use pm_ui::{
     sash, text, v_flex,
 };
 
+use crate::agent::{Standing, Tally, standing_color};
 use crate::editor::{FileId, OpenFile};
 use crate::message::Message;
+use crate::notice::{Shown, Tone};
 use crate::panel::{Panel, PanelView, bottom_panel};
 use crate::panes::{Item, PaneId};
 use crate::review::{Review, SourceControlControls, changes_sidebar};
@@ -183,6 +185,8 @@ pub struct SidebarSession {
     pub drift: String,
     /// Colour representing the state reported by the agent.
     pub status_color: Rgba,
+    /// How many errors the language servers over its worktree report.
+    pub errors: usize,
     /// Whether this session is selected.
     pub selected: bool,
 }
@@ -209,6 +213,10 @@ pub struct Panes {
     pub panel: Panel,
     /// How many agents are running in the active project's worktree.
     pub agents: usize,
+    /// How every agent in the window stands, across all its projects.
+    pub tally: Tally,
+    /// The newest thing the reader is being told about, if anything.
+    pub notice: Option<Shown>,
     /// The tab menu that is open, and what it holds.
     pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
     /// What is drawn over the panes, each at a point of its own.
@@ -495,6 +503,10 @@ struct Status {
     shells: usize,
     /// How many agents are running in it.
     agents: usize,
+    /// How every agent in the window stands, whichever project it is in.
+    tally: Tally,
+    /// The newest thing the reader is being told about, if anything.
+    notice: Option<Shown>,
     /// Whether the panel those shells are shown in is open.
     panel_open: bool,
     /// Where the cursor is in the file the pane is showing.
@@ -537,6 +549,8 @@ impl Status {
             changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.panel.shells.len(),
             agents: panes.agents,
+            tally: panes.tally,
+            notice: panes.notice.clone(),
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
@@ -601,6 +615,8 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         changes,
         shells,
         agents,
+        tally,
+        notice,
         panel_open,
         cursor,
         cursors,
@@ -672,7 +688,9 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                 false,
             ))
         })
+        .children(notice.map(|shown| notice_item(theme, shown)))
         .child(h_flex().flex_1())
+        .children(agent_tally(theme, tally))
         .when_some(modal, |bar, modal| {
             bar.child(status_item(theme, None, modal, None, true))
         })
@@ -717,6 +735,87 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
             Some(Message::TogglePanelView(PanelView::Terminal)),
             panel_open,
         ))
+}
+
+/// Builds the status bar's notice: what happened, which takes the reader to
+/// it when clicked, and the control that lets go of it.
+///
+/// Only the newest is drawn, with a count of the ones behind it; dismissing
+/// it brings up the next.
+fn notice_item(theme: &Theme, shown: Shown) -> Div<Message> {
+    let (glyph, color) = match shown.tone {
+        Tone::Trouble => (IconName::Warning, theme.colors.danger),
+        Tone::Done => (IconName::Check, theme.colors.success),
+    };
+    let label = match shown.more {
+        0 => shown.text,
+        more => format!("{} (+{more})", shown.text),
+    };
+    h_flex()
+        .items_center()
+        .overflow_hidden()
+        .child(
+            h_flex()
+                .h_px(theme.size.bar - BAR_INSET)
+                .px(1)
+                .gap(0.75)
+                .items_center()
+                .overflow_hidden()
+                .rounded(theme.radius.md)
+                .hover_bg(theme.colors.surface_hover)
+                .active_bg(theme.colors.surface_active)
+                .on_click(Message::FollowNotice(shown.id))
+                .child(icon(glyph).size(IconSize::XSmall).color(color))
+                .child(text(label).text_xs().font_light().color(theme.colors.text)),
+        )
+        .child(
+            v_flex()
+                .size_px(theme.size.bar - BAR_INSET)
+                .items_center()
+                .justify_center()
+                .rounded(theme.radius.md)
+                .hover_bg(theme.colors.surface_hover)
+                .active_bg(theme.colors.surface_active)
+                .on_click(Message::DismissNotice(shown.id))
+                .child(
+                    icon(IconName::Close)
+                        .size(IconSize::XSmall)
+                        .color(theme.colors.text_subtle),
+                ),
+        )
+}
+
+/// Builds the status bar's count of agents by how they stand, one reading
+/// per state that any agent is in.
+///
+/// The count is the window's, not the active project's: an agent waiting on
+/// the reader in a project nobody is looking at is the one most worth
+/// knowing about.
+fn agent_tally(theme: &Theme, tally: Tally) -> Vec<Div<Message>> {
+    [
+        (Standing::Working, tally.working, "working"),
+        (Standing::Waiting, tally.waiting, "needs you"),
+        (Standing::Done, tally.done, "done"),
+        (Standing::Idle, tally.idle, "idle"),
+        (Standing::Stopped, tally.stopped, "stopped"),
+    ]
+    .into_iter()
+    .filter(|(_, count, _)| *count > 0)
+    .map(|(standing, count, label)| {
+        h_flex()
+            .h_px(theme.size.bar - BAR_INSET)
+            .px(1)
+            .gap(0.75)
+            .items_center()
+            .child(text("●").text_xs().color(standing_color(theme, standing)))
+            .child(
+                text(format!("{count} {label}"))
+                    .text_xs()
+                    .font_light()
+                    .color(theme.colors.text_muted),
+            )
+    })
+    .collect()
 }
 
 /// Builds one reading in the status bar: its icon, its text, its action.
@@ -1087,6 +1186,14 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
                 .font_light()
                 .color(theme.colors.text),
         ))
+        .when(session.errors > 0, |row| {
+            row.child(
+                text(format!("{} ", session.errors))
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.danger),
+            )
+        })
         .child(reading(theme, session.drift.clone()))
 }
 

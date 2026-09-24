@@ -304,6 +304,19 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// How many errors the server has published, across every file it has
+    /// said anything about.
+    pub fn errors(&self) -> usize {
+        self.state.lock().map_or(0, |state| {
+            state
+                .diagnostics
+                .values()
+                .flatten()
+                .filter(|found| found.severity == Severity::Error)
+                .count()
+        })
+    }
+
     /// Whether anything has arrived since this was last asked.
     pub fn take_fresh(&self) -> bool {
         self.state

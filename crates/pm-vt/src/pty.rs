@@ -140,6 +140,15 @@ impl Pty {
     pub fn is_running(&mut self) -> bool {
         !self.closed && matches!(self.child.try_wait(), Ok(None))
     }
+
+    /// The code the child exited with, once it has exited.
+    pub fn exit_code(&mut self) -> Option<u32> {
+        self.child
+            .try_wait()
+            .ok()
+            .flatten()
+            .map(|status| status.exit_code())
+    }
 }
 
 impl Drop for Pty {

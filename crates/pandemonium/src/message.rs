@@ -13,6 +13,7 @@ use crate::agent::TalkId;
 use crate::config::{FontSlot, Preference, Step, ThemeMode, WorktreePaths};
 use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::Action;
+use crate::notice::NoticeId;
 use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::{Group, RepositoryAction};
@@ -439,6 +440,12 @@ pub enum Message {
     StartAgentCommand(TalkId),
     /// Stop the turn this session is running.
     StopAgentTurn(TalkId),
+    /// Open the pane this session is read in, in whichever worktree it is.
+    ShowAgent(TalkId),
+    /// Go to what this notice is about, and let go of it.
+    FollowNotice(NoticeId),
+    /// Let go of this notice without going anywhere.
+    DismissNotice(NoticeId),
     /// Open the menu of things that can be done to the box being written in.
     ShowInputMenu,
     /// Carry out this command in whatever box has the keyboard.

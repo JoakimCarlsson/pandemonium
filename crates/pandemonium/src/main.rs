@@ -24,6 +24,7 @@ mod input;
 mod keymap;
 mod markdown;
 mod message;
+mod notice;
 mod onboarding;
 mod panel;
 mod panes;

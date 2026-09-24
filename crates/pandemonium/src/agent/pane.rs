@@ -21,7 +21,7 @@ use pm_acp::{About, Ask, Knob, Output, Setting, Status, Step, ToolCall, Voice, W
 use pm_gfx::Rgba;
 use pm_ui::{Div, IconName, IconSize, Styled, Theme, button, h_flex, icon, rule, text, v_flex};
 
-use crate::agent::{Block, Talk, TalkId};
+use crate::agent::{Block, Standing, Talk, TalkId};
 use crate::input::input_view;
 use crate::message::Message;
 
@@ -380,7 +380,11 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         .gap(1)
         .items_center()
         .bg(theme.colors.surface)
-        .child(text("●").text_xs().color(standing(theme, talk)))
+        .child(
+            text("●")
+                .text_xs()
+                .color(standing_color(theme, talk.standing())),
+        )
         .child(
             text(talk.agent().name.to_owned())
                 .text_xs()
@@ -641,13 +645,17 @@ fn tone(theme: &Theme, tone: Tone) -> Rgba {
     }
 }
 
-/// The colour the header's mark is drawn in, for how the session is doing.
-fn standing(theme: &Theme, talk: &Talk) -> Rgba {
-    match (talk.is_running(), talk.asks().is_empty(), talk.is_busy()) {
-        (false, ..) => theme.colors.danger,
-        (_, false, _) => theme.colors.warning,
-        (_, _, true) => theme.colors.success,
-        _ => theme.colors.text_subtle,
+/// The colour a session's mark is drawn in, for how it is doing.
+///
+/// The header, the sidebar's row and the status bar's tally all mark a
+/// session this way, so one reading of a colour holds everywhere.
+pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
+    match standing {
+        Standing::Stopped => theme.colors.danger,
+        Standing::Waiting => theme.colors.warning,
+        Standing::Working => theme.colors.success,
+        Standing::Done => theme.colors.link,
+        Standing::Idle => theme.colors.text_subtle,
     }
 }
 

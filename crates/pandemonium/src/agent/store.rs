@@ -18,7 +18,7 @@ use crate::input::Input;
 use pm_acp::{
     About, Agent, Ask, Command, Event, Knob, Mode, Notify, Session, Setting, Stop, Voice,
 };
-use pm_core::{ProjectId, SessionId};
+use pm_core::{ProjectId, Scope, SessionId};
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -27,6 +27,36 @@ use pm_core::{ProjectId, SessionId};
 /// knowing which project it belongs to.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TalkId(u64);
+
+/// How a conversation is doing, as a reader deciding where to look reads it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Standing {
+    /// The agent's process has gone.
+    Stopped,
+    /// It is waiting on the reader to allow something.
+    Waiting,
+    /// A turn is running.
+    Working,
+    /// A turn has ended that the reader has not looked at since.
+    Done,
+    /// It is doing nothing and waiting on nobody.
+    Idle,
+}
+
+/// How many of the window's conversations stand each way.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Tally {
+    /// How many have stopped.
+    pub stopped: usize,
+    /// How many are waiting on the reader.
+    pub waiting: usize,
+    /// How many are in the middle of a turn.
+    pub working: usize,
+    /// How many have finished a turn nobody has read yet.
+    pub done: usize,
+    /// How many are doing nothing.
+    pub idle: usize,
+}
 
 /// One conversation: what is running, what has been said, what it is owed.
 pub struct Talk {
@@ -57,6 +87,8 @@ pub struct Talk {
     ready: bool,
     /// Whether a turn is running.
     busy: bool,
+    /// Whether a turn has ended since the reader last looked at the pane.
+    unseen: bool,
     /// The mode the agent says it is in, where it has modes.
     mode: Option<String>,
     /// The first row the pane is drawn from.
@@ -74,6 +106,14 @@ impl Talk {
     /// Which agent is running.
     pub fn agent(&self) -> Agent {
         self.conversation.agent()
+    }
+
+    /// The worktree the conversation belongs to, as the panes name it.
+    pub fn scope(&self) -> Scope {
+        match self.session {
+            Some(session) => Scope::of(self.project, session),
+            None => Scope::checkout(self.project),
+        }
     }
 
     /// The worktree the agent is working in.
@@ -325,6 +365,30 @@ impl Talk {
         self.conversation.is_running()
     }
 
+    /// How the conversation is doing.
+    ///
+    /// A stopped agent outranks a question it left behind, and a question
+    /// outranks a running turn: each is the more urgent thing to read.
+    pub fn standing(&self) -> Standing {
+        match (
+            self.is_running(),
+            self.asks.is_empty(),
+            self.busy,
+            self.unseen,
+        ) {
+            (false, ..) => Standing::Stopped,
+            (_, false, ..) => Standing::Waiting,
+            (_, _, true, _) => Standing::Working,
+            (_, _, _, true) => Standing::Done,
+            _ => Standing::Idle,
+        }
+    }
+
+    /// Marks what the conversation has done as read.
+    pub fn see(&mut self) {
+        self.unseen = false;
+    }
+
     /// The first row the pane is drawn from.
     pub fn scroll(&self) -> usize {
         self.scroll
@@ -369,6 +433,7 @@ impl Talk {
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
+        self.unseen = false;
         self.following = true;
     }
 
@@ -414,12 +479,14 @@ impl Talk {
             Event::Asked(ask) => self.asks.push(ask),
             Event::Stopped(stop) => {
                 self.busy = false;
+                self.unseen = stop != Stop::Cancelled;
                 if stop != Stop::EndTurn {
                     self.transcript.note(note(stop));
                 }
             }
             Event::Failed(trouble) => {
                 self.busy = false;
+                self.unseen = true;
                 self.transcript.note(trouble);
             }
             Event::Ended => {
@@ -442,6 +509,8 @@ pub struct Talks {
     notify: Option<Notify>,
     /// Whether a session has opened its conversation since this was asked.
     opened: bool,
+    /// The sessions whose agent went away on its own since this was asked.
+    ended: Vec<TalkId>,
 }
 
 impl Talks {
@@ -519,6 +588,7 @@ impl Talks {
                 dismissed: false,
                 ready: false,
                 busy: false,
+                unseen: false,
                 mode: None,
                 scroll: 0,
                 following: true,
@@ -567,6 +637,31 @@ impl Talks {
         self.talks.retain(|_, talk| talk.project != project);
     }
 
+    /// How many of the window's conversations stand each way, across every
+    /// project.
+    pub fn tally(&self) -> Tally {
+        self.talks
+            .values()
+            .fold(Tally::default(), |mut tally, talk| {
+                match talk.standing() {
+                    Standing::Stopped => tally.stopped += 1,
+                    Standing::Waiting => tally.waiting += 1,
+                    Standing::Working => tally.working += 1,
+                    Standing::Done => tally.done += 1,
+                    Standing::Idle => tally.idle += 1,
+                }
+                tally
+            })
+    }
+
+    /// The sessions whose agent went away on its own since this was asked.
+    ///
+    /// Ending a session is closing its tab, which drops it without a word:
+    /// an agent that is heard ending is one that stopped by itself.
+    pub fn take_ended(&mut self) -> Vec<TalkId> {
+        std::mem::take(&mut self.ended)
+    }
+
     /// How many of the conversations are in the middle of a turn.
     pub fn working(&self) -> usize {
         self.talks.values().filter(|talk| talk.is_busy()).count()
@@ -582,6 +677,9 @@ impl Talks {
         for talk in self.talks.values_mut() {
             for event in talk.conversation.drain() {
                 self.opened |= matches!(event, Event::Ready);
+                if matches!(event, Event::Ended) {
+                    self.ended.push(talk.id);
+                }
                 talk.take(event);
                 changed = true;
             }

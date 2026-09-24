@@ -39,6 +39,16 @@ pub struct ShellEntry {
     pub active: bool,
 }
 
+/// A shell that exited with something other than success.
+pub struct Exited {
+    /// The worktree it was running in.
+    pub scope: Scope,
+    /// What it was called.
+    pub name: String,
+    /// The code it exited with.
+    pub code: u32,
+}
+
 /// One worktree's shells and which of them its pane is showing.
 #[derive(Default)]
 struct WorktreeShells {
@@ -63,10 +73,26 @@ impl WorktreeShells {
     }
 
     /// Drops the shells whose child has exited, and says whether any had.
-    fn reap(&mut self) -> bool {
+    ///
+    /// The ones that exited badly are handed to `failed`, named, with the
+    /// code they gave.
+    fn reap(&mut self, scope: Scope, failed: &mut Vec<Exited>) -> bool {
         let before = self.running.len();
-        self.running
-            .retain(|(_, shell)| shell.borrow_mut().is_running());
+        self.running.retain(|(_, shell)| {
+            let mut child = shell.borrow_mut();
+            if child.is_running() {
+                return true;
+            }
+            if let Some(code) = child.exit_code().filter(|code| *code != 0) {
+                drop(child);
+                failed.push(Exited {
+                    scope,
+                    name: name(shell),
+                    code,
+                });
+            }
+            false
+        });
         if self.running.len() == before {
             return false;
         }
@@ -94,6 +120,8 @@ pub struct Terminals {
     notify: Option<Notify>,
     /// How many lines of scrollback a shell keeps, once the reader has said.
     scrollback: Option<usize>,
+    /// The shells that exited badly since this was last asked.
+    failed: Vec<Exited>,
 }
 
 impl Terminals {
@@ -232,13 +260,18 @@ impl Terminals {
     /// list as a dead pane: the list shows what is running.
     pub fn pump(&mut self) -> bool {
         let mut changed = false;
-        for shells in self.worktrees.values_mut() {
+        for (scope, shells) in &mut self.worktrees {
             for (_, shell) in &shells.running {
                 changed |= shell.borrow_mut().pump();
             }
-            changed |= shells.reap();
+            changed |= shells.reap(*scope, &mut self.failed);
         }
         changed
+    }
+
+    /// The shells that exited badly since this was last asked.
+    pub fn take_failed(&mut self) -> Vec<Exited> {
+        std::mem::take(&mut self.failed)
     }
 }
 
