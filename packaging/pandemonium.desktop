@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pandemonium
+GenericName=Code Editor
+Comment=A GPU-native code editor for conducting agents
+Exec=pandemonium
+Terminal=false
+Categories=Development;TextEditor;IDE;
+StartupWMClass=pandemonium

@@ -15,3 +15,9 @@ pm-text = { path = "crates/pm-text" }
 pm-ui = { path = "crates/pm-ui" }
 pm-vim = { path = "crates/pm-vim" }
 pm-vt = { path = "crates/pm-vt" }
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = true

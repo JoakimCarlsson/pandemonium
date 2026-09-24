@@ -1,5 +1,7 @@
 //! Application entry point: opens the window and runs the event loop.
 
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod agent;
 mod app;
 mod config;
@@ -35,8 +37,13 @@ use winit::event_loop::{ControlFlow, EventLoop};
 
 use app::{App, Wake};
 
-/// Starts the conductor window from the preferences the last launch left.
+/// Starts the conductor window from the preferences the last launch left,
+/// or prints the version and leaves when asked for it with `--version`.
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let event_loop = EventLoop::<Wake>::with_user_event()
         .build()
         .expect("event loop creation failed");

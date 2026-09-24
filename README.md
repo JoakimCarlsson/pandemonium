@@ -43,6 +43,23 @@ defaults reflect my preferences, and features appear in the order I need them.
 Linux is the daily driver; macOS and Windows build in CI and should work, but
 get less love.
 
+## Installing
+
+Prebuilt binaries for Linux, macOS and Windows are attached to each
+[release](https://github.com/JoakimCarlsson/pandemonium/releases).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.ps1 | iex
+```
+
+Set `PANDEMONIUM_VERSION` to pin a release. The script checks the download
+against the release's `SHA256SUMS`, puts the binary in `~/.local/bin` and, on
+Linux, adds a launcher entry.
+
 ## Building
 
 You need a recent stable Rust toolchain (edition 2024) and a GPU that wgpu is
@@ -59,6 +76,7 @@ Other targets:
 ```sh
 make fmt     # cargo fmt --all
 make lint    # cargo clippy --workspace --all-targets -- -D warnings
+make release VERSION=0.2.0   # bump, tag and push; CI builds and publishes
 ```
 
 ## Layout

@@ -1,4 +1,4 @@
-.PHONY: fmt lint run
+.PHONY: fmt lint run release
 
 fmt:
 	cargo fmt --all
@@ -8,3 +8,6 @@ lint:
 
 run:
 	cargo run -p pandemonium
+
+release:
+	scripts/release.sh $(VERSION)
