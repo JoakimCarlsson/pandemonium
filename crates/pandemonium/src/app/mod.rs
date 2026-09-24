@@ -1349,7 +1349,9 @@ impl App {
             Message::OpenExcerpts => self.open_excerpts(),
             Message::RefreshChanges => self.reread_worktree(),
             Message::ToggleChangeStaged(index) => self.toggle_change_staged(index),
-            Message::ToggleGroupStaged(group) => self.toggle_group_staged(group),
+            Message::ToggleGroupStaged(repository, group) => {
+                self.toggle_group_staged(repository, group);
+            }
             Message::ToggleHunkStaged(index, staged, hunk) => {
                 self.toggle_hunk_staged(index, staged, hunk);
             }
@@ -1395,9 +1397,13 @@ impl App {
             }
             Message::ShowInputMenu => self.open_menu(MenuTarget::Input),
             Message::EditText(action) => self.act(action),
-            Message::WriteCommit(phase, anchor, head) => {
+            Message::WriteCommit(repository, phase, anchor, head) => {
+                if let Some(review) = self.review_mut() {
+                    review.activate(repository);
+                }
                 self.point_in(Writing::Commit, phase, anchor, head);
             }
+            Message::InRepository(repository, action) => self.in_repository(repository, action),
             _ => return false,
         }
         true
@@ -1658,7 +1664,7 @@ impl App {
     /// The box of text that has the keyboard, to write in.
     pub(super) fn written_in(&mut self) -> Option<&mut crate::input::Input> {
         match self.writing? {
-            Writing::Commit => self.review_mut().map(crate::review::Review::message_mut),
+            Writing::Commit => self.review_mut()?.message_mut(),
             Writing::Prompt(session) => self
                 .agents
                 .get_mut(session)
@@ -2002,8 +2008,7 @@ impl ApplicationHandler<Wake> for App {
                     .unwrap_or_default();
                 for (scope, said) in finished {
                     if let Some(review) = self.reviews.get_mut(&scope) {
-                        review.finish();
-                        review.report(said);
+                        review.settle(said);
                     }
                 }
                 self.remote_operation = None;

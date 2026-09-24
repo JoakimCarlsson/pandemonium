@@ -10,26 +10,30 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
-use crate::git::run::{Said, answer, git, piped, within};
+use crate::git::run::{Said, answer, git, holding, piped, within};
 
-/// The text the index holds for `path`, in the repository at `root`.
+/// The text the index holds for `path`, in the repository holding it at or
+/// below `root`.
 ///
 /// A file that git has never heard of has no baseline, which is what makes
 /// every line of a new file read as added rather than as unchanged.
 pub fn baseline(root: &Path, path: &Path) -> Option<String> {
-    let relative = within(root, path)?;
-    answer(root, [OsStr::new("show"), &staged(relative)])
+    let root = holding(root, path);
+    let relative = within(&root, path)?;
+    answer(&root, [OsStr::new("show"), &staged(relative)])
 }
 
-/// The text the last commit holds for `path`, in the repository at `root`.
+/// The text the last commit holds for `path`, in the repository holding it
+/// at or below `root`.
 ///
 /// A file the last commit does not have — one added since, or a repository
 /// with no commit yet — has none.
 pub fn committed(root: &Path, path: &Path) -> Option<String> {
-    let relative = within(root, path)?;
+    let root = holding(root, path);
+    let relative = within(&root, path)?;
     let mut named = std::ffi::OsString::from("HEAD:");
     named.push(relative.as_os_str());
-    answer(root, [OsStr::new("show"), &named])
+    answer(&root, [OsStr::new("show"), &named])
 }
 
 /// Puts what the worktree holds for `paths` into the index.

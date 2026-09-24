@@ -520,7 +520,12 @@ impl Status {
 
         Self {
             project: project.map(|project| project.name().to_owned()),
-            branch: pointed,
+            branch: pointed.or_else(|| {
+                files
+                    .review
+                    .and_then(crate::review::Review::head)
+                    .map(pm_core::Head::name)
+            }),
             sessions: project.map_or(0, |project| sessions_of(project, sessions).len()),
             changes: files.review.map_or(0, |review| review.changed().len()),
             shells: panes.panel.shells.len(),
@@ -1032,8 +1037,9 @@ fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div
 ///
 /// The project is the worktree its sessions were cut from, so its row names
 /// it and states the branch it has out — `main`, most of the time — and the
-/// sessions under it are read against that. A plain folder has no branch,
-/// and its row states nothing beside its name.
+/// sessions under it are read against that. A folder of several
+/// repositories states how many it holds, and a plain folder states nothing
+/// beside its name.
 fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message> {
     row(theme, selected)
         .on_click(Message::ActivateProject(project.id()))
@@ -1046,11 +1052,17 @@ fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message>
                 .font_medium()
                 .color(theme.colors.text),
         ))
-        .children(
-            project
-                .branch()
-                .map(|branch| reading(theme, branch.to_owned())),
-        )
+        .children(project_reading(project).map(|said| reading(theme, said)))
+}
+
+/// What a project's row states beside its name: the branch it has out, or
+/// how many repositories it holds when it holds several.
+fn project_reading(project: &Project) -> Option<String> {
+    match (project.branch(), project.repositories().len()) {
+        (Some(branch), _) => Some(branch.to_owned()),
+        (None, 0) => None,
+        (None, count) => Some(format!("{count} repositories")),
+    }
 }
 
 /// Builds one session row: its state, what it is called, how far it has gone.

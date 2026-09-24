@@ -35,22 +35,27 @@ impl Projects {
     /// folder no repository contains opens as itself. A file outside every
     /// repository opens the folder holding it.
     ///
-    /// A path already open resolves to the project that is already there
-    /// instead of being held twice, so a menu entry, a keybinding and a
-    /// restored window all land on the same project.
+    /// A path already open, or inside a project already open, resolves to
+    /// the project that is already there instead of being held twice, so a
+    /// menu entry, a keybinding and a restored window all land on the same
+    /// project — and a repository inside a folder of several is the folder's.
     pub fn find_or_open(&mut self, path: impl AsRef<Path>) -> Result<ProjectId, OpenError> {
         let path = path.as_ref();
         let path = std::fs::canonicalize(path).map_err(|_| OpenError::Missing {
             path: path.to_path_buf(),
         })?;
-        let root = repository::root(&path).unwrap_or_else(|| folder_of(path));
-
-        if let Some(project) = self.open.iter().find(|project| project.root() == root) {
+        let holding = self
+            .open
+            .iter()
+            .filter(|project| path.starts_with(project.root()))
+            .max_by_key(|project| project.root().components().count());
+        if let Some(project) = holding {
             let id = project.id();
             self.active = Some(id);
             return Ok(id);
         }
 
+        let root = repository::root(&path).unwrap_or_else(|| folder_of(path));
         let id = self.next;
         self.next = id.next();
         self.open.push(Project::at(id, root));
@@ -95,7 +100,8 @@ impl Projects {
         self.open.iter().find(|project| project.id() == id)
     }
 
-    /// Reads the checked-out branch of project `id` again.
+    /// Reads the repositories of project `id`, and the branch each has out,
+    /// again.
     pub fn refresh(&mut self, id: ProjectId) {
         if let Some(project) = self.open.iter_mut().find(|project| project.id() == id) {
             project.refresh();

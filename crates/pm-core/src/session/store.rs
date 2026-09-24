@@ -7,7 +7,7 @@ use crate::git;
 use crate::project::{Project, ProjectId};
 use crate::session::bootstrap::{self, Bootstrap};
 use crate::session::placement;
-use crate::session::{Session, SessionId};
+use crate::session::{Cut, Session, SessionId};
 
 /// Every session the window holds, in the order they were started.
 ///
@@ -29,12 +29,15 @@ impl Sessions {
         Self::default()
     }
 
-    /// Cuts a worktree for a session of `project` called `name`, under `under`.
+    /// Cuts a session of `project` called `name`, under `under`.
     ///
-    /// The worktree is cut from `base` and left detached: a session is
-    /// somewhere to work, and the branch it ends up on is named later, by
-    /// whoever ends up naming it. An empty `base` is what the project has
-    /// checked out, which is where a reader who was not asked means.
+    /// Each repository the project holds is cut as a worktree from `base`
+    /// and left detached: a session is somewhere to work, and the branch it
+    /// ends up on is named later, by whoever ends up naming it. An empty
+    /// `base` is what each repository has checked out, which is where a
+    /// reader who was not asked means. The worktrees are laid out the way the
+    /// project lays its repositories out, and what lies outside all of them
+    /// is copied in beside them.
     ///
     /// What git leaves out of a worktree, `wanted` brings across, and the
     /// session is given a port nothing else in the window has. Neither can
@@ -51,27 +54,63 @@ impl Sessions {
         if !project.is_repository() {
             return Err(StartError::NotARepository);
         }
-        let origin = project.root().to_path_buf();
         let cut_from = match base.is_empty() {
             true => "HEAD",
             false => base,
         };
-        let base = git::commit_of(&origin, cut_from).ok_or(StartError::NoCommit)?;
+        let planned = project
+            .repositories()
+            .iter()
+            .map(|repository| {
+                let origin = repository.root().to_path_buf();
+                let base = git::commit_of(&origin, cut_from).ok_or(StartError::NoCommit)?;
+                Ok((origin, base))
+            })
+            .collect::<Result<Vec<_>, StartError>>()?;
         let root = placement::place(under, project.name(), name);
 
-        if let Some(parent) = root.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| StartError::Place {
-                path: parent.to_path_buf(),
-                trouble: error.to_string(),
-            })?;
+        std::fs::create_dir_all(&root).map_err(|error| StartError::Place {
+            path: root.clone(),
+            trouble: error.to_string(),
+        })?;
+        let mut cuts = Vec::new();
+        for (origin, base) in planned {
+            let within = origin.strip_prefix(project.root()).unwrap_or(Path::new(""));
+            let cut = Cut {
+                root: root.join(within),
+                origin,
+                base,
+            };
+            if let Err(said) = git::add_worktree(&cut.origin, &cut.root, &cut.base) {
+                tear_down(&root, &cuts);
+                return Err(StartError::Git(said));
+            }
+            git::remember(&cut.root, &cut.base, name);
+            cuts.push(cut);
         }
-        git::add_worktree(&origin, &root, &base).map_err(StartError::Git)?;
-        git::remember(&root, &base, name);
 
-        let trouble = bootstrap::apply(&origin, &root, wanted);
+        let mut trouble = Vec::new();
+        if !cuts.iter().any(|cut| cut.root == root) {
+            let repositories = cuts
+                .iter()
+                .map(|cut| cut.origin.clone())
+                .collect::<Vec<_>>();
+            trouble.extend(bootstrap::loose(
+                project.root(),
+                &root,
+                &repositories,
+                wanted,
+            ));
+            trouble.extend(bootstrap::apply(project.root(), &root, wanted));
+        }
+        for cut in &cuts {
+            trouble.extend(bootstrap::apply(&cut.origin, &cut.root, wanted));
+        }
         let port = bootstrap::free_port(&self.ports());
         if let Some(port) = port {
-            git::remember_port(&root, port);
+            for cut in &cuts {
+                git::remember_port(&cut.root, port);
+            }
         }
 
         let id = self.next;
@@ -80,10 +119,9 @@ impl Sessions {
             id,
             project: project.id(),
             name: name.to_owned(),
-            summary: git::since(&root, &base),
+            summary: super::drift(&cuts),
             root,
-            origin,
-            base,
+            cuts,
             port,
         });
         Ok(Started { id, trouble })
@@ -100,30 +138,59 @@ impl Sessions {
             return Ok(());
         };
         let session = &self.open[at];
-        git::remove_worktree(&session.origin, &session.root).map_err(StartError::Git)?;
+        for cut in session.cuts.iter().rev() {
+            git::remove_worktree(&cut.origin, &cut.root).map_err(StartError::Git)?;
+        }
+        if session.root.exists() {
+            std::fs::remove_dir_all(&session.root).map_err(|error| StartError::Place {
+                path: session.root.clone(),
+                trouble: error.to_string(),
+            })?;
+        }
         self.open.remove(at);
         Ok(())
     }
 
-    /// Takes up the worktrees `project` already has under `under`.
+    /// Takes up the sessions `project` already has under `under`.
     ///
-    /// A session outlives the window that started it, because the worktree
-    /// does: what a launch has to do is recognise the ones that are still
-    /// there, which is git's list narrowed to the ones in our own home. A
-    /// worktree already taken up is left alone, so this is safe to run again.
+    /// A session outlives the window that started it, because its worktrees
+    /// do: what a launch has to do is recognise the ones that are still
+    /// there, which is git's list of each repository's worktrees narrowed to
+    /// the ones in our own home, gathered by the session folder they sit in.
+    /// A session already taken up is left alone, so this is safe to run
+    /// again.
     pub fn adopt(&mut self, project: &Project, under: &Path) {
-        let origin = project.root().to_path_buf();
         let ours = under.join(placement::slug(project.name()));
+        let mut found: Vec<(PathBuf, Vec<Cut>)> = Vec::new();
 
-        for root in git::worktrees(&origin) {
-            if !root.starts_with(&ours) || self.open.iter().any(|open| open.root == root) {
-                continue;
+        for repository in project.repositories() {
+            let origin = repository.root().to_path_buf();
+            for root in git::worktrees(&origin) {
+                let Some(folder) = session_folder(&ours, &root) else {
+                    continue;
+                };
+                if self.open.iter().any(|open| open.root == folder) {
+                    continue;
+                }
+                let base = git::remembered_base(&root)
+                    .or_else(|| git::commit_of(&root, "HEAD"))
+                    .unwrap_or_default();
+                let cut = Cut {
+                    origin: origin.clone(),
+                    root,
+                    base,
+                };
+                match found.iter_mut().find(|(held, _)| *held == folder) {
+                    Some((_, cuts)) => cuts.push(cut),
+                    None => found.push((folder, vec![cut])),
+                }
             }
-            let base = git::remembered_base(&root)
-                .or_else(|| git::commit_of(&root, "HEAD"))
-                .unwrap_or_default();
-            let name = git::remembered_name(&root).unwrap_or_else(|| named(&root));
-            let port = git::remembered_port(&root);
+        }
+
+        for (root, cuts) in found {
+            let first = &cuts[0].root;
+            let name = git::remembered_name(first).unwrap_or_else(|| named(&root));
+            let port = git::remembered_port(first);
 
             let id = self.next;
             self.next = id.next();
@@ -131,10 +198,9 @@ impl Sessions {
                 id,
                 project: project.id(),
                 name,
-                summary: git::since(&root, &base),
+                summary: super::drift(&cuts),
                 root,
-                origin: origin.clone(),
-                base,
+                cuts,
                 port,
             });
         }
@@ -184,6 +250,21 @@ pub struct Started {
     pub id: SessionId,
     /// What could not be brought across, one line apiece.
     pub trouble: Vec<String>,
+}
+
+/// The session folder a worktree at `root` belongs to, when it sits in
+/// `ours` at all: the directory one level below it.
+fn session_folder(ours: &Path, root: &Path) -> Option<PathBuf> {
+    let first = root.strip_prefix(ours).ok()?.components().next()?;
+    Some(ours.join(first))
+}
+
+/// Takes away what a session that could not be cut in full had cut so far.
+fn tear_down(root: &Path, cuts: &[Cut]) {
+    for cut in cuts.iter().rev() {
+        let _ = git::remove_worktree(&cut.origin, &cut.root);
+    }
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// What a session directory is called when nothing wrote a name down.

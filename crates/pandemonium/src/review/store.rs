@@ -1,19 +1,26 @@
-//! What one project has changed, and everything done about it.
+//! What one worktree has changed, and everything done about it.
 //!
 //! This is the one seam between the window and git's index: the sidebar, the
 //! review pane and a keybinding all stage, unstage, throw away and commit
 //! through here, and each of them is followed by asking git again rather
 //! than by guessing what the answer would now be. Git is the state; this is
 //! what the window last read of it.
+//!
+//! A worktree may hold several repositories. The changes of all of them are
+//! one list, in the order the repositories are found, and every command over
+//! a set of files is carried out in each repository over the files that are
+//! its own. What only one repository can do — commit, sync, switch branch —
+//! is done in the active one, which the sidebar's sections choose.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use pm_core::{Changed, Head, Hunk, Line, Side, Status};
+use pm_core::{Changed, FileStatus, Head, Hunk, Line, Side};
 use pm_text::{Buffer, Highlight};
 
-use crate::input::{Input, Submit};
+use crate::input::Input;
+use crate::review::repository::Repository;
 use crate::review::shade::{Shading, Version};
 
 /// What the commit button says while there is nothing to commit.
@@ -117,35 +124,24 @@ pub struct Patch {
     pub unstaged: Vec<Hunk>,
 }
 
-/// What one project has changed, as the window last read it.
+/// What one worktree has changed, as the window last read it.
 pub struct Review {
     /// The worktree this is a review of.
     root: PathBuf,
-    /// What git makes of that worktree.
-    status: Status,
+    /// The repositories the worktree holds, the root's own first.
+    repositories: Vec<Repository>,
+    /// The repository a commit, a sync or a branch is made in.
+    active: usize,
+    /// Every file that has changed, repository by repository.
+    changed: Vec<Changed>,
+    /// The repository each of those files is in, by its place in the list.
+    owners: Vec<usize>,
     /// The lines of each file that has changed.
     patches: BTreeMap<PathBuf, Patch>,
     /// The colour of every character each file's lines are drawn in.
     shades: BTreeMap<PathBuf, Shading>,
     /// The files whose lines are folded away in the review pane.
     collapsed: BTreeSet<PathBuf>,
-    /// What the next commit will say, as a buffer like any other.
-    ///
-    /// The message is edited in the editor the window is made of rather than
-    /// in a line of its own: a commit message is several lines, it is written
-    /// with the cursor moved about and the text selected, and every one of
-    /// those is something the editor already does.
-    message: Input,
-    /// What git said when it last would not do something.
-    trouble: Option<String>,
-    /// What is being done with a remote right now, and since when.
-    busy: Option<(&'static str, Instant)>,
-    /// Commits on the checked out branch.
-    history_auto: Vec<pm_core::Commit>,
-    /// Commits reachable from every reference.
-    history_all: Vec<pm_core::Commit>,
-    /// First visible commit in each history filter.
-    history_scrolls: [usize; 2],
     /// The id each file that has ever changed here was given.
     ///
     /// A path keeps its id for as long as the window is open, whether or not
@@ -175,16 +171,13 @@ impl Review {
     pub fn of(root: &Path) -> Self {
         let mut review = Self {
             root: root.to_path_buf(),
-            status: Status::default(),
+            repositories: Vec::new(),
+            active: 0,
+            changed: Vec::new(),
+            owners: Vec::new(),
             patches: BTreeMap::new(),
             shades: BTreeMap::new(),
             collapsed: BTreeSet::new(),
-            message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
-            trouble: None,
-            busy: None,
-            history_auto: Vec::new(),
-            history_all: Vec::new(),
-            history_scrolls: [0; 2],
             ids: BTreeMap::new(),
             next: 0,
             kept: BTreeSet::new(),
@@ -199,34 +192,41 @@ impl Review {
 
     /// Asks git again what the worktree holds.
     ///
-    /// The whole worktree is asked about at once, because that is what git
-    /// answers in one go: a file at a time would be a subprocess per row of
-    /// a list as long as the change is.
+    /// The repositories are looked for again first, so one cloned into the
+    /// folder is reviewed without reopening it; one that was already here
+    /// keeps its message. Each repository is asked about whole, because that
+    /// is what git answers in one go: a file at a time would be a subprocess
+    /// per row of a list as long as the change is.
     pub fn reread(&mut self) {
-        self.status = Status::of(&self.root);
-        self.history_auto = pm_core::history(&self.root, 500, false);
-        self.history_all = pm_core::history(&self.root, 500, true);
-        self.patches = pm_core::diffs(&self.root, Side::Staged)
-            .into_iter()
-            .map(|(path, hunks)| {
-                let patch = Patch {
-                    staged: hunks,
-                    unstaged: Vec::new(),
-                };
-                (path, patch)
-            })
-            .collect();
-        for (path, hunks) in pm_core::diffs(&self.root, Side::Unstaged) {
+        self.find_repositories();
+        for repository in &mut self.repositories {
+            repository.reread();
+        }
+        self.gather_changes();
+
+        self.patches = BTreeMap::new();
+        for repository in &self.repositories {
+            for (path, hunks) in pm_core::diffs(repository.root(), Side::Staged) {
+                self.patches.entry(path).or_default().staged = hunks;
+            }
+            for (path, hunks) in pm_core::diffs(repository.root(), Side::Unstaged) {
+                self.patches.entry(path).or_default().unstaged = hunks;
+            }
+        }
+        for (repository, path) in self.untracked() {
+            let root = self.repositories[repository].root();
+            let hunks = pm_core::diff(root, &path, Side::Untracked);
             self.patches.entry(path).or_default().unstaged = hunks;
         }
-        for path in self.untracked() {
-            let hunks = pm_core::diff(&self.root, &path, Side::Untracked);
-            self.patches.entry(path).or_default().unstaged = hunks;
-        }
+        self.patches
+            .retain(|path, _| self.changed.iter().any(|changed| changed.path == *path));
         self.shades = self
             .patches
             .iter()
-            .map(|(path, patch)| (path.clone(), Shading::of(&self.root, path, patch)))
+            .map(|(path, patch)| {
+                let root = self.repository_root_of(path);
+                (path.clone(), Shading::of(root, path, patch))
+            })
             .collect();
         self.collapsed
             .retain(|path| self.patches.contains_key(path));
@@ -242,28 +242,135 @@ impl Review {
         self.gesture = None;
     }
 
-    /// The cached commits selected by the Source Control graph filter.
-    pub fn history(&self, all: bool) -> &[pm_core::Commit] {
-        match all {
-            true => &self.history_all,
-            false => &self.history_auto,
+    /// Looks for the worktree's repositories again, keeping what the ones
+    /// still there were holding and the active one where it was.
+    fn find_repositories(&mut self) {
+        let active = self.active_root().map(Path::to_path_buf);
+        let mut held = std::mem::take(&mut self.repositories);
+        self.repositories = pm_core::repositories(&self.root)
+            .into_iter()
+            .map(
+                |root| match held.iter().position(|kept| kept.root() == root) {
+                    Some(at) => held.swap_remove(at),
+                    None => Repository::at(&self.root, &root),
+                },
+            )
+            .collect();
+        self.active = active
+            .and_then(|active| {
+                self.repositories
+                    .iter()
+                    .position(|repository| repository.root() == active)
+            })
+            .unwrap_or_default();
+    }
+
+    /// Lists every repository's changes as one, leaving out what a
+    /// repository reports of another inside it.
+    ///
+    /// A repository inside another is, to the outer one, a directory it has
+    /// never been told about; its files are the inner repository's to list.
+    fn gather_changes(&mut self) {
+        self.changed.clear();
+        self.owners.clear();
+        for (owner, repository) in self.repositories.iter().enumerate() {
+            let inner = self
+                .repositories
+                .iter()
+                .map(Repository::root)
+                .filter(|root| *root != repository.root() && root.starts_with(repository.root()))
+                .collect::<Vec<_>>();
+            for changed in repository.changed() {
+                if inner.iter().any(|root| changed.path.starts_with(root)) {
+                    continue;
+                }
+                self.changed.push(changed.clone());
+                self.owners.push(owner);
+            }
         }
+    }
+
+    /// The repositories the worktree holds, the root's own first.
+    pub fn repositories(&self) -> &[Repository] {
+        &self.repositories
+    }
+
+    /// The `index`-th repository.
+    pub fn repository(&self, index: usize) -> Option<&Repository> {
+        self.repositories.get(index)
+    }
+
+    /// Which repository a commit, a sync or a branch is made in.
+    pub fn active(&self) -> usize {
+        self.active
+    }
+
+    /// Makes the `index`-th repository the one a commit is made in.
+    pub fn activate(&mut self, index: usize) {
+        if index < self.repositories.len() {
+            self.active = index;
+        }
+    }
+
+    /// The repository a commit is made in, while the worktree holds one.
+    fn active_repository(&self) -> Option<&Repository> {
+        self.repositories.get(self.active)
+    }
+
+    /// That repository, to change.
+    fn active_repository_mut(&mut self) -> Option<&mut Repository> {
+        self.repositories.get_mut(self.active)
+    }
+
+    /// Where the repository a commit is made in sits on disk.
+    pub fn active_root(&self) -> Option<&Path> {
+        self.active_repository().map(Repository::root)
+    }
+
+    /// The root of the repository `path` is in, or the worktree's own.
+    fn repository_root_of(&self, path: &Path) -> &Path {
+        self.repositories
+            .iter()
+            .rev()
+            .map(Repository::root)
+            .find(|root| path.starts_with(root))
+            .unwrap_or(&self.root)
+    }
+
+    /// Which repository `path` is in.
+    fn owner_of(&self, path: &Path) -> Option<usize> {
+        self.changed
+            .iter()
+            .position(|changed| changed.path == path)
+            .map(|at| self.owners[at])
+    }
+
+    /// What git makes of `path`, in whichever repository it is in.
+    pub fn mark(&self, path: &Path) -> Option<FileStatus> {
+        self.repositories
+            .iter()
+            .rev()
+            .find_map(|repository| repository.status().mark(path))
+    }
+
+    /// The cached commits of the active repository selected by the Source
+    /// Control graph filter.
+    pub fn history(&self, all: bool) -> &[pm_core::Commit] {
+        self.active_repository()
+            .map_or(&[], |repository| repository.history(all))
     }
 
     /// The first visible commit under the selected history filter.
     pub fn history_scroll(&self, all: bool, visible: usize) -> usize {
-        let total = self.history(all).len();
-        self.history_scrolls[usize::from(all)].min(total.saturating_sub(visible.max(1)))
+        self.active_repository()
+            .map_or(0, |repository| repository.history_scroll(all, visible))
     }
 
     /// Scrolls the selected history filter within the commits it has read.
     pub fn scroll_history(&mut self, all: bool, rows: isize, visible: usize) {
-        let index = usize::from(all);
-        let total = self.history(all).len();
-        let last = total.saturating_sub(visible.max(1));
-        self.history_scrolls[index] = self.history_scrolls[index]
-            .saturating_add_signed(rows)
-            .min(last);
+        if let Some(repository) = self.active_repository_mut() {
+            repository.scroll_history(all, rows, visible);
+        }
     }
 
     /// The id `path` goes by, giving it one if it has never had one.
@@ -308,36 +415,50 @@ impl Review {
         self.kept.insert(id);
     }
 
-    /// How many files git already knows about have changed.
+    /// How many files of the `repository`-th that git already knows about
+    /// have changed.
     ///
     /// These are what a commit takes when nothing has been staged: a commit
     /// can take a tracked file's changes without being told to, and can never
     /// take a file git has not been told about.
-    pub fn tracked(&self) -> usize {
-        self.changed()
-            .iter()
+    fn tracked(&self, repository: usize) -> usize {
+        self.changed_in(repository)
             .filter(|changed| !changed.is_untracked() && !changed.is_conflicted())
             .count()
     }
 
-    /// What the control offering to commit says, and whether it can.
+    /// The files of the `repository`-th that have changed.
+    fn changed_in(&self, repository: usize) -> impl Iterator<Item = &Changed> {
+        self.changed
+            .iter()
+            .zip(&self.owners)
+            .filter(move |(_, owner)| **owner == repository)
+            .map(|(changed, _)| changed)
+    }
+
+    /// What the control offering to commit the `repository`-th says, and
+    /// whether it can.
     ///
     /// The words are Zed's: with something staged it commits that, and with
     /// nothing staged it offers to take every tracked change instead. What
     /// stops it saying so — a conflict, no message, nothing to commit — is
     /// what the control says in its place.
-    pub fn committable(&self) -> (String, Option<&'static str>) {
-        let staged = self.staged();
+    pub fn committable(&self, repository: usize) -> (String, Option<&'static str>) {
+        let staged = self.staged_of(repository);
         let title = match staged {
             0 => "Commit Tracked".to_owned(),
             _ => "Commit".to_owned(),
         };
+        let unsaid = self
+            .repositories
+            .get(repository)
+            .is_none_or(Repository::unsaid);
 
-        let stopped = if self.changed().iter().any(Changed::is_conflicted) {
+        let stopped = if self.changed_in(repository).any(Changed::is_conflicted) {
             Some("Resolve the conflicts before committing")
-        } else if staged == 0 && self.tracked() == 0 {
+        } else if staged == 0 && self.tracked(repository) == 0 {
             Some(NOTHING_TO_COMMIT)
-        } else if self.unsaid() {
+        } else if unsaid {
             Some("No commit message")
         } else {
             None
@@ -345,23 +466,29 @@ impl Review {
         (title, stopped)
     }
 
-    /// What the button under the message does now.
+    /// What the button under the `repository`-th message does now.
     ///
     /// The words are VS Code's: while there is something to commit it
     /// commits, and once there is nothing it offers to bring the branch level
     /// with the one it follows — to sync what the two have drifted apart by,
     /// or to publish a branch that follows nothing yet. While a remote is
     /// being talked to, it says so and waits.
-    pub fn primary(&self) -> Primary {
-        if let Some((doing, since)) = self.busy {
+    pub fn primary(&self, repository: usize) -> Primary {
+        let Some(held) = self.repositories.get(repository) else {
+            return Primary::Commit {
+                title: "Commit".to_owned(),
+                stopped: Some(NOTHING_TO_COMMIT),
+            };
+        };
+        if let Some((doing, since)) = held.busy() {
             return Primary::Busy { doing, since };
         }
-        let (title, stopped) = self.committable();
+        let (title, stopped) = self.committable(repository);
         if stopped != Some(NOTHING_TO_COMMIT) {
             return Primary::Commit { title, stopped };
         }
 
-        let head = self.head();
+        let head = held.head();
         match (&head.branch, &head.upstream) {
             (Some(_), None) if head.commit.is_some() => Primary::Publish,
             (Some(_), Some(_)) if head.ahead + head.behind > 0 => Primary::Sync {
@@ -372,20 +499,29 @@ impl Review {
         }
     }
 
-    /// How many files have something staged for the next commit.
+    /// How many files have something staged for the next commit, in every
+    /// repository.
     pub fn staged(&self) -> usize {
-        self.changed()
+        self.changed
             .iter()
             .filter(|changed| changed.is_staged())
             .count()
     }
 
-    /// How many files of `group` are staged, and how many there are.
+    /// How many files of the `repository`-th have something staged.
+    fn staged_of(&self, repository: usize) -> usize {
+        self.changed_in(repository)
+            .filter(|changed| changed.is_staged())
+            .count()
+    }
+
+    /// How many files of `group` in the `repository`-th are staged, and how
+    /// many there are.
     ///
     /// This is what the box on the group's heading says: none of them, all of
     /// them, or somewhere in between.
-    pub fn staged_in(&self, group: Group) -> (usize, usize) {
-        let rows = self.grouped(group);
+    pub fn staged_in(&self, repository: usize, group: Group) -> (usize, usize) {
+        let rows = self.grouped(repository, group);
         let staged = rows
             .iter()
             .filter_map(|index| self.change(*index))
@@ -394,21 +530,32 @@ impl Review {
         (staged, rows.len())
     }
 
-    /// The files of `group`, in the order the sidebar lists them.
-    pub fn grouped(&self, group: Group) -> Vec<usize> {
-        self.changed()
+    /// The files of `group` in the `repository`-th, in the order the sidebar
+    /// lists them.
+    pub fn grouped(&self, repository: usize, group: Group) -> Vec<usize> {
+        self.changed
             .iter()
+            .zip(&self.owners)
             .enumerate()
-            .filter(|(_, changed)| group.holds(changed))
+            .filter(|(_, (changed, owner))| **owner == repository && group.holds(changed))
             .map(|(index, _)| index)
             .collect()
     }
 
-    /// Every row the sidebar draws, in the order it draws them.
+    /// How many files of the `repository`-th have changed.
+    pub fn grouped_count(&self, repository: usize) -> usize {
+        self.changed_in(repository).count()
+    }
+
+    /// Every row the sidebar draws, in the order it draws them: repository
+    /// by repository, and group by group within each.
     fn listed(&self) -> Vec<ChangeId> {
-        Group::ALL
-            .into_iter()
-            .flat_map(|group| self.grouped(group))
+        (0..self.repositories.len())
+            .flat_map(|repository| {
+                Group::ALL
+                    .into_iter()
+                    .flat_map(move |group| self.grouped(repository, group))
+            })
             .filter_map(|index| self.id_of(index))
             .collect()
     }
@@ -572,19 +719,14 @@ impl Review {
         &self.root
     }
 
-    /// What git makes of that worktree.
-    pub fn status(&self) -> &Status {
-        &self.status
-    }
-
-    /// Where the worktree's head stands.
-    pub fn head(&self) -> &Head {
-        self.status.head()
+    /// Where the active repository's head stands, while there is one.
+    pub fn head(&self) -> Option<&Head> {
+        self.active_repository().map(Repository::head)
     }
 
     /// Every file that has changed, in the order the lists show them.
     pub fn changed(&self) -> &[Changed] {
-        self.status.changed()
+        &self.changed
     }
 
     /// The `index`-th file that has changed.
@@ -635,44 +777,48 @@ impl Review {
         }
     }
 
-    /// The box the next commit's message is written in.
-    pub fn message(&self) -> &Input {
-        &self.message
+    /// The box the active repository's next commit message is written in.
+    pub fn message(&self) -> Option<&Input> {
+        self.active_repository().map(Repository::message)
     }
 
     /// That box, to write in.
-    pub fn message_mut(&mut self) -> &mut Input {
-        &mut self.message
+    pub fn message_mut(&mut self) -> Option<&mut Input> {
+        self.active_repository_mut().map(Repository::message_mut)
     }
 
-    /// What it holds.
-    pub fn said(&self) -> String {
-        self.message.value()
-    }
-
-    /// Whether nothing has been written in it.
-    pub fn unsaid(&self) -> bool {
-        self.said().trim().is_empty()
-    }
-
-    /// What git said when it last would not do something.
+    /// What git said when it last would not do something in the active
+    /// repository.
     pub fn trouble(&self) -> Option<&str> {
-        self.trouble.as_deref()
+        self.active_repository().and_then(Repository::trouble)
     }
 
-    /// Marks a remote as being talked to, worded as `doing`.
+    /// Marks a remote as being talked to from the active repository, worded
+    /// as `doing`.
     pub fn begin(&mut self, doing: &'static str) {
-        self.busy = Some((doing, Instant::now()));
+        if let Some(repository) = self.active_repository_mut() {
+            repository.set_busy(Some(doing));
+        }
     }
 
-    /// Marks the remote as no longer being talked to.
-    pub fn finish(&mut self) {
-        self.busy = None;
+    /// Takes in what a remote said, in the repository that was talking to
+    /// it, and reads the worktree again.
+    pub fn settle(&mut self, said: pm_core::Said) {
+        let talking = self
+            .repositories
+            .iter()
+            .position(|repository| repository.busy().is_some())
+            .unwrap_or(self.active);
+        for repository in &mut self.repositories {
+            repository.set_busy(None);
+        }
+        self.done(talking, said);
     }
 
-    /// Records what a Git operation outside the review said and rereads it.
+    /// Records what a Git operation outside the review said about the active
+    /// repository, and rereads it.
     pub fn report(&mut self, said: pm_core::Said) {
-        self.done(said);
+        self.done(self.active, said);
     }
 
     /// The first row the pane showing `shown` is drawn from.
@@ -696,51 +842,76 @@ impl Review {
         self.scrolls.insert(shown, reached);
     }
 
-    /// The files `ids` names that `wanted` accepts.
+    /// The files `ids` names that `wanted` accepts, with the repository
+    /// each is in.
     ///
     /// An id naming a file that has stopped differing is left out rather
     /// than passed on: the list is read again after every change, and a
     /// command carried out over a stale row is a command over one file less.
-    fn named_where(&self, ids: &[ChangeId], wanted: impl Fn(&Changed) -> bool) -> Vec<PathBuf> {
+    fn named_where(
+        &self,
+        ids: &[ChangeId],
+        wanted: impl Fn(&Changed) -> bool,
+    ) -> Vec<(usize, PathBuf)> {
         ids.iter()
-            .filter_map(|id| self.change(self.place_of(*id)?))
-            .filter(|changed| wanted(changed))
-            .map(|changed| changed.path.clone())
+            .filter_map(|id| self.place_of(*id))
+            .filter(|place| self.change(*place).is_some_and(&wanted))
+            .map(|place| (self.owners[place], self.changed[place].path.clone()))
             .collect()
     }
 
-    /// Puts the files `ids` names into the index.
+    /// Carries `command` out in each repository over the files of `named`
+    /// that are its own, and reads the worktree again once.
     ///
-    /// Every file goes in one call, because staging four files is one thing
-    /// the reader asked for and should be one thing git is told — and a
-    /// half-finished bulk change is the state nobody can reason about.
-    pub fn stage(&mut self, ids: &[ChangeId]) {
-        let paths = self.named_where(ids, Changed::is_unstaged);
-        if paths.is_empty() {
+    /// Every repository's files go in one call, because staging four files
+    /// is one thing the reader asked for and should be one thing git is told
+    /// — and a half-finished bulk change is the state nobody can reason
+    /// about.
+    fn in_each(
+        &mut self,
+        named: Vec<(usize, PathBuf)>,
+        command: impl Fn(&Path, &[PathBuf]) -> pm_core::Said,
+    ) {
+        if named.is_empty() {
             return;
         }
-        self.done(pm_core::stage(&self.root, &paths));
+        for repository in 0..self.repositories.len() {
+            let paths = named
+                .iter()
+                .filter(|(owner, _)| *owner == repository)
+                .map(|(_, path)| path.clone())
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                continue;
+            }
+            let said = command(self.repositories[repository].root(), &paths);
+            self.repositories[repository].heard(said);
+        }
+        self.reread();
+    }
+
+    /// Puts the files `ids` names into the index.
+    pub fn stage(&mut self, ids: &[ChangeId]) {
+        let named = self.named_where(ids, Changed::is_unstaged);
+        self.in_each(named, pm_core::stage);
     }
 
     /// Takes the files `ids` names back out of the index.
     pub fn unstage(&mut self, ids: &[ChangeId]) {
-        let paths = self.named_where(ids, Changed::is_staged);
-        if paths.is_empty() {
-            return;
-        }
-        self.done(pm_core::unstage(&self.root, &paths));
+        let named = self.named_where(ids, Changed::is_staged);
+        self.in_each(named, pm_core::unstage);
     }
 
     /// Puts everything that has changed into the index.
     pub fn stage_all(&mut self) {
-        let paths = self.paths(Changed::is_unstaged);
-        self.done(pm_core::stage(&self.root, &paths));
+        let named = self.owned(Changed::is_unstaged);
+        self.in_each(named, pm_core::stage);
     }
 
     /// Takes everything back out of the index.
     pub fn unstage_all(&mut self) {
-        let paths = self.paths(Changed::is_staged);
-        self.done(pm_core::unstage(&self.root, &paths));
+        let named = self.owned(Changed::is_staged);
+        self.in_each(named, pm_core::unstage);
     }
 
     /// Puts the files `ids` names back the way the last commit had them.
@@ -756,23 +927,26 @@ impl Review {
         let staged = self.named_where(ids, Changed::is_staged);
         let created = self.named_where(ids, Changed::is_created);
         let tracked = self.named_where(ids, |changed| !changed.is_created());
+        let touched = staged
+            .iter()
+            .chain(&created)
+            .chain(&tracked)
+            .map(|(owner, _)| *owner)
+            .collect::<BTreeSet<_>>();
 
-        if !staged.is_empty()
-            && let Err(said) = pm_core::unstage(&self.root, &staged)
-        {
-            return self.done(Err(said));
+        for repository in touched {
+            let root = self.repositories[repository].root().to_path_buf();
+            let own = |named: &[(usize, PathBuf)]| {
+                named
+                    .iter()
+                    .filter(|(owner, _)| *owner == repository)
+                    .map(|(_, path)| path.clone())
+                    .collect::<Vec<_>>()
+            };
+            let said = discard_in(&root, &own(&staged), &own(&tracked), &own(&created));
+            self.repositories[repository].heard(said);
         }
-        if !tracked.is_empty()
-            && let Err(said) = pm_core::discard_all(&self.root, &tracked)
-        {
-            return self.done(Err(said));
-        }
-        for path in created {
-            if let Err(said) = pm_core::discard(&self.root, &path, true) {
-                return self.done(Err(said));
-            }
-        }
-        self.done(Ok(String::new()));
+        self.reread();
     }
 
     /// Puts one hunk of a file into the index, or takes one back out of it.
@@ -794,8 +968,11 @@ impl Review {
             true => &patch.staged,
             false => &patch.unstaged,
         };
-        let (Some(hunk), Some(held)) = (side.get(hunk), pm_core::baseline(&self.root, &path))
-        else {
+        let Some(owner) = self.owner_of(&path) else {
+            return;
+        };
+        let root = self.repositories[owner].root().to_path_buf();
+        let (Some(hunk), Some(held)) = (side.get(hunk), pm_core::baseline(&root, &path)) else {
             return;
         };
 
@@ -809,7 +986,7 @@ impl Review {
         let Some(written) = rewritten(&held, from, count, &replacement) else {
             return;
         };
-        self.done(pm_core::write_index(&self.root, &path, &written));
+        self.done(owner, pm_core::write_index(&root, &path, &written));
     }
 
     /// Puts the lines of one hunk back the way the other side has them.
@@ -834,47 +1011,89 @@ impl Review {
         let Some(written) = rewritten(&held, hunk.start, hunk.new_count, &hunk.side(false)) else {
             return;
         };
+        let owner = self.owner_of(&path).unwrap_or(self.active);
 
         self.done(
+            owner,
             std::fs::write(&path, written)
                 .map(|()| String::new())
                 .map_err(|error| error.to_string()),
         );
     }
 
-    /// Commits what the index holds, saying what the message field holds.
+    /// Commits what the active repository's index holds, saying what its
+    /// message field holds.
     ///
     /// The message is cleared only when the commit was made: a commit a hook
     /// refused is one to try again, and retyping the message is not part of
     /// trying again.
     pub fn commit(&mut self) {
-        let message = self.said();
-        let said = pm_core::commit(&self.root, &message, self.staged() == 0);
+        let active = self.active;
+        let tracked = self.staged_of(active) == 0;
+        let Some(repository) = self.active_repository_mut() else {
+            return;
+        };
+        let said = pm_core::commit(repository.root(), &repository.said(), tracked);
         if said.is_ok() {
-            self.message.clear();
+            repository.message_mut().clear();
         }
-        self.done(said);
+        self.done(active, said);
     }
 
-    /// Takes in what git said, and reads the worktree again.
-    fn done(&mut self, said: pm_core::Said) {
-        self.trouble = said.err().filter(|said| !said.is_empty());
+    /// Takes in what git said in the `repository`-th, and reads the worktree
+    /// again.
+    fn done(&mut self, repository: usize, said: pm_core::Said) {
+        if let Some(held) = self.repositories.get_mut(repository) {
+            held.heard(said);
+        }
         self.reread();
     }
 
     /// The files `wanted` accepts, as paths.
     fn paths(&self, wanted: impl Fn(&Changed) -> bool) -> Vec<PathBuf> {
-        self.changed()
+        self.changed
             .iter()
             .filter(|changed| wanted(changed))
             .map(|changed| changed.path.clone())
             .collect()
     }
 
-    /// The files git has never been told about.
-    fn untracked(&self) -> Vec<PathBuf> {
-        self.paths(Changed::is_untracked)
+    /// The files `wanted` accepts, with the repository each is in.
+    fn owned(&self, wanted: impl Fn(&Changed) -> bool) -> Vec<(usize, PathBuf)> {
+        self.changed
+            .iter()
+            .zip(&self.owners)
+            .filter(|(changed, _)| wanted(changed))
+            .map(|(changed, owner)| (*owner, changed.path.clone()))
+            .collect()
     }
+
+    /// The files git has never been told about, with the repository each is
+    /// in.
+    fn untracked(&self) -> Vec<(usize, PathBuf)> {
+        self.owned(Changed::is_untracked)
+    }
+}
+
+/// Throws away the changes to one repository's files at `root`: `staged`
+/// taken out of the index, `tracked` put back from it and `created` taken
+/// off the disk, stopping at the first that git refuses.
+fn discard_in(
+    root: &Path,
+    staged: &[PathBuf],
+    tracked: &[PathBuf],
+    created: &[PathBuf],
+) -> pm_core::Said {
+    if !staged.is_empty() {
+        pm_core::unstage(root, staged)?;
+    }
+    if !tracked.is_empty() {
+        pm_core::discard_all(root, tracked)?;
+    }
+    for path in created {
+        pm_core::discard(root, path, true)?;
+    }
+    Ok(String::new())
 }
 
 /// `text` with `count` lines from `from` written over by `replacement`.

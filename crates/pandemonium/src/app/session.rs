@@ -43,14 +43,15 @@ impl App {
     /// The branches it offers to cut a session from are gathered here rather
     /// than while the menu is drawn: a menu is built every frame it is open,
     /// and asking git every frame for a list that cannot have changed is a
-    /// subprocess a second for nothing.
+    /// subprocess a second for nothing. A project of several repositories
+    /// offers none: a branch is one repository's, and a session of all of
+    /// them is cut from what each has checked out.
     pub(super) fn open_project_menu(&mut self, project: ProjectId) {
         self.open.activate(project);
-        let branches = self
-            .open
-            .get(project)
-            .map(|project| pm_core::branches(project.root()))
-            .unwrap_or_default();
+        let branches = match self.open.get(project).map(pm_core::Project::repositories) {
+            Some([only]) => pm_core::branches(only.root()),
+            _ => Vec::new(),
+        };
         let (checked_out, rest): (Vec<_>, Vec<_>) =
             branches.iter().partition(|branch| branch.is_current());
         self.session_bases = checked_out

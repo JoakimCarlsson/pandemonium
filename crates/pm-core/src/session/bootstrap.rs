@@ -101,6 +101,52 @@ pub fn apply(origin: &Path, root: &Path, wanted: &Bootstrap) -> Vec<String> {
         .collect()
 }
 
+/// Copies what lies in the folder at `origin` outside every one of
+/// `repositories` into the session folder at `root`.
+///
+/// A folder of several repositories is more than the repositories: the
+/// `Makefile` that builds them together, the compose file that runs them.
+/// None of it is any repository's to cut, so it is copied the way `.env` is,
+/// and a session that edits it edits its own. What `wanted` links is left to
+/// be linked, and a directory holding a repository is walked into rather
+/// than copied, since the worktree cut there already stands in for part of
+/// it.
+pub fn loose(
+    origin: &Path,
+    root: &Path,
+    repositories: &[PathBuf],
+    wanted: &Bootstrap,
+) -> Vec<String> {
+    let mut trouble = Vec::new();
+    let Ok(entries) = fs::read_dir(origin) else {
+        return trouble;
+    };
+    for entry in entries.flatten() {
+        let source = entry.path();
+        let destination = root.join(entry.file_name());
+        let linked = wanted.link.iter().any(|path| origin.join(path) == source);
+        if linked || repositories.contains(&source) {
+            continue;
+        }
+        let holding = repositories
+            .iter()
+            .any(|repository| repository.starts_with(&source));
+        let brought = match holding {
+            true => fs::create_dir_all(&destination).map(|()| {
+                trouble.extend(loose(&source, &destination, repositories, wanted));
+            }),
+            false => copy(&source, &destination),
+        };
+        if let Err(error) = brought {
+            trouble.push(format!(
+                "{} could not be brought across: {error}",
+                source.display()
+            ));
+        }
+    }
+    trouble
+}
+
 /// Symlinks `source` into the worktree at `destination`.
 ///
 /// The link is absolute, so it resolves however the worktree is reached.
@@ -116,9 +162,11 @@ fn copy(source: &Path, destination: &Path) -> io::Result<()> {
     if !skippable(source, destination)? {
         return Ok(());
     }
-    match fs::symlink_metadata(source)?.is_dir() {
-        true => copy_tree(source, destination),
-        false => fs::copy(source, destination).map(|_| ()),
+    let kind = fs::symlink_metadata(source)?.file_type();
+    match () {
+        () if kind.is_symlink() => symlink(&fs::read_link(source)?, destination),
+        () if kind.is_dir() => copy_tree(source, destination),
+        () => fs::copy(source, destination).map(|_| ()),
     }
 }
 

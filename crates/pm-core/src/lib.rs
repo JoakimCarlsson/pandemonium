@@ -14,6 +14,6 @@ pub use git::{
     force_push, history, last_message, named, pull, push_branch, push_to, remotes, remove_worktree,
     since, stage, switch_branch, sync, unstage, worktrees, write_index,
 };
-pub use project::{OpenError, Project, ProjectId, Projects};
+pub use project::{OpenError, Project, ProjectId, Projects, Repository, repositories};
 pub use scope::Scope;
 pub use session::{Bootstrap, Session, SessionId, Sessions, StartError, Started, slug};

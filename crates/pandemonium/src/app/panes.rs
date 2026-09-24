@@ -355,7 +355,7 @@ impl App {
     /// of them has the keyboard, not the file behind it.
     pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
         match self.writing? {
-            crate::app::Writing::Commit => Some(self.review()?.message().text()),
+            crate::app::Writing::Commit => Some(self.review()?.message()?.text()),
             crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
             crate::app::Writing::Console(scope) => {
                 Some(self.debuggers.get(scope)?.console().text())

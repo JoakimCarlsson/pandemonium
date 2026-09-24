@@ -12,17 +12,59 @@ use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, text};
 use crate::message::Message;
 use crate::review::store::Primary;
 
-/// What a press on the button sends, or nothing while it cannot be pressed.
-pub fn primary_message(primary: &Primary) -> Option<Message> {
-    match primary {
-        Primary::Commit { stopped: None, .. } => Some(Message::Commit),
+/// What one of a repository's own controls asks for, once that repository
+/// has been made the active one.
+///
+/// A folder of several repositories draws the same controls once for each,
+/// and a press on one of them means that repository: the window makes it
+/// active first and then carries out the plain command, so every command
+/// keeps exactly one implementation whichever section it was pressed in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RepositoryAction {
+    /// Only make the repository the active one.
+    Activate,
+    /// Commit what its index holds.
+    Commit,
+    /// Pull and push its branch.
+    SyncBranch,
+    /// Push its branch, publishing it if it follows nothing.
+    PushBranch,
+    /// Open the menu under its commit button.
+    ShowCommitMenu,
+    /// Open its source control menu.
+    ShowSourceControlMenu,
+    /// Open the list of its branches.
+    ShowBranches,
+}
+
+impl RepositoryAction {
+    /// The plain command this carries out in the active repository.
+    pub fn message(self) -> Option<Message> {
+        match self {
+            Self::Activate => None,
+            Self::Commit => Some(Message::Commit),
+            Self::SyncBranch => Some(Message::SyncBranch),
+            Self::PushBranch => Some(Message::PushBranch),
+            Self::ShowCommitMenu => Some(Message::ShowCommitMenu),
+            Self::ShowSourceControlMenu => Some(Message::ShowSourceControlMenu),
+            Self::ShowBranches => Some(Message::ShowStatusBranches),
+        }
+    }
+}
+
+/// What a press on the `repository`-th button sends, or nothing while it
+/// cannot be pressed.
+pub fn primary_message(repository: usize, primary: &Primary) -> Option<Message> {
+    let action = match primary {
+        Primary::Commit { stopped: None, .. } => RepositoryAction::Commit,
         Primary::Commit {
             stopped: Some(_), ..
-        } => None,
-        Primary::Sync { .. } => Some(Message::SyncBranch),
-        Primary::Publish => Some(Message::PushBranch),
-        Primary::Busy { .. } => None,
-    }
+        } => return None,
+        Primary::Sync { .. } => RepositoryAction::SyncBranch,
+        Primary::Publish => RepositoryAction::PushBranch,
+        Primary::Busy { .. } => return None,
+    };
+    Some(Message::InRepository(repository, action))
 }
 
 /// Builds what the button says: its icon, its words and, while syncing, how
@@ -31,7 +73,7 @@ pub fn primary_message(primary: &Primary) -> Option<Message> {
 /// `commit` is the icon a commit is drawn with, because each screen has its
 /// own; what stops a commit is written where its title would be.
 pub fn primary_face(theme: &Theme, primary: &Primary, commit: IconName) -> Div<Message> {
-    let color = match primary_message(primary) {
+    let color = match primary_message(0, primary) {
         Some(_) => theme.colors.text,
         None => theme.colors.text_subtle,
     };

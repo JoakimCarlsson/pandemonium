@@ -15,7 +15,7 @@ use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::Action;
 use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
-use crate::review::Group;
+use crate::review::{Group, RepositoryAction};
 use crate::settings::{SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
@@ -354,8 +354,12 @@ pub enum Message {
     ChoosePushRemote,
     /// Put this change into the index, or take it back out if it is in.
     ToggleChangeStaged(usize),
-    /// Put this whole group into the index, or take the whole of it out.
-    ToggleGroupStaged(Group),
+    /// Put this whole group of this repository into the index, or take the
+    /// whole of it out.
+    ToggleGroupStaged(usize, Group),
+    /// Make this repository the active one, then do what one of its own
+    /// controls asks for there.
+    InRepository(usize, RepositoryAction),
     /// Put the lines of one hunk back the way they were.
     RestoreHunk(usize, bool, usize),
     /// Put one hunk of this change into the index, or take it back out.
@@ -400,11 +404,13 @@ pub enum Message {
     StageAll,
     /// Take everything the active project has staged back out of the index.
     UnstageAll,
-    /// Put the commit message's cursor where a press landed, selecting to it.
+    /// Put this repository's commit message cursor where a press landed,
+    /// selecting to it.
     ///
-    /// A press in the message is also what gives it the keyboard, so this is
-    /// the whole of how it is written in: there is nothing to focus first.
-    WriteCommit(ResizePhase, Position, Position),
+    /// A press in the message is also what gives it the keyboard, and makes
+    /// its repository the active one, so this is the whole of how it is
+    /// written in: there is nothing to focus first.
+    WriteCommit(usize, ResizePhase, Position, Position),
     /// Commit what the index holds, saying what the message field holds.
     Commit,
     /// Commit what the index holds, then push the active branch.

@@ -8,6 +8,7 @@
 mod repository;
 mod store;
 
+pub use repository::repositories;
 pub use store::{OpenError, Projects};
 
 use std::path::{Path, PathBuf};
@@ -28,39 +29,39 @@ impl ProjectId {
     }
 }
 
-/// A folder the window holds open, a repository's working copy or not.
+/// A folder the window holds open, and the repositories it holds.
 ///
-/// A plain folder is a project like any other — its files, its terminals and
-/// its language servers work the same — it only has no branch to state and
-/// no history to cut a session from.
+/// A project is a repository's working copy, a folder of several of them, or
+/// a plain folder with none — its files, its terminals and its language
+/// servers work the same whichever it is. Only git needs to know which: a
+/// plain folder has no branch to state and no history to cut a session from,
+/// and a folder of several has one of each per repository.
 #[derive(Clone, Debug)]
 pub struct Project {
     /// What this project is called for as long as it is open.
     id: ProjectId,
-    /// The folder the project is rooted at: a working-copy root, or the plain
-    /// folder that was opened.
+    /// The folder the project is rooted at.
     root: PathBuf,
     /// The last component of the root, shown wherever the project is named.
     name: String,
-    /// The branch the working copy has checked out, or `None` for a folder
-    /// no repository contains.
-    branch: Option<String>,
+    /// The repositories at or below the root, the root's own first.
+    repositories: Vec<Repository>,
 }
 
 impl Project {
-    /// The project rooted at `root`, reading its name and branch off disk.
+    /// The project rooted at `root`, reading its repositories off disk.
     fn at(id: ProjectId, root: PathBuf) -> Self {
         let name = root.file_name().map_or_else(
             || root.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let branch = repository::is_root(&root).then(|| repository::branch(&root));
+        let repositories = Repository::under(&root);
 
         Self {
             id,
             root,
             name,
-            branch,
+            repositories,
         }
     }
 
@@ -79,20 +80,63 @@ impl Project {
         &self.name
     }
 
-    /// The branch the working copy has checked out, or `None` for a folder
-    /// no repository contains.
+    /// The repositories at or below the root, the root's own first.
+    pub fn repositories(&self) -> &[Repository] {
+        &self.repositories
+    }
+
+    /// The branch the project has checked out, while it holds exactly one
+    /// repository.
+    ///
+    /// A plain folder has no branch, and a folder of several repositories has
+    /// one per repository rather than one to speak for all of them.
     pub fn branch(&self) -> Option<&str> {
-        self.branch.as_deref()
+        match self.repositories.as_slice() {
+            [only] => Some(only.branch()),
+            _ => None,
+        }
     }
 
-    /// Whether the project is a repository's working copy.
+    /// Whether the project holds a repository at all.
     pub fn is_repository(&self) -> bool {
-        self.branch.is_some()
+        !self.repositories.is_empty()
     }
 
-    /// Reads the branch checked out in this working copy again, noticing a
-    /// folder that has since become a repository or stopped being one.
+    /// Reads the repositories and the branches they have out again, noticing
+    /// one cloned into the folder or taken out of it since.
     fn refresh(&mut self) {
-        self.branch = repository::is_root(&self.root).then(|| repository::branch(&self.root));
+        self.repositories = Repository::under(&self.root);
+    }
+}
+
+/// One repository a project holds: where it is, and what it has checked out.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Repository {
+    /// The repository's working-copy root.
+    root: PathBuf,
+    /// The branch the working copy has checked out.
+    branch: String,
+}
+
+impl Repository {
+    /// Every repository at or below `root`, the root's own first.
+    fn under(root: &Path) -> Vec<Self> {
+        repository::repositories(root)
+            .into_iter()
+            .map(|root| Self {
+                branch: repository::branch(&root),
+                root,
+            })
+            .collect()
+    }
+
+    /// The repository's working-copy root.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The branch the working copy has checked out.
+    pub fn branch(&self) -> &str {
+        &self.branch
     }
 }
