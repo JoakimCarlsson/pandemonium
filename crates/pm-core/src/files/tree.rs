@@ -54,6 +54,61 @@ impl FileTree {
         self.expanded.push(path);
     }
 
+    /// Shows what the directory at `path` holds, reading it if need be.
+    pub fn expand(&mut self, path: &Path) {
+        if self.is_expanded(path) || !path.starts_with(&self.root) || path == self.root {
+            return;
+        }
+        if !self.children.contains_key(path) {
+            self.read(path);
+        }
+        self.expanded.push(path.to_path_buf());
+    }
+
+    /// Hides what the directory at `path` holds.
+    pub fn collapse(&mut self, path: &Path) {
+        self.expanded.retain(|open| open != path);
+    }
+
+    /// Hides what every directory holds, leaving the top level alone.
+    pub fn collapse_all(&mut self) {
+        self.expanded.clear();
+    }
+
+    /// Whether the directory at `path` is showing what it holds.
+    pub fn is_expanded(&self, path: &Path) -> bool {
+        self.expanded.iter().any(|open| open == path)
+    }
+
+    /// Opens every directory between the root and `path`, so its row shows.
+    pub fn reveal(&mut self, path: &Path) {
+        let Ok(relative) = path.strip_prefix(&self.root) else {
+            return;
+        };
+        let mut directory = self.root.clone();
+        let parts = relative.components().collect::<Vec<_>>();
+        for part in parts.iter().take(parts.len().saturating_sub(1)) {
+            directory.push(part);
+            self.expand(&directory.clone());
+        }
+    }
+
+    /// The entry named `id`, while the tree still holds it.
+    pub fn entry(&self, id: EntryId) -> Option<&Entry> {
+        self.children
+            .values()
+            .flatten()
+            .find(|entry| entry.id == id)
+    }
+
+    /// The entry at `path`, if the tree has read the directory holding it.
+    pub fn entry_at(&self, path: &Path) -> Option<&Entry> {
+        self.children
+            .get(path.parent()?)?
+            .iter()
+            .find(|entry| entry.path == path)
+    }
+
     /// Reads the worktree again, keeping whatever was expanded expanded.
     ///
     /// Everything read so far is thrown away rather than reconciled: a tree
@@ -106,11 +161,7 @@ impl FileTree {
 
     /// Where the entry named `id` is, while the tree still holds it.
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
-        self.children
-            .values()
-            .flatten()
-            .find(|entry| entry.id == id)
-            .map(|entry| entry.path.clone())
+        self.entry(id).map(|entry| entry.path.clone())
     }
 
     /// Reads `directory`, directories first and each half sorted by name.

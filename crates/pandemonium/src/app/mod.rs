@@ -179,8 +179,26 @@ pub struct App {
     discarding: Vec<crate::review::ChangeId>,
     /// Whether keystrokes go to the list of changes.
     changes_focused: bool,
-    /// What a path prompt is aimed at, while one is open.
-    path_target: Option<std::path::PathBuf>,
+    /// What the file tree is being asked whether to take off the disk.
+    removing: Vec<std::path::PathBuf>,
+    /// The rows each worktree's file tree has selected.
+    selections: BTreeMap<Scope, crate::tree::Selection>,
+    /// How far each worktree's file tree is scrolled.
+    tree_scrolls: BTreeMap<Scope, pm_ui::Scrolled>,
+    /// The name being typed into the file tree, if one is.
+    tree_edit: Option<crate::tree::Edit>,
+    /// What was cut or copied out of the file tree.
+    tree_clipboard: Option<crate::tree::Clipboard>,
+    /// The rows of the file tree the pointer is carrying.
+    entry_drag: Option<crate::tree::EntryDrag>,
+    /// Whether keystrokes go to the file tree.
+    tree_focused: bool,
+    /// Where the file tree's rows came out in the last frame.
+    tree_rows: pm_ui::Bounds,
+    /// Where the file tree's scrolled area came out in the last frame.
+    tree_area: pm_ui::Bounds,
+    /// Where the name being typed into the file tree came out.
+    tree_field: pm_ui::Bounds,
     /// Current width and drag state of the sessions sidebar.
     sidebar: ResizeState,
     /// Current height and drag state of the bottom panel.
@@ -351,7 +369,16 @@ impl App {
             watchers: BTreeMap::new(),
             discarding: Vec::new(),
             changes_focused: false,
-            path_target: None,
+            removing: Vec::new(),
+            selections: BTreeMap::new(),
+            tree_scrolls: BTreeMap::new(),
+            tree_edit: None,
+            tree_clipboard: None,
+            entry_drag: None,
+            tree_focused: false,
+            tree_rows: drag::unmeasured(),
+            tree_area: drag::unmeasured(),
+            tree_field: drag::unmeasured(),
             sidebar: ResizeState::new(
                 layout.primary_sidebar_width,
                 PRIMARY_SIDEBAR_RANGE.0,
@@ -463,6 +490,7 @@ impl App {
         self.terminal_focused = false;
         self.editor_focused = false;
         self.changes_focused = false;
+        self.tree_focused = false;
     }
 
     /// What the focused pane holds, for the keymap's `when` clauses.
@@ -488,44 +516,6 @@ impl App {
     /// The file keystrokes are going to, if the pane is focused.
     pub(super) fn focused_file(&self) -> Option<editor::OpenFile> {
         self.editor_focused.then(|| self.active_file()).flatten()
-    }
-
-    /// Opens the file the tree entry `id` names in the editor pane.
-    ///
-    /// One click previews the file and two keep it, the way every editor
-    /// with a preview tab behaves: clicking down a tree leaves one tab
-    /// behind, and the file you meant stays when you ask for it twice.
-    ///
-    /// Reaching another file this way is a jump like any other, so where the
-    /// pane was is taken down on the trail and going back returns to it.
-    fn open_file(&mut self, id: pm_core::EntryId) {
-        let preview = self.tree_clicks.press(id) < 2;
-        let Some(scope) = self.scope() else {
-            return;
-        };
-        let Some(root) = self.root_of(scope) else {
-            return;
-        };
-        let Some(path) = self.files.get(&scope).and_then(|tree| {
-            tree.rows()
-                .iter()
-                .find(|row| row.entry.id() == id)
-                .map(|row| row.entry.path().to_path_buf())
-        }) else {
-            return;
-        };
-
-        if self.open_picture(self.panes.focus(), scope, &path, preview) {
-            return;
-        }
-        if let Some(file) = self.editor.open(scope, &root, &path, preview) {
-            if self.active_tab() != Some(crate::panes::Item::File(file))
-                && let Some(from) = self.here()
-            {
-                self.trail.jumped(from);
-            }
-            self.show_file(self.panes.focus(), file, preview);
-        }
     }
 
     /// Places the cursor where a press landed, or selects to where it reached.
@@ -794,11 +784,6 @@ impl App {
             self.request_redraw();
             return;
         }
-        if message == Message::ConfirmDelete {
-            self.delete_path();
-            self.request_redraw();
-            return;
-        }
         if let Message::ShowPaneMenu(pane) = message {
             self.open_menu(MenuTarget::Pane(pane));
             return;
@@ -854,7 +839,14 @@ impl App {
             self.open_menu(MenuTarget::SourceControl);
             return;
         }
+        if let Message::ShowEntryMenu(_) | Message::ShowTreeMenu = message {
+            self.tree_command(message);
+            return;
+        }
         self.menu = None;
+        if self.tree_command(message) {
+            return;
+        }
         if self.tab_command(message) {
             self.request_redraw();
             return;
@@ -925,11 +917,6 @@ impl App {
         if let Message::ActOnTerminal(action) = message {
             self.focus_terminal();
             self.act(action);
-            return;
-        }
-        if let Message::OpenFile(id) = message {
-            self.open_file(id);
-            self.request_redraw();
             return;
         }
         if let Message::SelectItem(pane, item) = message {
@@ -1058,50 +1045,6 @@ impl App {
         }
         if let Message::TakeCodeAction(index) = message {
             self.take_code_action(index);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ShowEntryMenu(id) = message {
-            self.open_entry_menu(id);
-            return;
-        }
-        if let Message::NewFileIn(id) = message {
-            self.prompt_for_path(crate::picker::Kind::NewFile, id);
-            self.request_redraw();
-            return;
-        }
-        if let Message::NewFolderIn(id) = message {
-            self.prompt_for_path(crate::picker::Kind::NewFolder, id);
-            self.request_redraw();
-            return;
-        }
-        if let Message::RenameEntry(id) = message {
-            self.prompt_for_path(crate::picker::Kind::RenamePath, id);
-            self.request_redraw();
-            return;
-        }
-        if let Message::DeleteEntry(id) = message {
-            self.prompt_for_delete(id);
-            self.request_redraw();
-            return;
-        }
-        if let Message::CopyEntryPath(id) = message {
-            self.copy_entry_path(id, false);
-            self.request_redraw();
-            return;
-        }
-        if let Message::CopyEntryRelativePath(id) = message {
-            self.copy_entry_path(id, true);
-            self.request_redraw();
-            return;
-        }
-        if let Message::RevealEntry(id) = message {
-            self.reveal_entry(id);
-            self.request_redraw();
-            return;
-        }
-        if let Message::OpenEntryInTerminal(id) = message {
-            self.open_entry_in_terminal(id);
             self.request_redraw();
             return;
         }
@@ -1296,15 +1239,6 @@ impl App {
             self.open.activate(id);
             self.select_checkout();
             self.store();
-            self.request_redraw();
-            return;
-        }
-        if let Message::ToggleEntry(id) = message {
-            if let Some(scope) = self.scope()
-                && let Some(files) = self.files.get_mut(&scope)
-            {
-                files.toggle(id);
-            }
             self.request_redraw();
             return;
         }
@@ -1868,8 +1802,12 @@ impl App {
             linking: self.modifiers.control_key(),
         };
         let showing = self.active_file();
-        let drop = self.drop_highlight();
-        let carried = self.carried_tab();
+        let drop = self.drop_highlight().or_else(|| {
+            self.entry_drop_pane()
+                .and_then(|pane| self.geometry.pane_bounds(pane))
+        });
+        let carried = self.carried_tab().or_else(|| self.carried_entries());
+        let tree_scroll = self.tree_scroll();
         let layout = self.layout();
         let theme = self.theme();
         let editor = self.pane_view(&theme);
@@ -1878,7 +1816,25 @@ impl App {
         let scope = self.scope();
         let sidebar = self.sidebar_projects();
         let files = workspace::Worktree {
-            tree: scope.and_then(|scope| self.files.get(&scope)),
+            listing: scope.and_then(|scope| self.files.get(&scope)).map(|tree| {
+                crate::tree::Listing {
+                    tree,
+                    review: scope.and_then(|scope| self.reviews.get(&scope)),
+                    selection: scope.and_then(|scope| self.selections.get(&scope)),
+                    edit: self.tree_edit.as_ref(),
+                    clipboard: self.tree_clipboard.as_ref(),
+                    dropping: self
+                        .entry_drag
+                        .as_ref()
+                        .filter(|drag| drag.is_carried())
+                        .and_then(|drag| drag.target.as_deref()),
+                    focused: self.tree_focused,
+                    scroll: tree_scroll,
+                    rows: self.tree_rows.clone(),
+                    area: self.tree_area.clone(),
+                    field: self.tree_field.clone(),
+                }
+            }),
             review: scope.and_then(|scope| self.reviews.get(&scope)),
             committing: self.writing == Some(Writing::Commit),
             commit_bounds: self.commit_bounds.clone(),

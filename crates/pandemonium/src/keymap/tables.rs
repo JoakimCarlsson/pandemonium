@@ -58,6 +58,7 @@ pub const BASE: &[Row] = &[
     ("primary+k down", Action::FocusDown, "true"),
     ("primary+`", Action::NewTerminal, "true"),
     ("primary+shift+g", Action::ShowChanges, "true"),
+    ("primary+shift+e", Action::FocusFiles, "true"),
     ("primary+k primary+g", Action::OpenReview, "project.focused"),
     (
         "primary+k primary+e",

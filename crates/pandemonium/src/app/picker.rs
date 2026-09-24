@@ -69,7 +69,6 @@ impl App {
 
     /// Puts the picker away, saying whether one was open.
     pub(super) fn dismiss_picker(&mut self) -> bool {
-        self.path_target = None;
         self.branch_picker_at = None;
         self.picker.take().is_some()
     }
@@ -107,8 +106,6 @@ impl App {
             (Kind::Branches, _) if !typed.trim().is_empty() => self.create_branch(typed.trim()),
             (Kind::Line, _) => self.go_to_typed_line(&typed),
             (Kind::Rename, _) => self.rename_to(typed),
-            (Kind::NewFile | Kind::NewFolder, _) => self.make_path(kind, &typed),
-            (Kind::RenamePath, _) => self.rename_path(&typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::NewSession, _) => self.start_session(&typed),
             (Kind::CloneUrl, _) => self.clone_project(&typed),
@@ -222,9 +219,6 @@ impl App {
             Kind::Symbols
             | Kind::Line
             | Kind::Rename
-            | Kind::NewFile
-            | Kind::NewFolder
-            | Kind::RenamePath
             | Kind::NewBranch
             | Kind::NewSession
             | Kind::CloneUrl

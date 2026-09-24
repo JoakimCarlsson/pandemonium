@@ -51,12 +51,6 @@ pub enum Kind {
     Line,
     /// A new name for the symbol under the cursor, which is also a prompt.
     Rename,
-    /// The name of a file to make.
-    NewFile,
-    /// The name of a directory to make.
-    NewFolder,
-    /// A new name for a file or directory of the tree.
-    RenamePath,
     /// The name of a local branch to create and check out.
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
@@ -101,9 +95,6 @@ impl Kind {
             Self::Search => "Search every open project",
             Self::Line => "Go to line",
             Self::Rename => "New name",
-            Self::NewFile => "Name of the new file",
-            Self::NewFolder => "Name of the new directory",
-            Self::RenamePath => "New name",
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::CloneUrl => "The repository to clone",
@@ -125,9 +116,6 @@ impl Kind {
             self,
             Self::Line
                 | Self::Rename
-                | Self::NewFile
-                | Self::NewFolder
-                | Self::RenamePath
                 | Self::NewBranch
                 | Self::NewSession
                 | Self::CloneUrl

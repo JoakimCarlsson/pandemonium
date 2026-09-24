@@ -91,8 +91,6 @@ pub enum Message {
     FinishSession(SessionId),
     /// Finish this session, having been told to.
     EndSession(SessionId),
-    /// Show or hide what this directory of the file tree holds.
-    ToggleEntry(EntryId),
     /// Resize the sessions sidebar.
     ResizeSidebar(ResizeEvent),
     /// Minimize the application window.
@@ -135,8 +133,6 @@ pub enum Message {
     ShowCommitMenu,
     /// Show the Source Control action menu.
     ShowSourceControlMenu,
-    /// Open this entry of the file tree in the pane that has the keyboard.
-    OpenFile(EntryId),
     /// Show this tab of this pane.
     SelectItem(PaneId, Item),
     /// Close this tab of this pane.
@@ -213,24 +209,54 @@ pub enum Message {
     ConfirmDelete,
     /// Put away whatever is open over the text.
     DismissPopup,
+    /// Press, drag or let go of this row of the file tree.
+    ///
+    /// A press that goes nowhere is a click: it selects the row, opens a
+    /// file and opens or closes a directory. One that travels carries what
+    /// is selected, to drop into a directory or onto a pane.
+    PressEntry(EntryId, ResizeEvent),
+    /// Press the file tree below its last row, letting go of the selection.
+    PressTreeSpace,
     /// Open the menu of things that can be done to this entry of the tree.
     ShowEntryMenu(EntryId),
-    /// Ask for the name of a file to make beside or inside this entry.
-    NewFileIn(EntryId),
-    /// Ask for the name of a directory to make beside or inside this entry.
-    NewFolderIn(EntryId),
-    /// Ask for a new name for this entry.
-    RenameEntry(EntryId),
-    /// Ask whether this entry should be taken off the disk.
-    DeleteEntry(EntryId),
-    /// Put this entry's path on the clipboard.
-    CopyEntryPath(EntryId),
-    /// Put this entry's path, from the worktree down, on the clipboard.
-    CopyEntryRelativePath(EntryId),
-    /// Show this entry in the desktop's file manager.
-    RevealEntry(EntryId),
-    /// Start a shell in this entry's directory.
-    OpenEntryInTerminal(EntryId),
+    /// Open the menu of the tree itself, from the space below its rows.
+    ShowTreeMenu,
+    /// Start typing the name of a file to make where the tree is pointed.
+    NewTreeFile,
+    /// Start typing the name of a directory to make where the tree is pointed.
+    NewTreeFolder,
+    /// Start typing a new name for the row the tree's keyboard is on.
+    RenameTreeEntry,
+    /// Put the caret of the name being typed into the tree this far in.
+    PlaceTreeEdit(usize),
+    /// Ask whether what the tree is acting on should go to the trash.
+    TrashTreeEntries,
+    /// Ask whether what the tree is acting on should come off the disk.
+    DeleteTreeEntries,
+    /// Move what the tree is acting on to the trash, having been told to.
+    ConfirmTrash,
+    /// Take what the tree is acting on off the tree's clipboard to move it.
+    CutTreeEntries,
+    /// Put what the tree is acting on on the tree's clipboard to copy it.
+    CopyTreeEntries,
+    /// Copy or move what is on the tree's clipboard where the tree points.
+    PasteTreeEntries,
+    /// Copy what the tree is acting on beside itself.
+    DuplicateTreeEntries,
+    /// Open what the tree is acting on in a pane of its own, to the side.
+    OpenTreeEntriesToSide,
+    /// Put the paths of what the tree is acting on on the clipboard.
+    CopyTreePaths,
+    /// Put those paths, from the worktree down, on the clipboard.
+    CopyTreeRelativePaths,
+    /// Show the row the tree's keyboard is on in the desktop's file manager.
+    RevealTreeEntry,
+    /// Start a shell in the directory of the row the tree's keyboard is on.
+    OpenTreeEntryInTerminal,
+    /// Close every directory of the tree.
+    CollapseTree,
+    /// Read the tree's worktree again.
+    RefreshTree,
     /// Open the menu of things that can be done to this tab.
     ShowTabMenu(PaneId, Item),
     /// Open the menu of things that can be done to this shell's tab.

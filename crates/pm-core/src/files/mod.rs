@@ -7,6 +7,7 @@
 
 mod entry;
 mod ignore;
+pub mod ops;
 mod tree;
 mod walk;
 mod watch;

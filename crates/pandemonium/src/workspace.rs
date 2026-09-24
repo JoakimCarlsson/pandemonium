@@ -1,6 +1,6 @@
 //! The editor workspace shown after onboarding has finished.
 
-use pm_core::{FileStatus, FileTree, Project, ProjectId, Projects, Row, SessionId};
+use pm_core::{Project, ProjectId, Projects, SessionId};
 use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
 #[cfg(not(target_os = "macos"))]
@@ -14,7 +14,7 @@ use pm_ui::{
 use crate::editor::{FileId, OpenFile};
 use crate::message::Message;
 use crate::panes::{Item, PaneId};
-use crate::review::{Review, SourceControlControls, changes_sidebar, status_color};
+use crate::review::{Review, SourceControlControls, changes_sidebar};
 use crate::terminal::{Shell, ShellEntry, ShellId, terminal_view};
 
 /// How far the tab under the pointer sits from the pointer itself.
@@ -25,12 +25,6 @@ const BAR_INSET: f32 = 4.0;
 
 /// How far a session row sits in from the project row above it.
 const SESSION_INDENT: f32 = 12.0;
-
-/// How far the first level of the file tree sits from the edge.
-const FILE_INSET: f32 = 6.0;
-
-/// How far each further level of the file tree is indented.
-const FILE_INDENT: f32 = 14.0;
 
 /// Width of the bar marking the row the window is pointed at.
 const MARKER_WIDTH: f32 = 2.0;
@@ -144,7 +138,7 @@ impl Default for Layout {
 /// The worktree the sidebar beside the panes lists, either way it lists it.
 pub struct Worktree<'a> {
     /// The tree itself, when the window has a project open.
-    pub tree: Option<&'a FileTree>,
+    pub listing: Option<crate::tree::Listing<'a>>,
     /// What has changed in it, once git has been asked.
     pub review: Option<&'a Review>,
     /// Whether the commit message is where keystrokes are going.
@@ -281,8 +275,10 @@ pub enum MenuTarget {
     Input,
     /// The fixes a language server offered where the cursor is.
     CodeActions,
-    /// One entry of the file tree.
+    /// One entry of the file tree, and whatever is selected with it.
     Entry(pm_core::EntryId),
+    /// The file tree itself, from the space below its rows.
+    Tree,
     /// A file with changes that are not on disk, being closed.
     Unsaved(PaneId, FileId),
     /// The list of what a project has changed, on the rows it is acting on.
@@ -929,7 +925,7 @@ fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<
         .bg(theme.colors.surface)
         .child(view_switch(theme, view))
         .child(match view {
-            SidebarView::Files => files_sidebar(theme, files, width),
+            SidebarView::Files => crate::tree::files_sidebar(theme, files.listing.as_ref(), width),
             SidebarView::Changes => changes_sidebar(
                 theme,
                 files.review,
@@ -979,58 +975,6 @@ fn view_switch(theme: &Theme, view: SidebarView) -> Div<Message> {
         }))
 }
 
-/// Builds the list of every file of the worktree.
-fn files_sidebar(theme: &Theme, files: &Worktree<'_>, width: f32) -> Div<Message> {
-    let rows = files.tree.map(FileTree::rows).unwrap_or_default();
-    let status = files.review.map(Review::status);
-
-    v_flex()
-        .w_px(width)
-        .flex_1()
-        .overflow_hidden()
-        .when_some(files.tree, |sidebar, tree| {
-            sidebar.child(tree_root(theme, tree))
-        })
-        .when(files.tree.is_none(), |sidebar| {
-            sidebar.child(
-                text("No project open")
-                    .text_sm()
-                    .font_light()
-                    .color(theme.colors.text_subtle)
-                    .px(3)
-                    .py(2),
-            )
-        })
-        .children(rows.iter().map(|row| {
-            file_row(
-                theme,
-                row,
-                status.and_then(|status| status.mark(row.entry.path())),
-            )
-        }))
-}
-
-/// Builds the line above the tree naming the worktree it lists.
-fn tree_root(theme: &Theme, files: &FileTree) -> Div<Message> {
-    h_flex()
-        .w_full()
-        .h_px(theme.size.row)
-        .px(1.5)
-        .items_center()
-        .overflow_hidden()
-        .child(
-            text(root_label(files))
-                .text_sm()
-                .font_mono()
-                .color(theme.colors.text_subtle),
-        )
-}
-
-/// The worktree's path, shortened against the home directory.
-fn root_label(files: &FileTree) -> String {
-    shortened(files.root())
-}
-
 /// `path` written the way a prompt writes it, against the home directory.
 pub fn shortened(path: &std::path::Path) -> String {
     let path = path.display().to_string();
@@ -1038,63 +982,6 @@ pub fn shortened(path: &std::path::Path) -> String {
         Ok(home) if !home.is_empty() => path.replacen(&home, "~", 1),
         _ => path,
     }
-}
-
-/// Builds one line of the file tree: chevron, icon and name.
-fn file_row(theme: &Theme, row: &Row<'_>, status: Option<FileStatus>) -> Div<Message> {
-    let entry = row.entry;
-    let directory = entry.is_directory();
-    let chevron = match (directory, row.expanded) {
-        (false, _) => None,
-        (true, true) => Some(IconName::ChevronDown),
-        (true, false) => Some(IconName::ChevronRight),
-    };
-    let glyph = match (directory, row.expanded) {
-        (false, _) => IconName::File,
-        (true, true) => IconName::FolderOpen,
-        (true, false) => IconName::Folder,
-    };
-
-    h_flex()
-        .w_full()
-        .h_px(theme.size.row)
-        .overflow_hidden()
-        .gap(0.5)
-        .items_center()
-        .hover_bg(theme.colors.surface_hover)
-        .on_click(if directory {
-            Message::ToggleEntry(entry.id())
-        } else {
-            Message::OpenFile(entry.id())
-        })
-        .on_secondary_click(Message::ShowEntryMenu(entry.id()))
-        .child(v_flex().w_px(FILE_INSET + row.depth as f32 * FILE_INDENT))
-        .child(
-            h_flex()
-                .w_px(IconSize::Medium.pixels())
-                .items_center()
-                .justify_center()
-                .when_some(chevron, |slot, chevron| {
-                    slot.child(
-                        icon(chevron)
-                            .size(IconSize::Medium)
-                            .color(theme.colors.text_subtle),
-                    )
-                }),
-        )
-        .child(
-            icon(glyph)
-                .size(IconSize::Medium)
-                .color(theme.colors.text_subtle),
-        )
-        .child(v_flex().w(1))
-        .child(
-            match (status.map(|status| status_color(theme, status)), directory) {
-                (Some(color), _) => text(entry.name().to_owned()).color(color),
-                (None, true) => text(entry.name().to_owned()),
-                (None, false) => text(entry.name().to_owned()).color(theme.colors.text_muted),
-            },
-        )
 }
 
 /// Builds the projects sidebar: every open project, its sessions beneath it.

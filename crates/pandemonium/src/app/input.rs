@@ -76,6 +76,12 @@ impl App {
         if self.send_to_picker(event) {
             return self.request_redraw();
         }
+        if self.send_to_tree_edit(&event.logical_key.as_ref()) {
+            return self.request_redraw();
+        }
+        if self.send_to_tree(&event.logical_key.as_ref()) {
+            return self.request_redraw();
+        }
         if self.send_to_completions(event) {
             return self.request_redraw();
         }
@@ -594,6 +600,7 @@ impl App {
     pub(super) fn pointer_left(&mut self) {
         self.pointer = None;
         self.drag = None;
+        self.entry_drag = None;
         self.resting = None;
         self.hint = None;
         self.link = None;
@@ -641,6 +648,12 @@ impl App {
         }
 
         if state == ElementState::Pressed {
+            if !self
+                .pointer
+                .is_some_and(|pointer| self.presses_tree_edit(pointer))
+            {
+                self.commit_tree_edit();
+            }
             self.release_pane_focus();
         }
 
@@ -691,6 +704,10 @@ impl App {
                 self.request_redraw();
                 return;
             }
+        }
+        if self.scroll_tree(delta) {
+            self.request_redraw();
+            return;
         }
         if let Some(shell) = self.focused_shell() {
             let lines = (delta / text.terminal.line_height).round() as isize;

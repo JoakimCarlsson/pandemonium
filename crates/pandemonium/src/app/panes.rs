@@ -112,6 +112,7 @@ impl App {
         self.editor_focused = true;
         self.terminal_focused = false;
         self.changes_focused = false;
+        self.tree_focused = false;
     }
 
     /// Opens `file` in `pane`, as a preview or to stay.
@@ -1152,10 +1153,8 @@ impl App {
                 let name = self.editor.entry(file)?.name;
                 panes::unsaved_menu(pane, file, &name)
             }
-            MenuTarget::Entry(id) => {
-                let tree = self.files.get(&self.scope()?)?;
-                crate::tree::entry_menu(crate::tree::entry_of(tree, id)?)
-            }
+            MenuTarget::Entry(id) => self.entry_menu(id),
+            MenuTarget::Tree => self.tree_menu(),
             MenuTarget::CodeActions => self
                 .code_actions
                 .iter()

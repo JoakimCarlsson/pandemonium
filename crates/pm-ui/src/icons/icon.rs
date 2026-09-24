@@ -69,6 +69,12 @@ pub enum IconName {
     Target,
     /// A directory.
     Folder,
+    /// A directory with a plus beside it: make a new one.
+    FolderAdd,
+    /// A file with a plus beside it: make a new one.
+    FileAdd,
+    /// Rows folding together: close everything that is open.
+    Collapse,
     /// A directory that is open.
     FolderOpen,
     /// Take away one of whatever the control is beside.
@@ -121,6 +127,9 @@ impl IconName {
             Self::GitPush => Svg::new("git_push", include_icon!("git_push")),
             Self::Target => Svg::new("target", include_icon!("target")),
             Self::Folder => Svg::new("folder", include_icon!("folder")),
+            Self::FolderAdd => Svg::new("folder_add", include_icon!("folder_add")),
+            Self::FileAdd => Svg::new("file_add", include_icon!("file_add")),
+            Self::Collapse => Svg::new("list_collapse", include_icon!("list_collapse")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
             Self::Minus => Svg::new("minus", include_icon!("minus")),
             Self::Plus => Svg::new("plus", include_icon!("plus")),

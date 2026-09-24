@@ -219,6 +219,14 @@ pub enum Action {
     ZoomOut,
     /// Draw the editor's text at the size it was set at.
     ZoomReset,
+    /// Show the file tree, reveal the focused file in it and give it the keyboard.
+    FocusFiles,
+    /// Start typing the name of a new file into the file tree.
+    NewFile,
+    /// Start typing the name of a new directory into the file tree.
+    NewFolder,
+    /// Close every directory of the file tree.
+    CollapseFiles,
     /// Open the settings screen.
     OpenSettings,
     /// Dismiss whatever is open on top: a palette, a prompt, a search.
@@ -460,6 +468,14 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::ZoomIn, "view.zoom_in", "Zoom In"),
     (Action::ZoomOut, "view.zoom_out", "Zoom Out"),
     (Action::ZoomReset, "view.zoom_reset", "Reset Zoom"),
+    (Action::FocusFiles, "files.focus", "Reveal in File Tree"),
+    (Action::NewFile, "files.new_file", "New File"),
+    (Action::NewFolder, "files.new_folder", "New Folder"),
+    (
+        Action::CollapseFiles,
+        "files.collapse",
+        "Collapse Folders in File Tree",
+    ),
     (Action::OpenSettings, "window.settings", "Open Settings"),
     (Action::Cancel, "window.cancel", "Cancel"),
 ];
