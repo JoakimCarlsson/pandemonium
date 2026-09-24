@@ -57,6 +57,9 @@ pub enum Kind {
     Agents,
     /// What to call the session about to be cut.
     NewSession,
+    /// Which repositories of the active project the session about to be cut
+    /// works in.
+    SessionRepositories,
     /// The URL of a repository to clone and open.
     CloneUrl,
     /// A path to symlink into every new worktree.
@@ -101,6 +104,7 @@ impl Kind {
             Self::Rename => "New name",
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
+            Self::SessionRepositories => "Pick the repositories this session works in",
             Self::CloneUrl => "The repository to clone",
             Self::LinkedPath => "Path to link into new worktrees",
             Self::CopiedPath => "Path to copy into new worktrees",
@@ -170,6 +174,10 @@ pub enum Choice {
     Font(FontSlot, Option<String>),
     /// Debug this worktree as this scenario.
     Debug(Scope, Box<pm_dap::Scenario>),
+    /// Tick or untick this repository for the session about to be cut.
+    SessionRepository(PathBuf),
+    /// Cut the session about to be cut, of the repositories ticked.
+    StartSession,
 }
 
 /// One thing the picker is offering.

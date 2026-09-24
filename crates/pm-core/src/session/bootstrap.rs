@@ -104,6 +104,9 @@ pub fn apply(origin: &Path, root: &Path, wanted: &Bootstrap) -> Vec<String> {
 /// Copies what lies in the folder at `origin` outside every one of
 /// `repositories` into the session folder at `root`.
 ///
+/// `repositories` is every repository the folder holds, cut or not: one that
+/// was left out of the session is left out, never copied in as loose files.
+///
 /// A folder of several repositories is more than the repositories: the
 /// `Makefile` that builds them together, the compose file that runs them.
 /// None of it is any repository's to cut, so it is copied the way `.env` is,

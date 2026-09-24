@@ -29,15 +29,17 @@ impl Sessions {
         Self::default()
     }
 
-    /// Cuts a session of `project` called `name`, under `under`.
+    /// Cuts a session of `project` called `name`, under `under`, of the
+    /// repositories `chosen` names.
     ///
-    /// Each repository the project holds is cut as a worktree from `base`
+    /// Each chosen repository is cut as a worktree from `base`
     /// and left detached: a session is somewhere to work, and the branch it
     /// ends up on is named later, by whoever ends up naming it. An empty
     /// `base` is what each repository has checked out, which is where a
     /// reader who was not asked means. The worktrees are laid out the way the
     /// project lays its repositories out, and what lies outside all of them
-    /// is copied in beside them.
+    /// is copied in beside them; a repository that was not chosen is left
+    /// out of the session altogether.
     ///
     /// What git leaves out of a worktree, `wanted` brings across, and the
     /// session is given a port nothing else in the window has. Neither can
@@ -48,6 +50,7 @@ impl Sessions {
         project: &Project,
         name: &str,
         base: &str,
+        chosen: &[PathBuf],
         under: &Path,
         wanted: &Bootstrap,
     ) -> Result<Started, StartError> {
@@ -61,12 +64,16 @@ impl Sessions {
         let planned = project
             .repositories()
             .iter()
+            .filter(|repository| chosen.iter().any(|root| root == repository.root()))
             .map(|repository| {
                 let origin = repository.root().to_path_buf();
                 let base = git::commit_of(&origin, cut_from).ok_or(StartError::NoCommit)?;
                 Ok((origin, base))
             })
             .collect::<Result<Vec<_>, StartError>>()?;
+        if planned.is_empty() {
+            return Err(StartError::NothingChosen);
+        }
         let root = placement::place(under, project.name(), name);
 
         std::fs::create_dir_all(&root).map_err(|error| StartError::Place {
@@ -91,9 +98,10 @@ impl Sessions {
 
         let mut trouble = Vec::new();
         if !cuts.iter().any(|cut| cut.root == root) {
-            let repositories = cuts
+            let repositories = project
+                .repositories()
                 .iter()
-                .map(|cut| cut.origin.clone())
+                .map(|repository| repository.root().to_path_buf())
                 .collect::<Vec<_>>();
             trouble.extend(bootstrap::loose(
                 project.root(),
@@ -278,6 +286,8 @@ fn named(root: &Path) -> String {
 pub enum StartError {
     /// The project is a plain folder, with no repository to cut a worktree of.
     NotARepository,
+    /// None of the project's repositories was chosen to be cut.
+    NothingChosen,
     /// The project has no commit to cut a worktree from.
     NoCommit,
     /// The directory the worktree would go in could not be made.
@@ -296,6 +306,7 @@ impl Display for StartError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotARepository => write!(formatter, "the project is not a git repository"),
+            Self::NothingChosen => write!(formatter, "no repository was chosen"),
             Self::NoCommit => write!(formatter, "the project has no commits yet"),
             Self::Place { path, trouble } => {
                 write!(

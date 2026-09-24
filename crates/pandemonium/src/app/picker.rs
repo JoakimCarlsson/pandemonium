@@ -100,6 +100,7 @@ impl App {
         let kind = picker.kind();
         let typed = picker.field().value().to_owned();
         let chosen = picker.chosen().cloned();
+        let place = picker.selected();
 
         self.picker = None;
         match (kind, chosen) {
@@ -108,6 +109,9 @@ impl App {
             (Kind::Rename, _) => self.rename_to(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::NewSession, _) => self.start_session(&typed),
+            (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
+                self.toggle_session_repository(root, typed, place);
+            }
             (Kind::CloneUrl, _) => self.clone_project(&typed),
             (Kind::LinkedPath, _) => self.add_worktree_path(WorktreePaths::Linked, &typed),
             (Kind::CopiedPath, _) => self.add_worktree_path(WorktreePaths::Copied, &typed),
@@ -155,6 +159,8 @@ impl App {
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
             Choice::Debug(scope, scenario) => self.start_debugging(scope, *scenario),
+            Choice::SessionRepository(_) => {}
+            Choice::StartSession => self.cut_session(),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::FetchRemote(project, remote) => {
                 self.run_in(
@@ -210,6 +216,7 @@ impl App {
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
             Kind::Debug => self.debug_rows(),
+            Kind::SessionRepositories => self.session_repository_rows(),
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),

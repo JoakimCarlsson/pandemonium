@@ -31,7 +31,8 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use pm_core::{FileTree, Projects, Scope, Sessions};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
@@ -170,6 +171,10 @@ pub struct App {
     working: usize,
     /// What a session being named is cut from, while one is being named.
     session_base: Option<String>,
+    /// What the session whose repositories are being picked is called.
+    session_name: String,
+    /// The repositories ticked for that session.
+    session_picks: BTreeSet<PathBuf>,
     /// The branches the open project menu offers to cut a session from.
     session_bases: Vec<String>,
     /// Whether that menu is showing them.
@@ -376,6 +381,8 @@ impl App {
             session: None,
             working: 0,
             session_base: None,
+            session_name: String::new(),
+            session_picks: BTreeSet::new(),
             session_bases: Vec::new(),
             showing_bases: false,
             open,

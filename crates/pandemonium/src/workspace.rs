@@ -421,10 +421,12 @@ pub fn session_menu_items(session: SessionId) -> Vec<MenuItem<Message>> {
 
 /// The things that can be done to one project.
 ///
-/// Cutting a session is the whole of it, and there is one way to do it: the
-/// line opens onto every branch there is to cut one from, the checked-out
-/// one first. Nothing here starts an agent — a session is a worktree first,
-/// and what is run in it comes after.
+/// Cutting a session is the whole of it. For one repository the line opens
+/// onto every branch there is to cut one from, the checked-out one first. A
+/// folder of several has no one set of branches to offer, so its line asks
+/// for the session's name and the repositories it works in, each cut from
+/// what it has checked out. Nothing here starts an agent — a session is a
+/// worktree first, and what is run in it comes after.
 pub fn project_menu_items(
     project: &Project,
     bases: &[String],
@@ -442,13 +444,18 @@ pub fn project_menu_items(
         })
         .collect::<Vec<_>>();
 
-    vec![
-        pm_ui::menu_submenu(
+    let session = match project.repositories().len() > 1 {
+        true => menu_entry("New Session…", Some(Message::NewSession)),
+        false => pm_ui::menu_submenu(
             "New Session From…",
             (!from.is_empty()).then_some(Message::ShowSessionBases),
             showing_bases,
             from,
         ),
+    };
+
+    vec![
+        session,
         menu_separator(),
         menu_entry("Open Project…", Some(Message::OpenProject)),
         menu_entry("Close Project", Some(Message::CloseProject(id))),

@@ -6,13 +6,16 @@
 //! reading of them — the rows under a project are this model, not a second
 //! one kept beside it.
 
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
 use pm_core::{FileTree, ProjectId, Scope, Session, SessionId};
 use pm_ui::Theme;
 
 use crate::app::App;
 use crate::config;
 use crate::message::Message;
-use crate::picker::Kind;
+use crate::picker::{Choice, Kind, Row};
 use crate::prompt::{Answer, Prompt};
 use crate::workspace::{MenuTarget, SidebarProject, SidebarSession, counted};
 
@@ -91,9 +94,82 @@ impl App {
         self.open_picker_with(Kind::NewSession, Vec::new(), String::new());
     }
 
-    /// Cuts a session called `name`, and points the window at it.
+    /// Takes the name a session was given, and cuts it — or, for a project
+    /// of several repositories, asks which of them it works in first.
+    ///
+    /// Every repository starts ticked: a session that works across all of
+    /// them is the one a reader who just presses enter meant.
     pub(super) fn start_session(&mut self, name: &str) {
         let name = name.trim();
+        let Some(project) = self.open.active().filter(|_| !name.is_empty()) else {
+            return;
+        };
+        let roots = project
+            .repositories()
+            .iter()
+            .map(|repository| repository.root().to_path_buf())
+            .collect::<BTreeSet<_>>();
+
+        self.session_name = name.to_owned();
+        self.session_picks = roots;
+        match self.session_picks.len() > 1 {
+            true => self.open_picker(Kind::SessionRepositories),
+            false => self.cut_session(),
+        }
+    }
+
+    /// Ticks the repository at `root` for the session being picked for, or
+    /// unticks it, and shows the list again where it was.
+    pub(super) fn toggle_session_repository(&mut self, root: PathBuf, typed: String, place: usize) {
+        if !self.session_picks.remove(&root) {
+            self.session_picks.insert(root);
+        }
+        let rows = self.session_repository_rows();
+        self.open_picker_with(Kind::SessionRepositories, rows, typed);
+        if let Some(picker) = self.picker.as_mut() {
+            picker.select(place);
+        }
+    }
+
+    /// What the list of repositories to cut a session of offers: the line
+    /// that cuts it, then a row per repository with its tick.
+    pub(super) fn session_repository_rows(&self) -> Vec<Row> {
+        let Some(project) = self.open.active() else {
+            return Vec::new();
+        };
+        let total = project.repositories().len();
+        let ticked = self.session_picks.len();
+        let start = Row {
+            section: None,
+            label: format!("Start “{}”", self.session_name),
+            detail: format!("{ticked} of {total} repositories"),
+            choice: Choice::StartSession,
+            enabled: ticked > 0,
+        };
+        let repositories = project.repositories().iter().map(|repository| {
+            let root = repository.root();
+            let tick = match self.session_picks.contains(root) {
+                true => "✓",
+                false => "  ",
+            };
+            Row {
+                section: None,
+                label: format!("{tick}  {}", within(project.root(), root)),
+                detail: repository.branch().to_owned(),
+                choice: Choice::SessionRepository(root.to_path_buf()),
+                enabled: true,
+            }
+        });
+        std::iter::once(start).chain(repositories).collect()
+    }
+
+    /// Cuts the session being named, of the repositories ticked for it, and
+    /// points the window at it.
+    pub(super) fn cut_session(&mut self) {
+        let name = std::mem::take(&mut self.session_name);
+        let chosen = std::mem::take(&mut self.session_picks)
+            .into_iter()
+            .collect::<Vec<_>>();
         let base = self.session_base.take().unwrap_or_default();
         let Some(under) = config::worktrees().filter(|_| !name.is_empty()) else {
             return;
@@ -102,10 +178,14 @@ impl App {
             return;
         };
 
-        match self
-            .sessions
-            .start(&project, name, &base, &under, &self.preferences.bootstrap)
-        {
+        match self.sessions.start(
+            &project,
+            &name,
+            &base,
+            &chosen,
+            &under,
+            &self.preferences.bootstrap,
+        ) {
             Ok(started) => {
                 self.select_session(started.id);
                 self.say_bootstrap_trouble(&started.trouble);
@@ -358,5 +438,16 @@ impl App {
             vec![trouble.to_string()],
             vec![Answer::understood()],
         ));
+    }
+}
+
+/// Where `root` sits in the project at `project`, for a row that names it.
+fn within(project: &Path, root: &Path) -> String {
+    match root.strip_prefix(project) {
+        Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
+        _ => root
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
     }
 }
