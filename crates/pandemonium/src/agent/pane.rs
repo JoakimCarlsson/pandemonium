@@ -654,6 +654,7 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
         Standing::Stopped => theme.colors.danger,
         Standing::Waiting => theme.colors.warning,
         Standing::Working => theme.colors.success,
+        Standing::Done => theme.colors.link,
         Standing::Idle => theme.colors.text_subtle,
     }
 }

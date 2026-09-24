@@ -37,6 +37,8 @@ pub enum Standing {
     Waiting,
     /// A turn is running.
     Working,
+    /// A turn has ended that the reader has not looked at since.
+    Done,
     /// It is doing nothing and waiting on nobody.
     Idle,
 }
@@ -50,6 +52,8 @@ pub struct Tally {
     pub waiting: usize,
     /// How many are in the middle of a turn.
     pub working: usize,
+    /// How many have finished a turn nobody has read yet.
+    pub done: usize,
     /// How many are doing nothing.
     pub idle: usize,
 }
@@ -83,6 +87,8 @@ pub struct Talk {
     ready: bool,
     /// Whether a turn is running.
     busy: bool,
+    /// Whether a turn has ended since the reader last looked at the pane.
+    unseen: bool,
     /// The mode the agent says it is in, where it has modes.
     mode: Option<String>,
     /// The first row the pane is drawn from.
@@ -356,12 +362,23 @@ impl Talk {
     /// A stopped agent outranks a question it left behind, and a question
     /// outranks a running turn: each is the more urgent thing to read.
     pub fn standing(&self) -> Standing {
-        match (self.is_running(), self.asks.is_empty(), self.busy) {
+        match (
+            self.is_running(),
+            self.asks.is_empty(),
+            self.busy,
+            self.unseen,
+        ) {
             (false, ..) => Standing::Stopped,
-            (_, false, _) => Standing::Waiting,
-            (_, _, true) => Standing::Working,
+            (_, false, ..) => Standing::Waiting,
+            (_, _, true, _) => Standing::Working,
+            (_, _, _, true) => Standing::Done,
             _ => Standing::Idle,
         }
+    }
+
+    /// Marks what the conversation has done as read.
+    pub fn see(&mut self) {
+        self.unseen = false;
     }
 
     /// The first row the pane is drawn from.
@@ -408,6 +425,7 @@ impl Talk {
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
+        self.unseen = false;
         self.following = true;
     }
 
@@ -453,12 +471,14 @@ impl Talk {
             Event::Asked(ask) => self.asks.push(ask),
             Event::Stopped(stop) => {
                 self.busy = false;
+                self.unseen = stop != Stop::Cancelled;
                 if stop != Stop::EndTurn {
                     self.transcript.note(note(stop));
                 }
             }
             Event::Failed(trouble) => {
                 self.busy = false;
+                self.unseen = true;
                 self.transcript.note(trouble);
             }
             Event::Ended => {
@@ -558,6 +578,7 @@ impl Talks {
                 dismissed: false,
                 ready: false,
                 busy: false,
+                unseen: false,
                 mode: None,
                 scroll: 0,
                 following: true,
@@ -616,6 +637,7 @@ impl Talks {
                     Standing::Stopped => tally.stopped += 1,
                     Standing::Waiting => tally.waiting += 1,
                     Standing::Working => tally.working += 1,
+                    Standing::Done => tally.done += 1,
                     Standing::Idle => tally.idle += 1,
                 }
                 tally

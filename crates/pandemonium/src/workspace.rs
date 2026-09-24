@@ -737,6 +737,7 @@ fn agent_tally(theme: &Theme, tally: Tally) -> Vec<Div<Message>> {
     [
         (Standing::Working, tally.working, "working"),
         (Standing::Waiting, tally.waiting, "needs you"),
+        (Standing::Done, tally.done, "done"),
         (Standing::Idle, tally.idle, "idle"),
         (Standing::Stopped, tally.stopped, "stopped"),
     ]

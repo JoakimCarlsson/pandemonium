@@ -6,8 +6,9 @@
 //! answers to goes through [`App::agent_command`].
 
 use pm_acp::{About, Agent, Knob, Setting};
+use winit::window::UserAttentionType;
 
-use crate::agent::TalkId;
+use crate::agent::{TalkId, Tally};
 use crate::app::{App, Writing};
 use crate::message::Message;
 use crate::panes::Item;
@@ -297,6 +298,50 @@ impl App {
             talk.scroll_by(rows, total.saturating_sub(held.saturating_sub(1)));
         }
         true
+    }
+
+    /// Marks every conversation a pane is showing as read, while the window
+    /// has the reader's attention.
+    ///
+    /// A turn that ended in a pane on screen has been seen; one that ended
+    /// behind another tab, or while the reader was in another application,
+    /// is still news.
+    pub(super) fn see_shown_agents(&mut self) {
+        if !self.window_focused {
+            return;
+        }
+        let shown = self
+            .panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.panes.pane(pane)?.active(self.scope()))
+            .filter_map(Item::session)
+            .collect::<Vec<_>>();
+        for session in shown {
+            if let Some(talk) = self.agents.get_mut(session) {
+                talk.see();
+            }
+        }
+    }
+
+    /// Asks the desktop to point the reader at the window when an agent has
+    /// started waiting on them or finished a turn while they were elsewhere.
+    ///
+    /// A question blocks the agent until it is answered, so it is asked for
+    /// until the window is focused; a finished turn is mentioned once.
+    pub(super) fn call_reader(&self, before: Tally) {
+        if self.window_focused {
+            return;
+        }
+        let after = self.agents.tally();
+        let urgency = match () {
+            () if after.waiting > before.waiting => UserAttentionType::Critical,
+            () if after.done > before.done => UserAttentionType::Informational,
+            () => return,
+        };
+        if let Some(window) = self.window.as_ref() {
+            window.request_user_attention(Some(urgency));
+        }
     }
 
     /// Keeps every conversation that is following its end at its end.

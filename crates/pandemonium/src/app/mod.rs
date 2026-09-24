@@ -138,6 +138,9 @@ impl RemoteOperation {
 pub struct App {
     /// The platform window, once the event loop has opened one.
     window: Option<Arc<Window>>,
+    /// Whether that window has the keyboard, which is whether the reader is
+    /// looking at it rather than at another application.
+    window_focused: bool,
     /// The device and surface drawing into that window.
     renderer: Option<Renderer>,
     /// The element tree's focus, hover and hit regions between frames.
@@ -365,6 +368,7 @@ impl App {
 
         Self {
             window: None,
+            window_focused: true,
             renderer: None,
             ui: None,
             list: None,
@@ -1830,6 +1834,7 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
+        self.see_shown_agents();
         self.settle_excerpts();
         self.refresh_annotations();
         self.open_reviewed_files();
@@ -1988,7 +1993,9 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Agent => {
+                let before = self.agents.tally();
                 if self.agents.pump() {
+                    self.call_reader(before);
                     self.follow_agents();
                     self.reread_worked_sessions();
                     self.request_redraw();
@@ -2124,6 +2131,10 @@ impl ApplicationHandler<Wake> for App {
                 self.request_redraw();
             }
             WindowEvent::ThemeChanged(_) => self.request_redraw(),
+            WindowEvent::Focused(focused) => {
+                self.window_focused = focused;
+                self.request_redraw();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.pointer_moved(Point::new(
                     position.x as f32 / scale,
