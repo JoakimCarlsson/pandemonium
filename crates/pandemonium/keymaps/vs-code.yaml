@@ -128,6 +128,7 @@ bindings:
       primary+j: window.toggle_panel
   - when: pane.kind == file
     keys:
+      primary+shift+.: agent.add_selection
       primary+f3: search.selection
   - when: "os != macos"
     keys:

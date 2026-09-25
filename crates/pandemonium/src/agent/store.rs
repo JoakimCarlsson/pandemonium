@@ -110,6 +110,9 @@ pub struct Talk {
     listing: bool,
     /// Why the agent could not list saved sessions, where it failed.
     history_error: Option<String>,
+    /// The worktree's files as a mention offers them, relative to its root,
+    /// listed when a mention starts and kept until the next one does.
+    mentionable: RefCell<Option<Vec<String>>>,
     /// Which of the commands a slash narrows to is selected.
     chosen: usize,
     /// Whether the reader has waved that list away for what is typed now.
@@ -264,6 +267,18 @@ impl Talk {
         }
     }
 
+    /// Adds lines `first` to `last` of the file at `path`, which say `text`,
+    /// to the next prompt.
+    pub fn attach_selection(&mut self, path: PathBuf, first: usize, last: usize, text: String) {
+        self.attachment_previews.push(None);
+        self.attachments.push(Attachment::Selection {
+            path,
+            first,
+            last,
+            text,
+        });
+    }
+
     /// Removes the attachment at `place` before it is sent.
     pub fn remove_attachment(&mut self, place: usize) {
         if place < self.attachments.len() {
@@ -321,13 +336,18 @@ impl Talk {
         &self.asks
     }
 
-    /// What the prompt is naming after a slash, when that is what it holds.
+    /// What the prompt is naming after a slash, when that is what it holds,
+    /// or after an at sign, when it ends in a file being mentioned.
     ///
     /// A command is only being named while it is the whole of the prompt: a
     /// slash with an argument after it has been named already, and a slash
-    /// in the middle of a sentence is a slash.
+    /// in the middle of a sentence is a slash. A mention is being named while
+    /// it is the word the prompt ends in.
     pub fn naming(&self) -> Option<(char, String)> {
         let typed = self.prompt.value();
+        if let Some(mention) = mentioning(&typed) {
+            return Some((MENTION, mention.to_lowercase()));
+        }
         let prefix = typed.chars().next()?;
         let named = match prefix {
             '/' => typed.strip_prefix('/')?,
@@ -349,6 +369,9 @@ impl Talk {
         let Some((prefix, named)) = self.naming().filter(|_| !self.dismissed) else {
             return Vec::new();
         };
+        if prefix == MENTION {
+            return self.mentions(&named);
+        }
         let source = match prefix {
             '$' => &self.skills,
             _ => &self.commands,
@@ -360,6 +383,39 @@ impl Talk {
                 prefix,
                 name: command.name.clone(),
                 description: command.description.clone(),
+            })
+            .collect()
+    }
+
+    /// The worktree's files `named` narrows a mention to, those whose name
+    /// starts with it first and shorter paths before longer ones.
+    fn mentions(&self, named: &str) -> Vec<Offered> {
+        let root = self.root().to_path_buf();
+        let mut listed = self.mentionable.borrow_mut();
+        let files = listed.get_or_insert_with(|| {
+            pm_core::walk(&root)
+                .into_iter()
+                .filter_map(|path| {
+                    let relative = path.strip_prefix(&root).ok()?;
+                    Some(relative.to_string_lossy().replace('\\', "/"))
+                })
+                .collect()
+        });
+        let mut found = files
+            .iter()
+            .filter(|file| file.to_lowercase().contains(named))
+            .collect::<Vec<_>>();
+        found.sort_by_key(|file| {
+            let name = file.rsplit('/').next().unwrap_or(file).to_lowercase();
+            (!name.starts_with(named), file.len())
+        });
+        found
+            .into_iter()
+            .take(MENTIONED)
+            .map(|file| Offered {
+                prefix: MENTION,
+                name: file.clone(),
+                description: String::new(),
             })
             .collect()
     }
@@ -423,9 +479,15 @@ impl Talk {
     }
 
     /// Starts the selection again, for a prompt that has been typed into.
+    ///
+    /// A mention just begun lists the worktree afresh, so a file the agent
+    /// wrote a moment ago is there to be mentioned.
     pub fn retyped(&mut self) {
         self.chosen = 0;
         self.dismissed = false;
+        if self.naming() == Some((MENTION, String::new())) {
+            self.mentionable.borrow_mut().take();
+        }
     }
 
     /// Puts the command in `place` of what is offered into the prompt.
@@ -438,6 +500,15 @@ impl Talk {
         let Some(command) = offered.get(place) else {
             return;
         };
+        if command.prefix == MENTION {
+            let typed = self.prompt.value();
+            let before = typed.rfind(MENTION).map_or("", |at| &typed[..at]);
+            self.prompt
+                .set(&format!("{before}{MENTION}{} ", command.name));
+            self.chosen = 0;
+            self.dismissed = false;
+            return;
+        }
         self.prompt
             .set(&format!("{}{} ", command.prefix, command.name));
         self.chosen = 0;
@@ -690,6 +761,15 @@ impl Talk {
         if !shown.is_empty() {
             self.transcript.say(Voice::Reader, &shown);
         }
+        let mut attachments = attachments;
+        for path in mentioned(self.root(), &text) {
+            if !attachments
+                .iter()
+                .any(|attached| matches!(attached, Attachment::File(file) if *file == path))
+            {
+                attachments.push(Attachment::File(path));
+            }
+        }
         for preview in previews.into_iter().flatten() {
             self.transcript.picture(preview);
         }
@@ -789,6 +869,49 @@ impl Drop for Talk {
             let _ = fs::remove_file(path);
         }
     }
+}
+
+/// What starts a mention of a file in a prompt.
+const MENTION: char = '@';
+
+/// The most files a mention offers at once.
+const MENTIONED: usize = 50;
+
+/// What trails a mention in prose without being part of the path.
+const AFTER_MENTION: &[char] = &['.', ',', ';', ':', '!', '?', ')', '\'', '"'];
+
+/// The mention `typed` ends in, without its at sign, when it ends in one.
+fn mentioning(typed: &str) -> Option<&str> {
+    typed
+        .rsplit(char::is_whitespace)
+        .next()?
+        .strip_prefix(MENTION)
+}
+
+/// The files of the worktree at `root` that `text` mentions, in the order
+/// it mentions them.
+///
+/// A mention is an at sign and a path from the root, and only one naming a
+/// file that is there, inside the worktree, is taken: an address in an
+/// email is an at sign too.
+fn mentioned(root: &Path, text: &str) -> Vec<PathBuf> {
+    let Ok(inside) = root.canonicalize() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for word in text.split_whitespace() {
+        let Some(named) = word.strip_prefix(MENTION) else {
+            continue;
+        };
+        let path = root.join(named.trim_end_matches(AFTER_MENTION));
+        let there = path
+            .canonicalize()
+            .is_ok_and(|resolved| resolved.starts_with(&inside) && resolved.is_file());
+        if there && !found.contains(&path) {
+            found.push(path);
+        }
+    }
+    found
 }
 
 /// Finds skills Codex can invoke from the user's and worktree's skill folders.
@@ -964,6 +1087,7 @@ impl Talks {
                 history: Vec::new(),
                 listing: false,
                 history_error: None,
+                mentionable: RefCell::new(None),
                 chosen: 0,
                 dismissed: false,
                 ready: false,

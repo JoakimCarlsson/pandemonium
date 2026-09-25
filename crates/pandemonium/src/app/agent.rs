@@ -420,6 +420,88 @@ impl App {
         self.follow_agents();
     }
 
+    /// Attaches the focused file's selection to the next prompt of an agent
+    /// in the file's worktree, and gives that prompt the keyboard.
+    ///
+    /// Nothing selected is the line the cursor is on. The agent is one a
+    /// pane is showing where there is one, and any of the worktree's where
+    /// none is: the reader is sending it something to talk about, not
+    /// choosing who to talk to.
+    pub(super) fn add_selection_to_agent(&mut self) {
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        let (Some(scope), Some(document)) = (self.editor.scope_of(file), self.editor.get(file))
+        else {
+            return;
+        };
+        let (path, first, last, text) = {
+            let document = document.borrow();
+            let buffer = document.buffer();
+            let selection = buffer.selection();
+            let (start, end) = (selection.start(), selection.end());
+            let text = match selection.is_empty() {
+                true => buffer.line_text(start.line),
+                false => buffer.text_in(start..end),
+            };
+            let last = match end.column == 0 && end.line > start.line {
+                true => end.line - 1,
+                false => end.line,
+            };
+            (buffer.path().to_path_buf(), start.line + 1, last + 1, text)
+        };
+        let Some(session) = self.agent_in(scope) else {
+            self.notices
+                .trouble("No agent is open in this worktree.", None);
+            return;
+        };
+        if let Some(talk) = self.agents.get_mut(session) {
+            talk.attach_selection(path, first, last, text);
+        }
+        if !self.is_showing(Item::Agent(scope, session)) {
+            self.show_agent(session);
+        }
+        self.focus_prompt(session);
+    }
+
+    /// The agent of `scope` a selection is sent to: the one a pane is
+    /// showing, or else any the worktree has open.
+    fn agent_in(&self, scope: Scope) -> Option<TalkId> {
+        let panes = self
+            .panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.panes.pane(pane))
+            .collect::<Vec<_>>();
+        let showing =
+            panes
+                .iter()
+                .filter_map(|pane| pane.active(scope))
+                .find_map(|item| match item {
+                    Item::Agent(held, talk) if held == scope => Some(talk),
+                    _ => None,
+                });
+        showing.or_else(|| {
+            panes
+                .iter()
+                .flat_map(|pane| pane.items())
+                .find_map(|item| match item {
+                    Item::Agent(held, talk) if held == scope => Some(talk),
+                    _ => None,
+                })
+        })
+    }
+
+    /// Whether a pane has `item` in front.
+    fn is_showing(&self, item: Item) -> bool {
+        let scope = self.scope();
+        self.panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.panes.pane(pane))
+            .any(|pane| pane.active(scope) == Some(item))
+    }
+
     /// Logs `session`'s agent in by the way it offered in `place`.
     fn log_in_agent(&mut self, session: TalkId, place: usize) {
         let Some(method) = self
