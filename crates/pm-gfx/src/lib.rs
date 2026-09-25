@@ -22,6 +22,6 @@ pub use color::Rgba;
 pub use draw::{DrawList, IconRun, ImageRun, Layer, Quad, TextRun};
 pub use geometry::{Point, Rect, Size};
 pub use image::Image;
-pub use renderer::Renderer;
+pub use renderer::{Renderer, RendererError};
 pub use svg::Svg;
 pub use text::{FontFamily, FontStyle, ShapedRun, TextSystem};

@@ -94,6 +94,7 @@ One crate per layer, each depending only on the ones below it.
 | `pm-acp`      | Agents over the Agent Client Protocol: the process and its protocol.    |
 | `pm-gfx`      | GPU device, surface, glyph atlas and draw list. The only wgpu code.     |
 | `pm-text`     | Rope storage, syntax trees and the language-server client.              |
+| `pm-dap`      | Debug adapters over the Debug Adapter Protocol, and launch scenarios.   |
 | `pm-vt`       | Terminal emulation: parser, cell grid, scrollback.                      |
 | `pm-vim`      | Modal editing over a `pm-text` buffer.                                  |
 | `pm-ui`       | Element tree, layout, hit testing, focus and input routing.             |

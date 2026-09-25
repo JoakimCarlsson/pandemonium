@@ -31,6 +31,11 @@ the domain; nothing in it knows that a UI exists.
   agent, its worktree and its branch. Everything is scoped by project id, from
   the first commit — a session, a buffer, a task or a language server that is
   not attached to a project id is a bug.
+- `pm-acp` — agents over the Agent Client Protocol: which agents there are
+  and how each is started, the process in its worktree, the protocol on its
+  pipes, and what it says turned into events a window can draw. It speaks to
+  one agent at a time and knows nothing of panes, projects or sessions in the
+  editor's sense.
 - `pm-gfx` — the GPU device, the surface, the glyph atlas and the draw list.
   The one place that talks to wgpu. Callers submit a draw list; they never see
   a queue, an encoder or a bind group.
@@ -87,10 +92,9 @@ which of them callers may name.
 - **Everything is a pane.** Files, diffs, agent sessions and terminals are the
   same kind of item in the same pane tree: splittable, tabbable, closable. No
   bespoke docks, no panel that only one feature can live in.
-- **The layers point one way.** `pm-core` depends on nothing of ours; `pm-vim`
-  and `pm-dap` know `pm-text` alone; `pm-ui` knows `pm-gfx` and not the binary; the binary
-  knows everyone. A layer never
-  reaches back up.
+- **The layers point one way.** `pm-core` and `pm-acp` depend on nothing of
+  ours; `pm-vim` and `pm-dap` know `pm-text` alone; `pm-ui` knows `pm-gfx` and
+  not the binary; the binary knows everyone. A layer never reaches back up.
 - **One seam, one place.** Creating a session, resolving a project, tearing a
   worktree down: each has exactly one implementation, and every caller — the
   palette, a keybinding, a pane — goes through it.

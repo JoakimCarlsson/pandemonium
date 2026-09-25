@@ -97,6 +97,7 @@ main() {
     tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
     mkdir -p "$BIN_DIR"
     install -m 0755 "$tmp/$name/pandemonium" "$BIN_DIR/pandemonium"
+    [ "$(uname -s)" = "Darwin" ] && xattr -d com.apple.quarantine "$BIN_DIR/pandemonium" 2>/dev/null || true
     [ -f "$tmp/$name/pandemonium.desktop" ] && install_desktop_entry "$tmp/$name/pandemonium.desktop"
 
     echo "installed $("$BIN_DIR/pandemonium" --version) to $BIN_DIR"

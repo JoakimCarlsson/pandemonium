@@ -2192,20 +2192,17 @@ impl ApplicationHandler<Wake> for App {
         };
         #[cfg(not(target_os = "macos"))]
         let attributes = attributes.with_decorations(false);
-        let window = Arc::new(
-            event_loop
-                .create_window(attributes)
-                .expect("window creation failed"),
-        );
+        let window = match event_loop.create_window(attributes) {
+            Ok(window) => Arc::new(window),
+            Err(error) => fail_to_start(&format!("could not open a window: {error}")),
+        };
 
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
-        self.renderer = Some(Renderer::new(
-            window.clone(),
-            size.width,
-            size.height,
-            scale,
-        ));
+        match Renderer::new(window.clone(), size.width, size.height, scale) {
+            Ok(renderer) => self.renderer = Some(renderer),
+            Err(error) => fail_to_start(&error.to_string()),
+        }
         self.window = Some(window);
         self.resolver.set_keymap(self.preferences.keymap_in_force());
 
@@ -2320,4 +2317,17 @@ impl ApplicationHandler<Wake> for App {
             event_loop.exit();
         }
     }
+}
+
+/// Reports why the window could not start, on stderr and in a native dialog
+/// for a launch from the desktop that has no terminal to read, then exits.
+fn fail_to_start(reason: &str) -> ! {
+    eprintln!("pandemonium: {reason}");
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("Pandemonium could not start")
+        .set_description(reason)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+    std::process::exit(1)
 }

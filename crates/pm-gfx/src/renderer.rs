@@ -24,6 +24,44 @@ const GROUND: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
+/// Why a [`Renderer`] could not be built for a window.
+#[derive(Debug)]
+pub enum RendererError {
+    /// The window offered no surface wgpu can present to.
+    Surface(wgpu::CreateSurfaceError),
+    /// No GPU adapter can drive the window's surface.
+    Adapter(wgpu::RequestAdapterError),
+    /// The adapter refused to open a device.
+    Device(wgpu::RequestDeviceError),
+}
+
+impl std::fmt::Display for RendererError {
+    /// Says what failed in words a reader without the source can act on.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Surface(error) => {
+                write!(f, "the window has no surface the GPU can draw to: {error}")
+            }
+            Self::Adapter(error) => write!(
+                f,
+                "no GPU adapter can drive this window; check that Vulkan, Metal or DirectX 12 drivers are installed: {error}"
+            ),
+            Self::Device(error) => write!(f, "the GPU refused to open a device: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RendererError {
+    /// The wgpu error underneath.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Surface(error) => Some(error),
+            Self::Adapter(error) => Some(error),
+            Self::Device(error) => Some(error),
+        }
+    }
+}
+
 /// Owns the GPU device, queue and swapchain surface backing one window.
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -52,7 +90,7 @@ impl Renderer {
         width: u32,
         height: u32,
         scale: f32,
-    ) -> Self {
+    ) -> Result<Self, RendererError> {
         pollster::block_on(Self::create(target, width, height, scale))
     }
 
@@ -62,11 +100,11 @@ impl Renderer {
         width: u32,
         height: u32,
         scale: f32,
-    ) -> Self {
+    ) -> Result<Self, RendererError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
             .create_surface(target)
-            .expect("surface creation failed");
+            .map_err(RendererError::Surface)?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -76,7 +114,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .expect("no suitable GPU adapter");
+            .map_err(RendererError::Adapter)?;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -84,7 +122,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .expect("device request failed");
+            .map_err(RendererError::Device)?;
 
         let capabilities = surface.get_capabilities(&adapter);
         let format = capabilities
@@ -206,7 +244,7 @@ impl Renderer {
             &ImageInstance::ATTRIBUTES,
         );
 
-        Self {
+        Ok(Self {
             surface,
             device,
             queue,
@@ -224,7 +262,7 @@ impl Renderer {
             textures,
             image_pipeline,
             image_instances: InstanceBuffer::new("image instances"),
-        }
+        })
     }
 
     /// The text system layout measures with and draw lists shape through.
