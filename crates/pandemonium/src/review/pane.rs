@@ -194,6 +194,14 @@ fn toolbar(theme: &Theme, review: &Review, split: bool) -> Div<Message> {
                 .font_mono()
                 .color(theme.colors.text_muted),
         )
+        .when_some(
+            review.head().and_then(|head| head.operation.as_ref()),
+            |bar, operation| match operation {
+                pm_core::Operation::Merge(_) => {
+                    bar.child(text("Merging").text_xs().color(theme.colors.text_muted))
+                }
+            },
+        )
         .child(
             text(counted)
                 .text_xs()

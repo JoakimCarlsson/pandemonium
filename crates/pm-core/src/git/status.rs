@@ -183,6 +183,7 @@ impl Status {
         };
 
         let mut status = Self::default();
+        status.head.operation = crate::git::operation(root);
         let mut fields = text.split('\0');
         while let Some(entry) = fields.next() {
             match entry.chars().next() {

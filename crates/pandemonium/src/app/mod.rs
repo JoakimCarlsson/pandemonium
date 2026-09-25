@@ -845,6 +845,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if message == Message::ConfirmAbortMerge {
+            self.change_by(Review::abort_merge);
+            return;
+        }
         if message == Message::ConfirmDiscard {
             self.discard_change();
             self.request_redraw();
@@ -1424,6 +1428,14 @@ impl App {
             Message::StageAll => self.change_by(Review::stage_all),
             Message::UnstageAll => self.change_by(Review::unstage_all),
             Message::Commit => self.change_by(Review::commit),
+            Message::AbortMerge => self.ask_first(crate::prompt::Prompt::asking(
+                "Abort merge?".to_owned(),
+                vec!["The merge resolution will be discarded.".to_owned()],
+                vec![
+                    crate::prompt::Answer::new("Abort Merge", Message::ConfirmAbortMerge),
+                    crate::prompt::Answer::cancel(),
+                ],
+            )),
             Message::CommitAndPush => {
                 self.change_by(Review::commit);
                 if self

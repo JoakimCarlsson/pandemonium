@@ -418,6 +418,10 @@ pub enum Message {
     Commit,
     /// Commit what the index holds, then push the active branch.
     CommitAndPush,
+    /// Ask before discarding the active repository's merge resolution.
+    AbortMerge,
+    /// Abort the active repository's merge after confirmation.
+    ConfirmAbortMerge,
     /// Ask which agent to start in the active project's worktree.
     NewAgentSession,
     /// Put the prompt's cursor where a press landed, selecting to it.

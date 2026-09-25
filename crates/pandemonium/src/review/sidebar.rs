@@ -208,6 +208,14 @@ fn repository_heading(
                 .font_light()
                 .color(theme.colors.text_muted),
         })
+        .when_some(
+            held.head().operation.as_ref(),
+            |row, operation| match operation {
+                pm_core::Operation::Merge(_) => {
+                    row.child(text("Merging").text_xs().color(theme.colors.text_muted))
+                }
+            },
+        )
         .child(h_flex().flex_1())
         .child(
             h_flex()
