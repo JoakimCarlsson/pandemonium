@@ -143,6 +143,9 @@ pub fn agent_pane(
             .w_full()
             .flex_1(),
         ))
+        .when(!talk.logins().is_empty(), |pane| {
+            pane.child(login(theme, talk))
+        })
         .children(
             talk.asks()
                 .iter()
@@ -992,6 +995,41 @@ fn thousands(count: u64) -> String {
         0..1000 => count.to_string(),
         _ => format!("{}k", count / 1000),
     }
+}
+
+/// Builds the card offering the ways the agent can be logged in.
+///
+/// The agent opens no conversation until it is logged in, so this sits where
+/// a question from it would: under the conversation, above the prompt.
+fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
+    let session = talk.id();
+    let buttons = talk
+        .logins()
+        .iter()
+        .enumerate()
+        .map(|(place, method)| {
+            button(method.name.clone(), Message::LogInAgent(session, place))
+                .h_px(theme.size.control)
+                .filled()
+        })
+        .collect::<Vec<_>>();
+
+    v_flex().w_full().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .p(0.75)
+            .gap(0.75)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.accent)
+            .bg(theme.colors.surface)
+            .child(
+                text(format!("{BULLET}Log in to {}", talk.agent().name))
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.accent),
+            )
+            .child(h_flex().gap(0.75).children(buttons)),
+    )
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.

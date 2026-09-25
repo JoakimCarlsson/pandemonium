@@ -371,6 +371,9 @@ pub struct App {
     /// The terminals agents have started among those shells, and what the
     /// agents are waiting to hear about them.
     errands: client::Errands,
+    /// The logins running in terminals, as the conversation each is for and
+    /// the worktree and shell it runs as.
+    logins: Vec<(crate::agent::TalkId, Scope, crate::terminal::ShellId)>,
     /// What the reader is being told about in the status bar.
     notices: Notices,
     /// The breakpoints each worktree keeps, and the program each debugs.
@@ -526,6 +529,7 @@ impl App {
             agents: Talks::default(),
             terminals: Terminals::default(),
             errands: client::Errands::default(),
+            logins: Vec::new(),
             notices: Notices::default(),
             debuggers: crate::debug::Debuggers::default(),
             terminal_focused: false,
@@ -2108,7 +2112,8 @@ impl ApplicationHandler<Wake> for App {
         match event {
             Wake::Terminal => {
                 let pumped = self.terminals.pump();
-                if pumped | self.follow_errands() {
+                let logged_in = self.follow_logins();
+                if pumped | self.follow_errands() | logged_in {
                     self.hear_failed_shells();
                     self.close_empty_panel();
                     self.request_redraw();

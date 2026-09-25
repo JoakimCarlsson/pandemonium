@@ -130,6 +130,25 @@ pub struct Method {
     pub name: String,
     /// What it does, where the agent explains it.
     pub description: Option<String>,
+    /// How the login is carried out.
+    pub way: Way,
+}
+
+/// How a login is carried out.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Way {
+    /// The agent does it when asked, by whatever flow it has of its own.
+    Asked,
+    /// The agent's own program is run in a terminal with these arguments and
+    /// variables, for the reader to log in through; the agent is started
+    /// again once that has finished.
+    Terminal {
+        /// What the program is run with, after the arguments it is always
+        /// run with.
+        args: Vec<String>,
+        /// Variables it is run with.
+        env: Vec<(String, String)>,
+    },
 }
 
 /// A mode a session can be put into.
@@ -400,6 +419,9 @@ pub(crate) fn event(update: &Value, tools: &mut Tools) -> Option<Event> {
 }
 
 /// The login methods an agent answered its handshake with.
+///
+/// A method of a kind the editor cannot carry out — a key it would have to
+/// ask the reader for, say — is left out rather than offered and failed.
 pub(crate) fn methods(methods: &Value) -> Vec<Method> {
     methods
         .as_array()
@@ -410,9 +432,48 @@ pub(crate) fn methods(methods: &Value) -> Vec<Method> {
                 id: method["id"].as_str()?.to_owned(),
                 name: method["name"].as_str().unwrap_or("Log in").to_owned(),
                 description: method["description"].as_str().map(str::to_owned),
+                way: way(method)?,
             })
         })
         .collect()
+}
+
+/// How the login `method` describes is carried out, where the editor can.
+fn way(method: &Value) -> Option<Way> {
+    match method["type"].as_str() {
+        None | Some("agent") => Some(Way::Asked),
+        Some("terminal") => Some(Way::Terminal {
+            args: method["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|arg| arg.as_str().map(str::to_owned))
+                .collect(),
+            env: variables(&method["env"]),
+        }),
+        Some(_) => None,
+    }
+}
+
+/// The variables `env` sets, written either as a map or as a list of names
+/// and values.
+fn variables(env: &Value) -> Vec<(String, String)> {
+    match env {
+        Value::Object(map) => map
+            .iter()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+            .collect(),
+        Value::Array(list) => list
+            .iter()
+            .filter_map(|variable| {
+                Some((
+                    variable["name"].as_str()?.to_owned(),
+                    variable["value"].as_str().unwrap_or_default().to_owned(),
+                ))
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The modes an agent opened a conversation with.

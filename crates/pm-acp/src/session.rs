@@ -1085,6 +1085,7 @@ fn handshake() -> Value {
         "clientCapabilities": {
             "fs": { "readTextFile": true, "writeTextFile": true },
             "terminal": true,
+            "auth": { "terminal": true },
         },
     })
 }

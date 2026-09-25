@@ -24,5 +24,5 @@ pub use request::{Answer, Exit, Request, Run};
 pub use session::{Notify, Session};
 pub use update::{
     About, Ask, Choice, Command, Cost, Event, History, Kind, Knob, Location, Method, Mode, Output,
-    Pick, Setting, Status, Step, Stop, ToolCall, Usage, Voice, Weight,
+    Pick, Setting, Status, Step, Stop, ToolCall, Usage, Voice, Way, Weight,
 };

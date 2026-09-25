@@ -7,7 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-use pm_acp::{About, Agent, Knob, Setting};
+use pm_acp::{About, Agent, Knob, Method, Setting, Way};
+use pm_core::Scope;
 use pm_text::Position;
 use winit::window::UserAttentionType;
 
@@ -16,8 +17,10 @@ use crate::app::places::Place;
 use crate::app::{App, Writing};
 use crate::desktop;
 use crate::message::Message;
+use crate::panel::PanelView;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Row};
+use crate::terminal::ShellId;
 
 impl App {
     /// Carries out the commands an agent session answers to.
@@ -42,6 +45,7 @@ impl App {
                 }
             }
             Message::FollowAgentLink(session, place) => self.follow_agent_link(session, place),
+            Message::LogInAgent(session, place) => self.log_in_agent(session, place),
             Message::AttachAgentFiles(session) => self.attach_agent_files(session),
             Message::RemoveAgentAttachment(session, place) => {
                 if let Some(talk) = self.agents.get_mut(session) {
@@ -414,6 +418,112 @@ impl App {
         }
         self.focus_prompt(session);
         self.follow_agents();
+    }
+
+    /// Logs `session`'s agent in by the way it offered in `place`.
+    fn log_in_agent(&mut self, session: TalkId, place: usize) {
+        let Some(method) = self
+            .agents
+            .get(session)
+            .and_then(|talk| talk.logins().get(place).cloned())
+        else {
+            return;
+        };
+        match &method.way {
+            Way::Asked => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.log_in(&method);
+                }
+            }
+            Way::Terminal { args, env } => self.log_in_in_terminal(session, &method, args, env),
+        }
+    }
+
+    /// Runs `session`'s agent in a terminal with `args` and `env` added, for
+    /// the reader to log in through, and starts the agent again once they
+    /// have.
+    ///
+    /// The terminal is shown and given the keyboard, because what runs in it
+    /// is waiting on the reader: a code to paste, a browser to confirm in.
+    fn log_in_in_terminal(
+        &mut self,
+        session: TalkId,
+        method: &Method,
+        args: &[String],
+        env: &[(String, String)],
+    ) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let scope = talk.scope();
+        let root = talk.root().to_path_buf();
+        let command = talk.agent().command();
+        let program = command.get_program().to_string_lossy().into_owned();
+        let mut arguments = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        arguments.extend(args.iter().cloned());
+        let mut environment = talk.env().to_vec();
+        environment.extend(env.iter().cloned());
+
+        let started = self
+            .terminals
+            .run(scope, &root, &program, &arguments, &environment);
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        match started {
+            Ok(shell) => {
+                talk.note(format!("Logging in with {} in the terminal…", method.name));
+                self.terminals.activate(scope, shell);
+                self.logins.push((session, scope, shell));
+                self.show_panel(PanelView::Terminal);
+                self.focus_terminal();
+            }
+            Err(error) => talk.note(format!("The login would not start: {error}")),
+        }
+    }
+
+    /// Starts again every agent whose login in a terminal has finished, and
+    /// says so of any whose login failed.
+    pub(super) fn follow_logins(&mut self) -> bool {
+        let mut followed = false;
+        for (session, scope, shell) in std::mem::take(&mut self.logins) {
+            let Some(ended) = self.login_ended(scope, shell) else {
+                self.logins.push((session, scope, shell));
+                continue;
+            };
+            followed = true;
+            self.terminals.release(scope, shell);
+            match ended {
+                Some(0) => {
+                    self.agents.restart(session);
+                }
+                code => {
+                    if let Some(talk) = self.agents.get_mut(session) {
+                        talk.note(match code {
+                            Some(code) => format!("The login exited with code {code}."),
+                            None => "The login was closed before it finished.".to_owned(),
+                        });
+                    }
+                }
+            }
+        }
+        followed
+    }
+
+    /// How the login running as `shell` in `scope` ended, once it has: the
+    /// code it exited with, or nothing when the reader closed it first.
+    fn login_ended(&self, scope: Scope, shell: ShellId) -> Option<Option<u32>> {
+        let Some(shell) = self.terminals.get(scope, shell) else {
+            return Some(None);
+        };
+        let mut shell = shell.borrow_mut();
+        match shell.is_running() {
+            true => None,
+            false => Some(shell.exit_code()),
+        }
     }
 
     /// Follows the link `session`'s pane drew in `place`.

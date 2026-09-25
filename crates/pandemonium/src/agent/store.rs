@@ -25,8 +25,8 @@ use pm_gfx::Image;
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Mode, Notify, Request,
-    Session, Setting, Stop, Usage, Voice,
+    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Method, Mode, Notify,
+    Request, Session, Setting, Stop, Usage, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_ui::Bounds;
@@ -79,6 +79,12 @@ pub struct Talk {
     session: Option<SessionId>,
     /// The conversation itself, as the protocol carries it.
     conversation: Session,
+    /// What the worktree adds to the environment the agent was started in,
+    /// kept so that it is started the same way again after a login.
+    env: Vec<(String, String)>,
+    /// The ways of logging in the agent offered when it would not open a
+    /// conversation without one, until it has opened one.
+    logins: Vec<Method>,
     /// Everything said so far.
     transcript: Transcript,
     /// The buffer the next prompt is written in.
@@ -284,6 +290,30 @@ impl Talk {
         }
         self.terminals.insert(terminal.to_owned(), tail);
         true
+    }
+
+    /// The ways of logging in the agent is waiting on the reader to choose
+    /// between, while it will not open a conversation without one.
+    pub fn logins(&self) -> &[Method] {
+        &self.logins
+    }
+
+    /// Adds something the editor itself has to say to the conversation.
+    pub fn note(&mut self, note: impl Into<String>) {
+        self.transcript.note(note);
+    }
+
+    /// The environment the worktree adds to the agent's.
+    pub fn env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
+    /// Asks the agent to log in by the method `method` names, which it does
+    /// by a flow of its own before opening the conversation.
+    pub fn log_in(&mut self, method: &Method) {
+        self.transcript
+            .note(format!("Logging in with {}…", method.name));
+        self.conversation.login(&method.id);
     }
 
     /// The permission requests waiting on the reader.
@@ -695,7 +725,10 @@ impl Talk {
     /// Takes in one thing the agent said.
     fn take(&mut self, event: Event) {
         match event {
-            Event::Ready => self.ready = true,
+            Event::Ready => {
+                self.ready = true;
+                self.logins.clear();
+            }
             Event::Listed(page, more) => {
                 self.history.extend(page);
                 self.listing = more;
@@ -705,13 +738,15 @@ impl Talk {
                 self.listing = false;
             }
             Event::Login(methods) => {
-                let names = methods
-                    .iter()
-                    .map(|method| method.name.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                self.transcript
-                    .note(format!("{} needs logging in: {names}", self.agent().name));
+                let note = match methods.is_empty() {
+                    true => format!(
+                        "{} needs logging in, and offers no way the editor can do it.",
+                        self.agent().name
+                    ),
+                    false => format!("{} needs logging in.", self.agent().name),
+                };
+                self.transcript.note(note);
+                self.logins = methods;
             }
             Event::Said(voice, text) => self.transcript.say(voice, &text),
             Event::Ran(call) => self.transcript.ran(call),
@@ -916,6 +951,8 @@ impl Talks {
                 project,
                 session,
                 conversation,
+                env: env.to_vec(),
+                logins: Vec::new(),
                 transcript: Transcript::default(),
                 prompt: Input::many_lines("Prompt"),
                 attachments: Vec::new(),
@@ -946,6 +983,37 @@ impl Talks {
             },
         );
         Some(id)
+    }
+
+    /// Starts the agent of the conversation `id` names again, in a new
+    /// conversation, answering whether it started.
+    ///
+    /// This is what follows a login the agent had the reader do outside it:
+    /// the agent reads what the login left behind only when it starts.
+    pub fn restart(&mut self, id: TalkId) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        match Session::start(talk.agent(), talk.root(), &talk.env, notify) {
+            Ok(conversation) => {
+                talk.conversation = conversation;
+                talk.ready = false;
+                talk.busy = false;
+                talk.busy_since = None;
+                talk.logins.clear();
+                talk.asks.clear();
+                talk.transcript.note("Logged in. Starting the agent again…");
+                true
+            }
+            Err(error) => {
+                talk.transcript
+                    .note(format!("The agent would not start again: {error}"));
+                false
+            }
+        }
     }
 
     /// How many sessions `project` has running.
