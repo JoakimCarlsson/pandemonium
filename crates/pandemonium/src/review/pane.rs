@@ -803,10 +803,12 @@ fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message
         }
     }
 
-    h_flex().items_center().children(runs.into_iter().map(|(highlight, run)| {
-        let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
-        text(run).text_sm().font_mono().color(color)
-    }))
+    h_flex()
+        .items_center()
+        .children(runs.into_iter().map(|(highlight, run)| {
+            let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
+            text(run).text_sm().font_mono().color(color)
+        }))
 }
 
 /// Builds one of a line's numbers, or the blank where it has none.
