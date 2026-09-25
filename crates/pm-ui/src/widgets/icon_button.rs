@@ -29,3 +29,31 @@ pub fn tinted_icon_button<M>(theme: &Theme, name: IconName, color: Rgba, message
         .on_click(message)
         .child(icon(name).size(IconSize::Medium).color(color))
 }
+
+/// The same control, turned `turn` radians round while what it started is
+/// under way, or at rest and pressable when `turn` is `None`.
+///
+/// While it turns it is neither lit nor pressable: the turning is what says
+/// it was pressed, and a second press would only ask for what is already
+/// being done.
+pub fn turning_icon_button<M>(
+    theme: &Theme,
+    name: IconName,
+    turn: Option<f32>,
+    message: M,
+) -> Div<M> {
+    let Some(turn) = turn else {
+        return icon_button(theme, name, message);
+    };
+    v_flex()
+        .size_px(theme.size.icon_control)
+        .items_center()
+        .justify_center()
+        .rounded(theme.radius.md)
+        .child(
+            icon(name)
+                .size(IconSize::Medium)
+                .color(theme.colors.text_subtle)
+                .rotate(turn),
+        )
+}

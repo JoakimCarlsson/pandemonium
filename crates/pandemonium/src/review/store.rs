@@ -26,6 +26,9 @@ use crate::review::shade::{Shading, Version};
 /// What the commit button says while there is nothing to commit.
 const NOTHING_TO_COMMIT: &str = "Nothing to commit";
 
+/// How long the refresh control takes to turn once round after a press.
+const REFRESH_TURN: std::time::Duration = std::time::Duration::from_millis(700);
+
 /// What the button under the commit message does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Primary {
@@ -164,6 +167,9 @@ pub struct Review {
     /// scrolled is named by what the pane is showing: nothing for the review
     /// itself, the file for one of its diffs.
     scrolls: BTreeMap<Option<ChangeId>, usize>,
+    /// When the reader last asked for the worktree to be read again, while
+    /// the refresh control is still turning for it.
+    refreshed: Option<Instant>,
 }
 
 impl Review {
@@ -185,9 +191,28 @@ impl Review {
             marked: BTreeSet::new(),
             gesture: None,
             scrolls: BTreeMap::new(),
+            refreshed: None,
         };
         review.reread();
         review
+    }
+
+    /// Starts the refresh control turning, as the reader has just asked for
+    /// the worktree to be read again.
+    pub fn start_refresh(&mut self) {
+        self.refreshed = Some(Instant::now());
+    }
+
+    /// How far round the refresh control has turned, in radians, while it is
+    /// turning.
+    ///
+    /// Git answers a refresh within a frame, so the control turns once in
+    /// full however quick the answer was: a press that shows nothing reads
+    /// as a press that did nothing.
+    pub fn refresh_turn(&self) -> Option<f32> {
+        let elapsed = self.refreshed?.elapsed();
+        (elapsed < REFRESH_TURN)
+            .then(|| elapsed.as_secs_f32() / REFRESH_TURN.as_secs_f32() * std::f32::consts::TAU)
     }
 
     /// Asks git again what the worktree holds.

@@ -419,18 +419,24 @@ impl App {
         });
     }
 
-    /// Whether the spinner is owed its next frame, taking it up if so.
+    /// Whether a spinner is owed its next frame, taking it up if so.
     pub(super) fn spun(&mut self) -> bool {
-        if self.remote_operation.is_none() || self.spun.elapsed() < SPIN_FRAME {
+        if self.next_spin().is_none() || self.spun.elapsed() < SPIN_FRAME {
             return false;
         }
         self.spun = std::time::Instant::now();
         true
     }
 
-    /// When the spinner next turns, while a remote is being waited on.
+    /// When a spinner next turns, while a remote is being waited on or a
+    /// refresh control is turning.
     pub(super) fn next_spin(&self) -> Option<std::time::Instant> {
-        self.remote_operation.map(|_| self.spun + SPIN_FRAME)
+        let turning = self.remote_operation.is_some()
+            || self
+                .reviews
+                .values()
+                .any(|review| review.refresh_turn().is_some());
+        turning.then(|| self.spun + SPIN_FRAME)
     }
 
     /// Runs a remote Git operation away from the UI thread and wakes on completion.

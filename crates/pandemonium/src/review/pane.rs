@@ -23,9 +23,11 @@
 use std::path::Path;
 
 use pm_core::{Changed, Hunk, Line, LineKind};
+use pm_gfx::Rgba;
 use pm_text::Highlight;
 use pm_ui::{
-    Div, IconName, IconSize, Styled, Theme, checkbox, h_flex, icon, icon_button, text, v_flex,
+    Div, IconName, IconSize, Styled, Theme, checkbox, h_flex, icon, icon_button, text,
+    turning_icon_button, v_flex,
 };
 
 use crate::config::Preference;
@@ -47,7 +49,13 @@ const DRAWN: usize = 400;
 const NUMBERS: f32 = 76.0;
 
 /// How wide the one number of a side of a split diff is drawn.
-const SIDE_NUMBER: f32 = 40.0;
+const SIDE_NUMBER: f32 = 48.0;
+
+/// How wide the column a line's `+` or `−` is written in is drawn.
+const MARK: f32 = 20.0;
+
+/// How many times deeper a changed line's gutter is washed than its text.
+const GUTTER_DEPTH: f32 = 2.5;
 
 /// Builds the review of everything one project has changed.
 ///
@@ -201,9 +209,10 @@ fn toolbar(theme: &Theme, review: &Review, split: bool) -> Div<Message> {
             true => worded(theme, "Unstage All", true, Message::UnstageAll),
             false => worded(theme, "Stage All", files > 0, Message::StageAll),
         })
-        .child(icon_button(
+        .child(turning_icon_button(
             theme,
             IconName::Refresh,
+            review.refresh_turn(),
             Message::RefreshChanges,
         ))
 }
@@ -488,7 +497,7 @@ fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
             .items_stretch()
             .overflow_hidden()
             .child(half(theme, review, path, staged, old, false))
-            .child(v_flex().w_px(1.0).bg(theme.colors.border_variant))
+            .child(v_flex().w_px(1.0).bg(theme.colors.border))
             .child(half(theme, review, path, staged, new, true)),
     }
 }
@@ -603,22 +612,28 @@ fn heading_row(
     h_flex()
         .w_full()
         .h_px(theme.size.row)
-        .px(1.5)
+        .pr(1.5)
         .gap(1)
         .items_center()
         .overflow_hidden()
-        .bg(theme.colors.surface)
+        .bg(theme.colors.accent.alpha(theme.emphasis.change))
         .child(
-            text(format!("@@ {}", hunk.start))
+            h_flex().w_px(NUMBERS).h_full().bg(theme
+                .colors
+                .accent
+                .alpha(theme.emphasis.change * GUTTER_DEPTH)),
+        )
+        .child(
+            text(range_of(hunk))
                 .text_xs()
                 .font_mono()
-                .color(theme.colors.text_subtle),
+                .color(theme.colors.text_muted),
         )
         .child(
             text(hunk.heading.clone())
                 .text_xs()
                 .font_mono()
-                .color(theme.colors.text_subtle),
+                .color(theme.colors.text_muted),
         )
         .child(h_flex().flex_1())
         .when(separate, |row| {
@@ -640,50 +655,50 @@ fn heading_row(
         })
 }
 
-/// Builds one line of a hunk: its numbers on each side, then the line itself,
-/// coloured by `shade` the way the file it came from is.
+/// The range a hunk covers, written the way git heads it: `@@ -22,6 +22,7 @@`.
+fn range_of(hunk: &Hunk) -> String {
+    format!(
+        "@@ -{},{} +{},{} @@",
+        hunk.old_start, hunk.old_count, hunk.start, hunk.new_count
+    )
+}
+
+/// Builds one line of a hunk: its numbers on each side, its mark, then the
+/// line itself, coloured by `shade` the way the file it came from is.
+///
+/// This is GitHub's unified diff: the numbers sit in a gutter washed deeper
+/// than the line beside it, so the eye finds where a change is by the edge
+/// before it reads what the change is.
 fn line_row(theme: &Theme, line: &Line, shade: Option<&[Option<Highlight>]>) -> Div<Message> {
-    let wash = match line.kind {
-        LineKind::Added => Some(theme.colors.success.alpha(theme.emphasis.change)),
-        LineKind::Removed => Some(theme.colors.danger.alpha(theme.emphasis.change)),
-        LineKind::Context => None,
-    };
-    let mark = match line.kind {
-        LineKind::Added => "+",
-        LineKind::Removed => "−",
-        LineKind::Context => " ",
-    };
+    let (gutter, wash) = washes(theme, Some(line.kind));
 
     h_flex()
         .w_full()
-        .px(1.5)
-        .gap(0.5)
-        .items_center()
+        .items_stretch()
         .overflow_hidden()
         .when_some(wash, Div::bg)
         .child(
             h_flex()
                 .w_px(NUMBERS)
+                .px(0.5)
                 .gap(0.5)
+                .items_center()
                 .justify_end()
+                .when_some(gutter, Div::bg)
                 .child(number(theme, line.old))
                 .child(number(theme, line.new)),
         )
-        .child(
-            text(mark)
-                .text_sm()
-                .font_mono()
-                .color(theme.colors.text_subtle),
-        )
+        .child(marked(theme, Some(line)))
         .child(shaded(theme, &line.text, shade.unwrap_or_default()))
 }
 
 /// Builds one side of a row of a split diff: the line's number on that
-/// side, then the line, or a blank where that side has no line here.
+/// side, its mark, then the line, or a filler where that side has no line.
 ///
-/// A line on both sides is washed on neither, since nothing happened to it;
-/// the new side of a line taken out and the old side of a line put in are
-/// left empty rather than washed, which is what says the other side has it.
+/// A line on both sides is washed on neither, since nothing happened to it.
+/// The side that has nothing across from a line taken out or put in is
+/// filled in the quiet colour of the bars, the way GitHub greys it, so the
+/// gap reads as a gap rather than as an unchanged blank line.
 fn half(
     theme: &Theme,
     review: &Review,
@@ -692,11 +707,7 @@ fn half(
     line: Option<&Line>,
     new: bool,
 ) -> Div<Message> {
-    let wash = line.and_then(|line| match line.kind {
-        LineKind::Added => Some(theme.colors.success.alpha(theme.emphasis.change)),
-        LineKind::Removed => Some(theme.colors.danger.alpha(theme.emphasis.change)),
-        LineKind::Context => None,
-    });
+    let (gutter, wash) = washes(theme, line.map(|line| line.kind));
     let number = line.and_then(|line| match new {
         true => line.new,
         false => line.old,
@@ -705,15 +716,16 @@ fn half(
 
     h_flex()
         .flex_1()
-        .px(1)
-        .gap(0.5)
-        .items_center()
+        .items_stretch()
         .overflow_hidden()
         .when_some(wash, Div::bg)
         .child(
             h_flex()
                 .w_px(SIDE_NUMBER)
+                .px(0.5)
+                .items_center()
                 .justify_end()
+                .when_some(gutter, Div::bg)
                 .when_some(number, |slot, number| {
                     slot.child(
                         text(number.to_string())
@@ -723,10 +735,48 @@ fn half(
                     )
                 }),
         )
+        .child(marked(theme, line))
         .child(match line {
             Some(line) => shaded(theme, &line.text, shade.unwrap_or_default()),
             None => h_flex().child(text(" ").text_sm().font_mono()),
         })
+}
+
+/// The washes a line of `kind` is drawn on: the deeper one of its gutter,
+/// then the one under its text.
+///
+/// A line both sides share is washed on neither; a side with no line at all
+/// is filled in the colour of the bars on both.
+fn washes(theme: &Theme, kind: Option<LineKind>) -> (Option<Rgba>, Option<Rgba>) {
+    let changed = |color: Rgba| {
+        (
+            Some(color.alpha(theme.emphasis.change * GUTTER_DEPTH)),
+            Some(color.alpha(theme.emphasis.change)),
+        )
+    };
+    match kind {
+        Some(LineKind::Added) => changed(theme.colors.success),
+        Some(LineKind::Removed) => changed(theme.colors.danger),
+        Some(LineKind::Context) => (None, None),
+        None => (Some(theme.colors.surface), Some(theme.colors.surface)),
+    }
+}
+
+/// Builds the column a line's `+` or `−` is written in, blank for a line
+/// both sides share or a side with no line.
+fn marked(theme: &Theme, line: Option<&Line>) -> Div<Message> {
+    let mark = match line.map(|line| line.kind) {
+        Some(LineKind::Added) => "+",
+        Some(LineKind::Removed) => "−",
+        _ => " ",
+    };
+
+    h_flex().w_px(MARK).items_center().justify_center().child(
+        text(mark)
+            .text_sm()
+            .font_mono()
+            .color(theme.colors.text_muted),
+    )
 }
 
 /// Builds `said` as runs of one colour each, as `shade` colours it.
@@ -752,7 +802,7 @@ fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message
 /// Builds one of a line's numbers, or the blank where it has none.
 fn number(theme: &Theme, line: Option<usize>) -> Div<Message> {
     h_flex()
-        .w_px(NUMBERS / 2.0 - 4.0)
+        .w_px(NUMBERS / 2.0 - 6.0)
         .justify_end()
         .when_some(line, |slot, line| {
             slot.child(
