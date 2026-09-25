@@ -10,16 +10,17 @@ use pm_ui::{Div, Styled, Theme, field, h_flex, rule, text, v_flex};
 use crate::message::Message;
 use crate::picker::state::{Kind, Picker};
 
-/// How wide the panel is drawn.
-const WIDTH: f32 = 620.0;
+/// How wide the panel is drawn, and the command center that opens it.
+pub const WIDTH: f32 = 600.0;
 
 /// Width of the branch popover attached to the status bar.
 const BRANCH_WIDTH: f32 = 360.0;
 /// Width of agent control choices beside their control.
 const AGENT_WIDTH: f32 = 280.0;
 
-/// How far from the top of the window it hangs.
-pub const TOP: f32 = 96.0;
+/// How far from the top of the window it hangs: over the command center in
+/// the title bar, the way the field it stands for is drawn there.
+pub const TOP: f32 = 6.0;
 
 /// Height of one row of the list.
 const ROW_HEIGHT: f32 = 30.0;
@@ -36,7 +37,8 @@ const FIELD_HEIGHT: f32 = 49.0;
 /// Approximate height of the explanatory line under a prompt.
 const HINT_HEIGHT: f32 = 32.0;
 
-/// Width of a picker, with branch workflows using their compact popover size.
+/// Width of a picker drawn beside the control that opened it, with branch
+/// workflows using their compact popover size.
 pub fn width(kind: Kind) -> f32 {
     match kind {
         Kind::Branches | Kind::NewBranch => BRANCH_WIDTH,
@@ -78,13 +80,14 @@ fn visible_rows(kind: Kind) -> usize {
     }
 }
 
-/// Builds the panel for `picker`, over whatever the window is showing.
-pub fn picker(theme: &Theme, picker: &Picker, solid: bool) -> Div<Message> {
+/// Builds the panel for `picker`, `width` wide, over whatever the window is
+/// showing.
+pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Message> {
     let prompt = picker.kind().is_prompt();
 
     if matches!(picker.kind(), Kind::Modes | Kind::Knob) {
         return v_flex()
-            .w_px(width(picker.kind()))
+            .w_px(width)
             .overflow_hidden()
             .bg(theme.colors.surface)
             .border_1(theme.colors.border)
@@ -94,7 +97,7 @@ pub fn picker(theme: &Theme, picker: &Picker, solid: bool) -> Div<Message> {
 
     if picker.kind() == Kind::Branches {
         return v_flex()
-            .w_px(width(picker.kind()))
+            .w_px(width)
             .items_stretch()
             .overflow_hidden()
             .bg(theme.colors.surface)
@@ -113,7 +116,7 @@ pub fn picker(theme: &Theme, picker: &Picker, solid: bool) -> Div<Message> {
     }
 
     v_flex()
-        .w_px(width(picker.kind()))
+        .w_px(width)
         .items_stretch()
         .overflow_hidden()
         .bg(theme.colors.surface)

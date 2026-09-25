@@ -17,6 +17,12 @@ use crate::config::FontSlot;
 use crate::field::Field;
 use crate::keymap::Action;
 
+/// What a query starts with to ask the file picker for commands instead.
+const COMMAND_PREFIX: char = '>';
+
+/// What a query starts with to ask the file picker for workspace symbols.
+const SYMBOL_PREFIX: char = '#';
+
 /// How many rows the picker keeps after filtering.
 const SHOWN: usize = 200;
 
@@ -25,7 +31,7 @@ const SHOWN: usize = 200;
 pub enum Kind {
     /// Every command the window can carry out.
     Commands,
-    /// Every file of every open project.
+    /// Every file of the worktree the window is pointed at.
     Files,
     /// The projects the window holds open.
     Projects,
@@ -41,11 +47,12 @@ pub enum Kind {
     Problems,
     /// Everywhere the symbol under the cursor is used.
     References,
-    /// The symbols of the focused file's workspace whose names match the query.
+    /// The symbols of the focused file's workspace whose names match the
+    /// query, over the files of the worktree in front.
     WorkspaceSymbols,
     /// Whatever calls, or is called by, the symbol under the cursor.
     Calls,
-    /// Every place a query was found across the open projects.
+    /// Every place a query was found in the worktree the window is pointed at.
     Search,
     /// A line number to go to, which is a prompt rather than a list.
     Line,
@@ -91,7 +98,7 @@ impl Kind {
     pub fn placeholder(self) -> &'static str {
         match self {
             Self::Commands => "Run a command",
-            Self::Files => "Open a file by name",
+            Self::Files => "Search files by name, > for commands, # for symbols",
             Self::Projects => "Go to a project",
             Self::Branches => "Switch or type to create a branch…",
             Self::FetchRemotes => "Pick which remote to fetch",
@@ -101,7 +108,7 @@ impl Kind {
             Self::References => "Go to a use of this symbol",
             Self::WorkspaceSymbols => "Go to a symbol in the workspace",
             Self::Calls => "Go to a call",
-            Self::Search => "Search every open project",
+            Self::Search => "Search this worktree",
             Self::Line => "Go to line",
             Self::Rename => "New name",
             Self::NewBranch => "Name of the new branch",
@@ -147,6 +154,34 @@ impl Kind {
     /// every other list is gathered once when it opens and narrowed after.
     pub fn is_queried(self) -> bool {
         self == Self::Search
+    }
+
+    /// The character a query starts with to turn the file picker into this
+    /// kind of list, for the kinds that are modes of it.
+    fn prefix(self) -> Option<char> {
+        match self {
+            Self::Commands => Some(COMMAND_PREFIX),
+            Self::WorkspaceSymbols => Some(SYMBOL_PREFIX),
+            _ => None,
+        }
+    }
+
+    /// Whether this kind is the file picker or one of its prefixed modes.
+    fn is_quick_open(self) -> bool {
+        self == Self::Files || self.prefix().is_some()
+    }
+
+    /// What is typed, less the prefix that chose this kind of list.
+    pub fn query(self, typed: &str) -> &str {
+        self.prefix()
+            .and_then(|prefix| typed.strip_prefix(prefix))
+            .unwrap_or(typed)
+            .trim_start()
+    }
+
+    /// What is seeded into the field when a picker of this kind is opened.
+    pub fn seed(self) -> String {
+        self.prefix().map(String::from).unwrap_or_default()
     }
 }
 
@@ -244,6 +279,27 @@ impl Picker {
         self.filter();
     }
 
+    /// Which list what has been typed asks for instead of this one, when it
+    /// asks for another: files turn into commands or symbols at their prefix,
+    /// and back into files once it is taken away.
+    pub fn switched(&self) -> Option<Kind> {
+        if !self.kind.is_quick_open() {
+            return None;
+        }
+        let typed = self.field.value().chars().next();
+        let wanted = [Kind::Commands, Kind::WorkspaceSymbols]
+            .into_iter()
+            .find(|kind| kind.prefix() == typed)
+            .unwrap_or(Kind::Files);
+        (wanted != self.kind).then_some(wanted)
+    }
+
+    /// Offers `rows` as a picker of `kind`, keeping what has been typed.
+    pub fn switch(&mut self, kind: Kind, rows: Vec<Row>) {
+        self.kind = kind;
+        self.refill(rows);
+    }
+
     /// Offers `rows` instead, narrowed by what has been typed.
     pub fn refill(&mut self, rows: Vec<Row>) {
         self.rows = rows;
@@ -309,7 +365,7 @@ impl Picker {
 
     /// Narrows the rows to the ones the query matches, best match first.
     fn filter(&mut self) {
-        let query = self.field.value();
+        let query = self.kind.query(self.field.value());
         if self.kind.is_prompt() || self.kind.is_queried() || query.is_empty() {
             let limit = match self.kind {
                 Kind::AgentHistory(_) => usize::MAX,

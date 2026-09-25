@@ -80,7 +80,7 @@ impl App {
             Action::ShowSymbols => Request::Symbols,
             Action::ShowIncomingCalls => Request::PrepareCalls(Calls::Incoming),
             Action::ShowOutgoingCalls => Request::PrepareCalls(Calls::Outgoing),
-            Action::ShowWorkspaceSymbols => return self.open_workspace_symbols(),
+            Action::ShowWorkspaceSymbols => return self.open_picker(Kind::WorkspaceSymbols),
             Action::Rename => return self.open_prompt(Action::Rename),
             _ => return,
         };
@@ -208,18 +208,23 @@ impl App {
             .any(|pending| pending.file == file && std::mem::discriminant(&pending.request) == kind)
     }
 
-    /// Opens the picker over the symbols of the focused file's workspace.
+    /// Starts the symbol picker that was just opened over the worktree's
+    /// files asking the servers for what its query names.
     ///
-    /// The list is the servers' to fill, not the picker's: a workspace has
-    /// too many symbols to gather up front, so each query is asked anew and
-    /// the list is filled as the answers come in.
-    fn open_workspace_symbols(&mut self) {
-        if self.say_unserved() {
+    /// The symbols are the servers' to fill, not the picker's: a workspace
+    /// has too many to gather up front, so each query is asked anew and the
+    /// list is filled as the answers come in. The files it was opened over
+    /// stay below them, so a name finds something even where no server runs.
+    pub(super) fn ask_typed_symbols(&mut self) {
+        let Some(picker) = self.picker.as_ref() else {
             return;
-        }
+        };
+        let query = Kind::WorkspaceSymbols
+            .query(picker.field().value())
+            .to_owned();
+        self.workspace_files = picker.rows().cloned().collect();
         self.workspace_symbols = (None, Vec::new());
-        self.open_picker_with(Kind::WorkspaceSymbols, Vec::new(), String::new());
-        self.ask_workspace_symbols(String::new());
+        self.ask_workspace_symbols(query);
     }
 
     /// Asks every server over the focused file's worktree for the symbols
@@ -745,7 +750,13 @@ impl App {
         }
         let rows = self.named_rows(found);
         self.workspace_symbols.1.extend(rows);
-        let rows = self.workspace_symbols.1.clone();
+        let rows = self
+            .workspace_symbols
+            .1
+            .iter()
+            .chain(&self.workspace_files)
+            .cloned()
+            .collect();
         if let Some(picker) = self.picker.as_mut() {
             picker.refill(rows);
         }

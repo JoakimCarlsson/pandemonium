@@ -35,6 +35,8 @@ pub enum IconName {
     ChevronUp,
     /// The way down to what follows.
     ArrowDown,
+    /// Go back to what came before.
+    ArrowLeft,
     /// Go to what the control is beside.
     ArrowRight,
     /// The way up to what came before.
@@ -93,6 +95,8 @@ pub enum IconName {
     Sparkle,
     /// Divide a pane.
     Split,
+    /// Look for something by name, as a magnifying glass.
+    Search,
     /// The preferences, as a gear.
     Settings,
     /// A terminal.
@@ -126,6 +130,7 @@ impl IconName {
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),
             Self::ChevronUp => Svg::new("chevron_up", include_icon!("chevron_up")),
             Self::ArrowDown => Svg::new("arrow_down", include_icon!("arrow_down")),
+            Self::ArrowLeft => Svg::new("arrow_left", include_icon!("arrow_left")),
             Self::ArrowRight => Svg::new("arrow_right", include_icon!("arrow_right")),
             Self::ArrowUp => Svg::new("arrow_up", include_icon!("arrow_up")),
             Self::Check => Svg::new("check", include_icon!("check")),
@@ -155,6 +160,7 @@ impl IconName {
             Self::PinFilled => Svg::new("pin_filled", include_icon!("pin_filled")),
             Self::Sparkle => Svg::new("sparkle", include_icon!("sparkle")),
             Self::Split => Svg::new("split", include_icon!("split")),
+            Self::Search => Svg::new("search", include_icon!("search")),
             Self::Settings => Svg::new("settings", include_icon!("settings")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),

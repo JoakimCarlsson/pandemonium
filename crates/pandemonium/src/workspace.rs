@@ -7,12 +7,13 @@ use pm_text::Severity;
 use pm_ui::button;
 use pm_ui::{
     Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Text, Theme,
-    h_flex, icon, icon_button, layout_icon_button, menu, menu_entry, menu_separator, overlay, rule,
-    sash, text, v_flex,
+    h_flex, icon, icon_button, layout_icon_button, measured, menu, menu_entry, menu_separator,
+    overlay, rule, sash, text, v_flex,
 };
 
 use crate::agent::{Standing, Tally, standing_color};
 use crate::editor::{FileId, OpenFile};
+use crate::keymap::Action;
 use crate::message::Message;
 use crate::notice::{Shown, Tone};
 use crate::panel::{Panel, PanelView, bottom_panel};
@@ -22,6 +23,16 @@ use crate::terminal::{ShellEntry, ShellId};
 
 /// How far the tab under the pointer sits from the pointer itself.
 const CARRIED_OFFSET: f32 = 8.0;
+
+/// Widest the command center is drawn: as wide as the picker it opens, so
+/// the picker lands over it.
+const COMMAND_CENTER_WIDTH: f32 = crate::picker::WIDTH;
+
+/// Narrowest the command center is squeezed to in a narrow window.
+const COMMAND_CENTER_MIN_WIDTH: f32 = 160.0;
+
+/// How tall the command center is drawn inside the title bar.
+const COMMAND_CENTER_HEIGHT: f32 = 26.0;
 
 /// How much shorter than its bar a control sitting inside one is drawn.
 const BAR_INSET: f32 = 4.0;
@@ -294,6 +305,7 @@ pub fn workspace(
     sessions: &[SidebarProject],
     files: Worktree<'_>,
     layout: Layout,
+    command_center: Bounds,
     panes: Panes,
 ) -> Div<Message> {
     let status = Status::of(open, sessions, &panes, layout, &files);
@@ -310,7 +322,12 @@ pub fn workspace(
     v_flex()
         .w_full()
         .h_full()
-        .child(titlebar(theme, layout))
+        .child(titlebar(
+            theme,
+            layout,
+            whereabouts(open, sessions),
+            command_center,
+        ))
         .child(
             h_flex()
                 .w_full()
@@ -867,40 +884,115 @@ pub fn counted(count: usize, noun: &str) -> String {
 }
 
 /// Builds the window bar above every project and pane.
-fn titlebar(theme: &Theme, layout: Layout) -> Div<Message> {
+///
+/// The bar is three columns of which the outer two share what is left over
+/// equally, so the command center between them sits in the middle of the
+/// window whatever is drawn either side of it.
+fn titlebar(theme: &Theme, layout: Layout, here: String, bounds: Bounds) -> Div<Message> {
     h_flex()
         .w_full()
         .h_px(theme.size.titlebar)
         .items_center()
         .bg(theme.colors.surface)
         .border_1(theme.colors.border)
-        .child(h_flex().flex_1())
         .child(
             h_flex()
-                .gap(1)
+                .flex_1()
+                .h_full()
+                .gap(0.5)
+                .px(2)
                 .items_center()
+                .justify_end()
                 .child(
-                    icon_button(theme, IconName::Settings, Message::OpenSettings)
-                        .tooltip("Open Settings"),
+                    icon_button(theme, IconName::ArrowLeft, Message::Act(Action::GoBack))
+                        .tooltip("Go Back"),
                 )
-                .child(layout_icon_button(
-                    LayoutIcon::PrimarySidebar,
-                    layout.primary_sidebar_open,
-                    Message::TogglePrimarySidebar,
-                ))
-                .child(layout_icon_button(
-                    LayoutIcon::BottomPanel,
-                    layout.bottom_panel_open,
-                    Message::ToggleBottomPanel,
-                ))
-                .child(layout_icon_button(
-                    LayoutIcon::SecondarySidebar,
-                    layout.secondary_sidebar_open,
-                    Message::ToggleSecondarySidebar,
-                )),
+                .child(
+                    icon_button(theme, IconName::ArrowRight, Message::Act(Action::GoForward))
+                        .tooltip("Go Forward"),
+                ),
         )
-        .child(v_flex().w(2.5))
-        .child(window_controls())
+        .child(measured(bounds, command_center(theme, here)))
+        .child(
+            h_flex()
+                .flex_1()
+                .h_full()
+                .items_center()
+                .justify_end()
+                .child(
+                    h_flex()
+                        .gap(1)
+                        .items_center()
+                        .child(
+                            icon_button(theme, IconName::Settings, Message::OpenSettings)
+                                .tooltip("Open Settings"),
+                        )
+                        .child(layout_icon_button(
+                            LayoutIcon::PrimarySidebar,
+                            layout.primary_sidebar_open,
+                            Message::TogglePrimarySidebar,
+                        ))
+                        .child(layout_icon_button(
+                            LayoutIcon::BottomPanel,
+                            layout.bottom_panel_open,
+                            Message::ToggleBottomPanel,
+                        ))
+                        .child(layout_icon_button(
+                            LayoutIcon::SecondarySidebar,
+                            layout.secondary_sidebar_open,
+                            Message::ToggleSecondarySidebar,
+                        )),
+                )
+                .child(v_flex().w(2.5))
+                .child(window_controls()),
+        )
+}
+
+/// Builds the box in the middle of the title bar that says where the window
+/// is pointed and opens the file picker there when it is pressed.
+///
+/// Where it comes out is measured, so the picker it opens is drawn over it
+/// and exactly as wide.
+fn command_center(theme: &Theme, here: String) -> Div<Message> {
+    h_flex()
+        .flex_1()
+        .min_w_px(COMMAND_CENTER_MIN_WIDTH)
+        .max_w_px(COMMAND_CENTER_WIDTH)
+        .h_px(COMMAND_CENTER_HEIGHT)
+        .px(2)
+        .gap(1.5)
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
+        .bg(theme.colors.background)
+        .border_1(theme.colors.border)
+        .rounded(theme.radius.md)
+        .hover_bg(theme.colors.surface_hover)
+        .active_bg(theme.colors.surface_active)
+        .on_click(Message::Act(Action::ShowFiles))
+        .tooltip("Search files, > for commands, # for symbols")
+        .child(
+            icon(IconName::Search)
+                .size(IconSize::Small)
+                .color(theme.colors.text_subtle),
+        )
+        .child(text(here).text_sm().color(theme.colors.text_subtle))
+}
+
+/// What the command center says the window is pointed at: the active
+/// project, and the session in it when one is in front.
+fn whereabouts(open: &Projects, sessions: &[SidebarProject]) -> String {
+    let Some(project) = open.active() else {
+        return "Search".to_owned();
+    };
+    let session = sessions
+        .iter()
+        .find(|entry| entry.project == project.id() && !entry.at_checkout)
+        .and_then(|entry| entry.sessions.iter().find(|session| session.selected));
+    match session {
+        Some(session) => format!("{} · {}", project.name(), session.name),
+        None => project.name().to_owned(),
+    }
 }
 
 /// Builds the central pane area and optional bottom panel.

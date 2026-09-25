@@ -40,10 +40,13 @@ impl App {
             Kind::Search => self
                 .with_buffer(pm_text::Buffer::selected_text)
                 .unwrap_or_default(),
-            _ => String::new(),
+            kind => kind.seed(),
         };
         let rows = self.rows_for(kind, &seeded);
         self.open_picker_with(kind, rows, seeded);
+        if kind == Kind::WorkspaceSymbols {
+            self.ask_typed_symbols();
+        }
     }
 
     /// Opens the picker of `kind` over `rows`, with `seeded` already typed.
@@ -83,8 +86,20 @@ impl App {
         let Some(picker) = self.picker.as_ref() else {
             return;
         };
+        if let Some(kind) = picker.switched() {
+            let rows = self.rows_for(kind, "");
+            if let Some(picker) = self.picker.as_mut() {
+                picker.switch(kind, rows);
+            }
+            if kind == Kind::WorkspaceSymbols {
+                self.ask_typed_symbols();
+            }
+            return;
+        }
         if picker.kind() == Kind::WorkspaceSymbols {
-            let query = picker.field().value().to_owned();
+            let query = Kind::WorkspaceSymbols
+                .query(picker.field().value())
+                .to_owned();
             return self.ask_workspace_symbols(query);
         }
         if !picker.kind().is_queried() {
@@ -227,11 +242,8 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::Knob
-            | Kind::References
-            | Kind::WorkspaceSymbols
-            | Kind::Calls
-            | Kind::Font(_) => Vec::new(),
+            Kind::WorkspaceSymbols => self.file_rows(),
+            Kind::Knob | Kind::References | Kind::Calls | Kind::Font(_) => Vec::new(),
             Kind::Search => self.search_rows(query),
             Kind::Symbols
             | Kind::Line
@@ -269,26 +281,33 @@ impl App {
             .collect()
     }
 
-    /// Every file of every worktree the window is holding.
+    /// Every file of the worktree the window is pointed at.
+    ///
+    /// A tab is drawn only in the worktree it was opened from, so a file of
+    /// any other worktree would open where it cannot be seen.
     fn file_rows(&self) -> Vec<Row> {
-        self.worktrees()
+        let Some((scope, root)) = self.here_on_disk() else {
+            return Vec::new();
+        };
+        pm_core::walk(&root)
             .into_iter()
-            .flat_map(|(id, root)| {
-                pm_core::walk(&root).into_iter().map(move |path| {
-                    let name = path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    Row {
-                        section: None,
-                        label: name,
-                        detail: relative(&root, &path),
-                        choice: Choice::Open(id, path),
-                        enabled: true,
-                    }
-                })
+            .map(|path| Row {
+                section: None,
+                label: path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                detail: relative(&root, &path),
+                choice: Choice::Open(scope, path),
+                enabled: true,
             })
             .collect()
+    }
+
+    /// The worktree the window is pointed at, with where it sits on disk.
+    fn here_on_disk(&self) -> Option<(pm_core::Scope, PathBuf)> {
+        let scope = self.scope()?;
+        Some((scope, self.root_of(scope)?))
     }
 
     /// The projects the window holds open.
@@ -519,36 +538,34 @@ impl App {
         rows
     }
 
-    /// Every place `query` appears in the worktrees the window is holding.
+    /// Every place `query` appears in the worktree the window is pointed at.
     fn search_rows(&self, query: &str) -> Vec<Row> {
         if query.len() < 2 {
             return Vec::new();
         }
+        let Some((scope, root)) = self.here_on_disk() else {
+            return Vec::new();
+        };
         let needle = query.to_lowercase().chars().collect::<Vec<_>>();
         let mut rows = Vec::new();
 
-        for (id, root) in self.worktrees() {
-            for path in pm_core::walk(&root) {
-                if rows.len() >= SEARCH_LIMIT {
-                    return rows;
-                }
-                let Ok(text) = std::fs::read_to_string(&path) else {
+        for path in pm_core::walk(&root) {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (line, content) in text.lines().enumerate() {
+                let Some(column) = found_at(content, &needle) else {
                     continue;
                 };
-                for (line, content) in text.lines().enumerate() {
-                    let Some(column) = found_at(content, &needle) else {
-                        continue;
-                    };
-                    rows.push(Row {
-                        section: None,
-                        label: content.trim().chars().take(CONTEXT).collect(),
-                        detail: format!("{}:{}", relative(&root, &path), line + 1),
-                        choice: Choice::OpenAt(id, path.clone(), Position::new(line, column)),
-                        enabled: true,
-                    });
-                    if rows.len() >= SEARCH_LIMIT {
-                        return rows;
-                    }
+                rows.push(Row {
+                    section: None,
+                    label: content.trim().chars().take(CONTEXT).collect(),
+                    detail: format!("{}:{}", relative(&root, &path), line + 1),
+                    choice: Choice::OpenAt(scope, path.clone(), Position::new(line, column)),
+                    enabled: true,
+                });
+                if rows.len() >= SEARCH_LIMIT {
+                    return rows;
                 }
             }
         }

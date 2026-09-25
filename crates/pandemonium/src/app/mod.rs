@@ -73,9 +73,6 @@ use crate::workspace::{
 /// The blames that have come back from the threads that asked for them.
 type Blamed = Arc<Mutex<Vec<(editor::FileId, Vec<pm_core::Blame>)>>>;
 
-/// How wide the picker is drawn, for centring it over the window.
-const PICKER_WIDTH: f32 = 620.0;
-
 /// Which box of text the keyboard is going to, when it is going to one.
 ///
 /// A window has more than one thing that is written in and only one keyboard,
@@ -308,6 +305,8 @@ pub struct App {
     agent_picker_at: Option<Point>,
     /// Bounds of the Source Control commit split button from the last frame.
     commit_bounds: pm_ui::Bounds,
+    /// Bounds of the title bar's command center from the last frame.
+    command_center_bounds: pm_ui::Bounds,
     /// Bounds of the Graph history-reference filter from the last frame.
     history_refs_bounds: pm_ui::Bounds,
     /// Bounds of the Source Control Graph from the last frame.
@@ -345,6 +344,9 @@ pub struct App {
     /// The query the servers were last asked for workspace symbols, and the
     /// rows their answers have come to so far.
     workspace_symbols: (Option<String>, Vec<crate::picker::Row>),
+    /// The files of the worktree in front, offered below the symbols the
+    /// servers find so that a name always finds something.
+    workspace_files: Vec<crate::picker::Row>,
     /// The pane whose tabs are being closed, while one of them is asked about.
     closing: Option<crate::panes::PaneId>,
     /// The blames that have come back and not yet been taken in.
@@ -489,6 +491,7 @@ impl App {
             branch_picker_at: None,
             agent_picker_at: None,
             commit_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            command_center_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_refs_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_graph_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_all: layout.history_all,
@@ -507,6 +510,7 @@ impl App {
             asked: Vec::new(),
             saving: false,
             workspace_symbols: (None, Vec::new()),
+            workspace_files: Vec::new(),
             closing: None,
             blamed: Arc::new(Mutex::new(Vec::new())),
             text_clicks: Clicks::default(),
@@ -991,6 +995,9 @@ impl App {
             self.focus_terminal();
             self.open_menu(MenuTarget::Screen);
             return;
+        }
+        if let Message::Act(action) = message {
+            return self.act(action);
         }
         if let Message::ActOnTerminal(action) = message {
             self.focus_terminal();
@@ -1815,50 +1822,49 @@ impl App {
     /// What is drawn over the panes: a picker, a completion list, a hint.
     ///
     /// Each is placed where it belongs rather than laid out — the picker
-    /// under the title bar, a completion list under the word it completes, a
-    /// hint beside the cursor — because none of them takes room from the
-    /// screen they cover.
+    /// over the command center in the title bar, a completion list under the
+    /// word it completes, a hint beside the cursor — because none of them
+    /// takes room from the screen they cover.
     fn overlays(&self, theme: &Theme) -> Vec<workspace::Overlaid> {
         let mut overlays = Vec::new();
 
         let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
 
         if let Some(picker) = self.picker.as_ref() {
-            let width = crate::picker::width(picker.kind());
             let agent_choices = matches!(
                 picker.kind(),
                 crate::picker::Kind::Modes | crate::picker::Kind::Knob
             );
-            let at = self.branch_picker_at.filter(|_| {
+            let branch_anchor = self.branch_picker_at.filter(|_| {
                 matches!(
                     picker.kind(),
                     crate::picker::Kind::Branches | crate::picker::Kind::NewBranch
                 )
             });
-            let point = self.agent_picker_at.filter(|_| agent_choices).map_or_else(
-                || {
-                    at.map_or_else(
-                        || Point::new(window.width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
-                        |anchor| {
-                            let height = crate::picker::height(picker);
-                            Point::new(
-                                (anchor.x - 24.0).clamp(8.0, (window.width - width - 8.0).max(8.0)),
-                                (anchor.y - height - 8.0).max(8.0),
-                            )
-                        },
-                    )
-                },
-                |anchor| {
+            let anchor = match agent_choices {
+                true => self.agent_picker_at.map(|anchor| (anchor.x, anchor)),
+                false => branch_anchor.map(|anchor| (anchor.x - 24.0, anchor)),
+            };
+            let (point, width) = match anchor {
+                Some((left, anchor)) => {
+                    let width = crate::picker::width(picker.kind());
                     let height = crate::picker::height(picker);
-                    Point::new(
-                        anchor.x.clamp(8.0, (window.width - width - 8.0).max(8.0)),
+                    let point = Point::new(
+                        left.clamp(8.0, (window.width - width - 8.0).max(8.0)),
                         (anchor.y - height - 8.0).max(8.0),
-                    )
-                },
-            );
+                    );
+                    (point, width)
+                }
+                None => self.over_command_center(window),
+            };
             overlays.push(workspace::Overlaid {
                 at: point,
-                content: Box::new(crate::picker::picker(theme, picker, self.caret_solid())),
+                content: Box::new(crate::picker::picker(
+                    theme,
+                    picker,
+                    width,
+                    self.caret_solid(),
+                )),
                 backdrop: (!agent_choices).then_some(Message::DismissPopup),
             });
         }
@@ -1891,6 +1897,20 @@ impl App {
             });
         }
         overlays
+    }
+
+    /// Where a picker not anchored to a control is drawn, and how wide: over
+    /// the title bar's command center, as wide as it came out last frame.
+    fn over_command_center(&self, window: Size) -> (Point, f32) {
+        let bar = self.command_center_bounds.get();
+        if bar.size.width <= 0.0 {
+            let width = crate::picker::WIDTH;
+            return (
+                Point::new(window.width / 2.0 - width / 2.0, crate::picker::TOP),
+                width,
+            );
+        }
+        (Point::new(bar.origin.x, bar.origin.y), bar.size.width)
     }
 
     /// Where on screen the cursor of the focused pane last came out.
@@ -2012,6 +2032,7 @@ impl App {
                 &sidebar,
                 files,
                 layout,
+                self.command_center_bounds.clone(),
                 Panes {
                     editor,
                     recording: self.preferences.vim_mode.then(|| self.vim.recording()),

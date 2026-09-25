@@ -124,6 +124,8 @@ pub enum Message {
     PointTerminal(ResizePhase, pm_vt::Place, pm_vt::Place),
     /// Open the menu of things that can be done to what the terminal shows.
     ShowScreenMenu,
+    /// Carry this command out, from a control that stands for it.
+    Act(Action),
     /// Carry this command out on the terminal, giving it the keyboard.
     ActOnTerminal(Action),
     /// Start another shell in the active project's worktree.
