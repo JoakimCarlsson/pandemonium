@@ -1033,6 +1033,11 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::PreviewFile(pane) = message {
+            self.open_file_preview(pane);
+            self.request_redraw();
+            return;
+        }
         if let Message::ClosePane(pane) = message {
             self.close_pane(pane);
             self.request_redraw();

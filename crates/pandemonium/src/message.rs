@@ -164,6 +164,8 @@ pub enum Message {
     SplitPane(PaneId, SplitDirection),
     /// Divide this pane that way, showing this tab's contents in the new half.
     SplitItem(PaneId, Item, SplitDirection),
+    /// Open a rendered view or editable source beside this pane's file.
+    PreviewFile(PaneId),
     /// Open the menu of things that can be done to this pane.
     ShowPaneMenu(PaneId),
     /// Carry this pane's tab across the window, and let go of it somewhere.
