@@ -1848,7 +1848,7 @@ impl App {
             let (point, width) = match anchor {
                 Some((left, anchor)) => {
                     let width = crate::picker::width(picker.kind());
-                    let height = crate::picker::height(picker);
+                    let height = crate::picker::height(theme, picker);
                     let point = Point::new(
                         left.clamp(8.0, (window.width - width - 8.0).max(8.0)),
                         (anchor.y - height - 8.0).max(8.0),
