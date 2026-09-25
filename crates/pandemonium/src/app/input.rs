@@ -25,9 +25,6 @@ use crate::terminal;
 /// Logical pixels one notch of a mouse wheel scrolls.
 pub(super) const WHEEL_STEP: f32 = 48.0;
 
-/// How many notches a page key scrolls.
-const PAGE_NOTCHES: f32 = 4.0;
-
 /// How many rows of a picker a page key moves through.
 const PICKER_PAGE: isize = 10;
 
@@ -51,6 +48,23 @@ pub(super) const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duratio
 const WINDOW_RESIZE_EDGE: f32 = 8.0;
 
 impl App {
+    /// The logical height of the pane under the pointer, or the focused pane.
+    pub(super) fn scroll_viewport_height(&self) -> f32 {
+        let pane = self
+            .pointer
+            .and_then(|pointer| self.geometry.pane_at(pointer))
+            .unwrap_or_else(|| self.panes.focus());
+        self.geometry
+            .pane_size(pane)
+            .map(|size| size.height)
+            .or_else(|| {
+                self.window
+                    .as_ref()
+                    .map(|window| window.inner_size().height as f32 / window.scale_factor() as f32)
+            })
+            .unwrap_or(WHEEL_STEP)
+            .max(WHEEL_STEP)
+    }
     /// What is true where a key was pressed, for the `when` clauses to read.
     pub(super) fn context(&self) -> Context {
         let mut context = Context::new();
@@ -522,11 +536,11 @@ impl App {
             }
             Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => ui.activate_focused(),
             Key::Named(NamedKey::PageDown) => {
-                self.scroll_by(-WHEEL_STEP * PAGE_NOTCHES);
+                self.scroll_by(-self.scroll_viewport_height());
                 None
             }
             Key::Named(NamedKey::PageUp) => {
-                self.scroll_by(WHEEL_STEP * PAGE_NOTCHES);
+                self.scroll_by(self.scroll_viewport_height());
                 None
             }
             _ => None,
