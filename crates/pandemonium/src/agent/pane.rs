@@ -62,8 +62,8 @@ const RESULT: &str = "    ";
 /// What a line continuing the one above it is indented by.
 const WRAPPED: &str = "  ";
 
-/// What a turn that is still running is marked with.
-const WORKING: &str = "  ◐ ";
+/// Frames of the activity mark shown during a turn.
+const WORKING: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
 /// The colour a piece of a row is drawn in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -379,7 +379,7 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
         if !rows.is_empty() {
             rows.push(Row::new());
         }
-        rows.push(vec![piece(format!("{WORKING}Working…"), Tone::Quiet)]);
+        rows.push(vec![piece(working(talk), Tone::Quiet)]);
     }
     rows
 }
@@ -991,13 +991,20 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
     }
 }
 
+/// The changing activity label for a turn in progress.
+fn working(talk: &Talk) -> String {
+    let elapsed = talk.working_for().unwrap_or_default();
+    let frame = (elapsed.as_millis() / 250 % WORKING.len() as u128) as usize;
+    format!("{}  Working · {}s", WORKING[frame], elapsed.as_secs())
+}
+
 /// What the header says the session is doing.
-fn doing(talk: &Talk) -> &'static str {
+fn doing(talk: &Talk) -> String {
     match (talk.is_running(), talk.is_ready(), talk.is_busy()) {
-        (false, ..) => "stopped",
-        (_, false, _) => "starting",
-        (_, _, true) => "working",
-        _ => "ready",
+        (false, ..) => "stopped".to_owned(),
+        (_, false, _) => "starting".to_owned(),
+        (_, _, true) => working(talk),
+        _ => "ready".to_owned(),
     }
 }
 

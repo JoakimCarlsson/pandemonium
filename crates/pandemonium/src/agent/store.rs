@@ -17,6 +17,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use pm_gfx::Image;
@@ -111,6 +112,8 @@ pub struct Talk {
     ready: bool,
     /// Whether a turn is running.
     busy: bool,
+    /// When the current turn began, for its visible activity timer.
+    busy_since: Option<Instant>,
     /// Whether a turn has ended since the reader last looked at the pane.
     unseen: bool,
     /// The mode the agent says it is in, where it has modes.
@@ -390,6 +393,11 @@ impl Talk {
         self.busy
     }
 
+    /// How long the current turn has been running.
+    pub fn working_for(&self) -> Option<Duration> {
+        self.busy_since.map(|since| since.elapsed())
+    }
+
     /// The mode the agent is in, where it has modes.
     pub fn mode(&self) -> Option<&str> {
         self.mode.as_deref()
@@ -606,6 +614,7 @@ impl Talk {
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
+        self.busy_since = Some(Instant::now());
         self.unseen = false;
         self.following = true;
     }
@@ -660,6 +669,7 @@ impl Talk {
             Event::Asked(ask) => self.asks.push(ask),
             Event::Stopped(stop) => {
                 self.busy = false;
+                self.busy_since = None;
                 self.unseen = stop != Stop::Cancelled;
                 if stop != Stop::EndTurn {
                     self.transcript.note(note(stop));
@@ -667,11 +677,13 @@ impl Talk {
             }
             Event::Failed(trouble) => {
                 self.busy = false;
+                self.busy_since = None;
                 self.unseen = true;
                 self.transcript.note(trouble);
             }
             Event::Ended => {
                 self.busy = false;
+                self.busy_since = None;
                 self.ready = false;
                 self.transcript.note(ended(&self.conversation));
             }
@@ -860,6 +872,7 @@ impl Talks {
                 dismissed: false,
                 ready: false,
                 busy: false,
+                busy_since: None,
                 unseen: false,
                 mode: None,
                 scroll: 0.0,
