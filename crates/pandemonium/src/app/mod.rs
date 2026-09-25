@@ -2234,7 +2234,8 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 let (across, down) = match delta {
                     MouseScrollDelta::LineDelta(columns, lines) => {
-                        (columns * input::WHEEL_STEP, lines * input::WHEEL_STEP)
+                        let step = self.scroll_viewport_height();
+                        (columns * input::WHEEL_STEP, lines * step)
                     }
                     MouseScrollDelta::PixelDelta(position) => {
                         (position.x as f32 / scale, position.y as f32 / scale)
