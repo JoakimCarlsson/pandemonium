@@ -126,6 +126,7 @@ impl App {
             theme,
             self.debuggers.get(scope),
             self.writing == Some(Writing::Console(scope)),
+            self.caret_solid(),
         ))
     }
 

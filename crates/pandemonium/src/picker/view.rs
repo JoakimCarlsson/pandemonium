@@ -79,7 +79,7 @@ fn visible_rows(kind: Kind) -> usize {
 }
 
 /// Builds the panel for `picker`, over whatever the window is showing.
-pub fn picker(theme: &Theme, picker: &Picker) -> Div<Message> {
+pub fn picker(theme: &Theme, picker: &Picker, solid: bool) -> Div<Message> {
     let prompt = picker.kind().is_prompt();
 
     if matches!(picker.kind(), Kind::Modes | Kind::Knob) {
@@ -103,7 +103,7 @@ pub fn picker(theme: &Theme, picker: &Picker) -> Div<Message> {
             .child(rows(theme, picker))
             .child(rule(theme))
             .child(
-                field(picker.field().value(), picker.field().caret(), true)
+                field(picker.field().value(), picker.field().caret(), solid)
                     .placeholder(picker.kind().placeholder())
                     .w_full()
                     .px(2)
@@ -120,7 +120,7 @@ pub fn picker(theme: &Theme, picker: &Picker) -> Div<Message> {
         .border_1(theme.colors.border)
         .rounded(theme.radius.lg)
         .child(
-            field(picker.field().value(), picker.field().caret(), true)
+            field(picker.field().value(), picker.field().caret(), solid)
                 .placeholder(picker.kind().placeholder())
                 .w_full()
                 .px(2)

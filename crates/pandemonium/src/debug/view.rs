@@ -40,7 +40,12 @@ const VARIABLES_WIDTH: f32 = 360.0;
 
 /// Builds the view showing `debugger`, or offering to start one where there
 /// is none; `typing` says its console has the keyboard.
-pub fn debug_view(theme: &Theme, debugger: Option<&Debugger>, typing: bool) -> Div<Message> {
+pub fn debug_view(
+    theme: &Theme,
+    debugger: Option<&Debugger>,
+    typing: bool,
+    solid: bool,
+) -> Div<Message> {
     let Some(debugger) = debugger else {
         return idle(theme);
     };
@@ -86,7 +91,7 @@ pub fn debug_view(theme: &Theme, debugger: Option<&Debugger>, typing: bool) -> D
                         )),
                 )
                 .child(divider(theme))
-                .child(console(theme, debugger, typing)),
+                .child(console(theme, debugger, typing, solid)),
         )
 }
 
@@ -388,7 +393,7 @@ fn tree_row(theme: &Theme, depth: usize, open: Option<bool>) -> Div<Message> {
 }
 
 /// Builds the console: its last lines, and the box an expression is typed in.
-fn console(theme: &Theme, debugger: &Debugger, typing: bool) -> Div<Message> {
+fn console(theme: &Theme, debugger: &Debugger, typing: bool, solid: bool) -> Div<Message> {
     let line_height = theme.text.code.line_height.max(1.0);
     let room = (debugger.console_area().get().size.height / line_height)
         .floor()
@@ -420,6 +425,7 @@ fn console(theme: &Theme, debugger: &Debugger, typing: bool) -> Div<Message> {
             theme,
             debugger.console(),
             typing,
+            solid,
             1.0,
             Message::WriteDebugConsole,
             Message::ShowInputMenu,

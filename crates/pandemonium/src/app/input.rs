@@ -112,6 +112,9 @@ impl App {
         if self.send_to_prompt(event) {
             return self.request_redraw();
         }
+        if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
+            return self.request_redraw();
+        }
         if self.send_to_picker(event) {
             return self.request_redraw();
         }
@@ -617,15 +620,28 @@ impl App {
 
     /// Whether the caret has turned over since the last frame.
     ///
-    /// Only a pane with the keyboard has a caret to blink; a window whose
-    /// text is not being edited is a window that stays still.
+    /// A focused editor or input keeps the blink clock running.
     pub(super) fn blinked(&mut self) -> bool {
-        self.preferences.cursor_blink && self.editor_focused && self.blink.changed()
+        self.preferences.cursor_blink && self.caret_active() && self.blink.changed()
     }
 
     /// When the caret next turns over, while there is one to turn.
     pub(super) fn next_blink(&self) -> Option<std::time::Instant> {
-        (self.preferences.cursor_blink && self.editor_focused).then(|| self.blink.next_change())
+        (self.preferences.cursor_blink && self.caret_active()).then(|| self.blink.next_change())
+    }
+
+    /// Whether a focused editor or input has a caret to blink.
+    fn caret_active(&self) -> bool {
+        self.editor_focused
+            || self.writing.is_some()
+            || self.picker.is_some()
+            || self.tree_edit.is_some()
+            || self.search_focused
+    }
+
+    /// Whether a focused caret should be drawn in this frame.
+    pub(super) fn caret_solid(&self) -> bool {
+        !self.preferences.cursor_blink || self.blink.is_solid()
     }
 
     /// Tells the element tree the pointer has left the window.
@@ -692,6 +708,18 @@ impl App {
                 self.commit_tree_edit();
             }
             self.release_pane_focus();
+            if let Some(pane) = self
+                .pointer
+                .and_then(|pointer| self.geometry.pane_at(pointer))
+                && self
+                    .panes
+                    .pane(pane)
+                    .and_then(|pane| pane.active(self.scope()))
+                    .is_some_and(|item| item.session().is_some())
+            {
+                self.focus_pane(pane);
+            }
+            self.blink.restart();
         }
 
         let message = match (self.ui.as_mut(), state) {

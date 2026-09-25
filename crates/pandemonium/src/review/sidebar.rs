@@ -30,6 +30,8 @@ use crate::review::store::{Group, Primary, Review};
 /// Window controls and saved layout for the Source Control sidebar.
 #[derive(Clone)]
 pub struct SourceControlControls {
+    /// Whether the focused commit caret is in its visible blink phase.
+    pub solid: bool,
     /// Where the commit split button was drawn in the last frame.
     pub commit_bounds: Bounds,
     /// Where the history reference filter was drawn in the last frame.
@@ -135,7 +137,13 @@ fn section(
         .when(several, |section| {
             section.child(repository_heading(theme, review, index, held, active))
         })
-        .child(message_field(theme, index, held, typing && active))
+        .child(message_field(
+            theme,
+            index,
+            held,
+            typing && active,
+            controls.solid,
+        ))
         .when(active, |section| {
             section.child(measured(
                 controls.commit_bounds.clone(),
@@ -539,12 +547,18 @@ fn toolbar_action(
 ///
 /// It is the editor, not a line: several lines, a cursor that moves about and
 /// text that selects — the same buffer the panes draw, in a box of its own.
-fn message_field(theme: &Theme, index: usize, held: &Repository, typing: bool) -> Div<Message> {
+fn message_field(
+    theme: &Theme,
+    index: usize,
+    held: &Repository,
+    typing: bool,
+    solid: bool,
+) -> Div<Message> {
     v_flex()
         .w_full()
         .px(1.5)
         .py(1)
-        .child(commit_editor(theme, index, held, typing))
+        .child(commit_editor(theme, index, held, typing, solid))
 }
 
 /// Builds the control that commits, or syncs once there is nothing to commit.

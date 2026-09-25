@@ -146,6 +146,8 @@ pub struct Worktree<'a> {
     pub review: Option<&'a Review>,
     /// Whether the commit message is where keystrokes are going.
     pub committing: bool,
+    /// Whether the focused input caret is in its visible blink phase.
+    pub caret: bool,
     /// Where the Source Control commit split button was drawn last frame.
     pub commit_bounds: Bounds,
     /// Where the Graph reference filter was drawn last frame.
@@ -958,6 +960,7 @@ fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<
                 files.committing,
                 width,
                 SourceControlControls {
+                    solid: files.caret,
                     commit_bounds: files.commit_bounds.clone(),
                     history_refs_bounds: files.history_refs_bounds.clone(),
                     history_graph_bounds: files.history_graph_bounds.clone(),

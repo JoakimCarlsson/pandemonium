@@ -63,7 +63,13 @@ const GUTTER_DEPTH: f32 = 2.5;
 /// that the caret is drawn in the field the reader is actually in — the same
 /// message the sidebar shows, because there is one message and two places it
 /// can be written. `split` sets each hunk's two sides beside each other.
-pub fn review_pane(theme: &Theme, review: &Review, typing: bool, split: bool) -> Div<Message> {
+pub fn review_pane(
+    theme: &Theme,
+    review: &Review,
+    typing: bool,
+    solid: bool,
+    split: bool,
+) -> Div<Message> {
     let empty = review.changed().is_empty();
 
     v_flex()
@@ -82,7 +88,9 @@ pub fn review_pane(theme: &Theme, review: &Review, typing: bool, split: bool) ->
                 })
                 .children(drawn(theme, review, None, split)),
         )
-        .when(!empty, |pane| pane.child(commit_bar(theme, review, typing)))
+        .when(!empty, |pane| {
+            pane.child(commit_bar(theme, review, typing, solid))
+        })
 }
 
 /// Builds the diff of the one changed file `id` names.
@@ -276,7 +284,7 @@ fn worded(theme: &Theme, label: &str, enabled: bool, message: Message) -> Div<Me
 
 /// Builds the bar below the changes: the message, and what it commits or
 /// syncs.
-fn commit_bar(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
+fn commit_bar(theme: &Theme, review: &Review, typing: bool, solid: bool) -> Div<Message> {
     let active = review.active();
     let primary = review.primary(active);
     let pressed = primary_message(active, &primary);
@@ -292,7 +300,7 @@ fn commit_bar(theme: &Theme, review: &Review, typing: bool) -> Div<Message> {
             h_flex().flex_1().children(
                 review
                     .repository(active)
-                    .map(|held| commit_editor(theme, active, held, typing)),
+                    .map(|held| commit_editor(theme, active, held, typing, solid)),
             ),
         )
         .child(

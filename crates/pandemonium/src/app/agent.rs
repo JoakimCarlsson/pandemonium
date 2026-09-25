@@ -368,6 +368,23 @@ impl App {
         true
     }
 
+    /// Stops the turn in the agent pane that has the keyboard.
+    pub(super) fn cancel_busy_agent(&self) -> bool {
+        let session = match self.writing {
+            Some(Writing::Prompt(session)) => Some(session),
+            _ if self.editor_focused => self.active_tab().and_then(Item::session),
+            _ => None,
+        };
+        let Some(talk) = session.and_then(|session| self.agents.get(session)) else {
+            return false;
+        };
+        if !talk.is_busy() {
+            return false;
+        }
+        talk.cancel();
+        true
+    }
+
     /// Gives the keyboard to `session`'s prompt.
     pub(super) fn focus_prompt(&mut self, session: TalkId) {
         self.write_in(Writing::Prompt(session));

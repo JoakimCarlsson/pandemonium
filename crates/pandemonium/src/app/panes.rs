@@ -926,7 +926,7 @@ impl App {
         let scope = self.scope();
         let link = self.link_target();
         let talked_about = self.hovered_name();
-        let caret = !self.preferences.cursor_blink || self.blink.is_solid();
+        let caret = self.caret_solid();
         let display = self.preferences.display;
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
         panes::pane_tree(theme, &self.panes, self.editor_focused, &|pane| {
@@ -1026,6 +1026,7 @@ impl App {
                     theme,
                     review,
                     self.writing == Some(crate::app::Writing::Commit),
+                    self.caret_solid(),
                     self.preferences.split_diff,
                 ))),
                 None => Content::Empty,
@@ -1035,6 +1036,7 @@ impl App {
                     theme,
                     talk,
                     self.writing == Some(crate::app::Writing::Prompt(session)),
+                    self.caret_solid(),
                     width,
                 ))),
                 None => Content::Empty,

@@ -43,6 +43,8 @@ pub struct Listing<'a> {
     pub dropping: Option<&'a Path>,
     /// Whether keystrokes go to the tree.
     pub focused: bool,
+    /// Whether the input caret is in its visible blink phase.
+    pub caret: bool,
     /// How far the rows are scrolled.
     pub scroll: Scrolled,
     /// Where the rows came out, for telling which one the pointer is over.
@@ -187,7 +189,7 @@ fn edit_lines(
         .child(v_flex().w(1))
         .child(measured(
             listing.field.clone(),
-            field(edit.field().value(), edit.field().caret(), true)
+            field(edit.field().value(), edit.field().caret(), listing.caret)
                 .flex_1()
                 .h_px(theme.size.row - 2.0)
                 .px(1)

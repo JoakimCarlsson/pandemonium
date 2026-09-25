@@ -38,11 +38,13 @@ pub fn input_menu(selected: bool) -> Vec<MenuItem<Message>> {
 ///
 /// `on_point` is sent as the pointer presses, drags and is let go of in the
 /// text, and `on_menu` when the right button asks for a menu over it — both
-/// belong to the screen, because only it knows which box this is.
+/// belong to the screen, because only it knows which box this is. `solid`
+/// says whether the focused caret is in its visible blink phase.
 pub fn input_view<M: Clone + 'static>(
     theme: &Theme,
     input: &Input,
     focused: bool,
+    solid: bool,
     lines: f32,
     on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
     on_menu: M,
@@ -55,13 +57,10 @@ pub fn input_view<M: Clone + 'static>(
         .overflow_hidden()
         .rounded(theme.radius.md)
         .bg(theme.colors.background)
-        .border_1(match focused {
-            true => theme.colors.border_focused,
-            false => theme.colors.border,
-        })
+        .border_1(theme.colors.border)
         .child(
             plain_view(input.text(), focused)
-                .caret(focused)
+                .caret(focused && solid)
                 .on_select(on_point)
                 .on_menu(on_menu),
         )

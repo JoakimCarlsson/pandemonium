@@ -1825,7 +1825,7 @@ impl App {
             );
             overlays.push(workspace::Overlaid {
                 at: point,
-                content: Box::new(crate::picker::picker(theme, picker)),
+                content: Box::new(crate::picker::picker(theme, picker, self.caret_solid())),
                 backdrop: (!agent_choices).then_some(Message::DismissPopup),
             });
         }
@@ -1918,6 +1918,7 @@ impl App {
         let overlays = self.overlays(&theme);
         let scope = self.scope();
         let sidebar = self.sidebar_projects();
+        let caret = self.caret_solid();
         let files = workspace::Worktree {
             listing: scope.and_then(|scope| self.files.get(&scope)).map(|tree| {
                 crate::tree::Listing {
@@ -1932,6 +1933,7 @@ impl App {
                         .filter(|drag| drag.is_carried())
                         .and_then(|drag| drag.target.as_deref()),
                     focused: self.tree_focused,
+                    caret,
                     scroll: tree_scroll,
                     rows: self.tree_rows.clone(),
                     area: self.tree_area.clone(),
@@ -1940,6 +1942,7 @@ impl App {
             }),
             review: scope.and_then(|scope| self.reviews.get(&scope)),
             committing: self.writing == Some(Writing::Commit),
+            caret,
             commit_bounds: self.commit_bounds.clone(),
             history_refs_bounds: self.history_refs_bounds.clone(),
             history_graph_bounds: self.history_graph_bounds.clone(),

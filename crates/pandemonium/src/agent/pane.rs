@@ -103,8 +103,14 @@ type Row = Vec<Piece>;
 /// Builds the pane showing `talk`, wrapped to `width` logical pixels.
 ///
 /// `typing` says the prompt box has the keyboard, so that the caret is drawn
-/// where the reader is actually writing.
-pub fn agent_pane(theme: &Theme, talk: &Talk, typing: bool, width: f32) -> Div<Message> {
+/// where the reader is actually writing; `solid` is its blink phase.
+pub fn agent_pane(
+    theme: &Theme,
+    talk: &Talk,
+    typing: bool,
+    solid: bool,
+    width: f32,
+) -> Div<Message> {
     let columns = columns(theme, width);
 
     v_flex()
@@ -131,7 +137,7 @@ pub fn agent_pane(theme: &Theme, talk: &Talk, typing: bool, width: f32) -> Div<M
         .when(!talk.offered().is_empty(), |pane| {
             pane.child(commands(theme, talk))
         })
-        .child(composer(theme, talk, typing))
+        .child(composer(theme, talk, typing, solid))
 }
 
 /// Builds the list of commands the slash being typed narrows to.
@@ -456,12 +462,8 @@ fn permission(theme: &Theme, session: TalkId, ask: &Ask) -> Div<Message> {
 /// what mode it is in and whether it is sent or stopped. They are facts about
 /// the next turn, so they are where the next turn is written and not in a bar
 /// at the top of the pane.
-fn composer(theme: &Theme, talk: &Talk, typing: bool) -> Div<Message> {
+fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Message> {
     let id = talk.id();
-    let edge = match typing {
-        true => theme.colors.border_focused,
-        false => theme.colors.border,
-    };
 
     v_flex().w_full().px(1.25).pt(0.5).pb(1).child(
         v_flex()
@@ -469,12 +471,13 @@ fn composer(theme: &Theme, talk: &Talk, typing: bool) -> Div<Message> {
             .gap(0.5)
             .p(0.75)
             .rounded(theme.radius.lg)
-            .border_1(edge)
+            .border_1(theme.colors.border)
             .bg(theme.colors.surface)
             .child(input_view(
                 theme,
                 talk.prompt(),
                 typing,
+                solid,
                 PROMPT_LINES,
                 move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
                 Message::ShowInputMenu,

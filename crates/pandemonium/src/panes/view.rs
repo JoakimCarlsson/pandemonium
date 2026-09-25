@@ -162,7 +162,7 @@ fn pane_view(
         .as_ref()
         .map(|file| file.borrow())
         .filter(|document| document.search().is_open())
-        .map(|document| search_bar(theme, id, document.search()));
+        .map(|document| search_bar(theme, id, document.search(), caret));
 
     let body = v_flex()
         .w_full()

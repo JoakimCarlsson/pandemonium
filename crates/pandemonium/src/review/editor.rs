@@ -25,11 +25,13 @@ pub fn commit_editor(
     repository: usize,
     held: &Repository,
     focused: bool,
+    solid: bool,
 ) -> Div<Message> {
     input_view(
         theme,
         held.message(),
         focused,
+        solid,
         MESSAGE_LINES,
         move |phase, anchor, head| Message::WriteCommit(repository, phase, anchor, head),
         Message::ShowInputMenu,
