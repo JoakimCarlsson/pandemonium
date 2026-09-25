@@ -6,7 +6,7 @@ use pm_gfx::{Quad, Rect, Rgba, Size};
 
 use crate::element::{Element, Interaction, IntoElement, LayoutContext, PaintContext};
 use crate::resize::ResizeEvent;
-use crate::style::{Align, Axis, Justify, Length, Style, Styled};
+use crate::style::{Align, Axis, Justify, Length, Side, Style, Styled};
 use crate::ui::PointerCursor;
 
 /// A container that measures its children, stacks them and paints a background.
@@ -298,6 +298,11 @@ impl<M: Clone> Element<M> for Div<M> {
                 .corner_radius(self.style.corner_radius)
                 .border(self.style.border_width, self.style.border_color),
         );
+        for (side, (width, color)) in Side::ALL.into_iter().zip(self.style.sides) {
+            if width > 0.0 && !color.is_transparent() {
+                cx.quad(Quad::filled(side.strip(bounds, width), color));
+            }
+        }
 
         let padding = self.style.padding;
         let content = Rect::from_xywh(

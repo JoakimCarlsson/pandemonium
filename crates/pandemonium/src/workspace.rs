@@ -8,7 +8,7 @@ use pm_ui::button;
 use pm_ui::{
     Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Text, Theme,
     h_flex, icon, icon_button, layout_icon_button, measured, menu, menu_entry, menu_separator,
-    overlay, rule, sash, text, v_flex,
+    overlay, rule, sash, text, v_flex, view_tab,
 };
 
 use crate::agent::{Standing, Tally, standing_color};
@@ -1065,35 +1065,29 @@ fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<
         })
 }
 
-/// Builds the switch between the worktree's files and what has changed.
+/// Builds the switch between the worktree's files and what has changed, as
+/// a bar as tall as the panes' bars of tabs so the two line up.
 fn view_switch(theme: &Theme, view: SidebarView) -> Div<Message> {
-    h_flex()
+    v_flex()
         .w_full()
-        .px(1)
-        .py(1)
-        .gap(0.5)
-        .items_center()
-        .children(SidebarView::ALL.map(|offered| {
-            let chosen = offered == view;
+        .h_px(theme.size.tab_bar)
+        .child(
             h_flex()
+                .w_full()
                 .flex_1()
-                .h_px(theme.size.control - BAR_INSET)
-                .items_center()
-                .justify_center()
-                .rounded(theme.radius.md)
-                .when(chosen, |tab| tab.bg(theme.colors.surface_selected))
-                .hover_bg(theme.colors.surface_hover)
-                .on_click(Message::SetSidebarView(offered))
-                .child(
-                    text(offered.label())
-                        .text_sm()
-                        .font_light()
-                        .color(match chosen {
-                            true => theme.colors.text,
-                            false => theme.colors.text_subtle,
-                        }),
-                )
-        }))
+                .items_stretch()
+                .children(SidebarView::ALL.map(|offered| {
+                    view_tab(
+                        theme,
+                        offered.label(),
+                        offered == view,
+                        None,
+                        Message::SetSidebarView(offered),
+                    )
+                    .flex_1()
+                })),
+        )
+        .child(rule(theme))
 }
 
 /// `path` written the way a prompt writes it, against the home directory.

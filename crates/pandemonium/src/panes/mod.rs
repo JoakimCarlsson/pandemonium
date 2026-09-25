@@ -14,4 +14,6 @@ mod view;
 pub use item::Item;
 pub use saved::{Saved, SavedKind, SavedTab};
 pub use tree::{Pane, PaneId, PaneTree, SplitDirection, SplitId};
-pub use view::{Content, Contents, TabEntry, pane_menu, pane_tree, tab_menu, unsaved_menu};
+pub use view::{
+    Content, Contents, Shortcut, TabEntry, pane_menu, pane_tree, tab_menu, unsaved_menu,
+};

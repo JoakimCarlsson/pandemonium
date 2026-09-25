@@ -16,11 +16,21 @@ use pm_ui::{Axis, Element, IconName, MenuItem, ResizeEvent, ResizePhase, Theme};
 use crate::app::App;
 use crate::app::drag::{DropPlace, TabDrag, highlight, unmeasured};
 use crate::editor::{Display, FileEntry, FileId, OpenFile};
+use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::{
-    self, Content, Contents, Item, PaneId, Saved, SavedKind, SavedTab, SplitDirection, TabEntry,
+    self, Content, Contents, Item, PaneId, Saved, SavedKind, SavedTab, Shortcut, SplitDirection,
+    TabEntry,
 };
 use crate::workspace::{MenuTarget, TabMenu};
+
+/// The commands an empty pane offers, in the order it lists them.
+const EMPTY_PANE_COMMANDS: [Action; 4] = [
+    Action::ShowFiles,
+    Action::ShowCommands,
+    Action::NewAgentSession,
+    Action::NewTerminal,
+];
 
 impl App {
     /// The worktree the panes are showing: the active project's, or a session's.
@@ -931,6 +941,7 @@ impl App {
         let talked_about = self.hovered_name();
         let caret = self.caret_solid();
         let display = self.preferences.display;
+        let shortcuts = self.empty_pane_shortcuts();
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
         panes::pane_tree(theme, &self.panes, scope, self.editor_focused, &|pane| {
             let (bounds, bar, tab_bounds) = cells
@@ -974,8 +985,24 @@ impl App {
                 crumbs: file
                     .filter(|_| display.breadcrumbs)
                     .and_then(|file| self.crumbs_of(file)),
+                shortcuts: shortcuts.clone(),
             }
         })
+    }
+
+    /// The commands an empty pane offers, each with the keys it answers to
+    /// here, leaving out any that nothing is bound to.
+    fn empty_pane_shortcuts(&self) -> Vec<Shortcut> {
+        let context = self.context();
+        EMPTY_PANE_COMMANDS
+            .into_iter()
+            .filter_map(|action| {
+                Some(Shortcut {
+                    title: action.title(),
+                    keys: self.keys_for(action, &context)?,
+                })
+            })
+            .collect()
     }
 
     /// Where `file` is in its worktree, and where its cursor is in it.

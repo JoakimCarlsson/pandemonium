@@ -6,17 +6,14 @@
 //! shell the worktree is running, once there is more than one to list.
 
 use pm_ui::{
-    Bounds, Div, IconName, IconSize, Scrolled, Styled, Theme, h_flex, icon, icon_button, text,
-    v_flex,
+    Bounds, Div, IconName, IconSize, Scrolled, Styled, Theme, h_flex, icon, icon_button, rule,
+    text, v_flex, view_tab,
 };
 
 use crate::message::Message;
 use crate::panel::PanelView;
 use crate::panel::problems::{ProblemFile, badge, problems_view};
 use crate::terminal::{Shell, ShellEntry, terminal_view};
-
-/// How much shorter than the bar a view's label is drawn.
-const BAR_INSET: f32 = 8.0;
 
 /// How wide the list of shells beside the terminal is.
 const SHELL_LIST_WIDTH: f32 = 180.0;
@@ -76,10 +73,12 @@ pub fn bottom_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
         )
 }
 
-/// Builds the bar: one label per view, then the view's own actions.
+/// Builds the bar: one label per view, then the view's own actions, standing
+/// on the hairline that parts it from the view.
 fn bar(theme: &Theme, view: PanelView, problems: usize) -> Div<Message> {
     let actions = h_flex()
         .h_full()
+        .px(1.5)
         .gap(1)
         .items_center()
         .when(view == PanelView::Terminal, |actions| {
@@ -91,41 +90,31 @@ fn bar(theme: &Theme, view: PanelView, problems: usize) -> Div<Message> {
             Message::ToggleBottomPanel,
         ));
 
-    h_flex()
+    v_flex()
         .w_full()
         .h_px(theme.size.tab_bar)
-        .px(1.5)
-        .gap(0.5)
-        .items_center()
-        .children(PanelView::ALL.map(|offered| {
-            let count = (offered == PanelView::Problems && problems > 0).then_some(problems);
-            view_label(theme, offered, offered == view, count)
-        }))
-        .child(h_flex().flex_1())
-        .child(actions)
-}
-
-/// Builds the label of one view, lit when it is the one in front.
-fn view_label(theme: &Theme, view: PanelView, chosen: bool, count: Option<usize>) -> Div<Message> {
-    h_flex()
-        .h_px(theme.size.tab_bar - BAR_INSET)
-        .px(1)
-        .gap(0.75)
-        .items_center()
-        .rounded(theme.radius.md)
-        .when(chosen, |label| label.bg(theme.colors.surface_selected))
-        .hover_bg(theme.colors.surface_hover)
-        .on_click(Message::ShowPanelView(view))
+        .bg(theme.colors.surface)
         .child(
-            text(view.label())
-                .text_sm()
-                .font_light()
-                .color(match chosen {
-                    true => theme.colors.text,
-                    false => theme.colors.text_muted,
-                }),
+            h_flex()
+                .w_full()
+                .flex_1()
+                .pl(1)
+                .items_stretch()
+                .children(PanelView::ALL.map(|offered| {
+                    let count =
+                        (offered == PanelView::Problems && problems > 0).then_some(problems);
+                    view_tab(
+                        theme,
+                        offered.label(),
+                        offered == view,
+                        count.map(|count| badge(theme, count)),
+                        Message::ShowPanelView(offered),
+                    )
+                }))
+                .child(h_flex().flex_1())
+                .child(actions),
         )
-        .when_some(count, |label, count| label.child(badge(theme, count)))
+        .child(rule(theme))
 }
 
 /// Builds the terminal view: the shell in front, and the list of them.

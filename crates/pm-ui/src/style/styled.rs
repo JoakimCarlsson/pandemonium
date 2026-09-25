@@ -2,8 +2,8 @@
 
 use pm_gfx::Rgba;
 
-use crate::style::Style;
 use crate::style::units::{Align, Axis, Justify, Length, space};
+use crate::style::{Side, Style};
 
 /// The utility setters every element is styled with.
 ///
@@ -227,6 +227,12 @@ pub trait Styled: Sized {
     fn border_2(mut self, color: Rgba) -> Self {
         self.style().border_width = 2.0;
         self.style().border_color = color;
+        self
+    }
+
+    /// Draws a line `width` thick in `color` along `side` alone.
+    fn border_side(mut self, side: Side, width: f32, color: Rgba) -> Self {
+        self.style().sides[side as usize] = (width, color);
         self
     }
 

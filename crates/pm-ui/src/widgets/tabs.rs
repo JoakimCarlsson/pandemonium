@@ -13,10 +13,9 @@ use crate::div::{Div, h_flex, v_flex};
 use crate::icons::{IconName, IconSize, icon};
 use crate::measured::{Bounds, measured};
 use crate::resize::ResizeEvent;
-use crate::style::Styled;
+use crate::style::{Side, Styled};
 use crate::text::text;
 use crate::theme::Theme;
-use crate::widgets::rule;
 use crate::widgets::{icon_button, tinted_icon_button};
 
 /// Longest name a tab shows before it is cut short.
@@ -24,6 +23,10 @@ const NAME_CHARS: usize = 20;
 
 /// Diameter of the dot marking that what a tab holds is unsaved.
 const DOT_SIZE: f32 = 7.0;
+
+/// Thickness of the line across the top of the tab in front of the pane
+/// that has the keyboard.
+const LIT_EDGE: f32 = 2.0;
 
 /// What carrying one tab across the window sends, event by event.
 type OnDrag<M> = Arc<dyn Fn(ResizeEvent) -> M>;
@@ -122,34 +125,43 @@ impl<M> Tab<M> {
 /// The empty stretch after the last tab is part of the bar rather than a gap
 /// in it: a tab let go of there belongs at the end of the row, and the bar
 /// is what the window measures to know that.
-pub fn tab_bar<M: Clone + 'static>(theme: &Theme, tabs: Vec<Tab<M>>, actions: Div<M>) -> Div<M> {
-    v_flex()
+///
+/// The hairline under the bar is drawn by each part of it rather than across
+/// it, so the tab in front leaves a gap in it and reads as one piece with
+/// what is drawn beneath. The tab in front of a `focused` pane is also lit
+/// along its top edge, which is how the window says where keystrokes go.
+pub fn tab_bar<M: Clone + 'static>(
+    theme: &Theme,
+    tabs: Vec<Tab<M>>,
+    actions: Div<M>,
+    focused: bool,
+) -> Div<M> {
+    let floor = theme.colors.border_variant;
+    h_flex()
         .w_full()
         .h_px(theme.size.tab_bar)
-        .child(
-            h_flex()
-                .w_full()
-                .flex_1()
-                .items_stretch()
-                .overflow_hidden()
-                .bg(theme.colors.surface)
-                .children(tabs.into_iter().map(|tab| one_tab(theme, tab)))
-                .child(h_flex().flex_1())
-                .child(actions),
-        )
-        .child(rule(theme))
+        .items_stretch()
+        .overflow_hidden()
+        .bg(theme.colors.surface)
+        .children(tabs.into_iter().map(|tab| one_tab(theme, tab, focused)))
+        .child(h_flex().flex_1().border_side(Side::Bottom, 1.0, floor))
+        .child(actions.border_side(Side::Bottom, 1.0, floor))
 }
 
 /// Builds one tab, measured when the caller asked to be told where it lands.
-fn one_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>) -> Box<dyn crate::Element<M>> {
+fn one_tab<M: Clone + 'static>(
+    theme: &Theme,
+    tab: Tab<M>,
+    focused: bool,
+) -> Box<dyn crate::Element<M>> {
     match tab.bounds.clone() {
-        Some(bounds) => Box::new(measured(bounds, pane_tab(theme, tab))),
-        None => Box::new(pane_tab(theme, tab)),
+        Some(bounds) => Box::new(measured(bounds, pane_tab(theme, tab, focused))),
+        None => Box::new(pane_tab(theme, tab, focused)),
     }
 }
 
-/// Builds one tab: what it holds, and the control that closes it.
-fn pane_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>) -> Div<M> {
+/// Builds one tab: its edges, what it holds, and the control that closes it.
+fn pane_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>, focused: bool) -> Div<M> {
     let (background, color) = if tab.active {
         (theme.colors.background, theme.colors.text)
     } else {
@@ -157,18 +169,28 @@ fn pane_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>) -> Div<M> {
     };
     let name = text(truncated(&tab.name, NAME_CHARS))
         .text_sm()
-        .font_light()
         .color(color);
     let name = if tab.preview { name.italic() } else { name };
 
     h_flex()
         .h_full()
-        .px(1)
-        .gap(1)
+        .pl(2)
+        .pr(1)
+        .gap(1.5)
         .items_center()
         .overflow_hidden()
         .bg(background)
-        .when(!tab.active, |tab| tab.hover_bg(theme.colors.surface_hover))
+        .border_side(Side::Right, 1.0, theme.colors.border_variant)
+        .when(tab.active && focused, |tab| {
+            tab.border_side(Side::Top, LIT_EDGE, theme.colors.border_focused)
+        })
+        .when(!tab.active, |tab| {
+            tab.hover_bg(theme.colors.surface_hover).border_side(
+                Side::Bottom,
+                1.0,
+                theme.colors.border_variant,
+            )
+        })
         .when_some(tab.drag, |row, on_drag| {
             row.on_drag(move |event| on_drag(event))
         })

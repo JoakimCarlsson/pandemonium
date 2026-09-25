@@ -269,12 +269,7 @@ impl App {
             .map(|action| Row {
                 section: None,
                 label: action.title().to_owned(),
-                detail: self
-                    .resolver
-                    .keymap()
-                    .sequence_for(action, &context)
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
+                detail: self.keys_for(action, &context).unwrap_or_default(),
                 choice: Choice::Act(action),
                 enabled: has_buffer || !action.needs_buffer(),
             })

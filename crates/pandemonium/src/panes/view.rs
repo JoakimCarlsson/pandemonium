@@ -3,13 +3,13 @@
 //! The view walks the tree the window keeps and asks for each pane's
 //! contents as it reaches it, so what is drawn is the tree itself rather
 //! than a copy of it made beforehand. A pane is a bar of tabs with whatever
-//! is in front beneath it and a ring around it while it has the keyboard. Its tabs are carried by the pointer,
+//! is in front beneath it, its tab in front lit while it has the keyboard. Its tabs are carried by the pointer,
 //! and both they and the pane leave their bounds behind as they paint,
 //! because where a carried tab is let go of is the window's to answer.
 
 use pm_ui::{
     Bounds, Div, Element, IconName, Measured, MenuItem, Styled, Tab, Theme, h_flex, icon_button,
-    measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
+    kbd, measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
 use pm_core::Scope;
@@ -20,6 +20,10 @@ use crate::message::Message;
 use crate::panes::item::Item;
 
 use super::tree::{Node, Pane, PaneId, PaneTree, SplitDirection};
+
+/// Width the keys of an empty pane's commands are right-aligned in, so the
+/// names beside them start in one column.
+const SHORTCUT_KEYS_WIDTH: f32 = 120.0;
 
 /// One tab of a pane as its bar presents it.
 ///
@@ -87,6 +91,17 @@ pub struct Contents {
     pub display: Display,
     /// Where the text in front is, for the bar above it, when it is drawn.
     pub crumbs: Option<Crumbs>,
+    /// The commands an empty pane offers, with the keys they answer to.
+    pub shortcuts: Vec<Shortcut>,
+}
+
+/// One command an empty pane offers, and the keys it answers to.
+#[derive(Clone, Debug)]
+pub struct Shortcut {
+    /// What the command is called.
+    pub title: &'static str,
+    /// The keys it answers to, as the keymap writes them.
+    pub keys: String,
 }
 
 /// Builds the tree of panes `scope` draws, `focused` when the window's own
@@ -183,6 +198,7 @@ fn pane_view(
         .map(|(held, bounds)| pane_tab(id, &held, active == Some(held.item), bounds))
         .collect::<Vec<_>>();
     let empty = matches!(contents.content, Content::Empty);
+    let shortcuts = contents.shortcuts;
     let link = contents.link.clone();
     let hovered = contents.hovered.clone();
     let found = contents.found.clone();
@@ -209,13 +225,18 @@ fn pane_view(
         .h_full()
         .overflow_hidden()
         .bg(theme.colors.background)
-        .when(divided && focused, |pane| {
+        .when(divided && focused && tabs.is_empty(), |pane| {
             pane.border_1(theme.colors.border_focused)
         })
         .when(!tabs.is_empty(), |view| {
             view.child(measured(
                 contents.bar,
-                tab_bar(theme, tabs, pane_actions(theme, id, divided, previewable)),
+                tab_bar(
+                    theme,
+                    tabs,
+                    pane_actions(theme, id, divided, previewable),
+                    focused,
+                ),
             ))
         })
         .when_some(
@@ -256,7 +277,7 @@ fn pane_view(
                     .on_open(move |index| Message::OpenExcerptFile(id, index)),
             )
         })
-        .when(empty, |view| view.child(placeholder(theme, id)))
+        .when(empty, |view| view.child(placeholder(theme, id, &shortcuts)))
         .when_some(built(contents.content), Div::child);
 
     measured(contents.bounds, body)
@@ -308,19 +329,56 @@ fn pane_actions(theme: &Theme, id: PaneId, divided: bool, previewable: bool) -> 
         })
 }
 
-/// Builds what an empty pane says, which is also what claims it for a click.
-fn placeholder(theme: &Theme, id: PaneId) -> Div<Message> {
+/// Builds what an empty pane says, which is also what claims it for a click:
+/// what the pane is for, and the keys that fill it.
+fn placeholder(theme: &Theme, id: PaneId, shortcuts: &[Shortcut]) -> Div<Message> {
     v_flex()
         .w_full()
         .flex_1()
+        .gap(4)
         .items_center()
         .justify_center()
         .on_click(Message::FocusPane(id))
         .child(
-            text("Open a file from the tree")
+            v_flex()
+                .gap(1.5)
+                .items_center()
+                .child(
+                    text("Nothing open here")
+                        .text_base()
+                        .font_semibold()
+                        .color(theme.colors.text),
+                )
+                .child(
+                    text("Open a file from the tree, or start from the keyboard.")
+                        .text_sm()
+                        .color(theme.colors.text_muted),
+                ),
+        )
+        .child(
+            v_flex().gap(1.5).children(
+                shortcuts
+                    .iter()
+                    .map(|shortcut| shortcut_row(theme, shortcut)),
+            ),
+        )
+}
+
+/// Builds one line of an empty pane's keys: the keys, then what they do.
+fn shortcut_row(theme: &Theme, shortcut: &Shortcut) -> Div<Message> {
+    h_flex()
+        .gap(3)
+        .items_center()
+        .child(
+            h_flex()
+                .w_px(SHORTCUT_KEYS_WIDTH)
+                .justify_end()
+                .child(kbd(theme, shortcut.keys.clone())),
+        )
+        .child(
+            text(shortcut.title)
                 .text_sm()
-                .font_light()
-                .color(theme.colors.text_subtle),
+                .color(theme.colors.text_muted),
         )
 }
 

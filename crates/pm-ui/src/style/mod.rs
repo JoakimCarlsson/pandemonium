@@ -11,7 +11,7 @@ mod units;
 pub use styled::Styled;
 pub use units::{Align, Axis, Edges, Justify, Length, STEP, space};
 
-use pm_gfx::Rgba;
+use pm_gfx::{Rect, Rgba};
 
 /// Everything the layout and the painter need to know about one element.
 #[derive(Clone, Copy, Debug)]
@@ -50,10 +50,53 @@ pub struct Style {
     pub border_width: f32,
     /// Border colour.
     pub border_color: Rgba,
+    /// Lines drawn inside the element's bounds along single sides, as
+    /// thickness and colour, in the order of [`Side::ALL`].
+    pub sides: [(f32, Rgba); 4],
     /// Corner radius of the background and border.
     pub corner_radius: f32,
     /// Whether descendants are clipped to this element's bounds.
     pub overflow_hidden: bool,
+}
+
+/// One side of an element, for a line drawn along it alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Side {
+    /// The top edge.
+    Top,
+    /// The right-hand edge.
+    Right,
+    /// The bottom edge.
+    Bottom,
+    /// The left-hand edge.
+    Left,
+}
+
+impl Side {
+    /// Every side, in the order [`Style::sides`] holds them.
+    pub const ALL: [Self; 4] = [Self::Top, Self::Right, Self::Bottom, Self::Left];
+
+    /// The strip `thickness` deep along this side of `bounds`.
+    pub fn strip(self, bounds: Rect, thickness: f32) -> Rect {
+        match self {
+            Self::Top => Rect::from_xywh(bounds.left(), bounds.top(), bounds.size.width, thickness),
+            Self::Right => Rect::from_xywh(
+                bounds.right() - thickness,
+                bounds.top(),
+                thickness,
+                bounds.size.height,
+            ),
+            Self::Bottom => Rect::from_xywh(
+                bounds.left(),
+                bounds.bottom() - thickness,
+                bounds.size.width,
+                thickness,
+            ),
+            Self::Left => {
+                Rect::from_xywh(bounds.left(), bounds.top(), thickness, bounds.size.height)
+            }
+        }
+    }
 }
 
 impl Style {
@@ -131,6 +174,7 @@ impl Default for Style {
             background_active: None,
             border_width: 0.0,
             border_color: Rgba::TRANSPARENT,
+            sides: [(0.0, Rgba::TRANSPARENT); 4],
             corner_radius: 0.0,
             overflow_hidden: false,
         }

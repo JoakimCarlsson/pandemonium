@@ -66,6 +66,15 @@ impl App {
             .unwrap_or(WHEEL_STEP)
             .max(WHEEL_STEP)
     }
+    /// The keys `action` answers to where `context` holds, as the keymap
+    /// writes them, when anything is bound to it there.
+    pub(super) fn keys_for(&self, action: Action, context: &Context) -> Option<String> {
+        self.resolver
+            .keymap()
+            .sequence_for(action, context)
+            .map(ToString::to_string)
+    }
+
     /// What is true where a key was pressed, for the `when` clauses to read.
     pub(super) fn context(&self) -> Context {
         let mut context = Context::new();
