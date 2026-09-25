@@ -436,17 +436,29 @@ impl App {
         self.panes.pane(pane)?.active(scope)?.session()
     }
 
-    /// Scrolls the conversation the pointer is over by `rows`.
+    /// Scrolls the conversation the pointer is over `pixels` down, or up
+    /// when negative.
+    ///
+    /// The wheel reports many times a frame, so it is held against how tall
+    /// the pane last drew the conversation rather than wrapping all of it
+    /// again for every step.
     ///
     /// The answer says whether there was one, so that the wheel goes on to
     /// whatever is behind it when there was not.
-    pub(super) fn scroll_agent(&mut self, rows: isize) -> bool {
+    pub(super) fn scroll_agent(&mut self, pixels: f32) -> bool {
         let Some(session) = self.agent_under() else {
             return false;
         };
-        let (total, held) = self.measure_agent(session);
+        let Some(talk) = self.agents.get(session) else {
+            return true;
+        };
+        let (drawn, view) = (talk.drawn_height().get(), talk.view().get().size);
+        let end = match drawn > 0.0 && view.height > 0.0 {
+            true => drawn - view.height,
+            false => self.agent_end(session),
+        };
         if let Some(talk) = self.agents.get_mut(session) {
-            talk.scroll_by(rows, total.saturating_sub(held.saturating_sub(1)));
+            talk.scroll_by(pixels, end);
         }
         true
     }
@@ -521,27 +533,35 @@ impl App {
             {
                 continue;
             }
-            let (total, held) = self.measure_agent(session);
+            let end = self.agent_end(session);
             if let Some(talk) = self.agents.get_mut(session) {
-                talk.scroll_to(total.saturating_sub(held));
+                talk.scroll_to(end);
             }
         }
     }
 
-    /// How many rows `session` comes to, and how many of them a pane holds.
-    fn measure_agent(&self, session: TalkId) -> (usize, usize) {
+    /// How far `session` scrolls before its last row is against the foot of
+    /// the pane, in logical pixels.
+    ///
+    /// The pane writes down where it drew the conversation; before it has,
+    /// the focused pane less its bars is the best guess there is.
+    fn agent_end(&self, session: TalkId) -> f32 {
+        let Some(talk) = self.agents.get(session) else {
+            return 0.0;
+        };
         let theme = self.theme();
-        let size = self
-            .geometry
-            .pane_size(self.panes.focus())
-            .unwrap_or_default();
-        let line = theme.text.code.line_height.max(1.0);
-        let held = ((size.height - theme.size.tab_bar * 3.0) / line).max(1.0) as usize;
-        let total = self
-            .agents
-            .get(session)
-            .map_or(0, |talk| crate::agent::row_count(&theme, talk, size.width));
-        (total, held)
+        let drawn = talk.view().get().size;
+        let view = match drawn.height > 0.0 {
+            true => drawn,
+            false => {
+                let pane = self
+                    .geometry
+                    .pane_size(self.panes.focus())
+                    .unwrap_or_default();
+                pm_gfx::Size::new(pane.width, pane.height - theme.size.tab_bar * 3.0)
+            }
+        };
+        crate::agent::content_height(&theme, talk, view.width) - view.height
     }
 }
 

@@ -10,11 +10,13 @@
 //! [`Talk`] is one of them — the agent, everything said to it and by it, the
 //! prompt being typed and whatever it is waiting to be allowed to do.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use base64::Engine;
 
@@ -25,6 +27,7 @@ use pm_acp::{
     Stop, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
+use pm_ui::Bounds;
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -109,8 +112,13 @@ pub struct Talk {
     unseen: bool,
     /// The mode the agent says it is in, where it has modes.
     mode: Option<String>,
-    /// The first row the pane is drawn from.
-    scroll: usize,
+    /// How far down the conversation the pane is scrolled, in logical pixels.
+    scroll: f32,
+    /// Where the conversation was last drawn, which is how much of it a
+    /// pane holds.
+    view: Bounds,
+    /// How tall the conversation came to when it was last drawn.
+    drawn_height: Rc<Cell<f32>>,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
     /// The tool and thought blocks the reader has opened.
@@ -496,27 +504,37 @@ impl Talk {
         self.unseen = false;
     }
 
-    /// The first row the pane is drawn from.
-    pub fn scroll(&self) -> usize {
+    /// How far down the conversation the pane is scrolled, in logical pixels.
+    pub fn scroll(&self) -> f32 {
         self.scroll
     }
 
-    /// Scrolls the pane by `rows`, of the `total` there are to show.
+    /// Where the conversation was last drawn, shared with the pane drawing it.
+    pub fn view(&self) -> Bounds {
+        self.view.clone()
+    }
+
+    /// How tall the conversation came to when it was last drawn, shared with
+    /// the pane drawing it.
+    pub fn drawn_height(&self) -> Rc<Cell<f32>> {
+        self.drawn_height.clone()
+    }
+
+    /// Scrolls the pane `pixels` down, or up when negative, no further than
+    /// `end`, where the last row sits against the foot of the pane.
     ///
     /// Scrolling back is also what stops the pane following the end of the
     /// conversation: a reader who has gone up to read something is not
     /// dragged down again by the next thing the agent says.
-    pub fn scroll_by(&mut self, rows: isize, total: usize) {
-        self.scroll = self
-            .scroll
-            .saturating_add_signed(rows)
-            .min(total.saturating_sub(1));
-        self.following = self.scroll + 1 >= total;
+    pub fn scroll_by(&mut self, pixels: f32, end: f32) {
+        let end = end.max(0.0);
+        self.scroll = (self.scroll + pixels).clamp(0.0, end);
+        self.following = self.scroll >= end;
     }
 
-    /// Puts the pane at `row`, which is what following the end comes to.
-    pub fn scroll_to(&mut self, row: usize) {
-        self.scroll = row;
+    /// Puts the pane `pixels` down, which is what following the end comes to.
+    pub fn scroll_to(&mut self, pixels: f32) {
+        self.scroll = pixels.max(0.0);
     }
 
     /// Whether the pane follows the end of the conversation as it grows.
@@ -820,7 +838,9 @@ impl Talks {
                 busy: false,
                 unseen: false,
                 mode: None,
-                scroll: 0,
+                scroll: 0.0,
+                view: Bounds::default(),
+                drawn_height: Rc::default(),
                 following: true,
                 expanded_details: BTreeSet::new(),
             },

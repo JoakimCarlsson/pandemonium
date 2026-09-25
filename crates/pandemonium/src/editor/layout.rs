@@ -45,6 +45,9 @@ pub struct TextLayout {
     pub minimap: f32,
     /// The first line the pane showed.
     pub first: usize,
+    /// How far that first line is scrolled up past the top of the pane, in
+    /// logical pixels: a wheel moves the text by the pixel, not by the line.
+    pub offset: f32,
     /// The first column the pane showed, the text being scrolled left by it.
     pub column: usize,
 }
@@ -58,7 +61,7 @@ impl TextLayout {
 
     /// The top of the `row`-th line drawn, whether or not there is room.
     pub fn top_at(&self, row: usize) -> f32 {
-        self.bounds.top() + row as f32 * self.cell.height
+        self.bounds.top() + row as f32 * self.cell.height - self.offset
     }
 
     /// The left edge of the column drawn at `column`.
@@ -88,6 +91,13 @@ impl TextLayout {
             .max(1.0) as usize
     }
 
+    /// How many lines are drawn, the ones cut by either edge included.
+    pub fn drawn_rows(&self) -> usize {
+        ((self.bounds.size.height + self.offset) / self.cell.height.max(1.0))
+            .ceil()
+            .max(1.0) as usize
+    }
+
     /// How many whole columns of text the pane has room for.
     pub fn columns(&self) -> usize {
         (self.text_area().size.width / self.cell.width.max(1.0))
@@ -97,7 +107,7 @@ impl TextLayout {
 
     /// The row `point` falls on, counted from the first one drawn.
     pub fn row_at(&self, point: Point) -> usize {
-        let row = ((point.y - self.bounds.top()) / self.cell.height.max(1.0)).floor();
+        let row = ((point.y - self.bounds.top() + self.offset) / self.cell.height.max(1.0)).floor();
         row.max(0.0) as usize
     }
 

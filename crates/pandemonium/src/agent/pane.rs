@@ -15,7 +15,10 @@ use std::path::Path;
 
 use pm_acp::{About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Voice, Weight};
 use pm_gfx::Rgba;
-use pm_ui::{Div, IconName, IconSize, Styled, Theme, button, h_flex, icon, rule, text, v_flex};
+use pm_ui::{
+    Div, IconName, IconSize, Scroll, Styled, Theme, button, h_flex, icon, measured, rule,
+    scroll_area, space, text, v_flex,
+};
 
 use crate::agent::{Block, Standing, Talk, TalkId};
 use crate::input::input_view;
@@ -26,6 +29,14 @@ const DRAWN: usize = 300;
 
 /// How many lines of one tool call's result are shown before the rest.
 const RESULT_LINES: usize = 2;
+
+/// How far the conversation sits from the top and foot of its area, in
+/// steps of the spacing scale.
+const INSET: f32 = 1.0;
+
+/// How far the edge of a bubble holding what the reader said sits from its
+/// text, in steps of the spacing scale.
+const BUBBLE: f32 = 0.75;
 
 /// How many lines of the prompt the pane has room for.
 const PROMPT_LINES: f32 = 3.0;
@@ -98,6 +109,7 @@ pub fn agent_pane(
     width: f32,
 ) -> Div<Message> {
     let columns = columns(theme, width);
+    let (drawn, offset) = drawn(theme, talk, columns);
 
     v_flex()
         .w_full()
@@ -106,15 +118,15 @@ pub fn agent_pane(
         .bg(theme.colors.background)
         .child(header(theme, talk))
         .child(rule(theme))
-        .child(
-            v_flex()
-                .w_full()
-                .flex_1()
-                .overflow_hidden()
-                .px(1.75)
-                .py(1)
-                .children(drawn(theme, talk, columns)),
-        )
+        .child(measured(
+            talk.view(),
+            scroll_area(
+                std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
+                v_flex().w_full().px(1.75).py(INSET).children(drawn),
+            )
+            .w_full()
+            .flex_1(),
+        ))
         .children(
             talk.asks()
                 .iter()
@@ -181,29 +193,45 @@ fn first_line(said: &str) -> String {
     said.lines().next().unwrap_or_default().to_owned()
 }
 
-/// How many rows the conversation comes to at `width` logical pixels.
+/// How tall the conversation comes to at `width` logical pixels.
 ///
 /// The window asks this to know how far the pane can be scrolled, which only
 /// the rows can say.
-pub fn row_count(theme: &Theme, talk: &Talk, width: f32) -> usize {
-    rows(talk, columns(theme, width)).len()
+pub fn content_height(theme: &Theme, talk: &Talk, width: f32) -> f32 {
+    let rows = rows(talk, columns(theme, width));
+    heights(theme, &rows).iter().sum::<f32>() + space(INSET) * 2.0
 }
 
-/// The rows of the pane, from where it is scrolled to.
-fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> Vec<Div<Message>> {
-    let mut visible = rows(talk, columns)
-        .into_iter()
-        .skip(talk.scroll())
-        .take(DRAWN)
-        .peekable();
+/// The rows of the pane from where it is scrolled to, and how far the first
+/// of them is scrolled up past the top of the area.
+///
+/// Only the rows from there are built, however long the conversation runs,
+/// so the view is drawn from the row it is scrolled into and shifted up by
+/// the part of it already gone by. A row inside a bubble is drawn from the
+/// top of its bubble, so the bubble keeps its edge as it scrolls by.
+fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32) {
+    let rows = rows(talk, columns);
+    let heights = heights(theme, &rows);
+    talk.drawn_height()
+        .set(heights.iter().sum::<f32>() + space(INSET) * 2.0);
+    let mut first = 0;
+    let mut top = 0.0;
+    while first < rows.len() && top + heights[first] <= talk.scroll() - space(INSET) {
+        top += heights[first];
+        first += 1;
+    }
+    while first > 0 && is_said(&rows[first]) && is_said(&rows[first - 1]) {
+        first -= 1;
+        top -= heights[first];
+    }
+    let offset = talk.scroll() - top;
+
+    let mut visible = rows.into_iter().skip(first).take(DRAWN).peekable();
     let mut drawn = Vec::new();
     while let Some(line) = visible.next() {
-        if line.iter().any(|piece| piece.tone == Tone::Said) {
+        if is_said(&line) {
             let mut message = vec![self::row(theme, line, talk.id())];
-            while visible
-                .peek()
-                .is_some_and(|next| next.iter().any(|piece| piece.tone == Tone::Said))
-            {
+            while visible.peek().is_some_and(is_said) {
                 if let Some(next) = visible.next() {
                     message.push(self::row(theme, next, talk.id()));
                 }
@@ -211,7 +239,7 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> Vec<Div<Message>> {
             drawn.push(
                 h_flex().w_full().justify_end().child(
                     v_flex()
-                        .p(0.75)
+                        .p(BUBBLE)
                         .rounded(theme.radius.lg)
                         .bg(theme.colors.surface_hover)
                         .children(message),
@@ -221,7 +249,47 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> Vec<Div<Message>> {
             drawn.push(self::row(theme, line, talk.id()));
         }
     }
-    drawn
+    (drawn, offset)
+}
+
+/// Whether `row` is part of something the reader said, drawn in a bubble.
+fn is_said(row: &Row) -> bool {
+    row.iter().any(|piece| piece.tone == Tone::Said)
+}
+
+/// How tall each of `rows` is drawn, the edges of a bubble counted into the
+/// first row and the last one it holds.
+fn heights(theme: &Theme, rows: &[Row]) -> Vec<f32> {
+    let edge = space(BUBBLE);
+    rows.iter()
+        .enumerate()
+        .map(|(at, row)| {
+            let mut height = row_height(theme, row);
+            if is_said(row) {
+                if at == 0 || !is_said(&rows[at - 1]) {
+                    height += edge;
+                }
+                if rows.get(at + 1).is_none_or(|next| !is_said(next)) {
+                    height += edge;
+                }
+            }
+            height
+        })
+        .collect()
+}
+
+/// How tall one row is drawn: an empty one a line of code, and one with
+/// text in it as tall as its tallest piece.
+fn row_height(theme: &Theme, row: &Row) -> f32 {
+    if row.is_empty() {
+        return theme.text.code.line_height;
+    }
+    row.iter()
+        .map(|piece| match piece.tone {
+            Tone::Said | Tone::Spoken => theme.text.base.line_height,
+            _ => theme.text.sm.line_height,
+        })
+        .fold(0.0, f32::max)
 }
 
 /// Every row the conversation comes to, wrapped at `columns` characters.
@@ -460,15 +528,20 @@ fn step_row(step: &Step) -> Row {
 }
 
 /// Builds one row out of its pieces.
+///
+/// The row is held to the height [`row_height`] gives it, so that where the
+/// pane scrolls to and where it draws the rows are the same measurement.
 fn row(theme: &Theme, row: Row, session: TalkId) -> Div<Message> {
+    let height = row_height(theme, &row);
     if row.is_empty() {
-        return h_flex().h_px(theme.text.code.line_height);
+        return h_flex().h_px(height);
     }
     let action = row.first().and_then(|piece| match piece.tone {
         Tone::DetailGroup(block) => Some(block),
         _ => None,
     });
     h_flex()
+        .h_px(height)
         .when_some(action, |line, block| {
             line.on_click(Message::ToggleAgentDetails(session, block))
                 .hover_bg(theme.colors.surface_hover)

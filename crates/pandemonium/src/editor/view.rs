@@ -353,19 +353,21 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             blame,
             minimap,
             first: document.scroll(),
+            offset: document.offset(),
             column: document.column(),
         };
         document.follow_cursor(sizing.rows(), sizing.columns());
 
         let layout = TextLayout {
             first: document.scroll(),
+            offset: document.offset(),
             column: document.column(),
             ..sizing
         };
         document.set_layout(layout);
 
         let rows = layout.rows();
-        let drawn = document.drawn_lines(layout.first, rows);
+        let drawn = document.drawn_lines(layout.first, layout.drawn_rows());
         let span = *drawn.first().unwrap_or(&0)..drawn.last().map_or(0, |last| last + 1);
         let folded = drawn
             .iter()
@@ -915,7 +917,7 @@ impl<M> BufferView<M> {
         ));
 
         for (row, line) in holders.iter().copied().enumerate() {
-            let top = layout.top_at(row);
+            let top = layout.bounds.top() + row as f32 * layout.cell.height;
             self.paint_pinned(line, top, painting, glyphs, cx);
         }
         cx.quad(Quad::filled(
