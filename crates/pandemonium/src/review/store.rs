@@ -16,10 +16,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use pm_core::{Changed, FileStatus, Head, Hunk, Line, Side};
+use pm_core::{Changed, FileStatus, Head, Hunk, Line};
 use pm_text::{Buffer, Highlight};
 
 use crate::input::Input;
+use crate::review::reading::{self, Reading, RepositoryReading};
 use crate::review::repository::Repository;
 use crate::review::shade::{Shading, Version};
 
@@ -170,6 +171,9 @@ pub struct Review {
     /// When the reader last asked for the worktree to be read again, while
     /// the refresh control is still turning for it.
     refreshed: Option<Instant>,
+    /// How many readings have been taken in, which names the one a read
+    /// started now will answer.
+    reads: u64,
 }
 
 impl Review {
@@ -192,6 +196,7 @@ impl Review {
             gesture: None,
             scrolls: BTreeMap::new(),
             refreshed: None,
+            reads: 0,
         };
         review.reread();
         review
@@ -215,44 +220,42 @@ impl Review {
             .then(|| elapsed.as_secs_f32() / REFRESH_TURN.as_secs_f32() * std::f32::consts::TAU)
     }
 
-    /// Asks git again what the worktree holds.
+    /// Asks git again what the worktree holds, and waits for the answer.
+    ///
+    /// This is for what the reader has just done here, whose result the
+    /// next frame has to show; what the disk did on its own is read through
+    /// [`Review::read_later`] instead.
+    pub fn reread(&mut self) {
+        let reading = Reading::of(&self.root, self.reads);
+        self.take(reading);
+    }
+
+    /// What reads the worktree again, on whichever thread it is called on.
     ///
     /// The repositories are looked for again first, so one cloned into the
-    /// folder is reviewed without reopening it; one that was already here
-    /// keeps its message. Each repository is asked about whole, because that
-    /// is what git answers in one go: a file at a time would be a subprocess
-    /// per row of a list as long as the change is.
-    pub fn reread(&mut self) {
-        self.find_repositories();
-        for repository in &mut self.repositories {
-            repository.reread();
+    /// folder is reviewed without reopening it. Each repository is asked
+    /// about whole, because that is what git answers in one go: a file at a
+    /// time would be a subprocess per row of a list as long as the change is.
+    pub fn read_later(&self) -> impl FnOnce() -> Reading + Send + 'static {
+        let root = self.root.clone();
+        let reads = self.reads;
+        move || Reading::of(&root, reads)
+    }
+
+    /// Takes in what git said the worktree held, unless the review has been
+    /// read again since that was asked; answers whether it was taken.
+    ///
+    /// A repository that was already here keeps its message.
+    pub fn take(&mut self, reading: Reading) -> bool {
+        if reading.reads != self.reads {
+            return false;
         }
+        self.reads += 1;
+        self.find_repositories(reading.repositories);
         self.gather_changes();
 
-        self.patches = BTreeMap::new();
-        for repository in &self.repositories {
-            for (path, hunks) in pm_core::diffs(repository.root(), Side::Staged) {
-                self.patches.entry(path).or_default().staged = hunks;
-            }
-            for (path, hunks) in pm_core::diffs(repository.root(), Side::Unstaged) {
-                self.patches.entry(path).or_default().unstaged = hunks;
-            }
-        }
-        for (repository, path) in self.untracked() {
-            let root = self.repositories[repository].root();
-            let hunks = pm_core::diff(root, &path, Side::Untracked);
-            self.patches.entry(path).or_default().unstaged = hunks;
-        }
-        self.patches
-            .retain(|path, _| self.changed.iter().any(|changed| changed.path == *path));
-        self.shades = self
-            .patches
-            .iter()
-            .map(|(path, patch)| {
-                let root = self.repository_root_of(path);
-                (path.clone(), Shading::of(root, path, patch))
-            })
-            .collect();
+        self.patches = reading.patches;
+        self.shades = reading.shades;
         self.collapsed
             .retain(|path| self.patches.contains_key(path));
         for path in self.paths(|_| true) {
@@ -265,21 +268,25 @@ impl Review {
             .filter(|id| listed.contains(id))
             .or_else(|| listed.first().copied());
         self.gesture = None;
+        true
     }
 
-    /// Looks for the worktree's repositories again, keeping what the ones
+    /// Puts the repositories `read` found in place, keeping what the ones
     /// still there were holding and the active one where it was.
-    fn find_repositories(&mut self) {
+    fn find_repositories(&mut self, read: Vec<RepositoryReading>) {
         let active = self.active_root().map(Path::to_path_buf);
         let mut held = std::mem::take(&mut self.repositories);
-        self.repositories = pm_core::repositories(&self.root)
+        self.repositories = read
             .into_iter()
-            .map(
-                |root| match held.iter().position(|kept| kept.root() == root) {
+            .map(|reading| {
+                let mut repository = match held.iter().position(|kept| kept.root() == reading.root)
+                {
                     Some(at) => held.swap_remove(at),
-                    None => Repository::at(&self.root, &root),
-                },
-            )
+                    None => Repository::at(&self.root, &reading.root),
+                };
+                repository.take(reading);
+                repository
+            })
             .collect();
         self.active = active
             .and_then(|active| {
@@ -290,29 +297,15 @@ impl Review {
             .unwrap_or_default();
     }
 
-    /// Lists every repository's changes as one, leaving out what a
-    /// repository reports of another inside it.
-    ///
-    /// A repository inside another is, to the outer one, a directory it has
-    /// never been told about; its files are the inner repository's to list.
+    /// Lists every repository's changes as one.
     fn gather_changes(&mut self) {
-        self.changed.clear();
-        self.owners.clear();
-        for (owner, repository) in self.repositories.iter().enumerate() {
-            let inner = self
-                .repositories
+        (self.owners, self.changed) = reading::gather(
+            self.repositories
                 .iter()
-                .map(Repository::root)
-                .filter(|root| *root != repository.root() && root.starts_with(repository.root()))
-                .collect::<Vec<_>>();
-            for changed in repository.changed() {
-                if inner.iter().any(|root| changed.path.starts_with(root)) {
-                    continue;
-                }
-                self.changed.push(changed.clone());
-                self.owners.push(owner);
-            }
-        }
+                .map(|repository| (repository.root(), repository.changed())),
+        )
+        .into_iter()
+        .unzip();
     }
 
     /// The repositories the worktree holds, the root's own first.
@@ -350,16 +343,6 @@ impl Review {
     /// Where the repository a commit is made in sits on disk.
     pub fn active_root(&self) -> Option<&Path> {
         self.active_repository().map(Repository::root)
-    }
-
-    /// The root of the repository `path` is in, or the worktree's own.
-    fn repository_root_of(&self, path: &Path) -> &Path {
-        self.repositories
-            .iter()
-            .rev()
-            .map(Repository::root)
-            .find(|root| path.starts_with(root))
-            .unwrap_or(&self.root)
     }
 
     /// Which repository `path` is in.
@@ -1091,12 +1074,6 @@ impl Review {
             .filter(|(changed, _)| wanted(changed))
             .map(|(changed, owner)| (*owner, changed.path.clone()))
             .collect()
-    }
-
-    /// The files git has never been told about, with the repository each is
-    /// in.
-    fn untracked(&self) -> Vec<(usize, PathBuf)> {
-        self.owned(Changed::is_untracked)
     }
 }
 

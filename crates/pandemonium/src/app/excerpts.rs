@@ -60,7 +60,7 @@ impl App {
     ///
     /// The documents are the files' own, opened the way a review opens them,
     /// so an excerpt and a tab showing the same file are the same text.
-    fn refresh_excerpts_of(&mut self, scope: Scope) {
+    pub(super) fn refresh_excerpts_of(&mut self, scope: Scope) {
         let Some(root) = self.root_of(scope) else {
             return;
         };
