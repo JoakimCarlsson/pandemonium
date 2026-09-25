@@ -12,6 +12,8 @@ use pm_ui::{
     measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
+use pm_core::Scope;
+
 use crate::editor::{Breakpoint, Crumbs, Display, OpenFile, buffer_view, crumb_bar, search_bar};
 use crate::excerpts::{OpenExcerpts, excerpts_view};
 use crate::message::Message;
@@ -87,41 +89,71 @@ pub struct Contents {
     pub crumbs: Option<Crumbs>,
 }
 
-/// Builds the whole tree of panes, `focused` when the window's own focus is.
+/// Builds the tree of panes `scope` draws, `focused` when the window's own
+/// focus is.
 pub fn pane_tree(
     theme: &Theme,
     tree: &PaneTree,
+    scope: Option<Scope>,
     focused: bool,
     contents: &dyn Fn(&Pane) -> Contents,
 ) -> Box<dyn Element<Message>> {
-    node(theme, tree, tree.root(), focused, contents)
+    let divided = tree.drawn(scope).len() > 1;
+    let drawing = Drawing {
+        theme,
+        tree,
+        scope,
+        focused,
+        divided,
+        contents,
+    };
+    drawing.node(tree.root())
 }
 
-/// Builds one node: a split of further nodes, or the pane at a leaf.
-fn node(
-    theme: &Theme,
-    tree: &PaneTree,
-    node: &Node,
+/// What every node of one drawing of the tree is built with.
+struct Drawing<'a> {
+    /// The theme the panes are drawn in.
+    theme: &'a Theme,
+    /// The tree being drawn.
+    tree: &'a PaneTree,
+    /// The worktree the window is showing.
+    scope: Option<Scope>,
+    /// Whether the window's own focus is on the panes.
     focused: bool,
-    contents: &dyn Fn(&Pane) -> Contents,
-) -> Box<dyn Element<Message>> {
-    match node {
-        Node::Pane(pane) => Box::new(pane_view(
-            theme,
-            pane,
-            contents(pane),
-            focused && tree.focus() == pane.id(),
-            tree.is_split(),
-        )),
-        Node::Split(node) => {
-            let id = node.id();
-            let mut element = split(node.axis()).on_resize(move |index, event, scale| {
-                Message::ResizeSplit(id, index, event, scale)
-            });
-            for (child, share) in node.children().iter().zip(node.shares()) {
-                element = element.child(*share, self::node(theme, tree, child, focused, contents));
+    /// Whether more than one pane is drawn.
+    divided: bool,
+    /// What each pane is showing.
+    contents: &'a dyn Fn(&Pane) -> Contents,
+}
+
+impl Drawing<'_> {
+    /// Builds one node: a split of the children `scope` draws, or the pane
+    /// at a leaf. A split drawing one child is no division, so that child is
+    /// drawn in its place.
+    fn node(&self, node: &Node) -> Box<dyn Element<Message>> {
+        match node {
+            Node::Pane(pane) => Box::new(pane_view(
+                self.theme,
+                pane,
+                (self.contents)(pane),
+                self.focused && self.tree.focus() == pane.id(),
+                self.divided,
+            )),
+            Node::Split(node) => {
+                let drawn = node.drawn(self.scope);
+                if let [only] = drawn[..] {
+                    return self.node(&node.children()[only]);
+                }
+                let id = node.id();
+                let mut element = split(node.axis()).on_resize(move |index, event, scale| {
+                    Message::ResizeSplit(id, index, event, scale)
+                });
+                for index in drawn {
+                    element =
+                        element.child(node.shares()[index], self.node(&node.children()[index]));
+                }
+                Box::new(element)
             }
-            Box::new(element)
         }
     }
 }

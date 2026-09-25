@@ -197,21 +197,23 @@ impl App {
     ///
     /// Without a file of its own the new pane shows what the old one was
     /// showing, which is what splitting a pane is for: the same file, twice,
-    /// at two places in it.
+    /// at two places in it. A pane showing nothing is not split at all: the
+    /// pane it would open could show nothing either, and two empty panes
+    /// divide the window for nothing.
     pub(super) fn split_pane(
         &mut self,
         pane: PaneId,
         item: Option<Item>,
         direction: SplitDirection,
     ) {
-        let item = item.or_else(|| self.panes.pane(pane)?.active(self.scope()));
-        let scope = item
-            .and_then(|item| self.scope_of(item))
-            .or_else(|| self.scope());
+        let Some(item) = item.or_else(|| self.panes.pane(pane)?.active(self.scope())) else {
+            return;
+        };
+        let scope = self.scope_of(item).or_else(|| self.scope());
         let Some(fresh) = self.panes.split(pane, direction) else {
             return;
         };
-        if let (Some(item), Some(fresh)) = (item, self.panes.pane_mut(fresh)) {
+        if let Some(fresh) = self.panes.pane_mut(fresh) {
             fresh.open(scope, item);
         }
         self.editor_focused = true;
@@ -903,7 +905,8 @@ impl App {
         let mut drawn = Vec::new();
         let mut drawn_tabs = Vec::new();
         let mut cells = Vec::new();
-        for pane in self.panes.panes() {
+        self.panes.keep_focus_drawn(self.scope());
+        for pane in self.panes.drawn(self.scope()) {
             drawn.push(pane);
             for item in self.tabs_of(pane) {
                 drawn_tabs.push((pane, item));
@@ -929,7 +932,7 @@ impl App {
         let caret = self.caret_solid();
         let display = self.preferences.display;
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
-        panes::pane_tree(theme, &self.panes, self.editor_focused, &|pane| {
+        panes::pane_tree(theme, &self.panes, scope, self.editor_focused, &|pane| {
             let (bounds, bar, tab_bounds) = cells
                 .iter()
                 .find(|(id, _)| *id == pane.id())

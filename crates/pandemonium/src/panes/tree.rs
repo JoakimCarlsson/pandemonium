@@ -385,30 +385,54 @@ impl Split {
         &self.shares
     }
 
-    /// Moves the divider after `index` by `delta` of the whole split.
+    /// The children drawn while the window shows `scope`, by their index.
+    ///
+    /// A child with nothing to show in that worktree gives its room to the
+    /// ones that do, so a division made in one project does not leave empty
+    /// halves in another. When no child shows anything the first is drawn
+    /// alone, which is how a window with nothing open is one empty pane.
+    pub fn drawn(&self, scope: Option<Scope>) -> Vec<usize> {
+        let shown = (0..self.children.len())
+            .filter(|index| self.children[*index].shows(scope))
+            .collect::<Vec<_>>();
+        if shown.is_empty() && !self.children.is_empty() {
+            vec![0]
+        } else {
+            shown
+        }
+    }
+
+    /// Moves the divider after the `index`-th child drawn in `scope` by
+    /// `delta` of the split as drawn.
     ///
     /// The two panes either side of a divider trade their shares between
     /// them: everything else in the split keeps what it had, which is what
     /// makes dragging one divider leave the rest of the window where it was.
     /// Every event of a drag reports travel from the same press, so what the
     /// travel is added to is where the divider stood when the press landed.
-    fn resize(&mut self, index: usize, delta: f32, phase: ResizePhase) {
+    fn resize(&mut self, index: usize, delta: f32, phase: ResizePhase, scope: Option<Scope>) {
+        let drawn = self.drawn(scope);
+        let (Some(first), Some(second)) =
+            (drawn.get(index).copied(), drawn.get(index + 1).copied())
+        else {
+            return;
+        };
         if phase == ResizePhase::Started {
-            self.dragging = self.shares.get(index).copied();
+            self.dragging = self.shares.get(first).copied();
         }
         let (Some(start), Some(before), Some(after)) = (
             self.dragging,
-            self.shares.get(index).copied(),
-            self.shares.get(index + 1).copied(),
+            self.shares.get(first).copied(),
+            self.shares.get(second).copied(),
         ) else {
             return;
         };
-        let whole: f32 = self.shares.iter().sum();
+        let whole: f32 = drawn.iter().map(|child| self.shares[*child]).sum();
         let pair = before + after;
         let min = MIN_SHARE * pair;
         let taken = (start + delta * whole).clamp(min, (pair - min).max(min));
-        self.shares[index] = taken;
-        self.shares[index + 1] = pair - taken;
+        self.shares[first] = taken;
+        self.shares[second] = pair - taken;
         if phase == ResizePhase::Ended {
             self.dragging = None;
         }
@@ -430,6 +454,26 @@ impl Node {
             (Self::Pane(pane), _) => Some(pane.id),
             (Self::Split(split), true) => split.children.last()?.edge(last),
             (Self::Split(split), false) => split.children.first()?.edge(last),
+        }
+    }
+
+    /// Whether anything under this node has a tab `scope` sees.
+    fn shows(&self, scope: Option<Scope>) -> bool {
+        match self {
+            Self::Pane(pane) => pane.shown(scope).next().is_some(),
+            Self::Split(split) => split.children.iter().any(|child| child.shows(scope)),
+        }
+    }
+
+    /// Calls `visit` on every pane under this node drawn in `scope`.
+    fn walk_drawn(&self, scope: Option<Scope>, visit: &mut impl FnMut(&Pane)) {
+        match self {
+            Self::Pane(pane) => visit(pane),
+            Self::Split(split) => {
+                for index in split.drawn(scope) {
+                    split.children[index].walk_drawn(scope, visit);
+                }
+            }
         }
     }
 
@@ -571,6 +615,24 @@ impl PaneTree {
         panes
     }
 
+    /// The panes drawn while the window shows `scope`, in drawing order.
+    pub fn drawn(&self, scope: Option<Scope>) -> Vec<PaneId> {
+        let mut panes = Vec::new();
+        self.root.walk_drawn(scope, &mut |pane| panes.push(pane.id));
+        panes
+    }
+
+    /// Hands the keyboard to a drawn pane when `scope` does not draw the one
+    /// holding it, so what is opened next lands where it can be seen.
+    pub fn keep_focus_drawn(&mut self, scope: Option<Scope>) {
+        let drawn = self.drawn(scope);
+        if !drawn.contains(&self.focus)
+            && let Some(first) = drawn.first()
+        {
+            self.focus = *first;
+        }
+    }
+
     /// Everything open in any pane of the window.
     pub fn held(&self) -> BTreeSet<Item> {
         let mut held = BTreeSet::new();
@@ -703,8 +765,16 @@ impl PaneTree {
         true
     }
 
-    /// Moves the divider after `index` in the split `id` names by `delta`.
-    pub fn resize(&mut self, id: SplitId, index: usize, delta: f32, phase: ResizePhase) {
+    /// Moves the divider after the `index`-th child `scope` draws in the
+    /// split `id` names by `delta`.
+    pub fn resize(
+        &mut self,
+        id: SplitId,
+        index: usize,
+        delta: f32,
+        phase: ResizePhase,
+        scope: Option<Scope>,
+    ) {
         fn find(node: &mut Node, id: SplitId) -> Option<&mut Split> {
             match node {
                 Node::Pane(_) => None,
@@ -719,7 +789,7 @@ impl PaneTree {
         }
 
         if let Some(split) = find(&mut self.root, id) {
-            split.resize(index, delta, phase);
+            split.resize(index, delta, phase, scope);
         }
     }
 

@@ -1049,8 +1049,14 @@ impl App {
         }
         if let Message::ResizeSplit(split, divider, event, scale) = message {
             if let Some(axis) = self.panes.split_axis(split) {
-                self.panes
-                    .resize(split, divider, event.delta(axis) * scale, event.phase);
+                let scope = self.scope();
+                self.panes.resize(
+                    split,
+                    divider,
+                    event.delta(axis) * scale,
+                    event.phase,
+                    scope,
+                );
             }
             self.store_settled(event);
             self.request_redraw();
