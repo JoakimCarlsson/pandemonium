@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::request::Request;
+
 /// The tool calls of one session, by the identity the agent gave each.
 pub type Tools = BTreeMap<String, ToolCall>;
 
@@ -40,8 +42,16 @@ pub enum Event {
     Mode(String),
     /// What the session can be set to, as the agent now offers it.
     Knobs(Vec<Knob>),
+    /// The title the agent has given the conversation, replacing the last.
+    Titled(String),
+    /// How much of the model's context the conversation fills, and what it
+    /// has cost so far.
+    Used(Usage),
     /// A tool call the agent will not run until the reader allows it.
     Asked(Ask),
+    /// A file or terminal request the window is to carry out and answer,
+    /// under the ticket given.
+    Requested(u64, Request),
     /// The turn is over, for the reason given.
     Stopped(Stop),
     /// The agent failed at something it was asked to do.
@@ -80,6 +90,26 @@ pub(crate) fn history(result: &Value) -> Vec<History> {
         .collect()
 }
 
+/// How much of the model's context a conversation fills.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Usage {
+    /// The tokens the context holds now.
+    pub used: u64,
+    /// The tokens it can hold.
+    pub size: u64,
+    /// What the conversation has cost so far, where the agent says.
+    pub cost: Option<Cost>,
+}
+
+/// An amount of money a conversation has cost.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cost {
+    /// How much.
+    pub amount: f64,
+    /// In what, as an ISO 4217 code.
+    pub currency: String,
+}
+
 /// Who is speaking in a run of text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Voice {
@@ -100,6 +130,25 @@ pub struct Method {
     pub name: String,
     /// What it does, where the agent explains it.
     pub description: Option<String>,
+    /// How the login is carried out.
+    pub way: Way,
+}
+
+/// How a login is carried out.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Way {
+    /// The agent does it when asked, by whatever flow it has of its own.
+    Asked,
+    /// The agent's own program is run in a terminal with these arguments and
+    /// variables, for the reader to log in through; the agent is started
+    /// again once that has finished.
+    Terminal {
+        /// What the program is run with, after the arguments it is always
+        /// run with.
+        args: Vec<String>,
+        /// Variables it is run with.
+        env: Vec<(String, String)>,
+    },
 }
 
 /// A mode a session can be put into.
@@ -193,6 +242,13 @@ pub struct ToolCall {
     pub output: Vec<Output>,
     /// The files it is working on.
     pub locations: Vec<Location>,
+    /// The one thing the tool was given to work on, where the agent passed
+    /// the tool's input on: the command it ran, the pattern it searched for,
+    /// the address it fetched.
+    pub argument: Option<String>,
+    /// What the tool gave back, where the agent passed that on as it was
+    /// rather than as output of its own.
+    pub returned: Option<String>,
 }
 
 /// What kind of work a tool call does.
@@ -247,6 +303,9 @@ pub enum Output {
         /// What it holds after.
         after: String,
     },
+    /// A terminal the agent started, showing what its command writes as it
+    /// runs.
+    Terminal(String),
 }
 
 /// A file a tool call names, and where in it.
@@ -353,11 +412,16 @@ pub(crate) fn event(update: &Value, tools: &mut Tools) -> Option<Event> {
         "available_commands_update" => Some(Event::Offers(commands(&update["availableCommands"]))),
         "current_mode_update" => Some(Event::Mode(update["currentModeId"].as_str()?.to_owned())),
         "config_option_update" => Some(Event::Knobs(knobs(&update["configOptions"]))),
+        "session_info_update" => Some(Event::Titled(update["title"].as_str()?.to_owned())),
+        "usage_update" => Some(Event::Used(usage(update)?)),
         _ => None,
     }
 }
 
 /// The login methods an agent answered its handshake with.
+///
+/// A method of a kind the editor cannot carry out — a key it would have to
+/// ask the reader for, say — is left out rather than offered and failed.
 pub(crate) fn methods(methods: &Value) -> Vec<Method> {
     methods
         .as_array()
@@ -368,9 +432,48 @@ pub(crate) fn methods(methods: &Value) -> Vec<Method> {
                 id: method["id"].as_str()?.to_owned(),
                 name: method["name"].as_str().unwrap_or("Log in").to_owned(),
                 description: method["description"].as_str().map(str::to_owned),
+                way: way(method)?,
             })
         })
         .collect()
+}
+
+/// How the login `method` describes is carried out, where the editor can.
+fn way(method: &Value) -> Option<Way> {
+    match method["type"].as_str() {
+        None | Some("agent") => Some(Way::Asked),
+        Some("terminal") => Some(Way::Terminal {
+            args: method["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|arg| arg.as_str().map(str::to_owned))
+                .collect(),
+            env: variables(&method["env"]),
+        }),
+        Some(_) => None,
+    }
+}
+
+/// The variables `env` sets, written either as a map or as a list of names
+/// and values.
+fn variables(env: &Value) -> Vec<(String, String)> {
+    match env {
+        Value::Object(map) => map
+            .iter()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+            .collect(),
+        Value::Array(list) => list
+            .iter()
+            .filter_map(|variable| {
+                Some((
+                    variable["name"].as_str()?.to_owned(),
+                    variable["value"].as_str().unwrap_or_default().to_owned(),
+                ))
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The modes an agent opened a conversation with.
@@ -499,6 +602,8 @@ fn merge(update: &Value, tools: &mut Tools) -> Option<ToolCall> {
         status: Status::Pending,
         output: Vec::new(),
         locations: Vec::new(),
+        argument: None,
+        returned: None,
     });
 
     if let Some(title) = update["title"].as_str() {
@@ -519,7 +624,66 @@ fn merge(update: &Value, tools: &mut Tools) -> Option<ToolCall> {
     if let Some(locations) = update["locations"].as_array() {
         call.locations = locations.iter().filter_map(location).collect();
     }
+    if let Some(argument) = argument(&update["rawInput"]) {
+        call.argument = Some(argument);
+    }
+    if let Some(returned) = returned(&update["rawOutput"]) {
+        call.returned = Some(returned);
+    }
     Some(call.clone())
+}
+
+/// The input fields that name what a tool works on, most telling first.
+const ARGUMENTS: [&str; 5] = ["command", "pattern", "query", "url", "description"];
+
+/// The one thing `input` gave a tool to work on, where it names one.
+///
+/// A tool's input is the tool's own shape, not the protocol's, so this reads
+/// the few fields every agent's shell, search and fetch tools agree on. A
+/// command given as a list of words is those words, as a shell would read
+/// them back.
+fn argument(input: &Value) -> Option<String> {
+    ARGUMENTS.iter().find_map(|field| match &input[*field] {
+        Value::String(argument) => Some(argument.clone()),
+        Value::Array(words) => {
+            let words = words.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+            (!words.is_empty()).then(|| words.join(" "))
+        }
+        _ => None,
+    })
+}
+
+/// What `output` comes to as text, where a tool gave anything back.
+///
+/// A tool that returned text is that text; one that returned a structure is
+/// the output fields shells report, or the structure written out whole.
+fn returned(output: &Value) -> Option<String> {
+    match output {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Object(fields) => ["output", "stdout", "result"]
+            .iter()
+            .find_map(|field| fields.get(*field)?.as_str().map(str::to_owned))
+            .or_else(|| Some(output.to_string())),
+        output => Some(output.to_string()),
+    }
+}
+
+/// The context usage `update` reports, where it reports a size to fill.
+fn usage(update: &Value) -> Option<Usage> {
+    Some(Usage {
+        used: update["used"].as_u64()?,
+        size: update["size"].as_u64().filter(|size| *size > 0)?,
+        cost: cost(&update["cost"]),
+    })
+}
+
+/// The cost `cost` reports, where it reports one whole.
+fn cost(cost: &Value) -> Option<Cost> {
+    Some(Cost {
+        amount: cost["amount"].as_f64()?,
+        currency: cost["currency"].as_str()?.to_owned(),
+    })
 }
 
 /// The plan steps `entries` lists.
@@ -564,6 +728,7 @@ fn output(output: &Value) -> Option<Output> {
             before: output["oldText"].as_str().map(str::to_owned),
             after: output["newText"].as_str().unwrap_or_default().to_owned(),
         }),
+        "terminal" => Some(Output::Terminal(output["terminalId"].as_str()?.to_owned())),
         _ => None,
     }
 }

@@ -32,6 +32,9 @@ const EMPTY_PANE_COMMANDS: [Action; 4] = [
     Action::NewTerminal,
 ];
 
+/// The most characters of a conversation's title a tab shows.
+const TAB_TITLE: usize = 32;
+
 impl App {
     /// The worktree the panes are showing: the active project's, or a session's.
     ///
@@ -618,6 +621,7 @@ impl App {
             .collect::<BTreeSet<_>>();
         self.editor.retain(&files);
         self.agents.retain(&sessions);
+        self.sweep_errands();
         if let Some(crate::app::Writing::Prompt(open)) = self.writing
             && !sessions.contains(&open)
         {
@@ -872,7 +876,9 @@ impl App {
                 let talk = self.agents.get(session)?;
                 Some(TabEntry {
                     item,
-                    name: talk.agent().name.to_owned(),
+                    name: talk
+                        .title()
+                        .map_or_else(|| talk.agent().name.to_owned(), shortened),
                     icon: IconName::Sparkle,
                     dirty: talk.is_busy(),
                     preview: false,
@@ -1236,4 +1242,14 @@ impl App {
         };
         Some((open, items))
     }
+}
+
+/// `title` held to what a tab has room for, cut at a word where it can be.
+fn shortened(title: &str) -> String {
+    if title.chars().count() <= TAB_TITLE {
+        return title.to_owned();
+    }
+    let cut = title.chars().take(TAB_TITLE).collect::<String>();
+    let kept = cut.rsplit_once(' ').map_or(cut.as_str(), |(kept, _)| kept);
+    format!("{}…", kept.trim_end())
 }

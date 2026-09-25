@@ -30,6 +30,8 @@ pub struct Run {
     pub text: String,
     /// How they are set.
     pub emphasis: Emphasis,
+    /// Where they lead, when they are the words of a link.
+    pub target: Option<String>,
 }
 
 /// One block of a document, in the order it is read.
@@ -216,6 +218,7 @@ impl<'a> Reader<'a> {
     fn runs(&mut self, stop: &dyn Fn(&Event<'_>) -> bool) -> Vec<Run> {
         let mut runs: Vec<Run> = Vec::new();
         let mut emphasis = Emphasis::default();
+        let mut target: Option<String> = None;
         while let Some(event) = self.events.get(self.at).cloned() {
             if stop(&event) {
                 break;
@@ -246,12 +249,14 @@ impl<'a> Reader<'a> {
                     emphasis.struck = false;
                     continue;
                 }
-                Event::Start(Tag::Link { .. }) => {
+                Event::Start(Tag::Link { dest_url, .. }) => {
                     emphasis.link = true;
+                    target = Some(dest_url.into_string());
                     continue;
                 }
                 Event::End(TagEnd::Link) => {
                     emphasis.link = false;
+                    target = None;
                     continue;
                 }
                 Event::Start(Tag::Image { .. }) => (self.text_until(TagEnd::Image), emphasis),
@@ -271,10 +276,13 @@ impl<'a> Reader<'a> {
                 _ => continue,
             };
             match runs.last_mut() {
-                Some(last) if last.emphasis == set => last.text.push_str(&text),
+                Some(last) if last.emphasis == set && last.target == target => {
+                    last.text.push_str(&text);
+                }
                 _ => runs.push(Run {
                     text,
                     emphasis: set,
+                    target: target.clone(),
                 }),
             }
         }

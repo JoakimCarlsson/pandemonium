@@ -10,7 +10,7 @@
 //! [`Talk`] is one of them — the agent, everything said to it and by it, the
 //! prompt being typed and whatever it is waiting to be allowed to do.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -25,8 +25,8 @@ use pm_gfx::Image;
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Ask, Attachment, Command, Event, History, Knob, Mode, Notify, Session, Setting,
-    Stop, Voice,
+    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Method, Mode, Notify,
+    Request, Session, Setting, Stop, Usage, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_ui::Bounds;
@@ -79,6 +79,12 @@ pub struct Talk {
     session: Option<SessionId>,
     /// The conversation itself, as the protocol carries it.
     conversation: Session,
+    /// What the worktree adds to the environment the agent was started in,
+    /// kept so that it is started the same way again after a login.
+    env: Vec<(String, String)>,
+    /// The ways of logging in the agent offered when it would not open a
+    /// conversation without one, until it has opened one.
+    logins: Vec<Method>,
     /// Everything said so far.
     transcript: Transcript,
     /// The buffer the next prompt is written in.
@@ -104,6 +110,9 @@ pub struct Talk {
     listing: bool,
     /// Why the agent could not list saved sessions, where it failed.
     history_error: Option<String>,
+    /// The worktree's files as a mention offers them, relative to its root,
+    /// listed when a mention starts and kept until the next one does.
+    mentionable: RefCell<Option<Vec<String>>>,
     /// Which of the commands a slash narrows to is selected.
     chosen: usize,
     /// Whether the reader has waved that list away for what is typed now.
@@ -118,6 +127,11 @@ pub struct Talk {
     unseen: bool,
     /// The mode the agent says it is in, where it has modes.
     mode: Option<String>,
+    /// The title the agent has given the conversation, where it has.
+    title: Option<String>,
+    /// How much of the model's context the conversation fills, where the
+    /// agent says.
+    usage: Option<Usage>,
     /// How far down the conversation the pane is scrolled, in logical pixels.
     scroll: f32,
     /// Where the conversation was last drawn, which is how much of it a
@@ -125,10 +139,16 @@ pub struct Talk {
     view: Bounds,
     /// How tall the conversation came to when it was last drawn.
     drawn_height: Rc<Cell<f32>>,
+    /// Where each link the pane last drew leads, in the order it drew them,
+    /// which is how a press on one names it.
+    drawn_links: Rc<RefCell<Vec<String>>>,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
     /// The tool and thought blocks the reader has opened.
     expanded_details: BTreeSet<usize>,
+    /// The last lines each terminal the agent started has written, by the
+    /// name the agent knows it by, for the tool calls that show one.
+    terminals: BTreeMap<String, String>,
 }
 
 /// One completion offered by a prompt prefix.
@@ -247,6 +267,18 @@ impl Talk {
         }
     }
 
+    /// Adds lines `first` to `last` of the file at `path`, which say `text`,
+    /// to the next prompt.
+    pub fn attach_selection(&mut self, path: PathBuf, first: usize, last: usize, text: String) {
+        self.attachment_previews.push(None);
+        self.attachments.push(Attachment::Selection {
+            path,
+            first,
+            last,
+            text,
+        });
+    }
+
     /// Removes the attachment at `place` before it is sent.
     pub fn remove_attachment(&mut self, place: usize) {
         if place < self.attachments.len() {
@@ -255,18 +287,67 @@ impl Talk {
         }
     }
 
+    /// Answers the file or terminal request raised under `ticket`.
+    pub fn answer_request(&self, ticket: u64, answer: Answer) {
+        self.conversation.answer_request(ticket, answer);
+    }
+
+    /// The last lines the terminal the agent calls `terminal` has written.
+    pub fn terminal_tail(&self, terminal: &str) -> Option<&str> {
+        self.terminals.get(terminal).map(String::as_str)
+    }
+
+    /// Takes down the last lines the terminal the agent calls `terminal` has
+    /// written, answering whether they are new.
+    pub fn show_terminal(&mut self, terminal: &str, tail: String) -> bool {
+        if self.terminals.get(terminal) == Some(&tail) {
+            return false;
+        }
+        self.terminals.insert(terminal.to_owned(), tail);
+        true
+    }
+
+    /// The ways of logging in the agent is waiting on the reader to choose
+    /// between, while it will not open a conversation without one.
+    pub fn logins(&self) -> &[Method] {
+        &self.logins
+    }
+
+    /// Adds something the editor itself has to say to the conversation.
+    pub fn note(&mut self, note: impl Into<String>) {
+        self.transcript.note(note);
+    }
+
+    /// The environment the worktree adds to the agent's.
+    pub fn env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
+    /// Asks the agent to log in by the method `method` names, which it does
+    /// by a flow of its own before opening the conversation.
+    pub fn log_in(&mut self, method: &Method) {
+        self.transcript
+            .note(format!("Logging in with {}…", method.name));
+        self.conversation.login(&method.id);
+    }
+
     /// The permission requests waiting on the reader.
     pub fn asks(&self) -> &[Ask] {
         &self.asks
     }
 
-    /// What the prompt is naming after a slash, when that is what it holds.
+    /// What the prompt is naming after a slash, when that is what it holds,
+    /// or after an at sign, when it ends in a file being mentioned.
     ///
     /// A command is only being named while it is the whole of the prompt: a
     /// slash with an argument after it has been named already, and a slash
-    /// in the middle of a sentence is a slash.
+    /// in the middle of a sentence is a slash. A mention is being named while
+    /// it is the word the prompt ends in.
     pub fn naming(&self) -> Option<(char, String)> {
         let typed = self.prompt.value();
+        if let Some(mention) = mentioning(&typed) {
+            return Some((MENTION, mention.to_lowercase()));
+        }
         let prefix = typed.chars().next()?;
         let named = match prefix {
             '/' => typed.strip_prefix('/')?,
@@ -288,6 +369,9 @@ impl Talk {
         let Some((prefix, named)) = self.naming().filter(|_| !self.dismissed) else {
             return Vec::new();
         };
+        if prefix == MENTION {
+            return self.mentions(&named);
+        }
         let source = match prefix {
             '$' => &self.skills,
             _ => &self.commands,
@@ -299,6 +383,39 @@ impl Talk {
                 prefix,
                 name: command.name.clone(),
                 description: command.description.clone(),
+            })
+            .collect()
+    }
+
+    /// The worktree's files `named` narrows a mention to, those whose name
+    /// starts with it first and shorter paths before longer ones.
+    fn mentions(&self, named: &str) -> Vec<Offered> {
+        let root = self.root().to_path_buf();
+        let mut listed = self.mentionable.borrow_mut();
+        let files = listed.get_or_insert_with(|| {
+            pm_core::walk(&root)
+                .into_iter()
+                .filter_map(|path| {
+                    let relative = path.strip_prefix(&root).ok()?;
+                    Some(relative.to_string_lossy().replace('\\', "/"))
+                })
+                .collect()
+        });
+        let mut found = files
+            .iter()
+            .filter(|file| file.to_lowercase().contains(named))
+            .collect::<Vec<_>>();
+        found.sort_by_key(|file| {
+            let name = file.rsplit('/').next().unwrap_or(file).to_lowercase();
+            (!name.starts_with(named), file.len())
+        });
+        found
+            .into_iter()
+            .take(MENTIONED)
+            .map(|file| Offered {
+                prefix: MENTION,
+                name: file.clone(),
+                description: String::new(),
             })
             .collect()
     }
@@ -362,9 +479,15 @@ impl Talk {
     }
 
     /// Starts the selection again, for a prompt that has been typed into.
+    ///
+    /// A mention just begun lists the worktree afresh, so a file the agent
+    /// wrote a moment ago is there to be mentioned.
     pub fn retyped(&mut self) {
         self.chosen = 0;
         self.dismissed = false;
+        if self.naming() == Some((MENTION, String::new())) {
+            self.mentionable.borrow_mut().take();
+        }
     }
 
     /// Puts the command in `place` of what is offered into the prompt.
@@ -377,6 +500,15 @@ impl Talk {
         let Some(command) = offered.get(place) else {
             return;
         };
+        if command.prefix == MENTION {
+            let typed = self.prompt.value();
+            let before = typed.rfind(MENTION).map_or("", |at| &typed[..at]);
+            self.prompt
+                .set(&format!("{before}{MENTION}{} ", command.name));
+            self.chosen = 0;
+            self.dismissed = false;
+            return;
+        }
         self.prompt
             .set(&format!("{}{} ", command.prefix, command.name));
         self.chosen = 0;
@@ -401,6 +533,17 @@ impl Talk {
     /// The mode the agent is in, where it has modes.
     pub fn mode(&self) -> Option<&str> {
         self.mode.as_deref()
+    }
+
+    /// The title the agent has given the conversation, where it has.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// How much of the model's context the conversation fills, where the
+    /// agent says.
+    pub fn usage(&self) -> Option<&Usage> {
+        self.usage.as_ref()
     }
 
     /// The modes the agent takes, in the order it offered them.
@@ -543,6 +686,17 @@ impl Talk {
         self.drawn_height.clone()
     }
 
+    /// Where the links the pane last drew lead, shared with the pane
+    /// drawing them.
+    pub fn drawn_links(&self) -> Rc<RefCell<Vec<String>>> {
+        self.drawn_links.clone()
+    }
+
+    /// Where the link the pane drew in `place` leads.
+    pub fn drawn_link(&self, place: usize) -> Option<String> {
+        self.drawn_links.borrow().get(place).cloned()
+    }
+
     /// Scrolls the pane `pixels` down, or up when negative, no further than
     /// `end`, where the last row sits against the foot of the pane.
     ///
@@ -607,6 +761,15 @@ impl Talk {
         if !shown.is_empty() {
             self.transcript.say(Voice::Reader, &shown);
         }
+        let mut attachments = attachments;
+        for path in mentioned(self.root(), &text) {
+            if !attachments
+                .iter()
+                .any(|attached| matches!(attached, Attachment::File(file) if *file == path))
+            {
+                attachments.push(Attachment::File(path));
+            }
+        }
         for preview in previews.into_iter().flatten() {
             self.transcript.picture(preview);
         }
@@ -642,7 +805,10 @@ impl Talk {
     /// Takes in one thing the agent said.
     fn take(&mut self, event: Event) {
         match event {
-            Event::Ready => self.ready = true,
+            Event::Ready => {
+                self.ready = true;
+                self.logins.clear();
+            }
             Event::Listed(page, more) => {
                 self.history.extend(page);
                 self.listing = more;
@@ -652,13 +818,15 @@ impl Talk {
                 self.listing = false;
             }
             Event::Login(methods) => {
-                let names = methods
-                    .iter()
-                    .map(|method| method.name.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                self.transcript
-                    .note(format!("{} needs logging in: {names}", self.agent().name));
+                let note = match methods.is_empty() {
+                    true => format!(
+                        "{} needs logging in, and offers no way the editor can do it.",
+                        self.agent().name
+                    ),
+                    false => format!("{} needs logging in.", self.agent().name),
+                };
+                self.transcript.note(note);
+                self.logins = methods;
             }
             Event::Said(voice, text) => self.transcript.say(voice, &text),
             Event::Ran(call) => self.transcript.ran(call),
@@ -666,7 +834,10 @@ impl Talk {
             Event::Offers(commands) => self.commands = commands,
             Event::Mode(mode) => self.mode = Some(mode),
             Event::Knobs(_) => {}
+            Event::Titled(title) => self.title = Some(title).filter(|title| !title.is_empty()),
+            Event::Used(usage) => self.usage = Some(usage),
             Event::Asked(ask) => self.asks.push(ask),
+            Event::Requested(..) => {}
             Event::Stopped(stop) => {
                 self.busy = false;
                 self.busy_since = None;
@@ -698,6 +869,49 @@ impl Drop for Talk {
             let _ = fs::remove_file(path);
         }
     }
+}
+
+/// What starts a mention of a file in a prompt.
+const MENTION: char = '@';
+
+/// The most files a mention offers at once.
+const MENTIONED: usize = 50;
+
+/// What trails a mention in prose without being part of the path.
+const AFTER_MENTION: &[char] = &['.', ',', ';', ':', '!', '?', ')', '\'', '"'];
+
+/// The mention `typed` ends in, without its at sign, when it ends in one.
+fn mentioning(typed: &str) -> Option<&str> {
+    typed
+        .rsplit(char::is_whitespace)
+        .next()?
+        .strip_prefix(MENTION)
+}
+
+/// The files of the worktree at `root` that `text` mentions, in the order
+/// it mentions them.
+///
+/// A mention is an at sign and a path from the root, and only one naming a
+/// file that is there, inside the worktree, is taken: an address in an
+/// email is an at sign too.
+fn mentioned(root: &Path, text: &str) -> Vec<PathBuf> {
+    let Ok(inside) = root.canonicalize() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for word in text.split_whitespace() {
+        let Some(named) = word.strip_prefix(MENTION) else {
+            continue;
+        };
+        let path = root.join(named.trim_end_matches(AFTER_MENTION));
+        let there = path
+            .canonicalize()
+            .is_ok_and(|resolved| resolved.starts_with(&inside) && resolved.is_file());
+        if there && !found.contains(&path) {
+            found.push(path);
+        }
+    }
+    found
 }
 
 /// Finds skills Codex can invoke from the user's and worktree's skill folders.
@@ -774,6 +988,9 @@ pub struct Talks {
     opened: bool,
     /// The sessions whose agent went away on its own since this was asked.
     ended: Vec<TalkId>,
+    /// The file and terminal requests the agents have raised and the window
+    /// has not yet taken, with the ticket each is answered under.
+    requests: Vec<(TalkId, u64, Request)>,
 }
 
 impl Talks {
@@ -857,6 +1074,8 @@ impl Talks {
                 project,
                 session,
                 conversation,
+                env: env.to_vec(),
+                logins: Vec::new(),
                 transcript: Transcript::default(),
                 prompt: Input::many_lines("Prompt"),
                 attachments: Vec::new(),
@@ -868,6 +1087,7 @@ impl Talks {
                 history: Vec::new(),
                 listing: false,
                 history_error: None,
+                mentionable: RefCell::new(None),
                 chosen: 0,
                 dismissed: false,
                 ready: false,
@@ -875,14 +1095,49 @@ impl Talks {
                 busy_since: None,
                 unseen: false,
                 mode: None,
+                title: None,
+                usage: None,
                 scroll: 0.0,
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
+                drawn_links: Rc::default(),
                 following: true,
                 expanded_details: BTreeSet::new(),
+                terminals: BTreeMap::new(),
             },
         );
         Some(id)
+    }
+
+    /// Starts the agent of the conversation `id` names again, in a new
+    /// conversation, answering whether it started.
+    ///
+    /// This is what follows a login the agent had the reader do outside it:
+    /// the agent reads what the login left behind only when it starts.
+    pub fn restart(&mut self, id: TalkId) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        match Session::start(talk.agent(), talk.root(), &talk.env, notify) {
+            Ok(conversation) => {
+                talk.conversation = conversation;
+                talk.ready = false;
+                talk.busy = false;
+                talk.busy_since = None;
+                talk.logins.clear();
+                talk.asks.clear();
+                talk.transcript.note("Logged in. Starting the agent again…");
+                true
+            }
+            Err(error) => {
+                talk.transcript
+                    .note(format!("The agent would not start again: {error}"));
+                false
+            }
+        }
     }
 
     /// How many sessions `project` has running.
@@ -974,6 +1229,11 @@ impl Talks {
         let mut changed = false;
         for talk in self.talks.values_mut() {
             for event in talk.conversation.drain() {
+                if let Event::Requested(ticket, request) = event {
+                    self.requests.push((talk.id, ticket, request));
+                    changed = true;
+                    continue;
+                }
                 self.opened |= matches!(event, Event::Ready);
                 if matches!(event, Event::Ended) {
                     self.ended.push(talk.id);
@@ -983,6 +1243,12 @@ impl Talks {
             }
         }
         changed
+    }
+
+    /// The file and terminal requests raised since this was last asked, each
+    /// with the conversation and the ticket it is answered through.
+    pub fn take_requests(&mut self) -> Vec<(TalkId, u64, Request)> {
+        std::mem::take(&mut self.requests)
     }
 
     /// Whether a conversation has been opened since this was last asked.

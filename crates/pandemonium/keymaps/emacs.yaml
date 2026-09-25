@@ -131,6 +131,7 @@ bindings:
       primary+k right: pane.split_right
   - when: pane.kind == file
     keys:
+      primary+shift+.: agent.add_selection
       primary+f3: search.selection
   - when: os == macos
     keys:

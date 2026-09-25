@@ -7,6 +7,7 @@
 
 mod agent;
 mod clicks;
+mod client;
 mod commands;
 mod debug;
 mod disk;
@@ -367,6 +368,12 @@ pub struct App {
     agents: Talks,
     /// The shells the window is running, one per project.
     terminals: Terminals,
+    /// The terminals agents have started among those shells, and what the
+    /// agents are waiting to hear about them.
+    errands: client::Errands,
+    /// The logins running in terminals, as the conversation each is for and
+    /// the worktree and shell it runs as.
+    logins: Vec<(crate::agent::TalkId, Scope, crate::terminal::ShellId)>,
     /// What the reader is being told about in the status bar.
     notices: Notices,
     /// The breakpoints each worktree keeps, and the program each debugs.
@@ -521,6 +528,8 @@ impl App {
             menu: None,
             agents: Talks::default(),
             terminals: Terminals::default(),
+            errands: client::Errands::default(),
+            logins: Vec::new(),
             notices: Notices::default(),
             debuggers: crate::debug::Debuggers::default(),
             terminal_focused: false,
@@ -2102,7 +2111,9 @@ impl ApplicationHandler<Wake> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         match event {
             Wake::Terminal => {
-                if self.terminals.pump() {
+                let pumped = self.terminals.pump();
+                let logged_in = self.follow_logins();
+                if pumped | self.follow_errands() | logged_in {
                     self.hear_failed_shells();
                     self.close_empty_panel();
                     self.request_redraw();
@@ -2111,6 +2122,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Agent => {
                 let before = self.agents.tally();
                 if self.agents.pump() {
+                    self.serve_agents();
                     self.refresh_agent_history();
                     self.hear_ended_agents();
                     self.call_reader(before);

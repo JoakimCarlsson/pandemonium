@@ -129,6 +129,7 @@ impl App {
             }
             Action::OpenMarkdownPreview => self.open_rendered(),
             Action::NewAgentSession => return self.apply(Message::NewAgentSession),
+            Action::AddSelectionToAgent => self.add_selection_to_agent(),
             Action::FinishSession => {
                 if let Some(session) = self.selected_session() {
                     return self.apply(Message::FinishSession(session));
