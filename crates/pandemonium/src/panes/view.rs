@@ -136,6 +136,14 @@ fn pane_view(
 ) -> Measured<Message> {
     let id = pane.id();
     let active = contents.active;
+    let previewable = contents.tabs.iter().any(|tab| {
+        Some(tab.item) == active
+            && matches!(tab.item, Item::File(_) | Item::Image(_))
+            && (tab.name.to_ascii_lowercase().ends_with(".svg")
+                || [".md", ".markdown", ".mdown", ".mkd"]
+                    .iter()
+                    .any(|ending| tab.name.to_ascii_lowercase().ends_with(ending)))
+    });
     let tabs = contents
         .tabs
         .into_iter()
@@ -175,7 +183,7 @@ fn pane_view(
         .when(!tabs.is_empty(), |view| {
             view.child(measured(
                 contents.bar,
-                tab_bar(theme, tabs, pane_actions(theme, id, divided)),
+                tab_bar(theme, tabs, pane_actions(theme, id, divided, previewable)),
             ))
         })
         .when_some(
@@ -249,12 +257,15 @@ fn pane_tab(pane: PaneId, held: &TabEntry, active: bool, bounds: Bounds) -> Tab<
 }
 
 /// Builds the pane's own controls, at the end of its bar of tabs.
-fn pane_actions(theme: &Theme, id: PaneId, divided: bool) -> Div<Message> {
+fn pane_actions(theme: &Theme, id: PaneId, divided: bool, previewable: bool) -> Div<Message> {
     h_flex()
         .h_full()
         .px(1.5)
         .gap(1)
         .items_center()
+        .when(previewable, |actions| {
+            actions.child(icon_button(theme, IconName::Eye, Message::PreviewFile(id)))
+        })
         .child(icon_button(
             theme,
             IconName::Split,

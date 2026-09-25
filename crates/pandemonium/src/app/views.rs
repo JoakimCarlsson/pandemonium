@@ -10,6 +10,65 @@ use crate::image::Images;
 use crate::panes::{Item, PaneId, SplitDirection};
 
 impl App {
+    /// Opens the matching rendered view or SVG source beside `pane`.
+    pub(super) fn open_file_preview(&mut self, pane: PaneId) {
+        let active = self
+            .panes
+            .pane(pane)
+            .and_then(|pane| pane.active(self.scope()));
+        let item = match active {
+            Some(Item::File(file)) => {
+                let Some(path) = self.editor.path(file) else {
+                    return;
+                };
+                if crate::markdown::is_markdown(&path) {
+                    Item::Rendered(file)
+                } else if is_svg(&path) {
+                    let Some(scope) = self.editor.scope_of(file) else {
+                        return;
+                    };
+                    Item::Image(self.images.open(scope, &path, false))
+                } else {
+                    return;
+                }
+            }
+            Some(Item::Image(image)) => {
+                let Some(scope) = self.images.scope_of(image) else {
+                    return;
+                };
+                let Some(path) = self.images.path_of(image).filter(|path| is_svg(path)) else {
+                    return;
+                };
+                let path = path.to_path_buf();
+                let Some(root) = self.root_of(scope) else {
+                    return;
+                };
+                let Some(file) = self.editor.open(scope, &root, &path, false) else {
+                    return;
+                };
+                Item::File(file)
+            }
+            _ => return,
+        };
+        self.open_beside(pane, item);
+    }
+
+    /// Brings an existing view forward or opens it beside `pane`.
+    fn open_beside(&mut self, pane: PaneId, item: Item) {
+        let holder = self.panes.panes().into_iter().find(|pane| {
+            self.panes
+                .pane(*pane)
+                .is_some_and(|pane| pane.items().any(|held| held == item))
+        });
+        match holder {
+            Some(holder) => self.activate_tab(holder, item),
+            None => {
+                self.split_pane(pane, Some(item), SplitDirection::Right);
+                self.sweep();
+            }
+        }
+    }
+
     /// Opens `path` of `scope` as a picture in `pane`, when it is one,
     /// saying whether it was.
     ///
@@ -23,7 +82,7 @@ impl App {
         path: &Path,
         preview: bool,
     ) -> bool {
-        if !Images::is_picture(path) {
+        if !Images::is_picture(path) || is_svg(path) {
             return false;
         }
         let image = self.images.open(scope, path, preview);
@@ -46,20 +105,7 @@ impl App {
         if !markdown {
             return;
         }
-        let item = Item::Rendered(file);
-        let holder = self.panes.panes().into_iter().find(|pane| {
-            self.panes
-                .pane(*pane)
-                .is_some_and(|pane| pane.items().any(|held| held == item))
-        });
-        match holder {
-            Some(pane) => self.activate_tab(pane, item),
-            None => {
-                let pane = self.panes.focus();
-                self.split_pane(pane, Some(item), SplitDirection::Right);
-                self.sweep();
-            }
-        }
+        self.open_beside(self.panes.focus(), Item::Rendered(file));
     }
 
     /// Scrolls the rendered markdown under the pointer by `delta` logical
@@ -84,4 +130,11 @@ impl App {
             .unwrap_or_else(|| self.panes.focus());
         self.panes.pane(pane)?.active(self.scope())
     }
+}
+
+/// Whether `path` is an SVG whose source can be edited beside its image.
+fn is_svg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ending| ending.to_str())
+        .is_some_and(|ending| ending.eq_ignore_ascii_case("svg"))
 }

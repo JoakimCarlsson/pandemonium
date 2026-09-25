@@ -49,6 +49,7 @@ pub fn rendered_pane(
     let column = v_flex()
         .w_full()
         .max_w_px(COLUMN)
+        .mx_auto()
         .px(4)
         .py(3)
         .gap(1.5)
@@ -61,7 +62,7 @@ pub fn rendered_pane(
         .overflow_hidden()
         .bg(theme.colors.background)
         .child(
-            scroll_area(scroll, h_flex().w_full().justify_center().child(column))
+            scroll_area(scroll, v_flex().w_full().child(column))
                 .w_full()
                 .flex_1(),
         )
