@@ -611,6 +611,10 @@ fn detail(description: Option<&str>, current: bool) -> String {
 /// The file in the worktree at `root` that `link` names, and the line in it
 /// counted from nought, where it names a file that is there.
 ///
+/// The link is the agent's to write, so a file it names outside the worktree
+/// — by an absolute path, or by climbing out through `..` or a link — is not
+/// opened: the conversation is about the worktree it was started in.
+///
 /// A line is read from the `#L12` an address in a browser would carry, or
 /// from the `:12` or `:12:4` a compiler writes after a path.
 fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
@@ -627,8 +631,11 @@ fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
         None => after_colons(path),
     };
     let path = root.join(path.replace("%20", " "));
-    path.is_file()
-        .then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
+    let resolved = path.canonicalize().ok()?;
+    let inside = root
+        .canonicalize()
+        .is_ok_and(|root| resolved.starts_with(root));
+    (inside && resolved.is_file()).then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
 }
 
 /// `path` without the `:line` or `:line:column` written after it, and the
