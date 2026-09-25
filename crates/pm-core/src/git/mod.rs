@@ -19,6 +19,7 @@ mod diff;
 mod graph;
 mod head;
 mod index;
+mod operation;
 mod run;
 mod status;
 mod worktree;
@@ -35,6 +36,7 @@ pub use diff::{Hunk, Line, LineKind, Side, diff, diffs};
 pub use graph::{Edge, Half, Lanes};
 pub use head::Head;
 pub use index::{baseline, committed, discard, discard_all, stage, unstage, write_index};
+pub use operation::{Merge, Operation, abort_merge, operation};
 pub use run::Said;
 pub use status::{Changed, FileStatus, Status};
 pub use worktree::{

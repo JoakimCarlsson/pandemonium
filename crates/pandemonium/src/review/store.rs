@@ -453,9 +453,17 @@ impl Review {
     /// what the control says in its place.
     pub fn committable(&self, repository: usize) -> (String, Option<&'static str>) {
         let staged = self.staged_of(repository);
-        let title = match staged {
-            0 => "Commit Tracked".to_owned(),
-            _ => "Commit".to_owned(),
+        let merging = self
+            .repositories
+            .get(repository)
+            .is_some_and(|held| held.head().operation.is_some());
+        let title = if merging {
+            "Commit Merge".to_owned()
+        } else {
+            match staged {
+                0 => "Commit Tracked".to_owned(),
+                _ => "Commit".to_owned(),
+            }
         };
         let unsaid = self
             .repositories
@@ -464,7 +472,7 @@ impl Review {
 
         let stopped = if self.changed_in(repository).any(Changed::is_conflicted) {
             Some("Resolve the conflicts before committing")
-        } else if staged == 0 && self.tracked(repository) == 0 {
+        } else if !merging && staged == 0 && self.tracked(repository) == 0 {
             Some(NOTHING_TO_COMMIT)
         } else if unsaid {
             Some("No commit message")
@@ -1037,7 +1045,11 @@ impl Review {
     /// trying again.
     pub fn commit(&mut self) {
         let active = self.active;
-        let tracked = self.staged_of(active) == 0;
+        let tracked = self.staged_of(active) == 0
+            && self
+                .repositories
+                .get(active)
+                .is_some_and(|held| held.head().operation.is_none());
         let Some(repository) = self.active_repository_mut() else {
             return;
         };
@@ -1045,6 +1057,16 @@ impl Review {
         if said.is_ok() {
             repository.message_mut().clear();
         }
+        self.done(active, said);
+    }
+
+    /// Aborts the active repository's pending merge.
+    pub fn abort_merge(&mut self) {
+        let active = self.active;
+        let Some(repository) = self.active_repository() else {
+            return;
+        };
+        let said = pm_core::abort_merge(repository.root());
         self.done(active, said);
     }
 

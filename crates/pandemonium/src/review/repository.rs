@@ -87,6 +87,11 @@ impl Repository {
 
     /// Takes in what git said the repository held and what led up to it.
     pub(super) fn take(&mut self, reading: RepositoryReading) {
+        if self.unsaid()
+            && let Some(pm_core::Operation::Merge(merge)) = &reading.status.head().operation
+        {
+            self.message.set(&merge.message);
+        }
         self.status = reading.status;
         self.history = reading.history;
     }

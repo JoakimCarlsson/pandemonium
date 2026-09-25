@@ -1137,7 +1137,16 @@ impl App {
             MenuTarget::Commit => vec![
                 pm_ui::menu_entry("Commit", Some(Message::Commit)),
                 pm_ui::menu_entry("Commit and Push", Some(Message::CommitAndPush)),
-            ],
+            ]
+            .into_iter()
+            .chain(
+                self.review()
+                    .is_some_and(|review| {
+                        review.head().is_some_and(|head| head.operation.is_some())
+                    })
+                    .then(|| pm_ui::menu_entry("Abort Merge", Some(Message::AbortMerge))),
+            )
+            .collect(),
             MenuTarget::SourceControl => vec![
                 pm_ui::menu_entry("Pull", Some(Message::Pull)),
                 pm_ui::menu_entry("Push", Some(Message::PushBranch)),
@@ -1153,7 +1162,16 @@ impl App {
                 pm_ui::menu_entry("Commit", Some(Message::Commit)),
                 pm_ui::menu_entry("Commit and Push", Some(Message::CommitAndPush)),
                 pm_ui::menu_entry("Refresh", Some(Message::RefreshChanges)),
-            ],
+            ]
+            .into_iter()
+            .chain(
+                self.review()
+                    .is_some_and(|review| {
+                        review.head().is_some_and(|head| head.operation.is_some())
+                    })
+                    .then(|| pm_ui::menu_entry("Abort Merge", Some(Message::AbortMerge))),
+            )
+            .collect(),
             MenuTarget::HistoryRefs => vec![
                 pm_ui::menu_entry("Auto", Some(Message::SetHistoryFilter(false))),
                 pm_ui::menu_entry("All", Some(Message::SetHistoryFilter(true))),

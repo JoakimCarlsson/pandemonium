@@ -18,6 +18,8 @@ pub struct Head {
     pub ahead: usize,
     /// Commits the branch it follows has that this one has not.
     pub behind: usize,
+    /// An operation awaiting a commit in this worktree.
+    pub operation: Option<crate::git::Operation>,
 }
 
 /// How much of a commit hash names it where a branch would be named.
