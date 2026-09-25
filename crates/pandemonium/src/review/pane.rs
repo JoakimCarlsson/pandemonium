@@ -502,6 +502,7 @@ fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
         Row::Line(path, staged, line) => line_row(theme, line, review.shade(path, staged, line)),
         Row::Pair(path, staged, old, new) => h_flex()
             .w_full()
+            .h_px(theme.size.row)
             .items_stretch()
             .overflow_hidden()
             .child(half(theme, review, path, staged, old, false))
@@ -682,6 +683,7 @@ fn line_row(theme: &Theme, line: &Line, shade: Option<&[Option<Highlight>]>) -> 
 
     h_flex()
         .w_full()
+        .h_px(theme.size.row)
         .items_stretch()
         .overflow_hidden()
         .when_some(wash, Div::bg)
@@ -801,7 +803,7 @@ fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message
         }
     }
 
-    h_flex().children(runs.into_iter().map(|(highlight, run)| {
+    h_flex().items_center().children(runs.into_iter().map(|(highlight, run)| {
         let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
         text(run).text_sm().font_mono().color(color)
     }))
