@@ -438,6 +438,9 @@ pub enum Message {
     AnswerAgent(TalkId, u64, usize),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
+    /// Follow the link this session's pane drew in this place: open the
+    /// file it names, or the address in the browser.
+    FollowAgentLink(TalkId, usize),
     /// Choose files to add to this agent's next prompt.
     AttachAgentFiles(TalkId),
     /// Remove an attachment from this agent's next prompt.

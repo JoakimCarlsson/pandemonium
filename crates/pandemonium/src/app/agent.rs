@@ -5,11 +5,16 @@
 //! is running are the window's, and they are here. Every command a session
 //! answers to goes through [`App::agent_command`].
 
+use std::path::{Path, PathBuf};
+
 use pm_acp::{About, Agent, Knob, Setting};
+use pm_text::Position;
 use winit::window::UserAttentionType;
 
 use crate::agent::{TalkId, Tally};
+use crate::app::places::Place;
 use crate::app::{App, Writing};
+use crate::desktop;
 use crate::message::Message;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Row};
@@ -36,6 +41,7 @@ impl App {
                     talk.toggle_details(block);
                 }
             }
+            Message::FollowAgentLink(session, place) => self.follow_agent_link(session, place),
             Message::AttachAgentFiles(session) => self.attach_agent_files(session),
             Message::RemoveAgentAttachment(session, place) => {
                 if let Some(talk) = self.agents.get_mut(session) {
@@ -410,6 +416,31 @@ impl App {
         self.follow_agents();
     }
 
+    /// Follows the link `session`'s pane drew in `place`.
+    ///
+    /// An agent names the files it talks about as links to them, relative to
+    /// its worktree and often with a line after them; those open in the
+    /// editor at that line, and anything else goes to the browser.
+    fn follow_agent_link(&mut self, session: TalkId, place: usize) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let Some(link) = talk.drawn_link(place) else {
+            return;
+        };
+        match linked_file(talk.root(), &link) {
+            Some((path, line)) => {
+                let place = Place {
+                    scope: talk.scope(),
+                    path,
+                    position: Position::new(line, 0),
+                };
+                self.jump_to(&place);
+            }
+            None => desktop::browse(&link),
+        }
+    }
+
     /// Lets the reader choose files for this agent's next turn.
     fn attach_agent_files(&mut self, session: TalkId) {
         let Some(paths) = rfd::FileDialog::new()
@@ -575,4 +606,46 @@ fn detail(description: Option<&str>, current: bool) -> String {
         (description, true) => format!("current · {description}"),
         (description, false) => description.to_owned(),
     }
+}
+
+/// The file in the worktree at `root` that `link` names, and the line in it
+/// counted from nought, where it names a file that is there.
+///
+/// A line is read from the `#L12` an address in a browser would carry, or
+/// from the `:12` or `:12:4` a compiler writes after a path.
+fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
+    let path = match link.split_once("://") {
+        Some(("file", path)) => path,
+        Some(_) => return None,
+        None => link,
+    };
+    let (path, line) = match path.split_once("#L") {
+        Some((path, line)) => (
+            path,
+            line.split('-').next().and_then(|line| line.parse().ok()),
+        ),
+        None => after_colons(path),
+    };
+    let path = root.join(path.replace("%20", " "));
+    path.is_file()
+        .then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
+}
+
+/// `path` without the `:line` or `:line:column` written after it, and the
+/// line, where one was.
+fn after_colons(path: &str) -> (&str, Option<usize>) {
+    match numbered(path) {
+        Some((rest, last)) => match numbered(rest) {
+            Some((file, line)) => (file, line.parse().ok()),
+            None => (rest, last.parse().ok()),
+        },
+        None => (path, None),
+    }
+}
+
+/// `path` split before the number written after its last colon, where a
+/// number is what follows it.
+fn numbered(path: &str) -> Option<(&str, &str)> {
+    path.rsplit_once(':')
+        .filter(|(_, number)| number.parse::<usize>().is_ok())
 }

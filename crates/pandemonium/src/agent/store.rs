@@ -10,7 +10,7 @@
 //! [`Talk`] is one of them — the agent, everything said to it and by it, the
 //! prompt being typed and whatever it is waiting to be allowed to do.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -130,6 +130,9 @@ pub struct Talk {
     view: Bounds,
     /// How tall the conversation came to when it was last drawn.
     drawn_height: Rc<Cell<f32>>,
+    /// Where each link the pane last drew leads, in the order it drew them,
+    /// which is how a press on one names it.
+    drawn_links: Rc<RefCell<Vec<String>>>,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
     /// The tool and thought blocks the reader has opened.
@@ -582,6 +585,17 @@ impl Talk {
         self.drawn_height.clone()
     }
 
+    /// Where the links the pane last drew lead, shared with the pane
+    /// drawing them.
+    pub fn drawn_links(&self) -> Rc<RefCell<Vec<String>>> {
+        self.drawn_links.clone()
+    }
+
+    /// Where the link the pane drew in `place` leads.
+    pub fn drawn_link(&self, place: usize) -> Option<String> {
+        self.drawn_links.borrow().get(place).cloned()
+    }
+
     /// Scrolls the pane `pixels` down, or up when negative, no further than
     /// `end`, where the last row sits against the foot of the pane.
     ///
@@ -925,6 +939,7 @@ impl Talks {
                 scroll: 0.0,
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
+                drawn_links: Rc::default(),
                 following: true,
                 expanded_details: BTreeSet::new(),
                 terminals: BTreeMap::new(),
