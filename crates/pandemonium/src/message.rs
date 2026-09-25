@@ -428,6 +428,12 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
+    /// Open or close tool or thinking details in this session's transcript.
+    ToggleAgentDetails(TalkId, usize),
+    /// Choose files to add to this agent's next prompt.
+    AttachAgentFiles(TalkId),
+    /// Remove an attachment from this agent's next prompt.
+    RemoveAgentAttachment(TalkId, usize),
     /// Put the command this session is offering in this place into its prompt.
     TakeAgentCommand(TalkId, usize),
     /// Ask which of its agent's modes to put this session into.

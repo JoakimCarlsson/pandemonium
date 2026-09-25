@@ -1778,6 +1778,8 @@ name = "pandemonium"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64",
+ "image",
  "pm-acp",
  "pm-core",
  "pm-dap",

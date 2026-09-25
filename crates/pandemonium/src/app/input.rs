@@ -16,6 +16,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::ResizeDirection;
 
 use crate::app::{App, Writing};
+use crate::desktop;
 use crate::editor::{self, Completions};
 use crate::field::Typed;
 use crate::keymap::{self, Action, Context, Resolution, keys};
@@ -24,9 +25,6 @@ use crate::terminal;
 
 /// Logical pixels one notch of a mouse wheel scrolls.
 pub(super) const WHEEL_STEP: f32 = 48.0;
-
-/// How many notches a page key scrolls.
-const PAGE_NOTCHES: f32 = 4.0;
 
 /// How many rows of a picker a page key moves through.
 const PICKER_PAGE: isize = 10;
@@ -51,6 +49,23 @@ pub(super) const DOUBLE_CLICK_INTERVAL: std::time::Duration = std::time::Duratio
 const WINDOW_RESIZE_EDGE: f32 = 8.0;
 
 impl App {
+    /// The logical height of the pane under the pointer, or the focused pane.
+    pub(super) fn scroll_viewport_height(&self) -> f32 {
+        let pane = self
+            .pointer
+            .and_then(|pointer| self.geometry.pane_at(pointer))
+            .unwrap_or_else(|| self.panes.focus());
+        self.geometry
+            .pane_size(pane)
+            .map(|size| size.height)
+            .or_else(|| {
+                self.window
+                    .as_ref()
+                    .map(|window| window.inner_size().height as f32 / window.scale_factor() as f32)
+            })
+            .unwrap_or(WHEEL_STEP)
+            .max(WHEEL_STEP)
+    }
     /// What is true where a key was pressed, for the `when` clauses to read.
     pub(super) fn context(&self) -> Context {
         let mut context = Context::new();
@@ -110,6 +125,9 @@ impl App {
             return self.request_redraw();
         }
         if self.send_to_prompt(event) {
+            return self.request_redraw();
+        }
+        if self.paste_agent_prompt(event) {
             return self.request_redraw();
         }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
@@ -258,6 +276,29 @@ impl App {
         };
         if let Some(completions) = self.completions.as_mut() {
             completions.step(step);
+        }
+        true
+    }
+
+    /// Pastes clipboard image or text into the focused agent prompt.
+    fn paste_agent_prompt(&mut self, event: &KeyEvent) -> bool {
+        let Some(Writing::Prompt(session)) = self.writing else {
+            return false;
+        };
+        if !self.modifiers.super_key() && !self.modifiers.control_key() {
+            return false;
+        }
+        if !matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("v")) {
+            return false;
+        }
+        let Some(talk) = self.agents.get_mut(session) else {
+            return false;
+        };
+        if let Some(png) = desktop::paste_image() {
+            talk.attach_image(png);
+        } else if let Some(text) = desktop::paste() {
+            talk.prompt_mut().paste(&text);
+            talk.retyped();
         }
         true
     }
@@ -522,11 +563,11 @@ impl App {
             }
             Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => ui.activate_focused(),
             Key::Named(NamedKey::PageDown) => {
-                self.scroll_by(-WHEEL_STEP * PAGE_NOTCHES);
+                self.scroll_by(-self.scroll_viewport_height());
                 None
             }
             Key::Named(NamedKey::PageUp) => {
-                self.scroll_by(WHEEL_STEP * PAGE_NOTCHES);
+                self.scroll_by(self.scroll_viewport_height());
                 None
             }
             _ => None,
@@ -768,25 +809,23 @@ impl App {
                 .is_some_and(|pointer| self.history_graph_bounds.get().contains(pointer))
         {
             let row_height = self.theme().size.row;
-            let rows = (delta / row_height).round() as isize;
-            if rows != 0 {
-                let visible = ((self.history_graph.extent() - row_height) / row_height)
-                    .floor()
-                    .max(1.0) as usize;
-                let all = self.history_all;
-                if let Some(review) = self.review_mut() {
-                    review.scroll_history(all, -rows, visible);
-                }
-                self.request_redraw();
-                return;
+            let rows = self.wheel_lines(delta, row_height);
+            let visible = ((self.history_graph.extent() - row_height) / row_height)
+                .floor()
+                .max(1.0) as usize;
+            let all = self.history_all;
+            if let Some(review) = self.review_mut() {
+                review.scroll_history(all, -rows, visible);
             }
+            self.request_redraw();
+            return;
         }
         if self.scroll_tree(delta) {
             self.request_redraw();
             return;
         }
         if let Some(shell) = self.focused_shell() {
-            let lines = (delta / text.terminal.line_height).round() as isize;
+            let lines = self.wheel_lines(delta, text.terminal.line_height);
             shell.borrow_mut().scroll(lines);
             self.request_redraw();
             return;
@@ -803,16 +842,17 @@ impl App {
             self.request_redraw();
             return;
         }
-        let rows = (delta / text.code.line_height).round() as isize;
-        if self.scroll_agent(-rows) {
+        if self.scroll_agent(-delta) {
             self.request_redraw();
             return;
         }
-        if self.scroll_review(-rows) {
+        let (rows, carry) = self.wheel_split(delta, text.code.line_height);
+        if self.scroll_review(-rows) || self.scroll_excerpts(-rows) {
+            self.wheel_carry = carry;
             self.request_redraw();
             return;
         }
-        if self.scroll_excerpts(-rows) || self.scroll_rendered(delta) {
+        if self.scroll_rendered(delta) {
             self.request_redraw();
             return;
         }
@@ -822,13 +862,38 @@ impl App {
             .map(|(_, document)| document)
             .or_else(|| self.focused_file());
         if let Some(file) = under {
-            let lines = (delta / text.code.line_height).round() as isize;
-            file.borrow_mut().scroll_by(-lines);
+            file.borrow_mut().scroll_by_pixels(-delta);
             self.request_redraw();
             return;
         }
         self.scroll.by(delta);
         self.request_redraw();
+    }
+
+    /// Turns `delta` logical pixels of wheel into whole lines `line` tall,
+    /// keeping what falls short of a line for the next turn of the wheel.
+    fn wheel_lines(&mut self, delta: f32, line: f32) -> isize {
+        let (lines, carry) = self.wheel_split(delta, line);
+        self.wheel_carry = carry;
+        lines
+    }
+
+    /// The whole lines `line` tall that `delta` logical pixels of wheel come
+    /// to with what was carried over, and what is left to carry after them.
+    ///
+    /// A trackpad reports a stroke in many small steps, most of them less
+    /// than a line: rounding each on its own loses them, and what is carried
+    /// over is what adds them up. Turning back drops it, so the first step
+    /// the other way is not spent paying back the last one.
+    fn wheel_split(&self, delta: f32, line: f32) -> (isize, f32) {
+        let line = line.max(1.0);
+        let carried = match self.wheel_carry * delta < 0.0 {
+            true => 0.0,
+            false => self.wheel_carry,
+        };
+        let reach = carried + delta;
+        let lines = (reach / line).trunc();
+        (lines as isize, reach - lines * line)
     }
 
     /// Scrolls the focused pane along its lines by `delta` logical pixels.

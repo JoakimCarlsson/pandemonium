@@ -6,13 +6,20 @@
 //! what this holds. Runs of one voice join into one block, and a tool call
 //! replaces the block it is a later word about.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
+use base64::Engine;
 use pm_acp::{Step, ToolCall, Voice};
+use pm_gfx::Image;
 
 /// One thing the conversation shows.
 #[derive(Clone, Debug)]
 pub enum Block {
     /// A passage of text, of whichever voice said it.
     Said(Voice, String),
+    /// An image the reader attached to a prompt.
+    Picture(Image),
     /// A tool call, as it now stands.
     Ran(ToolCall),
     /// The plan the agent is working to.
@@ -26,6 +33,8 @@ pub enum Block {
 pub struct Transcript {
     /// The blocks, oldest first.
     blocks: Vec<Block>,
+    /// Images decoded from old session messages, by block and position.
+    pictures: RefCell<BTreeMap<(usize, usize), Image>>,
 }
 
 impl Transcript {
@@ -43,6 +52,29 @@ impl Transcript {
             Some(Block::Said(said, passage)) if *said == voice => passage.push_str(text),
             _ => self.blocks.push(Block::Said(voice, text.to_owned())),
         }
+    }
+
+    /// Adds a sent image beside the reader's prompt.
+    pub fn picture(&mut self, image: Image) {
+        self.blocks.push(Block::Picture(image));
+    }
+
+    /// Decodes an image echoed by a loaded session once and reuses it on redraw.
+    pub fn restored_picture(&self, block: usize, place: usize, source: &str) -> Option<Image> {
+        if let Some(image) = self.pictures.borrow().get(&(block, place)) {
+            return Some(image.clone());
+        }
+        let encoded = source
+            .split_once(";base64,")
+            .map_or(source, |(_, data)| data);
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded.trim_matches(['\'', '"']))
+            .ok()?;
+        let image = Image::decode(&bytes)?;
+        self.pictures
+            .borrow_mut()
+            .insert((block, place), image.clone());
+        Some(image)
     }
 
     /// Adds a tool call, or replaces the one it is a later word about.

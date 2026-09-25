@@ -26,6 +26,9 @@ const CONTEXT: usize = 120;
 /// How long the spinner holds each frame while a remote is waited on.
 const SPIN_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 
+/// How often a running agent's activity mark advances.
+const AGENT_FRAME: std::time::Duration = std::time::Duration::from_millis(250);
+
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
     pub(super) fn open_picker(&mut self, kind: Kind) {
@@ -421,7 +424,10 @@ impl App {
 
     /// Whether a spinner is owed its next frame, taking it up if so.
     pub(super) fn spun(&mut self) -> bool {
-        if self.next_spin().is_none() || self.spun.elapsed() < SPIN_FRAME {
+        if self
+            .next_spin()
+            .is_none_or(|next| std::time::Instant::now() < next)
+        {
             return false;
         }
         self.spun = std::time::Instant::now();
@@ -436,7 +442,13 @@ impl App {
                 .reviews
                 .values()
                 .any(|review| review.refresh_turn().is_some());
-        turning.then(|| self.spun + SPIN_FRAME)
+        if turning {
+            Some(self.spun + SPIN_FRAME)
+        } else if self.agents.working() > 0 {
+            Some(self.spun + AGENT_FRAME)
+        } else {
+            None
+        }
     }
 
     /// Runs a remote Git operation away from the UI thread and wakes on completion.

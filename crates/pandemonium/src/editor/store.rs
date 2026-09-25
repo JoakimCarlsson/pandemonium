@@ -68,6 +68,13 @@ pub struct Document {
     buffer: Buffer,
     /// The first line the pane shows.
     scroll: usize,
+    /// How far that line is scrolled up past the top of the pane, in logical
+    /// pixels, never as much as a whole line.
+    offset: f32,
+    /// Where the cursor was when the view last followed it, so the view is
+    /// brought back to the cursor when it moves and left alone when only the
+    /// view does, or when the text changes under a reader scrolled away.
+    followed: Option<Position>,
     /// The first column the pane shows, the text being scrolled left by it.
     column: usize,
     /// Where the pane last drew the text.
@@ -136,6 +143,8 @@ impl Document {
             folded: Vec::new(),
             buffer,
             scroll: 0,
+            offset: 0.0,
+            followed: None,
             column: 0,
             layout: TextLayout::default(),
             search: Search::default(),
@@ -390,6 +399,11 @@ impl Document {
         self.scroll
     }
 
+    /// How far the first line is scrolled up past the top of the pane.
+    pub fn offset(&self) -> f32 {
+        self.offset
+    }
+
     /// The first column the pane shows.
     pub fn column(&self) -> usize {
         self.column
@@ -445,6 +459,7 @@ impl Document {
     pub fn scroll_to(&mut self, line: usize) {
         let last = self.buffer.line_count().saturating_sub(1);
         self.scroll = line.min(last);
+        self.offset = 0.0;
     }
 
     /// Scrolls so that the cursor's line has `rows` rows above it, as near
@@ -460,6 +475,25 @@ impl Document {
     /// Scrolls `lines` down, or up when `lines` is negative.
     pub fn scroll_by(&mut self, lines: isize) {
         self.scroll_to(self.line_after(self.scroll, lines));
+    }
+
+    /// Scrolls `pixels` logical pixels down, or up when `pixels` is negative,
+    /// in lines as tall as the pane last drew them.
+    ///
+    /// The view comes to rest part of the way through a line, the way a
+    /// trackpad moves it; only the first line and the last one hold it to a
+    /// whole line, because there is nothing to show beyond either.
+    pub fn scroll_by_pixels(&mut self, pixels: f32) {
+        let line = self.layout.cell.height.max(1.0);
+        let reach = self.offset + pixels;
+        let rows = (reach / line).floor();
+        self.scroll_to(self.line_after(self.scroll, rows as isize));
+        let last = self.buffer.line_count().saturating_sub(1);
+        let pinned = (self.scroll == 0 && reach < 0.0) || self.scroll >= last;
+        self.offset = match pinned {
+            true => 0.0,
+            false => reach - rows * line,
+        };
     }
 
     /// Scrolls `columns` right, or left when `columns` is negative.
@@ -493,17 +527,24 @@ impl Document {
     /// view is told from: a keypress moves the cursor without knowing
     /// whether the place it moved to is on screen, and the next frame brings
     /// it back.
+    ///
+    /// Only a cursor that moved is followed: a view the wheel moved away
+    /// from the cursor stays where the wheel left it.
     pub fn follow_cursor(&mut self, rows: usize, columns: usize) {
         let head = self.buffer.selection().head;
+        if self.followed == Some(head) {
+            return;
+        }
+        self.followed = Some(head);
         self.reveal(head.line);
 
         let margin = SCROLL_MARGIN.min(rows.saturating_sub(1) / 2);
         let first = self.line_after(head.line, -(margin as isize));
         let last = self.line_after(head.line, margin as isize);
-        if first < self.scroll {
-            self.scroll = first;
+        if first < self.scroll || (first == self.scroll && self.offset > 0.0) {
+            self.scroll_to(first);
         } else if rows > 0 && self.row_of(self.scroll, last).is_none_or(|row| row >= rows) {
-            self.scroll = self.line_after(last, 1 - rows as isize);
+            self.scroll_to(self.line_after(last, 1 - rows as isize));
         }
 
         let drawn = self.buffer.display_column(head);

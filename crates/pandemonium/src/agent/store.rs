@@ -10,17 +10,26 @@
 //! [`Talk`] is one of them — the agent, everything said to it and by it, the
 //! prompt being typed and whatever it is waiting to be allowed to do.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use base64::Engine;
+use pm_gfx::Image;
 
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Ask, Command, Event, History, Knob, Mode, Notify, Session, Setting, Stop, Voice,
+    About, Agent, Ask, Attachment, Command, Event, History, Knob, Mode, Notify, Session, Setting,
+    Stop, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
+use pm_ui::Bounds;
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -77,6 +86,12 @@ pub struct Talk {
     /// A prompt is several lines as often as it is one, so it is written in
     /// the editor the window is made of rather than in a line of its own.
     prompt: Input,
+    /// Files and images to send with the next prompt.
+    attachments: Vec<Attachment>,
+    /// Decoded previews in the same order as the attachments.
+    attachment_previews: Vec<Option<Image>>,
+    /// Pasted images saved as files for agents without image prompt support.
+    clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
     /// The commands the agent has said it takes, as it last said them.
@@ -97,14 +112,23 @@ pub struct Talk {
     ready: bool,
     /// Whether a turn is running.
     busy: bool,
+    /// When the current turn began, for its visible activity timer.
+    busy_since: Option<Instant>,
     /// Whether a turn has ended since the reader last looked at the pane.
     unseen: bool,
     /// The mode the agent says it is in, where it has modes.
     mode: Option<String>,
-    /// The first row the pane is drawn from.
-    scroll: usize,
+    /// How far down the conversation the pane is scrolled, in logical pixels.
+    scroll: f32,
+    /// Where the conversation was last drawn, which is how much of it a
+    /// pane holds.
+    view: Bounds,
+    /// How tall the conversation came to when it was last drawn.
+    drawn_height: Rc<Cell<f32>>,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
+    /// The tool and thought blocks the reader has opened.
+    expanded_details: BTreeSet<usize>,
 }
 
 /// One completion offered by a prompt prefix.
@@ -187,6 +211,48 @@ impl Talk {
     /// That box, to write in.
     pub fn prompt_mut(&mut self) -> &mut Input {
         &mut self.prompt
+    }
+
+    /// Files and images waiting beside the prompt.
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
+    }
+
+    /// The preview of the attachment at `place`, when it is an image.
+    pub fn attachment_preview(&self, place: usize) -> Option<Image> {
+        self.attachment_previews.get(place).and_then(Clone::clone)
+    }
+
+    /// Adds a chosen file to the next prompt.
+    pub fn attach_file(&mut self, path: PathBuf) {
+        let preview = crate::image::Images::is_picture(&path)
+            .then(|| fs::read(&path).ok().and_then(|bytes| Image::decode(&bytes)))
+            .flatten();
+        self.attachment_previews.push(preview);
+        self.attachments.push(Attachment::File(path));
+    }
+
+    /// Adds a pasted PNG to the next prompt in the form this agent accepts.
+    pub fn attach_image(&mut self, png: Vec<u8>) {
+        if self.conversation.can_image() {
+            self.attachment_previews.push(Image::decode(&png));
+            self.attachments.push(Attachment::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(png),
+                mime_type: "image/png".to_owned(),
+            });
+        } else if let Some(path) = crate::desktop::save_pasted_image(&png) {
+            self.attachment_previews.push(Image::decode(&png));
+            self.attachments.push(Attachment::File(path.clone()));
+            self.clipboard_files.push(path);
+        }
+    }
+
+    /// Removes the attachment at `place` before it is sent.
+    pub fn remove_attachment(&mut self, place: usize) {
+        if place < self.attachments.len() {
+            self.attachments.remove(place);
+            self.attachment_previews.remove(place);
+        }
     }
 
     /// The permission requests waiting on the reader.
@@ -327,6 +393,11 @@ impl Talk {
         self.busy
     }
 
+    /// How long the current turn has been running.
+    pub fn working_for(&self) -> Option<Duration> {
+        self.busy_since.map(|since| since.elapsed())
+    }
+
     /// The mode the agent is in, where it has modes.
     pub fn mode(&self) -> Option<&str> {
         self.mode.as_deref()
@@ -456,32 +527,54 @@ impl Talk {
         self.unseen = false;
     }
 
-    /// The first row the pane is drawn from.
-    pub fn scroll(&self) -> usize {
+    /// How far down the conversation the pane is scrolled, in logical pixels.
+    pub fn scroll(&self) -> f32 {
         self.scroll
     }
 
-    /// Scrolls the pane by `rows`, of the `total` there are to show.
+    /// Where the conversation was last drawn, shared with the pane drawing it.
+    pub fn view(&self) -> Bounds {
+        self.view.clone()
+    }
+
+    /// How tall the conversation came to when it was last drawn, shared with
+    /// the pane drawing it.
+    pub fn drawn_height(&self) -> Rc<Cell<f32>> {
+        self.drawn_height.clone()
+    }
+
+    /// Scrolls the pane `pixels` down, or up when negative, no further than
+    /// `end`, where the last row sits against the foot of the pane.
     ///
     /// Scrolling back is also what stops the pane following the end of the
     /// conversation: a reader who has gone up to read something is not
     /// dragged down again by the next thing the agent says.
-    pub fn scroll_by(&mut self, rows: isize, total: usize) {
-        self.scroll = self
-            .scroll
-            .saturating_add_signed(rows)
-            .min(total.saturating_sub(1));
-        self.following = self.scroll + 1 >= total;
+    pub fn scroll_by(&mut self, pixels: f32, end: f32) {
+        let end = end.max(0.0);
+        self.scroll = (self.scroll + pixels).clamp(0.0, end);
+        self.following = self.scroll >= end;
     }
 
-    /// Puts the pane at `row`, which is what following the end comes to.
-    pub fn scroll_to(&mut self, row: usize) {
-        self.scroll = row;
+    /// Puts the pane `pixels` down, which is what following the end comes to.
+    pub fn scroll_to(&mut self, pixels: f32) {
+        self.scroll = pixels.max(0.0);
     }
 
     /// Whether the pane follows the end of the conversation as it grows.
     pub fn is_following(&self) -> bool {
         self.following
+    }
+
+    /// Whether the details starting at `block` are open.
+    pub fn details_expanded(&self, block: usize) -> bool {
+        self.expanded_details.contains(&block)
+    }
+
+    /// Opens or closes the details starting at `block`.
+    pub fn toggle_details(&mut self, block: usize) {
+        if !self.expanded_details.insert(block) {
+            self.expanded_details.remove(&block);
+        }
     }
 
     /// Sends what is in the prompt buffer, and empties it.
@@ -491,15 +584,37 @@ impl Talk {
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
         let text = self.prompt.value().trim().to_owned();
-        if text.is_empty() {
+        if text.is_empty() && self.attachments.is_empty() {
             return;
         }
         self.prompt.clear();
-        self.transcript.say(Voice::Reader, &text);
-        self.conversation.prompt(&text);
+        let attachments = std::mem::take(&mut self.attachments);
+        let previews = std::mem::take(&mut self.attachment_previews);
+        let labels = attachments
+            .iter()
+            .zip(&previews)
+            .filter(|(_, preview)| preview.is_none())
+            .map(|(attachment, _)| format!("[{}]", attachment.label()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let shown = if labels.is_empty() {
+            text.clone()
+        } else if text.is_empty() {
+            labels
+        } else {
+            format!("{text}\n{labels}")
+        };
+        if !shown.is_empty() {
+            self.transcript.say(Voice::Reader, &shown);
+        }
+        for preview in previews.into_iter().flatten() {
+            self.transcript.picture(preview);
+        }
+        self.conversation.prompt(&text, attachments);
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
+        self.busy_since = Some(Instant::now());
         self.unseen = false;
         self.following = true;
     }
@@ -554,6 +669,7 @@ impl Talk {
             Event::Asked(ask) => self.asks.push(ask),
             Event::Stopped(stop) => {
                 self.busy = false;
+                self.busy_since = None;
                 self.unseen = stop != Stop::Cancelled;
                 if stop != Stop::EndTurn {
                     self.transcript.note(note(stop));
@@ -561,14 +677,25 @@ impl Talk {
             }
             Event::Failed(trouble) => {
                 self.busy = false;
+                self.busy_since = None;
                 self.unseen = true;
                 self.transcript.note(trouble);
             }
             Event::Ended => {
                 self.busy = false;
+                self.busy_since = None;
                 self.ready = false;
                 self.transcript.note(ended(&self.conversation));
             }
+        }
+    }
+}
+
+impl Drop for Talk {
+    /// Removes pasted images kept for an agent without image prompt support.
+    fn drop(&mut self) {
+        for path in &self.clipboard_files {
+            let _ = fs::remove_file(path);
         }
     }
 }
@@ -732,6 +859,9 @@ impl Talks {
                 conversation,
                 transcript: Transcript::default(),
                 prompt: Input::many_lines("Prompt"),
+                attachments: Vec::new(),
+                attachment_previews: Vec::new(),
+                clipboard_files: Vec::new(),
                 asks: Vec::new(),
                 commands: Vec::new(),
                 skills: installed_skills(root, agent),
@@ -742,10 +872,14 @@ impl Talks {
                 dismissed: false,
                 ready: false,
                 busy: false,
+                busy_since: None,
                 unseen: false,
                 mode: None,
-                scroll: 0,
+                scroll: 0.0,
+                view: Bounds::default(),
+                drawn_height: Rc::default(),
                 following: true,
+                expanded_details: BTreeSet::new(),
             },
         );
         Some(id)

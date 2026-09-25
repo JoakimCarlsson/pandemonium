@@ -191,6 +191,9 @@ pub struct App {
     last_titlebar_click: Option<Instant>,
     /// How far the page is scrolled.
     scroll: Scroll,
+    /// The part of a line the wheel has moved a pane drawn in whole lines
+    /// that has not yet come to a line, in logical pixels.
+    wheel_carry: f32,
     /// The sessions of those projects: a worktree apiece, to work an agent in.
     sessions: Sessions,
     /// The session the window is pointed at, once one has been picked.
@@ -412,6 +415,7 @@ impl App {
             pointer: None,
             last_titlebar_click: None,
             scroll: Scroll::default(),
+            wheel_carry: 0.0,
             sessions: Sessions::new(),
             session: None,
             working: 0,
