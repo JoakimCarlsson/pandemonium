@@ -40,6 +40,11 @@ pub enum Event {
     Mode(String),
     /// What the session can be set to, as the agent now offers it.
     Knobs(Vec<Knob>),
+    /// The title the agent has given the conversation, replacing the last.
+    Titled(String),
+    /// How much of the model's context the conversation fills, and what it
+    /// has cost so far.
+    Used(Usage),
     /// A tool call the agent will not run until the reader allows it.
     Asked(Ask),
     /// The turn is over, for the reason given.
@@ -78,6 +83,26 @@ pub(crate) fn history(result: &Value) -> Vec<History> {
             })
         })
         .collect()
+}
+
+/// How much of the model's context a conversation fills.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Usage {
+    /// The tokens the context holds now.
+    pub used: u64,
+    /// The tokens it can hold.
+    pub size: u64,
+    /// What the conversation has cost so far, where the agent says.
+    pub cost: Option<Cost>,
+}
+
+/// An amount of money a conversation has cost.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cost {
+    /// How much.
+    pub amount: f64,
+    /// In what, as an ISO 4217 code.
+    pub currency: String,
 }
 
 /// Who is speaking in a run of text.
@@ -193,6 +218,13 @@ pub struct ToolCall {
     pub output: Vec<Output>,
     /// The files it is working on.
     pub locations: Vec<Location>,
+    /// The one thing the tool was given to work on, where the agent passed
+    /// the tool's input on: the command it ran, the pattern it searched for,
+    /// the address it fetched.
+    pub argument: Option<String>,
+    /// What the tool gave back, where the agent passed that on as it was
+    /// rather than as output of its own.
+    pub returned: Option<String>,
 }
 
 /// What kind of work a tool call does.
@@ -353,6 +385,8 @@ pub(crate) fn event(update: &Value, tools: &mut Tools) -> Option<Event> {
         "available_commands_update" => Some(Event::Offers(commands(&update["availableCommands"]))),
         "current_mode_update" => Some(Event::Mode(update["currentModeId"].as_str()?.to_owned())),
         "config_option_update" => Some(Event::Knobs(knobs(&update["configOptions"]))),
+        "session_info_update" => Some(Event::Titled(update["title"].as_str()?.to_owned())),
+        "usage_update" => Some(Event::Used(usage(update)?)),
         _ => None,
     }
 }
@@ -499,6 +533,8 @@ fn merge(update: &Value, tools: &mut Tools) -> Option<ToolCall> {
         status: Status::Pending,
         output: Vec::new(),
         locations: Vec::new(),
+        argument: None,
+        returned: None,
     });
 
     if let Some(title) = update["title"].as_str() {
@@ -519,7 +555,66 @@ fn merge(update: &Value, tools: &mut Tools) -> Option<ToolCall> {
     if let Some(locations) = update["locations"].as_array() {
         call.locations = locations.iter().filter_map(location).collect();
     }
+    if let Some(argument) = argument(&update["rawInput"]) {
+        call.argument = Some(argument);
+    }
+    if let Some(returned) = returned(&update["rawOutput"]) {
+        call.returned = Some(returned);
+    }
     Some(call.clone())
+}
+
+/// The input fields that name what a tool works on, most telling first.
+const ARGUMENTS: [&str; 5] = ["command", "pattern", "query", "url", "description"];
+
+/// The one thing `input` gave a tool to work on, where it names one.
+///
+/// A tool's input is the tool's own shape, not the protocol's, so this reads
+/// the few fields every agent's shell, search and fetch tools agree on. A
+/// command given as a list of words is those words, as a shell would read
+/// them back.
+fn argument(input: &Value) -> Option<String> {
+    ARGUMENTS.iter().find_map(|field| match &input[*field] {
+        Value::String(argument) => Some(argument.clone()),
+        Value::Array(words) => {
+            let words = words.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+            (!words.is_empty()).then(|| words.join(" "))
+        }
+        _ => None,
+    })
+}
+
+/// What `output` comes to as text, where a tool gave anything back.
+///
+/// A tool that returned text is that text; one that returned a structure is
+/// the output fields shells report, or the structure written out whole.
+fn returned(output: &Value) -> Option<String> {
+    match output {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Object(fields) => ["output", "stdout", "result"]
+            .iter()
+            .find_map(|field| fields.get(*field)?.as_str().map(str::to_owned))
+            .or_else(|| Some(output.to_string())),
+        output => Some(output.to_string()),
+    }
+}
+
+/// The context usage `update` reports, where it reports a size to fill.
+fn usage(update: &Value) -> Option<Usage> {
+    Some(Usage {
+        used: update["used"].as_u64()?,
+        size: update["size"].as_u64().filter(|size| *size > 0)?,
+        cost: cost(&update["cost"]),
+    })
+}
+
+/// The cost `cost` reports, where it reports one whole.
+fn cost(cost: &Value) -> Option<Cost> {
+    Some(Cost {
+        amount: cost["amount"].as_f64()?,
+        currency: cost["currency"].as_str()?.to_owned(),
+    })
 }
 
 /// The plan steps `entries` lists.

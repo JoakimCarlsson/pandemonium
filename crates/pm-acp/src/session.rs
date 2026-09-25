@@ -96,6 +96,9 @@ struct State {
     queued: Vec<Prompt>,
     /// Whether the agent accepts image content in prompts.
     images: bool,
+    /// Whether the agent accepts a file's contents in a prompt, rather than
+    /// only a link to it.
+    embeds: bool,
     /// The requests sent and not yet answered, and what each was for.
     sent: HashMap<i64, Sent>,
     /// The ways of logging in the agent offered in its handshake.
@@ -312,12 +315,8 @@ impl Session {
             return;
         };
         state.busy = true;
-        let request = self.request(
-            &mut state,
-            Sent::Turn,
-            "session/prompt",
-            &turn(&id, &prompt),
-        );
+        let params = turn(&id, &prompt, state.embeds);
+        let request = self.request(&mut state, Sent::Turn, "session/prompt", &params);
         drop(state);
         self.send(&request);
     }
@@ -692,8 +691,9 @@ impl Reader {
             state.logins = update::methods(&result["authMethods"]);
             state.loads = result["agentCapabilities"]["loadSession"] == json!(true);
             state.lists = result["agentCapabilities"]["sessionCapabilities"]["list"].is_object();
-            state.images =
-                result["agentCapabilities"]["promptCapabilities"]["image"] == json!(true);
+            let prompts = &result["agentCapabilities"]["promptCapabilities"];
+            state.images = prompts["image"] == json!(true);
+            state.embeds = prompts["embeddedContext"] == json!(true);
         }
         self.open();
     }
@@ -812,6 +812,7 @@ impl Reader {
             return;
         }
         let prompt = state.queued.remove(0);
+        let embeds = state.embeds;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         state.busy = true;
         state.sent.insert(id, Sent::Turn);
@@ -821,7 +822,7 @@ impl Reader {
             "jsonrpc": "2.0",
             "id": id,
             "method": "session/prompt",
-            "params": turn(&session, &prompt),
+            "params": turn(&session, &prompt, embeds),
         }));
     }
 
@@ -963,13 +964,19 @@ fn watch(stderr: impl BufRead, state: &Mutex<State>) {
     }
 }
 
-/// The turn `prompt` comes to, as the agent is asked to take it.
-fn turn(session: &str, prompt: &Prompt) -> Value {
+/// The turn `prompt` comes to, as the agent is asked to take it, with the
+/// files attached to it embedded where the agent `embeds`.
+fn turn(session: &str, prompt: &Prompt, embeds: bool) -> Value {
     let mut content = Vec::new();
     if !prompt.text.is_empty() {
         content.push(json!({ "type": "text", "text": prompt.text }));
     }
-    content.extend(prompt.attachments.iter().map(Attachment::content));
+    content.extend(
+        prompt
+            .attachments
+            .iter()
+            .map(|attachment| attachment.content(embeds)),
+    );
     json!({
         "sessionId": session,
         "prompt": content,

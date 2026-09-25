@@ -20,6 +20,6 @@ pub use agent::{AGENTS, Agent, Source};
 pub use attachment::Attachment;
 pub use session::{Notify, Session};
 pub use update::{
-    About, Ask, Choice, Command, Event, History, Kind, Knob, Location, Method, Mode, Output, Pick,
-    Setting, Status, Step, Stop, ToolCall, Voice, Weight,
+    About, Ask, Choice, Command, Cost, Event, History, Kind, Knob, Location, Method, Mode, Output,
+    Pick, Setting, Status, Step, Stop, ToolCall, Usage, Voice, Weight,
 };

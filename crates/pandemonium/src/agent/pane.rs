@@ -13,7 +13,9 @@
 
 use std::path::Path;
 
-use pm_acp::{About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Voice, Weight};
+use pm_acp::{
+    About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
+};
 use pm_gfx::{Image, Rgba};
 use pm_ui::{
     Div, IconName, IconSize, Scroll, Styled, Theme, button, h_flex, icon, measured, picture, rule,
@@ -624,7 +626,8 @@ fn called(call: &ToolCall, root: &Path) -> Row {
     let argument = call
         .locations
         .first()
-        .map(|location| relative(&location.path, root));
+        .map(|location| relative(&location.path, root))
+        .or_else(|| call.argument.as_deref().map(first_line));
 
     match (call.name.as_deref(), argument) {
         (Some(name), Some(argument)) => {
@@ -655,6 +658,11 @@ fn result(call: &ToolCall, columns: usize) -> Vec<String> {
                 after.lines().count()
             )),
         }
+    }
+    if lines.is_empty()
+        && let Some(returned) = &call.returned
+    {
+        lines.extend(wrap(returned, columns));
     }
     if lines.is_empty() {
         return match call.status {
@@ -753,8 +761,41 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
                 .font_mono()
                 .color(theme.colors.text_subtle),
         )
+        .when_some(talk.title(), |bar, title| {
+            bar.child(
+                text(title.to_owned())
+                    .text_xs()
+                    .color(theme.colors.text_muted),
+            )
+        })
         .child(h_flex().flex_1())
+        .when_some(talk.usage(), |bar, usage| {
+            bar.child(text(used(usage)).text_xs().color(theme.colors.text_subtle))
+        })
         .child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
+}
+
+/// What the header says of how full the model's context is, and what the
+/// conversation has cost where the agent says.
+fn used(usage: &Usage) -> String {
+    let filled = format!(
+        "{} / {} tokens",
+        thousands(usage.used),
+        thousands(usage.size)
+    );
+    match &usage.cost {
+        Some(cost) if cost.currency == "USD" => format!("{filled} · ${:.2}", cost.amount),
+        Some(cost) => format!("{filled} · {:.2} {}", cost.amount, cost.currency),
+        None => filled,
+    }
+}
+
+/// `count` in thousands once it runs to them, as `53k`.
+fn thousands(count: u64) -> String {
+    match count {
+        0..1000 => count.to_string(),
+        _ => format!("{}k", count / 1000),
+    }
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.

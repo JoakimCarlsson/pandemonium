@@ -26,7 +26,7 @@ use crate::agent::transcript::Transcript;
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Ask, Attachment, Command, Event, History, Knob, Mode, Notify, Session, Setting,
-    Stop, Voice,
+    Stop, Usage, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_ui::Bounds;
@@ -118,6 +118,11 @@ pub struct Talk {
     unseen: bool,
     /// The mode the agent says it is in, where it has modes.
     mode: Option<String>,
+    /// The title the agent has given the conversation, where it has.
+    title: Option<String>,
+    /// How much of the model's context the conversation fills, where the
+    /// agent says.
+    usage: Option<Usage>,
     /// How far down the conversation the pane is scrolled, in logical pixels.
     scroll: f32,
     /// Where the conversation was last drawn, which is how much of it a
@@ -403,6 +408,17 @@ impl Talk {
         self.mode.as_deref()
     }
 
+    /// The title the agent has given the conversation, where it has.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// How much of the model's context the conversation fills, where the
+    /// agent says.
+    pub fn usage(&self) -> Option<&Usage> {
+        self.usage.as_ref()
+    }
+
     /// The modes the agent takes, in the order it offered them.
     ///
     /// An agent says what its modes are when the conversation opens, and an
@@ -666,6 +682,8 @@ impl Talk {
             Event::Offers(commands) => self.commands = commands,
             Event::Mode(mode) => self.mode = Some(mode),
             Event::Knobs(_) => {}
+            Event::Titled(title) => self.title = Some(title).filter(|title| !title.is_empty()),
+            Event::Used(usage) => self.usage = Some(usage),
             Event::Asked(ask) => self.asks.push(ask),
             Event::Stopped(stop) => {
                 self.busy = false;
@@ -875,6 +893,8 @@ impl Talks {
                 busy_since: None,
                 unseen: false,
                 mode: None,
+                title: None,
+                usage: None,
                 scroll: 0.0,
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
