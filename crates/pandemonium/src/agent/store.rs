@@ -11,6 +11,8 @@
 //! prompt being typed and whatever it is waiting to be allowed to do.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
 use std::path::Path;
 
 use crate::agent::transcript::Transcript;
@@ -79,6 +81,8 @@ pub struct Talk {
     asks: Vec<Ask>,
     /// The commands the agent has said it takes, as it last said them.
     commands: Vec<Command>,
+    /// Skills installed for this agent, invoked with a dollar sign.
+    skills: Vec<Command>,
     /// Which of the commands a slash narrows to is selected.
     chosen: usize,
     /// Whether the reader has waved that list away for what is typed now.
@@ -95,6 +99,16 @@ pub struct Talk {
     scroll: usize,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
+}
+
+/// One completion offered by a prompt prefix.
+pub struct Offered {
+    /// The prefix the agent expects for this entry.
+    pub prefix: char,
+    /// The command or skill name.
+    pub name: String,
+    /// What the entry does.
+    pub description: String,
 }
 
 impl Talk {
@@ -151,12 +165,17 @@ impl Talk {
     /// A command is only being named while it is the whole of the prompt: a
     /// slash with an argument after it has been named already, and a slash
     /// in the middle of a sentence is a slash.
-    pub fn naming(&self) -> Option<String> {
+    pub fn naming(&self) -> Option<(char, String)> {
         let typed = self.prompt.value();
-        let named = typed.strip_prefix('/')?;
+        let prefix = typed.chars().next()?;
+        let named = match prefix {
+            '/' => typed.strip_prefix('/')?,
+            '$' if self.agent().id == "codex" => typed.strip_prefix('$')?,
+            _ => return None,
+        };
         match named.contains(char::is_whitespace) {
             true => None,
-            false => Some(named.to_lowercase()),
+            false => Some((prefix, named.to_lowercase())),
         }
     }
 
@@ -165,13 +184,22 @@ impl Talk {
     /// An agent says what it takes when the conversation opens and says it
     /// again whenever that changes, so this is what it offers now — the
     /// skills, the slash commands and whatever else it has put on the list.
-    pub fn offered(&self) -> Vec<&Command> {
-        let Some(named) = self.naming().filter(|_| !self.dismissed) else {
+    pub fn offered(&self) -> Vec<Offered> {
+        let Some((prefix, named)) = self.naming().filter(|_| !self.dismissed) else {
             return Vec::new();
         };
-        self.commands
+        let source = match prefix {
+            '$' => &self.skills,
+            _ => &self.commands,
+        };
+        source
             .iter()
             .filter(|command| command.name.to_lowercase().starts_with(&named))
+            .map(|command| Offered {
+                prefix,
+                name: command.name.clone(),
+                description: command.description.clone(),
+            })
             .collect()
     }
 
@@ -211,6 +239,13 @@ impl Talk {
         self.dismissed = false;
     }
 
+    /// Starts naming an installed skill in the prompt.
+    pub fn start_skill(&mut self) {
+        self.prompt.set("$");
+        self.chosen = 0;
+        self.dismissed = false;
+    }
+
     /// Takes the list of commands away, leaving what has been typed alone.
     ///
     /// The list is a suggestion over the prompt, not a thing the prompt is
@@ -238,14 +273,12 @@ impl Talk {
     /// most of them take something, and the ones that do not are one more
     /// key away.
     pub fn take_command(&mut self, place: usize) {
-        let Some(command) = self
-            .offered()
-            .get(place)
-            .map(|command| command.name.clone())
-        else {
+        let offered = self.offered();
+        let Some(command) = offered.get(place) else {
             return;
         };
-        self.prompt.set(&format!("/{command} "));
+        self.prompt
+            .set(&format!("{}{} ", command.prefix, command.name));
         self.chosen = 0;
         self.dismissed = false;
     }
@@ -498,6 +531,57 @@ impl Talk {
     }
 }
 
+/// Finds skills Codex can invoke from the user's and worktree's skill folders.
+fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
+    if agent.id != "codex" {
+        return Vec::new();
+    }
+    let mut folders = Vec::new();
+    if let Some(home) = env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        folders.push(home.join(".codex/skills"));
+        folders.push(home.join(".agents/skills"));
+    }
+    if let Some(home) = env::var_os("CODEX_HOME") {
+        folders.push(std::path::PathBuf::from(home).join("skills"));
+    }
+    folders.push(root.join(".codex/skills"));
+    folders.push(root.join(".agents/skills"));
+    let mut found = BTreeMap::new();
+    for folder in folders {
+        let Ok(entries) = fs::read_dir(folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path().join("SKILL.md");
+            let Ok(contents) = fs::read_to_string(path) else {
+                continue;
+            };
+            let name = contents
+                .lines()
+                .find_map(|line| line.strip_prefix("name: "))
+                .map(str::trim);
+            let Some(name) = name.filter(|name| !name.is_empty()) else {
+                continue;
+            };
+            let description = contents
+                .lines()
+                .find_map(|line| line.strip_prefix("description: "))
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            found.insert(
+                name.to_owned(),
+                Command {
+                    name: name.to_owned(),
+                    description,
+                },
+            );
+        }
+    }
+    found.into_values().collect()
+}
+
 /// Every agent session the window is running.
 #[derive(Default)]
 pub struct Talks {
@@ -584,6 +668,7 @@ impl Talks {
                 prompt: Input::many_lines("Prompt"),
                 asks: Vec::new(),
                 commands: Vec::new(),
+                skills: installed_skills(root, agent),
                 chosen: 0,
                 dismissed: false,
                 ready: false,

@@ -15,6 +15,8 @@ const WIDTH: f32 = 620.0;
 
 /// Width of the branch popover attached to the status bar.
 const BRANCH_WIDTH: f32 = 360.0;
+/// Width of agent control choices beside their control.
+const AGENT_WIDTH: f32 = 280.0;
 
 /// How far from the top of the window it hangs.
 pub const TOP: f32 = 96.0;
@@ -38,12 +40,16 @@ const HINT_HEIGHT: f32 = 32.0;
 pub fn width(kind: Kind) -> f32 {
     match kind {
         Kind::Branches | Kind::NewBranch => BRANCH_WIDTH,
+        Kind::Modes | Kind::Knob => AGENT_WIDTH,
         _ => WIDTH,
     }
 }
 
 /// Height occupied by the visible portion of `picker`.
 pub fn height(picker: &Picker) -> f32 {
+    if matches!(picker.kind(), Kind::Modes | Kind::Knob) {
+        return picker.shown_count().clamp(1, VISIBLE) as f32 * ROW_HEIGHT + 8.0;
+    }
     if picker.kind() == Kind::Branches {
         let shown = picker.shown().take(BRANCH_VISIBLE).collect::<Vec<_>>();
         let sections = shown
@@ -75,6 +81,16 @@ fn visible_rows(kind: Kind) -> usize {
 /// Builds the panel for `picker`, over whatever the window is showing.
 pub fn picker(theme: &Theme, picker: &Picker) -> Div<Message> {
     let prompt = picker.kind().is_prompt();
+
+    if matches!(picker.kind(), Kind::Modes | Kind::Knob) {
+        return v_flex()
+            .w_px(width(picker.kind()))
+            .overflow_hidden()
+            .bg(theme.colors.surface)
+            .border_1(theme.colors.border)
+            .rounded(theme.radius.lg)
+            .child(rows(theme, picker));
+    }
 
     if picker.kind() == Kind::Branches {
         return v_flex()
@@ -246,7 +262,9 @@ fn row(
         .gap(1)
         .items_center()
         .overflow_hidden()
-        .when(selected, |line| line.bg(theme.colors.surface_selected))
+        .when(selected || row.detail.starts_with("current"), |line| {
+            line.bg(theme.colors.surface_selected)
+        })
         .hover_bg(theme.colors.surface_hover)
         .on_click(Message::ChoosePicker(place))
         .child(text(row.label.clone()).text_sm().color(color))

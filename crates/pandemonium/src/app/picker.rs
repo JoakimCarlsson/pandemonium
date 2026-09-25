@@ -29,6 +29,7 @@ const SPIN_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
     pub(super) fn open_picker(&mut self, kind: Kind) {
+        self.agent_picker_at = None;
         if !matches!(kind, Kind::Branches | Kind::NewBranch) {
             self.branch_picker_at = None;
         }
@@ -70,6 +71,7 @@ impl App {
     /// Puts the picker away, saying whether one was open.
     pub(super) fn dismiss_picker(&mut self) -> bool {
         self.branch_picker_at = None;
+        self.agent_picker_at = None;
         self.picker.take().is_some()
     }
 

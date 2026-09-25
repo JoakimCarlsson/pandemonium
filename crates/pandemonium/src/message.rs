@@ -438,6 +438,8 @@ pub enum Message {
     PressKnob(TalkId, usize),
     /// Start naming one of this session's commands, in its prompt.
     StartAgentCommand(TalkId),
+    /// Start naming a locally installed skill in this session's prompt.
+    StartAgentSkill(TalkId),
     /// Stop the turn this session is running.
     StopAgentTurn(TalkId),
     /// Open the pane this session is read in, in whichever worktree it is.

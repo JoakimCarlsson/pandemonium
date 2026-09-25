@@ -298,6 +298,8 @@ pub struct App {
     picker: Option<crate::picker::Picker>,
     /// Pointer position of the status-bar branch control anchoring its popover.
     branch_picker_at: Option<Point>,
+    /// Pointer position of the agent control anchoring its choices.
+    agent_picker_at: Option<Point>,
     /// Bounds of the Source Control commit split button from the last frame.
     commit_bounds: pm_ui::Bounds,
     /// Bounds of the Graph history-reference filter from the last frame.
@@ -476,6 +478,7 @@ impl App {
             trail: Trail::default(),
             picker: None,
             branch_picker_at: None,
+            agent_picker_at: None,
             commit_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_refs_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_graph_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
@@ -1789,18 +1792,33 @@ impl App {
 
         if let Some(picker) = self.picker.as_ref() {
             let width = crate::picker::width(picker.kind());
+            let agent_choices = matches!(
+                picker.kind(),
+                crate::picker::Kind::Modes | crate::picker::Kind::Knob
+            );
             let at = self.branch_picker_at.filter(|_| {
                 matches!(
                     picker.kind(),
                     crate::picker::Kind::Branches | crate::picker::Kind::NewBranch
                 )
             });
-            let point = at.map_or_else(
-                || Point::new(window.width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
+            let point = self.agent_picker_at.filter(|_| agent_choices).map_or_else(
+                || {
+                    at.map_or_else(
+                        || Point::new(window.width / 2.0 - PICKER_WIDTH / 2.0, crate::picker::TOP),
+                        |anchor| {
+                            let height = crate::picker::height(picker);
+                            Point::new(
+                                (anchor.x - 24.0).clamp(8.0, (window.width - width - 8.0).max(8.0)),
+                                (anchor.y - height - 8.0).max(8.0),
+                            )
+                        },
+                    )
+                },
                 |anchor| {
                     let height = crate::picker::height(picker);
                     Point::new(
-                        (anchor.x - 24.0).clamp(8.0, (window.width - width - 8.0).max(8.0)),
+                        anchor.x.clamp(8.0, (window.width - width - 8.0).max(8.0)),
                         (anchor.y - height - 8.0).max(8.0),
                     )
                 },
@@ -1808,7 +1826,7 @@ impl App {
             overlays.push(workspace::Overlaid {
                 at: point,
                 content: Box::new(crate::picker::picker(theme, picker)),
-                backdrop: Some(Message::DismissPopup),
+                backdrop: (!agent_choices).then_some(Message::DismissPopup),
             });
         }
 

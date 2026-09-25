@@ -699,6 +699,17 @@ impl App {
             (Some(ui), ElementState::Released) => ui.pointer_released(),
             (None, _) => None,
         };
+        if state == ElementState::Released
+            && self.picker.as_ref().is_some_and(|picker| {
+                matches!(
+                    picker.kind(),
+                    crate::picker::Kind::Modes | crate::picker::Kind::Knob
+                )
+            })
+            && !matches!(message, Some(Message::ChoosePicker(_)))
+        {
+            self.dismiss_picker();
+        }
         self.update_pointer_cursor();
         self.handle(message);
         if state == ElementState::Released {

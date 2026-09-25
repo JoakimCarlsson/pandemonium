@@ -159,7 +159,7 @@ fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
                 .when(place == chosen, |row| row.bg(theme.colors.surface_selected))
                 .on_click(Message::TakeAgentCommand(session, place))
                 .child(
-                    text(format!("/{}", command.name))
+                    text(format!("{}{}", command.prefix, command.name))
                         .text_xs()
                         .font_mono()
                         .color(tone(theme, Tone::Tool)),
@@ -494,6 +494,11 @@ fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
         .child(
             pill(theme, "/", theme.syntax.function).on_click(Message::StartAgentCommand(session)),
         )
+        .when(talk.agent().id == "codex", |row| {
+            row.child(
+                pill(theme, "$", theme.syntax.function).on_click(Message::StartAgentSkill(session)),
+            )
+        })
         .children(
             talk.knobs()
                 .into_iter()

@@ -46,6 +46,12 @@ impl App {
                 }
                 self.focus_prompt(session);
             }
+            Message::StartAgentSkill(session) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.start_skill();
+                }
+                self.focus_prompt(session);
+            }
             Message::StopAgentTurn(session) => {
                 if let Some(talk) = self.agents.get(session) {
                     talk.cancel();
@@ -90,7 +96,7 @@ impl App {
     pub(super) fn show_agent_modes(&mut self, session: TalkId) {
         let rows = self.mode_rows(session);
         if !rows.is_empty() {
-            return self.open_picker_with(Kind::Modes, rows, String::new());
+            return self.open_agent_choices(Kind::Modes, rows);
         }
         if let Some(place) = self.knob_about(session, About::Mode) {
             self.press_knob(session, place);
@@ -139,7 +145,21 @@ impl App {
         if rows.is_empty() {
             return;
         }
-        self.open_picker_with(Kind::Knob, rows, String::new());
+        self.open_agent_choices(Kind::Knob, rows);
+    }
+
+    /// Opens an agent control's choices beside the control that was pressed.
+    fn open_agent_choices(&mut self, kind: Kind, rows: Vec<Row>) {
+        self.agent_picker_at = self.pointer;
+        self.open_picker_with(kind, rows, String::new());
+        if let Some(picker) = self.picker.as_mut() {
+            let current = picker
+                .shown()
+                .find_map(|(place, row)| row.detail.starts_with("current").then_some(place));
+            if let Some(place) = current {
+                picker.select(place);
+            }
+        }
     }
 
     /// The knob in `place` of what `session`'s agent offers.
