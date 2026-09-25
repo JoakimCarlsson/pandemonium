@@ -14,9 +14,9 @@
 use std::path::Path;
 
 use pm_acp::{About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Voice, Weight};
-use pm_gfx::Rgba;
+use pm_gfx::{Image, Rgba};
 use pm_ui::{
-    Div, IconName, IconSize, Scroll, Styled, Theme, button, h_flex, icon, measured, rule,
+    Div, IconName, IconSize, Scroll, Styled, Theme, button, h_flex, icon, measured, picture, rule,
     scroll_area, space, text, v_flex,
 };
 
@@ -32,11 +32,11 @@ const RESULT_LINES: usize = 2;
 
 /// How far the conversation sits from the top and foot of its area, in
 /// steps of the spacing scale.
-const INSET: f32 = 1.0;
+const INSET: f32 = 2.0;
 
 /// How far the edge of a bubble holding what the reader said sits from its
 /// text, in steps of the spacing scale.
-const BUBBLE: f32 = 0.75;
+const BUBBLE: f32 = 1.25;
 
 /// How many lines of the prompt the pane has room for.
 const PROMPT_LINES: f32 = 3.0;
@@ -92,6 +92,8 @@ struct Piece {
     text: String,
     /// What colour it is drawn in.
     tone: Tone,
+    /// A picture in place of text, when this piece is an attachment.
+    image: Option<Image>,
 }
 
 /// One line of the conversation, in the pieces it is coloured by.
@@ -220,7 +222,7 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
         top += heights[first];
         first += 1;
     }
-    while first > 0 && is_said(&rows[first]) && is_said(&rows[first - 1]) {
+    while first > 0 && rows.get(first).is_some_and(is_said) && is_said(&rows[first - 1]) {
         first -= 1;
         top -= heights[first];
     }
@@ -240,7 +242,7 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 h_flex().w_full().justify_end().child(
                     v_flex()
                         .p(BUBBLE)
-                        .rounded(theme.radius.lg)
+                        .rounded(theme.radius.xl)
                         .bg(theme.colors.surface_hover)
                         .children(message),
                 ),
@@ -273,6 +275,12 @@ fn heights(theme: &Theme, rows: &[Row]) -> Vec<f32> {
                     height += edge;
                 }
             }
+            if row
+                .first()
+                .is_some_and(|piece| matches!(piece.tone, Tone::DetailGroup(_)))
+            {
+                height += space(0.75);
+            }
             height
         })
         .collect()
@@ -285,9 +293,15 @@ fn row_height(theme: &Theme, row: &Row) -> f32 {
         return theme.text.code.line_height;
     }
     row.iter()
-        .map(|piece| match piece.tone {
-            Tone::Said | Tone::Spoken => theme.text.base.line_height,
-            _ => theme.text.sm.line_height,
+        .map(|piece| {
+            if piece.image.is_some() {
+                112.0
+            } else {
+                match piece.tone {
+                    Tone::Said | Tone::Spoken => theme.text.lg.line_height,
+                    _ => theme.text.sm.line_height,
+                }
+            }
         })
         .fold(0.0, f32::max)
 }
@@ -298,25 +312,32 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
     let blocks = talk.transcript().blocks();
     let mut at = 0;
     while at < blocks.len() {
-        if !rows.is_empty() {
+        let adjacent_picture = matches!(&blocks[at], Block::Picture(_))
+            && at > 0
+            && matches!(
+                &blocks[at - 1],
+                Block::Said(Voice::Reader, _) | Block::Picture(_)
+            );
+        if !rows.is_empty() && !adjacent_picture {
             rows.push(Row::new());
         }
         match &blocks[at] {
             Block::Said(Voice::Reader, passage) => {
-                rows.extend(passage_rows(
+                rows.extend(reader_rows(
+                    talk,
+                    at,
                     passage,
-                    CHEVRON,
-                    Tone::Said,
-                    (columns * 3 / 4).max(NARROWEST),
+                    (columns * 2 / 3).max(NARROWEST),
                 ));
             }
+            Block::Picture(image) => rows.push(vec![image_piece(image.clone())]),
             Block::Said(Voice::Agent, passage) => {
                 rows.extend(passage_rows(passage, BULLET, Tone::Spoken, columns));
             }
             Block::Said(Voice::Thought, passage) => {
                 rows.push(vec![piece(
                     format!(
-                        "  {} Thinking",
+                        "{} Thinking",
                         if talk.details_expanded(at) {
                             "⌄"
                         } else {
@@ -363,6 +384,38 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
     rows
 }
 
+/// Reader text and any images restored from an agent's saved transcript.
+fn reader_rows(talk: &Talk, block: usize, passage: &str, columns: usize) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let mut rest = passage;
+    let mut place = 0;
+    while let Some(start) = rest.find("[@image](") {
+        let before = &rest[..start];
+        if !before.is_empty() {
+            rows.extend(passage_rows(before, CHEVRON, Tone::Said, columns));
+        }
+        let source = &rest[start + "[@image](".len()..];
+        let Some(end) = source.find(')') else {
+            rest = &rest[start..];
+            break;
+        };
+        if let Some(image) = talk
+            .transcript()
+            .restored_picture(block, place, &source[..end])
+        {
+            rows.push(vec![image_piece(image)]);
+        } else {
+            rows.extend(passage_rows("[Pasted image]", CHEVRON, Tone::Said, columns));
+        }
+        place += 1;
+        rest = &source[end + 1..];
+    }
+    if !rest.is_empty() {
+        rows.extend(passage_rows(rest, CHEVRON, Tone::Said, columns));
+    }
+    rows
+}
+
 /// The collapsed or expanded heading for adjacent tool calls.
 fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
     let mark = if expanded { "⌄" } else { "›" };
@@ -384,7 +437,7 @@ fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
         });
         let mut activities = Vec::new();
         if reads {
-            activities.push("read files");
+            activities.push("Read files");
         }
         if runs {
             activities.push("ran commands");
@@ -395,13 +448,13 @@ fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
         if activities.is_empty() {
             format!("{count} tool calls")
         } else {
-            format!("{} · {count} calls", activities.join(", "))
+            activities.join(", ")
         }
     };
     let failed = blocks
         .iter()
         .any(|block| matches!(block, Block::Ran(call) if call.status == Status::Failed));
-    let mut row = vec![piece(format!("  {mark} {label}"), Tone::DetailGroup(at))];
+    let mut row = vec![piece(format!("{label}  {mark}"), Tone::DetailGroup(at))];
     if failed {
         row.push(piece(" · failed".to_owned(), Tone::Failed));
     }
@@ -410,7 +463,8 @@ fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
 
 /// One passage, as rows marked with `mark` and wrapped to the width.
 fn passage_rows(passage: &str, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
-    wrap(passage, columns.saturating_sub(mark.chars().count()))
+    let passage = hide_image_data(passage);
+    wrap(&passage, columns.saturating_sub(mark.chars().count()))
         .into_iter()
         .enumerate()
         .map(|(at, line)| match at {
@@ -424,6 +478,41 @@ fn passage_rows(passage: &str, mark: &str, tone: Tone, columns: usize) -> Vec<Ro
             ],
         })
         .collect()
+}
+
+/// Replaces image payloads echoed in a saved transcript with a short label.
+fn hide_image_data(passage: &str) -> String {
+    let bytes = passage.as_bytes();
+    let mut shown = String::with_capacity(passage.len().min(4096));
+    let mut copied = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        if !is_image_data_byte(bytes[at]) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < bytes.len() && is_image_data_byte(bytes[at]) {
+            at += 1;
+        }
+        if at - start < 512 {
+            continue;
+        }
+        let prefix = passage[copied..start]
+            .rfind("data:image/")
+            .filter(|prefix| start - (copied + prefix) < 80)
+            .map_or(start, |prefix| copied + prefix);
+        shown.push_str(&passage[copied..prefix]);
+        shown.push_str("[Pasted image]");
+        copied = at;
+    }
+    shown.push_str(&passage[copied..]);
+    shown
+}
+
+/// Whether a byte can occur in a base64 image payload.
+fn is_image_data_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_')
 }
 
 /// One tool call, as the line naming it and the lines of what it came to.
@@ -540,19 +629,25 @@ fn row(theme: &Theme, row: Row, session: TalkId) -> Div<Message> {
         Tone::DetailGroup(block) => Some(block),
         _ => None,
     });
+    let detail = action.is_some();
     h_flex()
-        .h_px(height)
+        .h_px(if detail { height + space(0.75) } else { height })
+        .items_center()
         .when_some(action, |line, block| {
             line.on_click(Message::ToggleAgentDetails(session, block))
                 .hover_bg(theme.colors.surface_hover)
         })
         .children(row.into_iter().map(|piece| {
+            if let Some(image) = piece.image {
+                return h_flex().child(picture(image).w_px(160.0).h_px(112.0));
+            }
             let styled = text(piece.text).color(tone(theme, piece.tone));
-            match piece.tone {
-                Tone::Said | Tone::Spoken => styled.text_base(),
+            let styled = match piece.tone {
+                Tone::Said | Tone::Spoken => styled.text_lg(),
                 Tone::Argument => styled.text_sm().font_mono(),
                 _ => styled.text_sm(),
-            }
+            };
+            h_flex().child(styled)
         }))
 }
 
@@ -655,7 +750,7 @@ fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Messag
 
 /// The files and images waiting to go with the next prompt.
 fn attachment_list(theme: &Theme, talk: &Talk) -> Div<Message> {
-    v_flex().gap(0.25).children(
+    v_flex().gap(0.5).children(
         talk.attachments()
             .iter()
             .enumerate()
@@ -663,6 +758,18 @@ fn attachment_list(theme: &Theme, talk: &Talk) -> Div<Message> {
                 h_flex()
                     .gap(0.5)
                     .items_center()
+                    .when_some(talk.attachment_preview(place), |row, preview| {
+                        row.child(
+                            h_flex()
+                                .size_px(48.0)
+                                .items_center()
+                                .justify_center()
+                                .rounded(theme.radius.sm)
+                                .bg(theme.colors.surface_hover)
+                                .overflow_hidden()
+                                .child(picture(preview).size_px(44.0)),
+                        )
+                    })
                     .child(
                         text(attachment.label())
                             .text_xs()
@@ -832,7 +939,20 @@ fn split(word: &str, columns: usize) -> Vec<String> {
 
 /// One run of text in one colour.
 fn piece(text: String, tone: Tone) -> Piece {
-    Piece { text, tone }
+    Piece {
+        text,
+        tone,
+        image: None,
+    }
+}
+
+/// A reader image shown as a thumbnail inside the message bubble.
+fn image_piece(image: Image) -> Piece {
+    Piece {
+        text: String::new(),
+        tone: Tone::Said,
+        image: Some(image),
+    }
 }
 
 /// The colour a mark against `tone` is drawn in.

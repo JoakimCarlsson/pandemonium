@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use base64::Engine;
+use pm_gfx::Image;
 
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
@@ -86,6 +87,8 @@ pub struct Talk {
     prompt: Input,
     /// Files and images to send with the next prompt.
     attachments: Vec<Attachment>,
+    /// Decoded previews in the same order as the attachments.
+    attachment_previews: Vec<Option<Image>>,
     /// Pasted images saved as files for agents without image prompt support.
     clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
@@ -212,19 +215,30 @@ impl Talk {
         &self.attachments
     }
 
+    /// The preview of the attachment at `place`, when it is an image.
+    pub fn attachment_preview(&self, place: usize) -> Option<Image> {
+        self.attachment_previews.get(place).and_then(Clone::clone)
+    }
+
     /// Adds a chosen file to the next prompt.
     pub fn attach_file(&mut self, path: PathBuf) {
+        let preview = crate::image::Images::is_picture(&path)
+            .then(|| fs::read(&path).ok().and_then(|bytes| Image::decode(&bytes)))
+            .flatten();
+        self.attachment_previews.push(preview);
         self.attachments.push(Attachment::File(path));
     }
 
     /// Adds a pasted PNG to the next prompt in the form this agent accepts.
     pub fn attach_image(&mut self, png: Vec<u8>) {
         if self.conversation.can_image() {
+            self.attachment_previews.push(Image::decode(&png));
             self.attachments.push(Attachment::Image {
                 data: base64::engine::general_purpose::STANDARD.encode(png),
                 mime_type: "image/png".to_owned(),
             });
         } else if let Some(path) = crate::desktop::save_pasted_image(&png) {
+            self.attachment_previews.push(Image::decode(&png));
             self.attachments.push(Attachment::File(path.clone()));
             self.clipboard_files.push(path);
         }
@@ -234,6 +248,7 @@ impl Talk {
     pub fn remove_attachment(&mut self, place: usize) {
         if place < self.attachments.len() {
             self.attachments.remove(place);
+            self.attachment_previews.remove(place);
         }
     }
 
@@ -566,9 +581,12 @@ impl Talk {
         }
         self.prompt.clear();
         let attachments = std::mem::take(&mut self.attachments);
+        let previews = std::mem::take(&mut self.attachment_previews);
         let labels = attachments
             .iter()
-            .map(|attachment| format!("[{}]", attachment.label()))
+            .zip(&previews)
+            .filter(|(_, preview)| preview.is_none())
+            .map(|(attachment, _)| format!("[{}]", attachment.label()))
             .collect::<Vec<_>>()
             .join(" ");
         let shown = if labels.is_empty() {
@@ -578,7 +596,12 @@ impl Talk {
         } else {
             format!("{text}\n{labels}")
         };
-        self.transcript.say(Voice::Reader, &shown);
+        if !shown.is_empty() {
+            self.transcript.say(Voice::Reader, &shown);
+        }
+        for preview in previews.into_iter().flatten() {
+            self.transcript.picture(preview);
+        }
         self.conversation.prompt(&text, attachments);
         self.chosen = 0;
         self.dismissed = false;
@@ -825,6 +848,7 @@ impl Talks {
                 transcript: Transcript::default(),
                 prompt: Input::many_lines("Prompt"),
                 attachments: Vec::new(),
+                attachment_previews: Vec::new(),
                 clipboard_files: Vec::new(),
                 asks: Vec::new(),
                 commands: Vec::new(),
