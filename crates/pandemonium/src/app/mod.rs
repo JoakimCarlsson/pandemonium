@@ -40,7 +40,7 @@ use pm_core::{FileTree, Projects, Scope, Sessions};
 use pm_gfx::{DrawList, Point, Quad, Rect, Renderer, Size};
 use pm_text::Position;
 use pm_ui::{
-    Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Theme, Ui,
+    Appearance, Axis, ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Scroll, Styled, Theme, Ui,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -1870,13 +1870,17 @@ impl App {
         }
 
         if let Some(asked) = self.prompt.as_ref() {
-            let height = crate::prompt::height(asked);
+            let width = crate::prompt::WIDTH.min((window.width - 24.0).max(1.0));
             overlays.push(workspace::Overlaid {
-                at: Point::new(
-                    window.width / 2.0 - crate::prompt::WIDTH / 2.0,
-                    (window.height - height) / 2.0,
+                at: Point::new(0.0, 0.0),
+                content: Box::new(
+                    pm_ui::v_flex()
+                        .w_px(window.width)
+                        .h_px(window.height)
+                        .items_center()
+                        .justify_center()
+                        .child(crate::prompt::prompt(theme, asked, width)),
                 ),
-                content: Box::new(crate::prompt::prompt(theme, asked)),
                 backdrop: Some(Message::DismissPrompt),
             });
         }

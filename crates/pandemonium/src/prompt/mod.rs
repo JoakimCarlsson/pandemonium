@@ -12,4 +12,4 @@ mod state;
 mod view;
 
 pub use state::{Answer, Prompt};
-pub use view::{WIDTH, height, prompt};
+pub use view::{WIDTH, prompt};

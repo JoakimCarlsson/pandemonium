@@ -63,6 +63,8 @@ pub struct Paragraph {
     style: Style,
     /// The lines the last measurement broke the runs into.
     lines: Vec<Line>,
+    /// Whether a word wider than the offered width may break between characters.
+    break_long_words: bool,
 }
 
 /// An empty paragraph, to add runs to.
@@ -71,10 +73,17 @@ pub fn paragraph() -> Paragraph {
         spans: Vec::new(),
         style: Style::default(),
         lines: Vec::new(),
+        break_long_words: false,
     }
 }
 
 impl Paragraph {
+    /// Allows words wider than the paragraph to break between characters.
+    pub fn break_long_words(mut self) -> Self {
+        self.break_long_words = true;
+        self
+    }
+
     /// Returns this paragraph with `content` added in `font` and `color`.
     pub fn span(mut self, content: impl Into<String>, font: Font, color: Rgba) -> Self {
         self.spans.push(Span {
@@ -119,10 +128,9 @@ impl Paragraph {
 
     /// Breaks the runs into lines no wider than `width`.
     ///
-    /// A line breaks before the word that would not fit, and a word wider
-    /// than the whole line is put on one of its own rather than cut, since a
-    /// path or an address cut in two reads as two. The space a line breaks
-    /// at is not carried onto the next.
+    /// A line breaks before the word that would not fit. A wider word stays
+    /// whole unless character breaking was requested. The space a line
+    /// breaks at is not carried onto the next.
     fn break_lines(&self, width: f32, cx: &mut LayoutContext<'_>) -> Vec<Line> {
         let mut lines = vec![Line::default()];
         let mut x = 0.0;
@@ -137,6 +145,30 @@ impl Paragraph {
                 }
                 let blank = token.trim().is_empty();
                 let size = cx.measure(token, font);
+                if self.break_long_words && !blank && size.width > width {
+                    for character in token.chars() {
+                        let character = character.to_string();
+                        let size = cx.measure(&character, font);
+                        if x + size.width > width
+                            && !lines.last().is_some_and(|line| line.pieces.is_empty())
+                        {
+                            trim_trailing_space(lines.last_mut().expect("there is always a line"));
+                            lines.push(Line::default());
+                            x = 0.0;
+                        }
+                        let line = lines.last_mut().expect("there is always a line");
+                        line.height = line.height.max(font.line_height);
+                        line.pieces.push(Piece {
+                            content: character,
+                            font,
+                            x,
+                            width: size.width,
+                            span: index,
+                        });
+                        x += size.width;
+                    }
+                    continue;
+                }
                 let line = lines.last_mut().expect("there is always a line");
                 if blank && line.pieces.is_empty() {
                     line.height = line.height.max(font.line_height);
