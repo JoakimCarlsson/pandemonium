@@ -15,7 +15,8 @@ use pm_core::{Changed, FileStatus};
 use pm_gfx::Rgba;
 use pm_ui::{
     Axis, Bounds, Div, IconName, IconSize, MenuItem, Styled, Theme, ToggleState, checkbox, h_flex,
-    icon, icon_button, measured, menu_entry, menu_separator, sash, text, v_flex,
+    icon, icon_button, measured, menu_entry, menu_separator, sash, text, turning_icon_button,
+    v_flex,
 };
 
 use crate::message::Message;
@@ -315,8 +316,13 @@ fn history_graph(
                 .child(icon_button(theme, IconName::GitPull, Message::Pull).tooltip("Pull"))
                 .child(icon_button(theme, IconName::GitPush, Message::PushBranch).tooltip("Push"))
                 .child(
-                    icon_button(theme, IconName::Refresh, Message::RefreshChanges)
-                        .tooltip("Refresh"),
+                    turning_icon_button(
+                        theme,
+                        IconName::Refresh,
+                        review.refresh_turn(),
+                        Message::RefreshChanges,
+                    )
+                    .tooltip("Refresh"),
                 ),
         )
         .when(open, |graph| {
@@ -491,9 +497,10 @@ fn section_heading(theme: &Theme, review: &Review, several: bool, open: bool) ->
                 Message::Commit,
             ))
         })
-        .child(icon_button(
+        .child(turning_icon_button(
             theme,
             IconName::Refresh,
+            review.refresh_turn(),
             Message::RefreshChanges,
         ))
         .when(!several, |heading| {

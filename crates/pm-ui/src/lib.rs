@@ -51,5 +51,5 @@ pub use widgets::{
     Button, ButtonVariant, Field, MenuItem, Switch, Tab, ThemePreview, ToggleState, button,
     checkbox, field, icon_button, menu, menu_entry, menu_separator, menu_submenu, rule, section,
     switch, switch_field, tab, tab_bar, theme_gallery, theme_preview, tinted_icon_button,
-    toggle_grid, toggle_row,
+    toggle_grid, toggle_row, turning_icon_button,
 };

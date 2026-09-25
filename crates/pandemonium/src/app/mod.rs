@@ -1390,7 +1390,7 @@ impl App {
         match message {
             Message::OpenReview => self.open_review(),
             Message::OpenExcerpts => self.open_excerpts(),
-            Message::RefreshChanges => self.reread_worktree(),
+            Message::RefreshChanges => self.refresh_changes(),
             Message::ToggleChangeStaged(index) => self.toggle_change_staged(index),
             Message::ToggleGroupStaged(repository, group) => {
                 self.toggle_group_staged(repository, group);

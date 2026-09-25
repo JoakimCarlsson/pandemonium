@@ -86,6 +86,16 @@ impl App {
         self.reread_changes();
     }
 
+    /// Reads the worktree again because the reader asked to, turning the
+    /// refresh control of its review while it does.
+    pub(super) fn refresh_changes(&mut self) {
+        self.reread_worktree();
+        if let Some(review) = self.scope().and_then(|scope| self.reviews.get_mut(&scope)) {
+            review.start_refresh();
+        }
+        self.spun = std::time::Instant::now();
+    }
+
     /// The paths of the tree's rows, in the order they are drawn.
     fn tree_order(&self) -> Vec<PathBuf> {
         self.scope()
