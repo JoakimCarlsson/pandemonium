@@ -23,6 +23,7 @@ use pm_ui::{Div, IconName, IconSize, Styled, Theme, button, h_flex, icon, rule, 
 
 use crate::agent::{Block, Standing, Talk, TalkId};
 use crate::input::input_view;
+use crate::markdown::blocks::{self, Block as MarkdownBlock, Run};
 use crate::message::Message;
 
 /// How many rows are built at once, however long the conversation runs.
@@ -223,7 +224,7 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
                 rows.extend(passage_rows(passage, CHEVRON, Tone::Said, columns));
             }
             Block::Said(Voice::Agent, passage) => {
-                rows.extend(passage_rows(passage, BULLET, Tone::Spoken, columns));
+                rows.extend(markdown_rows(passage, BULLET, Tone::Spoken, columns));
             }
             Block::Said(Voice::Thought, passage) => {
                 rows.extend(passage_rows(passage, BULLET, Tone::Quiet, columns));
@@ -241,6 +242,82 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
         )]);
     }
     rows
+}
+
+/// Renders a message's Markdown blocks as transcript rows.
+fn markdown_rows(source: &str, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
+    let mut rows = Vec::new();
+    for block in blocks::blocks(source) {
+        if !rows.is_empty() {
+            rows.push(Row::new());
+        }
+        markdown_block_rows(&block, mark, tone, columns, &mut rows);
+    }
+    rows
+}
+
+/// Appends one Markdown block, including nested list and quote blocks.
+fn markdown_block_rows(
+    block: &MarkdownBlock,
+    mark: &str,
+    tone: Tone,
+    columns: usize,
+    rows: &mut Vec<Row>,
+) {
+    match block {
+        MarkdownBlock::Heading(depth, runs) => {
+            let heading = format!("{} {}", "#".repeat(*depth), run_text(runs));
+            rows.extend(passage_rows(&heading, mark, Tone::Tool, columns));
+        }
+        MarkdownBlock::Paragraph(runs) => {
+            rows.extend(passage_rows(&run_text(runs), mark, tone, columns));
+        }
+        MarkdownBlock::Code(language, code) => {
+            let label = language.as_deref().unwrap_or("code");
+            rows.extend(passage_rows(label, mark, Tone::Quiet, columns));
+            for line in code.trim_end_matches('\n').lines() {
+                rows.extend(passage_rows(line, WRAPPED, Tone::Argument, columns));
+            }
+        }
+        MarkdownBlock::Quote(blocks) => {
+            for block in blocks {
+                markdown_block_rows(block, "> ", Tone::Quiet, columns, rows);
+            }
+        }
+        MarkdownBlock::List(first, items) => {
+            for (index, item) in items.iter().enumerate() {
+                let marker = match (item.task, first) {
+                    (Some(true), _) => "☑ ".to_owned(),
+                    (Some(false), _) => "☐ ".to_owned(),
+                    (None, Some(first)) => format!("{}. ", first + index as u64),
+                    (None, None) => "• ".to_owned(),
+                };
+                for (position, block) in item.blocks.iter().enumerate() {
+                    let prefix = if position == 0 { &marker } else { WRAPPED };
+                    markdown_block_rows(block, prefix, tone, columns, rows);
+                }
+            }
+        }
+        MarkdownBlock::Table(table) => {
+            for cells in table {
+                let line = cells
+                    .iter()
+                    .map(|runs| run_text(runs))
+                    .collect::<Vec<_>>()
+                    .join(" │ ");
+                rows.extend(passage_rows(&line, mark, tone, columns));
+            }
+        }
+        MarkdownBlock::Rule => rows.extend(passage_rows("────────", mark, Tone::Rule, columns)),
+        MarkdownBlock::Picture(_, description) => {
+            rows.extend(passage_rows(description, mark, tone, columns));
+        }
+    }
+}
+
+/// Returns the visible words of an inline Markdown passage.
+fn run_text(runs: &[Run]) -> String {
+    runs.iter().map(|run| run.text.as_str()).collect()
 }
 
 /// The rule the conversation opens with: which agent, over which worktree.

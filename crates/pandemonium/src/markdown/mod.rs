@@ -6,7 +6,7 @@
 //! what drawing it needs between frames — how far each is scrolled, the
 //! blocks the text last parsed into and the pictures it names.
 
-mod blocks;
+pub(crate) mod blocks;
 mod pane;
 mod store;
 
