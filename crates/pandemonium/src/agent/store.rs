@@ -14,11 +14,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
+
+use base64::Engine;
 
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Ask, Command, Event, History, Knob, Mode, Notify, Session, Setting, Stop, Voice,
+    About, Agent, Ask, Attachment, Command, Event, History, Knob, Mode, Notify, Session, Setting,
+    Stop, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
 
@@ -77,6 +81,10 @@ pub struct Talk {
     /// A prompt is several lines as often as it is one, so it is written in
     /// the editor the window is made of rather than in a line of its own.
     prompt: Input,
+    /// Files and images to send with the next prompt.
+    attachments: Vec<Attachment>,
+    /// Pasted images saved as files for agents without image prompt support.
+    clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
     /// The commands the agent has said it takes, as it last said them.
@@ -105,6 +113,8 @@ pub struct Talk {
     scroll: usize,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
+    /// The tool and thought blocks the reader has opened.
+    expanded_details: BTreeSet<usize>,
 }
 
 /// One completion offered by a prompt prefix.
@@ -187,6 +197,36 @@ impl Talk {
     /// That box, to write in.
     pub fn prompt_mut(&mut self) -> &mut Input {
         &mut self.prompt
+    }
+
+    /// Files and images waiting beside the prompt.
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
+    }
+
+    /// Adds a chosen file to the next prompt.
+    pub fn attach_file(&mut self, path: PathBuf) {
+        self.attachments.push(Attachment::File(path));
+    }
+
+    /// Adds a pasted PNG to the next prompt in the form this agent accepts.
+    pub fn attach_image(&mut self, png: Vec<u8>) {
+        if self.conversation.can_image() {
+            self.attachments.push(Attachment::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(png),
+                mime_type: "image/png".to_owned(),
+            });
+        } else if let Some(path) = crate::desktop::save_pasted_image(&png) {
+            self.attachments.push(Attachment::File(path.clone()));
+            self.clipboard_files.push(path);
+        }
+    }
+
+    /// Removes the attachment at `place` before it is sent.
+    pub fn remove_attachment(&mut self, place: usize) {
+        if place < self.attachments.len() {
+            self.attachments.remove(place);
+        }
     }
 
     /// The permission requests waiting on the reader.
@@ -484,6 +524,18 @@ impl Talk {
         self.following
     }
 
+    /// Whether the details starting at `block` are open.
+    pub fn details_expanded(&self, block: usize) -> bool {
+        self.expanded_details.contains(&block)
+    }
+
+    /// Opens or closes the details starting at `block`.
+    pub fn toggle_details(&mut self, block: usize) {
+        if !self.expanded_details.insert(block) {
+            self.expanded_details.remove(&block);
+        }
+    }
+
     /// Sends what is in the prompt buffer, and empties it.
     ///
     /// The prompt goes into the transcript here rather than when the agent
@@ -491,12 +543,25 @@ impl Talk {
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
         let text = self.prompt.value().trim().to_owned();
-        if text.is_empty() {
+        if text.is_empty() && self.attachments.is_empty() {
             return;
         }
         self.prompt.clear();
-        self.transcript.say(Voice::Reader, &text);
-        self.conversation.prompt(&text);
+        let attachments = std::mem::take(&mut self.attachments);
+        let labels = attachments
+            .iter()
+            .map(|attachment| format!("[{}]", attachment.label()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let shown = if labels.is_empty() {
+            text.clone()
+        } else if text.is_empty() {
+            labels
+        } else {
+            format!("{text}\n{labels}")
+        };
+        self.transcript.say(Voice::Reader, &shown);
+        self.conversation.prompt(&text, attachments);
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
@@ -569,6 +634,15 @@ impl Talk {
                 self.ready = false;
                 self.transcript.note(ended(&self.conversation));
             }
+        }
+    }
+}
+
+impl Drop for Talk {
+    /// Removes pasted images kept for an agent without image prompt support.
+    fn drop(&mut self) {
+        for path in &self.clipboard_files {
+            let _ = fs::remove_file(path);
         }
     }
 }
@@ -732,6 +806,8 @@ impl Talks {
                 conversation,
                 transcript: Transcript::default(),
                 prompt: Input::many_lines("Prompt"),
+                attachments: Vec::new(),
+                clipboard_files: Vec::new(),
                 asks: Vec::new(),
                 commands: Vec::new(),
                 skills: installed_skills(root, agent),
@@ -746,6 +822,7 @@ impl Talks {
                 mode: None,
                 scroll: 0,
                 following: true,
+                expanded_details: BTreeSet::new(),
             },
         );
         Some(id)

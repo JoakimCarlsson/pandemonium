@@ -31,6 +31,17 @@ impl App {
                     talk.answer(ask, place);
                 }
             }
+            Message::ToggleAgentDetails(session, block) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.toggle_details(block);
+                }
+            }
+            Message::AttachAgentFiles(session) => self.attach_agent_files(session),
+            Message::RemoveAgentAttachment(session, place) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.remove_attachment(place);
+                }
+            }
             Message::TakeAgentCommand(session, place) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.take_command(place);
@@ -397,6 +408,22 @@ impl App {
         }
         self.focus_prompt(session);
         self.follow_agents();
+    }
+
+    /// Lets the reader choose files for this agent's next turn.
+    fn attach_agent_files(&mut self, session: TalkId) {
+        let Some(paths) = rfd::FileDialog::new()
+            .set_title("Attach files")
+            .pick_files()
+        else {
+            return;
+        };
+        if let Some(talk) = self.agents.get_mut(session) {
+            for path in paths {
+                talk.attach_file(path);
+            }
+        }
+        self.focus_prompt(session);
     }
 
     /// The session the pointer is over, or the one the focused pane shows.

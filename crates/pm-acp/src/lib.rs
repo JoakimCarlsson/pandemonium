@@ -11,11 +11,13 @@
 //! one of them running, and everything else here is what a session says.
 
 mod agent;
+mod attachment;
 mod session;
 mod transport;
 mod update;
 
 pub use agent::{AGENTS, Agent, Source};
+pub use attachment::Attachment;
 pub use session::{Notify, Session};
 pub use update::{
     About, Ask, Choice, Command, Event, History, Kind, Knob, Location, Method, Mode, Output, Pick,

@@ -104,6 +104,11 @@ impl Input {
         self.edit(|buffer| buffer.insert(value));
     }
 
+    /// Pastes text at the current selection.
+    pub fn paste(&mut self, value: &str) {
+        self.edit(|buffer| buffer.at_each(|buffer| buffer.paste(value)));
+    }
+
     /// Whether `key` is the one that finishes this box.
     pub fn submits(&self, key: &Key, modifiers: ModifiersState) -> bool {
         if !matches!(key, Key::Named(NamedKey::Enter)) {

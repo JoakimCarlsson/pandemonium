@@ -16,6 +16,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::ResizeDirection;
 
 use crate::app::{App, Writing};
+use crate::desktop;
 use crate::editor::{self, Completions};
 use crate::field::Typed;
 use crate::keymap::{self, Action, Context, Resolution, keys};
@@ -110,6 +111,9 @@ impl App {
             return self.request_redraw();
         }
         if self.send_to_prompt(event) {
+            return self.request_redraw();
+        }
+        if self.paste_agent_prompt(event) {
             return self.request_redraw();
         }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
@@ -258,6 +262,29 @@ impl App {
         };
         if let Some(completions) = self.completions.as_mut() {
             completions.step(step);
+        }
+        true
+    }
+
+    /// Pastes clipboard image or text into the focused agent prompt.
+    fn paste_agent_prompt(&mut self, event: &KeyEvent) -> bool {
+        let Some(Writing::Prompt(session)) = self.writing else {
+            return false;
+        };
+        if !self.modifiers.super_key() && !self.modifiers.control_key() {
+            return false;
+        }
+        if !matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("v")) {
+            return false;
+        }
+        let Some(talk) = self.agents.get_mut(session) else {
+            return false;
+        };
+        if let Some(png) = desktop::paste_image() {
+            talk.attach_image(png);
+        } else if let Some(text) = desktop::paste() {
+            talk.prompt_mut().paste(&text);
+            talk.retyped();
         }
         true
     }
