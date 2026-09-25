@@ -14,6 +14,13 @@ const INITIAL_COLS: usize = 80;
 /// Rows a shell is started with, before a pane has been drawn for it.
 const INITIAL_ROWS: usize = 24;
 
+/// Columns a command an agent runs is started with.
+///
+/// Nobody may ever draw it, and what it writes is read back as text, so it
+/// is given room for the lines a build or a test run prints rather than the
+/// width of a pane that does not exist yet.
+const ERRAND_COLS: usize = 160;
+
 /// One running shell, shared between the window and the pane drawing it.
 ///
 /// The element tree is rebuilt every frame and may not borrow the window's
@@ -49,6 +56,15 @@ pub struct Exited {
     pub code: u32,
 }
 
+/// A shell an agent started to run one command.
+struct Errand {
+    /// What the list calls it: the command it runs.
+    label: String,
+    /// Whether the agent may still ask about it, which keeps it listed after
+    /// its command has exited so that what it wrote can still be read.
+    held: bool,
+}
+
 /// One worktree's shells and which of them its pane is showing.
 #[derive(Default)]
 struct WorktreeShells {
@@ -56,6 +72,8 @@ struct WorktreeShells {
     running: Vec<(ShellId, Shell)>,
     /// The one the pane is showing.
     active: Option<ShellId>,
+    /// The shells among them that agents started, by id.
+    errands: BTreeMap<ShellId, Errand>,
 }
 
 impl WorktreeShells {
@@ -76,12 +94,24 @@ impl WorktreeShells {
     ///
     /// The ones that exited badly are handed to `failed`, named, with the
     /// code they gave.
+    ///
+    /// A shell an agent still holds is kept however it ended, and one an
+    /// agent started is never reported: a failing test is the agent's to
+    /// read, not the reader's to be interrupted by.
     fn reap(&mut self, scope: Scope, failed: &mut Vec<Exited>) -> bool {
         let before = self.running.len();
-        self.running.retain(|(_, shell)| {
+        let errands = &mut self.errands;
+        self.running.retain(|(id, shell)| {
             let mut child = shell.borrow_mut();
             if child.is_running() {
                 return true;
+            }
+            if let Some(errand) = errands.get(id) {
+                if errand.held {
+                    return true;
+                }
+                errands.remove(id);
+                return false;
             }
             if let Some(code) = child.exit_code().filter(|code| *code != 0) {
                 drop(child);
@@ -143,12 +173,16 @@ impl Terminals {
     }
 
     /// The shell `scope` is showing, starting its first one in `root`.
+    ///
+    /// The commands agents are running are not the reader's shell: a
+    /// worktree with only those has its own started beside them.
     pub fn open(&mut self, scope: Scope, root: &Path, env: &[(String, String)]) -> Option<Shell> {
-        if self
-            .worktrees
-            .get(&scope)
-            .is_none_or(|shells| shells.running.is_empty())
-        {
+        if self.worktrees.get(&scope).is_none_or(|shells| {
+            shells
+                .running
+                .iter()
+                .all(|(id, _)| shells.errands.contains_key(id))
+        }) {
             self.start(scope, root, env);
         }
         self.active(scope)
@@ -184,6 +218,58 @@ impl Terminals {
         Some(id)
     }
 
+    /// Runs `program` with `args` in `cwd` for an agent, as a shell of
+    /// `scope`'s that lists as `label`.
+    ///
+    /// It joins the worktree's list without taking the pane from the shell
+    /// the reader is looking at, and it stays in the list until the agent
+    /// lets it go, however soon its command exits.
+    pub fn run(
+        &mut self,
+        scope: Scope,
+        cwd: &Path,
+        program: &str,
+        args: &[String],
+        env: &[(String, String)],
+    ) -> std::io::Result<ShellId> {
+        let notify = self
+            .notify
+            .clone()
+            .ok_or_else(|| std::io::Error::other("the window is not listening"))?;
+        let mut shell = Terminal::run(cwd, ERRAND_COLS, INITIAL_ROWS, program, args, env, notify)?;
+        if let Some(lines) = self.scrollback {
+            shell.set_scrollback(lines);
+        }
+        let id = self.next;
+        self.next = ShellId(id.0 + 1);
+        let shells = self.worktrees.entry(scope).or_default();
+        shells.running.push((id, Rc::new(RefCell::new(shell))));
+        shells.active = shells.active.or(Some(id));
+        let label = std::iter::once(program)
+            .chain(args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        shells.errands.insert(id, Errand { label, held: true });
+        Ok(id)
+    }
+
+    /// The shell `id` names in `scope`, while it is listed.
+    pub fn get(&self, scope: Scope, id: ShellId) -> Option<Shell> {
+        self.worktrees.get(&scope)?.get(id)
+    }
+
+    /// Lets go of a shell an agent started, which leaves the list once its
+    /// command has exited.
+    pub fn release(&mut self, scope: Scope, id: ShellId) {
+        if let Some(errand) = self
+            .worktrees
+            .get_mut(&scope)
+            .and_then(|shells| shells.errands.get_mut(&id))
+        {
+            errand.held = false;
+        }
+    }
+
     /// The shell `scope` is showing, if it has one.
     pub fn active(&self, scope: Scope) -> Option<Shell> {
         self.worktrees.get(&scope)?.active()
@@ -208,7 +294,10 @@ impl Terminals {
             .iter()
             .map(|(id, shell)| ShellEntry {
                 id: *id,
-                name: name(shell),
+                name: shells
+                    .errands
+                    .get(id)
+                    .map_or_else(|| name(shell), |errand| errand.label.clone()),
                 active: shells.active == Some(*id),
             })
             .collect()
@@ -227,6 +316,7 @@ impl Terminals {
             return;
         };
         shells.running.retain(|(running, _)| *running != id);
+        shells.errands.remove(&id);
         if shells.active == Some(id) {
             shells.active = shells.running.last().map(|(id, _)| *id);
         }
@@ -238,6 +328,7 @@ impl Terminals {
             return;
         };
         shells.running.retain(|(running, _)| *running == id);
+        shells.errands.retain(|errand, _| *errand == id);
         shells.active = Some(id);
     }
 
@@ -245,6 +336,7 @@ impl Terminals {
     pub fn stop_all(&mut self, scope: Scope) {
         if let Some(shells) = self.worktrees.get_mut(&scope) {
             shells.running.clear();
+            shells.errands.clear();
             shells.active = None;
         }
     }

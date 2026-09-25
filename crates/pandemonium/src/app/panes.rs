@@ -621,6 +621,7 @@ impl App {
             .collect::<BTreeSet<_>>();
         self.editor.retain(&files);
         self.agents.retain(&sessions);
+        self.sweep_errands();
         if let Some(crate::app::Writing::Prompt(open)) = self.writing
             && !sessions.contains(&open)
         {

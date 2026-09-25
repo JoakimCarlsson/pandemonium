@@ -8,16 +8,19 @@
 //! sessions in the editor's sense; it speaks to one agent at a time.
 //!
 //! [`Agent`] is which agents there are and how each is run; [`Session`] is
-//! one of them running, and everything else here is what a session says.
+//! one of them running; a [`Request`] is what it asks the editor to do for
+//! it, and everything else here is what a session says.
 
 mod agent;
 mod attachment;
+mod request;
 mod session;
 mod transport;
 mod update;
 
 pub use agent::{AGENTS, Agent, Source};
 pub use attachment::Attachment;
+pub use request::{Answer, Exit, Request, Run};
 pub use session::{Notify, Session};
 pub use update::{
     About, Ask, Choice, Command, Cost, Event, History, Kind, Knob, Location, Method, Mode, Output,

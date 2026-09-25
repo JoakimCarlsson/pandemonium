@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::request::Request;
+
 /// The tool calls of one session, by the identity the agent gave each.
 pub type Tools = BTreeMap<String, ToolCall>;
 
@@ -47,6 +49,9 @@ pub enum Event {
     Used(Usage),
     /// A tool call the agent will not run until the reader allows it.
     Asked(Ask),
+    /// A file or terminal request the window is to carry out and answer,
+    /// under the ticket given.
+    Requested(u64, Request),
     /// The turn is over, for the reason given.
     Stopped(Stop),
     /// The agent failed at something it was asked to do.
@@ -279,6 +284,9 @@ pub enum Output {
         /// What it holds after.
         after: String,
     },
+    /// A terminal the agent started, showing what its command writes as it
+    /// runs.
+    Terminal(String),
 }
 
 /// A file a tool call names, and where in it.
@@ -659,6 +667,7 @@ fn output(output: &Value) -> Option<Output> {
             before: output["oldText"].as_str().map(str::to_owned),
             after: output["newText"].as_str().unwrap_or_default().to_owned(),
         }),
+        "terminal" => Some(Output::Terminal(output["terminalId"].as_str()?.to_owned())),
         _ => None,
     }
 }

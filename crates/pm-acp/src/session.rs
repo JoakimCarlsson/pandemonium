@@ -6,13 +6,15 @@
 //! start — ever holds a frame up. What comes back is a queue of [`Event`]s the
 //! window drains on the wake that follows.
 //!
-//! The editor is the client here: the agent reads and writes files through it
-//! and asks it before it runs a tool. Reading and writing are answered from
-//! this thread; a permission request is not, because the answer is a reader's.
+//! The editor is the client here: the agent reads and writes files through
+//! it, runs commands in its terminals and asks it before it runs a tool. None
+//! of those is answered from this thread. A permission is the reader's to
+//! give, and a file or a terminal is the window's: each goes up as an event
+//! under a ticket and comes back down through the session.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,6 +23,7 @@ use serde_json::{Value, json};
 
 use crate::agent::Agent;
 use crate::attachment::Attachment;
+use crate::request::{self, Answer, Request, Shape};
 use crate::transport;
 use crate::update::{self, Event, Knob, Method, Mode, Setting, Stop, Tools};
 
@@ -41,6 +44,9 @@ const NO_SUCH_METHOD: i64 = -32601;
 
 /// The error a request the editor could not carry out is refused with.
 const FAILED: i64 = -32603;
+
+/// The error a request that makes no sense is refused with.
+const INVALID: i64 = -32602;
 
 /// How much of what an agent writes on its error pipe is kept.
 const TROUBLE: usize = 8 * 1024;
@@ -67,6 +73,16 @@ enum Sent {
     Mode(Option<String>),
     /// A knob being set, from the knobs as they stood before it.
     Knob(Vec<Knob>),
+}
+
+/// A request of the agent's that the window has yet to answer.
+struct Owed {
+    /// The identity the agent asked under.
+    id: Value,
+    /// What it asked for.
+    request: Request,
+    /// What the answer has to be shaped into.
+    shape: Shape,
 }
 
 /// A turn waiting for the agent, including context attached to its text.
@@ -120,8 +136,18 @@ struct State {
     /// The permission requests waiting on a reader, by the ticket each was
     /// put to them under, against the identity the agent asked under.
     parked: HashMap<u64, Value>,
-    /// The ticket the next permission request will be put to the reader as.
+    /// The file and terminal requests waiting on the window, by the ticket
+    /// each was raised under.
+    owed: HashMap<u64, Owed>,
+    /// The most output each terminal's agent will keep, by the terminal's
+    /// name, for the terminals that set one.
+    limits: HashMap<String, usize>,
+    /// The ticket the next request will be put to the reader or the window
+    /// as.
     ticket: u64,
+    /// How many terminals the agent has started, which is what names the
+    /// next one.
+    terminals: u64,
 }
 
 /// An agent the editor is talking to.
@@ -353,6 +379,34 @@ impl Session {
     /// Answers the permission request `ask` by walking away from it.
     pub fn refuse(&self, ask: u64) {
         self.answer(ask, &json!({ "outcome": { "outcome": "cancelled" } }));
+    }
+
+    /// Answers the file or terminal request `ticket` was raised under.
+    ///
+    /// A request is answered once; an answer to one that is no longer owed
+    /// is dropped.
+    pub fn answer_request(&self, ticket: u64, answer: Answer) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let Some(owed) = state.owed.remove(&ticket) else {
+            return;
+        };
+        let limit = match &owed.request {
+            Request::Output { terminal } => state.limits.get(terminal).copied(),
+            Request::Release { terminal } => state.limits.remove(terminal),
+            _ => None,
+        };
+        drop(state);
+        let message = match request::reply(&owed.request, &owed.shape, limit, answer) {
+            Ok(result) => json!({ "jsonrpc": "2.0", "id": owed.id, "result": result }),
+            Err(trouble) => json!({
+                "jsonrpc": "2.0",
+                "id": owed.id,
+                "error": { "code": FAILED, "message": trouble },
+            }),
+        };
+        self.send(&message);
     }
 
     /// Replies to the permission request `ask`, if it is still waiting.
@@ -852,17 +906,53 @@ impl Reader {
     /// all, which reads as a hung session rather than a missing feature.
     fn serve(&self, id: &Value, method: &str, params: &Value) {
         match method {
-            "fs/read_text_file" => match read(&self.root, params) {
-                Ok(content) => self.answer(id, &json!({ "content": content })),
-                Err(error) => self.refuse(id, FAILED, &error.to_string()),
-            },
-            "fs/write_text_file" => match write(&self.root, params) {
-                Ok(()) => self.answer(id, &json!({})),
-                Err(error) => self.refuse(id, FAILED, &error.to_string()),
-            },
             "session/request_permission" => self.park(id, params),
+            "fs/read_text_file" | "fs/write_text_file" => self.owe(id, method, params),
+            method if method.starts_with("terminal/") => self.owe(id, method, params),
             _ => self.refuse(id, NO_SUCH_METHOD, method),
         }
+    }
+
+    /// Hands a file or terminal request to the window and leaves it owed.
+    ///
+    /// A request that cannot be read — a path outside the worktree, a run
+    /// with no command — is refused here, and never reaches the window.
+    fn owe(&self, id: &Value, method: &str, params: &Value) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let terminal = format!("terminal-{}", state.terminals + 1);
+        let (request, shape) = match request::read(&self.root, method, params, terminal) {
+            Ok(read) => read,
+            Err(trouble) => {
+                drop(state);
+                let code = match trouble == method {
+                    true => NO_SUCH_METHOD,
+                    false => INVALID,
+                };
+                return self.refuse(id, code, &trouble);
+            }
+        };
+        if let (Request::Run(run), Shape::Tail { limit }) = (&request, &shape) {
+            state.terminals += 1;
+            if let Some(limit) = limit {
+                state.limits.insert(run.terminal.clone(), *limit);
+            }
+        }
+        let ticket = state.ticket;
+        state.ticket += 1;
+        state.owed.insert(
+            ticket,
+            Owed {
+                id: id.clone(),
+                request: request.clone(),
+                shape,
+            },
+        );
+        state.events.push(Event::Requested(ticket, request));
+        state.fresh = true;
+        drop(state);
+        self.wake();
     }
 
     /// Puts a permission request to the reader and leaves it unanswered.
@@ -994,79 +1084,9 @@ fn handshake() -> Value {
         },
         "clientCapabilities": {
             "fs": { "readTextFile": true, "writeTextFile": true },
-            "terminal": false,
+            "terminal": true,
         },
     })
-}
-
-/// What a file the agent asked for holds, from the line it asked for.
-fn read(root: &Path, params: &Value) -> std::io::Result<String> {
-    let path = within(root, params)?;
-    let text = std::fs::read_to_string(path)?;
-
-    let from = params["line"].as_u64().unwrap_or(1).max(1) as usize - 1;
-    let count = params["limit"].as_u64().unwrap_or(u64::MAX) as usize;
-    if from == 0 && count == usize::MAX {
-        return Ok(text);
-    }
-    Ok(text
-        .lines()
-        .skip(from)
-        .take(count)
-        .collect::<Vec<_>>()
-        .join("\n"))
-}
-
-/// Writes what the agent asked to be written.
-fn write(root: &Path, params: &Value) -> std::io::Result<()> {
-    let path = within(root, params)?;
-    let content = params["content"].as_str().unwrap_or_default();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, content)
-}
-
-/// The file `params` names, once it is known to be one of the worktree's.
-///
-/// The agent is a program of the reader's, running as they do, and nothing
-/// here stops it opening a file for itself. What this stops is the editor
-/// doing it on the agent's behalf: the session was opened over one worktree,
-/// so the worktree is the whole of what the editor will read or write
-/// through, and a path that climbs out of it is refused rather than followed.
-fn within(root: &Path, params: &Value) -> std::io::Result<PathBuf> {
-    let path = params["path"]
-        .as_str()
-        .ok_or_else(|| std::io::Error::other("no path"))?;
-    let path = cleaned(&root.join(path));
-
-    match path.starts_with(cleaned(root)) {
-        true => Ok(path),
-        false => Err(std::io::Error::other(format!(
-            "{} is outside this session's worktree",
-            path.display()
-        ))),
-    }
-}
-
-/// `path` with the steps that go nowhere taken out of it.
-///
-/// The disk is not asked: a file being written may not exist yet, and one
-/// that does may be reached through a link the reader meant to follow. What
-/// is resolved here is only the spelling — `.` and the `..` that a path
-/// climbs out through.
-fn cleaned(path: &Path) -> PathBuf {
-    let mut cleaned = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                cleaned.pop();
-            }
-            part => cleaned.push(part),
-        }
-    }
-    cleaned
 }
 
 /// What an agent's error says, in one line.

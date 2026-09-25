@@ -7,13 +7,24 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system};
 
 /// How many bytes the reader thread hands over at a time.
 const CHUNK: usize = 8192;
+
+/// How long the reader thread waits between looks at a child whose pty has
+/// closed, for the child to be done exiting.
+const REAP_PAUSE: Duration = Duration::from_millis(20);
+
+/// How many looks it takes before it stops waiting.
+///
+/// A child that closes its pty and goes on running is a daemon, not one that
+/// is exiting slowly, and the caller learns of it the way it always would.
+const REAP_LOOKS: usize = 100;
 
 /// Told to the caller whenever the child has written something.
 pub type Notify = Arc<dyn Fn() + Send + Sync>;
@@ -26,8 +37,9 @@ pub struct Pty {
     writer: Box<dyn Write + Send>,
     /// Chunks the reader thread has read, oldest first.
     output: Receiver<Vec<u8>>,
-    /// The process itself, so it can be waited on and killed.
-    child: Box<dyn Child + Send + Sync>,
+    /// The process itself, so it can be waited on and killed, shared with
+    /// the reader thread so that it can say when the child has exited.
+    child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     /// Whether the child's end of the pty has closed.
     closed: bool,
 }
@@ -50,10 +62,12 @@ impl Pty {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
 
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(std::io::Error::other)?;
+        let child = Arc::new(Mutex::new(
+            pair.slave
+                .spawn_command(command)
+                .map_err(std::io::Error::other)?,
+        ));
+        let reaped = child.clone();
         drop(pair.slave);
 
         let mut reader = pair
@@ -79,6 +93,15 @@ impl Pty {
                         Err(error) if error.kind() == ErrorKind::Interrupted => continue,
                         Err(_) => break,
                     }
+                }
+                for _ in 0..REAP_LOOKS {
+                    let exited = reaped
+                        .lock()
+                        .map_or(true, |mut child| !matches!(child.try_wait(), Ok(None)));
+                    if exited {
+                        break;
+                    }
+                    std::thread::sleep(REAP_PAUSE);
                 }
                 notify();
             })?;
@@ -138,24 +161,48 @@ impl Pty {
 
     /// Whether the child is still running.
     pub fn is_running(&mut self) -> bool {
-        !self.closed && matches!(self.child.try_wait(), Ok(None))
+        !self.closed && matches!(self.status(), Ok(None))
+    }
+
+    /// Ends the child, if it is still running.
+    pub fn kill(&mut self) {
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+        }
     }
 
     /// The code the child exited with, once it has exited.
     pub fn exit_code(&mut self) -> Option<u32> {
-        self.child
-            .try_wait()
+        self.status()
             .ok()
             .flatten()
             .map(|status| status.exit_code())
+    }
+
+    /// The signal that ended the child, once a signal has.
+    pub fn exit_signal(&mut self) -> Option<String> {
+        self.status()
+            .ok()
+            .flatten()
+            .and_then(|status| status.signal().map(str::to_owned))
+    }
+
+    /// How the child exited, once it has.
+    fn status(&self) -> std::io::Result<Option<ExitStatus>> {
+        self.child
+            .lock()
+            .map_err(|_| std::io::Error::other("the child's lock was poisoned"))?
+            .try_wait()
     }
 }
 
 impl Drop for Pty {
     /// Kills the child, so closing a pane does not leave a shell behind.
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 

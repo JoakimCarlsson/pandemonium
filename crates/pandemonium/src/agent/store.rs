@@ -25,8 +25,8 @@ use pm_gfx::Image;
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Ask, Attachment, Command, Event, History, Knob, Mode, Notify, Session, Setting,
-    Stop, Usage, Voice,
+    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Mode, Notify, Request,
+    Session, Setting, Stop, Usage, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_ui::Bounds;
@@ -134,6 +134,9 @@ pub struct Talk {
     following: bool,
     /// The tool and thought blocks the reader has opened.
     expanded_details: BTreeSet<usize>,
+    /// The last lines each terminal the agent started has written, by the
+    /// name the agent knows it by, for the tool calls that show one.
+    terminals: BTreeMap<String, String>,
 }
 
 /// One completion offered by a prompt prefix.
@@ -258,6 +261,26 @@ impl Talk {
             self.attachments.remove(place);
             self.attachment_previews.remove(place);
         }
+    }
+
+    /// Answers the file or terminal request raised under `ticket`.
+    pub fn answer_request(&self, ticket: u64, answer: Answer) {
+        self.conversation.answer_request(ticket, answer);
+    }
+
+    /// The last lines the terminal the agent calls `terminal` has written.
+    pub fn terminal_tail(&self, terminal: &str) -> Option<&str> {
+        self.terminals.get(terminal).map(String::as_str)
+    }
+
+    /// Takes down the last lines the terminal the agent calls `terminal` has
+    /// written, answering whether they are new.
+    pub fn show_terminal(&mut self, terminal: &str, tail: String) -> bool {
+        if self.terminals.get(terminal) == Some(&tail) {
+            return false;
+        }
+        self.terminals.insert(terminal.to_owned(), tail);
+        true
     }
 
     /// The permission requests waiting on the reader.
@@ -685,6 +708,7 @@ impl Talk {
             Event::Titled(title) => self.title = Some(title).filter(|title| !title.is_empty()),
             Event::Used(usage) => self.usage = Some(usage),
             Event::Asked(ask) => self.asks.push(ask),
+            Event::Requested(..) => {}
             Event::Stopped(stop) => {
                 self.busy = false;
                 self.busy_since = None;
@@ -792,6 +816,9 @@ pub struct Talks {
     opened: bool,
     /// The sessions whose agent went away on its own since this was asked.
     ended: Vec<TalkId>,
+    /// The file and terminal requests the agents have raised and the window
+    /// has not yet taken, with the ticket each is answered under.
+    requests: Vec<(TalkId, u64, Request)>,
 }
 
 impl Talks {
@@ -900,6 +927,7 @@ impl Talks {
                 drawn_height: Rc::default(),
                 following: true,
                 expanded_details: BTreeSet::new(),
+                terminals: BTreeMap::new(),
             },
         );
         Some(id)
@@ -994,6 +1022,11 @@ impl Talks {
         let mut changed = false;
         for talk in self.talks.values_mut() {
             for event in talk.conversation.drain() {
+                if let Event::Requested(ticket, request) = event {
+                    self.requests.push((talk.id, ticket, request));
+                    changed = true;
+                    continue;
+                }
                 self.opened |= matches!(event, Event::Ready);
                 if matches!(event, Event::Ended) {
                     self.ended.push(talk.id);
@@ -1003,6 +1036,12 @@ impl Talks {
             }
         }
         changed
+    }
+
+    /// The file and terminal requests raised since this was last asked, each
+    /// with the conversation and the ticket it is answered through.
+    pub fn take_requests(&mut self) -> Vec<(TalkId, u64, Request)> {
+        std::mem::take(&mut self.requests)
     }
 
     /// Whether a conversation has been opened since this was last asked.

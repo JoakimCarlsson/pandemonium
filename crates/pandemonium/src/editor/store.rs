@@ -888,6 +888,31 @@ impl Files {
         }
     }
 
+    /// Makes the file `id` names hold `text`, and writes it to disk as it is.
+    ///
+    /// This is a write somebody else asked for: it goes into the open buffer
+    /// as one edit the reader can take back, and to disk untidied, because
+    /// whoever wrote it reads it again and expects to find what they wrote.
+    pub fn write(&mut self, id: FileId, text: &str, root: &Path) {
+        let Some(entry) = self.open.get(&id) else {
+            return;
+        };
+        let mut document = entry.document.borrow_mut();
+        if document.buffer().contents() != text {
+            document.edit(|buffer| {
+                buffer.commit();
+                buffer.set_contents(text);
+                buffer.commit();
+            });
+        }
+        document.save(Habits {
+            indent: self.habits.indent,
+            trim_whitespace: false,
+            final_newline: false,
+        });
+        document.reread_baseline(root);
+    }
+
     /// Writes every open file to disk, each against its own worktree.
     pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<PathBuf>) {
         for entry in self.open.values() {

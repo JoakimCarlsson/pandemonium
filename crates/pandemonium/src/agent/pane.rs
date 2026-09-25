@@ -31,7 +31,7 @@ use crate::message::Message;
 const DRAWN: usize = 300;
 
 /// How many lines of one tool call's result are shown before the rest.
-const RESULT_LINES: usize = 2;
+pub const RESULT_LINES: usize = 2;
 
 /// How far the conversation sits from the top and foot of its area, in
 /// steps of the spacing scale.
@@ -367,7 +367,7 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
                 if talk.details_expanded(at) {
                     for block in &blocks[at..end] {
                         if let Block::Ran(call) = block {
-                            rows.extend(tool_rows(call, talk.root(), columns));
+                            rows.extend(tool_rows(talk, call, columns));
                         }
                     }
                 }
@@ -595,14 +595,15 @@ fn is_image_data_byte(byte: u8) -> bool {
 }
 
 /// One tool call, as the line naming it and the lines of what it came to.
-fn tool_rows(call: &ToolCall, root: &Path, columns: usize) -> Vec<Row> {
+fn tool_rows(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<Row> {
+    let root = talk.root();
     let tone = match call.status {
         Status::Failed => Tone::Failed,
         _ => Tone::Quiet,
     };
     let mut rows = vec![called(call, root)];
     rows.extend(
-        result(call, columns.saturating_sub(RESULT.chars().count()))
+        result(talk, call, columns.saturating_sub(RESULT.chars().count()))
             .into_iter()
             .enumerate()
             .map(|(at, line)| match at {
@@ -646,8 +647,9 @@ fn called(call: &ToolCall, root: &Path) -> Row {
 ///
 /// A call that has produced nothing yet says where it has got to instead:
 /// the line beneath a call is never blank, because a call with nothing under
-/// it reads as one that did nothing.
-fn result(call: &ToolCall, columns: usize) -> Vec<String> {
+/// it reads as one that did nothing. A terminal the call is running in shows
+/// the last of what it has written, as it writes it.
+fn result(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for output in &call.output {
         match output {
@@ -657,6 +659,11 @@ fn result(call: &ToolCall, columns: usize) -> Vec<String> {
                 name_of(path),
                 after.lines().count()
             )),
+            Output::Terminal(terminal) => {
+                if let Some(tail) = talk.terminal_tail(terminal) {
+                    lines.extend(wrap(tail, columns));
+                }
+            }
         }
     }
     if lines.is_empty()
