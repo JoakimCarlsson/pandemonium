@@ -440,6 +440,8 @@ pub enum Message {
     StartAgentCommand(TalkId),
     /// Start naming a locally installed skill in this session's prompt.
     StartAgentSkill(TalkId),
+    /// List saved sessions from this agent for the current worktree.
+    ShowAgentHistory(TalkId),
     /// Stop the turn this session is running.
     StopAgentTurn(TalkId),
     /// Open the pane this session is read in, in whichever worktree it is.

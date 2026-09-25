@@ -157,6 +157,7 @@ impl App {
                 self.store();
             }
             Choice::Agent(agent) => self.start_agent(agent),
+            Choice::AgentHistory(session, saved) => self.open_agent_history(session, &saved),
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
@@ -217,6 +218,7 @@ impl App {
             Kind::PushRemotes => self.remote_rows(false),
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
+            Kind::AgentHistory(session) => self.agent_history_rows(session),
             Kind::Debug => self.debug_rows(),
             Kind::SessionRepositories => self.session_repository_rows(),
             Kind::Modes => self

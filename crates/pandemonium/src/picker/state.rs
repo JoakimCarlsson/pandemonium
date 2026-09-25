@@ -55,6 +55,8 @@ pub enum Kind {
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
     Agents,
+    /// Saved conversations offered by the focused agent.
+    AgentHistory(TalkId),
     /// What to call the session about to be cut.
     NewSession,
     /// Which repositories of the active project the session about to be cut
@@ -114,6 +116,7 @@ impl Kind {
             Self::ThemeName => "What the theme is called",
             Self::KeymapName => "What the keymap is called",
             Self::Agents => "Start an agent in this worktree",
+            Self::AgentHistory(_) => "Search agent history",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
             Self::Debug => "Debug this worktree as",
@@ -166,6 +169,8 @@ pub enum Choice {
     PushRemote(ProjectId, String),
     /// Start this agent in the active project's worktree.
     Agent(pm_acp::Agent),
+    /// Open a saved conversation from the named running agent.
+    AgentHistory(TalkId, String),
     /// Put this session into the mode this names.
     Mode(TalkId, String),
     /// Set this session's knob to the value this names.
@@ -245,6 +250,20 @@ impl Picker {
         self.filter();
     }
 
+    /// Replaces rows while keeping the selected choice when it is still shown.
+    pub fn refill_preserving_selection(&mut self, rows: Vec<Row>) {
+        let chosen = self.chosen().cloned();
+        self.refill(rows);
+        let selected = chosen.and_then(|chosen| {
+            self.shown()
+                .find(|(_, row)| row.choice == chosen)
+                .map(|(place, _)| place)
+        });
+        if let Some(place) = selected {
+            self.selected = place;
+        }
+    }
+
     /// The rows the query leaves, best match first.
     pub fn shown(&self) -> impl Iterator<Item = (usize, &Row)> {
         self.matched
@@ -292,7 +311,11 @@ impl Picker {
     fn filter(&mut self) {
         let query = self.field.value();
         if self.kind.is_prompt() || self.kind.is_queried() || query.is_empty() {
-            self.matched = (0..self.rows.len()).take(SHOWN).collect();
+            let limit = match self.kind {
+                Kind::AgentHistory(_) => usize::MAX,
+                _ => SHOWN,
+            };
+            self.matched = (0..self.rows.len()).take(limit).collect();
             self.selected = 0;
             return;
         }
@@ -311,7 +334,10 @@ impl Picker {
 
         self.matched = scored
             .into_iter()
-            .take(SHOWN)
+            .take(match self.kind {
+                Kind::AgentHistory(_) => usize::MAX,
+                _ => SHOWN,
+            })
             .map(|(_, index)| index)
             .collect();
         self.selected = 0;

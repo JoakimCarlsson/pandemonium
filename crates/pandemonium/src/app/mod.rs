@@ -2050,6 +2050,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Agent => {
                 let before = self.agents.tally();
                 if self.agents.pump() {
+                    self.refresh_agent_history();
                     self.hear_ended_agents();
                     self.call_reader(before);
                     self.follow_agents();

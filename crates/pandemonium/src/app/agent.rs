@@ -52,6 +52,7 @@ impl App {
                 }
                 self.focus_prompt(session);
             }
+            Message::ShowAgentHistory(session) => self.show_agent_history(session),
             Message::StopAgentTurn(session) => {
                 if let Some(talk) = self.agents.get(session) {
                     talk.cancel();
@@ -85,6 +86,91 @@ impl App {
                 enabled: agent.startable(),
             })
             .collect()
+    }
+
+    /// Opens a searchable list of this agent's saved sessions.
+    pub(super) fn show_agent_history(&mut self, session: TalkId) {
+        let Some(talk) = self.agents.get_mut(session).filter(|talk| talk.can_list()) else {
+            return;
+        };
+        talk.list_history();
+        let rows = self.agent_history_rows(session);
+        self.open_picker_with(Kind::AgentHistory(session), rows, String::new());
+    }
+
+    /// Refreshes the open history picker as the agent returns its pages.
+    pub(super) fn refresh_agent_history(&mut self) {
+        let Some(Kind::AgentHistory(session)) = self.picker.as_ref().map(|picker| picker.kind())
+        else {
+            return;
+        };
+        let rows = self.agent_history_rows(session);
+        if let Some(picker) = self.picker.as_mut() {
+            picker.refill_preserving_selection(rows);
+        }
+    }
+
+    /// Builds history choices from the saved sessions the agent has listed.
+    pub(super) fn agent_history_rows(&self, session: TalkId) -> Vec<Row> {
+        let Some(talk) = self.agents.get(session) else {
+            return Vec::new();
+        };
+        let mut rows = talk
+            .history()
+            .iter()
+            .map(|saved| Row {
+                section: None,
+                label: saved.title.clone().unwrap_or_else(|| saved.id.clone()),
+                detail: saved
+                    .updated_at
+                    .as_deref()
+                    .map_or_else(|| saved.id.clone(), |at| format!("{at} · {}", saved.id)),
+                choice: Choice::AgentHistory(session, saved.id.clone()),
+                enabled: true,
+            })
+            .collect::<Vec<_>>();
+        let state = match (talk.history_error(), talk.is_listing(), rows.is_empty()) {
+            (Some(error), _, _) => Some(error.to_owned()),
+            (None, true, true) => Some("Loading sessions…".to_owned()),
+            (None, true, false) => Some("Loading older sessions…".to_owned()),
+            (None, false, true) => Some("No saved sessions in this worktree".to_owned()),
+            (None, false, false) => None,
+        };
+        rows.extend(state.map(|label| Row {
+            section: None,
+            label,
+            detail: String::new(),
+            choice: Choice::AgentHistory(session, String::new()),
+            enabled: false,
+        }));
+        rows
+    }
+
+    /// Loads a saved conversation into a tab of the same worktree.
+    pub(super) fn open_agent_history(&mut self, source: TalkId, saved: &str) {
+        let Some(talk) = self.agents.get(source) else {
+            return;
+        };
+        let (scope, agent, root) = (talk.scope(), talk.agent(), talk.root().to_path_buf());
+        if let Some(existing) = self.agents.find_saved(scope, agent, saved) {
+            self.show_item(
+                self.panes.focus(),
+                scope,
+                Item::Agent(scope, existing),
+                false,
+            );
+            self.focus_prompt(existing);
+            return;
+        }
+        let env = self.worktree_env(scope);
+        let Some(opened) =
+            self.agents
+                .load(scope.project(), scope.session(), &root, &env, agent, saved)
+        else {
+            return;
+        };
+        self.show_item(self.panes.focus(), scope, Item::Agent(scope, opened), false);
+        self.focus_prompt(opened);
     }
 
     /// Asks which mode to put `session` into.

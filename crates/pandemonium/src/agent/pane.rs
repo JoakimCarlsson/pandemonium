@@ -499,6 +499,12 @@ fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
                 pill(theme, "$", theme.syntax.function).on_click(Message::StartAgentSkill(session)),
             )
         })
+        .when(talk.can_list(), |row| {
+            row.child(
+                pill(theme, "History", theme.colors.text_muted)
+                    .on_click(Message::ShowAgentHistory(session)),
+            )
+        })
         .children(
             talk.knobs()
                 .into_iter()

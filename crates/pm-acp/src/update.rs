@@ -22,6 +22,10 @@ pub type Tools = BTreeMap<String, ToolCall>;
 pub enum Event {
     /// The session is open and will take prompts.
     Ready,
+    /// Saved sessions returned by the agent, with whether more pages follow.
+    Listed(Vec<History>, bool),
+    /// Listing saved sessions failed.
+    ListFailed(String),
     /// The agent will not open a session until it is logged in.
     Login(Vec<Method>),
     /// A run of text, of whichever voice [`Voice`] names.
@@ -44,6 +48,36 @@ pub enum Event {
     Failed(String),
     /// The agent's process has gone.
     Ended,
+}
+
+/// A saved agent session that can be loaded again.
+#[derive(Clone, Debug)]
+pub struct History {
+    /// The identity the agent loads the session by.
+    pub id: String,
+    /// The directory the session was working in.
+    pub cwd: PathBuf,
+    /// The title the agent gave it, where one is available.
+    pub title: Option<String>,
+    /// When the agent last updated it, where one is available.
+    pub updated_at: Option<String>,
+}
+
+/// Reads one page of saved sessions from an agent's list response.
+pub(crate) fn history(result: &Value) -> Vec<History> {
+    result["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|session| {
+            Some(History {
+                id: session["sessionId"].as_str()?.to_owned(),
+                cwd: PathBuf::from(session["cwd"].as_str()?),
+                title: session["title"].as_str().map(str::to_owned),
+                updated_at: session["updatedAt"].as_str().map(str::to_owned),
+            })
+        })
+        .collect()
 }
 
 /// Who is speaking in a run of text.

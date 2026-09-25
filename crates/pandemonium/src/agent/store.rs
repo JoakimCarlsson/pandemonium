@@ -18,7 +18,7 @@ use std::path::Path;
 use crate::agent::transcript::Transcript;
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Ask, Command, Event, Knob, Mode, Notify, Session, Setting, Stop, Voice,
+    About, Agent, Ask, Command, Event, History, Knob, Mode, Notify, Session, Setting, Stop, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
 
@@ -83,6 +83,12 @@ pub struct Talk {
     commands: Vec<Command>,
     /// Skills installed for this agent, invoked with a dollar sign.
     skills: Vec<Command>,
+    /// Saved sessions returned by the agent's history listing.
+    history: Vec<History>,
+    /// Whether the agent is still fetching the history pages.
+    listing: bool,
+    /// Why the agent could not list saved sessions, where it failed.
+    history_error: Option<String>,
     /// Which of the commands a slash narrows to is selected.
     chosen: usize,
     /// Whether the reader has waved that list away for what is typed now.
@@ -133,6 +139,34 @@ impl Talk {
     /// The worktree the agent is working in.
     pub fn root(&self) -> &Path {
         self.conversation.root()
+    }
+
+    /// Whether this agent can list and load saved conversations.
+    pub fn can_list(&self) -> bool {
+        self.conversation.can_list()
+    }
+
+    /// Asks this agent to refresh its saved conversations.
+    pub fn list_history(&mut self) {
+        self.history.clear();
+        self.history_error = None;
+        self.listing = true;
+        self.conversation.list_sessions();
+    }
+
+    /// The saved conversations this agent has returned so far.
+    pub fn history(&self) -> &[History] {
+        &self.history
+    }
+
+    /// Whether more saved conversations are being fetched.
+    pub fn is_listing(&self) -> bool {
+        self.listing
+    }
+
+    /// Why the saved conversations could not be fetched.
+    pub fn history_error(&self) -> Option<&str> {
+        self.history_error.as_deref()
     }
 
     /// What the agent calls this conversation, once it has opened one.
@@ -494,6 +528,14 @@ impl Talk {
     fn take(&mut self, event: Event) {
         match event {
             Event::Ready => self.ready = true,
+            Event::Listed(page, more) => {
+                self.history.extend(page);
+                self.listing = more;
+            }
+            Event::ListFailed(error) => {
+                self.history_error = Some(error);
+                self.listing = false;
+            }
             Event::Login(methods) => {
                 let names = methods
                     .iter()
@@ -582,6 +624,16 @@ fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
     found.into_values().collect()
 }
 
+/// How a conversation is opened or taken up again.
+enum Opening<'a> {
+    /// Start a new conversation.
+    New,
+    /// Restore a saved pane, falling back to a fresh conversation.
+    Restore(&'a str),
+    /// Load a chosen saved conversation exactly.
+    Exact(&'a str),
+}
+
 /// Every agent session the window is running.
 #[derive(Default)]
 pub struct Talks {
@@ -612,7 +664,7 @@ impl Talks {
         env: &[(String, String)],
         agent: Agent,
     ) -> Option<TalkId> {
-        self.open(project, session, root, env, agent, None)
+        self.open(project, session, root, env, agent, Opening::New)
     }
 
     /// Takes the conversation `resume` names up again, in a session of its own.
@@ -625,10 +677,23 @@ impl Talks {
         agent: Agent,
         resume: &str,
     ) -> Option<TalkId> {
-        self.open(project, session, root, env, agent, Some(resume))
+        self.open(project, session, root, env, agent, Opening::Restore(resume))
     }
 
-    /// Starts `agent` in `root`, taking up `resume` where there is one.
+    /// Loads a saved conversation without substituting a new one if it fails.
+    pub fn load(
+        &mut self,
+        project: ProjectId,
+        session: Option<SessionId>,
+        root: &Path,
+        env: &[(String, String)],
+        agent: Agent,
+        saved: &str,
+    ) -> Option<TalkId> {
+        self.open(project, session, root, env, agent, Opening::Exact(saved))
+    }
+
+    /// Opens an agent conversation with the requested load behavior.
     fn open(
         &mut self,
         project: ProjectId,
@@ -636,12 +701,13 @@ impl Talks {
         root: &Path,
         env: &[(String, String)],
         agent: Agent,
-        resume: Option<&str>,
+        opening: Opening<'_>,
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
-        let started = match resume {
-            Some(resume) => Session::resume(agent, root, env, resume, notify),
-            None => Session::start(agent, root, env, notify),
+        let started = match opening {
+            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify),
+            Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify),
+            Opening::New => Session::start(agent, root, env, notify),
         };
         let conversation = match started {
             Ok(conversation) => conversation,
@@ -669,6 +735,9 @@ impl Talks {
                 asks: Vec::new(),
                 commands: Vec::new(),
                 skills: installed_skills(root, agent),
+                history: Vec::new(),
+                listing: false,
+                history_error: None,
                 chosen: 0,
                 dismissed: false,
                 ready: false,
@@ -706,6 +775,16 @@ impl Talks {
     /// The conversation `id` names, to act on.
     pub fn get_mut(&mut self, id: TalkId) -> Option<&mut Talk> {
         self.talks.get_mut(&id)
+    }
+
+    /// Finds a conversation already open for this agent, worktree and saved id.
+    pub fn find_saved(&self, scope: Scope, agent: Agent, saved: &str) -> Option<TalkId> {
+        self.talks.values().find_map(|talk| {
+            (talk.scope() == scope
+                && talk.agent() == agent
+                && talk.resumable().as_deref() == Some(saved))
+            .then_some(talk.id())
+        })
     }
 
     /// Ends every session but the ones `held` names.

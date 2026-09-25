@@ -58,6 +58,8 @@ enum Sent {
     Open,
     /// A conversation from a launch before this one being taken up again.
     Resume,
+    /// One page of saved sessions, requested after `cursor` where present.
+    List(Option<String>),
     /// A turn.
     Turn,
     /// A change of mode, from the mode the session was in before it.
@@ -73,8 +75,12 @@ struct State {
     id: Option<String>,
     /// The conversation to take up again, before one has been opened.
     resume: Option<String>,
+    /// Whether a failed load should open a fresh session for layout recovery.
+    resume_fallback: bool,
     /// Whether the agent said it can take a conversation up again.
     loads: bool,
+    /// Whether the agent can list its saved sessions.
+    lists: bool,
     /// Whether a turn is running, and so whether another may be sent.
     busy: bool,
     /// The prompts waiting for the conversation, or for the turn before them.
@@ -135,7 +141,7 @@ impl Session {
         env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, None, notify)
+        Self::open(agent, root, env, None, false, notify)
     }
 
     /// Starts `agent` in `root` and takes the conversation `id` names up again.
@@ -152,7 +158,18 @@ impl Session {
         id: &str,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, Some(id.to_owned()), notify)
+        Self::open(agent, root, env, Some(id.to_owned()), true, notify)
+    }
+
+    /// Loads `id` exactly, reporting failure when that saved session is gone.
+    pub fn load(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        id: &str,
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        Self::open(agent, root, env, Some(id.to_owned()), false, notify)
     }
 
     /// Starts `agent` in `root`, taking up `resume` where there is one.
@@ -165,6 +182,7 @@ impl Session {
         root: &Path,
         env: &[(String, String)],
         resume: Option<String>,
+        resume_fallback: bool,
         notify: Notify,
     ) -> std::io::Result<Self> {
         let mut process = agent
@@ -194,6 +212,7 @@ impl Session {
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
             state.resume = resume;
+            state.resume_fallback = resume_fallback;
         }
         session.send(&json!({
             "jsonrpc": "2.0",
@@ -237,6 +256,31 @@ impl Session {
     #[must_use]
     pub fn id(&self) -> Option<String> {
         self.state.lock().ok()?.id.clone()
+    }
+
+    /// Whether this agent can list previously saved sessions.
+    pub fn can_list(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.lists && state.loads)
+    }
+
+    /// Asks the agent for saved sessions in this worktree.
+    pub fn list_sessions(&self) {
+        if !self.can_list() {
+            return;
+        }
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let request = self.request(
+            &mut state,
+            Sent::List(None),
+            "session/list",
+            &json!({ "cwd": self.root }),
+        );
+        drop(state);
+        self.send(&request);
     }
 
     /// Sends `text` as the reader's next turn.
@@ -555,11 +599,32 @@ impl Reader {
             (Sent::Handshake, None) => self.shook(&message["result"]),
             (Sent::Open, None) => self.opened(&message["result"]),
             (Sent::Resume, None) => self.resumed(&message["result"]),
-            (Sent::Resume, Some(_)) => {
-                if let Ok(mut state) = self.state.lock() {
-                    state.resume = None;
+            (Sent::List(cursor), None) => {
+                let result = &message["result"];
+                let next = result["nextCursor"].as_str().map(str::to_owned);
+                let more = next
+                    .as_ref()
+                    .is_some_and(|next| Some(next) != cursor.as_ref());
+                self.raise(Event::Listed(update::history(result), more));
+                if more {
+                    self.ask(
+                        Sent::List(next.clone()),
+                        "session/list",
+                        &json!({ "cwd": self.root, "cursor": next }),
+                    );
                 }
-                self.open();
+            }
+            (Sent::List(_), Some(error)) => self.raise(Event::ListFailed(complaint(error))),
+            (Sent::Resume, Some(_)) => {
+                let fallback = self.state.lock().is_ok_and(|state| state.resume_fallback);
+                if fallback {
+                    if let Ok(mut state) = self.state.lock() {
+                        state.resume = None;
+                    }
+                    self.open();
+                } else if let Some(error) = failure {
+                    self.raise(Event::Failed(complaint(error)));
+                }
             }
             (Sent::Open, Some(error)) if error["code"] == json!(LOGIN_REQUIRED) => {
                 let logins = self
@@ -601,6 +666,7 @@ impl Reader {
         if let Ok(mut state) = self.state.lock() {
             state.logins = update::methods(&result["authMethods"]);
             state.loads = result["agentCapabilities"]["loadSession"] == json!(true);
+            state.lists = result["agentCapabilities"]["sessionCapabilities"]["list"].is_object();
         }
         self.open();
     }
@@ -621,6 +687,15 @@ impl Reader {
                     "mcpServers": [],
                 }),
             ),
+            None if self
+                .state
+                .lock()
+                .is_ok_and(|state| state.resume.is_some() && !state.resume_fallback) =>
+            {
+                self.raise(Event::Failed(
+                    "this agent cannot load saved sessions".to_owned(),
+                ));
+            }
             None => self.ask(
                 Sent::Open,
                 "session/new",

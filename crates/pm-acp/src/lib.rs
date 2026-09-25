@@ -18,6 +18,6 @@ mod update;
 pub use agent::{AGENTS, Agent, Source};
 pub use session::{Notify, Session};
 pub use update::{
-    About, Ask, Choice, Command, Event, Kind, Knob, Location, Method, Mode, Output, Pick, Setting,
-    Status, Step, Stop, ToolCall, Voice, Weight,
+    About, Ask, Choice, Command, Event, History, Kind, Knob, Location, Method, Mode, Output, Pick,
+    Setting, Status, Step, Stop, ToolCall, Voice, Weight,
 };
