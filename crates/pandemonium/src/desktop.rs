@@ -8,6 +8,12 @@
 
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
+
+/// The next pasted image's temporary file suffix.
+static NEXT_PASTED_IMAGE: AtomicU64 = AtomicU64::new(0);
 
 /// Puts `text` on the system clipboard.
 ///
@@ -90,4 +96,29 @@ const OPENER: &str = "explorer";
 /// answer is a paste of nothing rather than a window that stops drawing.
 pub fn paste() -> Option<String> {
     arboard::Clipboard::new().ok()?.get_text().ok()
+}
+
+/// Reads a clipboard image and encodes it as PNG for an agent prompt.
+pub fn paste_image() -> Option<Vec<u8>> {
+    let image = arboard::Clipboard::new().ok()?.get_image().ok()?;
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png)
+        .write_image(
+            &image.bytes,
+            u32::try_from(image.width).ok()?,
+            u32::try_from(image.height).ok()?,
+            ColorType::Rgba8.into(),
+        )
+        .ok()?;
+    Some(png)
+}
+
+/// Keeps a pasted PNG readable by an agent that accepts file links.
+pub fn save_pasted_image(png: &[u8]) -> Option<std::path::PathBuf> {
+    let directory = std::env::temp_dir().join("pandemonium");
+    std::fs::create_dir_all(&directory).ok()?;
+    let sequence = NEXT_PASTED_IMAGE.fetch_add(1, Ordering::Relaxed);
+    let path = directory.join(format!("pasted-{}-{sequence}.png", std::process::id()));
+    std::fs::write(&path, png).ok()?;
+    Some(path)
 }

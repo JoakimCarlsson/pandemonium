@@ -30,6 +30,15 @@ pub struct Scroll {
 }
 
 impl Scroll {
+    /// A scroll `offset` logical pixels down, held against the content's
+    /// extents once a frame has painted it.
+    pub fn at(offset: f32) -> Self {
+        Self {
+            offset,
+            ..Self::default()
+        }
+    }
+
     /// Records the space the content is seen through.
     pub fn set_viewport(&mut self, viewport: Size) {
         self.viewport = viewport;
@@ -38,6 +47,18 @@ impl Scroll {
 
     /// Records how tall the content turned out, once a frame has painted it.
     pub fn set_content_height(&mut self, height: f32) {
+        self.content_height = height;
+        self.clamp();
+    }
+
+    /// Records the space the content is seen through and how tall it turned
+    /// out together, holding the offset against both at once.
+    ///
+    /// Recording one and then the other holds the offset against a pair of
+    /// extents that never existed, and a scroll made with [`Scroll::at`],
+    /// which knows neither yet, would be held against no content at all.
+    pub fn set_extents(&mut self, viewport: Size, height: f32) {
+        self.viewport = viewport;
         self.content_height = height;
         self.clamp();
     }
@@ -113,8 +134,7 @@ impl<M> Element<M> for ScrollArea<M> {
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         let content = self.child.measure(bounds.size, &mut cx.layout);
         let mut scroll = self.scroll.get();
-        scroll.set_viewport(bounds.size);
-        scroll.set_content_height(content.height);
+        scroll.set_extents(bounds.size, content.height);
         self.scroll.set(scroll);
 
         let first = cx.region_count();

@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 
 use crate::agent::Agent;
+use crate::attachment::Attachment;
 use crate::transport;
 use crate::update::{self, Event, Knob, Method, Mode, Setting, Stop, Tools};
 
@@ -68,6 +69,14 @@ enum Sent {
     Knob(Vec<Knob>),
 }
 
+/// A turn waiting for the agent, including context attached to its text.
+struct Prompt {
+    /// The words the reader sent.
+    text: String,
+    /// Files and images sent with those words.
+    attachments: Vec<Attachment>,
+}
+
 /// What the agent has said, and what it has not been told yet.
 #[derive(Default)]
 struct State {
@@ -84,7 +93,9 @@ struct State {
     /// Whether a turn is running, and so whether another may be sent.
     busy: bool,
     /// The prompts waiting for the conversation, or for the turn before them.
-    queued: Vec<String>,
+    queued: Vec<Prompt>,
+    /// Whether the agent accepts image content in prompts.
+    images: bool,
     /// The requests sent and not yet answered, and what each was for.
     sent: HashMap<i64, Sent>,
     /// The ways of logging in the agent offered in its handshake.
@@ -288,18 +299,32 @@ impl Session {
     /// A prompt sent before the conversation is open, or while the turn
     /// before it is still running, is held until it can go: a reader types
     /// when they have something to say, not when the agent is ready.
-    pub fn prompt(&self, text: &str) {
+    pub fn prompt(&self, text: &str, attachments: Vec<Attachment>) {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
+        let prompt = Prompt {
+            text: text.to_owned(),
+            attachments,
+        };
         let Some(id) = state.id.clone().filter(|_| !state.busy) else {
-            state.queued.push(text.to_owned());
+            state.queued.push(prompt);
             return;
         };
         state.busy = true;
-        let request = self.request(&mut state, Sent::Turn, "session/prompt", &turn(&id, text));
+        let request = self.request(
+            &mut state,
+            Sent::Turn,
+            "session/prompt",
+            &turn(&id, &prompt),
+        );
         drop(state);
         self.send(&request);
+    }
+
+    /// Whether this agent has advertised image prompt support.
+    pub fn can_image(&self) -> bool {
+        self.state.lock().is_ok_and(|state| state.images)
     }
 
     /// Stops the turn that is running, if one is.
@@ -667,6 +692,8 @@ impl Reader {
             state.logins = update::methods(&result["authMethods"]);
             state.loads = result["agentCapabilities"]["loadSession"] == json!(true);
             state.lists = result["agentCapabilities"]["sessionCapabilities"]["list"].is_object();
+            state.images =
+                result["agentCapabilities"]["promptCapabilities"]["image"] == json!(true);
         }
         self.open();
     }
@@ -784,7 +811,7 @@ impl Reader {
         if state.queued.is_empty() {
             return;
         }
-        let text = state.queued.remove(0);
+        let prompt = state.queued.remove(0);
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         state.busy = true;
         state.sent.insert(id, Sent::Turn);
@@ -794,7 +821,7 @@ impl Reader {
             "jsonrpc": "2.0",
             "id": id,
             "method": "session/prompt",
-            "params": turn(&session, &text),
+            "params": turn(&session, &prompt),
         }));
     }
 
@@ -936,11 +963,16 @@ fn watch(stderr: impl BufRead, state: &Mutex<State>) {
     }
 }
 
-/// The turn `text` comes to, as the agent is asked to take it.
-fn turn(session: &str, text: &str) -> Value {
+/// The turn `prompt` comes to, as the agent is asked to take it.
+fn turn(session: &str, prompt: &Prompt) -> Value {
+    let mut content = Vec::new();
+    if !prompt.text.is_empty() {
+        content.push(json!({ "type": "text", "text": prompt.text }));
+    }
+    content.extend(prompt.attachments.iter().map(Attachment::content));
     json!({
         "sessionId": session,
-        "prompt": [{ "type": "text", "text": text }],
+        "prompt": content,
     })
 }
 

@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
+base64 = "0.23.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 pm-acp.workspace = true
 pm-core.workspace = true
 pm-dap.workspace = true

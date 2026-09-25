@@ -1,11 +1,7 @@
 //! One agent session, in a pane: what was said, what it is doing, what next.
 //!
-//! The pane is the agent's own transcript, drawn the way the agent's own CLI
-//! draws it: one monospaced column, a bullet against everything the agent
-//! says, a tool call named with its argument beside it and its result on the
-//! line beneath. Nothing is folded away behind a control, because a reader
-//! conducting four of these wants to see what the fourth one did without
-//! opening anything.
+//! The pane is a quiet reading surface: replies lead, while tool activity and
+//! thoughts remain available in the same transcript at a lower visual weight.
 //!
 //! Above it is which agent, which worktree and how it is doing; below it is
 //! the box the next prompt is written in. A permission the agent is waiting on
@@ -17,9 +13,12 @@
 
 use std::path::Path;
 
-use pm_acp::{About, Ask, Knob, Output, Setting, Status, Step, ToolCall, Voice, Weight};
-use pm_gfx::Rgba;
-use pm_ui::{Div, IconName, IconSize, Styled, Theme, button, h_flex, icon, rule, text, v_flex};
+use pm_acp::{About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Voice, Weight};
+use pm_gfx::{Image, Rgba};
+use pm_ui::{
+    Div, IconName, IconSize, Scroll, Styled, Theme, button, h_flex, icon, measured, picture, rule,
+    scroll_area, space, text, v_flex,
+};
 
 use crate::agent::{Block, Standing, Talk, TalkId};
 use crate::input::input_view;
@@ -29,7 +28,15 @@ use crate::message::Message;
 const DRAWN: usize = 300;
 
 /// How many lines of one tool call's result are shown before the rest.
-const RESULT_LINES: usize = 8;
+const RESULT_LINES: usize = 2;
+
+/// How far the conversation sits from the top and foot of its area, in
+/// steps of the spacing scale.
+const INSET: f32 = 2.0;
+
+/// How far the edge of a bubble holding what the reader said sits from its
+/// text, in steps of the spacing scale.
+const BUBBLE: f32 = 1.25;
 
 /// How many lines of the prompt the pane has room for.
 const PROMPT_LINES: f32 = 3.0;
@@ -37,40 +44,30 @@ const PROMPT_LINES: f32 = 3.0;
 /// How many of the commands a slash narrows to are offered at once.
 const OFFERED: usize = 8;
 
-/// How wide one character of the conversation's type is, as a share of its
-/// size.
-///
-/// The conversation is set in the monospaced face, whose characters are all
-/// this wide; the pane wraps to what it was drawn at last frame rather than
-/// asking the shaper, because a paragraph is wrapped before it is measured.
-const ADVANCE: f32 = 0.6;
+/// Estimated average width of a conversation character as a share of its size.
+const ADVANCE: f32 = 0.55;
 
 /// Fewest characters a line is wrapped at, however narrow the pane is.
 const NARROWEST: usize = 24;
 
-/// What stands against everything the agent says.
-const BULLET: &str = "● ";
+/// Mark before the agent's reply.
+const BULLET: &str = "";
 
 /// What stands against what the reader said.
-const CHEVRON: &str = "> ";
+const CHEVRON: &str = "";
 
-/// What a tool call's result hangs from.
-const RESULT: &str = "  └ ";
+/// Indentation before a tool call's result.
+const RESULT: &str = "    ";
 
 /// What a line continuing the one above it is indented by.
 const WRAPPED: &str = "  ";
 
-/// What a turn that is still running is marked with.
-const WORKING: &str = "◐ ";
-
-/// What the rule above a conversation begins with.
-const RULED: &str = "───";
+/// Frames of the activity mark shown during a turn.
+const WORKING: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
 /// The colour a piece of a row is drawn in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Tone {
-    /// The rule above the conversation.
-    Rule,
     /// What the reader said.
     Said,
     /// What the agent said.
@@ -81,8 +78,8 @@ enum Tone {
     Tool,
     /// What it called that tool on.
     Argument,
-    /// A tool call that came to something.
-    Done,
+    /// A group of tool calls or thoughts the reader can open.
+    DetailGroup(usize),
     /// One that did not.
     Failed,
     /// Something the editor has to say about the conversation itself.
@@ -95,6 +92,8 @@ struct Piece {
     text: String,
     /// What colour it is drawn in.
     tone: Tone,
+    /// A picture in place of text, when this piece is an attachment.
+    image: Option<Image>,
 }
 
 /// One line of the conversation, in the pieces it is coloured by.
@@ -112,6 +111,7 @@ pub fn agent_pane(
     width: f32,
 ) -> Div<Message> {
     let columns = columns(theme, width);
+    let (drawn, offset) = drawn(theme, talk, columns);
 
     v_flex()
         .w_full()
@@ -120,15 +120,15 @@ pub fn agent_pane(
         .bg(theme.colors.background)
         .child(header(theme, talk))
         .child(rule(theme))
-        .child(
-            v_flex()
-                .w_full()
-                .flex_1()
-                .overflow_hidden()
-                .px(1.75)
-                .py(1)
-                .children(drawn(theme, talk, columns)),
-        )
+        .child(measured(
+            talk.view(),
+            scroll_area(
+                std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
+                v_flex().w_full().px(1.75).py(INSET).children(drawn),
+            )
+            .w_full()
+            .flex_1(),
+        ))
         .children(
             talk.asks()
                 .iter()
@@ -195,82 +195,330 @@ fn first_line(said: &str) -> String {
     said.lines().next().unwrap_or_default().to_owned()
 }
 
-/// How many rows the conversation comes to at `width` logical pixels.
+/// How tall the conversation comes to at `width` logical pixels.
 ///
 /// The window asks this to know how far the pane can be scrolled, which only
 /// the rows can say.
-pub fn row_count(theme: &Theme, talk: &Talk, width: f32) -> usize {
-    rows(talk, columns(theme, width)).len()
+pub fn content_height(theme: &Theme, talk: &Talk, width: f32) -> f32 {
+    let rows = rows(talk, columns(theme, width));
+    heights(theme, &rows).iter().sum::<f32>() + space(INSET) * 2.0
 }
 
-/// The rows of the pane, from where it is scrolled to.
-fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> Vec<Div<Message>> {
-    rows(talk, columns)
-        .into_iter()
-        .skip(talk.scroll())
-        .take(DRAWN)
-        .map(|row| self::row(theme, row))
+/// The rows of the pane from where it is scrolled to, and how far the first
+/// of them is scrolled up past the top of the area.
+///
+/// Only the rows from there are built, however long the conversation runs,
+/// so the view is drawn from the row it is scrolled into and shifted up by
+/// the part of it already gone by. A row inside a bubble is drawn from the
+/// top of its bubble, so the bubble keeps its edge as it scrolls by.
+fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32) {
+    let rows = rows(talk, columns);
+    let heights = heights(theme, &rows);
+    talk.drawn_height()
+        .set(heights.iter().sum::<f32>() + space(INSET) * 2.0);
+    let mut first = 0;
+    let mut top = 0.0;
+    while first < rows.len() && top + heights[first] <= talk.scroll() - space(INSET) {
+        top += heights[first];
+        first += 1;
+    }
+    while first > 0 && rows.get(first).is_some_and(is_said) && is_said(&rows[first - 1]) {
+        first -= 1;
+        top -= heights[first];
+    }
+    let offset = talk.scroll() - top;
+
+    let mut visible = rows.into_iter().skip(first).take(DRAWN).peekable();
+    let mut drawn = Vec::new();
+    while let Some(line) = visible.next() {
+        if is_said(&line) {
+            let mut message = vec![self::row(theme, line, talk.id())];
+            while visible.peek().is_some_and(is_said) {
+                if let Some(next) = visible.next() {
+                    message.push(self::row(theme, next, talk.id()));
+                }
+            }
+            drawn.push(
+                h_flex().w_full().justify_end().child(
+                    v_flex()
+                        .p(BUBBLE)
+                        .rounded(theme.radius.xl)
+                        .bg(theme.colors.surface_hover)
+                        .children(message),
+                ),
+            );
+        } else {
+            drawn.push(self::row(theme, line, talk.id()));
+        }
+    }
+    (drawn, offset)
+}
+
+/// Whether `row` is part of something the reader said, drawn in a bubble.
+fn is_said(row: &Row) -> bool {
+    row.iter().any(|piece| piece.tone == Tone::Said)
+}
+
+/// How tall each of `rows` is drawn, the edges of a bubble counted into the
+/// first row and the last one it holds.
+fn heights(theme: &Theme, rows: &[Row]) -> Vec<f32> {
+    let edge = space(BUBBLE);
+    rows.iter()
+        .enumerate()
+        .map(|(at, row)| {
+            let mut height = row_height(theme, row);
+            if is_said(row) {
+                if at == 0 || !is_said(&rows[at - 1]) {
+                    height += edge;
+                }
+                if rows.get(at + 1).is_none_or(|next| !is_said(next)) {
+                    height += edge;
+                }
+            }
+            if row
+                .first()
+                .is_some_and(|piece| matches!(piece.tone, Tone::DetailGroup(_)))
+            {
+                height += space(0.75);
+            }
+            height
+        })
         .collect()
+}
+
+/// How tall one row is drawn: an empty one a line of code, and one with
+/// text in it as tall as its tallest piece.
+fn row_height(theme: &Theme, row: &Row) -> f32 {
+    if row.is_empty() {
+        return theme.text.code.line_height;
+    }
+    row.iter()
+        .map(|piece| {
+            if piece.image.is_some() {
+                112.0
+            } else {
+                match piece.tone {
+                    Tone::Said | Tone::Spoken => theme.text.lg.line_height,
+                    _ => theme.text.sm.line_height,
+                }
+            }
+        })
+        .fold(0.0, f32::max)
 }
 
 /// Every row the conversation comes to, wrapped at `columns` characters.
 fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
-    let mut rows = vec![opening(talk, columns)];
-    for block in talk.transcript().blocks() {
-        rows.push(Row::new());
-        match block {
+    let mut rows = Vec::new();
+    let blocks = talk.transcript().blocks();
+    let mut at = 0;
+    while at < blocks.len() {
+        let adjacent_picture = matches!(&blocks[at], Block::Picture(_))
+            && at > 0
+            && matches!(
+                &blocks[at - 1],
+                Block::Said(Voice::Reader, _) | Block::Picture(_)
+            );
+        if !rows.is_empty() && !adjacent_picture {
+            rows.push(Row::new());
+        }
+        match &blocks[at] {
             Block::Said(Voice::Reader, passage) => {
-                rows.extend(passage_rows(passage, CHEVRON, Tone::Said, columns));
+                rows.extend(reader_rows(
+                    talk,
+                    at,
+                    passage,
+                    (columns * 2 / 3).max(NARROWEST),
+                ));
             }
+            Block::Picture(image) => rows.push(vec![image_piece(image.clone())]),
             Block::Said(Voice::Agent, passage) => {
                 rows.extend(passage_rows(passage, BULLET, Tone::Spoken, columns));
             }
             Block::Said(Voice::Thought, passage) => {
-                rows.extend(passage_rows(passage, BULLET, Tone::Quiet, columns));
+                rows.push(vec![piece(
+                    format!(
+                        "{} Thinking",
+                        if talk.details_expanded(at) {
+                            "⌄"
+                        } else {
+                            "›"
+                        }
+                    ),
+                    Tone::DetailGroup(at),
+                )]);
+                if talk.details_expanded(at) {
+                    rows.extend(passage_rows(passage, BULLET, Tone::Quiet, columns));
+                }
             }
-            Block::Ran(call) => rows.extend(tool_rows(call, talk.root(), columns)),
+            Block::Ran(_) => {
+                let end = at
+                    + blocks[at..]
+                        .iter()
+                        .take_while(|block| matches!(block, Block::Ran(_)))
+                        .count();
+                rows.push(tool_group_row(
+                    &blocks[at..end],
+                    at,
+                    talk.details_expanded(at),
+                ));
+                if talk.details_expanded(at) {
+                    for block in &blocks[at..end] {
+                        if let Block::Ran(call) = block {
+                            rows.extend(tool_rows(call, talk.root(), columns));
+                        }
+                    }
+                }
+                at = end - 1;
+            }
             Block::Planned(steps) => rows.extend(steps.iter().map(step_row)),
             Block::Note(note) => rows.extend(passage_rows(note, BULLET, Tone::Note, columns)),
         }
+        at += 1;
     }
     if talk.is_busy() {
-        rows.push(Row::new());
-        rows.push(vec![piece(
-            format!("{WORKING}Working… (esc to interrupt)"),
-            Tone::Quiet,
-        )]);
+        if !rows.is_empty() {
+            rows.push(Row::new());
+        }
+        rows.push(vec![piece(working(talk), Tone::Quiet)]);
     }
     rows
 }
 
-/// The rule the conversation opens with: which agent, over which worktree.
-fn opening(talk: &Talk, columns: usize) -> Row {
-    let worktree = name_of(talk.root());
-    let said = match talk.mode_name() {
-        Some(mode) => format!("{RULED} {} ── {worktree} ── {mode} ", talk.agent().name),
-        None => format!("{RULED} {} ── {worktree} ", talk.agent().name),
+/// Reader text and any images restored from an agent's saved transcript.
+fn reader_rows(talk: &Talk, block: usize, passage: &str, columns: usize) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let mut rest = passage;
+    let mut place = 0;
+    while let Some(start) = rest.find("[@image](") {
+        let before = &rest[..start];
+        if !before.is_empty() {
+            rows.extend(passage_rows(before, CHEVRON, Tone::Said, columns));
+        }
+        let source = &rest[start + "[@image](".len()..];
+        let Some(end) = source.find(')') else {
+            rest = &rest[start..];
+            break;
+        };
+        if let Some(image) = talk
+            .transcript()
+            .restored_picture(block, place, &source[..end])
+        {
+            rows.push(vec![image_piece(image)]);
+        } else {
+            rows.extend(passage_rows("[Pasted image]", CHEVRON, Tone::Said, columns));
+        }
+        place += 1;
+        rest = &source[end + 1..];
+    }
+    if !rest.is_empty() {
+        rows.extend(passage_rows(rest, CHEVRON, Tone::Said, columns));
+    }
+    rows
+}
+
+/// The collapsed or expanded heading for adjacent tool calls.
+fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
+    let mark = if expanded { "⌄" } else { "›" };
+    let count = blocks.len();
+    let label = if count == 1 {
+        match &blocks[0] {
+            Block::Ran(call) => call.title.clone(),
+            _ => String::new(),
+        }
+    } else {
+        let reads = blocks.iter().any(|block| {
+            matches!(block, Block::Ran(call) if matches!(call.kind, Kind::Read | Kind::Search))
+        });
+        let runs = blocks
+            .iter()
+            .any(|block| matches!(block, Block::Ran(call) if call.kind == Kind::Execute));
+        let edits = blocks.iter().any(|block| {
+            matches!(block, Block::Ran(call) if matches!(call.kind, Kind::Edit | Kind::Delete | Kind::Move))
+        });
+        let mut activities = Vec::new();
+        if reads {
+            activities.push("Read files");
+        }
+        if runs {
+            activities.push("ran commands");
+        }
+        if edits {
+            activities.push("edited files");
+        }
+        if activities.is_empty() {
+            format!("{count} tool calls")
+        } else {
+            activities.join(", ")
+        }
     };
-    let over = columns.saturating_sub(said.chars().count());
-    vec![piece(said + &"─".repeat(over), Tone::Rule)]
+    let failed = blocks
+        .iter()
+        .any(|block| matches!(block, Block::Ran(call) if call.status == Status::Failed));
+    let mut row = vec![piece(format!("{label}  {mark}"), Tone::DetailGroup(at))];
+    if failed {
+        row.push(piece(" · failed".to_owned(), Tone::Failed));
+    }
+    row
 }
 
 /// One passage, as rows marked with `mark` and wrapped to the width.
 fn passage_rows(passage: &str, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
-    wrap(passage, columns.saturating_sub(mark.chars().count()))
+    let passage = hide_image_data(passage);
+    wrap(&passage, columns.saturating_sub(mark.chars().count()))
         .into_iter()
         .enumerate()
         .map(|(at, line)| match at {
             0 => vec![piece(mark.to_owned(), quieten(tone)), piece(line, tone)],
-            _ => vec![piece(WRAPPED.to_owned(), tone), piece(line, tone)],
+            _ => vec![
+                piece(
+                    if tone == Tone::Said { "" } else { WRAPPED }.to_owned(),
+                    tone,
+                ),
+                piece(line, tone),
+            ],
         })
         .collect()
+}
+
+/// Replaces image payloads echoed in a saved transcript with a short label.
+fn hide_image_data(passage: &str) -> String {
+    let bytes = passage.as_bytes();
+    let mut shown = String::with_capacity(passage.len().min(4096));
+    let mut copied = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        if !is_image_data_byte(bytes[at]) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < bytes.len() && is_image_data_byte(bytes[at]) {
+            at += 1;
+        }
+        if at - start < 512 {
+            continue;
+        }
+        let prefix = passage[copied..start]
+            .rfind("data:image/")
+            .filter(|prefix| start - (copied + prefix) < 80)
+            .map_or(start, |prefix| copied + prefix);
+        shown.push_str(&passage[copied..prefix]);
+        shown.push_str("[Pasted image]");
+        copied = at;
+    }
+    shown.push_str(&passage[copied..]);
+    shown
+}
+
+/// Whether a byte can occur in a base64 image payload.
+fn is_image_data_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_')
 }
 
 /// One tool call, as the line naming it and the lines of what it came to.
 fn tool_rows(call: &ToolCall, root: &Path, columns: usize) -> Vec<Row> {
     let tone = match call.status {
         Status::Failed => Tone::Failed,
-        Status::Done => Tone::Done,
         _ => Tone::Quiet,
     };
     let mut rows = vec![called(call, root)];
@@ -295,7 +543,7 @@ fn tool_rows(call: &ToolCall, root: &Path, columns: usize) -> Vec<Row> {
 /// the tool, then the file in brackets — and one that does not is left with
 /// the sentence it wrote instead.
 fn called(call: &ToolCall, root: &Path) -> Row {
-    let mut row = vec![piece(BULLET.to_owned(), Tone::Quiet)];
+    let mut row = vec![piece("  · ".to_owned(), Tone::Quiet)];
     let argument = call
         .locations
         .first()
@@ -335,11 +583,12 @@ fn result(call: &ToolCall, columns: usize) -> Vec<String> {
         return match call.status {
             Status::Pending => vec!["waiting".to_owned()],
             Status::Running => vec!["running".to_owned()],
-            Status::Done => vec![call.title.clone()],
+            Status::Done => Vec::new(),
             Status::Failed => vec!["failed".to_owned()],
         };
     }
 
+    lines.retain(|line| !line.trim().is_empty());
     let over = lines.len().saturating_sub(RESULT_LINES);
     lines.truncate(RESULT_LINES);
     if over > 0 {
@@ -368,13 +617,38 @@ fn step_row(step: &Step) -> Row {
 }
 
 /// Builds one row out of its pieces.
-fn row(theme: &Theme, row: Row) -> Div<Message> {
-    h_flex().children(row.into_iter().map(|piece| {
-        text(piece.text)
-            .text_xs()
-            .font_mono()
-            .color(tone(theme, piece.tone))
-    }))
+///
+/// The row is held to the height [`row_height`] gives it, so that where the
+/// pane scrolls to and where it draws the rows are the same measurement.
+fn row(theme: &Theme, row: Row, session: TalkId) -> Div<Message> {
+    let height = row_height(theme, &row);
+    if row.is_empty() {
+        return h_flex().h_px(height);
+    }
+    let action = row.first().and_then(|piece| match piece.tone {
+        Tone::DetailGroup(block) => Some(block),
+        _ => None,
+    });
+    let detail = action.is_some();
+    h_flex()
+        .h_px(if detail { height + space(0.75) } else { height })
+        .items_center()
+        .when_some(action, |line, block| {
+            line.on_click(Message::ToggleAgentDetails(session, block))
+                .hover_bg(theme.colors.surface_hover)
+        })
+        .children(row.into_iter().map(|piece| {
+            if let Some(image) = piece.image {
+                return h_flex().child(picture(image).w_px(160.0).h_px(112.0));
+            }
+            let styled = text(piece.text).color(tone(theme, piece.tone));
+            let styled = match piece.tone {
+                Tone::Said | Tone::Spoken => styled.text_lg(),
+                Tone::Argument => styled.text_sm().font_mono(),
+                _ => styled.text_sm(),
+            };
+            h_flex().child(styled)
+        }))
 }
 
 /// Builds the bar above the conversation: which agent, where, and how it is.
@@ -403,22 +677,7 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
                 .color(theme.colors.text_subtle),
         )
         .child(h_flex().flex_1())
-        .child(chip(theme, doing(talk)))
-}
-
-/// Builds one of the header's chips.
-fn chip(theme: &Theme, label: impl Into<String>) -> Div<Message> {
-    h_flex()
-        .px(0.5)
-        .items_center()
-        .rounded(theme.radius.sm)
-        .border_1(theme.colors.border)
-        .child(
-            text(label.into())
-                .text_xs()
-                .font_mono()
-                .color(theme.colors.text_muted),
-        )
+        .child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.
@@ -473,6 +732,9 @@ fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Messag
             .rounded(theme.radius.lg)
             .border_1(theme.colors.border)
             .bg(theme.colors.surface)
+            .when(!talk.attachments().is_empty(), |card| {
+                card.child(attachment_list(theme, talk))
+            })
             .child(input_view(
                 theme,
                 talk.prompt(),
@@ -486,6 +748,45 @@ fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Messag
     )
 }
 
+/// The files and images waiting to go with the next prompt.
+fn attachment_list(theme: &Theme, talk: &Talk) -> Div<Message> {
+    v_flex().gap(0.5).children(
+        talk.attachments()
+            .iter()
+            .enumerate()
+            .map(|(place, attachment)| {
+                h_flex()
+                    .gap(0.5)
+                    .items_center()
+                    .when_some(talk.attachment_preview(place), |row, preview| {
+                        row.child(
+                            h_flex()
+                                .size_px(48.0)
+                                .items_center()
+                                .justify_center()
+                                .rounded(theme.radius.sm)
+                                .bg(theme.colors.surface_hover)
+                                .overflow_hidden()
+                                .child(picture(preview).size_px(44.0)),
+                        )
+                    })
+                    .child(
+                        text(attachment.label())
+                            .text_xs()
+                            .color(theme.colors.text_muted),
+                    )
+                    .child(
+                        h_flex()
+                            .px(0.25)
+                            .rounded(theme.radius.sm)
+                            .hover_bg(theme.colors.surface_hover)
+                            .on_click(Message::RemoveAgentAttachment(talk.id(), place))
+                            .child(text("×").text_xs().color(theme.colors.text_subtle)),
+                    )
+            }),
+    )
+}
+
 /// Builds the row of controls under the prompt.
 fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
@@ -494,6 +795,11 @@ fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
         .w_full()
         .gap(0.5)
         .items_center()
+        .child(
+            pill(theme, "+", theme.colors.text_muted)
+                .on_click(Message::AttachAgentFiles(session))
+                .tooltip("Attach files"),
+        )
         .child(
             pill(theme, "/", theme.syntax.function).on_click(Message::StartAgentCommand(session)),
         )
@@ -590,7 +896,7 @@ fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
 
 /// How many characters of the conversation's type fit across `width`.
 fn columns(theme: &Theme, width: f32) -> usize {
-    let advance = (theme.text.code.size * ADVANCE).max(1.0);
+    let advance = (theme.text.base.size * ADVANCE).max(1.0);
     ((width / advance) as usize).max(NARROWEST)
 }
 
@@ -633,7 +939,20 @@ fn split(word: &str, columns: usize) -> Vec<String> {
 
 /// One run of text in one colour.
 fn piece(text: String, tone: Tone) -> Piece {
-    Piece { text, tone }
+    Piece {
+        text,
+        tone,
+        image: None,
+    }
+}
+
+/// A reader image shown as a thumbnail inside the message bubble.
+fn image_piece(image: Image) -> Piece {
+    Piece {
+        text: String::new(),
+        tone: Tone::Said,
+        image: Some(image),
+    }
 }
 
 /// The colour a mark against `tone` is drawn in.
@@ -647,13 +966,12 @@ fn quieten(tone: Tone) -> Tone {
 /// The colour `tone` comes out in.
 fn tone(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
-        Tone::Rule => theme.colors.border_selected,
         Tone::Said => theme.colors.text,
-        Tone::Spoken => theme.colors.text_muted,
+        Tone::Spoken => theme.colors.text,
         Tone::Quiet => theme.colors.text_subtle,
-        Tone::Tool => theme.syntax.function,
-        Tone::Argument => theme.syntax.string,
-        Tone::Done => theme.colors.success,
+        Tone::Tool => theme.colors.text_muted,
+        Tone::Argument => theme.colors.text_subtle,
+        Tone::DetailGroup(_) => theme.colors.text_subtle,
         Tone::Failed => theme.colors.danger,
         Tone::Note => theme.colors.warning,
     }
@@ -673,13 +991,20 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
     }
 }
 
+/// The changing activity label for a turn in progress.
+fn working(talk: &Talk) -> String {
+    let elapsed = talk.working_for().unwrap_or_default();
+    let frame = (elapsed.as_millis() / 250 % WORKING.len() as u128) as usize;
+    format!("{}  Working · {}s", WORKING[frame], elapsed.as_secs())
+}
+
 /// What the header says the session is doing.
-fn doing(talk: &Talk) -> &'static str {
+fn doing(talk: &Talk) -> String {
     match (talk.is_running(), talk.is_ready(), talk.is_busy()) {
-        (false, ..) => "stopped",
-        (_, false, _) => "starting",
-        (_, _, true) => "working",
-        _ => "ready",
+        (false, ..) => "stopped".to_owned(),
+        (_, false, _) => "starting".to_owned(),
+        (_, _, true) => working(talk),
+        _ => "ready".to_owned(),
     }
 }
 
