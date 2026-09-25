@@ -321,7 +321,7 @@ impl App {
         for project in &open {
             self.sessions.adopt(project, &under);
         }
-        self.sessions.reread();
+        self.reread_drift_later();
     }
 
     /// Asks git again how far the sessions have drifted, on a turn boundary.
@@ -337,7 +337,7 @@ impl App {
             return;
         }
         self.working = working;
-        self.sessions.reread();
+        self.reread_drift_later();
     }
 
     /// The session the window is pointed at, if it is pointed at one.

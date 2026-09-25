@@ -81,11 +81,7 @@ impl App {
             return;
         }
         self.editor.watched(root, &followed);
-        if let Some(review) = self.reviews.get_mut(&scope) {
-            review.reread();
-        }
-        self.repaint_reviews();
-        self.refresh_excerpts();
+        self.reread_review_later(scope);
     }
 }
 

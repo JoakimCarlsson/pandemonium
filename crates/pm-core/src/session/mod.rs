@@ -117,11 +117,6 @@ impl Session {
     pub fn summary(&self) -> Summary {
         self.summary
     }
-
-    /// Asks git again how far the worktrees have drifted.
-    fn refresh(&mut self) {
-        self.summary = drift(&self.cuts);
-    }
 }
 
 /// How far `cuts` have drifted between them from what each was cut from.

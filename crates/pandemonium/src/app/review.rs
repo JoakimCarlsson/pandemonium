@@ -71,11 +71,10 @@ impl App {
         self.watch_worktrees();
         self.reviews
             .retain(|scope, _| self.open.get(scope.project()).is_some());
-        for review in self.reviews.values_mut() {
-            review.reread();
+        let scopes = self.reviews.keys().copied().collect::<Vec<_>>();
+        for scope in scopes {
+            self.reread_review_later(scope);
         }
-        self.repaint_reviews();
-        self.refresh_excerpts();
     }
 
     /// The worktrees a pane is holding the review, or one file's diff, of.

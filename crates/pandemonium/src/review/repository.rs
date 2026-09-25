@@ -12,9 +12,29 @@ use std::time::Instant;
 use pm_core::{Changed, Head, Status};
 
 use crate::input::{Input, Submit};
+use crate::review::reading::RepositoryReading;
 
 /// How many commits of a repository's history are read at a time.
 const HISTORY: usize = 500;
+
+/// The commits leading up to a repository, under each of the graph's filters.
+#[derive(Default)]
+pub struct History {
+    /// Commits on the checked out branch.
+    auto: Vec<pm_core::Commit>,
+    /// Commits reachable from every reference.
+    all: Vec<pm_core::Commit>,
+}
+
+impl History {
+    /// Reads the history of the repository at `root`.
+    pub(super) fn of(root: &Path) -> Self {
+        Self {
+            auto: pm_core::history(root, HISTORY, false),
+            all: pm_core::history(root, HISTORY, true),
+        }
+    }
+}
 
 /// One repository of a review, as the window last read it.
 pub struct Repository {
@@ -35,10 +55,8 @@ pub struct Repository {
     trouble: Option<String>,
     /// What is being done with a remote right now, and since when.
     busy: Option<(&'static str, Instant)>,
-    /// Commits on the checked out branch.
-    history_auto: Vec<pm_core::Commit>,
-    /// Commits reachable from every reference.
-    history_all: Vec<pm_core::Commit>,
+    /// The commits leading up to it.
+    history: History,
     /// First visible commit in each history filter.
     history_scrolls: [usize; 2],
 }
@@ -62,17 +80,15 @@ impl Repository {
             message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
             trouble: None,
             busy: None,
-            history_auto: Vec::new(),
-            history_all: Vec::new(),
+            history: History::default(),
             history_scrolls: [0; 2],
         }
     }
 
-    /// Asks git again what the repository holds and what led up to it.
-    pub(super) fn reread(&mut self) {
-        self.status = Status::of(&self.root);
-        self.history_auto = pm_core::history(&self.root, HISTORY, false);
-        self.history_all = pm_core::history(&self.root, HISTORY, true);
+    /// Takes in what git said the repository held and what led up to it.
+    pub(super) fn take(&mut self, reading: RepositoryReading) {
+        self.status = reading.status;
+        self.history = reading.history;
     }
 
     /// The repository's working-copy root.
@@ -144,8 +160,8 @@ impl Repository {
     /// The cached commits selected by the Source Control graph filter.
     pub(super) fn history(&self, all: bool) -> &[pm_core::Commit] {
         match all {
-            true => &self.history_all,
-            false => &self.history_auto,
+            true => &self.history.all,
+            false => &self.history.auto,
         }
     }
 

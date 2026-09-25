@@ -20,6 +20,7 @@ mod panel;
 mod panes;
 mod picker;
 mod places;
+mod reading;
 mod review;
 mod session;
 mod settings;
@@ -109,6 +110,8 @@ pub enum Wake {
     Disk,
     /// A debug adapter has said something about the program it is debugging.
     Debug,
+    /// Git has answered a question asked away from the window.
+    Reading,
 }
 
 /// The remote operation currently running for the active project.
@@ -314,6 +317,8 @@ pub struct App {
     spun: std::time::Instant,
     /// Completed remote Git work waiting for the event loop.
     git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
+    /// What git is being asked about the worktrees away from the window.
+    readings: reading::Readings,
     /// The repositories a clone has finished with, and where they landed.
     cloned: Arc<Mutex<Vec<Result<std::path::PathBuf, String>>>>,
     /// The question the window is asking before it acts, if it is asking one.
@@ -486,6 +491,7 @@ impl App {
             remote_operation: None,
             spun: std::time::Instant::now(),
             git_results: Arc::new(Mutex::new(Vec::new())),
+            readings: reading::Readings::default(),
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
             completions: None,
@@ -2103,6 +2109,11 @@ impl ApplicationHandler<Wake> for App {
             }
             Wake::Debug => {
                 if self.take_debugged() {
+                    self.request_redraw();
+                }
+            }
+            Wake::Reading => {
+                if self.take_readings() {
                     self.request_redraw();
                 }
             }

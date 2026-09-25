@@ -3,7 +3,7 @@
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
-use crate::git;
+use crate::git::{self, Summary};
 use crate::project::{Project, ProjectId};
 use crate::session::bootstrap::{self, Bootstrap};
 use crate::session::placement;
@@ -239,10 +239,32 @@ impl Sessions {
         self.open.retain(|session| session.project != project);
     }
 
-    /// Asks git again how far every session has drifted from its base.
-    pub fn reread(&mut self) {
-        for session in &mut self.open {
-            session.refresh();
+    /// What asks git again how far every session has drifted from its base,
+    /// on whichever thread it is called on.
+    ///
+    /// Git is a subprocess per worktree, so the asking is handed out rather
+    /// than done here, and what it answers comes back through
+    /// [`Sessions::drifted`].
+    pub fn read_drift(&self) -> impl FnOnce() -> Vec<(SessionId, Summary)> + Send + 'static {
+        let cuts = self
+            .open
+            .iter()
+            .map(|session| (session.id, session.cuts.clone()))
+            .collect::<Vec<_>>();
+        move || {
+            cuts.into_iter()
+                .map(|(id, cuts)| (id, super::drift(&cuts)))
+                .collect()
+        }
+    }
+
+    /// Takes in how far the sessions have drifted, as [`Sessions::read_drift`]
+    /// read it; a session finished since is passed over.
+    pub fn drifted(&mut self, drifts: Vec<(SessionId, Summary)>) {
+        for (id, summary) in drifts {
+            if let Some(session) = self.open.iter_mut().find(|session| session.id == id) {
+                session.summary = summary;
+            }
         }
     }
 }
