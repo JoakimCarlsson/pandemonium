@@ -244,9 +244,10 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
         top -= heights[first];
     }
     let offset = talk.scroll() - top;
+    let count = covering(&heights[first..], offset + talk.view().get().size.height);
     talk.drawn_links().borrow_mut().clear();
 
-    let mut visible = rows.into_iter().skip(first).take(DRAWN).peekable();
+    let mut visible = rows.into_iter().skip(first).take(count).peekable();
     let mut drawn = Vec::new();
     while let Some(line) = visible.next() {
         if is_said(&line) {
@@ -270,6 +271,25 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
         }
     }
     (drawn, offset)
+}
+
+/// How many of the rows `heights` measures are built to fill `reach` logical
+/// pixels, and never fewer than [`DRAWN`].
+///
+/// The first row drawn is walked back to the top of its bubble, so one long
+/// message can put the whole view hundreds of rows past it; counting by height
+/// keeps the rows built reaching the foot of the pane however long it is.
+fn covering(heights: &[f32], reach: f32) -> usize {
+    let mut filled = 0.0;
+    let needed = heights
+        .iter()
+        .take_while(|height| {
+            let short = filled < reach;
+            filled += *height;
+            short
+        })
+        .count();
+    needed.max(DRAWN)
 }
 
 /// Whether `row` is part of something the reader said, drawn in a bubble.

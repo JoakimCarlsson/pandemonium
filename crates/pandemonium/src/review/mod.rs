@@ -7,6 +7,7 @@
 //! seen twice, never two stores.
 
 mod action;
+pub(crate) mod conflict;
 mod editor;
 mod graph;
 mod pane;
@@ -17,6 +18,7 @@ mod sidebar;
 mod store;
 
 pub use action::RepositoryAction;
+pub use conflict::Action as ConflictAction;
 pub use editor::commit_editor;
 pub use pane::{change_pane, hunk_row, review_pane, row_count, row_of};
 pub use reading::Reading;

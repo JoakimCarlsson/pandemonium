@@ -5,7 +5,7 @@
 //! same panel with nothing under the field. What fills the list is the
 //! window's; how it reads is here.
 
-use pm_ui::{Div, Styled, Theme, field, h_flex, rule, text, v_flex};
+use pm_ui::{Div, Styled, Theme, field, h_flex, rule, space, text, v_flex};
 
 use crate::message::Message;
 use crate::picker::state::{Kind, Picker};
@@ -48,7 +48,7 @@ pub fn width(kind: Kind) -> f32 {
 }
 
 /// Height occupied by the visible portion of `picker`.
-pub fn height(picker: &Picker) -> f32 {
+pub fn height(theme: &Theme, picker: &Picker) -> f32 {
     if matches!(picker.kind(), Kind::Modes | Kind::Knob) {
         return picker.shown_count().clamp(1, VISIBLE) as f32 * ROW_HEIGHT + 8.0;
     }
@@ -59,11 +59,31 @@ pub fn height(picker: &Picker) -> f32 {
             .filter_map(|(_, row)| row.section)
             .collect::<std::collections::BTreeSet<_>>()
             .len();
-        let creating = usize::from(!picker.field().value().trim().is_empty());
-        return FIELD_HEIGHT
-            + shown.len().max(1) as f32 * 46.0
-            + sections as f32 * 28.0
-            + creating as f32 * 54.0;
+        let rows = shown
+            .iter()
+            .map(|(_, row)| {
+                theme.text.sm.line_height
+                    + if row.detail.is_empty() {
+                        0.0
+                    } else {
+                        theme.text.xs.line_height
+                    }
+                    + space(1.0)
+            })
+            .sum::<f32>();
+        let section_height = theme.text.xs.line_height + space(1.5);
+        let creation_height = if picker.field().value().trim().is_empty() {
+            0.0
+        } else {
+            theme.text.sm.line_height + theme.text.xs.line_height + space(1.0)
+        };
+        return space(1.0)
+            + rows
+            + sections as f32 * section_height
+            + creation_height
+            + 1.0
+            + theme.text.sm.line_height
+            + space(3.0);
     }
     if picker.kind().is_prompt() {
         return FIELD_HEIGHT + HINT_HEIGHT;

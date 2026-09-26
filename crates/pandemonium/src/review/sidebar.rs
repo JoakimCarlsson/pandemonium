@@ -640,7 +640,13 @@ fn trouble(theme: &Theme, said: &str) -> Div<Message> {
 fn group(theme: &Theme, review: &Review, index: usize, listed: Group) -> Div<Message> {
     let (staged, count) = review.staged_in(index, listed);
     let name = listed.label();
-    let all = Some(ToggleState::of(staged, count));
+    let all = (listed != Group::Conflicted
+        || review.grouped(index, listed).into_iter().all(|row| {
+            review
+                .change(row)
+                .is_some_and(|changed| !review.has_conflicts(&changed.path))
+        }))
+    .then(|| ToggleState::of(staged, count));
 
     h_flex()
         .w_full()
@@ -682,7 +688,10 @@ fn change_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -
         .overflow_hidden()
         .when(marked, |row| row.bg(theme.colors.surface_selected))
         .hover_bg(theme.colors.surface_hover)
-        .on_click(Message::SelectChange(index))
+        .on_click(match changed.is_conflicted() {
+            true => Message::OpenChangeFile(index),
+            false => Message::SelectChange(index),
+        })
         .on_secondary_click(Message::ShowChangeMenu(index))
         .child(
             icon(IconName::File)
@@ -709,11 +718,13 @@ fn change_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -
             IconName::ArrowRight,
             Message::OpenChangeFile(index),
         ))
-        .child(checkbox(
-            theme,
-            staged_state(changed),
-            Message::ToggleChangeStaged(index),
-        ))
+        .when(!review.has_conflicts(&changed.path), |row| {
+            row.child(checkbox(
+                theme,
+                staged_state(changed),
+                Message::ToggleChangeStaged(index),
+            ))
+        })
 }
 
 /// What the box on a file's row says: how much of it is in the index.

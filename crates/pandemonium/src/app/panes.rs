@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use pm_core::Scope;
+use pm_core::{FileStatus, Scope};
 use pm_gfx::Rect;
 use pm_ui::{Axis, Element, IconName, MenuItem, ResizeEvent, ResizePhase, Theme};
 
@@ -958,6 +958,18 @@ impl App {
             let active = pane.active(scope);
             let file = active.and_then(Item::file);
             let display = self.display_of(file, display);
+            let conflicted = file.is_some_and(|file| {
+                let Some(scope) = self.editor.scope_of(file) else {
+                    return false;
+                };
+                let Some(document) = self.editor.get(file) else {
+                    return false;
+                };
+                self.reviews
+                    .get(&scope)
+                    .and_then(|review| review.mark(document.borrow().buffer().path()))
+                    == Some(FileStatus::Conflicted)
+            });
             Contents {
                 tabs: pane
                     .tabs(scope)
@@ -970,6 +982,7 @@ impl App {
                     .collect(),
                 active,
                 content: self.shown(theme, active, bounds.get().size.width),
+                conflicted,
                 bounds,
                 bar,
                 tab_bounds,

@@ -104,6 +104,9 @@ pub fn change_pane(theme: &Theme, review: &Review, id: ChangeId, split: bool) ->
         .map(|path| relative(review, path))
         .unwrap_or_default();
     let place = review.place_of(id);
+    let conflicted = place
+        .and_then(|index| review.change(index))
+        .is_some_and(Changed::is_conflicted);
 
     v_flex()
         .w_full()
@@ -114,7 +117,15 @@ pub fn change_pane(theme: &Theme, review: &Review, id: ChangeId, split: bool) ->
             bar(theme)
                 .child(text(name).text_xs().font_mono())
                 .child(h_flex().flex_1())
-                .child(layout_toggle(theme, split)),
+                .when_some(place.filter(|_| conflicted), |bar, index| {
+                    bar.child(worded(
+                        theme,
+                        "Open Result",
+                        true,
+                        Message::OpenChangeFile(index),
+                    ))
+                })
+                .when(!conflicted, |bar| bar.child(layout_toggle(theme, split))),
         )
         .when(place.is_none(), |pane| {
             pane.child(nothing(theme, "This file no longer differs from the index"))
@@ -129,9 +140,10 @@ fn drawn(
     shown: Option<ChangeId>,
     split: bool,
 ) -> Vec<Div<Message>> {
-    rows(review, shown, split)
-        .into_iter()
-        .skip(review.scroll(shown))
+    let rows = rows(review, shown, split);
+    let first = review.scroll(shown).min(rows.len().saturating_sub(1));
+    rows.into_iter()
+        .skip(first)
         .take(DRAWN)
         .map(|row| self::row(theme, review, row))
         .collect()
@@ -388,6 +400,10 @@ enum Row<'a> {
     /// One row of a hunk set out on two sides: the old line on the left and
     /// the new on the right, either missing where the other side has more.
     Pair(&'a Path, bool, Option<&'a Line>, Option<&'a Line>),
+    /// The heading of a conflict compared across its two versions.
+    CompareHeading(usize, usize),
+    /// A current and incoming line displayed side by side.
+    ComparePair(Option<&'a str>, Option<&'a str>),
 }
 
 /// Every row of the pane showing `shown`, file by file and hunk by hunk.
@@ -416,14 +432,40 @@ fn rows(review: &Review, shown: Option<ChangeId>, split: bool) -> Vec<Row<'_>> {
     let Some(index) = review.place_of(id) else {
         return Vec::new();
     };
-    review
-        .change(index)
-        .map(|changed| lines(review, index, changed, split))
-        .unwrap_or_default()
+    review.change(index).map_or_else(Vec::new, |changed| {
+        if changed.is_conflicted() {
+            compared(review, changed)
+        } else {
+            lines(review, index, changed, split)
+        }
+    })
+}
+
+/// Lays out each conflict's two versions in matching rows for comparison.
+fn compared<'a>(review: &'a Review, changed: &'a Changed) -> Vec<Row<'a>> {
+    let conflicts = review.conflicts(&changed.path);
+    let mut rows = Vec::new();
+    for (at, block) in conflicts.iter().enumerate() {
+        rows.push(Row::CompareHeading(at + 1, conflicts.len()));
+        let current = block.current.lines().collect::<Vec<_>>();
+        let incoming = block.incoming.lines().collect::<Vec<_>>();
+        for line in 0..current.len().max(incoming.len()) {
+            rows.push(Row::ComparePair(
+                current.get(line).copied(),
+                incoming.get(line).copied(),
+            ));
+        }
+    }
+    rows
 }
 
 /// The rows of one file's diff: each side of the index, hunk by hunk.
 fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed, split: bool) -> Vec<Row<'a>> {
+    if changed.is_conflicted() {
+        return vec![Row::Side(
+            "Open this file in the editor to resolve conflicts",
+        )];
+    }
     let Some(patch) = review.patch(&changed.path) else {
         return Vec::new();
     };
@@ -516,7 +558,62 @@ fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
             .child(half(theme, review, path, staged, old, false))
             .child(v_flex().w_px(1.0).bg(theme.colors.border))
             .child(half(theme, review, path, staged, new, true)),
+        Row::CompareHeading(at, total) => compare_heading(theme, at, total),
+        Row::ComparePair(current, incoming) => compare_pair(theme, current, incoming),
     }
+}
+
+/// Builds a heading above one side-by-side conflict comparison.
+fn compare_heading(theme: &Theme, at: usize, total: usize) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .h_px(theme.size.row)
+        .bg(theme.colors.surface)
+        .child(
+            h_flex().flex_1().px(1.5).items_center().child(
+                text(format!("Current · Conflict {at} of {total}"))
+                    .text_xs()
+                    .color(theme.colors.accent),
+            ),
+        )
+        .child(v_flex().w_px(1.0).bg(theme.colors.border))
+        .child(
+            h_flex()
+                .flex_1()
+                .px(1.5)
+                .items_center()
+                .child(text("Incoming").text_xs().color(theme.colors.success)),
+        )
+}
+
+/// Builds the current and incoming text of one comparison row.
+fn compare_pair(theme: &Theme, current: Option<&str>, incoming: Option<&str>) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .h_px(theme.size.row)
+        .items_stretch()
+        .child(compare_half(theme, current, true))
+        .child(v_flex().w_px(1.0).bg(theme.colors.border))
+        .child(compare_half(theme, incoming, false))
+}
+
+/// Builds one half of a conflict comparison row.
+fn compare_half(theme: &Theme, line: Option<&str>, current: bool) -> Div<Message> {
+    let color = match current {
+        true => theme.colors.accent,
+        false => theme.colors.success,
+    };
+    h_flex()
+        .flex_1()
+        .px(1.5)
+        .items_center()
+        .overflow_hidden()
+        .bg(color.alpha(theme.emphasis.change))
+        .child(
+            text(line.unwrap_or_default().to_owned())
+                .text_sm()
+                .font_mono(),
+        )
 }
 
 /// Builds the heading of one file: its path, its counts and its controls.
@@ -539,7 +636,10 @@ fn file_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -> 
         .bg(theme.colors.surface)
         .when(marked, |row| row.bg(theme.colors.surface_selected))
         .hover_bg(theme.colors.surface_hover)
-        .on_click(Message::ExpandChange(index))
+        .on_click(match changed.is_conflicted() {
+            true => Message::OpenChangeFile(index),
+            false => Message::ExpandChange(index),
+        })
         .on_secondary_click(Message::ShowChangeMenu(index))
         .child(
             v_flex()
@@ -547,9 +647,9 @@ fn file_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -> 
                 .items_center()
                 .justify_center()
                 .child(
-                    icon(match collapsed {
-                        true => IconName::ChevronRight,
-                        false => IconName::ChevronDown,
+                    icon(match (changed.is_conflicted(), collapsed) {
+                        (true, _) | (false, true) => IconName::ChevronRight,
+                        (false, false) => IconName::ChevronDown,
                     })
                     .size(IconSize::XSmall)
                     .color(theme.colors.text_subtle),

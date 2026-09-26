@@ -16,7 +16,7 @@ use crate::keymap::Action;
 use crate::notice::NoticeId;
 use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
-use crate::review::{Group, RepositoryAction};
+use crate::review::{ConflictAction, Group, RepositoryAction};
 use crate::settings::{SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
@@ -372,6 +372,8 @@ pub enum Message {
     /// The middle word says which side of the index the hunk was read from,
     /// which is what says whether clicking it stages or unstages.
     ToggleHunkStaged(usize, bool, usize),
+    /// Apply an inline action to the conflict starting on this file's line.
+    ConflictAction(FileId, usize, ConflictAction),
     /// Put the list's selection on this change, or mark it alongside.
     ///
     /// Which of the two it is comes from the modifiers held at the time: the

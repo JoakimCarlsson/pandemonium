@@ -24,6 +24,7 @@ use crate::editor::display::{CursorShape, Display};
 use crate::editor::layout::{GUTTER_GAP, GUTTER_INSET, TextLayout};
 use crate::editor::minimap::{MINIMAP_WIDTH, Minimap};
 use crate::editor::search::Search;
+use crate::review::conflict::{self, Action, Choice, Conflict};
 
 /// Width of the cursor while the pane is focused.
 const CURSOR_WIDTH: f32 = 2.0;
@@ -55,6 +56,45 @@ const LENS_GAP: usize = 2;
 
 /// What stands between two code lenses on one line.
 const LENS_SEPARATOR: &str = " | ";
+
+/// The actions shown over the start marker of each merge conflict.
+const CONFLICT_ACTIONS: [(&str, Action); 4] = [
+    ("Accept Current Change", Action::Accept(Choice::Current)),
+    ("Accept Incoming Change", Action::Accept(Choice::Incoming)),
+    ("Accept Both Changes", Action::Accept(Choice::Both)),
+    ("Compare Changes", Action::Compare),
+];
+
+/// Short labels used when a pane cannot fit the full conflict actions.
+const COMPACT_CONFLICT_ACTIONS: [(&str, Action); 4] = [
+    ("Current", Action::Accept(Choice::Current)),
+    ("Incoming", Action::Accept(Choice::Incoming)),
+    ("Both", Action::Accept(Choice::Both)),
+    ("Compare", Action::Compare),
+];
+
+/// The clickable bounds of each inline conflict action at `top`.
+fn conflict_action_bounds(layout: TextLayout, top: f32) -> Vec<(&'static str, Action, Rect)> {
+    let full_width = CONFLICT_ACTIONS
+        .iter()
+        .map(|(label, _)| label.chars().count() + 3)
+        .sum::<usize>() as f32
+        * layout.cell.width;
+    let actions = match full_width < layout.text_area().size.width {
+        true => &CONFLICT_ACTIONS,
+        false => &COMPACT_CONFLICT_ACTIONS,
+    };
+    let mut left = layout.text_left() + layout.cell.width;
+    actions
+        .iter()
+        .map(|(label, action)| {
+            let width = label.chars().count() as f32 * layout.cell.width;
+            let bounds = Rect::from_xywh(left, top, width, layout.cell.height);
+            left += width + 3.0 * layout.cell.width;
+            (*label, *action, bounds)
+        })
+        .collect()
+}
 
 /// Most lines kept in sight at the top of a pane while their body scrolls.
 const STICKY_LIMIT: usize = 4;
@@ -129,6 +169,8 @@ pub struct BufferView<M> {
     focused: bool,
     /// What a press or a drag over the text sends, given where it reached.
     on_select: Option<SelectHandler<M>>,
+    /// What selecting an inline merge action sends.
+    on_conflict: Option<Arc<dyn Fn(usize, Action) -> M>>,
     /// What a press or a drag down the gutter sends, given the lines it spans.
     on_gutter: Option<Arc<dyn Fn(Position, Position) -> M>>,
     /// What dragging a scrollbar sends, given the drag and the scale of it.
@@ -173,6 +215,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         file,
         focused,
         on_select: None,
+        on_conflict: None,
         on_gutter: None,
         on_fold: None,
         on_breakpoint: None,
@@ -202,6 +245,91 @@ pub fn plain_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
 }
 
 impl<M> BufferView<M> {
+    /// Washes the current and incoming parts of each conflict in distinct colours.
+    fn paint_conflict_backgrounds(
+        &self,
+        painting: &Painting<'_>,
+        conflicts: &[Conflict],
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let layout = painting.layout;
+        for block in conflicts {
+            for line in block.start_line..=block.end_line {
+                let Some(top) = painting.top_of(line) else {
+                    continue;
+                };
+                let color = if line < block.base_line.unwrap_or(block.divider_line) {
+                    painting.theme.colors.accent
+                } else if line < block.divider_line {
+                    painting.theme.colors.text_subtle
+                } else if line == block.divider_line {
+                    painting.theme.colors.border
+                } else {
+                    painting.theme.colors.success
+                };
+                let strength = if line == block.start_line || line == block.end_line {
+                    painting.theme.emphasis.change * 2.0
+                } else {
+                    painting.theme.emphasis.change
+                };
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(
+                        layout.bounds.left(),
+                        top,
+                        layout.bounds.size.width,
+                        layout.cell.height,
+                    ),
+                    color.alpha(strength),
+                ));
+            }
+        }
+    }
+
+    /// Draws VS Code style actions over each visible conflict start marker.
+    fn paint_conflict_actions(
+        &self,
+        painting: &Painting<'_>,
+        conflicts: &[Conflict],
+        glyphs: &mut Glyphs,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let layout = painting.layout;
+        for block in conflicts {
+            let Some(top) = painting.top_of(block.start_line) else {
+                continue;
+            };
+            cx.push_layer();
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    layout.text_left(),
+                    top,
+                    layout.text_area().size.width,
+                    layout.cell.height,
+                ),
+                painting.theme.colors.surface,
+            ));
+            cx.push_clip(layout.text_area());
+            for (label, _, bounds) in conflict_action_bounds(layout, top) {
+                for (at, ch) in label.chars().enumerate() {
+                    let x = bounds.left() + at as f32 * layout.cell.width;
+                    if x > layout.bounds.right() {
+                        break;
+                    }
+                    let run = glyphs.shape(ch, painting.font, cx);
+                    cx.text(Point::new(x, top), run, painting.theme.colors.accent);
+                }
+            }
+            cx.pop_clip();
+            cx.pop_layer();
+        }
+    }
+
+    /// Returns this view with clickable actions over each conflict marker.
+    pub fn on_conflict(mut self, on_conflict: impl Fn(usize, Action) -> M + 'static) -> Self {
+        self.on_conflict = Some(Arc::new(on_conflict));
+        self
+    }
+
     /// Returns this pane placing the cursor and selecting through `on_select`.
     ///
     /// The handler is given the stage of the gesture, where it began and
@@ -374,6 +502,10 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             .map(|line| document.is_folded_at(*line))
             .collect::<Vec<_>>();
         let changes = document.changes().to_vec();
+        let conflicts = match self.on_conflict.is_some() {
+            true => conflict::conflicts(&document.buffer().contents()),
+            false => Vec::new(),
+        };
         let highlights = document.buffer_mut().highlights(span.clone());
         let painting = Painting {
             layout,
@@ -400,6 +532,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             self.paint_current_line(&painting, cx);
         }
         self.paint_stopped(&painting, cx);
+        self.paint_conflict_backgrounds(&painting, &conflicts, cx);
         self.paint_search(&painting, cx);
         if self.display.occurrences {
             self.paint_occurrences(&painting, cx);
@@ -416,6 +549,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         for line in painting.drawn.clone() {
             self.paint_line(line, &painting, &mut glyphs, cx);
         }
+        self.paint_conflict_actions(&painting, &conflicts, &mut glyphs, cx);
         self.paint_brackets(&painting, cx);
         self.paint_link(&painting, cx);
         self.paint_cursor(&painting, cx);
@@ -432,6 +566,10 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
 
         let widest = painting.buffer.widest(span);
         let marks = markers(&painting);
+        let action_regions = conflicts
+            .iter()
+            .filter_map(|block| Some((block.start_line, painting.top_of(block.start_line)?)))
+            .collect::<Vec<_>>();
         let strip = (minimap > 0.0).then(|| Minimap::of(bounds, count, layout.first, rows));
         if let Some(strip) = strip {
             let view = layout.first..layout.first + rows;
@@ -441,6 +579,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         drop(document);
 
         self.select_region(layout, cx);
+        self.conflict_regions(layout, &action_regions, cx);
         if !self.plain {
             self.gutter_region(layout, cx);
             self.fold_region(layout, cx);
@@ -1214,6 +1353,35 @@ impl<M> BufferView<M> {
 }
 
 impl<M: Clone + 'static> BufferView<M> {
+    /// Takes presses on the action labels drawn over conflict markers.
+    fn conflict_regions(
+        &mut self,
+        layout: TextLayout,
+        regions: &[(usize, f32)],
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let Some(on_conflict) = self.on_conflict.as_ref() else {
+            return;
+        };
+        for (line, top) in regions {
+            for (_, action, bounds) in conflict_action_bounds(layout, *top) {
+                if bounds.left() >= layout.text_area().right() {
+                    break;
+                }
+                let visible = Rect::from_xywh(
+                    bounds.left(),
+                    bounds.top(),
+                    bounds
+                        .size
+                        .width
+                        .min(layout.text_area().right() - bounds.left()),
+                    bounds.size.height,
+                );
+                cx.clickable(visible, Some(on_conflict(*line, action)), None);
+            }
+        }
+    }
+
     /// Takes the press and the drag that place the cursor and select text.
     fn select_region(&mut self, layout: TextLayout, cx: &mut PaintContext<'_, '_, M>) {
         let Some(on_select) = self.on_select.clone() else {
