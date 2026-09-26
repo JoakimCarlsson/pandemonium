@@ -69,6 +69,8 @@ pub struct Contents {
     pub active: Option<Item>,
     /// What the pane draws beneath the bar.
     pub content: Content,
+    /// Whether the open file has an unresolved Git conflict.
+    pub conflicted: bool,
     /// Where the pane leaves its bounds, for a drop to be resolved against.
     pub bounds: Bounds,
     /// Where its bar of tabs leaves its bounds, for the same reason.
@@ -210,6 +212,7 @@ fn pane_view(
         Content::File(file) => Some(file.clone()),
         _ => None,
     };
+    let conflict_file = active.and_then(Item::file).filter(|_| contents.conflicted);
     let excerpted = match &contents.content {
         Content::Excerpts(excerpts) => Some(excerpts.clone()),
         _ => None,
@@ -245,27 +248,27 @@ fn pane_view(
         )
         .when_some(searching, Div::child)
         .when_some(showing, |view, file| {
-            view.child(
-                buffer_view(file, focused)
-                    .link(link)
-                    .hovered(hovered)
-                    .found(found)
-                    .breakpoints(breakpoints)
-                    .stopped(stopped)
-                    .caret(caret)
-                    .display(display)
-                    .on_select(move |phase, anchor, head| {
-                        Message::SelectText(id, phase, anchor, head)
-                    })
-                    .on_gutter(move |anchor, head| Message::SelectLines(id, anchor, head))
-                    .on_fold(move |at| Message::ToggleFold(id, at))
-                    .on_breakpoint(move |at| Message::ToggleBreakpoint(id, at))
-                    .on_scroll(move |axis, event, step| {
-                        Message::ScrollEditor(id, axis, event, step)
-                    })
-                    .on_minimap(move |line| Message::ScrollEditorTo(id, line))
-                    .on_menu(Message::ShowEditorMenu(id)),
-            )
+            let editor = buffer_view(file, focused)
+                .link(link)
+                .hovered(hovered)
+                .found(found)
+                .breakpoints(breakpoints)
+                .stopped(stopped)
+                .caret(caret)
+                .display(display)
+                .on_select(move |phase, anchor, head| Message::SelectText(id, phase, anchor, head))
+                .on_gutter(move |anchor, head| Message::SelectLines(id, anchor, head))
+                .on_fold(move |at| Message::ToggleFold(id, at))
+                .on_breakpoint(move |at| Message::ToggleBreakpoint(id, at))
+                .on_scroll(move |axis, event, step| Message::ScrollEditor(id, axis, event, step))
+                .on_minimap(move |line| Message::ScrollEditorTo(id, line))
+                .on_menu(Message::ShowEditorMenu(id));
+            let editor = match conflict_file {
+                Some(file) => editor
+                    .on_conflict(move |line, action| Message::ConflictAction(file, line, action)),
+                None => editor,
+            };
+            view.child(editor)
         })
         .when_some(excerpted, |view, excerpts| {
             view.child(

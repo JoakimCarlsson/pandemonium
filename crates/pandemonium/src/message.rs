@@ -16,7 +16,7 @@ use crate::keymap::Action;
 use crate::notice::NoticeId;
 use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
-use crate::review::{Group, RepositoryAction};
+use crate::review::{ConflictAction, Group, RepositoryAction};
 use crate::settings::{SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
@@ -372,6 +372,8 @@ pub enum Message {
     /// The middle word says which side of the index the hunk was read from,
     /// which is what says whether clicking it stages or unstages.
     ToggleHunkStaged(usize, bool, usize),
+    /// Apply an inline action to the conflict starting on this file's line.
+    ConflictAction(FileId, usize, ConflictAction),
     /// Put the list's selection on this change, or mark it alongside.
     ///
     /// Which of the two it is comes from the modifiers held at the time: the
@@ -436,8 +438,13 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
+    /// Log this session's agent in by the way it offered in this place.
+    LogInAgent(TalkId, usize),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
+    /// Follow the link this session's pane drew in this place: open the
+    /// file it names, or the address in the browser.
+    FollowAgentLink(TalkId, usize),
     /// Choose files to add to this agent's next prompt.
     AttachAgentFiles(TalkId),
     /// Remove an attachment from this agent's next prompt.

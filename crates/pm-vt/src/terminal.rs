@@ -55,6 +55,40 @@ impl Terminal {
         Self::spawn(command, cwd, cols, rows, notify)
     }
 
+    /// Runs `program` with `args` in `cwd` on a screen of `cols` by `rows`.
+    ///
+    /// A program given no arguments is taken as a whole command line and
+    /// handed to the user's shell, which is how a line with pipes, quotes and
+    /// `&&` in it means what whoever wrote it meant. `env` is added to the
+    /// editor's own, as it is for [`Self::shell`].
+    pub fn run(
+        cwd: impl Into<PathBuf>,
+        cols: usize,
+        rows: usize,
+        program: &str,
+        args: &[String],
+        env: &[(String, String)],
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        let mut command = match args.is_empty() {
+            true => {
+                let mut shell = Pty::shell();
+                shell.arg(if cfg!(windows) { "/C" } else { "-c" });
+                shell.arg(program);
+                shell
+            }
+            false => {
+                let mut command = CommandBuilder::new(program);
+                command.args(args);
+                command
+            }
+        };
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        Self::spawn(command, cwd, cols, rows, notify)
+    }
+
     /// Starts `command` in `cwd` on a screen of `cols` by `rows`.
     pub fn spawn(
         command: CommandBuilder,
@@ -176,6 +210,21 @@ impl Terminal {
         (!text.is_empty()).then_some(text)
     }
 
+    /// Everything the screen and its scrollback hold, as text.
+    ///
+    /// A line the child wrote is one line here however many rows it wrapped
+    /// across, and the blank rows below the last thing written are left off.
+    pub fn text(&self) -> String {
+        let grid = self.grid();
+        let (anchor, head) = grid.extent();
+        Selection {
+            anchor,
+            head,
+            unit: Unit::Cell,
+        }
+        .text(grid)
+    }
+
     /// The link written across `place`, if one is.
     pub fn link_at(&self, place: Place) -> Option<Link> {
         link::link_at(self.grid(), self.emulator.links(), place)
@@ -226,8 +275,39 @@ impl Terminal {
         self.pty.is_running()
     }
 
+    /// The last `lines` lines written, as text.
+    ///
+    /// Only the end of the scrollback is read, so this is cheap enough to ask
+    /// after every write however long the child has been running.
+    pub fn tail(&self, lines: usize) -> String {
+        let grid = self.grid();
+        let (anchor, head) = grid.extent();
+        let from = head
+            .line
+            .saturating_sub(lines + grid.rows())
+            .max(anchor.line);
+        let text = Selection {
+            anchor: Place::new(from, 0),
+            head,
+            unit: Unit::Cell,
+        }
+        .text(grid);
+        let kept = text.lines().count().saturating_sub(lines);
+        text.lines().skip(kept).collect::<Vec<_>>().join("\n")
+    }
+
+    /// Ends the child, leaving what it wrote on the screen.
+    pub fn kill(&mut self) {
+        self.pty.kill();
+    }
+
     /// The code the child exited with, once it has exited.
     pub fn exit_code(&mut self) -> Option<u32> {
         self.pty.exit_code()
+    }
+
+    /// The signal that ended the child, once a signal has.
+    pub fn exit_signal(&mut self) -> Option<String> {
+        self.pty.exit_signal()
     }
 }

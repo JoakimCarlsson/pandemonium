@@ -13,7 +13,9 @@
 
 use std::path::Path;
 
-use pm_acp::{About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Voice, Weight};
+use pm_acp::{
+    About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
+};
 use pm_gfx::{Image, Rgba};
 use pm_ui::{
     Div, IconName, IconSize, Scroll, Styled, Theme, button, h_flex, icon, measured, picture, rule,
@@ -29,7 +31,7 @@ use crate::message::Message;
 const DRAWN: usize = 300;
 
 /// How many lines of one tool call's result are shown before the rest.
-const RESULT_LINES: usize = 2;
+pub const RESULT_LINES: usize = 2;
 
 /// How far the conversation sits from the top and foot of its area, in
 /// steps of the spacing scale.
@@ -95,7 +97,18 @@ struct Piece {
     tone: Tone,
     /// A picture in place of text, when this piece is an attachment.
     image: Option<Image>,
+    /// Where it leads when it is pressed, when it is part of a link.
+    link: Option<String>,
 }
+
+/// A run of a passage, and where it leads when it is part of a link.
+type Span = (String, Option<String>);
+
+/// The schemes an address written out in a passage is known by.
+const SCHEMES: [&str; 2] = ["https://", "http://"];
+
+/// What trails an address in prose without being part of it.
+const TRAILING: &[char] = &['.', ',', ';', ':', '!', '?', ')', ']', '\'', '"', '>'];
 
 /// One line of the conversation, in the pieces it is coloured by.
 type Row = Vec<Piece>;
@@ -130,6 +143,9 @@ pub fn agent_pane(
             .w_full()
             .flex_1(),
         ))
+        .when(!talk.logins().is_empty(), |pane| {
+            pane.child(login(theme, talk))
+        })
         .children(
             talk.asks()
                 .iter()
@@ -229,15 +245,16 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     }
     let offset = talk.scroll() - top;
     let count = covering(&heights[first..], offset + talk.view().get().size.height);
+    talk.drawn_links().borrow_mut().clear();
 
     let mut visible = rows.into_iter().skip(first).take(count).peekable();
     let mut drawn = Vec::new();
     while let Some(line) = visible.next() {
         if is_said(&line) {
-            let mut message = vec![self::row(theme, line, talk.id())];
+            let mut message = vec![self::row(theme, line, talk)];
             while visible.peek().is_some_and(is_said) {
                 if let Some(next) = visible.next() {
-                    message.push(self::row(theme, next, talk.id()));
+                    message.push(self::row(theme, next, talk));
                 }
             }
             drawn.push(
@@ -250,7 +267,7 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 ),
             );
         } else {
-            drawn.push(self::row(theme, line, talk.id()));
+            drawn.push(self::row(theme, line, talk));
         }
     }
     (drawn, offset)
@@ -385,7 +402,7 @@ fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
                 if talk.details_expanded(at) {
                     for block in &blocks[at..end] {
                         if let Block::Ran(call) = block {
-                            rows.extend(tool_rows(call, talk.root(), columns));
+                            rows.extend(tool_rows(talk, call, columns));
                         }
                     }
                 }
@@ -427,11 +444,12 @@ fn markdown_block_rows(
 ) {
     match block {
         MarkdownBlock::Heading(depth, runs) => {
-            let heading = format!("{} {}", "#".repeat(*depth), run_text(runs));
-            rows.extend(passage_rows(&heading, mark, Tone::Tool, columns));
+            let mut heading = vec![(format!("{} ", "#".repeat(*depth)), None)];
+            heading.extend(spans(runs));
+            rows.extend(span_rows(heading, mark, Tone::Tool, columns));
         }
         MarkdownBlock::Paragraph(runs) => {
-            rows.extend(passage_rows(&run_text(runs), mark, tone, columns));
+            rows.extend(span_rows(spans(runs), mark, tone, columns));
         }
         MarkdownBlock::Code(language, code) => {
             let label = language.as_deref().unwrap_or("code");
@@ -461,12 +479,14 @@ fn markdown_block_rows(
         }
         MarkdownBlock::Table(table) => {
             for cells in table {
-                let line = cells
-                    .iter()
-                    .map(|runs| run_text(runs))
-                    .collect::<Vec<_>>()
-                    .join(" │ ");
-                rows.extend(passage_rows(&line, mark, tone, columns));
+                let mut line = Vec::new();
+                for (at, runs) in cells.iter().enumerate() {
+                    if at > 0 {
+                        line.push((" │ ".to_owned(), None));
+                    }
+                    line.extend(spans(runs));
+                }
+                rows.extend(span_rows(line, mark, tone, columns));
             }
         }
         MarkdownBlock::Rule => rows.extend(passage_rows("────────", mark, Tone::Quiet, columns)),
@@ -476,9 +496,11 @@ fn markdown_block_rows(
     }
 }
 
-/// Returns the visible words of an inline Markdown passage.
-fn run_text(runs: &[Run]) -> String {
-    runs.iter().map(|run| run.text.as_str()).collect()
+/// The runs of an inline Markdown passage as spans, each with its link.
+fn spans(runs: &[Run]) -> Vec<Span> {
+    runs.iter()
+        .map(|run| (run.text.clone(), run.target.clone()))
+        .collect()
 }
 
 /// Reader text and any images restored from an agent's saved transcript.
@@ -560,21 +582,174 @@ fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
 
 /// One passage, as rows marked with `mark` and wrapped to the width.
 fn passage_rows(passage: &str, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
-    let passage = hide_image_data(passage);
-    wrap(&passage, columns.saturating_sub(mark.chars().count()))
+    span_rows(vec![(passage.to_owned(), None)], mark, tone, columns)
+}
+
+/// One passage made of `spans`, as rows marked with `mark` and wrapped to
+/// the width, with its links, and the addresses written out in it, pressable.
+fn span_rows(spans: Vec<Span>, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
+    let spans = spans
+        .into_iter()
+        .map(|(text, link)| (hide_image_data(&text), link))
+        .collect::<Vec<_>>();
+    linked_wrap(&spans, columns.saturating_sub(mark.chars().count()))
         .into_iter()
         .enumerate()
-        .map(|(at, line)| match at {
-            0 => vec![piece(mark.to_owned(), quieten(tone)), piece(line, tone)],
-            _ => vec![
-                piece(
+        .map(|(at, line)| {
+            let lead = match at {
+                0 => piece(mark.to_owned(), quieten(tone)),
+                _ => piece(
                     if tone == Tone::Said { "" } else { WRAPPED }.to_owned(),
                     tone,
                 ),
-                piece(line, tone),
-            ],
+            };
+            let mut row = vec![lead];
+            if line.is_empty() {
+                row.push(piece(String::new(), tone));
+            }
+            row.extend(line.into_iter().map(|(text, link)| Piece {
+                text,
+                tone,
+                image: None,
+                link,
+            }));
+            row
         })
         .collect()
+}
+
+/// `spans` broken into lines of at most `columns` characters, each line the
+/// spans it is made of.
+///
+/// Lines break where [`wrap`] breaks them. A space between two words of the
+/// same link is part of the link, so the whole of it is one thing to press.
+fn linked_wrap(spans: &[Span], columns: usize) -> Vec<Vec<Span>> {
+    let mut lines = Vec::new();
+    for paragraph in paragraphs(spans) {
+        let mut line: Vec<Span> = Vec::new();
+        let mut width = 0;
+        for word in paragraph
+            .into_iter()
+            .flat_map(|word| split_linked(addressed(word), columns))
+        {
+            let length = word
+                .iter()
+                .map(|(text, _)| text.chars().count())
+                .sum::<usize>();
+            if width > 0 && width + 1 + length > columns {
+                lines.push(std::mem::take(&mut line));
+                width = 0;
+            } else if width > 0 {
+                let before = line.last().and_then(|(_, link)| link.as_ref());
+                let after = word.first().and_then(|(_, link)| link.as_ref());
+                let joined = before.filter(|_| before == after).cloned();
+                join(&mut line, " ", joined.as_ref());
+                width += 1;
+            }
+            for (text, link) in &word {
+                join(&mut line, text, link.as_ref());
+            }
+            width += length;
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+/// The paragraphs of `spans`, each the words it is made of, each word the
+/// spans it is made of.
+///
+/// A word is what lies between two spaces, so two spaces side by side make
+/// an empty word between them, as [`wrap`] reads them too.
+fn paragraphs(spans: &[Span]) -> Vec<Vec<Vec<Span>>> {
+    let mut paragraphs = vec![Vec::new()];
+    let mut word = Vec::new();
+    for (text, link) in spans {
+        for character in text.chars() {
+            match character {
+                ' ' | '\n' => {
+                    if let Some(paragraph) = paragraphs.last_mut() {
+                        paragraph.push(std::mem::take(&mut word));
+                    }
+                    if character == '\n' {
+                        paragraphs.push(Vec::new());
+                    }
+                }
+                character => join(&mut word, character.encode_utf8(&mut [0; 4]), link.as_ref()),
+            }
+        }
+    }
+    if let Some(paragraph) = paragraphs.last_mut() {
+        paragraph.push(word);
+    }
+    paragraphs
+}
+
+/// `word` with the address written out in it made a link to itself.
+///
+/// Only a word that is not already part of a link is looked in, and what
+/// trails the address in prose — the full stop after it, the bracket around
+/// it — is left out of what it leads to.
+fn addressed(word: Vec<Span>) -> Vec<Span> {
+    if word.iter().any(|(_, link)| link.is_some()) {
+        return word;
+    }
+    let text = word
+        .iter()
+        .map(|(text, _)| text.as_str())
+        .collect::<String>();
+    let Some(start) = SCHEMES.iter().filter_map(|scheme| text.find(scheme)).min() else {
+        return word;
+    };
+    let address = text[start..].trim_end_matches(TRAILING);
+    if SCHEMES.contains(&address) {
+        return word;
+    }
+    let end = start + address.len();
+    [
+        (text[..start].to_owned(), None),
+        (address.to_owned(), Some(address.to_owned())),
+        (text[end..].to_owned(), None),
+    ]
+    .into_iter()
+    .filter(|(text, _)| !text.is_empty())
+    .collect()
+}
+
+/// `word` in pieces of at most `columns` characters, each keeping the links
+/// of the characters it holds.
+fn split_linked(word: Vec<Span>, columns: usize) -> Vec<Vec<Span>> {
+    let length = word
+        .iter()
+        .map(|(text, _)| text.chars().count())
+        .sum::<usize>();
+    if length <= columns.max(1) {
+        return vec![word];
+    }
+    let mut pieces = vec![Vec::new()];
+    let mut filled = 0;
+    for (text, link) in &word {
+        for character in text.chars() {
+            if filled == columns.max(1) {
+                pieces.push(Vec::new());
+                filled = 0;
+            }
+            if let Some(piece) = pieces.last_mut() {
+                join(piece, character.encode_utf8(&mut [0; 4]), link.as_ref());
+            }
+            filled += 1;
+        }
+    }
+    pieces
+}
+
+/// Adds `text` to the end of `spans`, into the last span where it leads the
+/// same place.
+fn join(spans: &mut Vec<Span>, text: &str, link: Option<&String>) {
+    match spans.last_mut() {
+        Some((last, led)) if led.as_ref() == link => last.push_str(text),
+        _ => spans.push((text.to_owned(), link.cloned())),
+    }
 }
 
 /// Replaces image payloads echoed in a saved transcript with a short label.
@@ -613,14 +788,15 @@ fn is_image_data_byte(byte: u8) -> bool {
 }
 
 /// One tool call, as the line naming it and the lines of what it came to.
-fn tool_rows(call: &ToolCall, root: &Path, columns: usize) -> Vec<Row> {
+fn tool_rows(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<Row> {
+    let root = talk.root();
     let tone = match call.status {
         Status::Failed => Tone::Failed,
         _ => Tone::Quiet,
     };
     let mut rows = vec![called(call, root)];
     rows.extend(
-        result(call, columns.saturating_sub(RESULT.chars().count()))
+        result(talk, call, columns.saturating_sub(RESULT.chars().count()))
             .into_iter()
             .enumerate()
             .map(|(at, line)| match at {
@@ -644,7 +820,8 @@ fn called(call: &ToolCall, root: &Path) -> Row {
     let argument = call
         .locations
         .first()
-        .map(|location| relative(&location.path, root));
+        .map(|location| relative(&location.path, root))
+        .or_else(|| call.argument.as_deref().map(first_line));
 
     match (call.name.as_deref(), argument) {
         (Some(name), Some(argument)) => {
@@ -663,8 +840,9 @@ fn called(call: &ToolCall, root: &Path) -> Row {
 ///
 /// A call that has produced nothing yet says where it has got to instead:
 /// the line beneath a call is never blank, because a call with nothing under
-/// it reads as one that did nothing.
-fn result(call: &ToolCall, columns: usize) -> Vec<String> {
+/// it reads as one that did nothing. A terminal the call is running in shows
+/// the last of what it has written, as it writes it.
+fn result(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for output in &call.output {
         match output {
@@ -674,7 +852,17 @@ fn result(call: &ToolCall, columns: usize) -> Vec<String> {
                 name_of(path),
                 after.lines().count()
             )),
+            Output::Terminal(terminal) => {
+                if let Some(tail) = talk.terminal_tail(terminal) {
+                    lines.extend(wrap(tail, columns));
+                }
+            }
         }
+    }
+    if lines.is_empty()
+        && let Some(returned) = &call.returned
+    {
+        lines.extend(wrap(returned, columns));
     }
     if lines.is_empty() {
         return match call.status {
@@ -716,8 +904,12 @@ fn step_row(step: &Step) -> Row {
 /// Builds one row out of its pieces.
 ///
 /// The row is held to the height [`row_height`] gives it, so that where the
-/// pane scrolls to and where it draws the rows are the same measurement.
-fn row(theme: &Theme, row: Row, session: TalkId) -> Div<Message> {
+/// pane scrolls to and where it draws the rows are the same measurement. A
+/// piece that is part of a link is drawn in the link colour and follows the
+/// link when pressed; where it leads is written down in `talk` as it is
+/// drawn, and the press names it by its place there.
+fn row(theme: &Theme, row: Row, talk: &Talk) -> Div<Message> {
+    let session = talk.id();
     let height = row_height(theme, &row);
     if row.is_empty() {
         return h_flex().h_px(height);
@@ -738,13 +930,28 @@ fn row(theme: &Theme, row: Row, session: TalkId) -> Div<Message> {
             if let Some(image) = piece.image {
                 return h_flex().child(picture(image).w_px(160.0).h_px(112.0));
             }
-            let styled = text(piece.text).color(tone(theme, piece.tone));
+            let color = match piece.link {
+                Some(_) => theme.colors.link,
+                None => tone(theme, piece.tone),
+            };
+            let styled = text(piece.text).color(color);
             let styled = match piece.tone {
                 Tone::Said | Tone::Spoken => styled.text_lg(),
                 Tone::Argument => styled.text_sm().font_mono(),
                 _ => styled.text_sm(),
             };
-            h_flex().child(styled)
+            let Some(link) = piece.link else {
+                return h_flex().child(styled);
+            };
+            let links = talk.drawn_links();
+            let place = links.borrow().len();
+            links.borrow_mut().push(link.clone());
+            h_flex()
+                .rounded(theme.radius.sm)
+                .hover_bg(theme.colors.surface_hover)
+                .on_click(Message::FollowAgentLink(session, place))
+                .tooltip(link)
+                .child(styled)
         }))
 }
 
@@ -773,8 +980,76 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
                 .font_mono()
                 .color(theme.colors.text_subtle),
         )
+        .when_some(talk.title(), |bar, title| {
+            bar.child(
+                text(title.to_owned())
+                    .text_xs()
+                    .color(theme.colors.text_muted),
+            )
+        })
         .child(h_flex().flex_1())
+        .when_some(talk.usage(), |bar, usage| {
+            bar.child(text(used(usage)).text_xs().color(theme.colors.text_subtle))
+        })
         .child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
+}
+
+/// What the header says of how full the model's context is, and what the
+/// conversation has cost where the agent says.
+fn used(usage: &Usage) -> String {
+    let filled = format!(
+        "{} / {} tokens",
+        thousands(usage.used),
+        thousands(usage.size)
+    );
+    match &usage.cost {
+        Some(cost) if cost.currency == "USD" => format!("{filled} · ${:.2}", cost.amount),
+        Some(cost) => format!("{filled} · {:.2} {}", cost.amount, cost.currency),
+        None => filled,
+    }
+}
+
+/// `count` in thousands once it runs to them, as `53k`.
+fn thousands(count: u64) -> String {
+    match count {
+        0..1000 => count.to_string(),
+        _ => format!("{}k", count / 1000),
+    }
+}
+
+/// Builds the card offering the ways the agent can be logged in.
+///
+/// The agent opens no conversation until it is logged in, so this sits where
+/// a question from it would: under the conversation, above the prompt.
+fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
+    let session = talk.id();
+    let buttons = talk
+        .logins()
+        .iter()
+        .enumerate()
+        .map(|(place, method)| {
+            button(method.name.clone(), Message::LogInAgent(session, place))
+                .h_px(theme.size.control)
+                .filled()
+        })
+        .collect::<Vec<_>>();
+
+    v_flex().w_full().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .p(0.75)
+            .gap(0.75)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.accent)
+            .bg(theme.colors.surface)
+            .child(
+                text(format!("{BULLET}Log in to {}", talk.agent().name))
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.accent),
+            )
+            .child(h_flex().gap(0.75).children(buttons)),
+    )
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.
@@ -1040,6 +1315,7 @@ fn piece(text: String, tone: Tone) -> Piece {
         text,
         tone,
         image: None,
+        link: None,
     }
 }
 
@@ -1049,6 +1325,7 @@ fn image_piece(image: Image) -> Piece {
         text: String::new(),
         tone: Tone::Said,
         image: Some(image),
+        link: None,
     }
 }
 

@@ -20,6 +20,7 @@ use pm_core::{Changed, FileStatus, Head, Hunk, Line};
 use pm_text::{Buffer, Highlight};
 
 use crate::input::Input;
+use crate::review::conflict::Conflict;
 use crate::review::reading::{self, Reading, RepositoryReading};
 use crate::review::repository::Repository;
 use crate::review::shade::{Shading, Version};
@@ -142,6 +143,8 @@ pub struct Review {
     owners: Vec<usize>,
     /// The lines of each file that has changed.
     patches: BTreeMap<PathBuf, Patch>,
+    /// The marker blocks still awaiting a choice in each conflicted file.
+    conflicts: BTreeMap<PathBuf, Vec<Conflict>>,
     /// The colour of every character each file's lines are drawn in.
     shades: BTreeMap<PathBuf, Shading>,
     /// The files whose lines are folded away in the review pane.
@@ -186,6 +189,7 @@ impl Review {
             changed: Vec::new(),
             owners: Vec::new(),
             patches: BTreeMap::new(),
+            conflicts: BTreeMap::new(),
             shades: BTreeMap::new(),
             collapsed: BTreeSet::new(),
             ids: BTreeMap::new(),
@@ -255,6 +259,7 @@ impl Review {
         self.gather_changes();
 
         self.patches = reading.patches;
+        self.conflicts = reading.conflicts;
         self.shades = reading.shades;
         self.collapsed
             .retain(|path| self.patches.contains_key(path));
@@ -405,6 +410,16 @@ impl Review {
             .map(|(path, _)| path.as_path())
     }
 
+    /// The unresolved marker blocks currently read from `path`.
+    pub fn conflicts(&self, path: &Path) -> &[Conflict] {
+        self.conflicts.get(path).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Whether the conflicted file at `path` still contains marker blocks.
+    pub fn has_conflicts(&self, path: &Path) -> bool {
+        !self.conflicts(path).is_empty()
+    }
+
     /// Where the file `id` names sits in the list of changes.
     pub fn place_of(&self, id: ChangeId) -> Option<usize> {
         let path = self.path_of(id)?;
@@ -520,7 +535,7 @@ impl Review {
     pub fn staged(&self) -> usize {
         self.changed
             .iter()
-            .filter(|changed| changed.is_staged())
+            .filter(|changed| changed.is_staged() && !changed.is_conflicted())
             .count()
     }
 
@@ -909,6 +924,10 @@ impl Review {
     /// Puts the files `ids` names into the index.
     pub fn stage(&mut self, ids: &[ChangeId]) {
         let named = self.named_where(ids, Changed::is_unstaged);
+        let named = named
+            .into_iter()
+            .filter(|(_, path)| !self.has_conflicts(path))
+            .collect();
         self.in_each(named, pm_core::stage);
     }
 
@@ -920,7 +939,11 @@ impl Review {
 
     /// Puts everything that has changed into the index.
     pub fn stage_all(&mut self) {
-        let named = self.owned(Changed::is_unstaged);
+        let named = self
+            .owned(Changed::is_unstaged)
+            .into_iter()
+            .filter(|(_, path)| !self.has_conflicts(path))
+            .collect();
         self.in_each(named, pm_core::stage);
     }
 

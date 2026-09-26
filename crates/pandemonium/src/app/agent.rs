@@ -5,14 +5,22 @@
 //! is running are the window's, and they are here. Every command a session
 //! answers to goes through [`App::agent_command`].
 
-use pm_acp::{About, Agent, Knob, Setting};
+use std::path::{Path, PathBuf};
+
+use pm_acp::{About, Agent, Knob, Method, Setting, Way};
+use pm_core::Scope;
+use pm_text::Position;
 use winit::window::UserAttentionType;
 
 use crate::agent::{TalkId, Tally};
+use crate::app::places::Place;
 use crate::app::{App, Writing};
+use crate::desktop;
 use crate::message::Message;
+use crate::panel::PanelView;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Row};
+use crate::terminal::ShellId;
 
 impl App {
     /// Carries out the commands an agent session answers to.
@@ -36,6 +44,8 @@ impl App {
                     talk.toggle_details(block);
                 }
             }
+            Message::FollowAgentLink(session, place) => self.follow_agent_link(session, place),
+            Message::LogInAgent(session, place) => self.log_in_agent(session, place),
             Message::AttachAgentFiles(session) => self.attach_agent_files(session),
             Message::RemoveAgentAttachment(session, place) => {
                 if let Some(talk) = self.agents.get_mut(session) {
@@ -410,6 +420,219 @@ impl App {
         self.follow_agents();
     }
 
+    /// Attaches the focused file's selection to the next prompt of an agent
+    /// in the file's worktree, and gives that prompt the keyboard.
+    ///
+    /// Nothing selected is the line the cursor is on. The agent is one a
+    /// pane is showing where there is one, and any of the worktree's where
+    /// none is: the reader is sending it something to talk about, not
+    /// choosing who to talk to.
+    pub(super) fn add_selection_to_agent(&mut self) {
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        let (Some(scope), Some(document)) = (self.editor.scope_of(file), self.editor.get(file))
+        else {
+            return;
+        };
+        let (path, first, last, text) = {
+            let document = document.borrow();
+            let buffer = document.buffer();
+            let selection = buffer.selection();
+            let (start, end) = (selection.start(), selection.end());
+            let text = match selection.is_empty() {
+                true => buffer.line_text(start.line),
+                false => buffer.text_in(start..end),
+            };
+            let last = match end.column == 0 && end.line > start.line {
+                true => end.line - 1,
+                false => end.line,
+            };
+            (buffer.path().to_path_buf(), start.line + 1, last + 1, text)
+        };
+        let Some(session) = self.agent_in(scope) else {
+            self.notices
+                .trouble("No agent is open in this worktree.", None);
+            return;
+        };
+        if let Some(talk) = self.agents.get_mut(session) {
+            talk.attach_selection(path, first, last, text);
+        }
+        if !self.is_showing(Item::Agent(scope, session)) {
+            self.show_agent(session);
+        }
+        self.focus_prompt(session);
+    }
+
+    /// The agent of `scope` a selection is sent to: the one a pane is
+    /// showing, or else any the worktree has open.
+    fn agent_in(&self, scope: Scope) -> Option<TalkId> {
+        let panes = self
+            .panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.panes.pane(pane))
+            .collect::<Vec<_>>();
+        let showing =
+            panes
+                .iter()
+                .filter_map(|pane| pane.active(scope))
+                .find_map(|item| match item {
+                    Item::Agent(held, talk) if held == scope => Some(talk),
+                    _ => None,
+                });
+        showing.or_else(|| {
+            panes
+                .iter()
+                .flat_map(|pane| pane.items())
+                .find_map(|item| match item {
+                    Item::Agent(held, talk) if held == scope => Some(talk),
+                    _ => None,
+                })
+        })
+    }
+
+    /// Whether a pane has `item` in front.
+    fn is_showing(&self, item: Item) -> bool {
+        let scope = self.scope();
+        self.panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.panes.pane(pane))
+            .any(|pane| pane.active(scope) == Some(item))
+    }
+
+    /// Logs `session`'s agent in by the way it offered in `place`.
+    fn log_in_agent(&mut self, session: TalkId, place: usize) {
+        let Some(method) = self
+            .agents
+            .get(session)
+            .and_then(|talk| talk.logins().get(place).cloned())
+        else {
+            return;
+        };
+        match &method.way {
+            Way::Asked => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.log_in(&method);
+                }
+            }
+            Way::Terminal { args, env } => self.log_in_in_terminal(session, &method, args, env),
+        }
+    }
+
+    /// Runs `session`'s agent in a terminal with `args` and `env` added, for
+    /// the reader to log in through, and starts the agent again once they
+    /// have.
+    ///
+    /// The terminal is shown and given the keyboard, because what runs in it
+    /// is waiting on the reader: a code to paste, a browser to confirm in.
+    fn log_in_in_terminal(
+        &mut self,
+        session: TalkId,
+        method: &Method,
+        args: &[String],
+        env: &[(String, String)],
+    ) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let scope = talk.scope();
+        let root = talk.root().to_path_buf();
+        let command = talk.agent().command();
+        let program = command.get_program().to_string_lossy().into_owned();
+        let mut arguments = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        arguments.extend(args.iter().cloned());
+        let mut environment = talk.env().to_vec();
+        environment.extend(env.iter().cloned());
+
+        let started = self
+            .terminals
+            .run(scope, &root, &program, &arguments, &environment);
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        match started {
+            Ok(shell) => {
+                talk.note(format!("Logging in with {} in the terminal…", method.name));
+                self.terminals.activate(scope, shell);
+                self.logins.push((session, scope, shell));
+                self.show_panel(PanelView::Terminal);
+                self.focus_terminal();
+            }
+            Err(error) => talk.note(format!("The login would not start: {error}")),
+        }
+    }
+
+    /// Starts again every agent whose login in a terminal has finished, and
+    /// says so of any whose login failed.
+    pub(super) fn follow_logins(&mut self) -> bool {
+        let mut followed = false;
+        for (session, scope, shell) in std::mem::take(&mut self.logins) {
+            let Some(ended) = self.login_ended(scope, shell) else {
+                self.logins.push((session, scope, shell));
+                continue;
+            };
+            followed = true;
+            self.terminals.release(scope, shell);
+            match ended {
+                Some(0) => {
+                    self.agents.restart(session);
+                }
+                code => {
+                    if let Some(talk) = self.agents.get_mut(session) {
+                        talk.note(match code {
+                            Some(code) => format!("The login exited with code {code}."),
+                            None => "The login was closed before it finished.".to_owned(),
+                        });
+                    }
+                }
+            }
+        }
+        followed
+    }
+
+    /// How the login running as `shell` in `scope` ended, once it has: the
+    /// code it exited with, or nothing when the reader closed it first.
+    fn login_ended(&self, scope: Scope, shell: ShellId) -> Option<Option<u32>> {
+        let Some(shell) = self.terminals.get(scope, shell) else {
+            return Some(None);
+        };
+        let mut shell = shell.borrow_mut();
+        match shell.is_running() {
+            true => None,
+            false => Some(shell.exit_code()),
+        }
+    }
+
+    /// Follows the link `session`'s pane drew in `place`.
+    ///
+    /// An agent names the files it talks about as links to them, relative to
+    /// its worktree and often with a line after them; those open in the
+    /// editor at that line, and anything else goes to the browser.
+    fn follow_agent_link(&mut self, session: TalkId, place: usize) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let Some(link) = talk.drawn_link(place) else {
+            return;
+        };
+        match linked_file(talk.root(), &link) {
+            Some((path, line)) => {
+                let place = Place {
+                    scope: talk.scope(),
+                    path,
+                    position: Position::new(line, 0),
+                };
+                self.jump_to(&place);
+            }
+            None => desktop::browse(&link),
+        }
+    }
+
     /// Lets the reader choose files for this agent's next turn.
     fn attach_agent_files(&mut self, session: TalkId) {
         let Some(paths) = rfd::FileDialog::new()
@@ -575,4 +798,53 @@ fn detail(description: Option<&str>, current: bool) -> String {
         (description, true) => format!("current · {description}"),
         (description, false) => description.to_owned(),
     }
+}
+
+/// The file in the worktree at `root` that `link` names, and the line in it
+/// counted from nought, where it names a file that is there.
+///
+/// The link is the agent's to write, so a file it names outside the worktree
+/// — by an absolute path, or by climbing out through `..` or a link — is not
+/// opened: the conversation is about the worktree it was started in.
+///
+/// A line is read from the `#L12` an address in a browser would carry, or
+/// from the `:12` or `:12:4` a compiler writes after a path.
+fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
+    let path = match link.split_once("://") {
+        Some(("file", path)) => path,
+        Some(_) => return None,
+        None => link,
+    };
+    let (path, line) = match path.split_once("#L") {
+        Some((path, line)) => (
+            path,
+            line.split('-').next().and_then(|line| line.parse().ok()),
+        ),
+        None => after_colons(path),
+    };
+    let path = root.join(path.replace("%20", " "));
+    let resolved = path.canonicalize().ok()?;
+    let inside = root
+        .canonicalize()
+        .is_ok_and(|root| resolved.starts_with(root));
+    (inside && resolved.is_file()).then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
+}
+
+/// `path` without the `:line` or `:line:column` written after it, and the
+/// line, where one was.
+fn after_colons(path: &str) -> (&str, Option<usize>) {
+    match numbered(path) {
+        Some((rest, last)) => match numbered(rest) {
+            Some((file, line)) => (file, line.parse().ok()),
+            None => (rest, last.parse().ok()),
+        },
+        None => (path, None),
+    }
+}
+
+/// `path` split before the number written after its last colon, where a
+/// number is what follows it.
+fn numbered(path: &str) -> Option<(&str, &str)> {
+    path.rsplit_once(':')
+        .filter(|(_, number)| number.parse::<usize>().is_ok())
 }

@@ -385,6 +385,52 @@ impl App {
         self.reread_worktree();
     }
 
+    /// Applies a VS Code style inline action to an open conflict block.
+    pub(super) fn conflict_action(
+        &mut self,
+        file: crate::editor::FileId,
+        line: usize,
+        action: crate::review::ConflictAction,
+    ) {
+        let Some(document) = self.editor.get(file) else {
+            return;
+        };
+        let (path, source) = {
+            let document = document.borrow();
+            (
+                document.buffer().path().to_path_buf(),
+                document.buffer().contents(),
+            )
+        };
+        let Some(block) = crate::review::conflict::conflicts(&source)
+            .into_iter()
+            .find(|block| block.start_line == line)
+        else {
+            return;
+        };
+        match action {
+            crate::review::ConflictAction::Accept(choice) => {
+                let resolved = block.resolve(&source, choice);
+                self.editor
+                    .edit(file, |buffer| buffer.set_contents(&resolved));
+            }
+            crate::review::ConflictAction::Compare => {
+                let Some(scope) = self.editor.scope_of(file) else {
+                    return;
+                };
+                let Some(index) = self.reviews.get(&scope).and_then(|review| {
+                    review
+                        .changed()
+                        .iter()
+                        .position(|changed| changed.path == path)
+                }) else {
+                    return;
+                };
+                self.open_change_diff(index);
+            }
+        }
+    }
+
     /// Puts the lines of one hunk back the way they were.
     pub(super) fn restore_hunk(&mut self, index: usize, staged: bool, hunk: usize) {
         let Some(id) = self.review().and_then(|review| review.id_of(index)) else {
@@ -554,13 +600,17 @@ impl App {
         let review = self.reviews.get(&scope)?;
         let changed = review.change(index)?;
         let first = review
-            .patch(&changed.path)
-            .and_then(|patch| {
-                patch
-                    .unstaged
-                    .first()
-                    .or_else(|| patch.staged.first())
-                    .map(|hunk| hunk.start)
+            .conflicts(&changed.path)
+            .first()
+            .map(|block| block.start_line + 1)
+            .or_else(|| {
+                review.patch(&changed.path).and_then(|patch| {
+                    patch
+                        .unstaged
+                        .first()
+                        .or_else(|| patch.staged.first())
+                        .map(|hunk| hunk.start)
+                })
             })
             .unwrap_or(1);
         Some((

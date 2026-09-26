@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use pm_core::{Changed, Side, Status};
 
+use crate::review::conflict::{self, Conflict};
 use crate::review::repository::History;
 use crate::review::shade::Shading;
 use crate::review::store::Patch;
@@ -34,6 +35,8 @@ pub struct Reading {
     pub(super) repositories: Vec<RepositoryReading>,
     /// The lines of each file that has changed.
     pub(super) patches: BTreeMap<PathBuf, Patch>,
+    /// The unresolved marker blocks of each conflicted file.
+    pub(super) conflicts: BTreeMap<PathBuf, Vec<Conflict>>,
     /// The colour of every character each file's lines are drawn in.
     pub(super) shades: BTreeMap<PathBuf, Shading>,
 }
@@ -73,6 +76,14 @@ impl Reading {
             patches.entry(changed.path.clone()).or_default().unstaged = hunks;
         }
         patches.retain(|path, _| changed.iter().any(|(_, changed)| changed.path == *path));
+        let conflicts = changed
+            .iter()
+            .filter(|(_, changed)| changed.is_conflicted())
+            .filter_map(|(_, changed)| {
+                let source = std::fs::read_to_string(&changed.path).ok()?;
+                Some((changed.path.clone(), conflict::conflicts(&source)))
+            })
+            .collect();
         let shades = patches
             .iter()
             .map(|(path, patch)| {
@@ -85,6 +96,7 @@ impl Reading {
             reads,
             repositories,
             patches,
+            conflicts,
             shades,
         }
     }
