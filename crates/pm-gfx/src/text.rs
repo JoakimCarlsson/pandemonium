@@ -1,10 +1,12 @@
 //! Font selection, shaping and the measurement layout asks for.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
+use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use cosmic_text::fontdb::Weight;
 use cosmic_text::{Attrs, Buffer, Family, FamilyOwned, FontSystem, LayoutGlyph, Metrics, Shaping};
+use hashbrown::{DefaultHashBuilder, HashTable};
 
 use crate::geometry::Size;
 
@@ -139,11 +141,19 @@ impl ShapedRun {
     }
 }
 
-/// Identifies a shaped run in the cache.
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct RunKey {
-    /// The text that was shaped.
-    text: String,
+/// How many frames a shaped run stays cached without being asked for.
+///
+/// Long enough that text scrolled away and back, or a tab left and returned
+/// to, is not shaped again; short enough that a session which has shown a
+/// great deal of text does not keep every run of it.
+const RUN_LIFETIME: u64 = 240;
+
+/// How many frames pass between sweeps of the runs that have gone unused.
+const SWEEP_EVERY: u64 = 60;
+
+/// The style half of what identifies a shaped run, in a form that hashes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct StyleKey {
     /// Em size, in raw bits so it can be hashed.
     size: u32,
     /// Line height, in raw bits so it can be hashed.
@@ -156,11 +166,10 @@ struct RunKey {
     family: FontFamily,
 }
 
-impl RunKey {
-    /// Builds the key identifying `text` drawn in `style`.
-    fn new(text: &str, style: FontStyle) -> Self {
+impl StyleKey {
+    /// The key for runs drawn in `style`.
+    fn new(style: FontStyle) -> Self {
         Self {
-            text: text.to_owned(),
             size: style.size.to_bits(),
             line_height: style.line_height.to_bits(),
             weight: style.weight,
@@ -168,6 +177,21 @@ impl RunKey {
             family: style.family,
         }
     }
+}
+
+/// One shaped run in the cache, with what it was shaped from.
+struct CachedRun {
+    /// The hash of the text and style, kept so the table can grow without
+    /// reading the text again.
+    hash: u64,
+    /// The text that was shaped.
+    text: Box<str>,
+    /// The style it was shaped in.
+    style: StyleKey,
+    /// The run itself.
+    run: Arc<ShapedRun>,
+    /// The frame it was last asked for in.
+    used: u64,
 }
 
 /// Shapes text once and hands the same run to layout and to drawing.
@@ -180,8 +204,15 @@ pub struct TextSystem {
     mono: FamilyOwned,
     /// The families last asked for by name, prose's then code's.
     asked: (Option<String>, Option<String>),
-    /// Runs already shaped, keyed by their text and style.
-    runs: HashMap<RunKey, Arc<ShapedRun>>,
+    /// Runs already shaped, found by the hash of their text and style.
+    ///
+    /// A lookup hashes the borrowed text and compares it against the entries
+    /// under that hash, so finding a run allocates nothing.
+    runs: HashTable<CachedRun>,
+    /// How the text and style of a run are hashed.
+    hasher: DefaultHashBuilder,
+    /// The frame being built, counted from the first.
+    frame: u64,
 }
 
 impl TextSystem {
@@ -195,7 +226,9 @@ impl TextSystem {
             sans,
             mono,
             asked: (None, None),
-            runs: HashMap::new(),
+            runs: HashTable::new(),
+            hasher: DefaultHashBuilder::default(),
+            frame: 0,
         }
     }
 
@@ -244,14 +277,40 @@ impl TextSystem {
 
     /// Shapes `text` in `style`, reusing the cached run when there is one.
     pub fn shape(&mut self, text: &str, style: FontStyle) -> Arc<ShapedRun> {
-        let key = RunKey::new(text, style);
-        if let Some(run) = self.runs.get(&key) {
-            return run.clone();
+        let key = StyleKey::new(style);
+        let hash = self.hasher.hash_one((text, key));
+        let frame = self.frame;
+        if let Some(cached) = self
+            .runs
+            .find_mut(hash, |cached| cached.style == key && &*cached.text == text)
+        {
+            cached.used = frame;
+            return cached.run.clone();
         }
 
         let run = Arc::new(self.shape_uncached(text, style));
-        self.runs.insert(key, run.clone());
+        self.runs.insert_unique(
+            hash,
+            CachedRun {
+                hash,
+                text: text.into(),
+                style: key,
+                run: run.clone(),
+                used: frame,
+            },
+            |cached| cached.hash,
+        );
         run
+    }
+
+    /// Closes the frame being built, and every so often lets go of the runs
+    /// no frame has asked for in a while.
+    pub(crate) fn end_frame(&mut self) {
+        self.frame += 1;
+        if self.frame.is_multiple_of(SWEEP_EVERY) {
+            let oldest = self.frame.saturating_sub(RUN_LIFETIME);
+            self.runs.retain(|cached| cached.used >= oldest);
+        }
     }
 
     /// The extent `text` would occupy in `style`.

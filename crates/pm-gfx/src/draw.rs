@@ -194,9 +194,18 @@ impl DrawList {
         self.layer = self.layers.pop().unwrap_or_default();
     }
 
+    /// Whether anything drawn inside `bounds` would land inside the clip.
+    ///
+    /// A list that is not virtualised, a file tree or a long document,
+    /// pushes every row whether it is scrolled into view or not; the rows the
+    /// clip hides entirely are dropped here, before they cost an instance.
+    fn is_visible(&self, bounds: Rect) -> bool {
+        bounds.overlaps(&self.clip())
+    }
+
     /// Adds a quad, skipping it when it would draw nothing.
     pub fn quad(&mut self, quad: Quad) {
-        if quad.is_invisible() {
+        if quad.is_invisible() || !self.is_visible(quad.bounds) {
             return;
         }
         let clip = self.clip();
@@ -204,8 +213,16 @@ impl DrawList {
     }
 
     /// Adds a shaped run at `origin` in `color`.
+    ///
+    /// The run is tested against the clip with a line's height of slack on
+    /// every side, because a glyph's ink may reach past its line box: a slanted
+    /// letter past the advance, an accent above the ascent.
     pub fn text(&mut self, origin: Point, run: Arc<ShapedRun>, color: Rgba) {
         if color.is_transparent() || run.glyphs.is_empty() {
+            return;
+        }
+        let ink = Rect::new(origin, run.size()).outset(run.height);
+        if !self.is_visible(ink) {
             return;
         }
         let clip = self.clip();
@@ -219,8 +236,14 @@ impl DrawList {
     }
 
     /// Adds `svg` rotated around its centre inside `bounds`.
+    ///
+    /// The clip test allows for the corners a turn swings out past `bounds`.
     pub fn rotated_icon(&mut self, bounds: Rect, svg: Svg, color: Rgba, rotation: f32) {
         if color.is_transparent() || bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+            return;
+        }
+        let turned = bounds.outset(bounds.size.width.max(bounds.size.height) / 2.0);
+        if !self.is_visible(turned) {
             return;
         }
         let clip = self.clip();
@@ -238,7 +261,7 @@ impl DrawList {
 
     /// Adds `image` stretched over `bounds`.
     pub fn image(&mut self, bounds: Rect, image: Image) {
-        if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+        if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 || !self.is_visible(bounds) {
             return;
         }
         let clip = self.clip();

@@ -4,7 +4,6 @@
 //! Callers hand it a [`DrawList`] in logical pixels; scaling to physical
 //! pixels, rasterizing glyphs and submitting the pass happen in here.
 
-use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::atlas::GlyphAtlas;
@@ -73,7 +72,6 @@ pub struct Renderer {
     atlas: GlyphAtlas,
     viewport_buffer: wgpu::Buffer,
     viewport_group: wgpu::BindGroup,
-    atlas_group: wgpu::BindGroup,
     quad_pipeline: wgpu::RenderPipeline,
     quad_instances: InstanceBuffer,
     glyph_pipeline: wgpu::RenderPipeline,
@@ -81,6 +79,87 @@ pub struct Renderer {
     textures: Textures,
     image_pipeline: wgpu::RenderPipeline,
     image_instances: InstanceBuffer,
+    quads: Batch<QuadInstance>,
+    glyphs: Batch<GlyphInstance>,
+    images: Batch<(ImageInstance, u64)>,
+    image_upload: Vec<ImageInstance>,
+}
+
+/// One kind of instance for one frame, gathered in the order it was pushed
+/// and then grouped by layer.
+///
+/// A batch lives on the renderer and is emptied rather than dropped, so a
+/// frame reuses the allocations of the one before it.
+struct Batch<T> {
+    /// The instances as they were pushed, each with the layer it went into.
+    pushed: Vec<(Layer, T)>,
+    /// The instances grouped by layer, lowest first, in pushed order within
+    /// a layer.
+    grouped: Vec<T>,
+    /// Which run of `grouped` each layer is, indexed by layer.
+    layers: Vec<Range<u32>>,
+}
+
+impl<T: Copy> Batch<T> {
+    /// An empty batch.
+    fn new() -> Self {
+        Self {
+            pushed: Vec::new(),
+            grouped: Vec::new(),
+            layers: Vec::new(),
+        }
+    }
+
+    /// Empties the batch for the next frame, keeping its allocations.
+    fn clear(&mut self) {
+        self.pushed.clear();
+        self.grouped.clear();
+        self.layers.clear();
+    }
+
+    /// Adds `instance` to `layer`.
+    fn push(&mut self, layer: Layer, instance: T) {
+        self.pushed.push((layer, instance));
+    }
+
+    /// Groups the pushed instances by layer, for a frame with `count` layers.
+    ///
+    /// The instances of one layer end up next to each other, so a layer is
+    /// one draw call rather than one per primitive, and the order they were
+    /// pushed in survives inside it, because that is what drawn over means.
+    /// Layers are few and numbered from zero, so this counts rather than sorts.
+    fn group(&mut self, count: u32) {
+        self.layers.clear();
+        self.layers.resize(count as usize, 0..0);
+        for (layer, _) in &self.pushed {
+            self.layers[layer.0 as usize].end += 1;
+        }
+        let mut start = 0;
+        for range in &mut self.layers {
+            let length = range.end;
+            *range = start..start;
+            start += length;
+        }
+
+        self.grouped.clear();
+        let Some(&(_, filler)) = self.pushed.first() else {
+            return;
+        };
+        self.grouped.resize(self.pushed.len(), filler);
+        for (layer, instance) in &self.pushed {
+            let range = &mut self.layers[layer.0 as usize];
+            self.grouped[range.end as usize] = *instance;
+            range.end += 1;
+        }
+    }
+
+    /// The run of grouped instances in `layer`, when it has any.
+    fn layer(&self, layer: u32) -> Option<Range<u32>> {
+        self.layers
+            .get(layer as usize)
+            .filter(|range| !range.is_empty())
+            .cloned()
+    }
 }
 
 impl Renderer {
@@ -137,7 +216,7 @@ impl Renderer {
             format,
             width: width.max(1),
             height: height.max(1),
-            present_mode: capabilities.present_modes[0],
+            present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: capabilities.alpha_modes[0],
             color_space: wgpu::SurfaceColorSpace::Srgb,
             view_formats: vec![],
@@ -174,45 +253,6 @@ impl Renderer {
         });
 
         let atlas = GlyphAtlas::new(&device);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("glyph atlas"),
-            ..Default::default()
-        });
-        let atlas_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("glyph atlas"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        let atlas_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("glyph atlas"),
-            layout: &atlas_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(atlas.view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
 
         let quad_pipeline = build_pipeline(
             &device,
@@ -228,7 +268,7 @@ impl Renderer {
             format,
             "glyph",
             include_str!("shaders/glyph.wgsl"),
-            &[Some(&viewport_layout), Some(&atlas_layout)],
+            &[Some(&viewport_layout), Some(atlas.layout())],
             size_of::<GlyphInstance>() as u64,
             &GlyphInstance::ATTRIBUTES,
         );
@@ -254,7 +294,6 @@ impl Renderer {
             atlas,
             viewport_buffer,
             viewport_group,
-            atlas_group,
             quad_pipeline,
             quad_instances: InstanceBuffer::new("quad instances"),
             glyph_pipeline,
@@ -262,6 +301,10 @@ impl Renderer {
             textures,
             image_pipeline,
             image_instances: InstanceBuffer::new("image instances"),
+            quads: Batch::new(),
+            glyphs: Batch::new(),
+            images: Batch::new(),
+            image_upload: Vec::new(),
         })
     }
 
@@ -287,14 +330,22 @@ impl Renderer {
     }
 
     /// Draws one frame of `list` and presents it.
+    ///
+    /// A surface that timed out or is hidden skips the frame and is asked
+    /// again on the next one; only a surface that is outdated or lost is
+    /// configured again.
     pub fn render(&mut self, list: &DrawList) {
+        self.text.end_frame();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            _ => {
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 return;
             }
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => return,
         };
 
         self.queue.write_buffer(
@@ -306,18 +357,40 @@ impl Renderer {
             }),
         );
 
-        let (quads, quad_layers) = sorted(self.build_quads(list));
-        let mut glyphs = self.build_glyphs(list);
-        glyphs.extend(self.build_icons(list));
-        let (glyphs, glyph_layers) = sorted(glyphs);
-        self.quad_instances
-            .upload(&self.device, &self.queue, bytemuck::cast_slice(&quads));
-        self.glyph_instances
-            .upload(&self.device, &self.queue, bytemuck::cast_slice(&glyphs));
-        let (images, image_layers) = sorted(self.build_images(list));
-        let (images, pictures): (Vec<_>, Vec<_>) = images.into_iter().unzip();
-        self.image_instances
-            .upload(&self.device, &self.queue, bytemuck::cast_slice(&images));
+        let layers = list.layers().end() + 1;
+        let mut quads = std::mem::replace(&mut self.quads, Batch::new());
+        let mut glyphs = std::mem::replace(&mut self.glyphs, Batch::new());
+        let mut images = std::mem::replace(&mut self.images, Batch::new());
+
+        self.build_quads(list, &mut quads);
+        self.build_coverage(list, &mut glyphs);
+        if self.atlas.overflowed() {
+            self.atlas.make_room(&self.device);
+            self.build_coverage(list, &mut glyphs);
+        }
+        self.build_images(list, &mut images);
+        quads.group(layers);
+        glyphs.group(layers);
+        images.group(layers);
+
+        self.quad_instances.upload(
+            &self.device,
+            &self.queue,
+            bytemuck::cast_slice(&quads.grouped),
+        );
+        self.glyph_instances.upload(
+            &self.device,
+            &self.queue,
+            bytemuck::cast_slice(&glyphs.grouped),
+        );
+        self.image_upload.clear();
+        self.image_upload
+            .extend(images.grouped.iter().map(|(instance, _)| *instance));
+        self.image_instances.upload(
+            &self.device,
+            &self.queue,
+            bytemuck::cast_slice(&self.image_upload),
+        );
 
         let view = frame
             .texture
@@ -347,19 +420,20 @@ impl Renderer {
             pass.set_bind_group(0, &self.viewport_group, &[]);
             for layer in list.layers() {
                 if let Some(buffer) = self.quad_instances.buffer()
-                    && let Some(range) = quad_layers.get(&layer)
+                    && let Some(range) = quads.layer(layer)
                 {
                     pass.set_pipeline(&self.quad_pipeline);
                     pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..6, range.clone());
+                    pass.draw(0..6, range);
                 }
                 if let Some(buffer) = self.image_instances.buffer()
-                    && let Some(range) = image_layers.get(&layer)
+                    && let Some(range) = images.layer(layer)
                 {
                     pass.set_pipeline(&self.image_pipeline);
                     pass.set_vertex_buffer(0, buffer.slice(..));
-                    for index in range.clone() {
-                        let Some(group) = self.textures.group(pictures[index as usize]) else {
+                    for index in range {
+                        let (_, picture) = images.grouped[index as usize];
+                        let Some(group) = self.textures.group(picture) else {
                             continue;
                         };
                         pass.set_bind_group(1, group, &[]);
@@ -367,52 +441,64 @@ impl Renderer {
                     }
                 }
                 if let Some(buffer) = self.glyph_instances.buffer()
-                    && let Some(range) = glyph_layers.get(&layer)
+                    && let Some(range) = glyphs.layer(layer)
                 {
                     pass.set_pipeline(&self.glyph_pipeline);
-                    pass.set_bind_group(1, &self.atlas_group, &[]);
+                    pass.set_bind_group(1, self.atlas.group(), &[]);
                     pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..6, range.clone());
+                    pass.draw(0..6, range);
                 }
             }
         }
 
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
+
+        self.quads = quads;
+        self.glyphs = glyphs;
+        self.images = images;
     }
 
     /// Converts the list's quads to physical-pixel instances.
-    fn build_quads(&self, list: &DrawList) -> Vec<(Layer, QuadInstance)> {
-        list.quads()
-            .iter()
-            .map(|(quad, clip, layer)| {
-                (
-                    *layer,
-                    QuadInstance {
-                        origin: [
-                            quad.bounds.left() * self.scale,
-                            quad.bounds.top() * self.scale,
-                        ],
-                        size: [
-                            quad.bounds.size.width * self.scale,
-                            quad.bounds.size.height * self.scale,
-                        ],
-                        background: quad.background.to_array(),
-                        border_color: quad.border_color.to_array(),
-                        radii: quad.corner_radii.map(|radius| radius * self.scale),
-                        border: [quad.border_width * self.scale, 0.0],
-                        clip: self.clip(*clip),
-                    },
-                )
-            })
-            .collect()
+    fn build_quads(&self, list: &DrawList, batch: &mut Batch<QuadInstance>) {
+        batch.clear();
+        for (quad, clip, layer) in list.quads() {
+            batch.push(
+                *layer,
+                QuadInstance {
+                    origin: [
+                        quad.bounds.left() * self.scale,
+                        quad.bounds.top() * self.scale,
+                    ],
+                    size: [
+                        quad.bounds.size.width * self.scale,
+                        quad.bounds.size.height * self.scale,
+                    ],
+                    background: quad.background.to_array(),
+                    border_color: quad.border_color.to_array(),
+                    radii: quad.corner_radii.map(|radius| radius * self.scale),
+                    border: [quad.border_width * self.scale, 0.0],
+                    clip: self.clip(*clip),
+                },
+            );
+        }
+    }
+
+    /// Rasterizes the list's text and icons and converts them to glyph
+    /// instances, starting the batch over.
+    ///
+    /// When the atlas fills part way through, the batch is missing glyphs;
+    /// the caller makes room in the atlas and builds it again.
+    fn build_coverage(&mut self, list: &DrawList, batch: &mut Batch<GlyphInstance>) {
+        batch.clear();
+        self.build_glyphs(list, batch);
+        self.build_icons(list, batch);
     }
 
     /// Rasterizes the list's text and converts it to glyph instances.
-    fn build_glyphs(&mut self, list: &DrawList) -> Vec<(Layer, GlyphInstance)> {
+    fn build_glyphs(&mut self, list: &DrawList, batch: &mut Batch<GlyphInstance>) {
         let scale = self.scale;
         let atlas_size = self.atlas.size();
-        let mut instances = Vec::new();
 
         for (text, clip, layer) in list.texts() {
             let clip = self.clip(*clip);
@@ -431,7 +517,7 @@ impl Renderer {
                     continue;
                 };
 
-                instances.push((
+                batch.push(
                     *layer,
                     GlyphInstance {
                         origin: [
@@ -448,11 +534,9 @@ impl Renderer {
                         clip,
                         rotation: [0.0; 4],
                     },
-                ));
+                );
             }
         }
-
-        instances
     }
 
     /// Rasterizes the list's icons and converts them to glyph instances.
@@ -460,10 +544,9 @@ impl Renderer {
     /// An icon is a glyph as far as the GPU is concerned: the same atlas, the
     /// same pipeline, the same tint. What differs is only where the coverage
     /// came from, which the atlas has already forgotten by this point.
-    fn build_icons(&mut self, list: &DrawList) -> Vec<(Layer, GlyphInstance)> {
+    fn build_icons(&mut self, list: &DrawList, batch: &mut Batch<GlyphInstance>) {
         let scale = self.scale;
         let atlas_size = self.atlas.size();
-        let mut instances = Vec::new();
 
         for (icon, clip, layer) in list.icons() {
             let side = (icon.bounds.size.width.min(icon.bounds.size.height) * scale).round();
@@ -471,7 +554,7 @@ impl Renderer {
                 continue;
             };
 
-            instances.push((
+            batch.push(
                 *layer,
                 GlyphInstance {
                     origin: [
@@ -488,44 +571,39 @@ impl Renderer {
                     clip: self.clip(*clip),
                     rotation: [icon.rotation, 0.0, 0.0, 0.0],
                 },
-            ));
+            );
         }
-
-        instances
     }
 
     /// Uploads the list's pictures and converts them to image instances, each
     /// with the identity of the texture it samples.
-    fn build_images(&mut self, list: &DrawList) -> Vec<(Layer, (ImageInstance, u64))> {
-        let drawn = list
-            .images()
-            .iter()
-            .map(|(run, _, _)| &run.image)
-            .collect::<Vec<_>>();
-        self.textures.keep(&self.device, &self.queue, &drawn);
+    fn build_images(&mut self, list: &DrawList, batch: &mut Batch<(ImageInstance, u64)>) {
+        self.textures.keep(
+            &self.device,
+            &self.queue,
+            list.images().iter().map(|(run, _, _)| &run.image),
+        );
 
-        list.images()
-            .iter()
-            .map(|(run, clip, layer)| {
+        batch.clear();
+        for (run, clip, layer) in list.images() {
+            batch.push(
+                *layer,
                 (
-                    *layer,
-                    (
-                        ImageInstance {
-                            origin: [
-                                run.bounds.left() * self.scale,
-                                run.bounds.top() * self.scale,
-                            ],
-                            size: [
-                                run.bounds.size.width * self.scale,
-                                run.bounds.size.height * self.scale,
-                            ],
-                            clip: self.clip(*clip),
-                        },
-                        run.image.id(),
-                    ),
-                )
-            })
-            .collect()
+                    ImageInstance {
+                        origin: [
+                            run.bounds.left() * self.scale,
+                            run.bounds.top() * self.scale,
+                        ],
+                        size: [
+                            run.bounds.size.width * self.scale,
+                            run.bounds.size.height * self.scale,
+                        ],
+                        clip: self.clip(*clip),
+                    },
+                    run.image.id(),
+                ),
+            );
+        }
     }
 
     /// Converts a logical clip rectangle to the physical bounds shaders test.
@@ -537,31 +615,4 @@ impl Renderer {
             clip.bottom() * self.scale,
         ]
     }
-}
-
-/// Orders `instances` by layer and says which range of them each layer is.
-///
-/// The instances of one layer end up next to each other, so a layer is one
-/// draw call rather than one per primitive, and the layers are drawn lowest
-/// first because that is what being over something means.
-fn sorted<T>(instances: Vec<(Layer, T)>) -> (Vec<T>, HashMap<u32, Range<u32>>) {
-    let mut instances = instances;
-    instances.sort_by_key(|(layer, _)| *layer);
-
-    let mut ranges: HashMap<u32, Range<u32>> = HashMap::new();
-    for (index, (layer, _)) in instances.iter().enumerate() {
-        let index = index as u32;
-        ranges
-            .entry(layer.0)
-            .and_modify(|range| range.end = index + 1)
-            .or_insert(index..index + 1);
-    }
-
-    (
-        instances
-            .into_iter()
-            .map(|(_, instance)| instance)
-            .collect(),
-        ranges,
-    )
 }
