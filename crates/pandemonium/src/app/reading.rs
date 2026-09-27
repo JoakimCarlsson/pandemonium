@@ -42,6 +42,9 @@ enum Back {
     Finished(SessionId, Result<(), StartError>),
     /// What git said once it had changed a project's branch.
     Branched(ProjectId, pm_core::Said),
+    /// The branches a session of a project can be cut from, checked out
+    /// first.
+    Bases(ProjectId, Vec<String>),
 }
 
 /// The repositories of every open project, and the sessions they have on
@@ -261,6 +264,16 @@ impl App {
         self.spawn_read(move || Back::Branched(project, change()));
     }
 
+    /// Lists the branches a session of `project` can be cut from with
+    /// `list`, and offers them once git has answered.
+    pub(super) fn read_bases_later(
+        &mut self,
+        project: ProjectId,
+        list: impl FnOnce() -> Vec<String> + Send + 'static,
+    ) {
+        self.spawn_read(move || Back::Bases(project, list()));
+    }
+
     /// Runs `read` on a thread of its own, waking the window with what it
     /// came back with.
     fn spawn_read(&self, read: impl FnOnce() -> Back + Send + 'static) {
@@ -301,6 +314,7 @@ impl App {
                 Back::Cut(cut) => self.take_cut(cut),
                 Back::Finished(session, finished) => self.take_finished(session, finished),
                 Back::Branched(project, said) => self.branch_changed(project, said),
+                Back::Bases(project, bases) => self.take_bases(project, bases),
             }
         }
         any

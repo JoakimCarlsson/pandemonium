@@ -44,27 +44,38 @@ impl App {
 
     /// Opens the menu of what can be done to `project`, where the pointer is.
     ///
-    /// The branches it offers to cut a session from are gathered here rather
-    /// than while the menu is drawn: a menu is built every frame it is open,
-    /// and asking git every frame for a list that cannot have changed is a
-    /// subprocess a second for nothing. A project of several repositories
-    /// offers none: a branch is one repository's, and a session of all of
-    /// them is cut from what each has checked out.
+    /// The branches it offers to cut a session from are gathered once, away
+    /// from the window, rather than while the menu is drawn: a menu is built
+    /// every frame it is open, and asking git every frame for a list that
+    /// cannot have changed is a subprocess a second for nothing. A project of
+    /// several repositories offers none: a branch is one repository's, and a
+    /// session of all of them is cut from what each has checked out.
     pub(super) fn open_project_menu(&mut self, project: ProjectId) {
         self.open.activate(project);
-        let branches = match self.open.get(project).map(pm_core::Project::repositories) {
-            Some([only]) => pm_core::branches(only.root()),
-            _ => Vec::new(),
-        };
-        let (checked_out, rest): (Vec<_>, Vec<_>) =
-            branches.iter().partition(|branch| branch.is_current());
-        self.session_bases = checked_out
-            .into_iter()
-            .chain(rest)
-            .map(|branch| branch.name().to_owned())
-            .collect();
+        self.session_bases = Vec::new();
+        if let Some([only]) = self.open.get(project).map(pm_core::Project::repositories) {
+            let root = only.root().to_path_buf();
+            self.read_bases_later(project, move || {
+                let branches = pm_core::branches(&root);
+                let (checked_out, rest): (Vec<_>, Vec<_>) =
+                    branches.iter().partition(|branch| branch.is_current());
+                checked_out
+                    .into_iter()
+                    .chain(rest)
+                    .map(|branch| branch.name().to_owned())
+                    .collect()
+            });
+        }
         self.showing_bases = false;
         self.open_menu(MenuTarget::Project(project));
+    }
+
+    /// Offers `bases` to cut a session of `project` from, if its menu is
+    /// still the one open.
+    pub(super) fn take_bases(&mut self, project: ProjectId, bases: Vec<String>) {
+        if self.menu.as_ref().map(|menu| menu.target) == Some(MenuTarget::Project(project)) {
+            self.session_bases = bases;
+        }
     }
 
     /// Asks what to call a session of the active project, cut from its head.
