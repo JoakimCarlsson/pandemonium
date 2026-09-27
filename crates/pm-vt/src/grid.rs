@@ -307,6 +307,8 @@ impl Grid {
             if !wrap {
                 return;
             }
+            let (row, last) = (self.cursor.row, self.cols - 1);
+            self.lines[row].cells[last] = Cell::carried(self.cursor.attrs);
             self.wrap_line();
         }
 
@@ -632,10 +634,13 @@ impl Grid {
 
     /// Resizes the screen to `cols` by `rows`.
     ///
-    /// Rows leaving the bottom of a shrinking screen come off the top instead,
-    /// into the scrollback, so the cursor keeps the lines below it. Lines are
-    /// not reflowed: a narrower screen truncates them rather than rewrapping
-    /// what the program has already drawn.
+    /// Lines are rewrapped to the new width, scrollback and screen together,
+    /// so narrowing the screen and widening it again gives back what was
+    /// drawn rather than what survived the narrowest moment. The screen keeps
+    /// its top line where it can; rows leaving the bottom of a shrinking
+    /// screen come off the top instead, into the scrollback, so the cursor
+    /// keeps the lines below it, and a growing screen draws its new rows back
+    /// down out of the scrollback.
     pub fn resize(&mut self, cols: usize, rows: usize) {
         let cols = cols.max(1);
         let rows = rows.max(1);
@@ -643,43 +648,52 @@ impl Grid {
             return;
         }
 
-        if cols != self.cols {
-            for line in self.lines.iter_mut().chain(self.scrollback.iter_mut()) {
-                line.resize(cols, Attrs::DEFAULT);
-            }
-            self.tabs = tab_stops(cols);
-            self.cols = cols;
-        }
+        let history = self.scrollback.len();
+        let marks = [
+            Mark::at(
+                history + self.cursor.row,
+                self.cursor.col,
+                self.cursor.wrap_pending,
+            ),
+            Mark::at(
+                history + self.saved.row,
+                self.saved.col,
+                self.saved.wrap_pending,
+            ),
+            Mark::at(history, 0, false),
+        ];
+        let lines: Vec<Line> = self
+            .scrollback
+            .drain(..)
+            .chain(self.lines.drain(..))
+            .collect();
+        let (mut rewrapped, [cursor, saved, top]) = reflow(lines, cols, marks);
 
-        while self.lines.len() > rows {
-            let below_cursor = self.lines.len() - 1 > self.cursor.row;
-            if below_cursor {
-                self.lines.pop_back();
-            } else {
-                let line = self.lines.pop_front().expect("screen is never empty");
-                if self.limit > 0 {
-                    self.scrollback.push_back(line);
-                }
-                self.cursor.row = self.cursor.row.saturating_sub(1);
+        let start = top
+            .line
+            .max((cursor.line + 1).saturating_sub(rows))
+            .min(cursor.line)
+            .min(rewrapped.len().saturating_sub(rows));
+        if rewrapped.len() > start + rows {
+            rewrapped.truncate(start + rows);
+            if let Some(last) = rewrapped.last_mut() {
+                last.wrapped = false;
             }
         }
-        while self.lines.len() < rows {
-            match self.scrollback.pop_back() {
-                Some(line) => {
-                    self.lines.push_front(line);
-                    self.cursor.row += 1;
-                }
-                None => self.lines.push_back(Line::blank(cols, Attrs::DEFAULT)),
-            }
-        }
+        let mut screen = rewrapped.split_off(start);
+        screen.resize_with(rows, || Line::blank(cols, Attrs::DEFAULT));
+        self.scrollback = rewrapped.into();
+        self.lines = screen.into();
 
+        self.cols = cols;
         self.rows = rows;
+        self.tabs = tab_stops(cols);
         self.top = 0;
         self.bottom = rows - 1;
-        self.cursor.row = self.cursor.row.min(rows - 1);
-        self.cursor.col = self.cursor.col.min(cols - 1);
-        self.offset = self.offset.min(self.scrollback.len());
+        cursor.place(&mut self.cursor, start, cols, rows);
+        saved.place(&mut self.saved, start, cols, rows);
         self.trim_scrollback();
+        self.offset = self.offset.min(self.scrollback.len());
         self.selection = None;
     }
 
@@ -703,4 +717,178 @@ impl Grid {
 /// A tab stop every eight columns, which is where every terminal starts.
 fn tab_stops(cols: usize) -> Vec<bool> {
     (0..cols).map(|col| col % 8 == 0 && col > 0).collect()
+}
+
+/// A place in the grid followed through a reflow: the cursor, the saved
+/// cursor, and the first line of the screen.
+#[derive(Clone, Copy, Debug)]
+struct Mark {
+    /// Line counted from the oldest line of the scrollback.
+    line: usize,
+    /// Column within that line; one past the last column while a wrap is due.
+    col: usize,
+}
+
+impl Mark {
+    /// The mark on `line` at `col`, one column further on while a wrap is due.
+    fn at(line: usize, col: usize, wrap_pending: bool) -> Self {
+        Self {
+            line,
+            col: col + usize::from(wrap_pending),
+        }
+    }
+
+    /// Moves `cursor` to this mark, on a screen whose first line is `start`
+    /// and which is `cols` by `rows`.
+    fn place(self, cursor: &mut Cursor, start: usize, cols: usize, rows: usize) {
+        cursor.row = self.line.saturating_sub(start).min(rows - 1);
+        cursor.wrap_pending = self.col >= cols;
+        cursor.col = self.col.min(cols - 1);
+    }
+}
+
+/// Rewraps `lines` to `cols` columns, and follows `marks` to where they land.
+///
+/// Each run of wrapped lines is joined into the text it was written as,
+/// stripped of the blank cells trailing it, and cut again at the new width.
+/// A wide character that would straddle the last column moves to the next
+/// row whole. Cells a mark sits on are never stripped, so the cursor keeps
+/// the spaces it was typed after.
+fn reflow<const N: usize>(
+    lines: Vec<Line>,
+    cols: usize,
+    marks: [Mark; N],
+) -> (Vec<Line>, [Mark; N]) {
+    let blank = Cell::default();
+    let mut rewrapped = Vec::with_capacity(lines.len());
+    let mut placed = marks;
+    let mut lines = lines.into_iter().enumerate();
+    while let Some((first, mut line)) = lines.next() {
+        if !line.wrapped && fits(&line, first, cols, &marks, &blank) {
+            for (mark, target) in placed.iter_mut().zip(&marks) {
+                if target.line == first {
+                    *mark = Mark {
+                        line: rewrapped.len(),
+                        col: target.col,
+                    };
+                }
+            }
+            line.resize(cols, Attrs::DEFAULT);
+            rewrapped.push(line);
+            continue;
+        }
+        let mut run = vec![line];
+        while run.last().is_some_and(Line::is_wrapped) {
+            match lines.next() {
+                Some((_, line)) => run.push(line),
+                None => break,
+            }
+        }
+        let last = first + run.len() - 1;
+
+        let written = written_lengths(&run);
+        let mut offsets = [None; N];
+        for (offset, mark) in offsets.iter_mut().zip(&marks) {
+            if (first..=last).contains(&mark.line) {
+                let before: usize = written[..mark.line - first].iter().sum();
+                *offset = Some(before + mark.col);
+            }
+        }
+        let cells: Vec<Cell> = match run.len() {
+            1 => run.pop().expect("a run holds a line").cells,
+            _ => join(&run, &written),
+        };
+        let content = cells
+            .iter()
+            .rposition(|cell| *cell != blank)
+            .map_or(0, |index| index + 1);
+        let kept = offsets
+            .iter()
+            .flatten()
+            .map(|offset| offset + 1)
+            .fold(content, usize::max)
+            .min(cells.len());
+
+        let mut start = 0;
+        loop {
+            let mut end = (start + cols).min(kept);
+            let carried = end - start == cols && cols > 1 && cells[end - 1].width == 2;
+            if carried {
+                end -= 1;
+            }
+            let last = end >= kept;
+            for (mark, target) in placed.iter_mut().zip(&offsets) {
+                if target.is_some_and(|offset| offset >= start && (offset < end || last)) {
+                    *mark = Mark {
+                        line: rewrapped.len(),
+                        col: target.unwrap_or(start) - start,
+                    };
+                }
+            }
+            let mut row = wrapped_row(cells[start..end].to_vec(), cols);
+            if carried {
+                row.cells[cols - 1] = Cell::carried(Attrs::DEFAULT);
+            }
+            row.wrapped = !last;
+            rewrapped.push(row);
+            if last {
+                break;
+            }
+            start = end;
+        }
+    }
+    (rewrapped, placed)
+}
+
+/// How many cells of each line in `run` belong to the text written there:
+/// all of them but the blank a wide character left behind when it was
+/// carried to the next row whole.
+fn written_lengths(run: &[Line]) -> Vec<usize> {
+    run.iter()
+        .map(|line| {
+            let carried = match line.cells.as_slice() {
+                [.., before, last] => last.is_spacer() && before.width != 2,
+                [last] => last.is_spacer(),
+                [] => false,
+            };
+            line.cells.len() - usize::from(carried)
+        })
+        .collect()
+}
+
+/// The cells of a run of wrapped lines, as the one line they were written
+/// as, each line cut to its `written` length.
+fn join(run: &[Line], written: &[usize]) -> Vec<Cell> {
+    let mut cells = Vec::with_capacity(written.iter().sum());
+    for (line, length) in run.iter().zip(written) {
+        cells.extend_from_slice(&line.cells[..*length]);
+    }
+    cells
+}
+
+/// Whether `line`, numbered `number`, keeps its cells as they are at `cols`
+/// columns: nothing past the width but blanks, and no mark past it either.
+///
+/// Most of the scrollback is such lines, and cutting or padding one in
+/// place is what keeps a resize from copying every cell it holds.
+fn fits(line: &Line, number: usize, cols: usize, marks: &[Mark], blank: &Cell) -> bool {
+    let marked = marks
+        .iter()
+        .filter(|mark| mark.line == number)
+        .all(|mark| mark.col < cols);
+    marked
+        && line
+            .cells
+            .get(cols..)
+            .is_none_or(|rest| rest.iter().all(|cell| cell == blank))
+}
+
+/// A row of `cells` padded out to `cols`, running on into the next.
+fn wrapped_row(cells: Vec<Cell>, cols: usize) -> Line {
+    let mut line = Line {
+        cells,
+        wrapped: true,
+    };
+    line.resize(cols, Attrs::DEFAULT);
+    line
 }

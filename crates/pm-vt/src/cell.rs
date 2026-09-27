@@ -104,7 +104,20 @@ impl Cell {
         }
     }
 
-    /// Whether this cell is the trailing half of a double-width character.
+    /// The blank a double-width character leaves in the last column when it
+    /// is carried to the next row whole: a spacer, like its trailing half,
+    /// so it is neither drawn nor copied as part of the text.
+    pub fn carried(attrs: Attrs) -> Self {
+        Self {
+            ch: ' ',
+            attrs,
+            width: 0,
+            link: None,
+        }
+    }
+
+    /// Whether this cell is a spacer: the trailing half of a double-width
+    /// character, or the blank one left behind when it was carried on.
     pub fn is_spacer(&self) -> bool {
         self.width == 0
     }
