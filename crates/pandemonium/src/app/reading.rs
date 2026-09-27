@@ -40,6 +40,8 @@ enum Back {
     Cut(Result<Cutting, StartError>),
     /// A session taken off disk, or why it could not be.
     Finished(SessionId, Result<(), StartError>),
+    /// What git said once it had changed a project's branch.
+    Branched(ProjectId, pm_core::Said),
 }
 
 /// The repositories of every open project, and the sessions they have on
@@ -249,6 +251,16 @@ impl App {
         self.spawn_read(move || Back::Finished(session, finish()));
     }
 
+    /// Changes `project`'s branch with `change`, and refreshes every view of
+    /// the project once git has done it.
+    pub(super) fn change_branch_later(
+        &mut self,
+        project: ProjectId,
+        change: impl FnOnce() -> pm_core::Said + Send + 'static,
+    ) {
+        self.spawn_read(move || Back::Branched(project, change()));
+    }
+
     /// Runs `read` on a thread of its own, waking the window with what it
     /// came back with.
     fn spawn_read(&self, read: impl FnOnce() -> Back + Send + 'static) {
@@ -288,6 +300,7 @@ impl App {
                 }
                 Back::Cut(cut) => self.take_cut(cut),
                 Back::Finished(session, finished) => self.take_finished(session, finished),
+                Back::Branched(project, said) => self.branch_changed(project, said),
             }
         }
         any

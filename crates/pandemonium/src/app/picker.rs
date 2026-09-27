@@ -339,7 +339,8 @@ impl App {
 
     /// Checks out `branch` in `project` through the window's branch seam.
     fn switch_branch(&mut self, project: ProjectId, branch: &str) {
-        self.change_branch(project, |root| pm_core::switch_branch(root, branch));
+        let branch = branch.to_owned();
+        self.change_branch(project, move |root| pm_core::switch_branch(root, &branch));
     }
 
     /// Creates and checks out `name` in the active project.
@@ -347,21 +348,37 @@ impl App {
         let Some(project) = self.open.active().map(pm_core::Project::id) else {
             return;
         };
-        self.change_branch(project, |root| pm_core::create_branch(root, name));
+        let name = name.to_owned();
+        self.change_branch(project, move |root| pm_core::create_branch(root, &name));
     }
 
     /// Runs one branch-changing operation in the active repository of
     /// `project`, and refreshes every view of the project.
-    fn change_branch(&mut self, project: ProjectId, change: impl FnOnce(&Path) -> pm_core::Said) {
+    fn change_branch(
+        &mut self,
+        project: ProjectId,
+        change: impl FnOnce(&Path) -> pm_core::Said + Send + 'static,
+    ) {
         let scope = self.git_scope(project);
-        let (Some(root), Some(repository)) = (self.root_of(scope), self.repository_root(scope))
-        else {
+        let Some(repository) = self.repository_root(scope) else {
             return;
         };
-        let said = if self.editor.project_is_dirty(project) {
-            Err("save or discard open editor changes before changing branch".to_owned())
-        } else {
-            change(&repository)
+        if self.editor.project_is_dirty(project) {
+            self.branch_changed(
+                project,
+                Err("save or discard open editor changes before changing branch".to_owned()),
+            );
+            return;
+        }
+        self.change_branch_later(project, move || change(&repository));
+    }
+
+    /// Takes in what changing `project`'s branch came to, and refreshes
+    /// every view of the project once it has changed.
+    pub(super) fn branch_changed(&mut self, project: ProjectId, said: pm_core::Said) {
+        let scope = self.git_scope(project);
+        let Some(root) = self.root_of(scope) else {
+            return;
         };
         let changed = said.is_ok();
         if let Some(review) = self.reviews.get_mut(&scope) {
