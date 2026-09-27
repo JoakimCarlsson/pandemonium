@@ -14,7 +14,7 @@
 use std::ops::Range;
 
 use pm_gfx::{Point, Rgba};
-use pm_text::{Language, Position};
+use pm_text::{Highlight, Language, Position};
 use pm_ui::{
     Bounds, Div, Measured, Scrolled, Styled, Theme, h_flex, measured, scroll_area, text, v_flex,
 };
@@ -199,25 +199,49 @@ fn lines(theme: &Theme, content: &str, language: Option<Language>) -> Vec<Line> 
 /// the text of a file with no grammar is drawn: in the plain text colour.
 /// A rendered document's code blocks are coloured by the same hand.
 pub fn code_lines(theme: &Theme, language: Option<Language>, code: &[&str]) -> Vec<Line> {
+    code_highlights(language, code)
+        .into_iter()
+        .map(|line| {
+            let mut runs: Line = Vec::new();
+            for (run, highlight) in line {
+                let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
+                match runs.last_mut() {
+                    Some((drawn, last)) if *last == color => drawn.push_str(&run),
+                    _ => runs.push((run, color)),
+                }
+            }
+            runs
+        })
+        .collect()
+}
+
+/// The lines of one fenced block as runs of what each character is to its
+/// language's grammar, before any theme has said what colour that is.
+///
+/// A tab is set out as the spaces it stands for, so a column counted in the
+/// runs is a column drawn on screen.
+pub fn code_highlights(
+    language: Option<Language>,
+    code: &[&str],
+) -> Vec<Vec<(String, Option<Highlight>)>> {
     let highlights = language.map(|language| pm_text::highlight(language, &code.join("\n")));
     code.iter()
         .enumerate()
         .map(|(number, line)| {
-            let mut runs: Line = Vec::new();
+            let mut runs: Vec<(String, Option<Highlight>)> = Vec::new();
             let mut drawn = String::new();
             for (column, ch) in line.chars().enumerate() {
-                let color = highlights
+                let highlight = highlights
                     .as_ref()
-                    .and_then(|found| found.at(number, column))
-                    .map_or(theme.colors.text, |highlight| tint(highlight, theme));
+                    .and_then(|found| found.at(number, column));
                 drawn.clear();
                 match ch {
                     '\t' => drawn.extend(std::iter::repeat_n(' ', TAB)),
                     ch => drawn.push(ch),
                 }
                 match runs.last_mut() {
-                    Some((run, last)) if *last == color => run.push_str(&drawn),
-                    _ => runs.push((drawn.clone(), color)),
+                    Some((run, last)) if *last == highlight => run.push_str(&drawn),
+                    _ => runs.push((drawn.clone(), highlight)),
                 }
             }
             runs

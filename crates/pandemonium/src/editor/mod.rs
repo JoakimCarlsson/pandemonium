@@ -27,7 +27,7 @@ pub use caret::Blink;
 pub use completions::{Completions, completion_list};
 pub use crumbs::{Crumbs, crumb_bar};
 pub use display::{CursorShape, Display};
-pub use hint::{Shown, code_lines, hint};
+pub use hint::{Shown, code_highlights, code_lines, hint};
 pub use keys::{Edit, edit, keystroke, motion};
 pub use menu::{TextMenu, text_menu};
 pub use search::{Search, SearchField};

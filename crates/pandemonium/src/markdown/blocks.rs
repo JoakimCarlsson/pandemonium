@@ -4,7 +4,8 @@
 //! ends — and a pane is built from things, so the events are gathered here
 //! into the blocks and runs a screen is made of. Only what a reader of a
 //! README meets is kept: headings, paragraphs, lists, quotes, code, tables,
-//! rules and pictures. The rest reads as the text it holds.
+//! rules and pictures. The rest reads as the text it holds, except a fence
+//! of comma- or tab-separated values, which reads as the table it is.
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -111,7 +112,11 @@ impl<'a> Reader<'a> {
                         }
                         _ => None,
                     };
-                    blocks.push(Block::Code(language, self.text_until(TagEnd::CodeBlock)));
+                    let code = self.text_until(TagEnd::CodeBlock);
+                    match language.as_deref().and_then(separator) {
+                        Some(separator) => blocks.push(Block::Table(delimited(&code, separator))),
+                        None => blocks.push(Block::Code(language, code)),
+                    }
                 }
                 Event::Start(Tag::BlockQuote(kind)) => {
                     blocks.push(Block::Quote(
@@ -350,4 +355,67 @@ fn marker(done: bool) -> &'static str {
         true => "☑ ",
         false => "☐ ",
     }
+}
+
+/// The character the values of a fence tagged `language` are separated by,
+/// when it holds a table written as delimited values.
+fn separator(language: &str) -> Option<char> {
+    match language.to_ascii_lowercase().as_str() {
+        "csv" => Some(','),
+        "tsv" => Some('\t'),
+        _ => None,
+    }
+}
+
+/// The rows of a table written as values separated by `separator`, the
+/// first line its heading row.
+///
+/// A value in double quotes may hold the separator and line breaks, and two
+/// double quotes in one stand for one. A row shorter than the heading is
+/// filled out with empty cells, so every column lines up.
+fn delimited(source: &str, separator: char) -> Vec<Vec<Vec<Run>>> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row = Vec::new();
+    let mut value = String::new();
+    let mut quoted = false;
+    let mut characters = source.chars().peekable();
+    while let Some(character) = characters.next() {
+        match (character, quoted) {
+            ('"', true) if characters.peek() == Some(&'"') => {
+                characters.next();
+                value.push('"');
+            }
+            ('"', true) => quoted = false,
+            ('"', false) if value.is_empty() => quoted = true,
+            (character, false) if character == separator => {
+                row.push(std::mem::take(&mut value));
+            }
+            ('\r', false) => {}
+            ('\n', false) => {
+                row.push(std::mem::take(&mut value));
+                rows.push(std::mem::take(&mut row));
+            }
+            (character, _) => value.push(character),
+        }
+    }
+    if !value.is_empty() || !row.is_empty() {
+        row.push(value);
+        rows.push(row);
+    }
+    rows.retain(|row| row.iter().any(|value| !value.trim().is_empty()));
+    let width = rows.iter().map(Vec::len).max().unwrap_or_default();
+    rows.into_iter()
+        .map(|mut row| {
+            row.resize(width, String::new());
+            row.into_iter()
+                .map(|value| {
+                    vec![Run {
+                        text: value.trim().to_owned(),
+                        emphasis: Emphasis::default(),
+                        target: None,
+                    }]
+                })
+                .collect()
+        })
+        .collect()
 }
