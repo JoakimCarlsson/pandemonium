@@ -49,7 +49,9 @@ impl App {
     /// every frame it is open, and asking git every frame for a list that
     /// cannot have changed is a subprocess a second for nothing. A project of
     /// several repositories offers none: a branch is one repository's, and a
-    /// session of all of them is cut from what each has checked out.
+    /// session of all of them is cut from what each has checked out. A branch
+    /// whose remote branch was deleted is not offered, unless it is the one
+    /// checked out: it is almost always one whose work has been merged.
     pub(super) fn open_project_menu(&mut self, project: ProjectId) {
         self.open.activate(project);
         self.session_bases = Vec::new();
@@ -57,8 +59,10 @@ impl App {
             let root = only.root().to_path_buf();
             self.read_bases_later(project, move || {
                 let branches = pm_core::branches(&root);
-                let (checked_out, rest): (Vec<_>, Vec<_>) =
-                    branches.iter().partition(|branch| branch.is_current());
+                let (checked_out, rest): (Vec<_>, Vec<_>) = branches
+                    .iter()
+                    .filter(|branch| branch.is_current() || !branch.is_gone())
+                    .partition(|branch| branch.is_current());
                 checked_out
                     .into_iter()
                     .chain(rest)
