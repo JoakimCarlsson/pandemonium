@@ -419,6 +419,12 @@ const YAML: Language = Language {
     line_comment: Some("#"),
 };
 
+/// Every language the editor knows, in the order they are written down.
+const KNOWN: &[Language] = &[
+    BASH, C, CPP, CSHARP, CSS, DOCKERFILE, GO, HTML, JAVA, JAVASCRIPT, JSX, JSON, JSONC, KOTLIN,
+    LUA, MARKDOWN, PHP, PYTHON, RUBY, RUST, SQL, TOML, TSX, TYPESCRIPT, YAML,
+];
+
 impl Debug for Language {
     /// Writes the language's name, the grammar behind it being a pointer.
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
@@ -511,6 +517,16 @@ impl Language {
     /// The name the status bar shows.
     pub const fn name(self) -> &'static str {
         self.name
+    }
+
+    /// The language `name` asks for, by its status-bar name or the identifier
+    /// a server is told.
+    #[must_use]
+    pub fn called(name: &str) -> Option<Self> {
+        KNOWN.iter().copied().find(|language| {
+            language.name.eq_ignore_ascii_case(name)
+                || language.language_id.eq_ignore_ascii_case(name)
+        })
     }
 
     /// The identifier a server is told a document in this language is in.

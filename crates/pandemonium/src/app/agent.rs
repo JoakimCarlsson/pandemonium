@@ -151,8 +151,9 @@ impl App {
     /// from an installer instead of a package is listed unpickable until it
     /// is installed, with where to get it in its place.
     pub(super) fn agent_rows(&self) -> Vec<Row> {
-        pm_acp::AGENTS
-            .into_iter()
+        pm_acp::agents()
+            .iter()
+            .copied()
             .map(|agent| Row {
                 section: None,
                 label: agent.name.to_owned(),

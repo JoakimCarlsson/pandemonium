@@ -7,7 +7,7 @@
 //! language server hears about every change exactly once.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -697,6 +697,14 @@ impl Drop for Document {
     }
 }
 
+/// `servers` keyed by a language name that lives as long as the editor runs.
+fn named_servers(servers: &BTreeMap<String, Vec<Server>>) -> HashMap<&'static str, Vec<Server>> {
+    servers
+        .iter()
+        .map(|(language, servers)| (&*language.clone().leak(), servers.clone()))
+        .collect()
+}
+
 /// One open file: the worktree it belongs to and the document itself.
 struct Entry {
     /// The worktree the file was opened from.
@@ -726,11 +734,13 @@ impl Files {
 
     /// Runs `overrides` for the languages they name, in place of the usual.
     pub fn set_language_servers(&mut self, overrides: &BTreeMap<String, Vec<Server>>) {
-        let named = overrides
-            .iter()
-            .map(|(language, servers)| (&*language.clone().leak(), servers.clone()))
-            .collect();
-        self.servers.set_overrides(named);
+        self.servers.set_overrides(named_servers(overrides));
+    }
+
+    /// Runs `added` for the languages they name, after the servers those
+    /// languages name.
+    pub fn add_language_servers(&mut self, added: &BTreeMap<String, Vec<Server>>) {
+        self.servers.set_added(named_servers(added));
     }
 
     /// Writes files the way `habits` say from now on, the open ones
