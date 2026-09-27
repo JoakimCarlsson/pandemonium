@@ -57,19 +57,38 @@ impl Buffer {
     ///
     /// This is what a line is inside — the function, the block, the
     /// implementation — read the same way a fold is, so a pane can keep
-    /// them in sight while the body of them scrolls past.
+    /// them in sight while the body of them scrolls past. A pane asks it of
+    /// its top line every frame, so it is worked out once per top line and
+    /// version of the text.
     pub fn enclosing(&self, line: usize) -> Vec<usize> {
+        self.memo
+            .enclosing(self.version(), line, self.tab_width(), || {
+                self.enclosing_afresh(line)
+            })
+    }
+
+    /// The lines whose folds hold `line`, outermost first, worked out anew.
+    ///
+    /// A fold at a line above holds `line` exactly when every line between
+    /// them and the first line with text from `line` on are indented further
+    /// than it is, so the walk up keeps the shallowest line it has passed
+    /// rather than walking each fold down again to where it ends.
+    fn enclosing_afresh(&self, line: usize) -> Vec<usize> {
         let mut holders = Vec::new();
         let mut indent = self.indentation(line).unwrap_or(usize::MAX);
+        let reach = (line..self.line_count()).find_map(|below| self.indentation(below));
+        let mut between = usize::MAX;
 
         for above in (0..line).rev() {
             let Some(outer) = self.indentation(above) else {
                 continue;
             };
+            let holds = between > outer && reach.is_some_and(|inner| inner > outer);
+            between = between.min(outer);
             if outer >= indent {
                 continue;
             }
-            if self.fold_at(above).is_some_and(|fold| fold.contains(&line)) {
+            if holds {
                 holders.push(above);
                 indent = outer;
             }

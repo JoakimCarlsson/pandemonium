@@ -119,7 +119,7 @@ impl Minimap {
         cx.push_clip(self.area);
 
         let lines = self.lines();
-        let highlights = buffer.highlights(lines.clone());
+        let highlights = buffer.remembered_highlights(lines.clone());
         let tab = buffer.tab_width().max(1);
         for line in lines {
             let top = self.top_of(line);
