@@ -245,6 +245,13 @@ pub struct Picker {
     rows: Vec<Row>,
     /// Which of them the query leaves, best match first.
     matched: Vec<usize>,
+    /// Every row the last query matched, with how well, in the order given.
+    candidates: Vec<(i32, usize)>,
+    /// The query `candidates` were narrowed by, while they stand for one.
+    ///
+    /// A query that only adds to this one can match no row this one did not,
+    /// so typing onward scores the candidates rather than every row.
+    narrowed_by: Option<String>,
     /// Which of those is selected.
     selected: usize,
 }
@@ -257,6 +264,8 @@ impl Picker {
             field: Field::filled(seeded),
             rows,
             matched: Vec::new(),
+            candidates: Vec::new(),
+            narrowed_by: None,
             selected: 0,
         };
         picker.filter();
@@ -303,7 +312,34 @@ impl Picker {
     /// Offers `rows` instead, narrowed by what has been typed.
     pub fn refill(&mut self, rows: Vec<Row>) {
         self.rows = rows;
+        self.narrowed_by = None;
         self.filter();
+    }
+
+    /// Offers `rows` as well, after the rows already offered, narrowed by what
+    /// has been typed and keeping the selection where it is.
+    ///
+    /// This is how a list that is still being gathered grows: only the rows
+    /// that arrive are scored, not the ones already offered.
+    pub fn extend(&mut self, rows: Vec<Row>) {
+        let start = self.rows.len();
+        self.rows.extend(rows);
+        let limit = self.limit();
+        match self.narrowed_by.as_deref() {
+            Some(query) => {
+                let pattern = pattern(query);
+                let found = (start..self.rows.len())
+                    .filter_map(|index| self.scored(&pattern, index))
+                    .collect::<Vec<_>>();
+                self.candidates.extend(found);
+                self.matched = ranked(self.candidates.clone(), limit);
+            }
+            None => {
+                let room = limit.saturating_sub(self.matched.len());
+                self.matched.extend((start..self.rows.len()).take(room));
+            }
+        }
+        self.selected = self.selected.min(self.matched.len().saturating_sub(1));
     }
 
     /// Replaces rows while keeping the selected choice when it is still shown.
@@ -366,77 +402,124 @@ impl Picker {
     /// Narrows the rows to the ones the query matches, best match first.
     fn filter(&mut self) {
         let query = self.kind.query(self.field.value());
+        let limit = self.limit();
         if self.kind.is_prompt() || self.kind.is_queried() || query.is_empty() {
-            let limit = match self.kind {
-                Kind::AgentHistory(_) => usize::MAX,
-                _ => SHOWN,
-            };
+            self.narrowed_by = None;
+            self.candidates.clear();
             self.matched = (0..self.rows.len()).take(limit).collect();
             self.selected = 0;
             return;
         }
 
-        let mut scored = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter_map(|(index, row)| {
-                let label = score(query, &row.label);
-                let detail = score(query, &row.detail).map(|score| score / 2);
-                label.or(detail).map(|score| (score, index))
-            })
-            .collect::<Vec<_>>();
-        scored.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
-
-        self.matched = scored
-            .into_iter()
-            .take(match self.kind {
-                Kind::AgentHistory(_) => usize::MAX,
-                _ => SHOWN,
-            })
-            .map(|(_, index)| index)
-            .collect();
+        let pattern = pattern(query);
+        let narrowing = self
+            .narrowed_by
+            .as_deref()
+            .is_some_and(|before| query.starts_with(before));
+        let candidates = match narrowing {
+            true => self
+                .candidates
+                .iter()
+                .filter_map(|(_, index)| self.scored(&pattern, *index))
+                .collect::<Vec<_>>(),
+            false => (0..self.rows.len())
+                .filter_map(|index| self.scored(&pattern, index))
+                .collect(),
+        };
+        self.narrowed_by = Some(query.to_owned());
+        self.matched = ranked(candidates.clone(), limit);
+        self.candidates = candidates;
         self.selected = 0;
+    }
+
+    /// How well the `index`-th row matches `pattern`, by its label or else,
+    /// at half the weight, by what is said beside it.
+    fn scored(&self, pattern: &[char], index: usize) -> Option<(i32, usize)> {
+        let row = &self.rows[index];
+        score(pattern, &row.label)
+            .or_else(|| score(pattern, &row.detail).map(|score| score / 2))
+            .map(|score| (score, index))
+    }
+
+    /// How many rows the picker keeps after filtering.
+    fn limit(&self) -> usize {
+        match self.kind {
+            Kind::AgentHistory(_) => usize::MAX,
+            _ => SHOWN,
+        }
     }
 }
 
-/// How well `haystack` matches `needle`, or nothing when it does not.
+/// What `query` asks to be matched: its letters lower-cased, without the
+/// spaces between them.
+fn pattern(query: &str) -> Vec<char> {
+    query
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The first `limit` of `scored`'s rows, best score first and in the order
+/// given among equals.
+///
+/// Only the rows kept are sorted: the rest are set aside by selection, which
+/// is what keeps a first letter typed over a hundred thousand files cheap.
+fn ranked(mut scored: Vec<(i32, usize)>, limit: usize) -> Vec<usize> {
+    let order =
+        |left: &(i32, usize), right: &(i32, usize)| right.0.cmp(&left.0).then(left.1.cmp(&right.1));
+    if scored.len() > limit {
+        scored.select_nth_unstable_by(limit, order);
+        scored.truncate(limit);
+    }
+    scored.sort_unstable_by(order);
+    scored.into_iter().map(|(_, index)| index).collect()
+}
+
+/// How well `haystack` matches `pattern`, or nothing when it does not.
 ///
 /// The score rewards what a reader typing a few letters is aiming at: the
 /// letters in order, close together, and at the start of a word. It is a
 /// ranking and not a distance, so only the order of the scores matters.
-fn score(needle: &str, haystack: &str) -> Option<i32> {
-    let subject = haystack.to_lowercase().chars().collect::<Vec<_>>();
-    let pattern = needle.to_lowercase();
-    let mut wanted = pattern.chars().filter(|ch| !ch.is_whitespace()).peekable();
+/// `pattern` is already lower-cased, and `haystack` is lower-cased a letter
+/// at a time as it is read, so scoring a row allocates nothing.
+fn score(pattern: &[char], haystack: &str) -> Option<i32> {
+    let mut wanted = pattern.iter().copied().peekable();
     if wanted.peek().is_none() {
         return Some(0);
     }
 
     let mut score = 0;
     let mut last = None;
-    for (index, ch) in subject.iter().enumerate() {
-        let Some(want) = wanted.peek().copied() else {
+    let mut before = None;
+    let mut index = 0usize;
+    let mut counted = 0;
+    let mut letters = haystack.chars();
+    for ch in letters.by_ref() {
+        counted += 1;
+        for lower in ch.to_lowercase() {
+            if wanted.next_if_eq(&lower).is_some() {
+                score += 10;
+                if last == Some(index.wrapping_sub(1)) {
+                    score += 12;
+                }
+                let starts_word =
+                    before.is_none_or(|before| matches!(before, ' ' | '_' | '-' | '/' | '.' | ':'));
+                if starts_word {
+                    score += 8;
+                }
+                last = Some(index);
+            }
+            before = Some(lower);
+            index += 1;
+        }
+        if wanted.peek().is_none() {
             break;
-        };
-        if *ch != want {
-            continue;
         }
-        wanted.next();
-        score += 10;
-        if last == Some(index.wrapping_sub(1)) {
-            score += 12;
-        }
-        let starts_word =
-            index == 0 || matches!(subject[index - 1], ' ' | '_' | '-' | '/' | '.' | ':');
-        if starts_word {
-            score += 8;
-        }
-        last = Some(index);
     }
 
     if wanted.peek().is_some() {
         return None;
     }
-    Some(score - haystack.chars().count() as i32 / 4)
+    Some(score - (counted + letters.count()) as i32 / 4)
 }

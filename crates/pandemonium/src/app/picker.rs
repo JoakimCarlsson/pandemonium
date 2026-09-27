@@ -17,12 +17,6 @@ use crate::keymap::Action;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Picker, Row};
 
-/// Most results a project-wide search gathers before it stops looking.
-const SEARCH_LIMIT: usize = 500;
-
-/// Longest a line of context beside a search result is drawn.
-const CONTEXT: usize = 120;
-
 /// How long the spinner holds each frame while a remote is waited on.
 const SPIN_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 
@@ -31,7 +25,11 @@ const AGENT_FRAME: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
+    ///
+    /// What takes time to gather, a worktree's files, a search of them or
+    /// what git says, is started here and arrives after the picker is open.
     pub(super) fn open_picker(&mut self, kind: Kind) {
+        self.leave_listings();
         self.agent_picker_at = None;
         if !matches!(kind, Kind::Branches | Kind::NewBranch) {
             self.branch_picker_at = None;
@@ -42,15 +40,21 @@ impl App {
                 .unwrap_or_default(),
             kind => kind.seed(),
         };
-        let rows = self.rows_for(kind, &seeded);
-        self.open_picker_with(kind, rows, seeded);
-        if kind == Kind::WorkspaceSymbols {
-            self.ask_typed_symbols();
+        let rows = self.rows_for(kind);
+        self.open_picker_with(kind, rows, seeded.clone());
+        match kind {
+            Kind::WorkspaceSymbols => self.ask_typed_symbols(),
+            Kind::Search => self.search_later(&seeded),
+            Kind::Branches => self.ask_branches(),
+            Kind::FetchRemotes => self.ask_remotes(true),
+            Kind::PushRemotes => self.ask_remotes(false),
+            _ => {}
         }
     }
 
     /// Opens the picker of `kind` over `rows`, with `seeded` already typed.
     pub(super) fn open_picker_with(&mut self, kind: Kind, rows: Vec<Row>, seeded: String) {
+        self.begin_opening();
         self.picker = Some(Picker::new(kind, rows, &seeded));
         self.completions = None;
         self.hint = None;
@@ -78,6 +82,7 @@ impl App {
     pub(super) fn dismiss_picker(&mut self) -> bool {
         self.branch_picker_at = None;
         self.agent_picker_at = None;
+        self.leave_listings();
         self.picker.take().is_some()
     }
 
@@ -87,7 +92,7 @@ impl App {
             return;
         };
         if let Some(kind) = picker.switched() {
-            let rows = self.rows_for(kind, "");
+            let rows = self.rows_for(kind);
             if let Some(picker) = self.picker.as_mut() {
                 picker.switch(kind, rows);
             }
@@ -105,11 +110,8 @@ impl App {
         if !picker.kind().is_queried() {
             return;
         }
-        let (kind, query) = (picker.kind(), picker.field().value().to_owned());
-        let rows = self.rows_for(kind, &query);
-        if let Some(picker) = self.picker.as_mut() {
-            picker.refill(rows);
-        }
+        let query = picker.field().value().to_owned();
+        self.search_later(&query);
     }
 
     /// Takes what the picker has selected, and puts the picker away.
@@ -123,6 +125,7 @@ impl App {
         let place = picker.selected();
 
         self.picker = None;
+        self.leave_listings();
         match (kind, chosen) {
             (Kind::Branches, _) if !typed.trim().is_empty() => self.create_branch(typed.trim()),
             (Kind::Line, _) => self.go_to_typed_line(&typed),
@@ -225,15 +228,15 @@ impl App {
         self.ask(pm_text::Request::Rename(name));
     }
 
-    /// What a picker of `kind` offers, given what has been typed so far.
-    fn rows_for(&self, kind: Kind, query: &str) -> Vec<Row> {
+    /// What a picker of `kind` offers when it opens.
+    ///
+    /// The lists that take time to gather open empty, or with what has been
+    /// gathered so far, and are filled as the rest arrives.
+    fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
             Kind::Commands => self.command_rows(),
-            Kind::Files => self.file_rows(),
+            Kind::Files | Kind::WorkspaceSymbols => self.listed_file_rows(),
             Kind::Projects => self.project_rows(),
-            Kind::Branches => self.branch_rows(),
-            Kind::FetchRemotes => self.remote_rows(true),
-            Kind::PushRemotes => self.remote_rows(false),
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
             Kind::AgentHistory(session) => self.agent_history_rows(session),
@@ -242,10 +245,12 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::WorkspaceSymbols => self.file_rows(),
             Kind::Knob | Kind::References | Kind::Calls | Kind::Font(_) => Vec::new(),
-            Kind::Search => self.search_rows(query),
-            Kind::Symbols
+            Kind::Branches
+            | Kind::FetchRemotes
+            | Kind::PushRemotes
+            | Kind::Search
+            | Kind::Symbols
             | Kind::Line
             | Kind::Rename
             | Kind::NewBranch
@@ -276,31 +281,12 @@ impl App {
             .collect()
     }
 
-    /// Every file of the worktree the window is pointed at.
-    ///
-    /// A tab is drawn only in the worktree it was opened from, so a file of
-    /// any other worktree would open where it cannot be seen.
-    fn file_rows(&self) -> Vec<Row> {
-        let Some((scope, root)) = self.here_on_disk() else {
-            return Vec::new();
-        };
-        pm_core::walk(&root)
-            .into_iter()
-            .map(|path| Row {
-                section: None,
-                label: path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                detail: relative(&root, &path),
-                choice: Choice::Open(scope, path),
-                enabled: true,
-            })
-            .collect()
-    }
-
     /// The worktree the window is pointed at, with where it sits on disk.
-    fn here_on_disk(&self) -> Option<(pm_core::Scope, PathBuf)> {
+    ///
+    /// A tab is drawn only in the worktree it was opened from, so the files
+    /// listed for the pickers are this worktree's alone: a file of any other
+    /// would open where it cannot be seen.
+    pub(super) fn here_on_disk(&self) -> Option<(pm_core::Scope, PathBuf)> {
         let scope = self.scope()?;
         Some((scope, self.root_of(scope)?))
     }
@@ -319,61 +305,36 @@ impl App {
             .collect()
     }
 
-    /// Every local branch of the active project's active repository, current
-    /// branch first.
-    fn branch_rows(&self) -> Vec<Row> {
+    /// Asks git away from the window for every branch of the active
+    /// project's active repository, for the branch picker.
+    fn ask_branches(&self) {
         let Some(id) = self.open.active().map(pm_core::Project::id) else {
-            return Vec::new();
+            return;
         };
         let Some(root) = self.repository_root(self.git_scope(id)) else {
-            return Vec::new();
+            return;
         };
-        pm_core::branches(&root)
-            .into_iter()
-            .map(|branch| {
-                let remote = branch.is_remote();
-                let current = branch.is_current();
-                Row {
-                    section: Some(if remote {
-                        "Remote Branches"
-                    } else {
-                        "Local Branches"
-                    }),
-                    label: match current {
-                        true => format!("✓  {}", branch.name()),
-                        false => branch.name().to_owned(),
-                    },
-                    detail: branch.detail().to_owned(),
-                    choice: Choice::Branch(id, branch.name().to_owned()),
-                    enabled: !current,
-                }
-            })
-            .collect()
+        self.ask_git_later(Kind::Branches, move || {
+            branch_rows(id, pm_core::branches(&root))
+        });
     }
 
-    /// Every configured remote of the active project's active repository, for
-    /// fetching or pushing.
-    fn remote_rows(&self, fetching: bool) -> Vec<Row> {
+    /// Asks git away from the window for every configured remote of the
+    /// active project's active repository, for fetching or pushing.
+    fn ask_remotes(&self, fetching: bool) {
         let Some(id) = self.open.active().map(pm_core::Project::id) else {
-            return Vec::new();
+            return;
         };
         let Some(root) = self.repository_root(self.git_scope(id)) else {
-            return Vec::new();
+            return;
         };
-        pm_core::remotes(&root)
-            .into_iter()
-            .map(|remote| Row {
-                section: None,
-                label: remote.clone(),
-                detail: String::new(),
-                choice: if fetching {
-                    Choice::FetchRemote(id, remote)
-                } else {
-                    Choice::PushRemote(id, remote)
-                },
-                enabled: true,
-            })
-            .collect()
+        let kind = match fetching {
+            true => Kind::FetchRemotes,
+            false => Kind::PushRemotes,
+        };
+        self.ask_git_later(kind, move || {
+            remote_rows(id, pm_core::remotes(&root), fetching)
+        });
     }
 
     /// Checks out `branch` in `project` through the window's branch seam.
@@ -406,6 +367,7 @@ impl App {
         if let Some(review) = self.reviews.get_mut(&scope) {
             review.report(said);
         }
+        self.reread_review_later(scope);
         if !changed {
             self.secondary_sidebar_view = crate::workspace::SidebarView::Changes;
             self.secondary_sidebar_open = true;
@@ -455,7 +417,7 @@ impl App {
             || self
                 .reviews
                 .values()
-                .any(|review| review.refresh_turn().is_some());
+                .any(|review| review.refresh_turn().is_some() || review.is_working());
         if turning {
             Some(self.spun + SPIN_FRAME)
         } else if self.agents.working() > 0 {
@@ -533,40 +495,6 @@ impl App {
         rows
     }
 
-    /// Every place `query` appears in the worktree the window is pointed at.
-    fn search_rows(&self, query: &str) -> Vec<Row> {
-        if query.len() < 2 {
-            return Vec::new();
-        }
-        let Some((scope, root)) = self.here_on_disk() else {
-            return Vec::new();
-        };
-        let needle = query.to_lowercase().chars().collect::<Vec<_>>();
-        let mut rows = Vec::new();
-
-        for path in pm_core::walk(&root) {
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            for (line, content) in text.lines().enumerate() {
-                let Some(column) = found_at(content, &needle) else {
-                    continue;
-                };
-                rows.push(Row {
-                    section: None,
-                    label: content.trim().chars().take(CONTEXT).collect(),
-                    detail: format!("{}:{}", relative(&root, &path), line + 1),
-                    choice: Choice::OpenAt(scope, path.clone(), Position::new(line, column)),
-                    enabled: true,
-                });
-                if rows.len() >= SEARCH_LIMIT {
-                    return rows;
-                }
-            }
-        }
-        rows
-    }
-
     /// Every file the window has open, with the worktree and path it is in.
     pub(super) fn open_files(&self) -> Vec<(pm_core::Scope, PathBuf, crate::editor::FileId)> {
         self.panes
@@ -578,23 +506,67 @@ impl App {
     }
 }
 
-/// Which character of `line` the lower-cased `needle` first appears at.
-///
-/// The comparison is made over characters rather than over bytes, because
-/// lower-casing a line can change how many bytes it takes: an offset into
-/// the folded copy is not an offset into the line it came from.
-fn found_at(line: &str, needle: &[char]) -> Option<usize> {
-    let folded = line.to_lowercase().chars().collect::<Vec<_>>();
-    if needle.is_empty() || needle.len() > folded.len() {
-        return None;
+/// The rows of `project`'s branches, local ones first and the current
+/// branch marked and not to be chosen.
+fn branch_rows(project: ProjectId, branches: Vec<pm_core::Branch>) -> Vec<Row> {
+    branches
+        .into_iter()
+        .map(|branch| {
+            let remote = branch.is_remote();
+            let current = branch.is_current();
+            Row {
+                section: Some(if remote {
+                    "Remote Branches"
+                } else {
+                    "Local Branches"
+                }),
+                label: match current {
+                    true => format!("✓  {}", branch.name()),
+                    false => branch.name().to_owned(),
+                },
+                detail: branch.detail().to_owned(),
+                choice: Choice::Branch(project, branch.name().to_owned()),
+                enabled: !current,
+            }
+        })
+        .collect()
+}
+
+/// The rows of `project`'s remotes, for fetching from or pushing to.
+fn remote_rows(project: ProjectId, remotes: Vec<String>, fetching: bool) -> Vec<Row> {
+    remotes
+        .into_iter()
+        .map(|remote| Row {
+            section: None,
+            label: remote.clone(),
+            detail: String::new(),
+            choice: if fetching {
+                Choice::FetchRemote(project, remote)
+            } else {
+                Choice::PushRemote(project, remote)
+            },
+            enabled: true,
+        })
+        .collect()
+}
+
+/// The row of the file at `path` in the worktree `scope` at `root`: its
+/// name, and where it sits from the top of the worktree.
+pub(super) fn file_row(scope: pm_core::Scope, root: &Path, path: PathBuf) -> Row {
+    Row {
+        section: None,
+        label: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        detail: relative(root, &path),
+        choice: Choice::Open(scope, path),
+        enabled: true,
     }
-    (0..=folded.len() - needle.len())
-        .find(|start| folded[*start..start + needle.len()] == *needle)
-        .filter(|start| *start <= line.chars().count())
 }
 
 /// `path` written from `root` down.
-fn relative(root: &Path, path: &Path) -> String {
+pub(super) fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .display()
