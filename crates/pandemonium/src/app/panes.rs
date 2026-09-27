@@ -884,7 +884,7 @@ impl App {
                         .title()
                         .map_or_else(|| talk.agent().name.to_owned(), shortened),
                     icon: IconName::Sparkle,
-                    dirty: talk.is_busy(),
+                    dirty: false,
                     preview: false,
                     pinned: false,
                 })
