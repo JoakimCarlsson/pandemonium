@@ -16,6 +16,7 @@ mod repository;
 mod shade;
 mod sidebar;
 mod store;
+mod work;
 
 pub use action::RepositoryAction;
 pub use conflict::Action as ConflictAction;
@@ -24,3 +25,4 @@ pub use pane::{change_pane, hunk_row, review_pane, row_count, row_of};
 pub use reading::Reading;
 pub use sidebar::{SourceControlControls, change_menu, changes_sidebar, status_color};
 pub use store::{ChangeId, Group, Review};
+pub use work::{Done, Work};

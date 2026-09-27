@@ -17,7 +17,7 @@ use crate::desktop;
 use crate::editor::FileId;
 use crate::panes::Item;
 use crate::prompt::{Answer, Prompt};
-use crate::review::{ChangeId, Group, RepositoryAction, Review};
+use crate::review::{ChangeId, Group, RepositoryAction, Review, Work};
 
 impl App {
     /// The review of the project the window is pointed at.
@@ -46,35 +46,6 @@ impl App {
     pub(super) fn review_mut(&mut self) -> Option<&mut Review> {
         let scope = self.scope()?;
         self.reviews.get_mut(&scope)
-    }
-
-    /// Asks git again what it makes of every worktree the window is holding.
-    ///
-    /// A worktree the window has just been pointed at is read for the first
-    /// time here; one whose project has closed is forgotten, because a review
-    /// of a worktree nobody is looking at answers a question nobody asked.
-    /// Each project's repositories are looked for again first, so a session
-    /// is cut from the repositories that are there now.
-    pub(super) fn reread_changes(&mut self) {
-        let projects = self
-            .open
-            .iter()
-            .map(pm_core::Project::id)
-            .collect::<Vec<_>>();
-        for project in projects {
-            self.open.refresh(project);
-        }
-        self.reread_sessions();
-        if let Some(scope) = self.scope() {
-            self.point_at(scope);
-        }
-        self.watch_worktrees();
-        self.reviews
-            .retain(|scope, _| self.open.get(scope.project()).is_some());
-        let scopes = self.reviews.keys().copied().collect::<Vec<_>>();
-        for scope in scopes {
-            self.reread_review_later(scope);
-        }
     }
 
     /// The worktrees a pane is holding the review, or one file's diff, of.
@@ -126,27 +97,42 @@ impl App {
     ///
     /// A change is read in the colours its file has in an editor pane, and
     /// those come from the file's own document, so a review opens the
-    /// documents of what it shows the way a tab would.
+    /// documents of what it shows the way a tab would. This is asked for
+    /// when the panes change and when a review's list of changes does,
+    /// never while a frame is drawn.
     pub(super) fn open_reviewed_files(&mut self) {
         for scope in self.reviewed_scopes() {
-            let Some(root) = self
-                .reviews
-                .get(&scope)
-                .map(|review| review.root().to_path_buf())
-            else {
+            self.open_files_reviewed_in(scope);
+        }
+    }
+
+    /// Opens the files `scope`'s review is showing, when a pane holds it.
+    pub(super) fn open_reviewed_files_of(&mut self, scope: Scope) {
+        if self.reviewed_scopes().contains(&scope) {
+            self.open_files_reviewed_in(scope);
+        }
+    }
+
+    /// Opens every changed file of `scope`'s review, and asks their servers
+    /// what the names in them are.
+    fn open_files_reviewed_in(&mut self, scope: Scope) {
+        let Some(root) = self
+            .reviews
+            .get(&scope)
+            .map(|review| review.root().to_path_buf())
+        else {
+            return;
+        };
+        for path in self.reviewed_paths(scope) {
+            let Some(file) = self.editor.open(scope, &root, &path, true) else {
                 continue;
             };
-            for path in self.reviewed_paths(scope) {
-                let Some(file) = self.editor.open(scope, &root, &path, true) else {
-                    continue;
-                };
-                let wanted = self
-                    .editor
-                    .get(file)
-                    .is_some_and(|document| document.borrow_mut().wants_semantics());
-                if wanted {
-                    self.ask_about(file, Position::default(), Request::Semantics);
-                }
+            let wanted = self
+                .editor
+                .get(file)
+                .is_some_and(|document| document.borrow_mut().wants_semantics());
+            if wanted {
+                self.ask_about(file, Position::default(), Request::Semantics);
             }
         }
     }
@@ -360,18 +346,16 @@ impl App {
         let Some(ids) = self.review().map(|review| review.between(index)) else {
             return;
         };
-        if let Some(review) = self.review_mut() {
-            match staging {
-                true => review.stage(&ids),
-                false => review.unstage(&ids),
-            }
-        }
+        let work = self.review().and_then(|review| match staging {
+            true => review.stage(&ids),
+            false => review.unstage(&ids),
+        });
         if let Some(id) = self.review().and_then(|review| review.id_of(index))
             && let Some(review) = self.review_mut()
         {
             review.selected_is(id);
         }
-        self.reread_worktree();
+        self.work_here(work);
     }
 
     /// Puts one hunk into the index, or takes one back out of it.
@@ -379,10 +363,10 @@ impl App {
         let Some(id) = self.review().and_then(|review| review.id_of(index)) else {
             return;
         };
-        if let Some(review) = self.review_mut() {
-            review.stage_hunk(id, staged, hunk);
-        }
-        self.reread_worktree();
+        let work = self
+            .review()
+            .and_then(|review| review.stage_hunk(id, staged, hunk));
+        self.work_here(work);
     }
 
     /// Applies a VS Code style inline action to an open conflict block.
@@ -436,10 +420,10 @@ impl App {
         let Some(id) = self.review().and_then(|review| review.id_of(index)) else {
             return;
         };
-        if let Some(review) = self.review_mut() {
-            review.restore_hunk(id, staged, hunk);
-        }
-        self.reread_worktree();
+        let work = self
+            .review()
+            .and_then(|review| review.restore_hunk(id, staged, hunk));
+        self.work_here(work);
     }
 
     /// Puts a whole group of the `repository`-th repository into the index,
@@ -454,37 +438,41 @@ impl App {
             .into_iter()
             .filter_map(|index| review.id_of(index))
             .collect::<Vec<_>>();
-        let staging = staged < count;
-
-        if let Some(review) = self.review_mut() {
-            match staging {
-                true => review.stage(&ids),
-                false => review.unstage(&ids),
-            }
-        }
-        self.reread_worktree();
+        let work = match staged < count {
+            true => review.stage(&ids),
+            false => review.unstage(&ids),
+        };
+        self.work_here(work);
     }
 
     /// Carries `change` out over the `index`-th change alone.
-    pub(super) fn change_row(&mut self, index: usize, change: impl Fn(&mut Review, &[ChangeId])) {
-        let Some(id) = self.review().and_then(|review| review.id_of(index)) else {
-            return;
-        };
-        if let Some(review) = self.review_mut() {
-            change(review, &[id]);
-        }
-        self.reread_worktree();
+    pub(super) fn change_row(
+        &mut self,
+        index: usize,
+        change: impl Fn(&Review, &[ChangeId]) -> Option<Work>,
+    ) {
+        let work = self
+            .review()
+            .and_then(|review| change(review, &[review.id_of(index)?]));
+        self.work_here(work);
     }
 
     /// Carries `change` out over everything the list is acting on.
-    pub(super) fn change_selection(&mut self, change: impl Fn(&mut Review, &[ChangeId])) {
-        let Some(acting) = self.review().map(Review::acting_on) else {
-            return;
-        };
-        if let Some(review) = self.review_mut() {
-            change(review, &acting);
+    pub(super) fn change_selection(
+        &mut self,
+        change: impl Fn(&Review, &[ChangeId]) -> Option<Work>,
+    ) {
+        let work = self
+            .review()
+            .and_then(|review| change(review, &review.acting_on()));
+        self.work_here(work);
+    }
+
+    /// Has git carry `work` out in the worktree the window is pointed at.
+    pub(super) fn work_here(&mut self, work: Option<Work>) {
+        if let Some(scope) = self.scope() {
+            self.work_later(scope, work);
         }
-        self.reread_worktree();
     }
 
     /// Brings the review forward and moves it to the `index`-th change.
@@ -686,10 +674,8 @@ impl App {
         if discarding.is_empty() {
             return;
         }
-        if let Some(review) = self.review_mut() {
-            review.discard(&discarding);
-        }
-        self.reread_worktree();
+        let work = self.review().and_then(|review| review.discard(&discarding));
+        self.work_here(work);
     }
 
     /// Takes the keyboard away from the commit message.

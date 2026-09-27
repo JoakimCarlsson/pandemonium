@@ -165,7 +165,7 @@ impl App {
     }
 
     /// Cuts the session being named, of the repositories ticked for it, and
-    /// points the window at it.
+    /// points the window at it once git has cut it.
     pub(super) fn cut_session(&mut self) {
         let name = std::mem::take(&mut self.session_name);
         let chosen = std::mem::take(&mut self.session_picks)
@@ -179,20 +179,7 @@ impl App {
             return;
         };
 
-        match self.sessions.start(
-            &project,
-            &name,
-            &base,
-            &chosen,
-            &under,
-            &self.preferences.bootstrap,
-        ) {
-            Ok(started) => {
-                self.select_session(started.id);
-                self.say_bootstrap_trouble(&started.trouble);
-            }
-            Err(trouble) => self.say_trouble("The session could not be cut", &trouble),
-        }
+        self.cut_session_later(&project, &name, &base, &chosen, &under);
     }
 
     /// Points the window at `session`, bringing its agent forward if it has one.
@@ -252,10 +239,18 @@ impl App {
 
     /// Takes `session` off disk, having been told to.
     ///
-    /// The worktree goes, so everything reading it goes with it: its tabs,
-    /// its shells, its tree and its list of changes. What is left of the
-    /// session is what was pushed out of it, which is git's, not ours.
+    /// The worktree goes, so everything reading it goes with it once git has
+    /// taken it away. What is left of the session is what was pushed out of
+    /// it, which is git's, not ours.
     pub(super) fn end_session(&mut self, session: SessionId) {
+        if self.sessions.get(session).is_some() {
+            self.finish_session_later(session);
+        }
+    }
+
+    /// Takes `session`, whose worktree is off disk, out of the window: its
+    /// tabs, its shells, its tree and its list of changes.
+    pub(super) fn forget_session(&mut self, session: SessionId) {
         let Some(scope) = self
             .sessions
             .get(session)
@@ -263,9 +258,7 @@ impl App {
         else {
             return;
         };
-        if let Err(trouble) = self.sessions.finish(session) {
-            return self.say_trouble("The session could not be finished", &trouble);
-        }
+        self.sessions.forget(session);
 
         self.drop_tabs(&|held| held == scope);
         self.terminals.stop_all(scope);
@@ -303,25 +296,10 @@ impl App {
         self.files
             .entry(scope)
             .or_insert_with(|| FileTree::new(&root));
-        self.reviews
-            .entry(scope)
-            .or_insert_with(|| crate::review::Review::of(&root));
-    }
-
-    /// Takes up the worktrees the open projects already have, and rereads them.
-    ///
-    /// A session outlives the window, because its worktree does: this is what
-    /// finds the ones that are still there — including the ones another
-    /// window cut — and asks git again how far each of them has drifted.
-    pub(super) fn reread_sessions(&mut self) {
-        let Some(under) = config::worktrees() else {
-            return;
-        };
-        let open = self.open.iter().cloned().collect::<Vec<_>>();
-        for project in &open {
-            self.sessions.adopt(project, &under);
+        if let std::collections::btree_map::Entry::Vacant(vacant) = self.reviews.entry(scope) {
+            vacant.insert(crate::review::Review::of(&root));
+            self.reread_review_later(scope);
         }
-        self.reread_drift_later();
     }
 
     /// Asks git again how far the sessions have drifted, on a turn boundary.
@@ -421,7 +399,7 @@ impl App {
     /// The session is already there and already selected: this is a reading
     /// of what is missing from it, so that an agent failing to install or
     /// serve is explained before it happens rather than after.
-    fn say_bootstrap_trouble(&mut self, trouble: &[String]) {
+    pub(super) fn say_bootstrap_trouble(&mut self, trouble: &[String]) {
         if trouble.is_empty() {
             return;
         }
