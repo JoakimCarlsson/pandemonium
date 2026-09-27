@@ -83,10 +83,10 @@ pub enum Message {
     CloneProject,
     /// Take this project out of the window.
     CloseProject(ProjectId),
-    /// Make this the project the window's files and commands apply to.
-    ActivateProject(ProjectId),
     /// Open the menu of things that can be done to this project.
     ProjectMenu(ProjectId),
+    /// Press, drag or let go of this project's row in the projects sidebar.
+    DragProject(ProjectId, ResizeEvent),
     /// Cut a session of the active project from the branch it has out.
     NewSession,
     /// Cut a session of this project from the branch in this place of its list.

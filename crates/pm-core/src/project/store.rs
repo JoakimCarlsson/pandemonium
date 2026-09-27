@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::project::repository;
 use crate::project::{Project, ProjectId};
 
-/// Every project the window holds open, in the order they were opened.
+/// Every project the window holds open, in the order the window lists them.
 ///
 /// Projects are peers: the set has no implicit first project and no notion of
 /// one window per project. One of them is active — the project a new session
@@ -14,7 +14,7 @@ use crate::project::{Project, ProjectId};
 /// the set draws between them.
 #[derive(Debug, Default)]
 pub struct Projects {
-    /// The open projects, in the order they were opened.
+    /// The open projects, in the order the window lists them.
     open: Vec<Project>,
     /// The project a project-scoped command applies to.
     active: Option<ProjectId>,
@@ -76,6 +76,22 @@ impl Projects {
         }
     }
 
+    /// Moves `id` into the gap before the project at `gap`, or to the end.
+    ///
+    /// A gap counts the projects as they stand before the move, so the gaps
+    /// either side of `id` leave the order as it is.
+    pub fn move_to(&mut self, id: ProjectId, gap: usize) {
+        let Some(from) = self.open.iter().position(|project| project.id() == id) else {
+            return;
+        };
+        let project = self.open.remove(from);
+        let at = match gap > from {
+            true => gap - 1,
+            false => gap,
+        };
+        self.open.insert(at.min(self.open.len()), project);
+    }
+
     /// Makes `id` the project that project-scoped commands apply to.
     pub fn activate(&mut self, id: ProjectId) {
         if self.open.iter().any(|project| project.id() == id) {
@@ -108,7 +124,7 @@ impl Projects {
         }
     }
 
-    /// The open projects, in the order they were opened.
+    /// The open projects, in the order the window lists them.
     pub fn iter(&self) -> impl Iterator<Item = &Project> {
         self.open.iter()
     }

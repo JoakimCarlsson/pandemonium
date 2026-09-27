@@ -175,6 +175,16 @@ pub struct Worktree<'a> {
     pub changes_section_open: bool,
 }
 
+/// The projects the sidebar lists, and where its rows came out last frame.
+pub struct ProjectList<'a> {
+    /// Every project the window holds open, in the order they are listed.
+    pub open: &'a Projects,
+    /// The sessions hanging under each of them.
+    pub sessions: &'a [SidebarProject],
+    /// Where the rows were drawn, for a project carried up or down them.
+    pub bounds: Bounds,
+}
+
 /// The sessions belonging to one open project.
 ///
 /// The project itself comes from [`Projects`]; this is only what hangs under
@@ -301,13 +311,17 @@ pub enum MenuTarget {
 /// Builds the workspace with its resizable sessions sidebar.
 pub fn workspace(
     theme: &Theme,
-    open: &Projects,
-    sessions: &[SidebarProject],
+    projects: ProjectList<'_>,
     files: Worktree<'_>,
     layout: Layout,
     command_center: Bounds,
     panes: Panes,
 ) -> Div<Message> {
+    let ProjectList {
+        open,
+        sessions,
+        bounds: project_list,
+    } = projects;
     let status = Status::of(open, sessions, &panes, layout, &files);
     let Panes {
         editor,
@@ -338,6 +352,7 @@ pub fn workspace(
                         theme,
                         open,
                         sessions,
+                        project_list,
                         layout.primary_sidebar_width,
                     ))
                     .child(sash(Axis::Horizontal, Message::ResizeSidebar))
@@ -1104,11 +1119,14 @@ pub fn shortened(path: &std::path::Path) -> String {
 /// A project's own row is its checkout — what the repository is called, and
 /// the branch it has out — and every row under it is a session of it, saying
 /// how far that worktree has drifted. The list is one reading, taken down the
-/// window: what is being worked on, and how much of it there is.
+/// window: what is being worked on, and how much of it there is. The rows
+/// leave where they came out in `list`, so a project carried up or down them
+/// can be told where it would land.
 fn projects_sidebar(
     theme: &Theme,
     open: &Projects,
     sessions: &[SidebarProject],
+    list: Bounds,
     width: f32,
 ) -> Div<Message> {
     let rows = open
@@ -1145,7 +1163,7 @@ fn projects_sidebar(
         .when(open.is_empty(), |sidebar| {
             sidebar.child(open_project(theme))
         })
-        .children(rows)
+        .child(measured(list, v_flex().w_full().children(rows)))
 }
 
 /// Builds the control that asks for another repository to open.
@@ -1234,10 +1252,12 @@ fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div
 /// it and states the branch it has out — `main`, most of the time — and the
 /// sessions under it are read against that. A folder of several
 /// repositories states how many it holds, and a plain folder states nothing
-/// beside its name.
+/// beside its name. The row is carried to reorder the projects, and a press
+/// that goes nowhere activates it.
 fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message> {
+    let id = project.id();
     row(theme, selected)
-        .on_click(Message::ActivateProject(project.id()))
+        .on_drag(move |event| Message::DragProject(id, event))
         .on_secondary_click(Message::ProjectMenu(project.id()))
         .child(marker(theme, selected))
         .child(v_flex().w(2))

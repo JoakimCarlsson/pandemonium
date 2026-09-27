@@ -22,6 +22,7 @@ mod panes;
 mod picker;
 mod places;
 mod reading;
+mod reorder;
 mod review;
 mod session;
 mod settings;
@@ -232,6 +233,10 @@ pub struct App {
     tree_clipboard: Option<crate::tree::Clipboard>,
     /// The rows of the file tree the pointer is carrying.
     entry_drag: Option<crate::tree::EntryDrag>,
+    /// The project row the pointer is carrying up or down the sidebar.
+    project_drag: Option<reorder::ProjectDrag>,
+    /// Where the projects sidebar's rows came out in the last frame.
+    project_list: pm_ui::Bounds,
     /// Whether keystrokes go to the file tree.
     tree_focused: bool,
     /// Where the file tree's rows came out in the last frame.
@@ -445,6 +450,8 @@ impl App {
             tree_edit: None,
             tree_clipboard: None,
             entry_drag: None,
+            project_drag: None,
+            project_list: drag::unmeasured(),
             tree_focused: false,
             tree_rows: drag::unmeasured(),
             tree_area: drag::unmeasured(),
@@ -1345,10 +1352,8 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::ActivateProject(id) = message {
-            self.open.activate(id);
-            self.select_checkout();
-            self.store();
+        if let Message::DragProject(id, event) = message {
+            self.drag_project(id, event);
             self.request_redraw();
             return;
         }
@@ -1975,10 +1980,13 @@ impl App {
             debug: self.debug_in_panel(&theme),
         };
         let showing = self.active_file();
-        let drop = self.drop_highlight().or_else(|| {
-            self.entry_drop_pane()
-                .and_then(|pane| self.geometry.pane_bounds(pane))
-        });
+        let drop = self
+            .drop_highlight()
+            .or_else(|| {
+                self.entry_drop_pane()
+                    .and_then(|pane| self.geometry.pane_bounds(pane))
+            })
+            .or_else(|| self.project_caret());
         let carried = self.carried_tab().or_else(|| self.carried_entries());
         let tree_scroll = self.tree_scroll();
         let layout = self.layout();
@@ -2044,8 +2052,11 @@ impl App {
         let page = if self.onboarded {
             workspace::workspace(
                 &theme,
-                &self.open,
-                &sidebar,
+                workspace::ProjectList {
+                    open: &self.open,
+                    sessions: &sidebar,
+                    bounds: self.project_list.clone(),
+                },
                 files,
                 layout,
                 self.command_center_bounds.clone(),
