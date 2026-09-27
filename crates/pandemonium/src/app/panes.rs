@@ -589,12 +589,23 @@ impl App {
             }
             Some((Some(scope), Item::File(file)))
         });
+        let unread = self
+            .reviews
+            .iter()
+            .filter(|(_, review)| !review.is_read())
+            .map(|(scope, _)| *scope)
+            .collect::<Vec<_>>();
+        for scope in unread {
+            self.reread_review_later(scope);
+        }
         self.refresh_excerpts();
         self.sweep();
     }
 
-    /// Closes every file no pane is holding open any more.
+    /// Opens what the reviews in the panes show, then closes every file no
+    /// pane is holding open any more.
     pub(super) fn sweep(&mut self) {
+        self.open_reviewed_files();
         let held = self.panes.held();
         self.excerpts
             .retain(|scope, _| held.contains(&Item::Excerpts(*scope)));
@@ -1120,7 +1131,7 @@ impl App {
                     let buffer = document.buffer();
                     let blocks = self
                         .renders
-                        .blocks(file, buffer.version(), &buffer.contents());
+                        .blocks(file, buffer.version(), || buffer.contents());
                     Content::Built(Box::new(crate::markdown::rendered_pane(
                         theme,
                         &blocks,
