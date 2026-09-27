@@ -396,6 +396,13 @@ pub struct App {
     /// letting go of shift halfway through does not drop the anchor the
     /// press chose.
     text_extends: bool,
+    /// Whether the pointer gesture over text is a control click following a name.
+    ///
+    /// The drag and the release that finish such a press are part of the
+    /// click, not a selection: the answer to where the name is defined can
+    /// land before the button is let go, and a wobble of the pointer after
+    /// it would put the cursor back where the click was.
+    text_follows: bool,
     /// The last press on the terminal's grid, for telling a double one apart.
     screen_clicks: Clicks<pm_vt::Place>,
     /// What the drag over the terminal's grid grows its selection by.
@@ -647,6 +654,7 @@ impl App {
             blamed: Arc::new(Mutex::new(Vec::new())),
             text_clicks: Clicks::default(),
             text_extends: false,
+            text_follows: false,
             screen_clicks: Clicks::default(),
             screen_unit: pm_vt::Unit::Cell,
             agent_clicks: Clicks::default(),
@@ -761,10 +769,14 @@ impl App {
         let still = anchor == head;
         if pressed {
             self.text_extends = self.extends_text();
+            self.text_follows = still && self.modifiers.control_key();
         }
 
-        if pressed && still && self.modifiers.control_key() {
-            return self.follow_link(head);
+        if self.text_follows {
+            if pressed {
+                self.follow_link(head);
+            }
+            return;
         }
         if self.modifiers.alt_key() && self.modifiers.shift_key() {
             self.text_clicks.clear();
@@ -801,7 +813,7 @@ impl App {
             match presses {
                 1 => buffer.place(head, false),
                 2 => buffer.select_word(head),
-                3 => buffer.select_line(head),
+                3 => buffer.select_line_text(head),
                 _ => {
                     buffer.place(anchor, false);
                     buffer.place(head, true);

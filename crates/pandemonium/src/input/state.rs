@@ -166,7 +166,7 @@ impl Input {
             }
             match (still, presses) {
                 (true, 2) => buffer.select_word(head),
-                (true, count) if count >= 3 => buffer.select_line(head),
+                (true, count) if count >= 3 => buffer.select_line_text(head),
                 (true, _) => buffer.place(head, false),
                 (false, _) => {
                     buffer.place(anchor, false);
