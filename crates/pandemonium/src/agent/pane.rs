@@ -19,15 +19,17 @@ use pm_acp::{
     About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
 };
 use pm_gfx::{Image, Rgba};
+use pm_text::{Highlight, Language};
 use pm_ui::{
     Axis, Div, IconName, IconSize, PointerCursor, Scroll, Styled, Theme, button, h_flex, icon,
     measured, picture, rule, sash, scroll_area, space, text, v_flex,
 };
 
 use crate::agent::{Block, Spot, Standing, Talk, TalkId};
+use crate::editor::{code_highlights, tint};
 use crate::image::Decoding;
 use crate::input::input_view;
-use crate::markdown::blocks::{self, Block as MarkdownBlock, Run};
+use crate::markdown::blocks::{self, Block as MarkdownBlock, Emphasis, Run};
 use crate::message::Message;
 
 /// How many rows are built at once, however long the conversation runs.
@@ -65,6 +67,15 @@ const RESULT: &str = "    ";
 /// What a line continuing the one above it is indented by.
 const WRAPPED: &str = "  ";
 
+/// What stands down the side of a quotation in the agent's reply.
+const QUOTE: &str = "│ ";
+
+/// What stands between two cells of a row of a table.
+const DIVIDER: &str = " │ ";
+
+/// What stands between two cells of the rule under a table's heading row.
+const CROSSING: &str = "─┼─";
+
 /// Frames of the activity mark shown during a turn.
 const WORKING: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
@@ -75,6 +86,14 @@ enum Tone {
     Said,
     /// What the agent said.
     Spoken,
+    /// A heading in what the agent said, at its depth from one to six.
+    Heading(usize),
+    /// A line of a block of code, each run in what its grammar says it is.
+    Code(Option<Highlight>),
+    /// A cell of a table, set in fixed pitch so its columns line up.
+    Table,
+    /// What divides the cells of a table from one another.
+    TableRule,
     /// What it is quieter about: results, thoughts, what it is doing now.
     Quiet,
     /// The name of a tool it called.
@@ -99,13 +118,25 @@ struct Piece {
     image: Option<Image>,
     /// Where it leads when it is pressed, when it is part of a link.
     link: Option<String>,
+    /// How it is set within its tone: heavier, slanted, as code, struck.
+    emphasis: Emphasis,
     /// Whether it only indents a line carried on from the row above, which
     /// is a space between words rather than a line of its own once copied.
     wrapped: bool,
 }
 
-/// A run of a passage, and where it leads when it is part of a link.
-type Span = (String, Option<String>);
+/// A run of a passage, and how it is set.
+type Span = (String, Look);
+
+/// How a run of a passage is set: where it leads when it is part of a link,
+/// and how it is emphasised.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Look {
+    /// Where it leads when it is pressed.
+    link: Option<String>,
+    /// How it is set within its tone.
+    emphasis: Emphasis,
+}
 
 /// The schemes an address written out in a passage is known by.
 const SCHEMES: [&str; 2] = ["https://", "http://"];
@@ -321,7 +352,8 @@ fn row_height(theme: &Theme, row: &Row) -> f32 {
                 112.0
             } else {
                 match piece.tone {
-                    Tone::Said | Tone::Spoken => theme.text.lg.line_height,
+                    Tone::Heading(1) => theme.text.xl.line_height,
+                    Tone::Said | Tone::Spoken | Tone::Heading(_) => theme.text.lg.line_height,
                     _ => theme.text.sm.line_height,
                 }
             }
@@ -377,10 +409,10 @@ struct Wrapping {
     busy: bool,
 }
 
-/// The measures of a theme the height of a row is taken in: the lines of the
-/// conversation's type, of its smaller type and of code, the edge of a
-/// bubble and the room around a group of details.
-type Measures = [f32; 5];
+/// The measures of a theme the height of a row is taken in: the lines of a
+/// top heading, of the conversation's type, of its smaller type and of code,
+/// the edge of a bubble and the room around a group of details.
+type Measures = [f32; 6];
 
 /// One part of the conversation: one block, or a run of tool calls drawn
 /// under one heading, and the rows it comes to.
@@ -542,6 +574,7 @@ impl Wrapped {
 /// The measures of `theme` a row's height is taken in.
 fn measures(theme: &Theme) -> Measures {
     [
+        theme.text.xl.line_height,
         theme.text.lg.line_height,
         theme.text.sm.line_height,
         theme.text.code.line_height,
@@ -646,43 +679,55 @@ fn wrap_part(talk: &Talk, key: PartKey) -> Part {
 
 /// Renders a message's Markdown blocks as transcript rows.
 fn markdown_rows(source: &str, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
+    let hang = " ".repeat(mark.chars().count());
     let mut rows = Vec::new();
     for block in blocks::blocks(source) {
         if !rows.is_empty() {
             rows.push(Row::new());
         }
-        markdown_block_rows(&block, mark, tone, columns, &mut rows);
+        markdown_block_rows(&block, mark, &hang, tone, columns, &mut rows);
     }
     rows
 }
 
 /// Appends one Markdown block, including nested list and quote blocks.
+///
+/// Its first row is led by `mark` and every row after it by `hang`, so a
+/// block inside a list item or a quotation stands in from the text around
+/// it by as much as the item's marker or the quotation's bar.
 fn markdown_block_rows(
     block: &MarkdownBlock,
     mark: &str,
+    hang: &str,
     tone: Tone,
     columns: usize,
     rows: &mut Vec<Row>,
 ) {
     match block {
         MarkdownBlock::Heading(depth, runs) => {
-            let mut heading = vec![(format!("{} ", "#".repeat(*depth)), None)];
-            heading.extend(spans(runs));
-            rows.extend(span_rows(heading, mark, Tone::Tool, columns));
+            let columns = match depth {
+                1 => columns * 4 / 5,
+                _ => columns,
+            };
+            rows.extend(hung_rows(
+                spans(runs),
+                mark,
+                hang,
+                Tone::Heading(*depth),
+                columns,
+            ));
         }
         MarkdownBlock::Paragraph(runs) => {
-            rows.extend(span_rows(spans(runs), mark, tone, columns));
+            rows.extend(hung_rows(spans(runs), mark, hang, tone, columns));
         }
         MarkdownBlock::Code(language, code) => {
-            let label = language.as_deref().unwrap_or("code");
-            rows.extend(passage_rows(label, mark, Tone::Quiet, columns));
-            for line in code.trim_end_matches('\n').lines() {
-                rows.extend(passage_rows(line, WRAPPED, Tone::Argument, columns));
-            }
+            code_rows(language.as_deref(), code, (mark, hang), columns, rows);
         }
         MarkdownBlock::Quote(blocks) => {
-            for block in blocks {
-                markdown_block_rows(block, "> ", Tone::Quiet, columns, rows);
+            let (mark, hang) = (format!("{mark}{QUOTE}"), format!("{hang}{QUOTE}"));
+            for (position, block) in blocks.iter().enumerate() {
+                let lead = if position == 0 { &mark } else { &hang };
+                markdown_block_rows(block, lead, &hang, Tone::Quiet, columns, rows);
             }
         }
         MarkdownBlock::List(first, items) => {
@@ -693,35 +738,222 @@ fn markdown_block_rows(
                     (None, Some(first)) => format!("{}. ", first + index as u64),
                     (None, None) => "• ".to_owned(),
                 };
+                let lead = format!("{}{marker}", if index == 0 { mark } else { hang });
+                let nested = format!("{hang}{}", " ".repeat(marker.chars().count()));
                 for (position, block) in item.blocks.iter().enumerate() {
-                    let prefix = if position == 0 { &marker } else { WRAPPED };
-                    markdown_block_rows(block, prefix, tone, columns, rows);
+                    let lead = if position == 0 { &lead } else { &nested };
+                    markdown_block_rows(block, lead, &nested, tone, columns, rows);
                 }
             }
         }
-        MarkdownBlock::Table(table) => {
-            for cells in table {
-                let mut line = Vec::new();
-                for (at, runs) in cells.iter().enumerate() {
-                    if at > 0 {
-                        line.push((" │ ".to_owned(), None));
-                    }
-                    line.extend(spans(runs));
-                }
-                rows.extend(span_rows(line, mark, tone, columns));
-            }
+        MarkdownBlock::Table(table) => table_rows(table, (mark, hang), columns, rows),
+        MarkdownBlock::Rule => {
+            let rule = "─".repeat(columns.saturating_sub(hang.chars().count()).max(1));
+            rows.push(vec![
+                piece(mark.to_owned(), Tone::Quiet),
+                piece(rule, Tone::TableRule),
+            ]);
         }
-        MarkdownBlock::Rule => rows.extend(passage_rows("────────", mark, Tone::Quiet, columns)),
-        MarkdownBlock::Picture(_, description) => {
-            rows.extend(passage_rows(description, mark, tone, columns));
+        MarkdownBlock::Picture(target, description) => {
+            let said = match description.is_empty() {
+                true => target.clone(),
+                false => description.clone(),
+            };
+            let look = Look {
+                link: None,
+                emphasis: Emphasis {
+                    italic: true,
+                    ..Emphasis::default()
+                },
+            };
+            rows.extend(hung_rows(
+                vec![(said, look)],
+                mark,
+                hang,
+                Tone::Quiet,
+                columns,
+            ));
         }
     }
 }
 
-/// The runs of an inline Markdown passage as spans, each with its link.
+/// Appends a block of code: the language its fence named, then its lines
+/// coloured the way that language is in an editor pane and broken where
+/// they run past the width, all on a ground of their own.
+///
+/// `lead` is the mark before its first row and what stands before the rest.
+fn code_rows(
+    language: Option<&str>,
+    code: &str,
+    lead: (&str, &str),
+    columns: usize,
+    rows: &mut Vec<Row>,
+) {
+    let (mark, hang) = lead;
+    let lines = code.trim_end_matches('\n').lines().collect::<Vec<_>>();
+    let width = columns.saturating_sub(hang.chars().count() + 2).max(1);
+    rows.push(vec![
+        piece(mark.to_owned(), Tone::Quiet),
+        piece(
+            language.unwrap_or("code").to_owned(),
+            Tone::Code(Some(Highlight::Comment)),
+        ),
+    ]);
+    for line in code_highlights(language.and_then(Language::fenced), &lines) {
+        for chunk in chunked(line, width) {
+            let mut row = vec![
+                piece(hang.to_owned(), Tone::Quiet),
+                piece(String::new(), Tone::Code(None)),
+            ];
+            row.extend(
+                chunk
+                    .into_iter()
+                    .map(|(text, highlight)| piece(text, Tone::Code(highlight))),
+            );
+            rows.push(row);
+        }
+    }
+}
+
+/// Appends a table, its columns lined up in fixed pitch and its heading row
+/// set heavier, with a rule under it.
+///
+/// A table wider than the pane gives each column its fair share of the
+/// width, the narrow ones first, and wraps the cells of the rest inside it.
+/// `lead` is the mark before its first row and what stands before the rest.
+fn table_rows(table: &[Vec<Vec<Run>>], lead: (&str, &str), columns: usize, rows: &mut Vec<Row>) {
+    let (mark, hang) = lead;
+    let cells = table
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|runs| runs.iter().map(|run| run.text.as_str()).collect::<String>())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let count = cells.iter().map(Vec::len).max().unwrap_or_default();
+    if count == 0 {
+        return;
+    }
+    let dividers = (count - 1) * DIVIDER.chars().count();
+    let room = columns.saturating_sub(hang.chars().count() + dividers);
+    let widths = column_widths(&cells, room.max(count));
+    for (index, row) in cells.iter().enumerate() {
+        let lines = widths
+            .iter()
+            .enumerate()
+            .map(|(column, width)| {
+                let mut lines = Vec::new();
+                let cell = row.get(column).map_or("", String::as_str);
+                wrap(cell, *width, |line| lines.push(line.to_owned()));
+                lines
+            })
+            .collect::<Vec<_>>();
+        let height = lines.iter().map(Vec::len).max().unwrap_or(1);
+        for line in 0..height {
+            let lead = if index == 0 && line == 0 { mark } else { hang };
+            let mut built = vec![piece(lead.to_owned(), Tone::Quiet)];
+            for (column, width) in widths.iter().enumerate() {
+                if column > 0 {
+                    built.push(piece(DIVIDER.to_owned(), Tone::TableRule));
+                }
+                let said = lines[column].get(line).map_or("", String::as_str);
+                let text = match column + 1 == count {
+                    true => said.to_owned(),
+                    false => format!("{said:<width$}"),
+                };
+                built.push(Piece {
+                    emphasis: Emphasis {
+                        strong: index == 0,
+                        ..Emphasis::default()
+                    },
+                    ..piece(text, Tone::Table)
+                });
+            }
+            rows.push(built);
+        }
+        if index == 0 && cells.len() > 1 {
+            let rule = widths
+                .iter()
+                .map(|width| "─".repeat(*width))
+                .collect::<Vec<_>>()
+                .join(CROSSING);
+            rows.push(vec![
+                piece(hang.to_owned(), Tone::Quiet),
+                piece(rule, Tone::TableRule),
+            ]);
+        }
+    }
+}
+
+/// How many characters wide each column of `cells` is drawn, the widths and
+/// the dividers between them coming to no more than `room`.
+///
+/// Every column is as wide as its widest cell while they all fit; when they
+/// do not, the narrowest columns keep their width and the rest share what is
+/// left evenly.
+fn column_widths(cells: &[Vec<String>], room: usize) -> Vec<usize> {
+    let count = cells.iter().map(Vec::len).max().unwrap_or_default();
+    let natural = (0..count)
+        .map(|column| {
+            cells
+                .iter()
+                .filter_map(|row| row.get(column))
+                .map(|cell| cell.chars().count())
+                .max()
+                .unwrap_or_default()
+                .max(1)
+        })
+        .collect::<Vec<_>>();
+    let mut order = (0..count).collect::<Vec<_>>();
+    order.sort_by_key(|column| natural[*column]);
+    let mut widths = vec![0; count];
+    let mut left = room;
+    for (place, column) in order.into_iter().enumerate() {
+        let share = (left / (count - place)).max(1);
+        widths[column] = natural[column].min(share);
+        left = left.saturating_sub(widths[column]);
+    }
+    widths
+}
+
+/// `runs` in lines of at most `width` characters, each run keeping what it
+/// was tagged with across the break.
+fn chunked<T: Copy + PartialEq>(runs: Vec<(String, T)>, width: usize) -> Vec<Vec<(String, T)>> {
+    let mut lines: Vec<Vec<(String, T)>> = vec![Vec::new()];
+    let mut filled = 0;
+    for (text, tag) in runs {
+        for character in text.chars() {
+            if filled == width.max(1) {
+                lines.push(Vec::new());
+                filled = 0;
+            }
+            let Some(line) = lines.last_mut() else {
+                continue;
+            };
+            match line.last_mut() {
+                Some((run, last)) if *last == tag => run.push(character),
+                _ => line.push((character.to_string(), tag)),
+            }
+            filled += 1;
+        }
+    }
+    lines
+}
+
+/// The runs of an inline Markdown passage as spans, each with its link and
+/// its emphasis.
 fn spans(runs: &[Run]) -> Vec<Span> {
     runs.iter()
-        .map(|run| (run.text.clone(), run.target.clone()))
+        .map(|run| {
+            (
+                run.text.clone(),
+                Look {
+                    link: run.target.clone(),
+                    emphasis: run.emphasis,
+                },
+            )
+        })
         .collect()
 }
 
@@ -808,17 +1040,30 @@ fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
 
 /// One passage, as rows marked with `mark` and wrapped to the width.
 fn passage_rows(passage: &str, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
-    span_rows(vec![(passage.to_owned(), None)], mark, tone, columns)
+    span_rows(
+        vec![(passage.to_owned(), Look::default())],
+        mark,
+        tone,
+        columns,
+    )
 }
 
 /// One passage made of `spans`, as rows marked with `mark` and wrapped to
 /// the width, with its links, and the addresses written out in it, pressable.
 fn span_rows(spans: Vec<Span>, mark: &str, tone: Tone, columns: usize) -> Vec<Row> {
+    let hang = if tone == Tone::Said { "" } else { WRAPPED };
+    hung_rows(spans, mark, hang, tone, columns)
+}
+
+/// One passage made of `spans`, as rows wrapped to the width: the first led
+/// by `mark` and each line carried on from it by `hang`.
+fn hung_rows(spans: Vec<Span>, mark: &str, hang: &str, tone: Tone, columns: usize) -> Vec<Row> {
     let spans = spans
         .into_iter()
-        .map(|(text, link)| (hide_image_data(&text), link))
+        .map(|(text, look)| (hide_image_data(&text), look))
         .collect::<Vec<_>>();
-    linked_wrap(&spans, columns.saturating_sub(mark.chars().count()))
+    let lead = mark.chars().count().max(hang.chars().count());
+    linked_wrap(&spans, columns.saturating_sub(lead))
         .into_iter()
         .enumerate()
         .map(|(at, line)| {
@@ -826,18 +1071,16 @@ fn span_rows(spans: Vec<Span>, mark: &str, tone: Tone, columns: usize) -> Vec<Ro
                 0 => piece(mark.to_owned(), quieten(tone)),
                 _ => Piece {
                     wrapped: true,
-                    ..piece(
-                        if tone == Tone::Said { "" } else { WRAPPED }.to_owned(),
-                        tone,
-                    )
+                    ..piece(hang.to_owned(), tone)
                 },
             };
             let mut row = vec![lead];
             if line.is_empty() {
                 row.push(piece(String::new(), tone));
             }
-            row.extend(line.into_iter().map(|(text, link)| Piece {
-                link,
+            row.extend(line.into_iter().map(|(text, look)| Piece {
+                link: look.link,
+                emphasis: look.emphasis,
                 ..piece(text, tone)
             }));
             row
@@ -848,8 +1091,9 @@ fn span_rows(spans: Vec<Span>, mark: &str, tone: Tone, columns: usize) -> Vec<Ro
 /// `spans` broken into lines of at most `columns` characters, each line the
 /// spans it is made of.
 ///
-/// Lines break where [`wrap`] breaks them. A space between two words of the
-/// same link is part of the link, so the whole of it is one thing to press.
+/// Lines break where [`wrap`] breaks them. A space between two words set the
+/// same way is set that way too, so the whole of a link is one thing to
+/// press and the whole of a stretch of code sits on one ground.
 fn linked_wrap(spans: &[Span], columns: usize) -> Vec<Vec<Span>> {
     let mut lines = Vec::new();
     for paragraph in paragraphs(spans) {
@@ -867,14 +1111,14 @@ fn linked_wrap(spans: &[Span], columns: usize) -> Vec<Vec<Span>> {
                 lines.push(std::mem::take(&mut line));
                 width = 0;
             } else if width > 0 {
-                let before = line.last().and_then(|(_, link)| link.as_ref());
-                let after = word.first().and_then(|(_, link)| link.as_ref());
+                let before = line.last().map(|(_, look)| look);
+                let after = word.first().map(|(_, look)| look);
                 let joined = before.filter(|_| before == after).cloned();
-                join(&mut line, " ", joined.as_ref());
+                join(&mut line, " ", &joined.unwrap_or_default());
                 width += 1;
             }
-            for (text, link) in &word {
-                join(&mut line, text, link.as_ref());
+            for (text, look) in &word {
+                join(&mut line, text, look);
             }
             width += length;
         }
@@ -891,7 +1135,7 @@ fn linked_wrap(spans: &[Span], columns: usize) -> Vec<Vec<Span>> {
 fn paragraphs(spans: &[Span]) -> Vec<Vec<Vec<Span>>> {
     let mut paragraphs = vec![Vec::new()];
     let mut word = Vec::new();
-    for (text, link) in spans {
+    for (text, look) in spans {
         for character in text.chars() {
             match character {
                 ' ' | '\n' => {
@@ -902,7 +1146,7 @@ fn paragraphs(spans: &[Span]) -> Vec<Vec<Vec<Span>>> {
                         paragraphs.push(Vec::new());
                     }
                 }
-                character => join(&mut word, character.encode_utf8(&mut [0; 4]), link.as_ref()),
+                character => join(&mut word, character.encode_utf8(&mut [0; 4]), look),
             }
         }
     }
@@ -918,9 +1162,13 @@ fn paragraphs(spans: &[Span]) -> Vec<Vec<Vec<Span>>> {
 /// trails the address in prose — the full stop after it, the bracket around
 /// it — is left out of what it leads to.
 fn addressed(word: Vec<Span>) -> Vec<Span> {
-    if word.iter().any(|(_, link)| link.is_some()) {
+    if word.iter().any(|(_, look)| look.link.is_some()) {
         return word;
     }
+    let emphasis = word
+        .first()
+        .map(|(_, look)| look.emphasis)
+        .unwrap_or_default();
     let text = word
         .iter()
         .map(|(text, _)| text.as_str())
@@ -933,17 +1181,21 @@ fn addressed(word: Vec<Span>) -> Vec<Span> {
         return word;
     }
     let end = start + address.len();
+    let look = |link: Option<&str>| Look {
+        link: link.map(str::to_owned),
+        emphasis,
+    };
     [
-        (text[..start].to_owned(), None),
-        (address.to_owned(), Some(address.to_owned())),
-        (text[end..].to_owned(), None),
+        (text[..start].to_owned(), look(None)),
+        (address.to_owned(), look(Some(address))),
+        (text[end..].to_owned(), look(None)),
     ]
     .into_iter()
     .filter(|(text, _)| !text.is_empty())
     .collect()
 }
 
-/// `word` in pieces of at most `columns` characters, each keeping the links
+/// `word` in pieces of at most `columns` characters, each keeping the looks
 /// of the characters it holds.
 fn split_linked(word: Vec<Span>, columns: usize) -> Vec<Vec<Span>> {
     let length = word
@@ -955,14 +1207,14 @@ fn split_linked(word: Vec<Span>, columns: usize) -> Vec<Vec<Span>> {
     }
     let mut pieces = vec![Vec::new()];
     let mut filled = 0;
-    for (text, link) in &word {
+    for (text, look) in &word {
         for character in text.chars() {
             if filled == columns.max(1) {
                 pieces.push(Vec::new());
                 filled = 0;
             }
             if let Some(piece) = pieces.last_mut() {
-                join(piece, character.encode_utf8(&mut [0; 4]), link.as_ref());
+                join(piece, character.encode_utf8(&mut [0; 4]), look);
             }
             filled += 1;
         }
@@ -970,12 +1222,12 @@ fn split_linked(word: Vec<Span>, columns: usize) -> Vec<Vec<Span>> {
     pieces
 }
 
-/// Adds `text` to the end of `spans`, into the last span where it leads the
-/// same place.
-fn join(spans: &mut Vec<Span>, text: &str, link: Option<&String>) {
+/// Adds `text` to the end of `spans`, into the last span where it is set
+/// the same way.
+fn join(spans: &mut Vec<Span>, text: &str, look: &Look) {
     match spans.last_mut() {
-        Some((last, led)) if led.as_ref() == link => last.push_str(text),
-        _ => spans.push((text.to_owned(), link.cloned())),
+        Some((last, had)) if had == look => last.push_str(text),
+        _ => spans.push((text.to_owned(), look.clone())),
     }
 }
 
@@ -1179,10 +1431,12 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
         _ => None,
     });
     let detail = action.is_some();
+    let code = row.iter().any(|piece| matches!(piece.tone, Tone::Code(_)));
     let mut column = 0;
     h_flex()
         .h_px(if detail { height + space(0.75) } else { height })
         .items_center()
+        .when(code, |line| line.w_full().px(1).bg(theme.colors.surface))
         .when_some(action, |line, block| {
             line.on_click(Message::ToggleAgentDetails(session, block))
                 .hover_bg(theme.colors.surface_hover)
@@ -1191,9 +1445,10 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
             if let Some(image) = &piece.image {
                 return h_flex().child(picture(image.clone()).w_px(160.0).h_px(112.0));
             }
-            let color = match piece.link {
-                Some(_) => theme.colors.link,
-                None => tone(theme, piece.tone),
+            let color = match (&piece.link, piece.emphasis.struck) {
+                (Some(_), _) => theme.colors.link,
+                (None, true) => theme.colors.text_subtle,
+                (None, false) => tone(theme, piece.tone),
             };
             let start = Spot { row: at, column };
             let length = piece.text.chars().count();
@@ -1210,11 +1465,20 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
             };
             let styled = match piece.tone {
                 Tone::Said | Tone::Spoken => styled.text_lg(),
-                Tone::Argument => styled.text_sm().font_mono(),
+                Tone::Heading(1) => styled.text_xl().font_semibold(),
+                Tone::Heading(_) => styled.text_lg().font_semibold(),
+                Tone::Argument | Tone::Code(_) | Tone::Table | Tone::TableRule => {
+                    styled.text_sm().font_mono()
+                }
                 _ => styled.text_sm(),
             };
+            let styled = emphasised(styled, piece.emphasis);
             let Some(link) = piece.link.clone() else {
-                return h_flex().child(styled);
+                return h_flex()
+                    .when(piece.emphasis.code, |run| {
+                        run.rounded(theme.radius.sm).bg(theme.colors.surface)
+                    })
+                    .child(styled);
             };
             let links = talk.drawn_links();
             let place = links.borrow().len();
@@ -1226,6 +1490,23 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
                 .tooltip(link)
                 .child(styled)
         }))
+}
+
+/// `styled` set the way `emphasis` asks: heavier, slanted, or in the fixed
+/// pitch code is written in, a step smaller than the prose around it.
+fn emphasised(styled: pm_ui::Text, emphasis: Emphasis) -> pm_ui::Text {
+    let styled = match emphasis.strong {
+        true => styled.font_bold(),
+        false => styled,
+    };
+    let styled = match emphasis.italic {
+        true => styled.italic(),
+        false => styled,
+    };
+    match emphasis.code {
+        true => styled.text_base().font_mono(),
+        false => styled,
+    }
 }
 
 /// Which characters of the piece `length` characters long from `start` fall
@@ -1716,6 +1997,7 @@ fn piece(text: String, tone: Tone) -> Piece {
         tone,
         image: None,
         link: None,
+        emphasis: Emphasis::default(),
         wrapped: false,
     }
 }
@@ -1741,6 +2023,11 @@ fn tone(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
         Tone::Said => theme.colors.text,
         Tone::Spoken => theme.colors.text,
+        Tone::Heading(_) => theme.colors.text,
+        Tone::Code(Some(highlight)) => tint(highlight, theme),
+        Tone::Code(None) => theme.colors.text,
+        Tone::Table => theme.colors.text,
+        Tone::TableRule => theme.colors.text_subtle,
         Tone::Quiet => theme.colors.text_subtle,
         Tone::Tool => theme.colors.text_muted,
         Tone::Argument => theme.colors.text_subtle,
