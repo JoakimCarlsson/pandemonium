@@ -20,6 +20,7 @@ use std::time::Instant;
 
 use pm_core::{Changed, FileStatus, Head, Hunk, Line};
 use pm_text::{Buffer, Highlight};
+use pm_ui::Scrolled;
 
 use crate::input::Input;
 use crate::review::conflict::Conflict;
@@ -180,6 +181,8 @@ pub struct Review {
     /// scrolled is named by what the pane is showing: nothing for the review
     /// itself, the file for one of its diffs.
     scrolls: BTreeMap<Option<ChangeId>, usize>,
+    /// How far the sidebar's list of changes is scrolled.
+    list_scroll: Scrolled,
     /// When the reader last asked for the worktree to be read again, while
     /// the refresh control is still turning for it.
     refreshed: Option<Instant>,
@@ -211,6 +214,7 @@ impl Review {
             marked: BTreeSet::new(),
             gesture: None,
             scrolls: BTreeMap::new(),
+            list_scroll: Scrolled::default(),
             refreshed: None,
             reads: 0,
         }
@@ -382,6 +386,20 @@ impl Review {
     pub fn history_scroll(&self, all: bool, visible: usize) -> usize {
         self.active_repository()
             .map_or(0, |repository| repository.history_scroll(all, visible))
+    }
+
+    /// How far the sidebar's list of changes is scrolled, shared with the
+    /// area that draws it.
+    pub fn list_scroll(&self) -> Scrolled {
+        self.list_scroll.clone()
+    }
+
+    /// Scrolls the sidebar's list of changes by `delta` logical pixels,
+    /// positive being towards the top.
+    pub fn scroll_list(&self, delta: f32) {
+        let mut moved = self.list_scroll.get();
+        moved.by(delta);
+        self.list_scroll.set(moved);
     }
 
     /// Scrolls the selected history filter within the commits it has read.

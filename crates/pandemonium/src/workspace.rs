@@ -172,6 +172,8 @@ pub struct Worktree<'a> {
     pub history_refs_bounds: Bounds,
     /// Bounds of the Graph panel from the last frame.
     pub history_graph_bounds: Bounds,
+    /// Where the Source Control list of changes was drawn last frame.
+    pub changes_area: Bounds,
     /// Whether the Graph shows every history reference.
     pub history_all: bool,
     /// Height of the Source Control graph.
@@ -1102,6 +1104,7 @@ fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<
                     commit_bounds: files.commit_bounds.clone(),
                     history_refs_bounds: files.history_refs_bounds.clone(),
                     history_graph_bounds: files.history_graph_bounds.clone(),
+                    changes_area: files.changes_area.clone(),
                     history_all: files.history_all,
                     history_graph_height: files.history_graph_height,
                     history_graph_open: files.history_graph_open,

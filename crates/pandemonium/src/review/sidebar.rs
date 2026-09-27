@@ -15,8 +15,8 @@ use pm_core::{Changed, FileStatus};
 use pm_gfx::Rgba;
 use pm_ui::{
     Axis, Bounds, Div, IconName, IconSize, MenuItem, Styled, Theme, ToggleState, checkbox, h_flex,
-    icon, icon_button, measured, menu_entry, menu_separator, sash, text, turning_icon_button,
-    v_flex,
+    icon, icon_button, measured, menu_entry, menu_separator, sash, scroll_area, text,
+    turning_icon_button, v_flex,
 };
 
 use crate::message::Message;
@@ -38,6 +38,8 @@ pub struct SourceControlControls {
     pub history_refs_bounds: Bounds,
     /// Bounds of the Graph panel from the last frame.
     pub history_graph_bounds: Bounds,
+    /// Where the scrolled list of changes came out in the last frame.
+    pub changes_area: Bounds,
     /// Whether the graph includes every reference.
     pub history_all: bool,
     /// Height of the graph panel.
@@ -86,7 +88,14 @@ pub fn changes_sidebar(
             controls.changes_section_open,
         ))
         .when(controls.changes_section_open, |sidebar| {
-            sidebar.child(v_flex().flex_1().overflow_hidden().children(sections))
+            sidebar.child(
+                v_flex().w_full().flex_1().overflow_hidden().child(measured(
+                    controls.changes_area.clone(),
+                    scroll_area(review.list_scroll(), v_flex().w_full().children(sections))
+                        .w_full()
+                        .flex_1(),
+                )),
+            )
         })
         .when(!controls.changes_section_open, |sidebar| {
             sidebar.child(v_flex().flex_1())

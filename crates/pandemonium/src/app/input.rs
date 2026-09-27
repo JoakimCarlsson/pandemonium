@@ -908,6 +908,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.scroll_changes(delta) {
+            self.request_redraw();
+            return;
+        }
         if let Some(shell) = self.focused_shell() {
             let lines = self.wheel_lines(delta, text.terminal.line_height);
             shell.borrow_mut().scroll(lines);
