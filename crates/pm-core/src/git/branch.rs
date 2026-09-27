@@ -13,6 +13,8 @@ pub struct Branch {
     current: bool,
     /// Whether the name belongs to `refs/remotes` rather than `refs/heads`.
     remote: bool,
+    /// Whether the branch followed a remote branch that has since been deleted.
+    gone: bool,
     /// The latest commit's author, relative age and subject.
     detail: String,
 }
@@ -33,6 +35,12 @@ impl Branch {
         self.remote
     }
 
+    /// Whether the branch followed a remote branch that has since been
+    /// deleted, as a branch whose pull request was merged does.
+    pub fn is_gone(&self) -> bool {
+        self.gone
+    }
+
     /// The latest commit's author, relative age and subject.
     pub fn detail(&self) -> &str {
         &self.detail
@@ -42,15 +50,16 @@ impl Branch {
 /// Every local and remote-tracking branch of the repository at `root`,
 /// current branch first.
 ///
-/// A remote's symbolic `HEAD` is left out: it names the remote's default
-/// branch, which is listed under its own name already.
+/// A remote's symbolic `HEAD` is left out, and so is a remote-tracking
+/// branch a local branch follows: each names a branch that is listed under
+/// its own name already.
 pub fn branches(root: &Path) -> Vec<Branch> {
     let Some(output) = answer(
         root,
         [
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(HEAD)%00%(refname)%00%(refname:short)%00%(authorname)%00%(committerdate:relative)%00%(contents:subject)",
+            "--format=%(HEAD)%00%(refname)%00%(refname:short)%00%(upstream)%00%(upstream:track)%00%(authorname)%00%(committerdate:relative)%00%(contents:subject)",
             "refs/heads",
             "refs/remotes",
         ],
@@ -58,21 +67,34 @@ pub fn branches(root: &Path) -> Vec<Branch> {
         return Vec::new();
     };
 
-    let mut branches = output
+    let lines = output
         .lines()
-        .filter_map(|line| {
-            let mut fields = line.split('\0');
+        .map(|line| line.split('\0').collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let followed = lines
+        .iter()
+        .filter_map(|fields| fields.get(3).copied())
+        .filter(|upstream| !upstream.is_empty())
+        .collect::<Vec<_>>();
+    let mut branches = lines
+        .iter()
+        .filter_map(|fields| {
+            let mut fields = fields.iter().copied();
             let head = fields.next()?;
             let reference = fields.next()?;
             let name = fields.next()?;
+            let upstream = fields.next().unwrap_or_default();
+            let track = fields.next().unwrap_or_default();
             let author = fields.next().unwrap_or_default();
             let age = fields.next().unwrap_or_default();
             let subject = fields.next().unwrap_or_default();
             let symbolic = reference.starts_with("refs/remotes/") && reference.ends_with("/HEAD");
-            (!name.is_empty() && !symbolic).then(|| Branch {
+            let duplicate = followed.contains(&reference);
+            (!name.is_empty() && !symbolic && !duplicate).then(|| Branch {
                 name: name.to_owned(),
                 current: head == "*",
                 remote: reference.starts_with("refs/remotes/"),
+                gone: !upstream.is_empty() && track.contains("gone"),
                 detail: [author, age, subject]
                     .into_iter()
                     .filter(|part| !part.is_empty())
