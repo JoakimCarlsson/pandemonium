@@ -142,8 +142,17 @@ impl Input {
     ///
     /// `presses` is how many times the pointer has been pressed in the same
     /// place, so that the box selects what every other box selects: a word on
-    /// the second press, the line on the third.
-    pub fn point(&mut self, phase: ResizePhase, anchor: Position, head: Position, presses: usize) {
+    /// the second press, the line on the third. `extend` keeps the selection's
+    /// anchor and moves its head to where the pointer is, which is what a
+    /// click with shift held asks for.
+    pub fn point(
+        &mut self,
+        phase: ResizePhase,
+        anchor: Position,
+        head: Position,
+        presses: usize,
+        extend: bool,
+    ) {
         let still = anchor == head;
         if still && phase != ResizePhase::Started {
             return;
@@ -151,6 +160,10 @@ impl Input {
 
         self.edit(|buffer| {
             buffer.collapse_cursors();
+            if extend {
+                buffer.place(head, true);
+                return;
+            }
             match (still, presses) {
                 (true, 2) => buffer.select_word(head),
                 (true, count) if count >= 3 => buffer.select_line(head),

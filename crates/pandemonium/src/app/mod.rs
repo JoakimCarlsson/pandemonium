@@ -390,6 +390,12 @@ pub struct App {
     menu: Option<TabMenu>,
     /// The last press in the editor pane, for selecting a word.
     text_clicks: Clicks<Position>,
+    /// Whether the pointer gesture over text grows the selection already there.
+    ///
+    /// Decided when the press lands and kept for the drag that follows, so
+    /// letting go of shift halfway through does not drop the anchor the
+    /// press chose.
+    text_extends: bool,
     /// The last press on the terminal's grid, for telling a double one apart.
     screen_clicks: Clicks<pm_vt::Place>,
     /// What the drag over the terminal's grid grows its selection by.
@@ -640,6 +646,7 @@ impl App {
             closing: None,
             blamed: Arc::new(Mutex::new(Vec::new())),
             text_clicks: Clicks::default(),
+            text_extends: false,
             screen_clicks: Clicks::default(),
             screen_unit: pm_vt::Unit::Cell,
             agent_clicks: Clicks::default(),
@@ -730,8 +737,10 @@ impl App {
     ///
     /// A second press in the same place takes the word under it and a third
     /// takes the line, which are the gestures the element tree cannot tell
-    /// the window about on its own. Alt puts another cursor down instead of
-    /// moving the one there is, alt with shift draws a box, and control
+    /// the window about on its own. Shift keeps the selection's anchor and
+    /// moves its head to the pointer, so the text between the cursor and the
+    /// click is what ends up selected. Alt puts another cursor down instead
+    /// of moving the one there is, alt with shift draws a box, and control
     /// follows the name under the pointer to where it is defined.
     ///
     /// Only the press begins a gesture. The release that ends one says the
@@ -750,6 +759,9 @@ impl App {
 
         let pressed = phase == ResizePhase::Started;
         let still = anchor == head;
+        if pressed {
+            self.text_extends = self.extends_text();
+        }
 
         if pressed && still && self.modifiers.control_key() {
             return self.follow_link(head);
@@ -762,6 +774,16 @@ impl App {
             self.text_clicks.clear();
             return self.edit_active(|buffer| {
                 buffer.add_cursor(pm_text::Selection::at(head));
+            });
+        }
+        if self.text_extends {
+            if still && !pressed {
+                return;
+            }
+            self.text_clicks.clear();
+            return self.edit_active(|buffer| {
+                buffer.collapse_cursors();
+                buffer.place(head, true);
             });
         }
         if still && !pressed {
@@ -786,6 +808,14 @@ impl App {
                 }
             }
         });
+    }
+
+    /// Whether a press with the modifiers held grows the selection already there.
+    ///
+    /// Shift alone does. Alt with shift draws a box and control follows a
+    /// name, and neither of those is a selection growing from the cursor.
+    fn extends_text(&self) -> bool {
+        self.modifiers.shift_key() && !self.modifiers.alt_key() && !self.modifiers.control_key()
     }
 
     /// Follows the name under the pointer to where it is defined.
@@ -1899,7 +1929,8 @@ impl App {
     /// A press in a box is also what gives it the keyboard, so this is the
     /// whole of how one is written in: there is nothing to focus first. The
     /// presses are counted the way they are in the editor, so a box selects a
-    /// word on the second and its line on the third.
+    /// word on the second and its line on the third. Shift keeps the
+    /// selection's anchor and moves its head to the pointer.
     pub(super) fn point_in(
         &mut self,
         writing: Writing,
@@ -1910,18 +1941,22 @@ impl App {
         self.write_in(writing);
         let pressed = phase == ResizePhase::Started;
         let still = anchor == head;
+        if pressed {
+            self.text_extends = self.extends_text();
+        }
         if still && !pressed {
             return;
         }
-        let presses = match still {
-            true => self.text_clicks.press(anchor),
-            false => {
+        let extend = self.text_extends;
+        let presses = match (still, extend) {
+            (true, false) => self.text_clicks.press(anchor),
+            _ => {
                 self.text_clicks.clear();
                 0
             }
         };
         if let Some(input) = self.written_in() {
-            input.point(phase, anchor, head, presses);
+            input.point(phase, anchor, head, presses, extend);
         }
     }
 
