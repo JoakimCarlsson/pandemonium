@@ -55,7 +55,7 @@ impl Source {
 /// that is missing is fetched by [`RUNNER`] the first time it is started,
 /// which is how most of these are meant to be run. The few that ship with an
 /// application of their own are named by where they are had from instead.
-pub const AGENTS: [Agent; 5] = [
+pub const AGENTS: [Agent; 6] = [
     Agent {
         id: "claude-code",
         name: "Claude Code",
@@ -90,6 +90,13 @@ pub const AGENTS: [Agent; 5] = [
         program: "agent",
         arguments: &["acp"],
         source: Source::Installer("cursor.com"),
+    },
+    Agent {
+        id: "grok",
+        name: "Grok Build",
+        program: "grok",
+        arguments: &["agent", "stdio"],
+        source: Source::Installer("x.ai"),
     },
 ];
 
@@ -142,11 +149,13 @@ impl Agent {
 ///
 /// A window started from a desktop session inherits the path that session
 /// was given, which is not the one a shell has: npm, bun and cargo each put
-/// their programs somewhere that only a shell profile ever hears about. An
+/// their programs somewhere that only a shell profile ever hears about, and
+/// an agent with an installer of its own may keep a directory of its own. An
 /// agent the reader has installed is the one the editor runs, whether or not
 /// the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 6] = [
+const TOOL_DIRECTORIES: [&str; 7] = [
     ".local/bin",
+    ".grok/bin",
     ".bun/bin",
     ".deno/bin",
     ".npm-global/bin",
