@@ -114,6 +114,19 @@ impl Buffer {
         });
     }
 
+    /// Selects the text of the line `position` falls on, and not its break.
+    ///
+    /// A triple click takes the line it lands on and leaves the cursor at
+    /// its end: reaching into the line below would put the cursor on a line
+    /// nobody clicked, and on an empty line select nothing but the break.
+    pub fn select_line_text(&mut self, position: Position) {
+        let line = position.line.min(self.line_count().saturating_sub(1));
+        self.set_selection(Selection {
+            anchor: Position::new(line, 0),
+            head: Position::new(line, self.line_len(line)),
+        });
+    }
+
     /// Selects everything the buffer holds.
     pub fn select_all(&mut self) {
         self.collapse_cursors();
