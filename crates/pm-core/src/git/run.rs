@@ -102,6 +102,33 @@ where
     }
 }
 
+/// Runs git in `root` with `arguments`, feeding it `input` while it is
+/// still answering, and answers everything it wrote.
+///
+/// This is for a command that answers as it reads, such as
+/// `git cat-file --batch`: its answers can fill the pipe back long before
+/// the questions have all gone in, so the questions are written from a
+/// thread of their own rather than all at once ahead of the reading.
+pub fn streamed<I, S>(root: &Path, arguments: I, input: String) -> Option<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut child = Command::new("git")
+        .args(arguments)
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+    let output = child.wait_with_output().ok()?;
+    writer.join().ok()?.ok()?;
+    output.status.success().then_some(output.stdout)
+}
+
 /// The path git is given for `path`, which is where it sits under `root`.
 ///
 /// Git is run in the worktree, so a path is named from the worktree down;

@@ -7,10 +7,10 @@
 //! open document once a language server has said what its names are, so a
 //! change reads the way the same file does in an editor pane.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
-use pm_core::{Hunk, Line, LineKind};
+use pm_core::{Hunk, Line, LineKind, Revision};
 use pm_text::{Buffer, Highlight};
 
 use crate::review::store::Patch;
@@ -44,12 +44,12 @@ impl Version {
         }
     }
 
-    /// The text this version holds for `path`, in the worktree at `root`.
-    fn read(self, root: &Path, path: &Path) -> Option<String> {
+    /// The revision git holds this version in, which the worktree is not.
+    fn revision(self) -> Option<Revision> {
         match self {
-            Self::Committed => pm_core::committed(root, path),
-            Self::Indexed => pm_core::baseline(root, path),
-            Self::Worktree => std::fs::read_to_string(path).ok(),
+            Self::Committed => Some(Revision::Head),
+            Self::Indexed => Some(Revision::Index),
+            Self::Worktree => None,
         }
     }
 }
@@ -63,18 +63,51 @@ pub struct Shading {
 }
 
 impl Shading {
-    /// Reads `path` in every version `patch` shows a line of, and colours
-    /// those lines.
-    pub fn of(root: &Path, path: &Path, patch: &Patch) -> Self {
-        let mut shading = Self::default();
-        for (version, shown) in shown(patch) {
-            let Some(text) = version.read(root, path) else {
-                continue;
-            };
-            let mut buffer = Buffer::holding(path, &text);
-            shading.paint(version, &shown, &mut buffer);
-        }
-        shading
+    /// Reads every file of `patches` in every version its patch shows a
+    /// line of, in the worktree at `root`, and colours those lines.
+    ///
+    /// What the commit and the index hold is asked of git for every file at
+    /// once, because a subprocess per file and version is what made staging
+    /// two thousand files leave the review unread for a quarter of a minute.
+    pub fn all(root: &Path, patches: &BTreeMap<PathBuf, Patch>) -> BTreeMap<PathBuf, Self> {
+        let shown = patches
+            .iter()
+            .map(|(path, patch)| (path.as_path(), shown(patch)))
+            .collect::<Vec<_>>();
+        let wanted = shown
+            .iter()
+            .flat_map(|(path, versions)| {
+                versions
+                    .keys()
+                    .filter_map(|version| version.revision())
+                    .map(move |revision| (*path, revision))
+            })
+            .collect::<Vec<_>>();
+        let mut held = wanted
+            .iter()
+            .copied()
+            .zip(pm_core::contents(root, &wanted))
+            .filter_map(|(asked, text)| Some((asked, text?)))
+            .collect::<HashMap<_, _>>();
+
+        shown
+            .into_iter()
+            .map(|(path, versions)| {
+                let mut shading = Self::default();
+                for (version, lines) in versions {
+                    let text = match version.revision() {
+                        Some(revision) => held.remove(&(path, revision)),
+                        None => std::fs::read_to_string(path).ok(),
+                    };
+                    let Some(text) = text else {
+                        continue;
+                    };
+                    let mut buffer = Buffer::holding(path, &text);
+                    shading.paint(version, &lines, &mut buffer);
+                }
+                (path.to_path_buf(), shading)
+            })
+            .collect()
     }
 
     /// Colours the worktree's lines of `patch` again from `buffer`, what a

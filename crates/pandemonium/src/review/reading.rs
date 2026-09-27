@@ -84,13 +84,7 @@ impl Reading {
                 Some((changed.path.clone(), conflict::conflicts(&source)))
             })
             .collect();
-        let shades = patches
-            .iter()
-            .map(|(path, patch)| {
-                let holding = holding(&roots, path).unwrap_or(root);
-                (path.clone(), Shading::of(holding, path, patch))
-            })
-            .collect();
+        let shades = Shading::all(root, &patches);
 
         Self {
             reads,
@@ -129,13 +123,4 @@ pub(super) fn gather<'a>(
                 .map(move |changed| (owner, changed.clone()))
         })
         .collect()
-}
-
-/// The root of the innermost of `roots` that `path` is in.
-pub(super) fn holding<'a>(roots: &[&'a Path], path: &Path) -> Option<&'a Path> {
-    roots
-        .iter()
-        .rev()
-        .find(|root| path.starts_with(root))
-        .copied()
 }
