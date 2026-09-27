@@ -17,6 +17,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -132,8 +133,11 @@ pub struct Talk {
     /// Why the agent could not list saved sessions, where it failed.
     history_error: Option<String>,
     /// The worktree's files as a mention offers them, relative to its root,
-    /// listed when a mention starts and kept until the next one does.
-    mentionable: RefCell<Option<Vec<String>>>,
+    /// listed away from the window when a mention starts and kept until the
+    /// next one does.
+    mentionable: Arc<Mutex<Mentionable>>,
+    /// How the listing of those files wakes the window once it is done.
+    notify: Notify,
     /// Which of the commands a slash narrows to is selected.
     chosen: usize,
     /// Whether the reader has waved that list away for what is typed now.
@@ -441,20 +445,13 @@ impl Talk {
     /// The worktree's files `named` narrows a mention to, those whose name
     /// starts with it first and shorter paths before longer ones.
     fn mentions(&self, named: &str) -> Vec<Offered> {
-        let root = self.root().to_path_buf();
-        let mut listed = self.mentionable.borrow_mut();
-        let files = listed.get_or_insert_with(|| {
-            pm_core::walk(&root)
-                .into_iter()
-                .filter_map(|path| {
-                    let relative = path.strip_prefix(&root).ok()?;
-                    Some(relative.to_string_lossy().replace('\\', "/"))
-                })
-                .collect()
-        });
+        let Some(files) = self.mentionable_files() else {
+            return Vec::new();
+        };
         let mut found = files
             .iter()
-            .filter(|file| file.to_lowercase().contains(named))
+            .filter(|(_, lowered)| lowered.contains(named))
+            .map(|(file, _)| file)
             .collect::<Vec<_>>();
         found.sort_by_key(|file| {
             let name = file.rsplit('/').next().unwrap_or(file).to_lowercase();
@@ -529,6 +526,44 @@ impl Talk {
         true
     }
 
+    /// The worktree's files a mention offers, each beside its lowercase
+    /// form, once they are listed; the first asking starts the listing.
+    fn mentionable_files(&self) -> Option<Arc<[(String, String)]>> {
+        let mut mentionable = self.mentionable.lock().ok()?;
+        if mentionable.files.is_none() && !mentionable.listing {
+            mentionable.listing = true;
+            let root = self.root().to_path_buf();
+            let shared = self.mentionable.clone();
+            let notify = self.notify.clone();
+            std::thread::spawn(move || {
+                let files = pm_core::walk(&root)
+                    .into_iter()
+                    .filter_map(|path| {
+                        let relative = path.strip_prefix(&root).ok()?;
+                        let file = relative.to_string_lossy().replace('\\', "/");
+                        let lowered = file.to_lowercase();
+                        Some((file, lowered))
+                    })
+                    .collect();
+                if let Ok(mut mentionable) = shared.lock() {
+                    mentionable.files = Some(files);
+                    mentionable.listing = false;
+                    mentionable.fresh = true;
+                }
+                notify();
+            });
+        }
+        mentionable.files.clone()
+    }
+
+    /// Whether the files a mention offers have been listed since this was
+    /// last asked.
+    fn take_listed(&self) -> bool {
+        self.mentionable
+            .lock()
+            .is_ok_and(|mut mentionable| std::mem::take(&mut mentionable.fresh))
+    }
+
     /// Starts the selection again, for a prompt that has been typed into.
     ///
     /// A mention just begun lists the worktree afresh, so a file the agent
@@ -536,8 +571,10 @@ impl Talk {
     pub fn retyped(&mut self) {
         self.chosen = 0;
         self.dismissed = false;
-        if self.naming() == Some((MENTION, String::new())) {
-            self.mentionable.borrow_mut().take();
+        if self.naming() == Some((MENTION, String::new()))
+            && let Ok(mut mentionable) = self.mentionable.lock()
+        {
+            mentionable.files = None;
         }
     }
 
@@ -985,6 +1022,17 @@ impl Talk {
     }
 }
 
+/// The files a mention offers, as far as they have been listed.
+#[derive(Default)]
+struct Mentionable {
+    /// The files, relative to the worktree, each beside its lowercase form.
+    files: Option<Arc<[(String, String)]>>,
+    /// Whether they are being listed now.
+    listing: bool,
+    /// Whether a listing has come back that the window has not drawn yet.
+    fresh: bool,
+}
+
 /// An image off the clipboard, made ready to attach away from the window.
 pub struct Pasted {
     /// What goes with the prompt.
@@ -1213,9 +1261,9 @@ impl Talks {
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
         let started = match opening {
-            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify),
-            Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify),
-            Opening::New => Session::start(agent, root, env, notify),
+            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify.clone()),
+            Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
+            Opening::New => Session::start(agent, root, env, notify.clone()),
         };
         let conversation = match started {
             Ok(conversation) => conversation,
@@ -1253,7 +1301,8 @@ impl Talks {
                 history: Vec::new(),
                 listing: false,
                 history_error: None,
-                mentionable: RefCell::new(None),
+                mentionable: Arc::default(),
+                notify: notify.clone(),
                 chosen: 0,
                 dismissed: false,
                 ready: false,
@@ -1405,6 +1454,7 @@ impl Talks {
     pub fn pump(&mut self) -> bool {
         let mut changed = false;
         for talk in self.talks.values_mut() {
+            changed |= talk.take_listed();
             for event in talk.conversation.drain() {
                 if let Event::Requested(ticket, request) = event {
                     self.requests.push((talk.id, ticket, request));
