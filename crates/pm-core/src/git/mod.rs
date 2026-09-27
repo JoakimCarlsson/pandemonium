@@ -32,7 +32,7 @@ pub use branch::{
 pub use changes::{Change, ChangeKind, changes};
 pub use clone::{clone, named};
 pub use commit::{Commit, commit, history, last_message};
-pub use diff::{Hunk, Line, LineKind, Side, diff, diffs};
+pub use diff::{Hunk, Line, LineKind, Side, diff, diffs, untracked};
 pub use graph::{Edge, Half, Lanes};
 pub use head::Head;
 pub use index::{

@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::num::NonZero;
 use std::path::{Path, PathBuf};
 
 use crate::git::run::{holding, within, written};
@@ -175,6 +176,38 @@ pub fn diffs(root: &Path, side: Side) -> HashMap<PathBuf, Vec<Hunk>> {
         files.insert(root.join(path), read(patch));
     }
     files
+}
+
+/// How each of `paths`, files git has never been told about, reads as a
+/// whole new file, in the repository holding it at or below `root`,
+/// answered in the order they were given.
+///
+/// Git compares an untracked file against nothing one file per call, so
+/// the calls are spread over a thread per core rather than made one after
+/// another: a folder of two thousand new files is otherwise two thousand
+/// subprocesses in a row.
+pub fn untracked(root: &Path, paths: &[&Path]) -> Vec<Vec<Hunk>> {
+    let threads = std::thread::available_parallelism().map_or(1, NonZero::get);
+    let share = paths.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        paths
+            .chunks(share)
+            .map(|chunk| {
+                let compared = scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|path| diff(root, path, Side::Untracked))
+                        .collect::<Vec<_>>()
+                });
+                (chunk.len(), compared)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .flat_map(|(count, compared)| {
+                compared.join().unwrap_or_else(|_| vec![Vec::new(); count])
+            })
+            .collect()
+    })
 }
 
 /// Each file of a patch of several, as the path it is to and its own patch.

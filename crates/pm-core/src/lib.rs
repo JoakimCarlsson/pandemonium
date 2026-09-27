@@ -15,7 +15,7 @@ pub use git::{
     add_worktree, baseline, blame, branches, changes, clone, commit, committed, contents,
     create_branch, diff, diffs, discard, discard_all, fetch, fetch_from, force_push, history,
     last_message, named, operation, pull, push_branch, push_to, remotes, remove_worktree, since,
-    stage, switch_branch, sync, unstage, worktrees, write_index,
+    stage, switch_branch, sync, unstage, untracked, worktrees, write_index,
 };
 pub use project::{OpenError, Project, ProjectId, Projects, Repository, repositories};
 pub use scope::Scope;
