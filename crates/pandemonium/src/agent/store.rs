@@ -1001,8 +1001,7 @@ fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
         return Vec::new();
     }
     let mut folders = Vec::new();
-    if let Some(home) = env::var_os("HOME") {
-        let home = std::path::PathBuf::from(home);
+    if let Some(home) = env::home_dir() {
         folders.push(home.join(".codex/skills"));
         folders.push(home.join(".agents/skills"));
     }
