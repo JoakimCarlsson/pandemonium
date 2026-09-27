@@ -21,6 +21,8 @@ pub struct Div<M> {
     on_secondary_click: Option<M>,
     /// What dragging it sends, when it is something that can be carried.
     on_drag: Option<Arc<dyn Fn(ResizeEvent) -> M>>,
+    /// The shape the pointer takes over it while it can be dragged.
+    drag_cursor: PointerCursor,
     /// What this element tells the reader while it is hovered.
     tooltip: Option<String>,
 }
@@ -33,6 +35,7 @@ pub fn div<M>() -> Div<M> {
         on_click: None,
         on_secondary_click: None,
         on_drag: None,
+        drag_cursor: PointerCursor::Pointer,
         tooltip: None,
     }
 }
@@ -74,6 +77,14 @@ impl<M> Div<M> {
     /// tapped rather than carried.
     pub fn on_drag(mut self, on_drag: impl Fn(ResizeEvent) -> M + 'static) -> Self {
         self.on_drag = Some(Arc::new(on_drag));
+        self
+    }
+
+    /// Returns this container showing `cursor` while the pointer is over it,
+    /// where it can be dragged: a hand for a thing carried, a beam for text
+    /// picked out.
+    pub fn drag_cursor(mut self, cursor: PointerCursor) -> Self {
+        self.drag_cursor = cursor;
         self
     }
 
@@ -281,7 +292,7 @@ impl<M: Clone> Element<M> for Div<M> {
             self.on_secondary_click.clone(),
         ) {
             (Some(on_drag), _, on_secondary) => {
-                cx.draggable(bounds, PointerCursor::Pointer, on_drag, on_secondary)
+                cx.draggable(bounds, self.drag_cursor, on_drag, on_secondary)
             }
             (None, None, None) => Interaction::default(),
             (None, on_click, on_secondary) => cx.clickable(bounds, on_click, on_secondary),

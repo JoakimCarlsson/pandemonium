@@ -365,6 +365,10 @@ pub struct App {
     screen_clicks: Clicks<pm_vt::Place>,
     /// What the drag over the terminal's grid grows its selection by.
     screen_unit: pm_vt::Unit,
+    /// The last press on an agent's transcript, for selecting a word.
+    agent_clicks: Clicks<crate::agent::Spot>,
+    /// Whether the drag over an agent's transcript grows by whole words.
+    agent_words: bool,
     /// The last press on a row of the file tree, for keeping a file open.
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
@@ -530,6 +534,8 @@ impl App {
             text_clicks: Clicks::default(),
             screen_clicks: Clicks::default(),
             screen_unit: pm_vt::Unit::Cell,
+            agent_clicks: Clicks::default(),
+            agent_words: false,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
             menu: None,

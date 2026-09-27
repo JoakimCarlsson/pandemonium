@@ -109,6 +109,34 @@ impl ShapedRun {
     pub fn size(&self) -> Size {
         Size::new(self.width, self.height)
     }
+
+    /// How far into the run a caret sits before each character of `text`,
+    /// the text this run was shaped from, and after the last one.
+    ///
+    /// A character drawn as part of a glyph it shares with the ones after it,
+    /// a ligature or a mark on a letter, sits where that glyph begins.
+    pub fn carets(&self, text: &str) -> Vec<f32> {
+        let mut starts = self
+            .glyphs
+            .iter()
+            .map(|glyph| (glyph.start, glyph.end, glyph.x))
+            .collect::<Vec<_>>();
+        starts.sort_by_key(|(start, ..)| *start);
+        let mut carets = Vec::with_capacity(text.len() + 1);
+        let mut glyph = starts.iter().peekable();
+        let mut last = 0.0;
+        for (byte, _) in text.char_indices() {
+            while glyph.next_if(|(_, end, _)| *end <= byte).is_some() {}
+            if let Some((start, _, x)) = glyph.peek()
+                && *start <= byte
+            {
+                last = *x;
+            }
+            carets.push(last);
+        }
+        carets.push(self.width);
+        carets
+    }
 }
 
 /// Identifies a shaped run in the cache.

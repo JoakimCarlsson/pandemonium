@@ -6,6 +6,7 @@
 //! and no screen reaches into the window behind its back.
 
 use pm_core::{EntryId, ProjectId, SessionId};
+use pm_gfx::Point;
 use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
@@ -440,6 +441,9 @@ pub enum Message {
     AnswerAgent(TalkId, u64, usize),
     /// Log this session's agent in by the way it offered in this place.
     LogInAgent(TalkId, usize),
+    /// Pick out this session's transcript from where a press landed to where
+    /// the pointer has been dragged since.
+    SelectAgentText(TalkId, ResizePhase, Point, Point),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
     /// Follow the link this session's pane drew in this place: open the

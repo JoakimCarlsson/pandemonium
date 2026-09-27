@@ -1,8 +1,11 @@
 //! The text element: one shaped, unwrapped run in one colour.
 
+use std::ops::Range;
+
 use pm_gfx::{Point, Quad, Rect, Rgba, Size};
 
 use crate::element::{Element, LayoutContext, PaintContext};
+use crate::placed::{Placed, Placements};
 use crate::style::{Length, Style, Styled};
 use crate::theme::{Font, TextSize};
 
@@ -16,6 +19,10 @@ pub struct Text {
     color: Option<Rgba>,
     /// How the run is sized and padded.
     style: Style,
+    /// The characters washed in the selection colour behind the glyphs.
+    selected: Option<Range<usize>>,
+    /// Where the run writes down its carets as it paints, and under what key.
+    placed: Option<(Placements, usize)>,
 }
 
 /// A run of `content` at the base size in the theme's body colour.
@@ -25,6 +32,8 @@ pub fn text(content: impl Into<String>) -> Text {
         font: Font::default(),
         color: None,
         style: Style::default(),
+        selected: None,
+        placed: None,
     }
 }
 
@@ -107,6 +116,19 @@ impl Text {
         self
     }
 
+    /// Returns this run with the characters in `characters` shown selected.
+    pub fn selected(mut self, characters: Range<usize>) -> Self {
+        self.selected = Some(characters);
+        self
+    }
+
+    /// Returns this run writing down where its characters land in
+    /// `placements`, under `key`, as it paints.
+    pub fn placed(mut self, placements: Placements, key: usize) -> Self {
+        self.placed = Some((placements, key));
+        self
+    }
+
     /// Returns this run with `pixels` between baselines.
     pub fn leading(mut self, pixels: f32) -> Self {
         self.font = self.font.leading(pixels);
@@ -145,7 +167,7 @@ impl<M> Element<M> for Text {
         Size::new(width, height)
     }
 
-    /// Paints the background if there is one, then the glyphs.
+    /// Paints the background if there is one, the selection, then the glyphs.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         cx.quad(
             Quad::filled(bounds, self.style.background)
@@ -160,6 +182,51 @@ impl<M> Element<M> for Text {
             bounds.left() + self.style.padding.left,
             bounds.top() + self.style.padding.top,
         );
+        if self.selected.is_some() || self.placed.is_some() {
+            let carets = run
+                .carets(&self.content)
+                .into_iter()
+                .map(|caret| origin.x + caret)
+                .collect::<Vec<_>>();
+            self.paint_selection(&carets, origin.y, run.height, cx);
+            if let Some((placements, key)) = &self.placed {
+                placements.borrow_mut().push(Placed {
+                    key: *key,
+                    bounds: Rect::from_xywh(origin.x, origin.y, run.width, run.height),
+                    carets,
+                });
+            }
+        }
         cx.text(origin, run, color);
+    }
+}
+
+impl Text {
+    /// Washes the selected characters, whose carets are `carets`, over a
+    /// line box `height` tall from `top`.
+    fn paint_selection<M>(
+        &self,
+        carets: &[f32],
+        top: f32,
+        height: f32,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let Some(selected) = &self.selected else {
+            return;
+        };
+        let last = carets.len().saturating_sub(1);
+        let (start, end) = (
+            carets[selected.start.min(last)],
+            carets[selected.end.min(last)],
+        );
+        if end <= start {
+            return;
+        }
+        let theme = cx.theme();
+        let color = theme.colors.selection.alpha(theme.emphasis.selection);
+        cx.quad(Quad::filled(
+            Rect::from_xywh(start, top, end - start, height),
+            color,
+        ));
     }
 }

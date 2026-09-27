@@ -11,6 +11,7 @@
 //! A pane is as wide as the window made it and the text is wrapped to fit, so
 //! the width the last frame came out at is what this one is built against.
 
+use std::ops::Range;
 use std::path::Path;
 
 use pm_acp::{
@@ -18,11 +19,11 @@ use pm_acp::{
 };
 use pm_gfx::{Image, Rgba};
 use pm_ui::{
-    Div, IconName, IconSize, Scroll, Styled, Theme, button, h_flex, icon, measured, picture, rule,
-    scroll_area, space, text, v_flex,
+    Div, IconName, IconSize, PointerCursor, Scroll, Styled, Theme, button, h_flex, icon, measured,
+    picture, rule, scroll_area, space, text, v_flex,
 };
 
-use crate::agent::{Block, Standing, Talk, TalkId};
+use crate::agent::{Block, Spot, Standing, Talk, TalkId};
 use crate::input::input_view;
 use crate::markdown::blocks::{self, Block as MarkdownBlock, Run};
 use crate::message::Message;
@@ -99,6 +100,9 @@ struct Piece {
     image: Option<Image>,
     /// Where it leads when it is pressed, when it is part of a link.
     link: Option<String>,
+    /// Whether it only indents a line carried on from the row above, which
+    /// is a space between words rather than a line of its own once copied.
+    wrapped: bool,
 }
 
 /// A run of a passage, and where it leads when it is part of a link.
@@ -124,8 +128,10 @@ pub fn agent_pane(
     solid: bool,
     width: f32,
 ) -> Div<Message> {
+    talk.drawn_width().set(width);
     let columns = columns(theme, width);
     let (drawn, offset) = drawn(theme, talk, columns);
+    let session = talk.id();
 
     v_flex()
         .w_full()
@@ -138,7 +144,15 @@ pub fn agent_pane(
             talk.view(),
             scroll_area(
                 std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
-                v_flex().w_full().px(1.75).py(INSET).children(drawn),
+                v_flex()
+                    .w_full()
+                    .px(1.75)
+                    .py(INSET)
+                    .drag_cursor(PointerCursor::Text)
+                    .on_drag(move |event| {
+                        Message::SelectAgentText(session, event.phase, event.start, event.current)
+                    })
+                    .children(drawn),
             )
             .w_full()
             .flex_1(),
@@ -246,15 +260,22 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     let offset = talk.scroll() - top;
     let count = covering(&heights[first..], offset + talk.view().get().size.height);
     talk.drawn_links().borrow_mut().clear();
+    talk.drawn_text().borrow_mut().clear();
+    talk.drawn_spots().borrow_mut().clear();
 
-    let mut visible = rows.into_iter().skip(first).take(count).peekable();
+    let mut visible = rows
+        .into_iter()
+        .enumerate()
+        .skip(first)
+        .take(count)
+        .peekable();
     let mut drawn = Vec::new();
-    while let Some(line) = visible.next() {
+    while let Some((at, line)) = visible.next() {
         if is_said(&line) {
-            let mut message = vec![self::row(theme, line, talk)];
-            while visible.peek().is_some_and(is_said) {
-                if let Some(next) = visible.next() {
-                    message.push(self::row(theme, next, talk));
+            let mut message = vec![self::row(theme, line, at, talk)];
+            while visible.peek().is_some_and(|(_, next)| is_said(next)) {
+                if let Some((at, next)) = visible.next() {
+                    message.push(self::row(theme, next, at, talk));
                 }
             }
             drawn.push(
@@ -267,7 +288,7 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 ),
             );
         } else {
-            drawn.push(self::row(theme, line, talk));
+            drawn.push(self::row(theme, line, at, talk));
         }
     }
     (drawn, offset)
@@ -598,20 +619,21 @@ fn span_rows(spans: Vec<Span>, mark: &str, tone: Tone, columns: usize) -> Vec<Ro
         .map(|(at, line)| {
             let lead = match at {
                 0 => piece(mark.to_owned(), quieten(tone)),
-                _ => piece(
-                    if tone == Tone::Said { "" } else { WRAPPED }.to_owned(),
-                    tone,
-                ),
+                _ => Piece {
+                    wrapped: true,
+                    ..piece(
+                        if tone == Tone::Said { "" } else { WRAPPED }.to_owned(),
+                        tone,
+                    )
+                },
             };
             let mut row = vec![lead];
             if line.is_empty() {
                 row.push(piece(String::new(), tone));
             }
             row.extend(line.into_iter().map(|(text, link)| Piece {
-                text,
-                tone,
-                image: None,
                 link,
+                ..piece(text, tone)
             }));
             row
         })
@@ -901,15 +923,18 @@ fn step_row(step: &Step) -> Row {
     ]
 }
 
-/// Builds one row out of its pieces.
+/// Builds one row out of its pieces, the row `at` of the conversation.
 ///
 /// The row is held to the height [`row_height`] gives it, so that where the
 /// pane scrolls to and where it draws the rows are the same measurement. A
 /// piece that is part of a link is drawn in the link colour and follows the
 /// link when pressed; where it leads is written down in `talk` as it is
-/// drawn, and the press names it by its place there.
-fn row(theme: &Theme, row: Row, talk: &Talk) -> Div<Message> {
+/// drawn, and the press names it by its place there. Every piece of text
+/// writes down where it begins in the conversation and where its characters
+/// land, so a drag over it can be read back as the text it passed over.
+fn row(theme: &Theme, row: Row, at: usize, talk: &Talk) -> Div<Message> {
     let session = talk.id();
+    let selection = talk.selection();
     let height = row_height(theme, &row);
     if row.is_empty() {
         return h_flex().h_px(height);
@@ -919,6 +944,7 @@ fn row(theme: &Theme, row: Row, talk: &Talk) -> Div<Message> {
         _ => None,
     });
     let detail = action.is_some();
+    let mut column = 0;
     h_flex()
         .h_px(if detail { height + space(0.75) } else { height })
         .items_center()
@@ -934,7 +960,17 @@ fn row(theme: &Theme, row: Row, talk: &Talk) -> Div<Message> {
                 Some(_) => theme.colors.link,
                 None => tone(theme, piece.tone),
             };
-            let styled = text(piece.text).color(color);
+            let start = Spot { row: at, column };
+            let length = piece.text.chars().count();
+            column += length;
+            let spots = talk.drawn_spots();
+            let key = spots.borrow().len();
+            spots.borrow_mut().push(start);
+            let styled = text(piece.text).color(color).placed(talk.drawn_text(), key);
+            let styled = match selection.and_then(|chosen| picked(chosen, start, length)) {
+                Some(characters) => styled.selected(characters),
+                None => styled,
+            };
             let styled = match piece.tone {
                 Tone::Said | Tone::Spoken => styled.text_lg(),
                 Tone::Argument => styled.text_sm().font_mono(),
@@ -953,6 +989,116 @@ fn row(theme: &Theme, row: Row, talk: &Talk) -> Div<Message> {
                 .tooltip(link)
                 .child(styled)
         }))
+}
+
+/// Which characters of the piece `length` characters long from `start` fall
+/// between the ends of `selection`, when any do.
+fn picked(selection: (Spot, Spot), start: Spot, length: usize) -> Option<Range<usize>> {
+    let (first, last) = selection;
+    if start.row < first.row || start.row > last.row {
+        return None;
+    }
+    let from = match start.row == first.row {
+        true => first.column.saturating_sub(start.column),
+        false => 0,
+    };
+    let to = match start.row == last.row {
+        true => last.column.saturating_sub(start.column).min(length),
+        false => length,
+    };
+    (from < to).then_some(from..to)
+}
+
+/// The text the reader has picked out of `talk`, as the pane last wrapped
+/// it, when they have picked out any.
+///
+/// A row carried on from the one above is joined back to it with the space
+/// it was broken at, so a paragraph copies as the paragraph it was written
+/// as and not as the lines the pane happened to break it into.
+pub fn selected_text(theme: &Theme, talk: &Talk) -> Option<String> {
+    let (first, last) = talk.selection()?;
+    let rows = rows(talk, columns(theme, talk.drawn_width().get()));
+    let mut copied = String::new();
+    for (at, row) in rows.iter().enumerate().take(last.row + 1).skip(first.row) {
+        let wrapped = row.first().is_some_and(|piece| piece.wrapped);
+        let lead = match wrapped {
+            true => row[0].text.chars().count(),
+            false => 0,
+        };
+        let from = match at == first.row {
+            true => first.column.max(lead),
+            false => lead,
+        };
+        let line = row
+            .iter()
+            .map(|piece| piece.text.as_str())
+            .collect::<String>();
+        let to = match at == last.row {
+            true => last.column,
+            false => usize::MAX,
+        };
+        if at > first.row {
+            copied.push(if wrapped { ' ' } else { '\n' });
+        }
+        copied.extend(line.chars().take(to).skip(from));
+    }
+    Some(copied)
+}
+
+/// From the start of the word at the first of `anchor` and `head` to the end
+/// of the word at the last, as the pane last wrapped `talk`.
+///
+/// A word is a run of characters of one kind: letters and digits, spaces,
+/// or anything else, so a press on punctuation picks out the punctuation.
+pub fn words_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (Spot, Spot) {
+    let rows = rows(talk, columns(theme, talk.drawn_width().get()));
+    let word = |spot: Spot| {
+        let line = rows.get(spot.row).map_or_else(Vec::new, |row| {
+            row.iter()
+                .flat_map(|piece| piece.text.chars())
+                .collect::<Vec<_>>()
+        });
+        let (start, end) = word_at(&line, spot.column);
+        (
+            Spot {
+                row: spot.row,
+                column: start,
+            },
+            Spot {
+                row: spot.row,
+                column: end,
+            },
+        )
+    };
+    (word(anchor.min(head)).0, word(anchor.max(head)).1)
+}
+
+/// The word in `line` that `column` falls on, as the column it starts at
+/// and the one after it ends; a column past the end falls on the last one.
+fn word_at(line: &[char], column: usize) -> (usize, usize) {
+    let at = column.min(line.len().saturating_sub(1));
+    let Some(kind) = line.get(at).copied().map(kind_of) else {
+        return (0, 0);
+    };
+    let start = line[..at]
+        .iter()
+        .rposition(|character| kind_of(*character) != kind)
+        .map_or(0, |before| before + 1);
+    let end = line[at..]
+        .iter()
+        .position(|character| kind_of(*character) != kind)
+        .map_or(line.len(), |after| at + after);
+    (start, end)
+}
+
+/// Which kind of character `character` is, for where a word ends: letters,
+/// digits and underscores are one, space another, and the rest a third.
+fn kind_of(character: char) -> u8 {
+    match character {
+        character if character.is_alphanumeric() || character == '_' => 0,
+        character if character.is_whitespace() => 1,
+        _ => 2,
+    }
 }
 
 /// Builds the bar above the conversation: which agent, where, and how it is.
@@ -1316,16 +1462,15 @@ fn piece(text: String, tone: Tone) -> Piece {
         tone,
         image: None,
         link: None,
+        wrapped: false,
     }
 }
 
 /// A reader image shown as a thumbnail inside the message bubble.
 fn image_piece(image: Image) -> Piece {
     Piece {
-        text: String::new(),
-        tone: Tone::Said,
         image: Some(image),
-        link: None,
+        ..piece(String::new(), Tone::Said)
     }
 }
 

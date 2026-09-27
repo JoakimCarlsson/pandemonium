@@ -29,7 +29,8 @@ use pm_acp::{
     Request, Session, Setting, Stop, Usage, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
-use pm_ui::Bounds;
+use pm_gfx::Point;
+use pm_ui::{Bounds, Placements};
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -38,6 +39,19 @@ use pm_ui::Bounds;
 /// knowing which project it belongs to.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TalkId(u64);
+
+/// A place in the text of the conversation: a row of the pane, and how many
+/// characters into that row.
+///
+/// Rows are counted from the top of the whole conversation rather than of
+/// the view, so what is picked out stays put as the pane scrolls.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Spot {
+    /// Which row, from the first.
+    pub row: usize,
+    /// How many characters into it.
+    pub column: usize,
+}
 
 /// How a conversation is doing, as a reader deciding where to look reads it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,9 +153,20 @@ pub struct Talk {
     view: Bounds,
     /// How tall the conversation came to when it was last drawn.
     drawn_height: Rc<Cell<f32>>,
+    /// How wide the pane was when it last wrapped the conversation, which is
+    /// what its rows, and so the places in them, were counted against.
+    drawn_width: Rc<Cell<f32>>,
     /// Where each link the pane last drew leads, in the order it drew them,
     /// which is how a press on one names it.
     drawn_links: Rc<RefCell<Vec<String>>>,
+    /// Where each run of text the pane last drew came out, keyed by its
+    /// place in `drawn_spots`.
+    drawn_text: Placements,
+    /// Where in the conversation each run of text the pane last drew begins.
+    drawn_spots: Rc<RefCell<Vec<Spot>>>,
+    /// What the reader has picked out of the conversation: where the drag
+    /// began, and where it has got to.
+    selection: Option<(Spot, Spot)>,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
     /// The tool and thought blocks the reader has opened.
@@ -686,6 +711,12 @@ impl Talk {
         self.drawn_height.clone()
     }
 
+    /// How wide the pane was when it last wrapped the conversation, shared
+    /// with the pane drawing it.
+    pub fn drawn_width(&self) -> Rc<Cell<f32>> {
+        self.drawn_width.clone()
+    }
+
     /// Where the links the pane last drew lead, shared with the pane
     /// drawing them.
     pub fn drawn_links(&self) -> Rc<RefCell<Vec<String>>> {
@@ -695,6 +726,47 @@ impl Talk {
     /// Where the link the pane drew in `place` leads.
     pub fn drawn_link(&self, place: usize) -> Option<String> {
         self.drawn_links.borrow().get(place).cloned()
+    }
+
+    /// Where the runs of text the pane last drew came out, shared with the
+    /// pane drawing them.
+    pub fn drawn_text(&self) -> Placements {
+        self.drawn_text.clone()
+    }
+
+    /// Where in the conversation the runs of text the pane last drew begin,
+    /// shared with the pane drawing them.
+    pub fn drawn_spots(&self) -> Rc<RefCell<Vec<Spot>>> {
+        self.drawn_spots.clone()
+    }
+
+    /// The place in the conversation's text nearest `point`, as the pane
+    /// last drew it.
+    pub fn spot_at(&self, point: Point) -> Option<Spot> {
+        let placements = self.drawn_text.borrow();
+        let placed = pm_ui::nearest(&placements, point)?;
+        let start = *self.drawn_spots.borrow().get(placed.key)?;
+        Some(Spot {
+            row: start.row,
+            column: start.column + placed.caret_at(point.x),
+        })
+    }
+
+    /// What the reader has picked out of the conversation, first place
+    /// first, when it is anything at all.
+    pub fn selection(&self) -> Option<(Spot, Spot)> {
+        let (anchor, head) = self.selection?;
+        (anchor != head).then(|| (anchor.min(head), anchor.max(head)))
+    }
+
+    /// Picks out the text from `anchor` to `head`.
+    pub fn select(&mut self, anchor: Spot, head: Spot) {
+        self.selection = Some((anchor, head));
+    }
+
+    /// Lets go of what was picked out of the conversation.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
     }
 
     /// Scrolls the pane `pixels` down, or up when negative, no further than
@@ -726,6 +798,7 @@ impl Talk {
 
     /// Opens or closes the details starting at `block`.
     pub fn toggle_details(&mut self, block: usize) {
+        self.selection = None;
         if !self.expanded_details.insert(block) {
             self.expanded_details.remove(&block);
         }
@@ -1100,7 +1173,11 @@ impl Talks {
                 scroll: 0.0,
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
+                drawn_width: Rc::default(),
                 drawn_links: Rc::default(),
+                drawn_text: Rc::default(),
+                drawn_spots: Rc::default(),
+                selection: None,
                 following: true,
                 expanded_details: BTreeSet::new(),
                 terminals: BTreeMap::new(),

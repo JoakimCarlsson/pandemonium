@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
+use pm_gfx::Point;
 use pm_text::Position;
+use pm_ui::ResizePhase;
 use winit::window::UserAttentionType;
 
 use crate::agent::{TalkId, Tally};
@@ -31,7 +33,13 @@ impl App {
         match message {
             Message::NewAgentSession => self.open_picker(Kind::Agents),
             Message::WriteAgentPrompt(session, phase, anchor, head) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.clear_selection();
+                }
                 self.point_in(Writing::Prompt(session), phase, anchor, head);
+            }
+            Message::SelectAgentText(session, phase, anchor, head) => {
+                self.select_agent_text(session, phase, anchor, head);
             }
             Message::SendPrompt(session) => self.send_prompt(session),
             Message::AnswerAgent(session, ask, place) => {
@@ -631,6 +639,57 @@ impl App {
             }
             None => desktop::browse(&link),
         }
+    }
+
+    /// Picks out the transcript of `session` from `anchor` to `head`, the
+    /// points a drag over it began at and has reached.
+    ///
+    /// A press lets go of what was picked out before, so a click that goes
+    /// nowhere leaves nothing selected; a second press in the same place
+    /// picks out the word under it, and a drag from there grows by words.
+    fn select_agent_text(
+        &mut self,
+        session: TalkId,
+        phase: ResizePhase,
+        anchor: Point,
+        head: Point,
+    ) {
+        let theme = self.theme();
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        let (Some(anchor), Some(head)) = (talk.spot_at(anchor), talk.spot_at(head)) else {
+            return;
+        };
+        if phase == ResizePhase::Started {
+            self.agent_words = self.agent_clicks.press(head) == 2;
+            if !self.agent_words {
+                return talk.clear_selection();
+            }
+        } else if anchor != head {
+            self.agent_clicks.clear();
+        }
+        let (anchor, head) = match self.agent_words {
+            true => crate::agent::words_between(&theme, talk, anchor, head),
+            false => (anchor, head),
+        };
+        talk.select(anchor, head);
+    }
+
+    /// Puts what the reader picked out of the focused agent's transcript on
+    /// the clipboard, saying whether there was anything to put there.
+    pub(super) fn copy_agent_text(&self) -> bool {
+        let Some(talk) = self
+            .focused_talk()
+            .and_then(|session| self.agents.get(session))
+        else {
+            return false;
+        };
+        let Some(text) = crate::agent::selected_text(&self.theme(), talk) else {
+            return false;
+        };
+        desktop::copy(text);
+        true
     }
 
     /// Lets the reader choose files for this agent's next turn.
