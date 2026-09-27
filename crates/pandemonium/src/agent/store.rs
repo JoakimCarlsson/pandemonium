@@ -22,7 +22,9 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use pm_gfx::Image;
 
+use crate::agent::pane::Wrapped;
 use crate::agent::transcript::Transcript;
+use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Method, Mode, Notify,
@@ -108,8 +110,13 @@ pub struct Talk {
     prompt: Input,
     /// Files and images to send with the next prompt.
     attachments: Vec<Attachment>,
-    /// Decoded previews in the same order as the attachments.
-    attachment_previews: Vec<Option<Image>>,
+    /// The preview of each attachment, in the same order, by its key in
+    /// `previews` where the attachment is a picture.
+    attachment_previews: Vec<Option<u64>>,
+    /// The attachments' pictures, decoded away from the window.
+    previews: Decodes<u64>,
+    /// The key the next attached picture is given in `previews`.
+    next_preview: u64,
     /// Pasted images saved as files for agents without image prompt support.
     clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
@@ -174,6 +181,11 @@ pub struct Talk {
     /// The last lines each terminal the agent started has written, by the
     /// name the agent knows it by, for the tool calls that show one.
     terminals: BTreeMap<String, String>,
+    /// Counts the changes to what the pane shows that the transcript does
+    /// not hold: details opened or closed, and a terminal's latest lines.
+    shown_revision: u64,
+    /// The conversation as the pane last wrapped it.
+    wrapped: RefCell<Wrapped>,
 }
 
 /// One completion offered by a prompt prefix.
@@ -263,33 +275,44 @@ impl Talk {
         &self.attachments
     }
 
-    /// The preview of the attachment at `place`, when it is an image.
+    /// The preview of the attachment at `place`, once it is decoded.
     pub fn attachment_preview(&self, place: usize) -> Option<Image> {
-        self.attachment_previews.get(place).and_then(Clone::clone)
+        let key = self.attachment_previews.get(place).copied().flatten()?;
+        self.previews.peek(&key)?.ready()
     }
 
-    /// Adds a chosen file to the next prompt.
+    /// Whether the agent takes images inside a prompt rather than as files.
+    pub fn can_image(&self) -> bool {
+        self.conversation.can_image()
+    }
+
+    /// Adds a chosen file to the next prompt, decoding its preview away from
+    /// the window when it is a picture.
     pub fn attach_file(&mut self, path: PathBuf) {
-        let preview = crate::image::Images::is_picture(&path)
-            .then(|| fs::read(&path).ok().and_then(|bytes| Image::decode(&bytes)))
-            .flatten();
+        let preview = crate::image::Images::is_picture(&path).then(|| {
+            let key = self.preview_key();
+            self.previews.start(key, read_file(path.clone()));
+            key
+        });
         self.attachment_previews.push(preview);
         self.attachments.push(Attachment::File(path));
     }
 
-    /// Adds a pasted PNG to the next prompt in the form this agent accepts.
-    pub fn attach_image(&mut self, png: Vec<u8>) {
-        if self.conversation.can_image() {
-            self.attachment_previews.push(Image::decode(&png));
-            self.attachments.push(Attachment::Image {
-                data: base64::engine::general_purpose::STANDARD.encode(png),
-                mime_type: "image/png".to_owned(),
-            });
-        } else if let Some(path) = crate::desktop::save_pasted_image(&png) {
-            self.attachment_previews.push(Image::decode(&png));
-            self.attachments.push(Attachment::File(path.clone()));
-            self.clipboard_files.push(path);
+    /// Adds an image pasted and made ready away from the window.
+    pub fn attach_pasted(&mut self, pasted: Pasted) {
+        let key = self.preview_key();
+        if let Some(preview) = pasted.preview {
+            self.previews.put(key, preview);
         }
+        self.attachment_previews.push(Some(key));
+        self.attachments.push(pasted.attachment);
+        self.clipboard_files.extend(pasted.saved);
+    }
+
+    /// The key the next attached picture is kept under.
+    fn preview_key(&mut self) -> u64 {
+        self.next_preview += 1;
+        self.next_preview
     }
 
     /// Adds lines `first` to `last` of the file at `path`, which say `text`,
@@ -308,7 +331,9 @@ impl Talk {
     pub fn remove_attachment(&mut self, place: usize) {
         if place < self.attachments.len() {
             self.attachments.remove(place);
-            self.attachment_previews.remove(place);
+            if let Some(key) = self.attachment_previews.remove(place) {
+                self.previews.retain(|kept| *kept != key);
+            }
         }
     }
 
@@ -329,6 +354,7 @@ impl Talk {
             return false;
         }
         self.terminals.insert(terminal.to_owned(), tail);
+        self.shown_revision += 1;
         true
     }
 
@@ -810,6 +836,18 @@ impl Talk {
         if !self.expanded_details.insert(block) {
             self.expanded_details.remove(&block);
         }
+        self.shown_revision += 1;
+    }
+
+    /// Counts the changes to what the pane shows that the transcript does
+    /// not hold, so the pane can tell when its wrapped rows still stand.
+    pub fn shown_revision(&self) -> u64 {
+        self.shown_revision
+    }
+
+    /// The conversation as the pane last wrapped it, kept between frames.
+    pub(super) fn wrapped(&self) -> &RefCell<Wrapped> {
+        &self.wrapped
     }
 
     /// Sends what is in the prompt buffer, and empties it.
@@ -824,7 +862,11 @@ impl Talk {
         }
         self.prompt.clear();
         let attachments = std::mem::take(&mut self.attachments);
-        let previews = std::mem::take(&mut self.attachment_previews);
+        let previews = std::mem::take(&mut self.attachment_previews)
+            .into_iter()
+            .map(|key| key.and_then(|key| self.previews.peek(&key)?.ready()))
+            .collect::<Vec<_>>();
+        self.previews.clear();
         let labels = attachments
             .iter()
             .zip(&previews)
@@ -940,6 +982,47 @@ impl Talk {
                 self.transcript.note(ended(&self.conversation));
             }
         }
+    }
+}
+
+/// An image off the clipboard, made ready to attach away from the window.
+pub struct Pasted {
+    /// What goes with the prompt.
+    attachment: Attachment,
+    /// What is shown of it beside the prompt.
+    preview: Option<Image>,
+    /// Where it was saved, for an agent that takes it as a file.
+    saved: Option<PathBuf>,
+}
+
+impl Pasted {
+    /// Makes `width` by `height` RGBA `pixels` off the clipboard into what is
+    /// attached: the image itself for an agent that `can_image`, a file of it
+    /// for any other.
+    ///
+    /// Encoding a screenshot takes long enough to be felt, so this is run
+    /// away from the window.
+    pub fn prepare(width: u32, height: u32, pixels: Vec<u8>, can_image: bool) -> Option<Self> {
+        let png = crate::desktop::encode_png(width, height, &pixels)?;
+        let preview = Image::from_rgba(width, height, pixels);
+        let (attachment, saved) = match can_image {
+            true => (
+                Attachment::Image {
+                    data: base64::engine::general_purpose::STANDARD.encode(png),
+                    mime_type: "image/png".to_owned(),
+                },
+                None,
+            ),
+            false => {
+                let path = crate::desktop::save_pasted_image(&png)?;
+                (Attachment::File(path.clone()), Some(path))
+            }
+        };
+        Some(Self {
+            attachment,
+            preview,
+            saved,
+        })
     }
 }
 
@@ -1161,6 +1244,8 @@ impl Talks {
                 prompt: Input::many_lines("Prompt"),
                 attachments: Vec::new(),
                 attachment_previews: Vec::new(),
+                previews: Decodes::default(),
+                next_preview: 0,
                 clipboard_files: Vec::new(),
                 asks: Vec::new(),
                 commands: Vec::new(),
@@ -1188,6 +1273,8 @@ impl Talks {
                 selection: None,
                 following: true,
                 expanded_details: BTreeSet::new(),
+                shown_revision: 0,
+                wrapped: RefCell::default(),
                 terminals: BTreeMap::new(),
             },
         );

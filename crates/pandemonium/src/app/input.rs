@@ -15,7 +15,8 @@ use winit::keyboard::{Key, NamedKey};
 #[cfg(not(target_os = "macos"))]
 use winit::window::ResizeDirection;
 
-use crate::app::{App, Writing};
+use crate::agent::Pasted;
+use crate::app::{App, Pasting, Writing};
 use crate::desktop;
 use crate::editor::{self, Completions};
 use crate::field::Typed;
@@ -303,16 +304,52 @@ impl App {
         if !matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("v")) {
             return false;
         }
-        let Some(talk) = self.agents.get_mut(session) else {
+        let Some(talk) = self.agents.get(session) else {
             return false;
         };
-        if let Some(png) = desktop::paste_image() {
-            talk.attach_image(png);
-        } else if let Some(text) = desktop::paste() {
-            talk.prompt_mut().paste(&text);
-            talk.retyped();
-        }
+        let can_image = talk.can_image();
+        let pastes = self.pastes.clone();
+        let wake = self.waker(crate::app::Wake::Paste);
+        std::thread::spawn(move || {
+            let pasting = match desktop::paste_image() {
+                Some((width, height, pixels)) => {
+                    Pasted::prepare(width, height, pixels, can_image).map(Pasting::Image)
+                }
+                None => desktop::paste().map(Pasting::Text),
+            };
+            if let Some(pasting) = pasting
+                && let Ok(mut pastes) = pastes.lock()
+            {
+                pastes.push((session, pasting));
+                drop(pastes);
+                wake();
+            }
+        });
         true
+    }
+
+    /// Puts what has been read off the clipboard into the prompts it was
+    /// pasted into, answering whether anything was.
+    pub(super) fn take_pastes(&mut self) -> bool {
+        let pastes = self
+            .pastes
+            .lock()
+            .map(|mut pastes| std::mem::take(&mut *pastes))
+            .unwrap_or_default();
+        let any = !pastes.is_empty();
+        for (session, pasting) in pastes {
+            let Some(talk) = self.agents.get_mut(session) else {
+                continue;
+            };
+            match pasting {
+                Pasting::Image(pasted) => talk.attach_pasted(pasted),
+                Pasting::Text(text) => {
+                    talk.prompt_mut().paste(&text);
+                    talk.retyped();
+                }
+            }
+        }
+        any
     }
 
     /// Whether `event` is the copy chord: C with Control or the platform key,
@@ -691,18 +728,21 @@ impl App {
         (self.preferences.cursor_blink && self.caret_active()).then(|| self.blink.next_change())
     }
 
-    /// Whether a focused editor or input has a caret to blink.
+    /// Whether a focused editor or input has a caret to blink, in a window
+    /// the reader is looking at.
     fn caret_active(&self) -> bool {
-        self.editor_focused
-            || self.writing.is_some()
-            || self.picker.is_some()
-            || self.tree_edit.is_some()
-            || self.search_focused
+        self.window_focused
+            && !self.window_occluded
+            && (self.editor_focused
+                || self.writing.is_some()
+                || self.picker.is_some()
+                || self.tree_edit.is_some()
+                || self.search_focused)
     }
 
     /// Whether a focused caret should be drawn in this frame.
     pub(super) fn caret_solid(&self) -> bool {
-        !self.preferences.cursor_blink || self.blink.is_solid()
+        !self.preferences.cursor_blink || !self.caret_active() || self.blink.is_solid()
     }
 
     /// Tells the element tree the pointer has left the window.
