@@ -1,8 +1,9 @@
 //! The text element: one shaped, unwrapped run in one colour.
 
 use std::ops::Range;
+use std::sync::Arc;
 
-use pm_gfx::{Point, Quad, Rect, Rgba, Size};
+use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, ShapedRun, Size};
 
 use crate::element::{Element, LayoutContext, PaintContext};
 use crate::placed::{Placed, Placements};
@@ -23,6 +24,9 @@ pub struct Text {
     selected: Option<Range<usize>>,
     /// Where the run writes down its carets as it paints, and under what key.
     placed: Option<(Placements, usize)>,
+    /// The run measurement shaped, and the style it was shaped in, for
+    /// painting to draw without shaping it again.
+    shaped: Option<(FontStyle, Arc<ShapedRun>)>,
 }
 
 /// A run of `content` at the base size in the theme's body colour.
@@ -34,6 +38,7 @@ pub fn text(content: impl Into<String>) -> Text {
         style: Style::default(),
         selected: None,
         placed: None,
+        shaped: None,
     }
 }
 
@@ -152,7 +157,9 @@ impl<M> Element<M> for Text {
     /// Shapes the run and reports the line box it occupies.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
         let font = self.font.resolve(&cx.theme.text);
-        let run = cx.measure(&self.content, font);
+        let shaped = cx.shape(&self.content, font);
+        let run = shaped.size();
+        self.shaped = Some((font, shaped));
         let width = match self.style.width {
             Length::Px(pixels) => pixels,
             Length::Full => available.width,
@@ -177,7 +184,10 @@ impl<M> Element<M> for Text {
 
         let color = self.color.unwrap_or(cx.theme().colors.text);
         let font = self.font.resolve(&cx.theme().text);
-        let run = cx.shape(&self.content, font);
+        let run = match self.shaped.take() {
+            Some((shaped_in, run)) if shaped_in == font => run,
+            _ => cx.shape(&self.content, font),
+        };
         let origin = Point::new(
             bounds.left() + self.style.padding.left,
             bounds.top() + self.style.padding.top,
