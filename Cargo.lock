@@ -1775,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "pandemonium"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "base64",
@@ -1883,14 +1883,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "pm-acp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "pm-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "notify",
  "trash",
@@ -1898,7 +1898,7 @@ dependencies = [
 
 [[package]]
 name = "pm-dap"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pm-text",
  "serde_json",
@@ -1906,7 +1906,7 @@ dependencies = [
 
 [[package]]
 name = "pm-gfx"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -1919,7 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "pm-text"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "globset",
  "lsp-types",
@@ -1954,14 +1954,14 @@ dependencies = [
 
 [[package]]
 name = "pm-ui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pm-gfx",
 ]
 
 [[package]]
 name = "pm-vim"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pm-text",
  "regex",
@@ -1969,7 +1969,7 @@ dependencies = [
 
 [[package]]
 name = "pm-vt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "portable-pty",
  "unicode-width",
