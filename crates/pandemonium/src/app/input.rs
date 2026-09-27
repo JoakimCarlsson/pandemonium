@@ -139,6 +139,9 @@ impl App {
         if self.paste_agent_prompt(event) {
             return self.request_redraw();
         }
+        if self.is_copy(event) && self.copy_agent_text() {
+            return self.request_redraw();
+        }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
             return self.request_redraw();
         }
@@ -310,6 +313,14 @@ impl App {
             talk.retyped();
         }
         true
+    }
+
+    /// Whether `event` is the copy chord: C with Control or the platform key,
+    /// and Shift or not, the way a terminal's copy has it.
+    fn is_copy(&self, event: &KeyEvent) -> bool {
+        (self.modifiers.control_key() || self.modifiers.super_key())
+            && !self.modifiers.alt_key()
+            && matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("c"))
     }
 
     /// Sends a keypress to the box of text that has the keyboard.

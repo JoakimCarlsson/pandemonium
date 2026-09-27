@@ -22,6 +22,7 @@ mod panes;
 mod picker;
 mod places;
 mod reading;
+mod reorder;
 mod review;
 mod session;
 mod settings;
@@ -232,6 +233,10 @@ pub struct App {
     tree_clipboard: Option<crate::tree::Clipboard>,
     /// The rows of the file tree the pointer is carrying.
     entry_drag: Option<crate::tree::EntryDrag>,
+    /// The project row the pointer is carrying up or down the sidebar.
+    project_drag: Option<reorder::ProjectDrag>,
+    /// Where the projects sidebar's rows came out in the last frame.
+    project_list: pm_ui::Bounds,
     /// Whether keystrokes go to the file tree.
     tree_focused: bool,
     /// Where the file tree's rows came out in the last frame.
@@ -360,6 +365,10 @@ pub struct App {
     screen_clicks: Clicks<pm_vt::Place>,
     /// What the drag over the terminal's grid grows its selection by.
     screen_unit: pm_vt::Unit,
+    /// The last press on an agent's transcript, for selecting a word.
+    agent_clicks: Clicks<crate::agent::Spot>,
+    /// Whether the drag over an agent's transcript grows by whole words.
+    agent_words: bool,
     /// The last press on a row of the file tree, for keeping a file open.
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
@@ -445,6 +454,8 @@ impl App {
             tree_edit: None,
             tree_clipboard: None,
             entry_drag: None,
+            project_drag: None,
+            project_list: drag::unmeasured(),
             tree_focused: false,
             tree_rows: drag::unmeasured(),
             tree_area: drag::unmeasured(),
@@ -523,6 +534,8 @@ impl App {
             text_clicks: Clicks::default(),
             screen_clicks: Clicks::default(),
             screen_unit: pm_vt::Unit::Cell,
+            agent_clicks: Clicks::default(),
+            agent_words: false,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
             menu: None,
@@ -920,6 +933,10 @@ impl App {
         }
         if message == Message::ShowSourceControlMenu {
             self.open_menu(MenuTarget::SourceControl);
+            return;
+        }
+        if let Message::ShowAgentsMenu(standing) = message {
+            self.open_agents_menu(standing);
             return;
         }
         if let Message::ShowEntryMenu(_) | Message::ShowTreeMenu = message {
@@ -1345,10 +1362,8 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::ActivateProject(id) = message {
-            self.open.activate(id);
-            self.select_checkout();
-            self.store();
+        if let Message::DragProject(id, event) = message {
+            self.drag_project(id, event);
             self.request_redraw();
             return;
         }
@@ -1975,10 +1990,13 @@ impl App {
             debug: self.debug_in_panel(&theme),
         };
         let showing = self.active_file();
-        let drop = self.drop_highlight().or_else(|| {
-            self.entry_drop_pane()
-                .and_then(|pane| self.geometry.pane_bounds(pane))
-        });
+        let drop = self
+            .drop_highlight()
+            .or_else(|| {
+                self.entry_drop_pane()
+                    .and_then(|pane| self.geometry.pane_bounds(pane))
+            })
+            .or_else(|| self.project_caret());
         let carried = self.carried_tab().or_else(|| self.carried_entries());
         let tree_scroll = self.tree_scroll();
         let layout = self.layout();
@@ -2044,8 +2062,11 @@ impl App {
         let page = if self.onboarded {
             workspace::workspace(
                 &theme,
-                &self.open,
-                &sidebar,
+                workspace::ProjectList {
+                    open: &self.open,
+                    sessions: &sidebar,
+                    bounds: self.project_list.clone(),
+                },
                 files,
                 layout,
                 self.command_center_bounds.clone(),
@@ -2133,7 +2154,7 @@ impl ApplicationHandler<Wake> for App {
                     self.reread_worked_sessions();
                     self.request_redraw();
                 }
-                if self.agents.take_opened() {
+                if self.agents.take_renamed() {
                     self.store();
                 }
             }

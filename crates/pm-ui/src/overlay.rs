@@ -22,6 +22,9 @@ pub struct Overlay<M> {
     origin: Point,
     /// What is drawn there.
     child: Box<dyn Element<M>>,
+    /// Whether `origin` is the bottom left corner instead, so the overlay
+    /// grows upward from it.
+    rises: bool,
 }
 
 /// `child`, painted at `origin` over whatever was painted before it.
@@ -29,6 +32,17 @@ pub fn overlay<M>(origin: Point, child: impl IntoElement<M>) -> Overlay<M> {
     Overlay {
         origin,
         child: child.into_element(),
+        rises: false,
+    }
+}
+
+/// `child`, painted with its bottom left corner at `origin`: the overlay a
+/// control along the bottom of the window opens, which belongs above it.
+pub fn overlay_above<M>(origin: Point, child: impl IntoElement<M>) -> Overlay<M> {
+    Overlay {
+        origin,
+        child: child.into_element(),
+        rises: true,
     }
 }
 
@@ -52,9 +66,11 @@ impl<M> Element<M> for Overlay<M> {
             .x
             .min(window.right() - size.width - MARGIN)
             .max(window.left() + MARGIN);
-        let y = self
-            .origin
-            .y
+        let top = match self.rises {
+            true => self.origin.y - size.height,
+            false => self.origin.y,
+        };
+        let y = top
             .min(window.bottom() - size.height - MARGIN)
             .max(window.top() + MARGIN);
 

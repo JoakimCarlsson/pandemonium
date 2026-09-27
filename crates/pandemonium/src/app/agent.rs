@@ -9,10 +9,12 @@ use std::path::{Path, PathBuf};
 
 use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
+use pm_gfx::{Point, Renderer, Size};
 use pm_text::Position;
+use pm_ui::{MenuItem, ResizePhase};
 use winit::window::UserAttentionType;
 
-use crate::agent::{TalkId, Tally};
+use crate::agent::{Standing, Talk, TalkId, Tally};
 use crate::app::places::Place;
 use crate::app::{App, Writing};
 use crate::desktop;
@@ -21,8 +23,57 @@ use crate::panel::PanelView;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Row};
 use crate::terminal::ShellId;
+use crate::workspace::{MenuTarget, TabMenu};
+
+/// How far above the status bar its agent menu stops.
+const MENU_GAP: f32 = 4.0;
 
 impl App {
+    /// Opens the menu of the agents standing as `standing` does, rising from
+    /// the top of the status bar above the count that was clicked.
+    pub(super) fn open_agents_menu(&mut self, standing: Standing) {
+        let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
+        let bar = window.height - self.theme().size.bar;
+        self.menu = self.pointer.map(|pointer| TabMenu {
+            at: Point::new(pointer.x, bar - MENU_GAP),
+            target: MenuTarget::Agents(standing),
+        });
+        self.request_redraw();
+    }
+
+    /// The menu of the agents standing as `standing` does, each row going to
+    /// its pane.
+    pub(super) fn agents_menu(&self, standing: Standing) -> Vec<MenuItem<Message>> {
+        self.agents
+            .iter()
+            .filter(|talk| talk.standing() == standing)
+            .map(|talk| {
+                pm_ui::menu_entry(self.agent_place(talk), Some(Message::ShowAgent(talk.id())))
+            })
+            .collect()
+    }
+
+    /// Where a conversation is, written out: the agent, the project, the
+    /// session where it is in one, and the title the agent gave it.
+    fn agent_place(&self, talk: &Talk) -> String {
+        let scope = talk.scope();
+        [
+            Some(talk.agent().name.to_owned()),
+            self.open
+                .get(scope.project())
+                .map(|project| project.name().to_owned()),
+            scope
+                .session()
+                .and_then(|session| self.sessions.get(session))
+                .map(|session| session.name().to_owned()),
+            talk.title().map(str::to_owned),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+    }
+
     /// Carries out the commands an agent session answers to.
     ///
     /// The answer says whether the message was one of them, so that the
@@ -31,7 +82,13 @@ impl App {
         match message {
             Message::NewAgentSession => self.open_picker(Kind::Agents),
             Message::WriteAgentPrompt(session, phase, anchor, head) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.clear_selection();
+                }
                 self.point_in(Writing::Prompt(session), phase, anchor, head);
+            }
+            Message::SelectAgentText(session, phase, anchor, head) => {
+                self.select_agent_text(session, phase, anchor, head);
             }
             Message::SendPrompt(session) => self.send_prompt(session),
             Message::AnswerAgent(session, ask, place) => {
@@ -173,6 +230,12 @@ impl App {
             return;
         };
         let (scope, agent, root) = (talk.scope(), talk.agent(), talk.root().to_path_buf());
+        let title = talk
+            .history()
+            .iter()
+            .find(|listed| listed.id == saved)
+            .and_then(|listed| listed.title.clone())
+            .unwrap_or_default();
         if let Some(existing) = self.agents.find_saved(scope, agent, saved) {
             self.show_item(
                 self.panes.focus(),
@@ -190,6 +253,9 @@ impl App {
         else {
             return;
         };
+        if let Some(talk) = self.agents.get_mut(opened) {
+            talk.entitle(&title);
+        }
         self.show_item(self.panes.focus(), scope, Item::Agent(scope, opened), false);
         self.focus_prompt(opened);
     }
@@ -631,6 +697,57 @@ impl App {
             }
             None => desktop::browse(&link),
         }
+    }
+
+    /// Picks out the transcript of `session` from `anchor` to `head`, the
+    /// points a drag over it began at and has reached.
+    ///
+    /// A press lets go of what was picked out before, so a click that goes
+    /// nowhere leaves nothing selected; a second press in the same place
+    /// picks out the word under it, and a drag from there grows by words.
+    fn select_agent_text(
+        &mut self,
+        session: TalkId,
+        phase: ResizePhase,
+        anchor: Point,
+        head: Point,
+    ) {
+        let theme = self.theme();
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        let (Some(anchor), Some(head)) = (talk.spot_at(anchor), talk.spot_at(head)) else {
+            return;
+        };
+        if phase == ResizePhase::Started {
+            self.agent_words = self.agent_clicks.press(head) == 2;
+            if !self.agent_words {
+                return talk.clear_selection();
+            }
+        } else if anchor != head {
+            self.agent_clicks.clear();
+        }
+        let (anchor, head) = match self.agent_words {
+            true => crate::agent::words_between(&theme, talk, anchor, head),
+            false => (anchor, head),
+        };
+        talk.select(anchor, head);
+    }
+
+    /// Puts what the reader picked out of the focused agent's transcript on
+    /// the clipboard, saying whether there was anything to put there.
+    pub(super) fn copy_agent_text(&self) -> bool {
+        let Some(talk) = self
+            .focused_talk()
+            .and_then(|session| self.agents.get(session))
+        else {
+            return false;
+        };
+        let Some(text) = crate::agent::selected_text(&self.theme(), talk) else {
+            return false;
+        };
+        desktop::copy(text);
+        true
     }
 
     /// Lets the reader choose files for this agent's next turn.

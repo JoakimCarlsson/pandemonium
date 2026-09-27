@@ -128,6 +128,9 @@ pub struct SavedTab {
     pub agent: String,
     /// What that agent called the conversation, so it can be taken up again.
     pub session: String,
+    /// The title the agent gave that conversation, drawn until it gives one
+    /// again after being taken up.
+    pub title: String,
     /// Whether it was only being previewed.
     pub preview: bool,
     /// Whether it was drawn whichever project the window was showing.

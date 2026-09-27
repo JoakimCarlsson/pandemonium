@@ -15,6 +15,8 @@ mod pane;
 mod store;
 mod transcript;
 
-pub use pane::{RESULT_LINES, agent_pane, content_height, standing_color};
-pub use store::{Standing, Talk, TalkId, Talks, Tally};
+pub use pane::{
+    RESULT_LINES, agent_pane, content_height, selected_text, standing_color, words_between,
+};
+pub use store::{Spot, Standing, Talk, TalkId, Talks, Tally};
 pub use transcript::Block;

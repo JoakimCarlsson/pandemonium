@@ -6,6 +6,7 @@
 //! and no screen reaches into the window behind its back.
 
 use pm_core::{EntryId, ProjectId, SessionId};
+use pm_gfx::Point;
 use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
@@ -83,10 +84,10 @@ pub enum Message {
     CloneProject,
     /// Take this project out of the window.
     CloseProject(ProjectId),
-    /// Make this the project the window's files and commands apply to.
-    ActivateProject(ProjectId),
     /// Open the menu of things that can be done to this project.
     ProjectMenu(ProjectId),
+    /// Press, drag or let go of this project's row in the projects sidebar.
+    DragProject(ProjectId, ResizeEvent),
     /// Cut a session of the active project from the branch it has out.
     NewSession,
     /// Cut a session of this project from the branch in this place of its list.
@@ -152,6 +153,8 @@ pub enum Message {
     ShowCommitMenu,
     /// Show the Source Control action menu.
     ShowSourceControlMenu,
+    /// Show the menu of the window's agents that stand this way.
+    ShowAgentsMenu(crate::agent::Standing),
     /// Show this tab of this pane.
     SelectItem(PaneId, Item),
     /// Close this tab of this pane.
@@ -440,6 +443,9 @@ pub enum Message {
     AnswerAgent(TalkId, u64, usize),
     /// Log this session's agent in by the way it offered in this place.
     LogInAgent(TalkId, usize),
+    /// Pick out this session's transcript from where a press landed to where
+    /// the pointer has been dragged since.
+    SelectAgentText(TalkId, ResizePhase, Point, Point),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
     /// Follow the link this session's pane drew in this place: open the
