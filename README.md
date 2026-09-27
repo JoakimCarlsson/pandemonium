@@ -81,6 +81,7 @@ Other targets:
 ```sh
 make fmt     # cargo fmt --all
 make lint    # cargo clippy --workspace --all-targets -- -D warnings
+make install # build this checkout and install it as pandemonium-preview
 make release VERSION=0.2.0   # bump, tag and push; CI builds and publishes
 ```
 
