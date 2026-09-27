@@ -39,7 +39,11 @@ impl Branch {
     }
 }
 
-/// Every local branch of the repository at `root`, current branch first.
+/// Every local and remote-tracking branch of the repository at `root`,
+/// current branch first.
+///
+/// A remote's symbolic `HEAD` is left out: it names the remote's default
+/// branch, which is listed under its own name already.
 pub fn branches(root: &Path) -> Vec<Branch> {
     let Some(output) = answer(
         root,
@@ -64,7 +68,8 @@ pub fn branches(root: &Path) -> Vec<Branch> {
             let author = fields.next().unwrap_or_default();
             let age = fields.next().unwrap_or_default();
             let subject = fields.next().unwrap_or_default();
-            (!name.is_empty()).then(|| Branch {
+            let symbolic = reference.starts_with("refs/remotes/") && reference.ends_with("/HEAD");
+            (!name.is_empty() && !symbolic).then(|| Branch {
                 name: name.to_owned(),
                 current: head == "*",
                 remote: reference.starts_with("refs/remotes/"),
@@ -111,9 +116,10 @@ pub fn push_branch(root: &Path, has_upstream: bool) -> Said {
     git(root, ["push", "--set-upstream", remote, "HEAD"])
 }
 
-/// Fetches updates from every configured remote.
+/// Fetches updates from every configured remote, forgetting the
+/// remote-tracking branches whose remote branch is gone.
 pub fn fetch(root: &Path) -> Said {
-    git(root, ["fetch", "--all"])
+    git(root, ["fetch", "--all", "--prune"])
 }
 
 /// Configured remote names of the repository at `root`.
@@ -125,16 +131,18 @@ pub fn remotes(root: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Fetches updates from one configured `remote`.
+/// Fetches updates from one configured `remote`, forgetting the
+/// remote-tracking branches whose remote branch is gone.
 pub fn fetch_from(root: &Path, remote: &str) -> Said {
-    git(root, ["fetch", remote])
+    git(root, ["fetch", "--prune", remote])
 }
 
-/// Pulls the checked-out branch, rebasing when `rebase` asks for it.
+/// Pulls the checked-out branch, rebasing when `rebase` asks for it, and
+/// forgets the remote-tracking branches whose remote branch is gone.
 pub fn pull(root: &Path, rebase: bool) -> Said {
     match rebase {
-        true => git(root, ["pull", "--rebase"]),
-        false => git(root, ["pull"]),
+        true => git(root, ["pull", "--prune", "--rebase"]),
+        false => git(root, ["pull", "--prune"]),
     }
 }
 
