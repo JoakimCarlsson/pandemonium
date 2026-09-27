@@ -16,13 +16,14 @@ use std::path::{Path, PathBuf};
 /// their programs somewhere that only a shell profile ever hears about. A
 /// program the reader has installed is a program the editor runs, whether or
 /// not the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 8] = [
+const TOOL_DIRECTORIES: [&str; 9] = [
     ".cargo/bin",
     ".local/bin",
     "go/bin",
     ".bun/bin",
     ".deno/bin",
     ".npm-global/bin",
+    "AppData/Roaming/npm",
     ".volta/bin",
     ".local/share/fnm/aliases/default/bin",
 ];
@@ -33,7 +34,8 @@ const TOOL_DIRECTORIES: [&str; 8] = [
 /// reader does not have, and the editor does not try to run it.
 pub fn installed(command: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
-    let home = env::var_os("HOME").map(PathBuf::from);
+    let home = env::home_dir();
+    let names = file_names(command);
 
     env::split_paths(&path)
         .chain(
@@ -45,8 +47,29 @@ pub fn installed(command: &str) -> Option<PathBuf> {
             PathBuf::from("/usr/local/bin"),
             PathBuf::from("/opt/homebrew/bin"),
         ])
-        .map(|directory| directory.join(command))
+        .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
         .find(|program| program.is_file())
+}
+
+/// The file names `program` is installed under on this platform.
+#[cfg(not(windows))]
+fn file_names(program: &str) -> Vec<String> {
+    vec![program.to_owned()]
+}
+
+/// The file names `program` is installed under on this platform.
+///
+/// Windows runs a program by its extension, and `PATHEXT` lists the ones it
+/// runs. The bare name is left out: npm installs a shell script beside each
+/// `.cmd`, which Windows cannot start.
+#[cfg(windows)]
+fn file_names(program: &str) -> Vec<String> {
+    env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned())
+        .split(';')
+        .filter(|extension| !extension.is_empty())
+        .map(|extension| format!("{program}{extension}"))
+        .collect()
 }
 
 /// The path a program at `program` runs with: its own directory first.

@@ -131,7 +131,8 @@ impl Agent {
     pub fn command(self) -> Command {
         match (installed(self.program), self.source) {
             (None, Source::Package(package)) => {
-                let mut command = Command::new(RUNNER);
+                let mut command =
+                    Command::new(installed(RUNNER).unwrap_or_else(|| PathBuf::from(RUNNER)));
                 command.arg("--yes").arg(package).args(self.arguments);
                 command
             }
@@ -153,12 +154,13 @@ impl Agent {
 /// an agent with an installer of its own may keep a directory of its own. An
 /// agent the reader has installed is the one the editor runs, whether or not
 /// the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 7] = [
+const TOOL_DIRECTORIES: [&str; 8] = [
     ".local/bin",
     ".grok/bin",
     ".bun/bin",
     ".deno/bin",
     ".npm-global/bin",
+    "AppData/Roaming/npm",
     ".volta/bin",
     ".cargo/bin",
 ];
@@ -166,7 +168,8 @@ const TOOL_DIRECTORIES: [&str; 7] = [
 /// Where `program` is installed, on the path or in the usual places beside it.
 fn installed(program: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
-    let home = env::var_os("HOME").map(PathBuf::from);
+    let home = env::home_dir();
+    let names = file_names(program);
 
     env::split_paths(&path)
         .chain(
@@ -178,6 +181,27 @@ fn installed(program: &str) -> Option<PathBuf> {
             PathBuf::from("/usr/local/bin"),
             PathBuf::from("/opt/homebrew/bin"),
         ])
-        .map(|directory| directory.join(program))
+        .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
         .find(|candidate| candidate.is_file())
+}
+
+/// The file names `program` is installed under on this platform.
+#[cfg(not(windows))]
+fn file_names(program: &str) -> Vec<String> {
+    vec![program.to_owned()]
+}
+
+/// The file names `program` is installed under on this platform.
+///
+/// Windows runs a program by its extension, and `PATHEXT` lists the ones it
+/// runs. The bare name is left out: npm installs a shell script beside each
+/// `.cmd`, which Windows cannot start.
+#[cfg(windows)]
+fn file_names(program: &str) -> Vec<String> {
+    env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned())
+        .split(';')
+        .filter(|extension| !extension.is_empty())
+        .map(|extension| format!("{program}{extension}"))
+        .collect()
 }

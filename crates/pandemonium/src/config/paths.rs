@@ -29,7 +29,7 @@ const WORKTREES_DIRECTORY: &str = "worktrees";
 pub fn home() -> Option<PathBuf> {
     match std::env::var_os(HOME_VARIABLE) {
         Some(path) if !path.is_empty() => Some(PathBuf::from(path)),
-        _ => std::env::var_os("HOME").map(|home| PathBuf::from(home).join(HOME_DIRECTORY)),
+        _ => std::env::home_dir().map(|home| home.join(HOME_DIRECTORY)),
     }
 }
 
