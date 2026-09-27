@@ -342,6 +342,8 @@ pub struct App {
     history_refs_bounds: pm_ui::Bounds,
     /// Bounds of the Source Control Graph from the last frame.
     history_graph_bounds: pm_ui::Bounds,
+    /// Where the Source Control list of changes came out last frame.
+    changes_area: pm_ui::Bounds,
     /// Whether the Graph includes all history references.
     history_all: bool,
     /// Remote Git work currently running away from the UI thread.
@@ -616,6 +618,7 @@ impl App {
             command_center_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_refs_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_graph_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
+            changes_area: pm_ui::Bounds::default(),
             history_all: layout.history_all,
             remote_operation: None,
             spun: std::time::Instant::now(),
@@ -2144,6 +2147,7 @@ impl App {
             commit_bounds: self.commit_bounds.clone(),
             history_refs_bounds: self.history_refs_bounds.clone(),
             history_graph_bounds: self.history_graph_bounds.clone(),
+            changes_area: self.changes_area.clone(),
             history_all: self.history_all,
             history_graph_height: layout.history_graph_height,
             history_graph_open: layout.history_graph_open,

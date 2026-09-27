@@ -48,6 +48,23 @@ impl App {
         self.reviews.get_mut(&scope)
     }
 
+    /// Scrolls the Source Control list of changes by `delta` logical pixels
+    /// when the pointer is over it, answering whether it was.
+    pub(super) fn scroll_changes(&mut self, delta: f32) -> bool {
+        let over = self.secondary_sidebar_open
+            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes
+            && self
+                .pointer
+                .is_some_and(|pointer| self.changes_area.get().contains(pointer));
+        match self.review().filter(|_| over) {
+            Some(review) => {
+                review.scroll_list(delta);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// The worktrees a pane is holding the review, or one file's diff, of.
     fn reviewed_scopes(&self) -> BTreeSet<Scope> {
         self.panes
