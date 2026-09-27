@@ -198,6 +198,7 @@ fn toolbar(theme: &Theme, review: &Review, split: bool) -> Div<Message> {
     };
     let staged = review.staged();
     let acting = review.acting_on().len();
+    let idle = !review.is_working();
 
     bar(theme)
         .child(
@@ -226,16 +227,21 @@ fn toolbar(theme: &Theme, review: &Review, split: bool) -> Div<Message> {
         .child(worded(theme, "Edit", files > 0, Message::OpenExcerpts))
         .child(icon_button(theme, IconName::ArrowUp, Message::PreviousHunk))
         .child(icon_button(theme, IconName::ArrowDown, Message::NextHunk))
-        .child(worded(theme, "Stage", acting > 0, Message::StageSelection))
+        .child(worded(
+            theme,
+            "Stage",
+            idle && acting > 0,
+            Message::StageSelection,
+        ))
         .child(worded(
             theme,
             "Unstage",
-            staged > 0,
+            idle && staged > 0,
             Message::UnstageSelection,
         ))
         .child(match staged == files && files > 0 {
-            true => worded(theme, "Unstage All", true, Message::UnstageAll),
-            false => worded(theme, "Stage All", files > 0, Message::StageAll),
+            true => worded(theme, "Unstage All", idle, Message::UnstageAll),
+            false => worded(theme, "Stage All", idle && files > 0, Message::StageAll),
         })
         .child(turning_icon_button(
             theme,

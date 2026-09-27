@@ -107,10 +107,17 @@ impl App {
 
     /// Has git carry `work` out in `scope`'s worktree once whatever it is
     /// doing there already is done, and reads the worktree again after it.
+    ///
+    /// Its repositories read as busy from the moment it is asked for, not
+    /// from when it starts: work waiting behind a reading is work the reader
+    /// has to see is under way.
     pub(super) fn work_later(&mut self, scope: Scope, work: Option<Work>) {
         let Some(work) = work else {
             return;
         };
+        if let Some(review) = self.reviews.get_mut(&scope) {
+            review.began(&work);
+        }
         self.readings
             .queued
             .entry(scope)
@@ -133,9 +140,6 @@ impl App {
         else {
             return;
         };
-        if let Some(review) = self.reviews.get_mut(&scope) {
-            review.began(&work);
-        }
         self.readings.working.insert(scope);
         self.spun = std::time::Instant::now();
         self.spawn_read(move || Back::Worked(scope, work.run()));
@@ -336,6 +340,8 @@ impl App {
             self.work_next(scope);
         } else if self.readings.again.remove(&scope) {
             self.reread_review_later(scope);
+        } else if let Some(review) = self.reviews.get_mut(&scope) {
+            review.settle_work();
         }
     }
 

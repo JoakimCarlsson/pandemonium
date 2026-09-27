@@ -7,10 +7,32 @@
 //! which has nothing in the index to be restored from and is thrown away by
 //! being taken off the disk.
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::git::run::{Said, answer, git, holding, piped, within};
+use crate::git::run::{Said, answer, git, holding, piped, streamed, within};
+
+/// Where [`contents`] reads a file's text from.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Revision {
+    /// The last commit, as [`committed`] reads it.
+    Head,
+    /// The index, as [`baseline`] reads it.
+    Index,
+}
+
+impl Revision {
+    /// How git is asked for `relative` in this revision, when it can be
+    /// asked on a line of its own.
+    fn naming(self, relative: &Path) -> Option<String> {
+        let relative = relative.to_str().filter(|named| !named.contains('\n'))?;
+        Some(match self {
+            Self::Head => format!("HEAD:{relative}"),
+            Self::Index => format!(":{relative}"),
+        })
+    }
+}
 
 /// The text the index holds for `path`, in the repository holding it at or
 /// below `root`.
@@ -34,6 +56,69 @@ pub fn committed(root: &Path, path: &Path) -> Option<String> {
     let mut named = std::ffi::OsString::from("HEAD:");
     named.push(relative.as_os_str());
     answer(&root, [OsStr::new("show"), &named])
+}
+
+/// The text each of `wanted` holds for its file, in the repository holding
+/// it at or below `root`, answered in the order they were asked for.
+///
+/// This is [`committed`] and [`baseline`] for many files at once: one
+/// `git cat-file --batch` per repository rather than one `git show` per
+/// file, because a review of two thousand changed files would otherwise be
+/// four thousand subprocesses. A file the revision does not have answers
+/// nothing, as it does there.
+pub fn contents(root: &Path, wanted: &[(&Path, Revision)]) -> Vec<Option<String>> {
+    let mut answers = vec![None; wanted.len()];
+    let mut asked = BTreeMap::<PathBuf, Vec<(usize, String)>>::new();
+    for (at, (path, revision)) in wanted.iter().enumerate() {
+        let repository = holding(root, path);
+        if let Some(named) =
+            within(&repository, path).and_then(|relative| revision.naming(relative))
+        {
+            asked.entry(repository).or_default().push((at, named));
+        }
+    }
+    for (repository, asked) in asked {
+        let input = asked
+            .iter()
+            .map(|(_, named)| format!("{named}\n"))
+            .collect::<String>();
+        let Some(output) = streamed(&repository, ["cat-file", "--batch"], input) else {
+            continue;
+        };
+        for ((at, _), text) in asked.iter().zip(batched(&output)) {
+            answers[*at] = text;
+        }
+    }
+    answers
+}
+
+/// Each answer `git cat-file --batch` wrote, in the order it wrote them:
+/// the text of a blob, or nothing for a name it could not find or that is
+/// not a file.
+///
+/// Every answer starts with a line saying what was found. A blob's is
+/// `<id> blob <size>`, followed by that many bytes and a newline; a name git
+/// has nothing for is `<name> missing` and ends there.
+fn batched(output: &[u8]) -> Vec<Option<String>> {
+    let mut answers = Vec::new();
+    let mut rest = output;
+    while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
+        let header = String::from_utf8_lossy(&rest[..end]).into_owned();
+        rest = &rest[end + 1..];
+        let mut words = header.rsplitn(3, ' ');
+        let size = words.next().and_then(|size| size.parse::<usize>().ok());
+        let kind = words.next();
+        let Some(size) = size.filter(|_| words.next().is_some()) else {
+            answers.push(None);
+            continue;
+        };
+        let Some(body) = rest.get(..size) else {
+            break;
+        };
+        answers.push((kind == Some("blob")).then(|| String::from_utf8_lossy(body).into_owned()));
+        rest = rest.get(size + 1..).unwrap_or_default();
+    }
+    answers
 }
 
 /// Puts what the worktree holds for `paths` into the index.

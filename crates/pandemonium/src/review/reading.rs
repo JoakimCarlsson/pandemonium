@@ -52,10 +52,6 @@ impl Reading {
                 root,
             })
             .collect::<Vec<_>>();
-        let roots = repositories
-            .iter()
-            .map(|repository| repository.root.as_path())
-            .collect::<Vec<_>>();
         let changed = gather(
             repositories
                 .iter()
@@ -71,9 +67,13 @@ impl Reading {
                 patches.entry(path).or_default().unstaged = hunks;
             }
         }
-        for (owner, changed) in changed.iter().filter(|(_, changed)| changed.is_untracked()) {
-            let hunks = pm_core::diff(roots[*owner], &changed.path, Side::Untracked);
-            patches.entry(changed.path.clone()).or_default().unstaged = hunks;
+        let untracked = changed
+            .iter()
+            .filter(|(_, changed)| changed.is_untracked())
+            .map(|(_, changed)| changed.path.as_path())
+            .collect::<Vec<_>>();
+        for (path, hunks) in untracked.iter().zip(pm_core::untracked(root, &untracked)) {
+            patches.entry(path.to_path_buf()).or_default().unstaged = hunks;
         }
         patches.retain(|path, _| changed.iter().any(|(_, changed)| changed.path == *path));
         let conflicts = changed
@@ -84,13 +84,7 @@ impl Reading {
                 Some((changed.path.clone(), conflict::conflicts(&source)))
             })
             .collect();
-        let shades = patches
-            .iter()
-            .map(|(path, patch)| {
-                let holding = holding(&roots, path).unwrap_or(root);
-                (path.clone(), Shading::of(holding, path, patch))
-            })
-            .collect();
+        let shades = Shading::all(root, &patches);
 
         Self {
             reads,
@@ -129,13 +123,4 @@ pub(super) fn gather<'a>(
                 .map(move |changed| (owner, changed.clone()))
         })
         .collect()
-}
-
-/// The root of the innermost of `roots` that `path` is in.
-pub(super) fn holding<'a>(roots: &[&'a Path], path: &Path) -> Option<&'a Path> {
-    roots
-        .iter()
-        .rev()
-        .find(|root| path.starts_with(root))
-        .copied()
 }

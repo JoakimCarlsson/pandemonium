@@ -956,6 +956,7 @@ impl Review {
 
     /// The work of putting the files `ids` names into the index.
     pub fn stage(&self, ids: &[ChangeId]) -> Option<Work> {
+        self.idle()?;
         let named = self.named_where(ids, Changed::is_unstaged);
         let named = named
             .into_iter()
@@ -966,12 +967,14 @@ impl Review {
 
     /// The work of taking the files `ids` names back out of the index.
     pub fn unstage(&self, ids: &[ChangeId]) -> Option<Work> {
+        self.idle()?;
         let named = self.named_where(ids, Changed::is_staged);
         self.in_each(named, UNSTAGING, pm_core::unstage)
     }
 
     /// The work of putting everything that has changed into the index.
     pub fn stage_all(&self) -> Option<Work> {
+        self.idle()?;
         let named = self
             .owned(Changed::is_unstaged)
             .into_iter()
@@ -982,6 +985,7 @@ impl Review {
 
     /// The work of taking everything back out of the index.
     pub fn unstage_all(&self) -> Option<Work> {
+        self.idle()?;
         let named = self.owned(Changed::is_staged);
         self.in_each(named, UNSTAGING, pm_core::unstage)
     }
@@ -1049,6 +1053,7 @@ impl Review {
     /// the whole of the file. An unstaged hunk is the worktree's lines going
     /// in; a staged one is the last commit's lines going back over them.
     pub fn stage_hunk(&self, id: ChangeId, staged: bool, hunk: usize) -> Option<Work> {
+        self.idle()?;
         let path = self.path_of(id)?.to_path_buf();
         let patch = self.patches.get(&path)?;
         let side = match staged {
@@ -1152,11 +1157,11 @@ impl Review {
     /// Takes in what git said once a piece of work was carried out.
     ///
     /// The worktree is not read again here: that is the window's to ask
-    /// for, away from the frame, once this has been taken in.
+    /// for, away from the frame, once this has been taken in. Its
+    /// repositories go on reading as busy until [`Review::settle_work`],
+    /// because the list is still the one from before the work until that
+    /// reading is back.
     pub fn finished(&mut self, done: Done) {
-        for repository in &mut self.repositories {
-            repository.set_working(None);
-        }
         for (root, said) in done.heard {
             let Some(repository) = self
                 .repositories
@@ -1170,6 +1175,21 @@ impl Review {
             }
             repository.heard(said);
         }
+    }
+
+    /// Marks every repository as done with the work it was busy with, now
+    /// that the worktree has been read again after it.
+    pub fn settle_work(&mut self) {
+        for repository in &mut self.repositories {
+            repository.set_working(None);
+        }
+    }
+
+    /// Nothing while git is being had do something here, so that staging
+    /// asked for again before the list has caught up is not queued behind
+    /// it: the rows it names are the ones from before the last of it.
+    fn idle(&self) -> Option<()> {
+        (!self.is_working()).then_some(())
     }
 
     /// Whether git is being had do something in any of the repositories.
