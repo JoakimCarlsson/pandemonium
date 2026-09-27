@@ -19,6 +19,7 @@ use pm_text::{Buffer, Client, Indent, Position, Server, Servers};
 use crate::editor::baseline::Baselines;
 use crate::editor::layout::TextLayout;
 use crate::editor::search::Search;
+use crate::editor::wrap::{self, Row, Segment};
 
 /// How many lines of context the view keeps above and below the cursor.
 pub const SCROLL_MARGIN: usize = 2;
@@ -69,6 +70,12 @@ pub struct Document {
     buffer: Buffer,
     /// The first line the pane shows.
     scroll: usize,
+    /// How many rows of that line are above the pane, when it wraps onto
+    /// more than one.
+    part: usize,
+    /// Whether a line too long for the pane carries on down the next row
+    /// rather than off its right edge.
+    wraps: bool,
     /// How far that line is scrolled up past the top of the pane, in logical
     /// pixels, never as much as a whole line.
     offset: f32,
@@ -148,6 +155,8 @@ impl Document {
             folded: Vec::new(),
             buffer,
             scroll: 0,
+            part: 0,
+            wraps: false,
             offset: 0.0,
             followed: None,
             column: 0,
@@ -166,6 +175,12 @@ impl Document {
     /// document, with no file behind it and no server to tell about it.
     pub fn scratch(name: &str) -> Self {
         Self::new(Buffer::holding(name, ""), false, Vec::new(), None)
+    }
+
+    /// Returns this document wrapping the lines too long for its pane.
+    pub fn wrapped(mut self) -> Self {
+        self.wraps = true;
+        self
     }
 
     /// The text and everything the editor knows about it.
@@ -280,18 +295,123 @@ impl Document {
         Some((from..line).filter(|line| !self.is_folded(*line)).count())
     }
 
-    /// The line drawn `row` rows below `from`.
-    pub fn line_at_row(&self, from: usize, row: usize) -> usize {
-        self.line_after(from, row as isize)
-    }
-
-    /// The lines drawn from `from` down, as many as `rows` has room for.
-    pub fn drawn_lines(&self, from: usize, rows: usize) -> Vec<usize> {
-        let last = self.buffer.line_count();
-        (from..last)
+    /// The rows drawn from the top of the pane down, as many as `rows`.
+    pub fn drawn_segments(&self, rows: usize) -> Vec<Segment> {
+        (self.scroll..self.buffer.line_count())
             .filter(|line| !self.is_folded(*line))
+            .flat_map(|line| self.segments(line))
+            .skip(self.part)
             .take(rows)
             .collect()
+    }
+
+    /// The rows `line` is drawn on, as wide as the pane last drew it.
+    pub fn segments(&self, line: usize) -> Vec<Segment> {
+        match self.wraps {
+            true => wrap::segments(&self.buffer, line, self.layout.columns()),
+            false => vec![Segment::whole(line)],
+        }
+    }
+
+    /// The characters `row` holds.
+    fn segment_of(&self, row: Row) -> Segment {
+        let segments = self.segments(row.line);
+        let last = segments.len().saturating_sub(1);
+        segments
+            .get(row.part.min(last))
+            .copied()
+            .unwrap_or(Segment::whole(row.line))
+    }
+
+    /// How many rows `line` is drawn on.
+    fn row_count(&self, line: usize) -> usize {
+        match self.wraps {
+            true => self.segments(line).len().max(1),
+            false => 1,
+        }
+    }
+
+    /// The row `position` is drawn on.
+    pub fn row_holding(&self, position: Position) -> Row {
+        let part = self
+            .segments(position.line)
+            .iter()
+            .rposition(|segment| segment.start <= position.column)
+            .unwrap_or_default();
+        Row {
+            line: position.line,
+            part,
+        }
+    }
+
+    /// The first row the pane shows.
+    pub fn top(&self) -> Row {
+        Row {
+            line: self.scroll,
+            part: self.part,
+        }
+    }
+
+    /// The last row of the last line.
+    pub fn last_row(&self) -> Row {
+        let line = self.buffer.line_count().saturating_sub(1);
+        Row {
+            line,
+            part: self.row_count(line) - 1,
+        }
+    }
+
+    /// The row `rows` rows below `row`, or above it when `rows` is negative,
+    /// folded lines skipped and the ends of the file held to.
+    pub fn row_after(&self, row: Row, rows: isize) -> Row {
+        let mut at = row;
+        for _ in 0..rows.unsigned_abs() {
+            let Some(next) = self.next_row(at, rows > 0) else {
+                break;
+            };
+            at = next;
+        }
+        at
+    }
+
+    /// The row after `row`, or before it when not `down`, if there is one.
+    fn next_row(&self, row: Row, down: bool) -> Option<Row> {
+        if down && row.part + 1 < self.row_count(row.line) {
+            return Some(Row {
+                part: row.part + 1,
+                ..row
+            });
+        }
+        if !down && row.part > 0 {
+            return Some(Row {
+                part: row.part - 1,
+                ..row
+            });
+        }
+        let line = self.line_after(row.line, if down { 1 } else { -1 });
+        match (line == row.line, down) {
+            (true, _) => None,
+            (false, true) => Some(Row::first_of(line)),
+            (false, false) => Some(Row {
+                line,
+                part: self.row_count(line) - 1,
+            }),
+        }
+    }
+
+    /// How many rows below `from` the row `row` is drawn, if it is drawn.
+    pub fn rows_between(&self, from: Row, row: Row) -> Option<usize> {
+        if !self.wraps {
+            return self.row_of(from.line, row.line);
+        }
+        if row < from || self.is_folded(row.line) {
+            return None;
+        }
+        let above = (from.line..row.line)
+            .filter(|line| !self.is_folded(*line))
+            .map(|line| self.row_count(line))
+            .sum::<usize>();
+        Some(above + row.part - from.part)
     }
 
     /// Whether the server should be asked again what to write into the lines.
@@ -441,10 +561,14 @@ impl Document {
 
     /// The place in the file `point` fell on, as the pane last drew it.
     pub fn position_at(&self, point: Point) -> Position {
-        let line = self.line_at_row(self.scroll, self.layout.row_at(point));
-        let column = self.layout.column_at(point);
-        self.buffer
-            .clamped(self.buffer.position_at_display(line, column))
+        let row = self.row_after(self.top(), self.layout.row_at(point) as isize);
+        let segment = self.segment_of(row);
+        let column = self.layout.column_at(point) + segment.indent(&self.buffer);
+        let at = self.buffer.position_at_display(row.line, column);
+        self.buffer.clamped(Position::new(
+            at.line,
+            at.column.min(segment.end.saturating_sub(1)),
+        ))
     }
 
     /// The character in the file `point` is over, when it is over one.
@@ -453,32 +577,42 @@ impl Document {
     /// one: a question asked about the place a caret would be clamped to is
     /// a question about a name the reader is not pointing at.
     pub fn position_under(&self, point: Point) -> Option<Position> {
-        let row = self.layout.row_at(point);
-        let line = self.line_at_row(self.scroll, row);
-        if line >= self.buffer.line_count() || self.row_of(self.scroll, line) != Some(row) {
+        let index = self.layout.row_at(point);
+        let row = self.row_after(self.top(), index as isize);
+        if row.line >= self.buffer.line_count() || self.rows_between(self.top(), row) != Some(index)
+        {
             return None;
         }
-        let at = self
-            .buffer
-            .position_at_display(line, self.layout.column_under(point));
-        (at.column < self.buffer.line_len(line)).then_some(at)
+        let segment = self.segment_of(row);
+        let column = self.layout.column_under(point) + segment.indent(&self.buffer);
+        let at = self.buffer.position_at_display(row.line, column);
+        (at.column < self.buffer.line_len(row.line).min(segment.end)).then_some(at)
     }
 
     /// Where on screen `position` was drawn, as the pane last drew it.
     pub fn point_of(&self, position: Position) -> Point {
-        let row = self
-            .row_of(self.scroll, position.line)
+        let row = self.row_holding(position);
+        let index = self
+            .rows_between(self.top(), row)
             .unwrap_or_else(|| position.line.saturating_sub(self.scroll));
+        let indent = self.segment_of(row).indent(&self.buffer);
         Point::new(
-            self.layout.x_of(self.buffer.display_column(position)),
-            self.layout.top_at(row),
+            self.layout
+                .x_of(self.buffer.display_column(position).saturating_sub(indent)),
+            self.layout.top_at(index),
         )
     }
 
     /// Shows the file from `line` down, as far as there is file to show.
     pub fn scroll_to(&mut self, line: usize) {
+        self.scroll_to_row(Row::first_of(line));
+    }
+
+    /// Shows the file from `row` down, as far as there is file to show.
+    pub fn scroll_to_row(&mut self, row: Row) {
         let last = self.buffer.line_count().saturating_sub(1);
-        self.scroll = line.min(last);
+        self.scroll = row.line.min(last);
+        self.part = row.part.min(self.row_count(self.scroll) - 1);
         self.offset = 0.0;
     }
 
@@ -488,13 +622,13 @@ impl Document {
         let shown = self.rows();
         let margin = SCROLL_MARGIN.min(shown.saturating_sub(1) / 2);
         let rows = rows.clamp(margin, shown.saturating_sub(margin + 1).max(margin));
-        let head = self.buffer.selection().head.line;
-        self.scroll_to(self.line_after(head, -(rows as isize)));
+        let head = self.row_holding(self.buffer.selection().head);
+        self.scroll_to_row(self.row_after(head, -(rows as isize)));
     }
 
     /// Scrolls `lines` down, or up when `lines` is negative.
     pub fn scroll_by(&mut self, lines: isize) {
-        self.scroll_to(self.line_after(self.scroll, lines));
+        self.scroll_to_row(self.row_after(self.top(), lines));
     }
 
     /// Scrolls `pixels` logical pixels down, or up when `pixels` is negative,
@@ -507,9 +641,8 @@ impl Document {
         let line = self.layout.cell.height.max(1.0);
         let reach = self.offset + pixels;
         let rows = (reach / line).floor();
-        self.scroll_to(self.line_after(self.scroll, rows as isize));
-        let last = self.buffer.line_count().saturating_sub(1);
-        let pinned = (self.scroll == 0 && reach < 0.0) || self.scroll >= last;
+        self.scroll_to_row(self.row_after(self.top(), rows as isize));
+        let pinned = (self.top() == Row::default() && reach < 0.0) || self.top() >= self.last_row();
         self.offset = match pinned {
             true => 0.0,
             false => reach - rows * line,
@@ -559,12 +692,18 @@ impl Document {
         self.reveal(head.line);
 
         let margin = SCROLL_MARGIN.min(rows.saturating_sub(1) / 2);
-        let first = self.line_after(head.line, -(margin as isize));
-        let last = self.line_after(head.line, margin as isize);
-        if first < self.scroll || (first == self.scroll && self.offset > 0.0) {
-            self.scroll_to(first);
-        } else if rows > 0 && self.row_of(self.scroll, last).is_none_or(|row| row >= rows) {
-            self.scroll_to(self.line_after(last, 1 - rows as isize));
+        let row = self.row_holding(head);
+        let first = self.row_after(row, -(margin as isize));
+        let last = self.row_after(row, margin as isize);
+        let top = self.top();
+        if first < top || (first == top && self.offset > 0.0) {
+            self.scroll_to_row(first);
+        } else if rows > 0 && self.rows_between(top, last).is_none_or(|row| row >= rows) {
+            self.scroll_to_row(self.row_after(last, 1 - rows as isize));
+        }
+        if self.wraps {
+            self.column = 0;
+            return;
         }
 
         let drawn = self.buffer.display_column(head);
