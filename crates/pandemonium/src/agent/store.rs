@@ -565,6 +565,14 @@ impl Talk {
         self.title.as_deref()
     }
 
+    /// Names the conversation `title` until its agent names it, for one
+    /// taken up again under the title it had before.
+    pub fn entitle(&mut self, title: &str) {
+        if self.title.is_none() && !title.is_empty() {
+            self.title = Some(title.to_owned());
+        }
+    }
+
     /// How much of the model's context the conversation fills, where the
     /// agent says.
     pub fn usage(&self) -> Option<&Usage> {
@@ -1057,8 +1065,9 @@ pub struct Talks {
     next: TalkId,
     /// How an agent wakes the window once it has something to say.
     notify: Option<Notify>,
-    /// Whether a session has opened its conversation since this was asked.
-    opened: bool,
+    /// Whether a session has opened or retitled its conversation since this
+    /// was asked.
+    renamed: bool,
     /// The sessions whose agent went away on its own since this was asked.
     ended: Vec<TalkId>,
     /// The file and terminal requests the agents have raised and the window
@@ -1233,6 +1242,11 @@ impl Talks {
             .map(Talk::id)
     }
 
+    /// Every conversation in the window, across all its projects.
+    pub fn iter(&self) -> impl Iterator<Item = &Talk> {
+        self.talks.values()
+    }
+
     /// The conversation `id` names.
     pub fn get(&self, id: TalkId) -> Option<&Talk> {
         self.talks.get(&id)
@@ -1311,7 +1325,7 @@ impl Talks {
                     changed = true;
                     continue;
                 }
-                self.opened |= matches!(event, Event::Ready);
+                self.renamed |= matches!(event, Event::Ready | Event::Titled(_));
                 if matches!(event, Event::Ended) {
                     self.ended.push(talk.id);
                 }
@@ -1328,13 +1342,15 @@ impl Talks {
         std::mem::take(&mut self.requests)
     }
 
-    /// Whether a conversation has been opened since this was last asked.
+    /// Whether a conversation has been opened or retitled since this was
+    /// last asked.
     ///
-    /// The window writes down which conversation each pane is holding so
-    /// that the next launch can take it up again, and the name to write down
-    /// is the agent's, which does not exist until the agent has answered.
-    pub fn take_opened(&mut self) -> bool {
-        std::mem::take(&mut self.opened)
+    /// The window writes down which conversation each pane is holding, and
+    /// under what title, so that the next launch can take it up again; the
+    /// name and the title are the agent's, and neither exists until the agent
+    /// has said it.
+    pub fn take_renamed(&mut self) -> bool {
+        std::mem::take(&mut self.renamed)
     }
 }
 

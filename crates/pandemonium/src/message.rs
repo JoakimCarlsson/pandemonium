@@ -153,6 +153,8 @@ pub enum Message {
     ShowCommitMenu,
     /// Show the Source Control action menu.
     ShowSourceControlMenu,
+    /// Show the menu of the window's agents that stand this way.
+    ShowAgentsMenu(crate::agent::Standing),
     /// Show this tab of this pane.
     SelectItem(PaneId, Item),
     /// Close this tab of this pane.

@@ -935,6 +935,10 @@ impl App {
             self.open_menu(MenuTarget::SourceControl);
             return;
         }
+        if let Message::ShowAgentsMenu(standing) = message {
+            self.open_agents_menu(standing);
+            return;
+        }
         if let Message::ShowEntryMenu(_) | Message::ShowTreeMenu = message {
             self.tree_command(message);
             return;
@@ -2150,7 +2154,7 @@ impl ApplicationHandler<Wake> for App {
                     self.reread_worked_sessions();
                     self.request_redraw();
                 }
-                if self.agents.take_opened() {
+                if self.agents.take_renamed() {
                     self.store();
                 }
             }

@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 
 use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
-use pm_gfx::Point;
+use pm_gfx::{Point, Renderer, Size};
 use pm_text::Position;
-use pm_ui::ResizePhase;
+use pm_ui::{MenuItem, ResizePhase};
 use winit::window::UserAttentionType;
 
-use crate::agent::{TalkId, Tally};
+use crate::agent::{Standing, Talk, TalkId, Tally};
 use crate::app::places::Place;
 use crate::app::{App, Writing};
 use crate::desktop;
@@ -23,8 +23,57 @@ use crate::panel::PanelView;
 use crate::panes::Item;
 use crate::picker::{Choice, Kind, Row};
 use crate::terminal::ShellId;
+use crate::workspace::{MenuTarget, TabMenu};
+
+/// How far above the status bar its agent menu stops.
+const MENU_GAP: f32 = 4.0;
 
 impl App {
+    /// Opens the menu of the agents standing as `standing` does, rising from
+    /// the top of the status bar above the count that was clicked.
+    pub(super) fn open_agents_menu(&mut self, standing: Standing) {
+        let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
+        let bar = window.height - self.theme().size.bar;
+        self.menu = self.pointer.map(|pointer| TabMenu {
+            at: Point::new(pointer.x, bar - MENU_GAP),
+            target: MenuTarget::Agents(standing),
+        });
+        self.request_redraw();
+    }
+
+    /// The menu of the agents standing as `standing` does, each row going to
+    /// its pane.
+    pub(super) fn agents_menu(&self, standing: Standing) -> Vec<MenuItem<Message>> {
+        self.agents
+            .iter()
+            .filter(|talk| talk.standing() == standing)
+            .map(|talk| {
+                pm_ui::menu_entry(self.agent_place(talk), Some(Message::ShowAgent(talk.id())))
+            })
+            .collect()
+    }
+
+    /// Where a conversation is, written out: the agent, the project, the
+    /// session where it is in one, and the title the agent gave it.
+    fn agent_place(&self, talk: &Talk) -> String {
+        let scope = talk.scope();
+        [
+            Some(talk.agent().name.to_owned()),
+            self.open
+                .get(scope.project())
+                .map(|project| project.name().to_owned()),
+            scope
+                .session()
+                .and_then(|session| self.sessions.get(session))
+                .map(|session| session.name().to_owned()),
+            talk.title().map(str::to_owned),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+    }
+
     /// Carries out the commands an agent session answers to.
     ///
     /// The answer says whether the message was one of them, so that the
@@ -181,6 +230,12 @@ impl App {
             return;
         };
         let (scope, agent, root) = (talk.scope(), talk.agent(), talk.root().to_path_buf());
+        let title = talk
+            .history()
+            .iter()
+            .find(|listed| listed.id == saved)
+            .and_then(|listed| listed.title.clone())
+            .unwrap_or_default();
         if let Some(existing) = self.agents.find_saved(scope, agent, saved) {
             self.show_item(
                 self.panes.focus(),
@@ -198,6 +253,9 @@ impl App {
         else {
             return;
         };
+        if let Some(talk) = self.agents.get_mut(opened) {
+            talk.entitle(&title);
+        }
         self.show_item(self.panes.focus(), scope, Item::Agent(scope, opened), false);
         self.focus_prompt(opened);
     }

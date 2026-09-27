@@ -437,6 +437,7 @@ impl App {
                     worktree,
                     agent: talk.agent().id.to_owned(),
                     session: talk.resumable().unwrap_or_default(),
+                    title: talk.title().unwrap_or_default().to_owned(),
                     ..SavedTab::default()
                 });
             }
@@ -548,6 +549,9 @@ impl App {
                     true => agents.start(project, session, &root, &env, agent)?,
                     false => agents.resume(project, session, &root, &env, agent, &tab.session)?,
                 };
+                if let Some(opened) = agents.get_mut(talk) {
+                    opened.entitle(&tab.title);
+                }
                 return Some((Some(scope), Item::Agent(scope, talk)));
             }
             if tab.kind == SavedKind::Review {
@@ -1221,6 +1225,7 @@ impl App {
                     .then(|| pm_ui::menu_entry("Abort Merge", Some(Message::AbortMerge))),
             )
             .collect(),
+            MenuTarget::Agents(standing) => self.agents_menu(standing),
             MenuTarget::HistoryRefs => vec![
                 pm_ui::menu_entry("Auto", Some(Message::SetHistoryFilter(false))),
                 pm_ui::menu_entry("All", Some(Message::SetHistoryFilter(true))),

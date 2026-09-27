@@ -8,7 +8,7 @@ use pm_ui::button;
 use pm_ui::{
     Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Text, Theme,
     h_flex, icon, icon_button, layout_icon_button, measured, menu, menu_entry, menu_separator,
-    overlay, rule, sash, text, v_flex, view_tab,
+    overlay, overlay_above, rule, sash, text, v_flex, view_tab,
 };
 
 use crate::agent::{Standing, Tally, standing_color};
@@ -306,6 +306,8 @@ pub enum MenuTarget {
     SourceControl,
     /// The Graph history-reference filter.
     HistoryRefs,
+    /// The status bar's count of agents standing one way.
+    Agents(Standing),
 }
 
 /// Builds the workspace with its resizable sessions sidebar.
@@ -389,7 +391,10 @@ pub fn workspace(
                     Point::new(0.0, 0.0),
                     backdrop(Message::DismissMenu),
                 ))
-                .child(overlay(open.at, menu(theme, items)))
+                .child(match open.target {
+                    MenuTarget::Agents(_) => overlay_above(open.at, menu(theme, items)),
+                    _ => overlay(open.at, menu(theme, items)),
+                })
         })
 }
 
@@ -841,6 +846,10 @@ fn agent_tally(theme: &Theme, tally: Tally) -> Vec<Div<Message>> {
             .px(1)
             .gap(0.75)
             .items_center()
+            .rounded(theme.radius.md)
+            .hover_bg(theme.colors.surface_hover)
+            .active_bg(theme.colors.surface_active)
+            .on_click(Message::ShowAgentsMenu(standing))
             .child(text("●").text_xs().color(standing_color(theme, standing)))
             .child(
                 text(format!("{count} {label}"))

@@ -35,7 +35,7 @@ pub use element::{
 pub use glyphs::Glyphs;
 pub use icons::{Icon, IconName, IconSize, LayoutIcon, LayoutIconButton, icon, layout_icon_button};
 pub use measured::{Bounds, Measured, measured};
-pub use overlay::{Beside, Overlay, beside, overlay};
+pub use overlay::{Beside, Overlay, beside, overlay, overlay_above};
 pub use paragraph::{Paragraph, paragraph};
 pub use picture::{Picture, picture};
 pub use placed::{Placed, Placements, nearest};
