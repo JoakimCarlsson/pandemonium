@@ -460,23 +460,48 @@ impl Session {
     /// a whole file or a terminal's output costs the caller nothing to hand
     /// back.
     pub fn answer_request(&self, ticket: u64, answer: Answer) {
-        let Ok(mut state) = self.state.lock() else {
+        if let Some((owed, limit)) = self.take_owed(ticket) {
+            let _ = self.outbox.send(Outgoing::Answer {
+                owed,
+                limit,
+                answer,
+            });
+        }
+    }
+
+    /// Answers the request raised under `ticket` with what `answer` comes
+    /// to, worked out on a thread of its own so that reading or writing a
+    /// file for the agent never holds the window up.
+    pub fn answer_request_later(
+        &self,
+        ticket: u64,
+        answer: impl FnOnce() -> Answer + Send + 'static,
+    ) {
+        let Some((owed, limit)) = self.take_owed(ticket) else {
             return;
         };
-        let Some(owed) = state.owed.remove(&ticket) else {
-            return;
-        };
+        let outbox = self.outbox.clone();
+        std::thread::spawn(move || {
+            let _ = outbox.send(Outgoing::Answer {
+                owed,
+                limit,
+                answer: answer(),
+            });
+        });
+    }
+
+    /// Takes the request raised under `ticket` off what the agent is owed,
+    /// with the most output its terminal said it wants back, if it is still
+    /// owed at all.
+    fn take_owed(&self, ticket: u64) -> Option<(Owed, Option<usize>)> {
+        let mut state = self.state.lock().ok()?;
+        let owed = state.owed.remove(&ticket)?;
         let limit = match &owed.request {
             Request::Output { terminal } => state.limits.get(terminal).copied(),
             Request::Release { terminal } => state.limits.remove(terminal),
             _ => None,
         };
-        drop(state);
-        let _ = self.outbox.send(Outgoing::Answer {
-            owed,
-            limit,
-            answer,
-        });
+        Some((owed, limit))
     }
 
     /// Replies to the permission request `ask`, if it is still waiting.

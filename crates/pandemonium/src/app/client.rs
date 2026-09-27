@@ -37,8 +37,20 @@ impl App {
                 continue;
             };
             let answer = match request {
-                Request::Read { path } => self.read_for_agent(scope, &path),
-                Request::Write { path, text } => self.write_for_agent(scope, &path, &text),
+                Request::Read { path } => match self.read_for_agent(scope, &path) {
+                    Some(answer) => answer,
+                    None => {
+                        self.answer_later(talk, ticket, move || read_from_disk(&path));
+                        continue;
+                    }
+                },
+                Request::Write { path, text } => match self.write_for_agent(scope, &path, &text) {
+                    Some(answer) => answer,
+                    None => {
+                        self.answer_later(talk, ticket, move || write_to_disk(&path, &text));
+                        continue;
+                    }
+                },
                 Request::Run(run) => self.run_for_agent(talk, scope, run),
                 Request::Output { terminal } => {
                     self.errand(talk, &terminal).map_or_else(gone, |shell| {
@@ -123,38 +135,37 @@ impl App {
             .retain(|(talk, _, _)| agents.get(*talk).is_some());
     }
 
-    /// The file at `path` as `scope` has it: the open buffer, or the disk.
-    fn read_for_agent(&self, scope: Scope, path: &Path) -> Answer {
-        if let Some(document) = self
-            .editor
-            .opened(scope, path)
-            .and_then(|id| self.editor.get(id))
-        {
-            return Answer::Text(document.borrow().buffer().contents());
-        }
-        match fs::read_to_string(path) {
-            Ok(text) => Answer::Text(text),
-            Err(error) => Answer::Failed(error.to_string()),
+    /// Answers the request `talk` raised under `ticket` with what `answer`
+    /// comes to, worked out away from the window.
+    fn answer_later(
+        &self,
+        talk: TalkId,
+        ticket: u64,
+        answer: impl FnOnce() -> Answer + Send + 'static,
+    ) {
+        if let Some(talk) = self.agents.get(talk) {
+            talk.answer_request_later(ticket, answer);
         }
     }
 
-    /// Makes the file at `path` hold `text`, in its open buffer when it has
-    /// one and on disk either way.
-    fn write_for_agent(&mut self, scope: Scope, path: &Path, text: &str) -> Answer {
-        if let Some(id) = self.editor.opened(scope, path)
-            && let Some(root) = self.root_of(scope)
-        {
-            self.editor.write(id, text, &root);
-            return Answer::Done;
-        }
-        let written = path
-            .parent()
-            .map_or(Ok(()), fs::create_dir_all)
-            .and_then(|()| fs::write(path, text));
-        match written {
-            Ok(()) => Answer::Done,
-            Err(error) => Answer::Failed(error.to_string()),
-        }
+    /// The file at `path` as its open buffer in `scope` has it, or none when
+    /// it is not open and has to be read from the disk.
+    fn read_for_agent(&self, scope: Scope, path: &Path) -> Option<Answer> {
+        let document = self
+            .editor
+            .opened(scope, path)
+            .and_then(|id| self.editor.get(id))?;
+        Some(Answer::Text(document.borrow().buffer().contents()))
+    }
+
+    /// Makes the file at `path` hold `text` through its open buffer in
+    /// `scope`, or answers none when it is not open and has to be written to
+    /// the disk.
+    fn write_for_agent(&mut self, scope: Scope, path: &Path, text: &str) -> Option<Answer> {
+        let id = self.editor.opened(scope, path)?;
+        let root = self.root_of(scope)?;
+        self.editor.write(id, text, &root);
+        Some(Answer::Done)
     }
 
     /// Starts the command `run` names as one of `scope`'s shells, held for
@@ -222,4 +233,25 @@ fn exit(shell: &mut pm_vt::Terminal) -> Option<Exit> {
 /// agent asking after one they stopped is told so rather than left waiting.
 fn gone() -> Answer {
     Answer::Failed("the terminal has been closed".to_owned())
+}
+
+/// The file at `path` as the disk has it.
+fn read_from_disk(path: &Path) -> Answer {
+    match fs::read_to_string(path) {
+        Ok(text) => Answer::Text(text),
+        Err(error) => Answer::Failed(error.to_string()),
+    }
+}
+
+/// Makes the file at `path` on the disk hold `text`, making its folder if
+/// it has none.
+fn write_to_disk(path: &Path, text: &str) -> Answer {
+    let written = path
+        .parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| fs::write(path, text));
+    match written {
+        Ok(()) => Answer::Done,
+        Err(error) => Answer::Failed(error.to_string()),
+    }
 }

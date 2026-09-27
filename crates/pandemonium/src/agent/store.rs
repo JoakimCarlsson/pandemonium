@@ -346,6 +346,16 @@ impl Talk {
         self.conversation.answer_request(ticket, answer);
     }
 
+    /// Answers the request raised under `ticket` with what `answer` comes
+    /// to, worked out away from the window.
+    pub fn answer_request_later(
+        &self,
+        ticket: u64,
+        answer: impl FnOnce() -> Answer + Send + 'static,
+    ) {
+        self.conversation.answer_request_later(ticket, answer);
+    }
+
     /// The last lines the terminal the agent calls `terminal` has written.
     pub fn terminal_tail(&self, terminal: &str) -> Option<&str> {
         self.terminals.get(terminal).map(String::as_str)
