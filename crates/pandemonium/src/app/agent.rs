@@ -752,7 +752,7 @@ impl App {
     }
 
     /// The session the pointer is over, or the one the focused pane shows.
-    fn agent_under(&self) -> Option<TalkId> {
+    pub(super) fn agent_under(&self) -> Option<TalkId> {
         let scope = self.scope()?;
         let pane = self
             .pointer
