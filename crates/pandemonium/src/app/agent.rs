@@ -814,18 +814,22 @@ impl App {
         if !self.window_focused {
             return;
         }
-        let shown = self
-            .panes
-            .panes()
-            .into_iter()
-            .filter_map(|pane| self.panes.pane(pane)?.active(self.scope()))
-            .filter_map(Item::session)
-            .collect::<Vec<_>>();
-        for session in shown {
+        for session in self.shown_agents() {
             if let Some(talk) = self.agents.get_mut(session) {
                 talk.see();
             }
         }
+    }
+
+    /// The sessions a pane is showing now, each once for every pane it is
+    /// the front tab of.
+    fn shown_agents(&self) -> Vec<TalkId> {
+        self.panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.panes.pane(pane)?.active(self.scope()))
+            .filter_map(Item::session)
+            .collect()
     }
 
     /// Asks the desktop to point the reader at the window when an agent has
@@ -850,23 +854,17 @@ impl App {
         }
     }
 
-    /// Keeps every conversation that is following its end at its end.
+    /// Keeps every conversation a pane is showing that is following its end
+    /// at its end.
     ///
     /// Following is what a terminal does: the last thing said stays against
     /// the foot of the pane and everything above it scrolls off. How much of
     /// the conversation that leaves showing is what the pane came out at last
     /// frame, so the pane's own height is what the first row is counted from.
+    /// A conversation behind another tab is left where it is until a pane
+    /// shows it again, which is when a frame is drawn and this is asked.
     pub(super) fn follow_agents(&mut self) {
-        let sessions = self
-            .panes
-            .panes()
-            .into_iter()
-            .filter_map(|pane| self.panes.pane(pane))
-            .flat_map(crate::panes::Pane::items)
-            .filter_map(Item::session)
-            .collect::<Vec<_>>();
-
-        for session in sessions {
+        for session in self.shown_agents() {
             if self
                 .agents
                 .get(session)
