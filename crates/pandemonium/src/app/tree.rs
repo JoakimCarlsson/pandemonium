@@ -26,6 +26,22 @@ use crate::workspace::{MenuTarget, SidebarView};
 /// How many rows a page key moves the tree's keyboard.
 const TREE_PAGE: isize = 10;
 
+/// What a move, a copy or a removal in the tree came to, away from the
+/// window.
+pub(super) enum Shifted {
+    /// These were taken off the disk.
+    Removed(Vec<PathBuf>),
+    /// These were put in place.
+    Placed {
+        /// The folder they were put into, to be opened, where there was one.
+        directory: Option<PathBuf>,
+        /// Where each moved entry was, and where it is now.
+        moved: Vec<(PathBuf, PathBuf)>,
+        /// Every entry put in place, moved or copied.
+        placed: Vec<PathBuf>,
+    },
+}
+
 impl App {
     /// Carries out a command of the file tree, if `message` is one.
     pub(super) fn tree_command(&mut self, message: Message) -> bool {
@@ -495,20 +511,73 @@ impl App {
         self.ask_first(Prompt::asking(asked, shown, vec![answer, Answer::cancel()]));
     }
 
-    /// Takes off the disk what the question was asked about.
+    /// Takes off the disk what the question was asked about, away from the
+    /// window, since a folder of build output is a long time deleting.
     fn remove_entries(&mut self, trashing: bool) {
         let removing = std::mem::take(&mut self.removing);
-        for path in &removing {
-            let removed = match trashing {
-                true => ops::trash(path),
-                false => ops::remove(path),
-            };
-            if removed.is_ok() {
-                self.close_tabs_of(path);
+        self.shift_later(move || {
+            let removed = removing
+                .into_iter()
+                .filter(|path| match trashing {
+                    true => ops::trash(path).is_ok(),
+                    false => ops::remove(path).is_ok(),
+                })
+                .collect();
+            Shifted::Removed(removed)
+        });
+        self.focus_tree();
+    }
+
+    /// Runs `shift` on a thread of its own, and wakes the window with what
+    /// it moved, copied or removed.
+    fn shift_later(&self, shift: impl FnOnce() -> Shifted + Send + 'static) {
+        let shifted = self.shifted.clone();
+        let wake = self.waker(crate::app::Wake::Shifted);
+        std::thread::spawn(move || {
+            let done = shift();
+            if let Ok(mut shifted) = shifted.lock() {
+                shifted.push(done);
+            }
+            wake();
+        });
+    }
+
+    /// Takes in every move, copy and removal that has finished, answering
+    /// whether any had.
+    pub(super) fn take_shifted(&mut self) -> bool {
+        let shifted = self
+            .shifted
+            .lock()
+            .map(|mut shifted| std::mem::take(&mut *shifted))
+            .unwrap_or_default();
+        let any = !shifted.is_empty();
+        for done in shifted {
+            match done {
+                Shifted::Removed(removed) => {
+                    for path in &removed {
+                        self.close_tabs_of(path);
+                    }
+                    self.reread_worktree();
+                }
+                Shifted::Placed {
+                    directory,
+                    moved,
+                    placed,
+                } => {
+                    for (from, to) in &moved {
+                        self.retarget_tabs(from, to);
+                    }
+                    if let Some(directory) = directory
+                        && let Some(tree) =
+                            self.scope().and_then(|scope| self.files.get_mut(&scope))
+                    {
+                        tree.expand(&directory);
+                    }
+                    self.settle_on(&placed);
+                }
             }
         }
-        self.reread_worktree();
-        self.focus_tree();
+        any
     }
 
     /// Puts what the tree is acting on on its clipboard, to move or to copy.
@@ -538,32 +607,42 @@ impl App {
     /// Copies what the tree is acting on beside itself.
     fn duplicate_entries(&mut self) {
         let acting = self.tree_acting_on();
-        let placed = acting
-            .iter()
-            .filter_map(|path| ops::copy_into(path, path.parent()?).ok())
-            .collect::<Vec<_>>();
-        self.settle_on(&placed);
+        self.shift_later(move || Shifted::Placed {
+            directory: None,
+            moved: Vec::new(),
+            placed: acting
+                .iter()
+                .filter_map(|path| ops::copy_into(path, path.parent()?).ok())
+                .collect(),
+        });
     }
 
-    /// Moves `paths` into `directory`, or copies them there.
+    /// Moves `paths` into `directory`, or copies them there, away from the
+    /// window.
     fn move_entries(&mut self, paths: &[PathBuf], directory: &Path, copying: bool) {
-        let mut placed = Vec::new();
-        for path in paths {
-            let done = match copying {
-                true => ops::copy_into(path, directory),
-                false => ops::move_into(path, directory),
-            };
-            if let Ok(to) = done {
-                if !copying && to != *path {
-                    self.retarget_tabs(path, &to);
+        let paths = paths.to_vec();
+        let directory = directory.to_path_buf();
+        self.shift_later(move || {
+            let mut moved = Vec::new();
+            let mut placed = Vec::new();
+            for path in paths {
+                let done = match copying {
+                    true => ops::copy_into(&path, &directory),
+                    false => ops::move_into(&path, &directory),
+                };
+                if let Ok(to) = done {
+                    if !copying && to != path {
+                        moved.push((path, to.clone()));
+                    }
+                    placed.push(to);
                 }
-                placed.push(to);
             }
-        }
-        if let Some(tree) = self.scope().and_then(|scope| self.files.get_mut(&scope)) {
-            tree.expand(directory);
-        }
-        self.settle_on(&placed);
+            Shifted::Placed {
+                directory: Some(directory),
+                moved,
+                placed,
+            }
+        });
     }
 
     /// Reads the tree again and selects `placed`, what was just put there.

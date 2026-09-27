@@ -120,6 +120,8 @@ pub enum Wake {
     Listing,
     /// The reader has chosen something in one of the platform's pickers.
     Chosen,
+    /// A move, a copy or a removal in the file tree has finished.
+    Shifted,
     /// A picture has been decoded away from the window.
     Picture,
     /// Something has been read off the clipboard into a prompt.
@@ -247,6 +249,9 @@ pub struct App {
     tree_edit: Option<crate::tree::Edit>,
     /// What was cut or copied out of the file tree.
     tree_clipboard: Option<crate::tree::Clipboard>,
+    /// The moves, copies and removals in the tree that have finished and
+    /// have not been taken in yet.
+    shifted: Arc<Mutex<Vec<tree::Shifted>>>,
     /// The rows of the file tree the pointer is carrying.
     entry_drag: Option<crate::tree::EntryDrag>,
     /// The project row the pointer is carrying up or down the sidebar.
@@ -543,6 +548,7 @@ impl App {
             tree_scrolls: BTreeMap::new(),
             tree_edit: None,
             tree_clipboard: None,
+            shifted: Arc::default(),
             entry_drag: None,
             project_drag: None,
             project_list: drag::unmeasured(),
@@ -2311,6 +2317,11 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Picture => self.request_redraw(),
+            Wake::Shifted => {
+                if self.take_shifted() {
+                    self.request_redraw();
+                }
+            }
             Wake::Chosen => {
                 if self.take_chosen() {
                     self.request_redraw();
