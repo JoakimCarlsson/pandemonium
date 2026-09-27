@@ -20,8 +20,8 @@ use pm_acp::{
 };
 use pm_gfx::{Image, Rgba};
 use pm_ui::{
-    Div, IconName, IconSize, PointerCursor, Scroll, Styled, Theme, button, h_flex, icon, measured,
-    picture, rule, scroll_area, space, text, v_flex,
+    Axis, Div, IconName, IconSize, PointerCursor, Scroll, Styled, Theme, button, h_flex, icon,
+    measured, picture, rule, sash, scroll_area, space, text, v_flex,
 };
 
 use crate::agent::{Block, Spot, Standing, Talk, TalkId};
@@ -43,9 +43,6 @@ const INSET: f32 = 2.0;
 /// How far the edge of a bubble holding what the reader said sits from its
 /// text, in steps of the spacing scale.
 const BUBBLE: f32 = 1.25;
-
-/// How many lines of the prompt the pane has room for.
-const PROMPT_LINES: f32 = 3.0;
 
 /// How many of the commands a slash narrows to are offered at once.
 const OFFERED: usize = 8;
@@ -123,11 +120,13 @@ type Row = Vec<Piece>;
 ///
 /// `typing` says the prompt box has the keyboard, so that the caret is drawn
 /// where the reader is actually writing; `solid` is its blink phase.
+/// `prompt_height` is how tall the reader has dragged the prompt box.
 pub fn agent_pane(
     theme: &Theme,
     talk: &Talk,
     typing: bool,
     solid: bool,
+    prompt_height: f32,
     width: f32,
 ) -> Div<Message> {
     talk.drawn_width().set(width);
@@ -170,7 +169,8 @@ pub fn agent_pane(
         .when(!talk.offered().is_empty(), |pane| {
             pane.child(commands(theme, talk))
         })
-        .child(composer(theme, talk, typing, solid))
+        .child(sash(Axis::Vertical, Message::ResizeAgentPrompt))
+        .child(composer(theme, talk, typing, solid, prompt_height))
 }
 
 /// Builds the list of commands the slash being typed narrows to.
@@ -1479,8 +1479,9 @@ fn permission(theme: &Theme, session: TalkId, ask: &Ask) -> Div<Message> {
 /// card with the box they are typing it in: which model, how hard it thinks,
 /// what mode it is in and whether it is sent or stopped. They are facts about
 /// the next turn, so they are where the next turn is written and not in a bar
-/// at the top of the pane.
-fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Message> {
+/// at the top of the pane. The box is `height` logical pixels tall, and the
+/// edge above the card is what drags it taller or shorter.
+fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool, height: f32) -> Div<Message> {
     let id = talk.id();
 
     v_flex().w_full().px(1.25).pt(0.5).pb(1).child(
@@ -1499,7 +1500,7 @@ fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Messag
                 talk.prompt(),
                 typing,
                 solid,
-                PROMPT_LINES,
+                height / theme.size.control,
                 move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
                 Message::ShowInputMenu,
             ))

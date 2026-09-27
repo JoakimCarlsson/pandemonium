@@ -948,7 +948,7 @@ impl App {
     /// Enter takes the name and Escape gives it up; every other key is the
     /// field's, apart from the window's own chords.
     pub(super) fn send_to_tree_edit(&mut self, key: &Key<&str>) -> bool {
-        if self.tree_edit.is_none() || self.is_window_chord() {
+        if self.tree_edit.is_none() || self.is_window_chord_over_text(key) {
             return false;
         }
         let modifiers = self.modifiers;

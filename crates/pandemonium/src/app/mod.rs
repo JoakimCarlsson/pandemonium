@@ -272,6 +272,8 @@ pub struct App {
     bottom_panel: ResizeState,
     /// Current height and drag state of the Source Control graph.
     history_graph: ResizeState,
+    /// Current height and drag state of the box agents' prompts are written in.
+    prompt_box: ResizeState,
     /// Current width and drag state of the secondary sidebar.
     secondary_sidebar: ResizeState,
     /// Whether the primary sidebar is visible.
@@ -570,6 +572,11 @@ impl App {
                 layout.history_graph_height,
                 workspace::HISTORY_GRAPH_RANGE.0,
                 workspace::HISTORY_GRAPH_RANGE.1,
+            ),
+            prompt_box: ResizeState::new(
+                layout.prompt_height,
+                workspace::PROMPT_RANGE.0,
+                workspace::PROMPT_RANGE.1,
             ),
             secondary_sidebar: ResizeState::new(
                 layout.secondary_sidebar_width,
@@ -1081,6 +1088,13 @@ impl App {
         }
         if let Message::ResizeHistoryGraph(event) = message {
             self.history_graph
+                .resize(event, Axis::Vertical, ResizeEdge::Start);
+            self.store_settled(event);
+            self.request_redraw();
+            return;
+        }
+        if let Message::ResizeAgentPrompt(event) = message {
+            self.prompt_box
                 .resize(event, Axis::Vertical, ResizeEdge::Start);
             self.store_settled(event);
             self.request_redraw();
@@ -1824,6 +1838,7 @@ impl App {
             history_graph_open: self.history_graph_open,
             changes_section_open: self.changes_section_open,
             history_all: self.history_all,
+            prompt_height: self.prompt_box.extent(),
         }
     }
 

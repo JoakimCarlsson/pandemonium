@@ -147,6 +147,8 @@ pub enum Message {
     ResizeSecondarySidebar(ResizeEvent),
     /// Resize the Source Control graph.
     ResizeHistoryGraph(ResizeEvent),
+    /// Resize the box agents' prompts are written in.
+    ResizeAgentPrompt(ResizeEvent),
     /// Show or hide the Source Control graph.
     ToggleHistoryGraph,
     /// Expand or collapse the Source Control changes section.

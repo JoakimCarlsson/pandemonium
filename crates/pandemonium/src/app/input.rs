@@ -226,7 +226,7 @@ impl App {
 
     /// Sends a keypress to the list the window is asking a choice from.
     fn send_to_picker(&mut self, event: &KeyEvent) -> bool {
-        if self.picker.is_none() || self.is_window_chord() {
+        if self.picker.is_none() || self.is_window_chord_over_text(&event.logical_key.as_ref()) {
             return false;
         }
         let modifiers = self.modifiers;
@@ -387,7 +387,7 @@ impl App {
             self.submit_writing(writing);
             return true;
         }
-        if self.is_window_chord() {
+        if self.is_window_chord_over_text(&key.as_ref()) {
             return false;
         }
 
@@ -480,7 +480,7 @@ impl App {
 
     /// Sends a keypress to the search bar, when the bar has the keyboard.
     fn send_to_search(&mut self, event: &KeyEvent) -> bool {
-        if !self.search_focused || self.is_window_chord() {
+        if !self.search_focused || self.is_window_chord_over_text(&event.logical_key.as_ref()) {
             return false;
         }
         let Some(file) = self.active_file() else {
@@ -539,7 +539,7 @@ impl App {
     /// The pane takes it after the keymap has had its say, so a chord the
     /// window binds stays the window's however deep in a file the cursor is.
     fn send_to_editor(&mut self, event: &KeyEvent) -> bool {
-        if self.is_window_chord() {
+        if self.is_window_chord_over_text(&event.logical_key.as_ref()) {
             return false;
         }
         let Some(file) = self.focused_file() else {
@@ -601,6 +601,26 @@ impl App {
     /// Whether the modifiers held mark this keypress as the window's own.
     pub(super) fn is_window_chord(&self) -> bool {
         self.modifiers.super_key() || (self.modifiers.control_key() && self.modifiers.shift_key())
+    }
+
+    /// Whether the modifiers held mark `key` as the window's own when a box
+    /// of text has the keyboard.
+    ///
+    /// Ctrl and Shift with an arrow, Home or End select by word or to either
+    /// end in every box of text there is, so in a box those stay the box's.
+    pub(super) fn is_window_chord_over_text(&self, key: &Key<&str>) -> bool {
+        let selects = matches!(
+            key,
+            Key::Named(
+                NamedKey::ArrowLeft
+                    | NamedKey::ArrowRight
+                    | NamedKey::ArrowUp
+                    | NamedKey::ArrowDown
+                    | NamedKey::Home
+                    | NamedKey::End
+            )
+        );
+        self.modifiers.super_key() || (self.is_window_chord() && !selects)
     }
 
     /// Moves focus, activates what has it, or scrolls the page.
@@ -884,6 +904,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if self.scroll_input(-delta) {
+            self.request_redraw();
+            return;
+        }
         if let Some(shell) = self.focused_shell() {
             let lines = self.wheel_lines(delta, text.terminal.line_height);
             shell.borrow_mut().scroll(lines);
@@ -928,6 +952,54 @@ impl App {
         }
         self.scroll.by(delta);
         self.request_redraw();
+    }
+
+    /// Scrolls the box of text under the pointer by `pixels`, answering
+    /// whether there was one.
+    ///
+    /// Only a box on screen is asked: each remembers where it was last drawn,
+    /// and a box behind another tab or a closed panel is still remembering.
+    fn scroll_input(&mut self, pixels: f32) -> bool {
+        let Some(pointer) = self.pointer else {
+            return false;
+        };
+        let prompt = self
+            .agent_under()
+            .and_then(|session| self.agents.get(session))
+            .map(|talk| talk.prompt());
+        let console = self
+            .scope()
+            .filter(|_| self.showing_debugger())
+            .and_then(|scope| self.debuggers.get(scope))
+            .map(|debugger| debugger.console());
+        let commit = self
+            .review()
+            .filter(|_| self.commit_showing())
+            .and_then(|review| review.message());
+
+        let Some(input) = [prompt, console, commit]
+            .into_iter()
+            .flatten()
+            .find(|input| input.covers(pointer))
+        else {
+            return false;
+        };
+        input.scroll_by(pixels);
+        true
+    }
+
+    /// Whether a commit message box is on screen: in the sidebar listing the
+    /// changes, or in the review pane under the pointer.
+    fn commit_showing(&self) -> bool {
+        let listing = self.secondary_sidebar_open
+            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes;
+        let reviewing = self.scope().is_some_and(|scope| {
+            self.pointer
+                .and_then(|at| self.geometry.pane_at(at))
+                .and_then(|pane| self.panes.pane(pane)?.active(scope))
+                .is_some_and(|item| matches!(item, crate::panes::Item::Review(_)))
+        });
+        listing || reviewing
     }
 
     /// Turns `delta` logical pixels of wheel into whole lines `line` tall,

@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use pm_gfx::Point;
 use pm_text::Position;
 use pm_ui::ResizePhase;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -160,6 +161,25 @@ impl Input {
                 }
             }
         });
+    }
+
+    /// Whether `point` falls on the text of the box, as it was last drawn.
+    pub fn covers(&self, point: Point) -> bool {
+        self.text.borrow().layout().text_area().contains(point)
+    }
+
+    /// Scrolls the box `pixels` down, or up when `pixels` is negative.
+    ///
+    /// A box stops with its last line at its foot, not at its head the way
+    /// a file does: past that there is only the empty box to look at.
+    pub fn scroll_by(&self, pixels: f32) {
+        let mut text = self.text.borrow_mut();
+        text.scroll_by_pixels(pixels);
+        let last = text.buffer().line_count().saturating_sub(1);
+        let deepest = text.line_after(last, 1 - text.rows().max(1) as isize);
+        if text.scroll() >= deepest {
+            text.scroll_to(deepest);
+        }
     }
 
     /// Puts the buffer through `change`.
