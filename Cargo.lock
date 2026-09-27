@@ -1788,6 +1788,7 @@ dependencies = [
  "pm-ui",
  "pm-vim",
  "pm-vt",
+ "pollster 1.0.1",
  "pulldown-cmark",
  "rfd",
  "serde",

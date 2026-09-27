@@ -10,6 +10,7 @@ mod clicks;
 mod client;
 mod commands;
 mod debug;
+mod dialog;
 mod disk;
 mod drag;
 mod excerpts;
@@ -117,6 +118,8 @@ pub enum Wake {
     Release,
     /// Something listed for the picker away from the window has come back.
     Listing,
+    /// The reader has chosen something in one of the platform's pickers.
+    Chosen,
     /// A picture has been decoded away from the window.
     Picture,
     /// Something has been read off the clipboard into a prompt.
@@ -417,6 +420,9 @@ pub struct App {
     /// What has been read off the clipboard for a prompt and not yet put
     /// into it.
     pastes: Arc<Mutex<Vec<(crate::agent::TalkId, Pasting)>>>,
+    /// What the reader has chosen in the platform's pickers and the window
+    /// has not taken in yet.
+    choices: dialog::Choices,
     /// How the reader threads wake the event loop.
     proxy: EventLoopProxy<Wake>,
     /// Which wakes are on their way and not yet taken in, so a thread that
@@ -637,6 +643,7 @@ impl App {
             update_available: false,
             released: Arc::new(Mutex::new(false)),
             pastes: Arc::new(Mutex::new(Vec::new())),
+            choices: dialog::Choices::default(),
             proxy,
             pending,
         }
@@ -1418,10 +1425,7 @@ impl App {
             return;
         }
         if message == Message::OpenProject {
-            self.open_project();
-            self.read_new_worktrees();
-            self.store();
-            self.request_redraw();
+            self.ask_project();
             return;
         }
         if message == Message::CloneProject {
@@ -1722,21 +1726,6 @@ impl App {
         self.editor_focused = false;
     }
 
-    /// Asks for a folder and adds the project it belongs to to the window.
-    ///
-    /// The picker is the platform's own, so there is nothing to do when it is
-    /// dismissed. A folder inside a repository opens that repository; any
-    /// other folder opens as a project of its own.
-    fn open_project(&mut self) {
-        let Some(root) = rfd::FileDialog::new()
-            .set_title("Open a folder")
-            .pick_folder()
-        else {
-            return;
-        };
-        let _ = self.open.find_or_open(root);
-    }
-
     /// Fetches the repository at `url` into a directory the reader picks.
     ///
     /// A clone is the one git operation that takes as long as the network
@@ -1748,10 +1737,11 @@ impl App {
         if url.is_empty() {
             return;
         }
-        let Some(under) = rfd::FileDialog::new().set_title("Clone into").pick_folder() else {
-            return;
-        };
+        self.ask_clone_into(url);
+    }
 
+    /// Fetches the repository at `url` into `under`, on a thread of its own.
+    fn clone_into(&mut self, url: String, under: PathBuf) {
         let cloned = self.cloned.clone();
         let wake = self.waker(Wake::Clone);
         std::thread::spawn(move || {
@@ -2321,6 +2311,11 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Picture => self.request_redraw(),
+            Wake::Chosen => {
+                if self.take_chosen() {
+                    self.request_redraw();
+                }
+            }
             Wake::Paste => {
                 if self.take_pastes() {
                     self.request_redraw();
