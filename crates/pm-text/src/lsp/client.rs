@@ -9,9 +9,10 @@
 use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use lsp_types::{DiagnosticSeverity, PublishDiagnosticsParams};
 use ropey::Rope;
@@ -23,6 +24,7 @@ use crate::frame;
 use crate::language::Server;
 use crate::lsp::answer::{self, Answer, Request};
 use crate::lsp::encoding::{Encoding, Files};
+use crate::lsp::outbox::{Outbox, Outgoing};
 use crate::lsp::uri;
 use crate::lsp::watch::{Watched, Watchers};
 use crate::program::path_beside;
@@ -33,6 +35,12 @@ const INITIALIZE: i64 = 1;
 
 /// The identifier the first question after the handshake is asked under.
 const FIRST_REQUEST: i64 = 2;
+
+/// How long a server told to exit is given to do so before it is killed.
+const EXIT_GRACE: Duration = Duration::from_millis(500);
+
+/// How often a server told to exit is looked at, to see whether it has.
+const EXIT_POLL: Duration = Duration::from_millis(20);
 
 /// The semantic token types the editor understands, in the protocol's words.
 ///
@@ -74,8 +82,9 @@ pub struct Asked(i64);
 struct State {
     /// Whether the handshake has been answered.
     ready: bool,
-    /// Notifications held back until it has been.
-    queued: Vec<Value>,
+    /// Messages held back until it has been, with only the latest text of
+    /// each file among them.
+    queued: Vec<Outgoing>,
     /// The diagnostics last published, per file.
     diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
     /// The questions asked and not yet answered, and what they were about.
@@ -99,9 +108,9 @@ struct State {
 /// A language server the editor is talking to.
 pub struct Client {
     /// The process itself, kept so that it can be ended.
-    process: Mutex<Child>,
-    /// The pipe messages are written to, shared with the reader thread.
-    stdin: Arc<Mutex<ChildStdin>>,
+    process: Option<Child>,
+    /// Where messages for the server are handed to its writer thread.
+    outbox: Outbox,
     /// What the server has said and what it is owed.
     state: Arc<Mutex<State>>,
     /// The identifier the next question will be asked under.
@@ -129,29 +138,27 @@ impl Client {
             .stderr(Stdio::null())
             .spawn()?;
 
-        let stdin = process.stdin.take().expect("stdin was piped");
+        let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"));
         let stdout = process.stdout.take().expect("stdout was piped");
         let state = Arc::new(Mutex::new(State::default()));
 
-        let client = Self {
-            process: Mutex::new(process),
-            stdin: Arc::new(Mutex::new(stdin)),
-            state: state.clone(),
-            next: AtomicI64::new(FIRST_REQUEST),
-        };
-        client.send(&json!({
+        outbox.send(Outgoing::Message(json!({
             "jsonrpc": "2.0",
             "id": INITIALIZE,
             "method": "initialize",
             "params": initialize(root, server),
-        }));
+        })));
+        let client = Self {
+            process: Some(process),
+            outbox: outbox.clone(),
+            state: state.clone(),
+            next: AtomicI64::new(FIRST_REQUEST),
+        };
 
         let reader = Reader {
             state,
             notify,
-            answers: Answers {
-                stdin: client.stdin.clone(),
-            },
+            outbox,
             stdout: BufReader::new(stdout),
         };
         std::thread::spawn(move || reader.run());
@@ -166,8 +173,8 @@ impl Client {
     /// clangd serves a checkout's C and its C++ alike, and each document
     /// says which of the two it is.
     pub fn did_open(&self, path: &Path, language_id: &str, version: i32, text: &str) {
-        self.record(path, text);
-        self.notify(&json!({
+        self.record(path, Rope::from_str(text));
+        self.notify(json!({
             "method": "textDocument/didOpen",
             "params": {
                 "textDocument": {
@@ -184,21 +191,21 @@ impl Client {
     ///
     /// The whole text goes every time. Ranged changes save bytes on a pipe
     /// that is not short of them, and cost a second representation of every
-    /// edit that has to agree with the first one exactly.
-    pub fn did_change(&self, path: &Path, version: i32, text: &str) {
-        self.record(path, text);
-        self.notify(&json!({
-            "method": "textDocument/didChange",
-            "params": {
-                "textDocument": { "uri": uri::of(path), "version": version },
-                "contentChanges": [{ "text": text }],
-            },
-        }));
+    /// edit that has to agree with the first one exactly. The rope is shared
+    /// with the buffer, not copied, and becomes a message only on the writer
+    /// thread, so a keystroke costs the window nothing the size of the file.
+    pub fn did_change(&self, path: &Path, version: i32, text: &Rope) {
+        self.record(path, text.clone());
+        self.post(Outgoing::Change {
+            uri: uri::of(path),
+            version,
+            text: text.clone(),
+        });
     }
 
     /// Tells the server a file has been written to disk.
     pub fn did_save(&self, path: &Path, text: &str) {
-        self.notify(&json!({
+        self.notify(json!({
             "method": "textDocument/didSave",
             "params": {
                 "textDocument": { "uri": uri::of(path) },
@@ -215,7 +222,7 @@ impl Client {
             })
         });
         if asked {
-            self.notify(&json!({
+            self.notify(json!({
                 "method": "textDocument/willSave",
                 "params": { "textDocument": { "uri": uri::of(path) }, "reason": 1 },
             }));
@@ -241,7 +248,7 @@ impl Client {
         if let Ok(mut state) = self.state.lock() {
             state.texts.remove(path);
         }
-        self.notify(&json!({
+        self.notify(json!({
             "method": "textDocument/didClose",
             "params": { "textDocument": { "uri": uri::of(path) } },
         }));
@@ -256,7 +263,7 @@ impl Client {
             Err(_) => None,
         };
         if let Some(notification) = notification {
-            self.notify(&notification);
+            self.notify(notification);
         }
     }
 
@@ -278,7 +285,7 @@ impl Client {
             state.asked.insert(id, (request, path.to_path_buf()));
         }
 
-        self.notify(&message);
+        self.notify(message);
         Asked(id)
     }
 
@@ -326,61 +333,80 @@ impl Client {
     }
 
     /// Keeps the text the server was last told, for counting columns by.
-    fn record(&self, path: &Path, text: &str) {
+    fn record(&self, path: &Path, text: Rope) {
         if let Ok(mut state) = self.state.lock() {
-            state.texts.insert(path.to_path_buf(), Rope::from_str(text));
+            state.texts.insert(path.to_path_buf(), text);
         }
     }
 
-    /// Sends a notification, holding it back until the handshake is answered.
-    fn notify(&self, message: &Value) {
-        let mut message = message.clone();
+    /// Sends a notification or a request, holding it back until the
+    /// handshake is answered.
+    fn notify(&self, mut message: Value) {
         message["jsonrpc"] = json!("2.0");
-
-        let queued = match self.state.lock() {
-            Ok(mut state) if !state.ready => {
-                state.queued.push(message.clone());
-                true
-            }
-            _ => false,
-        };
-        if !queued {
-            self.send(&message);
-        }
+        self.post(Outgoing::Message(message));
     }
 
-    /// Writes one message to the server, dropping it if the pipe has gone.
-    fn send(&self, message: &Value) {
-        if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = frame::write(&mut *stdin, message);
+    /// Hands `outgoing` to the writer, or holds it back until the handshake
+    /// is answered.
+    ///
+    /// The decision and the handing over happen under one lock, the same
+    /// one the handshake's answer lets the held-back messages go under, so
+    /// nothing sent after the handshake can overtake what was held before.
+    fn post(&self, outgoing: Outgoing) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        match state.ready {
+            true => self.outbox.send(outgoing),
+            false => hold(&mut state.queued, outgoing),
         }
     }
 }
 
 impl Drop for Client {
-    /// Ends the server process when the last document it served is gone.
+    /// Tells the server to exit when the last document it served is gone,
+    /// and ends it if it has not within [`EXIT_GRACE`].
+    ///
+    /// Nothing here waits: the exit is handed to the writer thread, and the
+    /// waiting on the process happens on a thread of its own.
     fn drop(&mut self) {
-        self.send(&json!({ "jsonrpc": "2.0", "method": "exit" }));
-        if let Ok(mut process) = self.process.lock() {
-            let _ = process.kill();
-            let _ = process.wait();
+        self.outbox.send(Outgoing::Message(
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ));
+        if let Some(process) = self.process.take() {
+            std::thread::spawn(move || reap(process));
         }
     }
 }
 
-/// The pipe the reader thread writes its answers on.
-struct Answers {
-    /// The same handle on the server's standard input the client writes to.
-    stdin: Arc<Mutex<ChildStdin>>,
+/// Waits a moment for a server told to exit to do so, then kills it and
+/// takes down its exit either way.
+fn reap(mut process: Child) {
+    let told = Instant::now();
+    while told.elapsed() < EXIT_GRACE {
+        if !matches!(process.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(EXIT_POLL);
+    }
+    let _ = process.kill();
+    let _ = process.wait();
 }
 
-impl Answers {
-    /// Writes one message, dropping it if the pipe has gone.
-    fn send(&self, message: &Value) {
-        if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = frame::write(&mut *stdin, message);
+/// Holds `outgoing` back among `queued`, until the handshake is answered.
+///
+/// A file's whole text replaces the last one held for it, when nothing
+/// else about that file has been held since: a server that takes its time
+/// starting is told the text as it stands, not every keystroke on the way.
+fn hold(queued: &mut Vec<Outgoing>, outgoing: Outgoing) {
+    if let Outgoing::Change { uri, .. } = &outgoing {
+        let last = queued.iter().rposition(|held| held.is_about(uri));
+        if let Some(index) = last.filter(|&index| queued[index].is_change()) {
+            queued[index] = outgoing;
+            return;
         }
     }
+    queued.push(outgoing);
 }
 
 /// The thread reading everything the server says.
@@ -389,8 +415,8 @@ struct Reader {
     state: Arc<Mutex<State>>,
     /// How the window is woken once something has arrived.
     notify: Arc<dyn Fn() + Send + Sync>,
-    /// The pipe the server is answered on.
-    answers: Answers,
+    /// Where messages for the server are handed to its writer thread.
+    outbox: Outbox,
     /// The pipe the server writes on.
     stdout: BufReader<std::process::ChildStdout>,
 }
@@ -453,11 +479,11 @@ impl Reader {
 
     /// Answers the request `message` with nothing, which is all it needs.
     fn acknowledge(&self, message: &Value) {
-        self.answers.send(&json!({
+        self.outbox.send(Outgoing::Message(json!({
             "jsonrpc": "2.0",
             "id": message["id"].clone(),
             "result": Value::Null,
-        }));
+        })));
     }
 
     /// Runs `change` over the files the server has asked to hear about.
@@ -467,26 +493,26 @@ impl Reader {
         }
     }
 
-    /// Completes the handshake and lets the held-back notifications go.
+    /// Completes the handshake and lets the held-back messages go.
+    ///
+    /// They are handed over under the state's lock, so a message the window
+    /// sends the moment the handshake is marked answered queues behind them.
     fn ready(&self, result: &Value) {
-        let queued = match self.state.lock() {
-            Ok(mut state) => {
-                state.ready = true;
-                state.legend = answer::legend(&result["capabilities"]);
-                state.encoding = Encoding::of(&result["capabilities"]);
-                state.capabilities = Some(result["capabilities"].clone());
-                std::mem::take(&mut state.queued)
-            }
-            Err(_) => return,
+        let Ok(mut state) = self.state.lock() else {
+            return;
         };
+        state.ready = true;
+        state.legend = answer::legend(&result["capabilities"]);
+        state.encoding = Encoding::of(&result["capabilities"]);
+        state.capabilities = Some(result["capabilities"].clone());
 
-        self.answers.send(&json!({
+        self.outbox.send(Outgoing::Message(json!({
             "jsonrpc": "2.0",
             "method": "initialized",
             "params": {},
-        }));
-        for message in queued {
-            self.answers.send(&message);
+        })));
+        for outgoing in std::mem::take(&mut state.queued) {
+            self.outbox.send(outgoing);
         }
     }
 

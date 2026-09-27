@@ -4,7 +4,9 @@
 //! review pane and a keybinding all stage, unstage, throw away and commit
 //! through here, and each of them is followed by asking git again rather
 //! than by guessing what the answer would now be. Git is the state; this is
-//! what the window last read of it.
+//! what the window last read of it. What is done to git is handed out as
+//! [`Work`] for the window to carry out away from the frame, and what git
+//! said comes back through [`Review::finished`].
 //!
 //! A worktree may hold several repositories. The changes of all of them are
 //! one list, in the order the repositories are found, and every command over
@@ -24,6 +26,13 @@ use crate::review::conflict::Conflict;
 use crate::review::reading::{self, Reading, RepositoryReading};
 use crate::review::repository::Repository;
 use crate::review::shade::{Shading, Version};
+use crate::review::work::{Done, Work};
+
+/// What a repository's button says while files go into its index.
+const STAGING: &str = "Staging…";
+
+/// What a repository's button says while files come back out of its index.
+const UNSTAGING: &str = "Unstaging…";
 
 /// What the commit button says while there is nothing to commit.
 const NOTHING_TO_COMMIT: &str = "Nothing to commit";
@@ -180,9 +189,12 @@ pub struct Review {
 }
 
 impl Review {
-    /// The changes of the worktree at `root`, read now.
+    /// The changes of the worktree at `root`, not read yet.
+    ///
+    /// Nothing is asked of git here: the review starts empty and is filled
+    /// by a reading made away from the window, through [`Review::read_later`].
     pub fn of(root: &Path) -> Self {
-        let mut review = Self {
+        Self {
             root: root.to_path_buf(),
             repositories: Vec::new(),
             active: 0,
@@ -201,9 +213,12 @@ impl Review {
             scrolls: BTreeMap::new(),
             refreshed: None,
             reads: 0,
-        };
-        review.reread();
-        review
+        }
+    }
+
+    /// Whether any reading of the worktree has been taken in yet.
+    pub fn is_read(&self) -> bool {
+        self.reads > 0
     }
 
     /// Starts the refresh control turning, as the reader has just asked for
@@ -222,16 +237,6 @@ impl Review {
         let elapsed = self.refreshed?.elapsed();
         (elapsed < REFRESH_TURN)
             .then(|| elapsed.as_secs_f32() / REFRESH_TURN.as_secs_f32() * std::f32::consts::TAU)
-    }
-
-    /// Asks git again what the worktree holds, and waits for the answer.
-    ///
-    /// This is for what the reader has just done here, whose result the
-    /// next frame has to show; what the disk did on its own is read through
-    /// [`Review::read_later`] instead.
-    pub fn reread(&mut self) {
-        let reading = Reading::of(&self.root, self.reads);
-        self.take(reading);
     }
 
     /// What reads the worktree again, on whichever thread it is called on.
@@ -511,7 +516,7 @@ impl Review {
                 stopped: Some(NOTHING_TO_COMMIT),
             };
         };
-        if let Some((doing, since)) = held.busy() {
+        if let Some((doing, since)) = held.busy().or_else(|| held.working()) {
             return Primary::Busy { doing, since };
         }
         let (title, stopped) = self.committable(repository);
@@ -818,12 +823,6 @@ impl Review {
         self.active_repository_mut().map(Repository::message_mut)
     }
 
-    /// What git said when it last would not do something in the active
-    /// repository.
-    pub fn trouble(&self) -> Option<&str> {
-        self.active_repository().and_then(Repository::trouble)
-    }
-
     /// Marks a remote as being talked to from the active repository, worded
     /// as `doing`.
     pub fn begin(&mut self, doing: &'static str) {
@@ -833,7 +832,7 @@ impl Review {
     }
 
     /// Takes in what a remote said, in the repository that was talking to
-    /// it, and reads the worktree again.
+    /// it.
     pub fn settle(&mut self, said: pm_core::Said) {
         let talking = self
             .repositories
@@ -847,7 +846,7 @@ impl Review {
     }
 
     /// Records what a Git operation outside the review said about the active
-    /// repository, and rereads it.
+    /// repository.
     pub fn report(&mut self, said: pm_core::Said) {
         self.done(self.active, said);
     }
@@ -891,69 +890,86 @@ impl Review {
             .collect()
     }
 
-    /// Carries `command` out in each repository over the files of `named`
-    /// that are its own, and reads the worktree again once.
+    /// The work of carrying `command` out in each repository over the files
+    /// of `named` that are its own, worded as `doing` meanwhile.
     ///
     /// Every repository's files go in one call, because staging four files
     /// is one thing the reader asked for and should be one thing git is told
     /// — and a half-finished bulk change is the state nobody can reason
     /// about.
     fn in_each(
-        &mut self,
+        &self,
         named: Vec<(usize, PathBuf)>,
-        command: impl Fn(&Path, &[PathBuf]) -> pm_core::Said,
-    ) {
-        if named.is_empty() {
-            return;
+        doing: &'static str,
+        command: impl Fn(&Path, &[PathBuf]) -> pm_core::Said + Send + 'static,
+    ) -> Option<Work> {
+        let each = self.each_repository(&named);
+        if each.is_empty() {
+            return None;
         }
-        for repository in 0..self.repositories.len() {
-            let paths = named
-                .iter()
-                .filter(|(owner, _)| *owner == repository)
-                .map(|(_, path)| path.clone())
-                .collect::<Vec<_>>();
-            if paths.is_empty() {
-                continue;
-            }
-            let said = command(self.repositories[repository].root(), &paths);
-            self.repositories[repository].heard(said);
-        }
-        self.reread();
+        let roots = each.iter().map(|(root, _)| root.clone()).collect();
+        Some(Work::new(roots, doing, move || {
+            each.into_iter()
+                .map(|(root, paths)| {
+                    let said = command(&root, &paths);
+                    (root, said)
+                })
+                .collect()
+        }))
     }
 
-    /// Puts the files `ids` names into the index.
-    pub fn stage(&mut self, ids: &[ChangeId]) {
+    /// The files of `named` gathered under the root of the repository each
+    /// is in, leaving out the repositories none of them is in.
+    fn each_repository(&self, named: &[(usize, PathBuf)]) -> Vec<(PathBuf, Vec<PathBuf>)> {
+        self.repositories
+            .iter()
+            .enumerate()
+            .map(|(repository, held)| {
+                let paths = named
+                    .iter()
+                    .filter(|(owner, _)| *owner == repository)
+                    .map(|(_, path)| path.clone())
+                    .collect::<Vec<_>>();
+                (held.root().to_path_buf(), paths)
+            })
+            .filter(|(_, paths)| !paths.is_empty())
+            .collect()
+    }
+
+    /// The work of putting the files `ids` names into the index.
+    pub fn stage(&self, ids: &[ChangeId]) -> Option<Work> {
         let named = self.named_where(ids, Changed::is_unstaged);
         let named = named
             .into_iter()
             .filter(|(_, path)| !self.has_conflicts(path))
             .collect();
-        self.in_each(named, pm_core::stage);
+        self.in_each(named, STAGING, pm_core::stage)
     }
 
-    /// Takes the files `ids` names back out of the index.
-    pub fn unstage(&mut self, ids: &[ChangeId]) {
+    /// The work of taking the files `ids` names back out of the index.
+    pub fn unstage(&self, ids: &[ChangeId]) -> Option<Work> {
         let named = self.named_where(ids, Changed::is_staged);
-        self.in_each(named, pm_core::unstage);
+        self.in_each(named, UNSTAGING, pm_core::unstage)
     }
 
-    /// Puts everything that has changed into the index.
-    pub fn stage_all(&mut self) {
+    /// The work of putting everything that has changed into the index.
+    pub fn stage_all(&self) -> Option<Work> {
         let named = self
             .owned(Changed::is_unstaged)
             .into_iter()
             .filter(|(_, path)| !self.has_conflicts(path))
             .collect();
-        self.in_each(named, pm_core::stage);
+        self.in_each(named, STAGING, pm_core::stage)
     }
 
-    /// Takes everything back out of the index.
-    pub fn unstage_all(&mut self) {
+    /// The work of taking everything back out of the index.
+    pub fn unstage_all(&self) -> Option<Work> {
         let named = self.owned(Changed::is_staged);
-        self.in_each(named, pm_core::unstage);
+        self.in_each(named, UNSTAGING, pm_core::unstage)
     }
 
-    /// Puts the files `ids` names back the way the last commit had them.
+    /// The work of putting the files `ids` names back the way the last
+    /// commit had them.
     ///
     /// What is staged is taken back out of the index first, because a file
     /// half in the index is still a file with changes in it: throwing a
@@ -962,7 +978,7 @@ impl Review {
     /// rather than one — the files the last commit had are put back from it,
     /// and the files it never had are taken off the disk, which is what the
     /// worktree looked like before they were made.
-    pub fn discard(&mut self, ids: &[ChangeId]) {
+    pub fn discard(&self, ids: &[ChangeId]) -> Option<Work> {
         let staged = self.named_where(ids, Changed::is_staged);
         let created = self.named_where(ids, Changed::is_created);
         let tracked = self.named_where(ids, |changed| !changed.is_created());
@@ -972,134 +988,184 @@ impl Review {
             .chain(&tracked)
             .map(|(owner, _)| *owner)
             .collect::<BTreeSet<_>>();
-
-        for repository in touched {
-            let root = self.repositories[repository].root().to_path_buf();
-            let own = |named: &[(usize, PathBuf)]| {
-                named
-                    .iter()
-                    .filter(|(owner, _)| *owner == repository)
-                    .map(|(_, path)| path.clone())
-                    .collect::<Vec<_>>()
-            };
-            let said = discard_in(&root, &own(&staged), &own(&tracked), &own(&created));
-            self.repositories[repository].heard(said);
+        if touched.is_empty() {
+            return None;
         }
-        self.reread();
+
+        let each = touched
+            .into_iter()
+            .map(|repository| {
+                let own = |named: &[(usize, PathBuf)]| {
+                    named
+                        .iter()
+                        .filter(|(owner, _)| *owner == repository)
+                        .map(|(_, path)| path.clone())
+                        .collect::<Vec<_>>()
+                };
+                (
+                    self.repositories[repository].root().to_path_buf(),
+                    own(&staged),
+                    own(&tracked),
+                    own(&created),
+                )
+            })
+            .collect::<Vec<_>>();
+        let roots = each.iter().map(|(root, ..)| root.clone()).collect();
+        Some(Work::new(roots, "Discarding…", move || {
+            each.into_iter()
+                .map(|(root, staged, tracked, created)| {
+                    let said = discard_in(&root, &staged, &tracked, &created);
+                    (root, said)
+                })
+                .collect()
+        }))
     }
 
-    /// Puts one hunk of a file into the index, or takes one back out of it.
+    /// The work of putting one hunk of a file into the index, or taking one
+    /// back out of it.
     ///
     /// This is Zed's way of it, and it is the only way that does not go
-    /// through a patch: the text the index is to hold is worked out here —
-    /// what it holds now, with the run of lines this hunk covers written over
-    /// by the other side's — and handed to git as the whole of the file. An
-    /// unstaged hunk is the worktree's lines going in; a staged one is the
-    /// last commit's lines going back over them.
-    pub fn stage_hunk(&mut self, id: ChangeId, staged: bool, hunk: usize) {
-        let Some(path) = self.path_of(id).map(Path::to_path_buf) else {
-            return;
-        };
-        let Some(patch) = self.patches.get(&path) else {
-            return;
-        };
+    /// through a patch: the text the index is to hold is worked out from
+    /// what it holds when the work is carried out, with the run of lines this
+    /// hunk covers written over by the other side's, and handed to git as
+    /// the whole of the file. An unstaged hunk is the worktree's lines going
+    /// in; a staged one is the last commit's lines going back over them.
+    pub fn stage_hunk(&self, id: ChangeId, staged: bool, hunk: usize) -> Option<Work> {
+        let path = self.path_of(id)?.to_path_buf();
+        let patch = self.patches.get(&path)?;
         let side = match staged {
             true => &patch.staged,
             false => &patch.unstaged,
         };
-        let Some(owner) = self.owner_of(&path) else {
-            return;
-        };
+        let hunk = side.get(hunk)?;
+        let owner = self.owner_of(&path)?;
         let root = self.repositories[owner].root().to_path_buf();
-        let (Some(hunk), Some(held)) = (side.get(hunk), pm_core::baseline(&root, &path)) else {
-            return;
-        };
 
-        // An unstaged hunk is measured against the index, so its old side is
-        // the run to write over. A staged one is measured against the last
-        // commit, and what the index holds is its new side.
         let (from, count, replacement) = match staged {
             true => (hunk.start, hunk.new_count, hunk.side(false)),
             false => (hunk.old_start, hunk.old_count, hunk.side(true)),
         };
-        let Some(written) = rewritten(&held, from, count, &replacement) else {
-            return;
+        let doing = match staged {
+            true => UNSTAGING,
+            false => STAGING,
         };
-        self.done(owner, pm_core::write_index(&root, &path, &written));
+        Some(Work::new(vec![root.clone()], doing, move || {
+            let said = pm_core::baseline(&root, &path)
+                .and_then(|held| rewritten(&held, from, count, &replacement))
+                .map_or_else(
+                    || Ok(String::new()),
+                    |written| pm_core::write_index(&root, &path, &written),
+                );
+            vec![(root, said)]
+        }))
     }
 
-    /// Puts the lines of one hunk back the way the other side has them.
+    /// The work of putting the lines of one hunk back the way the other side
+    /// has them.
     ///
     /// This is the hunk-sized discard: the run of lines the hunk covers in
     /// the worktree is written back over with the side it differs from, and
     /// the rest of the file is left exactly as it is.
-    pub fn restore_hunk(&mut self, id: ChangeId, staged: bool, hunk: usize) {
-        let Some(path) = self.path_of(id).map(Path::to_path_buf) else {
-            return;
-        };
-        let Some(patch) = self.patches.get(&path) else {
-            return;
-        };
+    pub fn restore_hunk(&self, id: ChangeId, staged: bool, hunk: usize) -> Option<Work> {
+        let path = self.path_of(id)?.to_path_buf();
+        let patch = self.patches.get(&path)?;
         let side = match staged {
             true => &patch.staged,
             false => &patch.unstaged,
         };
-        let (Some(hunk), Ok(held)) = (side.get(hunk), std::fs::read_to_string(&path)) else {
-            return;
-        };
-        let Some(written) = rewritten(&held, hunk.start, hunk.new_count, &hunk.side(false)) else {
-            return;
-        };
+        let hunk = side.get(hunk)?;
+        let (from, count, replacement) = (hunk.start, hunk.new_count, hunk.side(false));
         let owner = self.owner_of(&path).unwrap_or(self.active);
+        let root = self.repositories.get(owner)?.root().to_path_buf();
 
-        self.done(
-            owner,
-            std::fs::write(&path, written)
-                .map(|()| String::new())
-                .map_err(|error| error.to_string()),
-        );
+        Some(Work::new(vec![root.clone()], "Discarding…", move || {
+            let said = std::fs::read_to_string(&path)
+                .map_err(|error| error.to_string())
+                .and_then(|held| match rewritten(&held, from, count, &replacement) {
+                    Some(written) => std::fs::write(&path, written)
+                        .map(|()| String::new())
+                        .map_err(|error| error.to_string()),
+                    None => Ok(String::new()),
+                });
+            vec![(root, said)]
+        }))
     }
 
-    /// Commits what the active repository's index holds, saying what its
-    /// message field holds.
+    /// The work of committing what the active repository's index holds,
+    /// saying what its message field holds.
     ///
-    /// The message is cleared only when the commit was made: a commit a hook
+    /// The message is cleared only once the commit was made: a commit a hook
     /// refused is one to try again, and retyping the message is not part of
     /// trying again.
-    pub fn commit(&mut self) {
-        let active = self.active;
-        let tracked = self.staged_of(active) == 0
+    pub fn commit(&self) -> Option<Work> {
+        let tracked = self.staged_of(self.active) == 0
             && self
-                .repositories
-                .get(active)
+                .active_repository()
                 .is_some_and(|held| held.head().operation.is_none());
-        let Some(repository) = self.active_repository_mut() else {
-            return;
-        };
-        let said = pm_core::commit(repository.root(), &repository.said(), tracked);
-        if said.is_ok() {
-            repository.message_mut().clear();
+        let repository = self.active_repository()?;
+        let root = repository.root().to_path_buf();
+        let message = repository.said();
+        let work = Work::new(vec![root.clone()], "Committing…", move || {
+            let said = pm_core::commit(&root, &message, tracked);
+            vec![(root, said)]
+        });
+        Some(work.committing())
+    }
+
+    /// The work of aborting the active repository's pending merge.
+    pub fn abort_merge(&self) -> Option<Work> {
+        let root = self.active_root()?.to_path_buf();
+        Some(Work::new(vec![root.clone()], "Aborting…", move || {
+            let said = pm_core::abort_merge(&root);
+            vec![(root, said)]
+        }))
+    }
+
+    /// Shows `work` being done on the buttons of the repositories it is
+    /// carried out in, as the window starts carrying it out.
+    pub fn began(&mut self, work: &Work) {
+        for repository in &mut self.repositories {
+            if work.is_in(repository.root()) {
+                repository.set_working(Some(work.doing()));
+            }
         }
-        self.done(active, said);
     }
 
-    /// Aborts the active repository's pending merge.
-    pub fn abort_merge(&mut self) {
-        let active = self.active;
-        let Some(repository) = self.active_repository() else {
-            return;
-        };
-        let said = pm_core::abort_merge(repository.root());
-        self.done(active, said);
+    /// Takes in what git said once a piece of work was carried out.
+    ///
+    /// The worktree is not read again here: that is the window's to ask
+    /// for, away from the frame, once this has been taken in.
+    pub fn finished(&mut self, done: Done) {
+        for repository in &mut self.repositories {
+            repository.set_working(None);
+        }
+        for (root, said) in done.heard {
+            let Some(repository) = self
+                .repositories
+                .iter_mut()
+                .find(|repository| repository.root() == root)
+            else {
+                continue;
+            };
+            if done.commits && said.is_ok() {
+                repository.message_mut().clear();
+            }
+            repository.heard(said);
+        }
     }
 
-    /// Takes in what git said in the `repository`-th, and reads the worktree
-    /// again.
+    /// Whether git is being had do something in any of the repositories.
+    pub fn is_working(&self) -> bool {
+        self.repositories
+            .iter()
+            .any(|repository| repository.working().is_some())
+    }
+
+    /// Takes in what git said in the `repository`-th.
     fn done(&mut self, repository: usize, said: pm_core::Said) {
         if let Some(held) = self.repositories.get_mut(repository) {
             held.heard(said);
         }
-        self.reread();
     }
 
     /// The files `wanted` accepts, as paths.

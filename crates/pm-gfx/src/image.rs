@@ -62,6 +62,15 @@ impl Image {
         Self::raster(bytes).or_else(|| Self::vector(bytes))
     }
 
+    /// A picture of `width` by `height` straight-alpha RGBA `pixels`, scaled
+    /// down to what a texture can hold, or none when the pixels do not fill
+    /// that size.
+    pub fn from_rgba(width: u32, height: u32, pixels: Vec<u8>) -> Option<Self> {
+        let decoded =
+            image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(width, height, pixels)?);
+        Some(Self::fitted(decoded))
+    }
+
     /// Width in pixels.
     pub fn width(&self) -> u32 {
         self.width
@@ -85,13 +94,17 @@ impl Image {
     /// Decodes one of the raster formats, scaling it down to what a texture
     /// can hold.
     fn raster(bytes: &[u8]) -> Option<Self> {
-        let decoded = image::load_from_memory(bytes).ok()?;
+        Some(Self::fitted(image::load_from_memory(bytes).ok()?))
+    }
+
+    /// `decoded`, scaled down to what a texture can hold.
+    fn fitted(decoded: image::DynamicImage) -> Self {
         let decoded = match decoded.width().max(decoded.height()) > LONGEST_SIDE {
             true => decoded.thumbnail(LONGEST_SIDE, LONGEST_SIDE),
             false => decoded,
         };
-        let pixels = decoded.to_rgba8();
-        Some(Self::of(pixels.width(), pixels.height(), pixels.into_raw()))
+        let pixels = decoded.into_rgba8();
+        Self::of(pixels.width(), pixels.height(), pixels.into_raw())
     }
 
     /// Draws an SVG document at the size it asks for, or at a size worth

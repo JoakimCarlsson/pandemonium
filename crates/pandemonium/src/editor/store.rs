@@ -16,6 +16,7 @@ use pm_core::{Blame, Change, ProjectId, Scope};
 use pm_gfx::Point;
 use pm_text::{Buffer, Client, Indent, Position, Server, Servers};
 
+use crate::editor::baseline::Baselines;
 use crate::editor::layout::TextLayout;
 use crate::editor::search::Search;
 
@@ -91,8 +92,11 @@ pub struct Document {
     servers: Vec<Arc<Client>>,
     /// What the index holds for this file, when git knows about it.
     baseline: Option<String>,
+    /// How many times that has been asked for, which names the asking a
+    /// baseline read now answers.
+    baseline_asked: u64,
     /// Where the file differs from that, and at which version it was worked out.
-    changes: (i32, Vec<Change>),
+    changes: (i32, Rc<[Change]>),
     /// Who last changed each line, once it has been asked for.
     blame: Vec<Blame>,
     /// Whether the blame column is being drawn.
@@ -133,7 +137,8 @@ impl Document {
 
         Self {
             baseline,
-            changes: (-1, Vec::new()),
+            baseline_asked: 0,
+            changes: (-1, Rc::from([])),
             blame: Vec::new(),
             blame_shown: false,
             hinted: None,
@@ -178,19 +183,21 @@ impl Document {
     /// The comparison is made against the version it was last made at, so a
     /// frame that has not been typed into since the last one costs nothing.
     /// A file git has never heard of has nothing to differ from, and is
-    /// marked nowhere rather than marked new from end to end.
-    pub fn changes(&mut self) -> &[Change] {
-        let Some(baseline) = self.baseline.clone() else {
-            return &[];
+    /// marked nowhere rather than marked new from end to end. What comes back
+    /// is shared with the document rather than copied out of it, so a pane
+    /// can hold it through a frame beside the buffer it was read from.
+    pub fn changes(&mut self) -> Rc<[Change]> {
+        let Some(baseline) = self.baseline.as_deref() else {
+            return Rc::from([]);
         };
         let version = self.buffer.version();
         if self.changes.0 != version {
             self.changes = (
                 version,
-                pm_core::changes(&baseline, &self.buffer.contents()),
+                pm_core::changes(baseline, &self.buffer.contents()).into(),
             );
         }
-        &self.changes.1
+        self.changes.1.clone()
     }
 
     /// Whether git knows anything about this file at all.
@@ -368,10 +375,23 @@ impl Document {
         self.blame = blame;
     }
 
-    /// Reads again what the index holds for this file.
-    pub fn reread_baseline(&mut self, root: &Path) {
-        self.baseline = pm_core::baseline(root, self.buffer.path());
-        self.changes = (-1, Vec::new());
+    /// Marks what the index holds for this file as asked for again,
+    /// answering which asking this is.
+    fn ask_baseline(&mut self) -> u64 {
+        self.baseline_asked += 1;
+        self.baseline_asked
+    }
+
+    /// Takes in what the index holds for this file, as its `asked`-th asking
+    /// read it, unless it has been asked for again since; answers whether it
+    /// was taken.
+    fn take_baseline(&mut self, asked: u64, baseline: Option<String>) -> bool {
+        if asked != self.baseline_asked {
+            return false;
+        }
+        self.baseline = baseline;
+        self.changes = (-1, Rc::from([]));
+        true
     }
 
     /// What is being looked for in the file, and where it was found.
@@ -612,9 +632,12 @@ impl Document {
         if self.search.is_open() {
             self.search.refresh(&self.buffer);
         }
-        let contents = self.buffer.contents();
         for server in &self.servers {
-            server.did_change(self.buffer.path(), self.buffer.version(), &contents);
+            server.did_change(
+                self.buffer.path(),
+                self.buffer.version(),
+                self.buffer.rope(),
+            );
         }
     }
 
@@ -648,10 +671,11 @@ impl Document {
     ///
     /// Whatever wrote the file — a branch change, an agent, a formatter run
     /// from a shell — the servers hear the new text the way they hear an
-    /// edit, and the comparison against the index is made again. A document
-    /// with unsaved changes keeps them: the reader's edits are not something
-    /// a write they did not see may throw away. Answers whether it changed.
-    fn reread(&mut self, root: &Path) -> bool {
+    /// edit, and the comparison against the index is made again once the
+    /// store has read what the index holds. A document with unsaved changes
+    /// keeps them: the reader's edits are not something a write they did not
+    /// see may throw away. Answers whether it changed.
+    fn reread(&mut self) -> bool {
         if self.buffer.is_dirty() {
             return false;
         }
@@ -660,8 +684,7 @@ impl Document {
         if version != self.buffer.version() {
             self.changed();
         }
-        self.baseline = pm_core::baseline(root, self.buffer.path());
-        self.changes = (-1, Vec::new());
+        self.changes = (-1, Rc::from([]));
         if changed {
             let lines = self.buffer.line_count();
             self.folded.retain(|fold| fold.end <= lines);
@@ -724,12 +747,45 @@ pub struct Files {
     servers: Servers,
     /// How the reader writes the files.
     habits: Habits,
+    /// What the index holds for each of them, read away from the window.
+    baselines: Baselines,
 }
 
 impl Files {
-    /// Wakes the window through `notify` when a server has something to say.
+    /// Wakes the window through `notify` when a server has something to say,
+    /// or when what the index holds for a file has been read.
     pub fn set_notify(&mut self, notify: Arc<dyn Fn() + Send + Sync>) {
+        self.baselines.start(notify.clone());
         self.servers.set_notify(notify);
+    }
+
+    /// Asks again what the index holds for the file `id` names, in the
+    /// worktree at `root`.
+    ///
+    /// The document keeps what it had until the answer is back; before the
+    /// thread reading baselines has been started, it is read here.
+    fn ask_baseline(&self, id: FileId, root: &Path) {
+        let Some(entry) = self.open.get(&id) else {
+            return;
+        };
+        let mut document = entry.document.borrow_mut();
+        let asked = document.ask_baseline();
+        let path = document.buffer().path().to_path_buf();
+        if !self.baselines.ask(id, asked, root, &path) {
+            document.take_baseline(asked, pm_core::baseline(root, &path));
+        }
+    }
+
+    /// Takes in every baseline that has been read, answering whether any
+    /// document took one.
+    fn take_baselines(&self) -> bool {
+        let mut taken = false;
+        for (id, asked, baseline) in self.baselines.take() {
+            if let Some(entry) = self.open.get(&id) {
+                taken |= entry.document.borrow_mut().take_baseline(asked, baseline);
+            }
+        }
+        taken
     }
 
     /// Runs `overrides` for the languages they name, in place of the usual.
@@ -811,14 +867,10 @@ impl Files {
             id,
             Entry {
                 scope,
-                document: Rc::new(RefCell::new(Document::new(
-                    buffer,
-                    preview,
-                    servers,
-                    pm_core::baseline(root, path),
-                ))),
+                document: Rc::new(RefCell::new(Document::new(buffer, preview, servers, None))),
             },
         );
+        self.ask_baseline(id, root);
         Some(id)
     }
 
@@ -892,9 +944,8 @@ impl Files {
     /// and writing the file is the moment that becomes possible.
     pub fn save(&mut self, id: FileId, root: &Path) {
         if let Some(entry) = self.open.get(&id) {
-            let mut document = entry.document.borrow_mut();
-            document.save(self.habits);
-            document.reread_baseline(root);
+            entry.document.borrow_mut().save(self.habits);
+            self.ask_baseline(id, root);
         }
     }
 
@@ -907,29 +958,41 @@ impl Files {
         let Some(entry) = self.open.get(&id) else {
             return;
         };
-        let mut document = entry.document.borrow_mut();
-        if document.buffer().contents() != text {
-            document.edit(|buffer| {
-                buffer.commit();
-                buffer.set_contents(text);
-                buffer.commit();
+        {
+            let mut document = entry.document.borrow_mut();
+            if document.buffer().contents() != text {
+                document.edit(|buffer| {
+                    buffer.commit();
+                    buffer.set_contents(text);
+                    buffer.commit();
+                });
+            }
+            document.save(Habits {
+                indent: self.habits.indent,
+                trim_whitespace: false,
+                final_newline: false,
             });
         }
-        document.save(Habits {
-            indent: self.habits.indent,
-            trim_whitespace: false,
-            final_newline: false,
-        });
-        document.reread_baseline(root);
+        self.ask_baseline(id, root);
     }
 
-    /// Writes every open file to disk, each against its own worktree.
+    /// Writes every open file with changes that are not on disk, each
+    /// against its own worktree; a file nobody changed is left as it is.
     pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<PathBuf>) {
-        for entry in self.open.values() {
-            let mut document = entry.document.borrow_mut();
-            document.save(self.habits);
-            if let Some(root) = root(entry.scope) {
-                document.reread_baseline(&root);
+        let dirty = self
+            .open
+            .iter()
+            .filter(|(_, entry)| entry.document.borrow().buffer().is_dirty())
+            .map(|(id, entry)| (*id, entry.scope))
+            .collect::<Vec<_>>();
+        for (id, scope) in dirty {
+            match root(scope) {
+                Some(root) => self.save(id, &root),
+                None => {
+                    if let Some(entry) = self.open.get(&id) {
+                        entry.document.borrow_mut().save(self.habits);
+                    }
+                }
             }
         }
     }
@@ -954,16 +1017,26 @@ impl Files {
 
     /// Reads the clean open documents of `scope` that `wanted` picks from
     /// disk again, answering whether any of them changed.
+    ///
+    /// What the index holds for each of them is asked for again too, since
+    /// a write under the worktree is as likely to be git's as anyone's.
     fn reread(&mut self, scope: Scope, root: &Path, wanted: impl Fn(&Path) -> bool) -> bool {
+        let clean = self
+            .open
+            .iter()
+            .filter(|(_, entry)| entry.scope == scope)
+            .filter(|(_, entry)| {
+                let document = entry.document.borrow();
+                !document.buffer().is_dirty() && wanted(document.buffer().path())
+            })
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
         let mut changed = false;
-        for entry in self.open.values() {
-            if entry.scope != scope {
-                continue;
+        for id in clean {
+            if let Some(entry) = self.open.get(&id) {
+                changed |= entry.document.borrow_mut().reread();
             }
-            let mut document = entry.document.borrow_mut();
-            if wanted(document.buffer().path()) {
-                changed |= document.reread(root);
-            }
+            self.ask_baseline(id, root);
         }
         changed
     }
@@ -996,10 +1069,12 @@ impl Files {
         self.servers.close(root);
     }
 
-    /// Takes in what the servers have said, and says whether anything is new.
+    /// Takes in what the servers have said and what the index has been read
+    /// to hold, and says whether anything is new.
     pub fn refresh(&mut self) -> bool {
+        let baselined = self.take_baselines();
         if !self.servers.take_fresh() {
-            return false;
+            return baselined;
         }
         for entry in self.open.values() {
             entry.document.borrow_mut().refresh();

@@ -10,11 +10,13 @@ mod clicks;
 mod client;
 mod commands;
 mod debug;
+mod dialog;
 mod disk;
 mod drag;
 mod excerpts;
 mod input;
 mod language;
+mod listing;
 mod modal;
 mod notice;
 mod panel;
@@ -32,6 +34,7 @@ mod views;
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -113,6 +116,16 @@ pub enum Wake {
     Reading,
     /// A release newer than this build has been found.
     Release,
+    /// Something listed for the picker away from the window has come back.
+    Listing,
+    /// The reader has chosen something in one of the platform's pickers.
+    Chosen,
+    /// A move, a copy or a removal in the file tree has finished.
+    Shifted,
+    /// A picture has been decoded away from the window.
+    Picture,
+    /// Something has been read off the clipboard into a prompt.
+    Paste,
 }
 
 /// The remote operation currently running for the active project.
@@ -167,6 +180,9 @@ pub struct App {
     /// Whether that window has the keyboard, which is whether the reader is
     /// looking at it rather than at another application.
     window_focused: bool,
+    /// Whether that window is hidden from sight, minimised or covered, so
+    /// nothing drawn by the clock alone would be seen.
+    window_occluded: bool,
     /// The device and surface drawing into that window.
     renderer: Option<Renderer>,
     /// The element tree's focus, hover and hit regions between frames.
@@ -233,6 +249,9 @@ pub struct App {
     tree_edit: Option<crate::tree::Edit>,
     /// What was cut or copied out of the file tree.
     tree_clipboard: Option<crate::tree::Clipboard>,
+    /// The moves, copies and removals in the tree that have finished and
+    /// have not been taken in yet.
+    shifted: Arc<Mutex<Vec<tree::Shifted>>>,
     /// The rows of the file tree the pointer is carrying.
     entry_drag: Option<crate::tree::EntryDrag>,
     /// The project row the pointer is carrying up or down the sidebar.
@@ -331,6 +350,8 @@ pub struct App {
     git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
     /// What git is being asked about the worktrees away from the window.
     readings: reading::Readings,
+    /// What the pickers have gathering away from the window.
+    listings: listing::Listings,
     /// The repositories a clone has finished with, and where they landed.
     cloned: Arc<Mutex<Vec<Result<std::path::PathBuf, String>>>>,
     /// The question the window is asking before it acts, if it is asking one.
@@ -401,8 +422,49 @@ pub struct App {
     update_available: bool,
     /// Set when the search for one finds it, until the window takes it in.
     released: Arc<Mutex<bool>>,
+    /// What has been read off the clipboard for a prompt and not yet put
+    /// into it.
+    pastes: Arc<Mutex<Vec<(crate::agent::TalkId, Pasting)>>>,
+    /// What the reader has chosen in the platform's pickers and the window
+    /// has not taken in yet.
+    choices: dialog::Choices,
     /// How the reader threads wake the event loop.
     proxy: EventLoopProxy<Wake>,
+    /// Which wakes are on their way and not yet taken in, so a thread that
+    /// has something to say a thousand times a second wakes the window once.
+    pending: Pending,
+}
+
+/// How many kinds of [`Wake`] there are.
+const WAKES: usize = Wake::Paste as usize + 1;
+
+/// One flag per kind of [`Wake`], set while one is on its way.
+type Pending = Arc<[AtomicBool; WAKES]>;
+
+/// What a paste into a prompt came to, read away from the window.
+pub(super) enum Pasting {
+    /// An image, ready to attach.
+    Image(crate::agent::Pasted),
+    /// Text, to type in.
+    Text(String),
+}
+
+/// A handle a thread behind the window wakes it with through `proxy`,
+/// sending `wake` unless one is already on its way by `pending`.
+fn waker_through(
+    proxy: &EventLoopProxy<Wake>,
+    pending: &Pending,
+    wake: Wake,
+) -> Arc<dyn Fn() + Send + Sync> {
+    let proxy = Mutex::new(proxy.clone());
+    let pending = pending.clone();
+    Arc::new(move || {
+        if !pending[wake as usize].swap(true, Ordering::AcqRel)
+            && let Ok(proxy) = proxy.lock()
+        {
+            let _ = proxy.send_event(wake);
+        }
+    })
 }
 
 /// The replacement lists and the added lists in `configured`.
@@ -447,10 +509,13 @@ impl App {
             .iter()
             .map(|project| (Scope::checkout(project.id()), FileTree::new(project.root())))
             .collect();
+        let pending: Pending = Arc::new(std::array::from_fn(|_| AtomicBool::new(false)));
+        crate::image::wake_with(waker_through(&proxy, &pending, Wake::Picture));
 
         Self {
             window: None,
             window_focused: true,
+            window_occluded: false,
             renderer: None,
             ui: None,
             list: None,
@@ -483,6 +548,7 @@ impl App {
             tree_scrolls: BTreeMap::new(),
             tree_edit: None,
             tree_clipboard: None,
+            shifted: Arc::default(),
             entry_drag: None,
             project_drag: None,
             project_list: drag::unmeasured(),
@@ -548,6 +614,7 @@ impl App {
             spun: std::time::Instant::now(),
             git_results: Arc::new(Mutex::new(Vec::new())),
             readings: reading::Readings::default(),
+            listings: listing::Listings::default(),
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
             completions: None,
@@ -581,7 +648,10 @@ impl App {
             editor_scroll_origin: None,
             update_available: false,
             released: Arc::new(Mutex::new(false)),
+            pastes: Arc::new(Mutex::new(Vec::new())),
+            choices: dialog::Choices::default(),
             proxy,
+            pending,
         }
     }
 
@@ -1361,10 +1431,7 @@ impl App {
             return;
         }
         if message == Message::OpenProject {
-            self.open_project();
-            self.read_new_worktrees();
-            self.store();
-            self.request_redraw();
+            self.ask_project();
             return;
         }
         if message == Message::CloneProject {
@@ -1511,13 +1578,7 @@ impl App {
                 ],
             )),
             Message::CommitAndPush => {
-                self.change_by(Review::commit);
-                if self
-                    .review()
-                    .is_some_and(|review| review.trouble().is_none())
-                {
-                    self.push_branch();
-                }
+                self.change_by(|review| review.commit().map(crate::review::Work::then_push));
             }
             Message::OpenChange(index) => self.open_change(index),
             Message::OpenChangeDiff(index) => self.open_change_diff(index),
@@ -1556,12 +1617,11 @@ impl App {
         true
     }
 
-    /// Changes what the index holds, and reads the worktree again after it.
-    fn change_by(&mut self, change: impl FnOnce(&mut Review)) {
-        if let Some(review) = self.review_mut() {
-            change(review);
-        }
-        self.reread_worktree();
+    /// Has git carry out the work `change` makes of the review, away from
+    /// the window, and reads the worktree again after it.
+    fn change_by(&mut self, change: impl FnOnce(&Review) -> Option<crate::review::Work>) {
+        let work = self.review().and_then(change);
+        self.work_here(work);
     }
 
     /// Opens the menu for `target` where the pointer is.
@@ -1672,21 +1732,6 @@ impl App {
         self.editor_focused = false;
     }
 
-    /// Asks for a folder and adds the project it belongs to to the window.
-    ///
-    /// The picker is the platform's own, so there is nothing to do when it is
-    /// dismissed. A folder inside a repository opens that repository; any
-    /// other folder opens as a project of its own.
-    fn open_project(&mut self) {
-        let Some(root) = rfd::FileDialog::new()
-            .set_title("Open a folder")
-            .pick_folder()
-        else {
-            return;
-        };
-        let _ = self.open.find_or_open(root);
-    }
-
     /// Fetches the repository at `url` into a directory the reader picks.
     ///
     /// A clone is the one git operation that takes as long as the network
@@ -1698,10 +1743,11 @@ impl App {
         if url.is_empty() {
             return;
         }
-        let Some(under) = rfd::FileDialog::new().set_title("Clone into").pick_folder() else {
-            return;
-        };
+        self.ask_clone_into(url);
+    }
 
+    /// Fetches the repository at `url` into `under`, on a thread of its own.
+    fn clone_into(&mut self, url: String, under: PathBuf) {
         let cloned = self.cloned.clone();
         let wake = self.waker(Wake::Clone);
         std::thread::spawn(move || {
@@ -1883,12 +1929,7 @@ impl App {
 
     /// A handle the threads behind the window wake it with, sending `wake`.
     pub(super) fn waker(&self, wake: Wake) -> Arc<dyn Fn() + Send + Sync> {
-        let proxy = Mutex::new(self.proxy.clone());
-        Arc::new(move || {
-            if let Ok(proxy) = proxy.lock() {
-                let _ = proxy.send_event(wake);
-            }
-        })
+        waker_through(&self.proxy, &self.pending, wake)
     }
 
     /// Asks the platform for another frame.
@@ -2018,9 +2059,9 @@ impl App {
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
         self.see_shown_agents();
+        self.follow_agents();
         self.settle_excerpts();
         self.refresh_annotations();
-        self.open_reviewed_files();
         let shell = self
             .showing_terminals()
             .then(|| self.active_shell())
@@ -2036,7 +2077,10 @@ impl App {
             shells,
             focused: self.terminal_focused,
             linking: self.modifiers.control_key(),
-            problems: self.problems(),
+            problems: match self.bottom_panel_open {
+                true => self.problems(),
+                false => Vec::new(),
+            },
             problems_scroll: self.problems_scroll.clone(),
             problems_area: self.problems_area.clone(),
             debug: self.debug_in_panel(&theme),
@@ -2166,13 +2210,14 @@ impl ApplicationHandler<Wake> for App {
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let expired = self.notices.expire(Instant::now());
-        if self.rested() || self.blinked() || self.spun() || expired {
+        let seen = !self.window_occluded;
+        if (self.rested() || self.blinked() || (seen && self.spun()) || expired) && seen {
             self.request_redraw();
         }
         let next = [
             self.next_rest(),
             self.next_blink(),
-            self.next_spin(),
+            self.next_spin().filter(|_| seen),
             self.notices.next_expiry(),
         ]
         .into_iter()
@@ -2186,6 +2231,7 @@ impl ApplicationHandler<Wake> for App {
 
     /// Applies what the shells have written and draws the result.
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
+        self.pending[event as usize].store(false, Ordering::Release);
         match event {
             Wake::Terminal => {
                 let pumped = self.terminals.pump();
@@ -2235,6 +2281,7 @@ impl ApplicationHandler<Wake> for App {
                     if let Some(review) = self.reviews.get_mut(&scope) {
                         review.settle(said);
                     }
+                    self.reread_review_later(scope);
                 }
                 self.remote_operation = None;
                 self.request_redraw();
@@ -2261,6 +2308,27 @@ impl ApplicationHandler<Wake> for App {
             Wake::Release => {
                 if self.released.lock().is_ok_and(|released| *released) {
                     self.update_available = true;
+                    self.request_redraw();
+                }
+            }
+            Wake::Listing => {
+                if self.take_listings() {
+                    self.request_redraw();
+                }
+            }
+            Wake::Picture => self.request_redraw(),
+            Wake::Shifted => {
+                if self.take_shifted() {
+                    self.request_redraw();
+                }
+            }
+            Wake::Chosen => {
+                if self.take_chosen() {
+                    self.request_redraw();
+                }
+            }
+            Wake::Paste => {
+                if self.take_pastes() {
                     self.request_redraw();
                 }
             }
@@ -2313,7 +2381,7 @@ impl ApplicationHandler<Wake> for App {
         self.editor.set_language_servers(&replace);
         self.editor.add_language_servers(&add);
         self.follow_preferences();
-        self.reread_changes();
+        self.reread_changes_now();
 
         let saved = std::mem::take(&mut self.saved);
         self.restore_panes(&saved);
@@ -2355,6 +2423,12 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
                 self.request_redraw();
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.window_occluded = occluded;
+                if !occluded {
+                    self.request_redraw();
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.pointer_moved(Point::new(

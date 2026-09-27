@@ -103,7 +103,7 @@ impl App {
             }
             Message::FollowAgentLink(session, place) => self.follow_agent_link(session, place),
             Message::LogInAgent(session, place) => self.log_in_agent(session, place),
-            Message::AttachAgentFiles(session) => self.attach_agent_files(session),
+            Message::AttachAgentFiles(session) => self.ask_attachments(session),
             Message::RemoveAgentAttachment(session, place) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.remove_attachment(place);
@@ -751,22 +751,6 @@ impl App {
         true
     }
 
-    /// Lets the reader choose files for this agent's next turn.
-    fn attach_agent_files(&mut self, session: TalkId) {
-        let Some(paths) = rfd::FileDialog::new()
-            .set_title("Attach files")
-            .pick_files()
-        else {
-            return;
-        };
-        if let Some(talk) = self.agents.get_mut(session) {
-            for path in paths {
-                talk.attach_file(path);
-            }
-        }
-        self.focus_prompt(session);
-    }
-
     /// The session the pointer is over, or the one the focused pane shows.
     fn agent_under(&self) -> Option<TalkId> {
         let scope = self.scope()?;
@@ -814,18 +798,22 @@ impl App {
         if !self.window_focused {
             return;
         }
-        let shown = self
-            .panes
-            .panes()
-            .into_iter()
-            .filter_map(|pane| self.panes.pane(pane)?.active(self.scope()))
-            .filter_map(Item::session)
-            .collect::<Vec<_>>();
-        for session in shown {
+        for session in self.shown_agents() {
             if let Some(talk) = self.agents.get_mut(session) {
                 talk.see();
             }
         }
+    }
+
+    /// The sessions a pane is showing now, each once for every pane it is
+    /// the front tab of.
+    fn shown_agents(&self) -> Vec<TalkId> {
+        self.panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.panes.pane(pane)?.active(self.scope()))
+            .filter_map(Item::session)
+            .collect()
     }
 
     /// Asks the desktop to point the reader at the window when an agent has
@@ -850,23 +838,17 @@ impl App {
         }
     }
 
-    /// Keeps every conversation that is following its end at its end.
+    /// Keeps every conversation a pane is showing that is following its end
+    /// at its end.
     ///
     /// Following is what a terminal does: the last thing said stays against
     /// the foot of the pane and everything above it scrolls off. How much of
     /// the conversation that leaves showing is what the pane came out at last
     /// frame, so the pane's own height is what the first row is counted from.
+    /// A conversation behind another tab is left where it is until a pane
+    /// shows it again, which is when a frame is drawn and this is asked.
     pub(super) fn follow_agents(&mut self) {
-        let sessions = self
-            .panes
-            .panes()
-            .into_iter()
-            .filter_map(|pane| self.panes.pane(pane))
-            .flat_map(crate::panes::Pane::items)
-            .filter_map(Item::session)
-            .collect::<Vec<_>>();
-
-        for session in sessions {
+        for session in self.shown_agents() {
             if self
                 .agents
                 .get(session)

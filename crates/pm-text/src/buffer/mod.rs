@@ -10,11 +10,13 @@
 mod cursors;
 mod edit;
 mod folds;
+mod memo;
 mod motion;
 
 use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ropey::Rope;
 
@@ -26,6 +28,8 @@ use crate::indent::Indent;
 use crate::language::Language;
 use crate::lsp::Lens;
 use crate::syntax::{Highlight, Highlights, Syntax};
+
+use self::memo::Memo;
 
 /// One file, open for reading and editing.
 pub struct Buffer {
@@ -58,12 +62,17 @@ pub struct Buffer {
     diagnostics: Vec<Diagnostic>,
     /// What a server has written into the lines that the file does not hold.
     hints: Vec<Hint>,
-    /// What a language server makes of every name in the file.
+    /// What a language server makes of every name in the file, in the order
+    /// the names appear.
     semantics: Vec<(Range<Position>, Highlight)>,
+    /// How many lines past its first the longest of those names runs on.
+    semantic_reach: usize,
     /// Where the symbol at the cursor is used, and the version it was found in.
     uses: (i32, Vec<Range<Position>>),
     /// The notes a server puts above the file's declarations.
     lenses: Vec<Lens>,
+    /// What has already been worked out about the text as it stands.
+    memo: Memo,
 }
 
 impl Buffer {
@@ -107,8 +116,10 @@ impl Buffer {
             diagnostics: Vec::new(),
             hints: Vec::new(),
             semantics: Vec::new(),
+            semantic_reach: 0,
             uses: (-1, Vec::new()),
             lenses: Vec::new(),
+            memo: Memo::default(),
         }
     }
 
@@ -160,6 +171,14 @@ impl Buffer {
     /// The whole text, as a language server wants it.
     pub fn contents(&self) -> String {
         self.text.to_string()
+    }
+
+    /// The whole text, as the rope it is stored in.
+    ///
+    /// A rope is shared rather than copied when it is cloned, so this is how
+    /// the text reaches something that keeps it without costing its size.
+    pub fn rope(&self) -> &Rope {
+        &self.text
     }
 
     /// How many lines the buffer holds.
@@ -222,9 +241,7 @@ impl Buffer {
 
     /// The hints drawn on `line`, in the order they are drawn.
     pub fn hints_on(&self, line: usize) -> impl Iterator<Item = &Hint> {
-        self.hints
-            .iter()
-            .filter(move |hint| hint.position.line == line)
+        self.hints[on_line(&self.hints, line, |hint| hint.position)].iter()
     }
 
     /// Replaces where a server said the symbol at the cursor is used.
@@ -273,9 +290,8 @@ impl Buffer {
 
     /// What the notes about the declaration on `line` say, in order.
     pub fn lenses_on(&self, line: usize) -> impl Iterator<Item = &str> {
-        self.lenses
+        self.lenses[on_line(&self.lenses, line, |lens| lens.position)]
             .iter()
-            .filter(move |lens| lens.position.line == line)
             .filter_map(|lens| lens.title.as_deref())
     }
 
@@ -359,6 +375,14 @@ impl Buffer {
             .min_by_key(|found| found.severity)
     }
 
+    /// What a language server said about any of `lines`, in the order it
+    /// said it.
+    pub fn diagnostics_touching(&self, lines: Range<usize>) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(move |found| {
+            found.range.end.line >= lines.start && found.range.start.line < lines.end
+        })
+    }
+
     /// Replaces what a language server had said about this file.
     pub fn set_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
         self.diagnostics = diagnostics;
@@ -367,6 +391,14 @@ impl Buffer {
     /// Replaces what a language server makes of the names in this file.
     pub fn set_semantics(&mut self, semantics: Vec<(Range<Position>, Highlight)>) {
         self.semantics = semantics;
+        self.semantics.sort_by_key(|(span, _)| span.start);
+        self.semantic_reach = self
+            .semantics
+            .iter()
+            .map(|(span, _)| span.end.line.saturating_sub(span.start.line))
+            .max()
+            .unwrap_or(0);
+        self.memo.forget_highlights();
     }
 
     /// The highlights of `lines`: what the grammar found, then what a server
@@ -381,13 +413,32 @@ impl Buffer {
             Some(syntax) => syntax.highlights(&self.text, lines.clone()),
             None => Highlights::default(),
         };
-        for (span, highlight) in &self.semantics {
+        let first = self.semantics.partition_point(|(span, _)| {
+            span.start.line < lines.start.saturating_sub(self.semantic_reach)
+        });
+        let last = self
+            .semantics
+            .partition_point(|(span, _)| span.start.line < lines.end);
+        for (span, highlight) in &self.semantics[first..last.max(first)] {
             if span.end.line < lines.start || span.start.line >= lines.end {
                 continue;
             }
             highlights.repaint(span.clone(), *highlight);
         }
         highlights
+    }
+
+    /// The highlights of `lines`, as [`Buffer::highlights`] has them, worked
+    /// out once for the text as it stands.
+    ///
+    /// A pane draws the same lines frame after frame while nothing is typed,
+    /// and each of those frames is handed what the first of them worked out.
+    pub fn remembered_highlights(&mut self, lines: Range<usize>) -> Arc<Highlights> {
+        let version = self.version;
+        let mut memo = std::mem::take(&mut self.memo);
+        let found = memo.highlights(version, lines.clone(), || self.highlights(lines));
+        self.memo = memo;
+        found
     }
 
     /// Every node of the syntax tree whose kind `keep` accepts, outermost
@@ -413,8 +464,17 @@ impl Buffer {
     }
 
     /// The bracket matching the one at or before the cursor, if there is one.
+    ///
+    /// The answer is worked out once per place the cursor rests at, however
+    /// many frames it rests there.
     pub fn matching_bracket(&self) -> Option<(Position, Position)> {
         let head = self.selection.head;
+        self.memo
+            .brackets(self.version, head, || self.brackets_at(head))
+    }
+
+    /// The bracket matching the one at or before `head`, worked out afresh.
+    fn brackets_at(&self, head: Position) -> Option<(Position, Position)> {
         for at in [head, Position::new(head.line, head.column.checked_sub(1)?)] {
             if let Some(other) = self.matched(at) {
                 return Some((at, other));
@@ -492,13 +552,16 @@ impl Buffer {
 
         let start = self.char_of(at);
         let mut depth = 0i32;
-        let steps: Box<dyn Iterator<Item = usize>> = if forward {
-            Box::new(start..self.text.len_chars())
+        let steps: Box<dyn Iterator<Item = (usize, char)>> = if forward {
+            Box::new((start..).zip(self.text.chars_at(start)))
         } else {
-            Box::new((0..=start).rev())
+            Box::new(
+                (0..=start)
+                    .rev()
+                    .zip(self.text.chars_at(start + 1).reversed()),
+            )
         };
-        for offset in steps {
-            let ch = self.text.char(offset);
+        for (offset, ch) in steps {
             if ch == bracket {
                 depth += 1;
             } else if ch == partner {
@@ -510,4 +573,11 @@ impl Buffer {
         }
         None
     }
+}
+
+/// The run of `sorted`, ordered by where each item is, that sits on `line`.
+fn on_line<T>(sorted: &[T], line: usize, at: impl Fn(&T) -> Position) -> Range<usize> {
+    let start = sorted.partition_point(|item| at(item).line < line);
+    let end = start + sorted[start..].partition_point(|item| at(item).line == line);
+    start..end
 }

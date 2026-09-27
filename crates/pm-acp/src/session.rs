@@ -11,12 +11,19 @@
 //! of those is answered from this thread. A permission is the reader's to
 //! give, and a file or a terminal is the window's: each goes up as an event
 //! under a ticket and comes back down through the session.
+//!
+//! Nothing is written to the agent from the window's thread or the reader's
+//! either. Both hand what they have to say to the writer thread, which builds
+//! it, serializes it and writes it in the order it was handed over: an agent
+//! slow to read its pipe holds up that thread, never a frame, and never the
+//! reader it is waiting to be read by.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -85,6 +92,68 @@ struct Owed {
     shape: Shape,
 }
 
+/// One message on its way to the agent, as it is handed to the writer.
+///
+/// A message that costs something to build is handed over as what it is
+/// built from, so that reading a file or shaping a terminal's output happens
+/// on the writer thread rather than on whichever thread had it to say.
+enum Outgoing {
+    /// A message ready to be written as it stands.
+    Message(Value),
+    /// A turn, whose content is read and built only once it is written.
+    Turn {
+        /// The identifier the request goes under.
+        id: i64,
+        /// What the agent calls the conversation.
+        session: String,
+        /// What the reader sent.
+        prompt: Prompt,
+        /// Whether the agent takes a file's contents rather than a link.
+        embeds: bool,
+    },
+    /// The window's answer to a file or terminal request of the agent's.
+    Answer {
+        /// The request being answered.
+        owed: Owed,
+        /// The most output the terminal it names will keep, where it set one.
+        limit: Option<usize>,
+        /// What the window came back with.
+        answer: Answer,
+    },
+}
+
+impl Outgoing {
+    /// The message this comes to on the wire.
+    fn build(self) -> Value {
+        match self {
+            Self::Message(message) => message,
+            Self::Turn {
+                id,
+                session,
+                prompt,
+                embeds,
+            } => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "session/prompt",
+                "params": turn(&session, &prompt, embeds),
+            }),
+            Self::Answer {
+                owed,
+                limit,
+                answer,
+            } => match request::reply(&owed.request, &owed.shape, limit, answer) {
+                Ok(result) => json!({ "jsonrpc": "2.0", "id": owed.id, "result": result }),
+                Err(trouble) => json!({
+                    "jsonrpc": "2.0",
+                    "id": owed.id,
+                    "error": { "code": FAILED, "message": trouble },
+                }),
+            },
+        }
+    }
+}
+
 /// A turn waiting for the agent, including context attached to its text.
 struct Prompt {
     /// The words the reader sent.
@@ -125,8 +194,6 @@ struct State {
     mode: Option<String>,
     /// What the session can be set to, as the agent last offered it.
     knobs: Vec<Knob>,
-    /// The tool calls of this conversation, as they now stand.
-    tools: Tools,
     /// What has arrived and not yet been drained.
     events: Vec<Event>,
     /// Whether anything has arrived since the window last looked.
@@ -142,12 +209,6 @@ struct State {
     /// The most output each terminal's agent will keep, by the terminal's
     /// name, for the terminals that set one.
     limits: HashMap<String, usize>,
-    /// The ticket the next request will be put to the reader or the window
-    /// as.
-    ticket: u64,
-    /// How many terminals the agent has started, which is what names the
-    /// next one.
-    terminals: u64,
 }
 
 /// An agent the editor is talking to.
@@ -156,10 +217,10 @@ pub struct Session {
     agent: Agent,
     /// The worktree it is working in.
     root: PathBuf,
-    /// The process itself, kept so that it can be ended.
-    process: Mutex<Child>,
-    /// The pipe messages are written to, shared with the reader thread.
-    stdin: Arc<Mutex<ChildStdin>>,
+    /// The process itself, kept so that it can be ended, until it has been.
+    process: Mutex<Option<Child>>,
+    /// Where messages for the agent are handed to the writer thread.
+    outbox: Sender<Outgoing>,
     /// What the agent has said and what it is owed.
     state: Arc<Mutex<State>>,
     /// The identifier the next request will be sent under, shared with the
@@ -239,12 +300,13 @@ impl Session {
         let stderr = process.stderr.take().expect("stderr was piped");
         let state = Arc::new(Mutex::new(State::default()));
         let next = Arc::new(AtomicI64::new(FIRST_REQUEST));
+        let (outbox, pending) = mpsc::channel();
 
         let session = Self {
             agent,
             root: root.to_path_buf(),
-            process: Mutex::new(process),
-            stdin: Arc::new(Mutex::new(stdin)),
+            process: Mutex::new(Some(process)),
+            outbox: outbox.clone(),
             state: state.clone(),
             next: next.clone(),
             notify: notify.clone(),
@@ -254,7 +316,7 @@ impl Session {
             state.resume = resume;
             state.resume_fallback = resume_fallback;
         }
-        session.send(&json!({
+        session.send(json!({
             "jsonrpc": "2.0",
             "id": HANDSHAKE,
             "method": "initialize",
@@ -265,12 +327,14 @@ impl Session {
             root: root.to_path_buf(),
             state: state.clone(),
             notify,
-            replies: Replies {
-                stdin: session.stdin.clone(),
-            },
+            replies: Replies { outbox },
             stdout: BufReader::new(stdout),
             next,
+            tools: Tools::new(),
+            ticket: 0,
+            terminals: 0,
         };
+        std::thread::spawn(move || write(stdin, &pending));
         std::thread::spawn(move || reader.run());
         std::thread::spawn(move || watch(BufReader::new(stderr), &state));
 
@@ -320,7 +384,7 @@ impl Session {
             &json!({ "cwd": self.root }),
         );
         drop(state);
-        self.send(&request);
+        self.send(request);
     }
 
     /// Sends `text` as the reader's next turn.
@@ -328,6 +392,10 @@ impl Session {
     /// A prompt sent before the conversation is open, or while the turn
     /// before it is still running, is held until it can go: a reader types
     /// when they have something to say, not when the agent is ready.
+    ///
+    /// Nothing of the prompt is built here: the files it embeds are read on
+    /// the writer thread, and it is handed over while the state is still
+    /// held, so no other message can be written ahead of it out of turn.
     pub fn prompt(&self, text: &str, attachments: Vec<Attachment>) {
         let Ok(mut state) = self.state.lock() else {
             return;
@@ -336,15 +404,19 @@ impl Session {
             text: text.to_owned(),
             attachments,
         };
-        let Some(id) = state.id.clone().filter(|_| !state.busy) else {
+        let Some(session) = state.id.clone().filter(|_| !state.busy) else {
             state.queued.push(prompt);
             return;
         };
         state.busy = true;
-        let params = turn(&id, &prompt, state.embeds);
-        let request = self.request(&mut state, Sent::Turn, "session/prompt", &params);
-        drop(state);
-        self.send(&request);
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        state.sent.insert(id, Sent::Turn);
+        let _ = self.outbox.send(Outgoing::Turn {
+            id,
+            session,
+            prompt,
+            embeds: state.embeds,
+        });
     }
 
     /// Whether this agent has advertised image prompt support.
@@ -361,7 +433,7 @@ impl Session {
             return;
         };
         drop(state);
-        self.send(&json!({
+        self.send(json!({
             "jsonrpc": "2.0",
             "method": "session/cancel",
             "params": { "sessionId": id },
@@ -384,29 +456,52 @@ impl Session {
     /// Answers the file or terminal request `ticket` was raised under.
     ///
     /// A request is answered once; an answer to one that is no longer owed
-    /// is dropped.
+    /// is dropped. The answer is shaped and written on the writer thread, so
+    /// a whole file or a terminal's output costs the caller nothing to hand
+    /// back.
     pub fn answer_request(&self, ticket: u64, answer: Answer) {
-        let Ok(mut state) = self.state.lock() else {
+        if let Some((owed, limit)) = self.take_owed(ticket) {
+            let _ = self.outbox.send(Outgoing::Answer {
+                owed,
+                limit,
+                answer,
+            });
+        }
+    }
+
+    /// Answers the request raised under `ticket` with what `answer` comes
+    /// to, worked out on a thread of its own so that reading or writing a
+    /// file for the agent never holds the window up.
+    pub fn answer_request_later(
+        &self,
+        ticket: u64,
+        answer: impl FnOnce() -> Answer + Send + 'static,
+    ) {
+        let Some((owed, limit)) = self.take_owed(ticket) else {
             return;
         };
-        let Some(owed) = state.owed.remove(&ticket) else {
-            return;
-        };
+        let outbox = self.outbox.clone();
+        std::thread::spawn(move || {
+            let _ = outbox.send(Outgoing::Answer {
+                owed,
+                limit,
+                answer: answer(),
+            });
+        });
+    }
+
+    /// Takes the request raised under `ticket` off what the agent is owed,
+    /// with the most output its terminal said it wants back, if it is still
+    /// owed at all.
+    fn take_owed(&self, ticket: u64) -> Option<(Owed, Option<usize>)> {
+        let mut state = self.state.lock().ok()?;
+        let owed = state.owed.remove(&ticket)?;
         let limit = match &owed.request {
             Request::Output { terminal } => state.limits.get(terminal).copied(),
             Request::Release { terminal } => state.limits.remove(terminal),
             _ => None,
         };
-        drop(state);
-        let message = match request::reply(&owed.request, &owed.shape, limit, answer) {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": owed.id, "result": result }),
-            Err(trouble) => json!({
-                "jsonrpc": "2.0",
-                "id": owed.id,
-                "error": { "code": FAILED, "message": trouble },
-            }),
-        };
-        self.send(&message);
+        Some((owed, limit))
     }
 
     /// Replies to the permission request `ask`, if it is still waiting.
@@ -422,7 +517,7 @@ impl Session {
         else {
             return;
         };
-        self.send(&json!({ "jsonrpc": "2.0", "id": id, "result": outcome }));
+        self.send(json!({ "jsonrpc": "2.0", "id": id, "result": outcome }));
     }
 
     /// Logs in by the method `method` names, and opens the conversation.
@@ -437,7 +532,7 @@ impl Session {
             &json!({ "methodId": method }),
         );
         drop(state);
-        self.send(&request);
+        self.send(request);
     }
 
     /// Puts the session into the mode `mode` names.
@@ -462,7 +557,7 @@ impl Session {
             &json!({ "sessionId": id, "modeId": mode }),
         );
         drop(state);
-        self.send(&request);
+        self.send(request);
         (self.notify)();
     }
 
@@ -519,7 +614,7 @@ impl Session {
             &params,
         );
         drop(state);
-        self.send(&request);
+        self.send(request);
         (self.notify)();
     }
 
@@ -571,10 +666,11 @@ impl Session {
 
     /// Whether the agent's process is still there.
     pub fn is_running(&self) -> bool {
-        self.process
-            .lock()
-            .map(|mut process| matches!(process.try_wait(), Ok(None)))
-            .unwrap_or_default()
+        self.process.lock().is_ok_and(|mut process| {
+            process
+                .as_mut()
+                .is_some_and(|process| matches!(process.try_wait(), Ok(None)))
+        })
     }
 
     /// One request, numbered and taken down as sent.
@@ -584,36 +680,46 @@ impl Session {
         json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
     }
 
-    /// Writes one message to the agent, dropping it if the pipe has gone.
-    fn send(&self, message: &Value) {
-        if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = transport::write(&mut *stdin, message);
-        }
+    /// Hands one message to the writer, dropping it if the writer has gone.
+    fn send(&self, message: Value) {
+        let _ = self.outbox.send(Outgoing::Message(message));
     }
 }
 
 impl Drop for Session {
     /// Ends the agent's process when the session is closed.
+    ///
+    /// The process is killed here and reaped on a thread of its own, so a
+    /// closing pane never waits on a process that is slow to go.
     fn drop(&mut self) {
-        if let Ok(mut process) = self.process.lock() {
-            let _ = process.kill();
-            let _ = process.wait();
+        let Some(mut process) = self.process.get_mut().ok().and_then(Option::take) else {
+            return;
+        };
+        let _ = process.kill();
+        std::thread::spawn(move || process.wait());
+    }
+}
+
+/// Writes what is handed over in `pending` to the agent's `stdin`, in order,
+/// until every sender has gone or the pipe has.
+fn write(mut stdin: ChildStdin, pending: &Receiver<Outgoing>) {
+    for outgoing in pending {
+        if transport::write(&mut stdin, &outgoing.build()).is_err() {
+            return;
         }
     }
 }
 
-/// The pipe the reader thread writes its own messages on.
+/// Where the reader thread hands its own messages to the writer.
 struct Replies {
-    /// The same handle on the agent's standard input the session writes to.
-    stdin: Arc<Mutex<ChildStdin>>,
+    /// The same way to the writer thread the session hands its messages to.
+    outbox: Sender<Outgoing>,
 }
 
 impl Replies {
-    /// Writes one message, dropping it if the pipe has gone.
-    fn send(&self, message: &Value) {
-        if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = transport::write(&mut *stdin, message);
-        }
+    /// Hands one message to the writer, dropping it if the writer has gone.
+    fn send(&self, message: Value) {
+        let _ = self.outbox.send(Outgoing::Message(message));
     }
 }
 
@@ -632,6 +738,14 @@ struct Reader {
     /// The identifier the next request sent from here goes under, shared
     /// with the session.
     next: Arc<AtomicI64>,
+    /// The tool calls of this conversation, as they now stand.
+    tools: Tools,
+    /// The ticket the next request will be put to the reader or the window
+    /// as.
+    ticket: u64,
+    /// How many terminals the agent has started, which is what names the
+    /// next one.
+    terminals: u64,
 }
 
 impl Reader {
@@ -648,7 +762,7 @@ impl Reader {
     /// An identity the editor did not hand out is passed back untouched
     /// rather than read: the agent numbers its own requests, and how it does
     /// so is its business.
-    fn dispatch(&self, message: &Value) {
+    fn dispatch(&mut self, message: &Value) {
         let id = message.get("id").filter(|id| !id.is_null());
         match (id, message["method"].as_str()) {
             (Some(id), Some(method)) => self.serve(id, method, &message["params"]),
@@ -741,11 +855,13 @@ impl Reader {
 
     /// Takes down what the agent can do, and opens the conversation.
     fn shook(&self, result: &Value) {
+        let logins = update::methods(&result["authMethods"]);
+        let capabilities = &result["agentCapabilities"];
+        let prompts = &capabilities["promptCapabilities"];
         if let Ok(mut state) = self.state.lock() {
-            state.logins = update::methods(&result["authMethods"]);
-            state.loads = result["agentCapabilities"]["loadSession"] == json!(true);
-            state.lists = result["agentCapabilities"]["sessionCapabilities"]["list"].is_object();
-            let prompts = &result["agentCapabilities"]["promptCapabilities"];
+            state.logins = logins;
+            state.loads = capabilities["loadSession"] == json!(true);
+            state.lists = capabilities["sessionCapabilities"]["list"].is_object();
             state.images = prompts["image"] == json!(true);
             state.embeds = prompts["embeddedContext"] == json!(true);
         }
@@ -810,7 +926,7 @@ impl Reader {
             state.sent.insert(id, sent);
         }
         self.replies
-            .send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
+            .send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
     }
 
     /// Takes down the conversation the agent opened, and starts talking.
@@ -854,6 +970,9 @@ impl Reader {
     }
 
     /// Lets the next prompt that was held back go, if one was.
+    ///
+    /// Like a prompt the window sends, it is handed to the writer while the
+    /// state is held, so the turn it opens is the one written next.
     fn idle(&self) {
         let Ok(mut state) = self.state.lock() else {
             return;
@@ -866,26 +985,26 @@ impl Reader {
             return;
         }
         let prompt = state.queued.remove(0);
-        let embeds = state.embeds;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         state.busy = true;
         state.sent.insert(id, Sent::Turn);
-        drop(state);
-
-        self.replies.send(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "session/prompt",
-            "params": turn(&session, &prompt, embeds),
-        }));
+        let _ = self.replies.outbox.send(Outgoing::Turn {
+            id,
+            session,
+            prompt,
+            embeds: state.embeds,
+        });
     }
 
     /// Takes down one thing the agent said during a turn.
-    fn updated(&self, update: &Value) {
-        let Ok(mut state) = self.state.lock() else {
+    ///
+    /// The update is read before the state is taken, which is held only for
+    /// as long as it takes to add what it came to.
+    fn updated(&mut self, update: &Value) {
+        let Some(event) = update::event(update, &mut self.tools) else {
             return;
         };
-        let Some(event) = update::event(update, &mut state.tools) else {
+        let Ok(mut state) = self.state.lock() else {
             return;
         };
         match &event {
@@ -904,7 +1023,7 @@ impl Reader {
     /// A request the editor does not serve is refused rather than ignored: an
     /// agent left waiting for a reply it asked for stops saying anything at
     /// all, which reads as a hung session rather than a missing feature.
-    fn serve(&self, id: &Value, method: &str, params: &Value) {
+    fn serve(&mut self, id: &Value, method: &str, params: &Value) {
         match method {
             "session/request_permission" => self.park(id, params),
             "fs/read_text_file" | "fs/write_text_file" => self.owe(id, method, params),
@@ -916,16 +1035,13 @@ impl Reader {
     /// Hands a file or terminal request to the window and leaves it owed.
     ///
     /// A request that cannot be read — a path outside the worktree, a run
-    /// with no command — is refused here, and never reaches the window.
-    fn owe(&self, id: &Value, method: &str, params: &Value) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
-        let terminal = format!("terminal-{}", state.terminals + 1);
+    /// with no command — is refused here, and never reaches the window. It is
+    /// read before the state is taken, which is held only to leave it owed.
+    fn owe(&mut self, id: &Value, method: &str, params: &Value) {
+        let terminal = format!("terminal-{}", self.terminals + 1);
         let (request, shape) = match request::read(&self.root, method, params, terminal) {
             Ok(read) => read,
             Err(trouble) => {
-                drop(state);
                 let code = match trouble == method {
                     true => NO_SUCH_METHOD,
                     false => INVALID,
@@ -933,14 +1049,17 @@ impl Reader {
                 return self.refuse(id, code, &trouble);
             }
         };
-        if let (Request::Run(run), Shape::Tail { limit }) = (&request, &shape) {
-            state.terminals += 1;
-            if let Some(limit) = limit {
-                state.limits.insert(run.terminal.clone(), *limit);
-            }
+        let ticket = self.ticket;
+        self.ticket += 1;
+        if matches!(request, Request::Run(_)) {
+            self.terminals += 1;
         }
-        let ticket = state.ticket;
-        state.ticket += 1;
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if let (Request::Run(run), Shape::Tail { limit: Some(limit) }) = (&request, &shape) {
+            state.limits.insert(run.terminal.clone(), *limit);
+        }
         state.owed.insert(
             ticket,
             Owed {
@@ -960,17 +1079,19 @@ impl Reader {
     /// The agent is waiting on this reply, and so it should be: the request
     /// is a question, and a question answered by the editor on the reader's
     /// behalf is a permission that was never asked for.
-    fn park(&self, id: &Value, params: &Value) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
-        let ticket = state.ticket;
-        let Some(ask) = update::ask(ticket, params, &mut state.tools) else {
-            drop(state);
+    ///
+    /// The request is read before the state is taken, which is held only to
+    /// leave it parked.
+    fn park(&mut self, id: &Value, params: &Value) {
+        let ticket = self.ticket;
+        let Some(ask) = update::ask(ticket, params, &mut self.tools) else {
             self.answer(id, &json!({ "outcome": { "outcome": "cancelled" } }));
             return;
         };
-        state.ticket += 1;
+        self.ticket += 1;
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
         state.parked.insert(ticket, id.clone());
         state.events.push(Event::Asked(ask));
         state.fresh = true;
@@ -981,12 +1102,12 @@ impl Reader {
     /// Replies to a request of the agent's.
     fn answer(&self, id: &Value, result: &Value) {
         self.replies
-            .send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+            .send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     }
 
     /// Refuses a request of the agent's.
     fn refuse(&self, id: &Value, code: i64, message: &str) {
-        self.replies.send(&json!({
+        self.replies.send(json!({
             "jsonrpc": "2.0",
             "id": id,
             "error": { "code": code, "message": message },

@@ -105,6 +105,24 @@ impl Rect {
         )
     }
 
+    /// Returns this rectangle grown by `amount` on every edge.
+    pub fn outset(self, amount: f32) -> Self {
+        Self::from_xywh(
+            self.left() - amount,
+            self.top() - amount,
+            self.size.width + amount * 2.0,
+            self.size.height + amount * 2.0,
+        )
+    }
+
+    /// Whether this rectangle and `other` share any area at all.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        self.left() < other.right()
+            && other.left() < self.right()
+            && self.top() < other.bottom()
+            && other.top() < self.bottom()
+    }
+
     /// The largest rectangle contained by both this one and `other`.
     pub fn intersect(self, other: Self) -> Self {
         let left = self.left().max(other.left());

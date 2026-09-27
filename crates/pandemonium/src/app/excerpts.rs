@@ -8,6 +8,7 @@
 //! only where the cursor is moved from one excerpt to the next.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use pm_core::Scope;
@@ -56,14 +57,14 @@ impl App {
     }
 
     /// Reads `scope`'s excerpts again from its review: which files changed,
-    /// and what the last commit holds for each of them.
+    /// and, away from the window, what the last commit holds for each of them.
     ///
-    /// The documents are the files' own, opened the way a review opens them,
-    /// so an excerpt and a tab showing the same file are the same text.
+    /// A worktree whose excerpts no pane is holding is passed over: the
+    /// excerpts are read again when a pane opens them.
     pub(super) fn refresh_excerpts_of(&mut self, scope: Scope) {
-        let Some(root) = self.root_of(scope) else {
+        if !self.excerpts.contains_key(&scope) {
             return;
-        };
+        }
         let paths = self
             .reviews
             .get(&scope)
@@ -76,8 +77,20 @@ impl App {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        self.reread_excerpts_later(scope, paths);
+    }
+
+    /// Puts `scope`'s excerpts together from the files `committed` names and
+    /// what the last commit holds for each.
+    ///
+    /// The documents are the files' own, opened the way a review opens them,
+    /// so an excerpt and a tab showing the same file are the same text.
+    pub(super) fn set_excerpts(&mut self, scope: Scope, committed: Vec<(PathBuf, Option<String>)>) {
+        let (Some(root), true) = (self.root_of(scope), self.excerpts.contains_key(&scope)) else {
+            return;
+        };
         let mut files = Vec::new();
-        for path in paths {
+        for (path, held) in committed {
             let Some(file) = self.editor.open(scope, &root, &path, true) else {
                 continue;
             };
@@ -89,12 +102,7 @@ impl App {
                 .unwrap_or(&path)
                 .display()
                 .to_string();
-            files.push(Excerpted::new(
-                file,
-                document,
-                name,
-                pm_core::committed(&root, &path),
-            ));
+            files.push(Excerpted::new(file, document, name, held));
         }
         if let Some(excerpts) = self.excerpts.get(&scope) {
             excerpts.borrow_mut().set_files(files);

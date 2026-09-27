@@ -16,6 +16,7 @@
 mod answer;
 mod client;
 mod encoding;
+mod outbox;
 mod uri;
 mod watch;
 

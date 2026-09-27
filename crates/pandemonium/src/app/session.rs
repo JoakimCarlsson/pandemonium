@@ -44,27 +44,38 @@ impl App {
 
     /// Opens the menu of what can be done to `project`, where the pointer is.
     ///
-    /// The branches it offers to cut a session from are gathered here rather
-    /// than while the menu is drawn: a menu is built every frame it is open,
-    /// and asking git every frame for a list that cannot have changed is a
-    /// subprocess a second for nothing. A project of several repositories
-    /// offers none: a branch is one repository's, and a session of all of
-    /// them is cut from what each has checked out.
+    /// The branches it offers to cut a session from are gathered once, away
+    /// from the window, rather than while the menu is drawn: a menu is built
+    /// every frame it is open, and asking git every frame for a list that
+    /// cannot have changed is a subprocess a second for nothing. A project of
+    /// several repositories offers none: a branch is one repository's, and a
+    /// session of all of them is cut from what each has checked out.
     pub(super) fn open_project_menu(&mut self, project: ProjectId) {
         self.open.activate(project);
-        let branches = match self.open.get(project).map(pm_core::Project::repositories) {
-            Some([only]) => pm_core::branches(only.root()),
-            _ => Vec::new(),
-        };
-        let (checked_out, rest): (Vec<_>, Vec<_>) =
-            branches.iter().partition(|branch| branch.is_current());
-        self.session_bases = checked_out
-            .into_iter()
-            .chain(rest)
-            .map(|branch| branch.name().to_owned())
-            .collect();
+        self.session_bases = Vec::new();
+        if let Some([only]) = self.open.get(project).map(pm_core::Project::repositories) {
+            let root = only.root().to_path_buf();
+            self.read_bases_later(project, move || {
+                let branches = pm_core::branches(&root);
+                let (checked_out, rest): (Vec<_>, Vec<_>) =
+                    branches.iter().partition(|branch| branch.is_current());
+                checked_out
+                    .into_iter()
+                    .chain(rest)
+                    .map(|branch| branch.name().to_owned())
+                    .collect()
+            });
+        }
         self.showing_bases = false;
         self.open_menu(MenuTarget::Project(project));
+    }
+
+    /// Offers `bases` to cut a session of `project` from, if its menu is
+    /// still the one open.
+    pub(super) fn take_bases(&mut self, project: ProjectId, bases: Vec<String>) {
+        if self.menu.as_ref().map(|menu| menu.target) == Some(MenuTarget::Project(project)) {
+            self.session_bases = bases;
+        }
     }
 
     /// Asks what to call a session of the active project, cut from its head.
@@ -165,7 +176,7 @@ impl App {
     }
 
     /// Cuts the session being named, of the repositories ticked for it, and
-    /// points the window at it.
+    /// points the window at it once git has cut it.
     pub(super) fn cut_session(&mut self) {
         let name = std::mem::take(&mut self.session_name);
         let chosen = std::mem::take(&mut self.session_picks)
@@ -179,20 +190,7 @@ impl App {
             return;
         };
 
-        match self.sessions.start(
-            &project,
-            &name,
-            &base,
-            &chosen,
-            &under,
-            &self.preferences.bootstrap,
-        ) {
-            Ok(started) => {
-                self.select_session(started.id);
-                self.say_bootstrap_trouble(&started.trouble);
-            }
-            Err(trouble) => self.say_trouble("The session could not be cut", &trouble),
-        }
+        self.cut_session_later(&project, &name, &base, &chosen, &under);
     }
 
     /// Points the window at `session`, bringing its agent forward if it has one.
@@ -252,10 +250,18 @@ impl App {
 
     /// Takes `session` off disk, having been told to.
     ///
-    /// The worktree goes, so everything reading it goes with it: its tabs,
-    /// its shells, its tree and its list of changes. What is left of the
-    /// session is what was pushed out of it, which is git's, not ours.
+    /// The worktree goes, so everything reading it goes with it once git has
+    /// taken it away. What is left of the session is what was pushed out of
+    /// it, which is git's, not ours.
     pub(super) fn end_session(&mut self, session: SessionId) {
+        if self.sessions.get(session).is_some() {
+            self.finish_session_later(session);
+        }
+    }
+
+    /// Takes `session`, whose worktree is off disk, out of the window: its
+    /// tabs, its shells, its tree and its list of changes.
+    pub(super) fn forget_session(&mut self, session: SessionId) {
         let Some(scope) = self
             .sessions
             .get(session)
@@ -263,9 +269,7 @@ impl App {
         else {
             return;
         };
-        if let Err(trouble) = self.sessions.finish(session) {
-            return self.say_trouble("The session could not be finished", &trouble);
-        }
+        self.sessions.forget(session);
 
         self.drop_tabs(&|held| held == scope);
         self.terminals.stop_all(scope);
@@ -303,25 +307,10 @@ impl App {
         self.files
             .entry(scope)
             .or_insert_with(|| FileTree::new(&root));
-        self.reviews
-            .entry(scope)
-            .or_insert_with(|| crate::review::Review::of(&root));
-    }
-
-    /// Takes up the worktrees the open projects already have, and rereads them.
-    ///
-    /// A session outlives the window, because its worktree does: this is what
-    /// finds the ones that are still there — including the ones another
-    /// window cut — and asks git again how far each of them has drifted.
-    pub(super) fn reread_sessions(&mut self) {
-        let Some(under) = config::worktrees() else {
-            return;
-        };
-        let open = self.open.iter().cloned().collect::<Vec<_>>();
-        for project in &open {
-            self.sessions.adopt(project, &under);
+        if let std::collections::btree_map::Entry::Vacant(vacant) = self.reviews.entry(scope) {
+            vacant.insert(crate::review::Review::of(&root));
+            self.reread_review_later(scope);
         }
-        self.reread_drift_later();
     }
 
     /// Asks git again how far the sessions have drifted, on a turn boundary.
@@ -421,7 +410,7 @@ impl App {
     /// The session is already there and already selected: this is a reading
     /// of what is missing from it, so that an agent failing to install or
     /// serve is explained before it happens rather than after.
-    fn say_bootstrap_trouble(&mut self, trouble: &[String]) {
+    pub(super) fn say_bootstrap_trouble(&mut self, trouble: &[String]) {
         if trouble.is_empty() {
             return;
         }

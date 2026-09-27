@@ -6,13 +6,13 @@
 
 use pm_ui::{Div, Styled, Theme, h_flex, picture, text, v_flex};
 
-use crate::image::Shown;
+use crate::image::{Decoding, Shown};
 use crate::message::Message;
 
 /// Builds the pane showing `shown`.
 pub fn image_pane(theme: &Theme, shown: Shown) -> Div<Message> {
     let body = match &shown.picture {
-        Ok(image) => h_flex()
+        Decoding::Ready(image) => h_flex()
             .w_full()
             .flex_1()
             .p(4)
@@ -20,26 +20,17 @@ pub fn image_pane(theme: &Theme, shown: Shown) -> Div<Message> {
             .justify_center()
             .overflow_hidden()
             .child(picture(image.clone())),
-        Err(said) => h_flex()
-            .w_full()
-            .flex_1()
-            .items_center()
-            .justify_center()
-            .child(
-                text(said.clone())
-                    .text_sm()
-                    .font_light()
-                    .color(theme.colors.text_subtle),
-            ),
+        Decoding::Pending => note(theme, "Loading…".to_owned()),
+        Decoding::Failed(said) => note(theme, said.clone()),
     };
     let measures = match &shown.picture {
-        Ok(image) => format!(
+        Decoding::Ready(image) => format!(
             "{} × {} · {}",
             image.width(),
             image.height(),
             size(shown.bytes)
         ),
-        Err(_) => size(shown.bytes),
+        _ => size(shown.bytes),
     };
 
     v_flex()
@@ -69,6 +60,21 @@ pub fn image_pane(theme: &Theme, shown: Shown) -> Div<Message> {
                         .font_mono()
                         .color(theme.colors.text_subtle),
                 ),
+        )
+}
+
+/// A line of `said` in the middle of the pane, where the picture would be.
+fn note(theme: &Theme, said: String) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .flex_1()
+        .items_center()
+        .justify_center()
+        .child(
+            text(said)
+                .text_sm()
+                .font_light()
+                .color(theme.colors.text_subtle),
         )
 }
 

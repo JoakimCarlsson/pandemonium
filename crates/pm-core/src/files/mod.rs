@@ -14,5 +14,5 @@ mod watch;
 
 pub use entry::{Entry, EntryId, Row};
 pub use tree::FileTree;
-pub use walk::walk;
+pub use walk::{walk, walk_each};
 pub use watch::{Disk, Touch, Touched, Watcher};

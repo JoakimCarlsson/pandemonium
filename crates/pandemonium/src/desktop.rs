@@ -10,7 +10,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
+use image::ColorType;
+use image::ImageEncoder;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 
 /// The next pasted image's temporary file suffix.
 static NEXT_PASTED_IMAGE: AtomicU64 = AtomicU64::new(0);
@@ -98,17 +100,23 @@ pub fn paste() -> Option<String> {
     arboard::Clipboard::new().ok()?.get_text().ok()
 }
 
-/// Reads a clipboard image and encodes it as PNG for an agent prompt.
-pub fn paste_image() -> Option<Vec<u8>> {
+/// The image on the system clipboard, as its width, its height and its
+/// straight-alpha RGBA pixels.
+pub fn paste_image() -> Option<(u32, u32, Vec<u8>)> {
     let image = arboard::Clipboard::new().ok()?.get_image().ok()?;
+    Some((
+        u32::try_from(image.width).ok()?,
+        u32::try_from(image.height).ok()?,
+        image.bytes.into_owned(),
+    ))
+}
+
+/// `width` by `height` RGBA `pixels` as a PNG, compressed quickly rather than
+/// small: a screenshot is sent once and waited on while it is encoded.
+pub fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
     let mut png = Vec::new();
-    PngEncoder::new(&mut png)
-        .write_image(
-            &image.bytes,
-            u32::try_from(image.width).ok()?,
-            u32::try_from(image.height).ok()?,
-            ColorType::Rgba8.into(),
-        )
+    PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Adaptive)
+        .write_image(pixels, width, height, ColorType::Rgba8.into())
         .ok()?;
     Some(png)
 }

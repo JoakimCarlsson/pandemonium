@@ -55,6 +55,8 @@ pub struct Repository {
     trouble: Option<String>,
     /// What is being done with a remote right now, and since when.
     busy: Option<(&'static str, Instant)>,
+    /// What git is being had do here right now, and since when.
+    working: Option<(&'static str, Instant)>,
     /// The commits leading up to it.
     history: History,
     /// First visible commit in each history filter.
@@ -80,6 +82,7 @@ impl Repository {
             message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
             trouble: None,
             busy: None,
+            working: None,
             history: History::default(),
             history_scrolls: [0; 2],
         }
@@ -160,6 +163,16 @@ impl Repository {
     /// longer being talked to.
     pub(super) fn set_busy(&mut self, doing: Option<&'static str>) {
         self.busy = doing.map(|doing| (doing, Instant::now()));
+    }
+
+    /// What git is being had do here right now, and since when.
+    pub(super) fn working(&self) -> Option<(&'static str, Instant)> {
+        self.working
+    }
+
+    /// Marks git as doing something here, worded as `doing`, or as done.
+    pub(super) fn set_working(&mut self, doing: Option<&'static str>) {
+        self.working = doing.map(|doing| (doing, Instant::now()));
     }
 
     /// The cached commits selected by the Source Control graph filter.

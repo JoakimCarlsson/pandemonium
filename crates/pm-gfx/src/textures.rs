@@ -1,12 +1,22 @@
 //! The pictures the frames are drawing, each uploaded as a texture of its own.
 //!
-//! A picture is uploaded the first frame that draws it and let go of the
-//! first frame that does not, so a pane closed over a large image gives the
-//! memory back without anyone having to say it was closed.
+//! A picture is uploaded the first frame that draws it and let go of once
+//! frames have gone a while without it, so a pane closed over a large image
+//! gives the memory back without anyone having to say it was closed, while a
+//! picture scrolled out and back or a tab switched away from and back to is
+//! not uploaded again.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::image::Image;
+
+/// How long a picture no frame draws keeps its texture.
+const GRACE: Duration = Duration::from_secs(10);
+
+/// How many bytes of pictures no frame draws are kept at most, the ones
+/// drawn longest ago being let go of first past it.
+const IDLE_BUDGET: u64 = 256 * 1024 * 1024;
 
 /// One uploaded picture, bound the way the image pipeline samples it.
 struct Uploaded {
@@ -14,9 +24,13 @@ struct Uploaded {
     _texture: wgpu::Texture,
     /// The texture and its sampler, as the pipeline's second group.
     group: wgpu::BindGroup,
+    /// How many bytes the texture holds.
+    bytes: u64,
+    /// When a frame last drew it.
+    drawn: Instant,
 }
 
-/// Every picture the last frames drew, by the picture's identity.
+/// Every picture the recent frames drew, by the picture's identity.
 pub(crate) struct Textures {
     /// The layout every picture's bind group is made to.
     layout: wgpu::BindGroupLayout,
@@ -24,6 +38,9 @@ pub(crate) struct Textures {
     sampler: wgpu::Sampler,
     /// The pictures uploaded so far.
     uploaded: HashMap<u64, Uploaded>,
+    /// The pictures no frame drew this time, oldest first, reused from frame
+    /// to frame.
+    idle: Vec<(Instant, u64, u64)>,
 }
 
 impl Textures {
@@ -61,6 +78,7 @@ impl Textures {
             layout,
             sampler,
             uploaded: HashMap::new(),
+            idle: Vec::new(),
         }
     }
 
@@ -70,15 +88,50 @@ impl Textures {
     }
 
     /// Uploads every picture in `drawn` not uploaded yet, and lets go of
-    /// every uploaded one it does not name.
-    pub(crate) fn keep(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, drawn: &[&Image]) {
-        let wanted = drawn.iter().map(|image| image.id()).collect::<HashSet<_>>();
-        self.uploaded.retain(|id, _| wanted.contains(id));
+    /// the uploaded ones no frame has drawn for longer than [`GRACE`], or
+    /// past [`IDLE_BUDGET`].
+    pub(crate) fn keep<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        drawn: impl Iterator<Item = &'a Image>,
+    ) {
+        let now = Instant::now();
         for image in drawn {
-            if !self.uploaded.contains_key(&image.id()) {
-                let uploaded = self.upload(device, queue, image);
-                self.uploaded.insert(image.id(), uploaded);
+            match self.uploaded.get_mut(&image.id()) {
+                Some(uploaded) => uploaded.drawn = now,
+                None => {
+                    let uploaded = self.upload(device, queue, image, now);
+                    self.uploaded.insert(image.id(), uploaded);
+                }
             }
+        }
+        self.uploaded
+            .retain(|_, uploaded| now.duration_since(uploaded.drawn) <= GRACE);
+        self.trim_idle(now);
+    }
+
+    /// Lets go of the pictures not drawn at `now`, oldest first, until the
+    /// ones left over fit in [`IDLE_BUDGET`].
+    fn trim_idle(&mut self, now: Instant) {
+        self.idle.clear();
+        self.idle.extend(
+            self.uploaded
+                .iter()
+                .filter(|(_, uploaded)| uploaded.drawn < now)
+                .map(|(id, uploaded)| (uploaded.drawn, *id, uploaded.bytes)),
+        );
+        let mut idle_bytes: u64 = self.idle.iter().map(|(_, _, bytes)| bytes).sum();
+        if idle_bytes <= IDLE_BUDGET {
+            return;
+        }
+        self.idle.sort_unstable_by_key(|(drawn, ..)| *drawn);
+        for (_, id, bytes) in &self.idle {
+            if idle_bytes <= IDLE_BUDGET {
+                break;
+            }
+            self.uploaded.remove(id);
+            idle_bytes -= bytes;
         }
     }
 
@@ -88,7 +141,13 @@ impl Textures {
     }
 
     /// Writes `image` into a texture of its own and binds it.
-    fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, image: &Image) -> Uploaded {
+    fn upload(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &Image,
+        drawn: Instant,
+    ) -> Uploaded {
         let size = wgpu::Extent3d {
             width: image.width().max(1),
             height: image.height().max(1),
@@ -138,6 +197,8 @@ impl Textures {
         Uploaded {
             _texture: texture,
             group,
+            bytes: 4 * u64::from(size.width) * u64::from(size.height),
+            drawn,
         }
     }
 }

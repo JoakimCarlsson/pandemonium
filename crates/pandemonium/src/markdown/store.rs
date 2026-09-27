@@ -9,6 +9,7 @@ use pm_gfx::Image;
 use pm_ui::Scrolled;
 
 use crate::editor::FileId;
+use crate::image::{Decodes, read_file};
 use crate::markdown::blocks::{self, Block};
 
 /// The endings of the files that read as markdown.
@@ -36,9 +37,9 @@ pub struct Renders {
     scrolls: RefCell<BTreeMap<FileId, Scrolled>>,
     /// The blocks each file last parsed into, and at which version.
     parsed: RefCell<BTreeMap<FileId, Parsed>>,
-    /// The pictures the documents name, by where they are, or none where a
-    /// file could not be read as one.
-    pictures: RefCell<BTreeMap<PathBuf, Option<Image>>>,
+    /// The pictures the documents name, by where they are, decoded away
+    /// from the window.
+    pictures: Decodes<PathBuf>,
 }
 
 impl Renders {
@@ -47,26 +48,30 @@ impl Renders {
         self.scrolls.borrow_mut().entry(file).or_default().clone()
     }
 
-    /// The blocks `source`, the text of `file` at `version`, reads as.
-    pub fn blocks(&self, file: FileId, version: i32, source: &str) -> Rc<Vec<Block>> {
+    /// The blocks the text of `file` at `version` reads as, asking `source`
+    /// for that text only when the version has not been parsed yet.
+    pub fn blocks(
+        &self,
+        file: FileId,
+        version: i32,
+        source: impl FnOnce() -> String,
+    ) -> Rc<Vec<Block>> {
         let mut parsed = self.parsed.borrow_mut();
         match parsed.get(&file) {
             Some((at, blocks)) if *at == version => blocks.clone(),
             _ => {
-                let blocks = Rc::new(blocks::blocks(source));
+                let blocks = Rc::new(blocks::blocks(&source()));
                 parsed.insert(file, (version, blocks.clone()));
                 blocks
             }
         }
     }
 
-    /// The picture at `path`, read the first time it is asked for.
+    /// The picture at `path`, once it is decoded; the first asking starts
+    /// the reading.
     pub fn picture(&self, path: &Path) -> Option<Image> {
-        self.pictures
-            .borrow_mut()
-            .entry(path.to_path_buf())
-            .or_insert_with(|| Image::decode(&std::fs::read(path).ok()?))
-            .clone()
+        let path = path.to_path_buf();
+        self.pictures.get(&path, read_file(path.clone())).ready()
     }
 
     /// Forgets what it kept for any file no pane is rendering any more, and
@@ -75,7 +80,7 @@ impl Renders {
         self.scrolls.get_mut().retain(|file, _| held.contains(file));
         self.parsed.get_mut().retain(|file, _| held.contains(file));
         if held.is_empty() {
-            self.pictures.get_mut().clear();
+            self.pictures.clear();
         }
     }
 }

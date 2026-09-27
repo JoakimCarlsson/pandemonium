@@ -1788,6 +1788,7 @@ dependencies = [
  "pm-ui",
  "pm-vim",
  "pm-vt",
+ "pollster 1.0.1",
  "pulldown-cmark",
  "rfd",
  "serde",
@@ -1909,6 +1910,7 @@ version = "0.2.0"
 dependencies = [
  "bytemuck",
  "cosmic-text",
+ "hashbrown 0.16.1",
  "image",
  "pollster 1.0.1",
  "resvg",

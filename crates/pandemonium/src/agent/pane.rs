@@ -11,6 +11,7 @@
 //! A pane is as wide as the window made it and the text is wrapped to fit, so
 //! the width the last frame came out at is what this one is built against.
 
+use std::cell::Ref;
 use std::ops::Range;
 use std::path::Path;
 
@@ -24,6 +25,7 @@ use pm_ui::{
 };
 
 use crate::agent::{Block, Spot, Standing, Talk, TalkId};
+use crate::image::Decoding;
 use crate::input::input_view;
 use crate::markdown::blocks::{self, Block as MarkdownBlock, Run};
 use crate::message::Message;
@@ -231,8 +233,7 @@ fn first_line(said: &str) -> String {
 /// The window asks this to know how far the pane can be scrolled, which only
 /// the rows can say.
 pub fn content_height(theme: &Theme, talk: &Talk, width: f32) -> f32 {
-    let rows = rows(talk, columns(theme, width));
-    heights(theme, &rows).iter().sum::<f32>() + space(INSET) * 2.0
+    wrapped(theme, talk, columns(theme, width)).height() + space(INSET) * 2.0
 }
 
 /// The rows of the pane from where it is scrolled to, and how far the first
@@ -243,17 +244,14 @@ pub fn content_height(theme: &Theme, talk: &Talk, width: f32) -> f32 {
 /// the part of it already gone by. A row inside a bubble is drawn from the
 /// top of its bubble, so the bubble keeps its edge as it scrolls by.
 fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32) {
-    let rows = rows(talk, columns);
-    let heights = heights(theme, &rows);
+    let wrapped = wrapped(theme, talk, columns);
+    let heights = &wrapped.heights;
     talk.drawn_height()
-        .set(heights.iter().sum::<f32>() + space(INSET) * 2.0);
-    let mut first = 0;
-    let mut top = 0.0;
-    while first < rows.len() && top + heights[first] <= talk.scroll() - space(INSET) {
-        top += heights[first];
-        first += 1;
-    }
-    while first > 0 && rows.get(first).is_some_and(is_said) && is_said(&rows[first - 1]) {
+        .set(wrapped.height() + space(INSET) * 2.0);
+    let reached = talk.scroll() - space(INSET);
+    let mut first = wrapped.tops[1..].partition_point(|end| *end <= reached);
+    let mut top = wrapped.tops[first];
+    while first > 0 && wrapped.said.get(first) == Some(&true) && wrapped.said[first - 1] {
         first -= 1;
         top -= heights[first];
     }
@@ -263,20 +261,13 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     talk.drawn_text().borrow_mut().clear();
     talk.drawn_spots().borrow_mut().clear();
 
-    let mut visible = rows
-        .into_iter()
-        .enumerate()
-        .skip(first)
-        .take(count)
-        .peekable();
+    let mut visible = (first..wrapped.len()).take(count).peekable();
     let mut drawn = Vec::new();
-    while let Some((at, line)) = visible.next() {
-        if is_said(&line) {
-            let mut message = vec![self::row(theme, line, at, talk)];
-            while visible.peek().is_some_and(|(_, next)| is_said(next)) {
-                if let Some((at, next)) = visible.next() {
-                    message.push(self::row(theme, next, at, talk));
-                }
+    while let Some(at) = visible.next() {
+        if wrapped.said[at] {
+            let mut message = vec![self::row(theme, wrapped.row(at), at, talk)];
+            while let Some(next) = visible.next_if(|next| wrapped.said[*next]) {
+                message.push(self::row(theme, wrapped.row(next), next, talk));
             }
             drawn.push(
                 h_flex().w_full().justify_end().child(
@@ -288,7 +279,7 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 ),
             );
         } else {
-            drawn.push(self::row(theme, line, at, talk));
+            drawn.push(self::row(theme, wrapped.row(at), at, talk));
         }
     }
     (drawn, offset)
@@ -318,33 +309,6 @@ fn is_said(row: &Row) -> bool {
     row.iter().any(|piece| piece.tone == Tone::Said)
 }
 
-/// How tall each of `rows` is drawn, the edges of a bubble counted into the
-/// first row and the last one it holds.
-fn heights(theme: &Theme, rows: &[Row]) -> Vec<f32> {
-    let edge = space(BUBBLE);
-    rows.iter()
-        .enumerate()
-        .map(|(at, row)| {
-            let mut height = row_height(theme, row);
-            if is_said(row) {
-                if at == 0 || !is_said(&rows[at - 1]) {
-                    height += edge;
-                }
-                if rows.get(at + 1).is_none_or(|next| !is_said(next)) {
-                    height += edge;
-                }
-            }
-            if row
-                .first()
-                .is_some_and(|piece| matches!(piece.tone, Tone::DetailGroup(_)))
-            {
-                height += space(0.75);
-            }
-            height
-        })
-        .collect()
-}
-
 /// How tall one row is drawn: an empty one a line of code, and one with
 /// text in it as tall as its tallest piece.
 fn row_height(theme: &Theme, row: &Row) -> f32 {
@@ -365,82 +329,319 @@ fn row_height(theme: &Theme, row: &Row) -> f32 {
         .fold(0.0, f32::max)
 }
 
-/// Every row the conversation comes to, wrapped at `columns` characters.
-fn rows(talk: &Talk, columns: usize) -> Vec<Row> {
-    let mut rows = Vec::new();
-    let blocks = talk.transcript().blocks();
-    let mut at = 0;
-    while at < blocks.len() {
-        let adjacent_picture = matches!(&blocks[at], Block::Picture(_))
-            && at > 0
-            && matches!(
-                &blocks[at - 1],
-                Block::Said(Voice::Reader, _) | Block::Picture(_)
-            );
-        if !rows.is_empty() && !adjacent_picture {
-            rows.push(Row::new());
+/// The conversation as `talk`'s pane last wrapped it, brought up to date
+/// for `columns` characters and `theme`'s measures.
+fn wrapped<'a>(theme: &Theme, talk: &'a Talk, columns: usize) -> Ref<'a, Wrapped> {
+    talk.wrapped().borrow_mut().refresh(theme, talk, columns);
+    talk.wrapped().borrow()
+}
+
+/// The conversation as the pane last wrapped it, kept between frames so
+/// that only the parts of it that have changed since are parsed and wrapped
+/// again: while an agent streams, that is the last passage alone.
+#[derive(Default)]
+pub struct Wrapped {
+    /// What it was last wrapped against, while every part of it is settled;
+    /// as long as that holds, it stands as it is.
+    wrapping: Option<Wrapping>,
+    /// The rows of each part of the conversation, oldest first.
+    parts: Vec<Part>,
+    /// Every row, in order, by where it is kept.
+    entries: Vec<Entry>,
+    /// Whether each row is part of something the reader said.
+    said: Vec<bool>,
+    /// How tall each row is drawn, the edges of a bubble counted into the
+    /// first row and the last one it holds.
+    heights: Vec<f32>,
+    /// Where each row begins below the first, and after the last of them
+    /// how tall they all come to.
+    tops: Vec<f32>,
+    /// The measures of the theme the heights were taken in.
+    measures: Option<Measures>,
+    /// The line saying a turn is running, as it was last said.
+    working: Row,
+    /// The row between two parts, which holds nothing.
+    gap: Row,
+}
+
+/// What the conversation was wrapped against as a whole.
+#[derive(Clone, Copy, PartialEq)]
+struct Wrapping {
+    /// The transcript's revision.
+    revision: u64,
+    /// The talk's count of changes the transcript does not hold.
+    shown: u64,
+    /// How many characters a line was wrapped at.
+    columns: usize,
+    /// Whether a turn was running, which adds a line at the foot.
+    busy: bool,
+}
+
+/// The measures of a theme the height of a row is taken in: the lines of the
+/// conversation's type, of its smaller type and of code, the edge of a
+/// bubble and the room around a group of details.
+type Measures = [f32; 5];
+
+/// One part of the conversation: one block, or a run of tool calls drawn
+/// under one heading, and the rows it comes to.
+struct Part {
+    /// What the rows were wrapped from.
+    key: PartKey,
+    /// Whether an empty row sets it apart from the part before it.
+    leads: bool,
+    /// Its rows.
+    rows: Vec<Row>,
+    /// Whether its rows are final: a restored picture still being decoded
+    /// leaves them to be wrapped again once it is.
+    settled: bool,
+}
+
+/// What one part's rows were wrapped from.
+#[derive(Clone, Copy, PartialEq)]
+struct PartKey {
+    /// The first block of it.
+    start: usize,
+    /// The block after its last.
+    end: usize,
+    /// The latest revision any of its blocks was changed at.
+    stamp: u64,
+    /// Whether its details are open.
+    expanded: bool,
+    /// The talk's count of changes the transcript does not hold, where the
+    /// part shows a terminal whose latest lines are counted there.
+    shown: u64,
+    /// How many characters a line was wrapped at.
+    columns: usize,
+}
+
+/// Where one row of the conversation is kept.
+#[derive(Clone, Copy)]
+enum Entry {
+    /// The empty row between two parts.
+    Gap,
+    /// A row of a part, by the part's place and the row's place in it.
+    Part(usize, usize),
+    /// The line saying a turn is running.
+    Working,
+}
+
+impl Wrapped {
+    /// How many rows the conversation comes to.
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// The row at `at`.
+    fn row(&self, at: usize) -> &Row {
+        match self.entries[at] {
+            Entry::Gap => &self.gap,
+            Entry::Part(part, row) => &self.parts[part].rows[row],
+            Entry::Working => &self.working,
         }
-        match &blocks[at] {
-            Block::Said(Voice::Reader, passage) => {
-                rows.extend(reader_rows(
-                    talk,
-                    at,
-                    passage,
-                    (columns * 2 / 3).max(NARROWEST),
-                ));
+    }
+
+    /// How tall the rows come to together.
+    fn height(&self) -> f32 {
+        self.tops.last().copied().unwrap_or_default()
+    }
+
+    /// Brings the rows up to date with `talk` at `columns` characters, and
+    /// their heights with `theme`.
+    fn refresh(&mut self, theme: &Theme, talk: &Talk, columns: usize) {
+        let wrapping = Wrapping {
+            revision: talk.transcript().revision(),
+            shown: talk.shown_revision(),
+            columns,
+            busy: talk.is_busy(),
+        };
+        if self.wrapping != Some(wrapping) {
+            self.rewrap(talk, columns);
+            self.wrapping = self
+                .parts
+                .iter()
+                .all(|part| part.settled)
+                .then_some(wrapping);
+            self.measures = None;
+        }
+        if wrapping.busy {
+            self.working = vec![piece(working(talk), Tone::Quiet)];
+        }
+        let measures = measures(theme);
+        if self.measures != Some(measures) {
+            self.measure(theme);
+            self.measures = Some(measures);
+        }
+    }
+
+    /// Wraps again every part of `talk`'s conversation that has changed
+    /// since it was last wrapped, keeping the rows of every other.
+    fn rewrap(&mut self, talk: &Talk, columns: usize) {
+        let blocks = talk.transcript().blocks();
+        let mut kept = std::mem::take(&mut self.parts).into_iter().peekable();
+        let mut at = 0;
+        while at < blocks.len() {
+            let key = part_key(talk, at, columns);
+            while kept.next_if(|part| part.key.start < at).is_some() {}
+            let part = kept
+                .next_if(|part| part.key == key && part.settled)
+                .unwrap_or_else(|| wrap_part(talk, key));
+            self.parts.push(part);
+            at = key.end;
+        }
+        self.entries.clear();
+        for (place, part) in self.parts.iter().enumerate() {
+            if !self.entries.is_empty() && part.leads {
+                self.entries.push(Entry::Gap);
             }
-            Block::Picture(image) => rows.push(vec![image_piece(image.clone())]),
-            Block::Said(Voice::Agent, passage) => {
-                rows.extend(markdown_rows(passage, BULLET, Tone::Spoken, columns));
+            self.entries
+                .extend((0..part.rows.len()).map(|row| Entry::Part(place, row)));
+        }
+        if talk.is_busy() {
+            if !self.entries.is_empty() {
+                self.entries.push(Entry::Gap);
             }
-            Block::Said(Voice::Thought, passage) => {
-                rows.push(vec![piece(
-                    format!(
-                        "{} Thinking",
-                        if talk.details_expanded(at) {
-                            "⌄"
-                        } else {
-                            "›"
-                        }
-                    ),
-                    Tone::DetailGroup(at),
-                )]);
-                if talk.details_expanded(at) {
-                    rows.extend(passage_rows(passage, BULLET, Tone::Quiet, columns));
-                }
-            }
-            Block::Ran(_) => {
-                let end = at
-                    + blocks[at..]
-                        .iter()
-                        .take_while(|block| matches!(block, Block::Ran(_)))
-                        .count();
-                rows.push(tool_group_row(
-                    &blocks[at..end],
-                    at,
-                    talk.details_expanded(at),
-                ));
-                if talk.details_expanded(at) {
-                    for block in &blocks[at..end] {
-                        if let Block::Ran(call) = block {
-                            rows.extend(tool_rows(talk, call, columns));
-                        }
+            self.entries.push(Entry::Working);
+        }
+    }
+
+    /// Takes the height of every row, and where each begins, in `theme`.
+    fn measure(&mut self, theme: &Theme) {
+        let edge = space(BUBBLE);
+        self.said = (0..self.len()).map(|at| is_said(self.row(at))).collect();
+        self.heights = (0..self.len())
+            .map(|at| {
+                let row = self.row(at);
+                let mut height = row_height(theme, row);
+                if self.said[at] {
+                    if at == 0 || !self.said[at - 1] {
+                        height += edge;
+                    }
+                    if self.said.get(at + 1) != Some(&true) {
+                        height += edge;
                     }
                 }
-                at = end - 1;
+                if row
+                    .first()
+                    .is_some_and(|piece| matches!(piece.tone, Tone::DetailGroup(_)))
+                {
+                    height += space(0.75);
+                }
+                height
+            })
+            .collect();
+        let mut top = 0.0;
+        self.tops = std::iter::once(0.0)
+            .chain(self.heights.iter().map(|height| {
+                top += height;
+                top
+            }))
+            .collect();
+    }
+}
+
+/// The measures of `theme` a row's height is taken in.
+fn measures(theme: &Theme) -> Measures {
+    [
+        theme.text.lg.line_height,
+        theme.text.sm.line_height,
+        theme.text.code.line_height,
+        space(BUBBLE),
+        space(0.75),
+    ]
+}
+
+/// What the part of `talk`'s conversation starting at block `at` is wrapped
+/// from at `columns` characters.
+///
+/// Tool calls side by side are one part, under one heading.
+fn part_key(talk: &Talk, at: usize, columns: usize) -> PartKey {
+    let transcript = talk.transcript();
+    let blocks = transcript.blocks();
+    let end = match &blocks[at] {
+        Block::Ran(_) => {
+            at + blocks[at..]
+                .iter()
+                .take_while(|block| matches!(block, Block::Ran(_)))
+                .count()
+        }
+        _ => at + 1,
+    };
+    let expanded = talk.details_expanded(at);
+    let terminal = blocks[at..end].iter().any(|block| {
+        matches!(block, Block::Ran(call) if call.output.iter().any(|output| matches!(output, Output::Terminal(_))))
+    });
+    PartKey {
+        start: at,
+        end,
+        stamp: transcript.stamps()[at..end]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or_default(),
+        expanded,
+        shown: match expanded && terminal {
+            true => talk.shown_revision(),
+            false => 0,
+        },
+        columns,
+    }
+}
+
+/// The part of `talk`'s conversation `key` names, wrapped.
+fn wrap_part(talk: &Talk, key: PartKey) -> Part {
+    let blocks = talk.transcript().blocks();
+    let PartKey {
+        start: at,
+        end,
+        expanded,
+        columns,
+        ..
+    } = key;
+    let leads = !(matches!(&blocks[at], Block::Picture(_))
+        && at > 0
+        && matches!(
+            &blocks[at - 1],
+            Block::Said(Voice::Reader, _) | Block::Picture(_)
+        ));
+    let mut settled = true;
+    let rows = match &blocks[at] {
+        Block::Said(Voice::Reader, passage) => {
+            let (rows, decoded) = reader_rows(talk, at, passage, (columns * 2 / 3).max(NARROWEST));
+            settled = decoded;
+            rows
+        }
+        Block::Picture(image) => vec![vec![image_piece(image.clone())]],
+        Block::Said(Voice::Agent, passage) => markdown_rows(passage, BULLET, Tone::Spoken, columns),
+        Block::Said(Voice::Thought, passage) => {
+            let mut rows = vec![vec![piece(
+                format!("{} Thinking", if expanded { "⌄" } else { "›" }),
+                Tone::DetailGroup(at),
+            )]];
+            if expanded {
+                rows.extend(passage_rows(passage, BULLET, Tone::Quiet, columns));
             }
-            Block::Planned(steps) => rows.extend(steps.iter().map(step_row)),
-            Block::Note(note) => rows.extend(passage_rows(note, BULLET, Tone::Note, columns)),
+            rows
         }
-        at += 1;
-    }
-    if talk.is_busy() {
-        if !rows.is_empty() {
-            rows.push(Row::new());
+        Block::Ran(_) => {
+            let mut rows = vec![tool_group_row(&blocks[at..end], at, expanded)];
+            if expanded {
+                for block in &blocks[at..end] {
+                    if let Block::Ran(call) = block {
+                        rows.extend(tool_rows(talk, call, columns));
+                    }
+                }
+            }
+            rows
         }
-        rows.push(vec![piece(working(talk), Tone::Quiet)]);
+        Block::Planned(steps) => steps.iter().map(step_row).collect(),
+        Block::Note(note) => passage_rows(note, BULLET, Tone::Note, columns),
+    };
+    Part {
+        key,
+        leads,
+        rows,
+        settled,
     }
-    rows
 }
 
 /// Renders a message's Markdown blocks as transcript rows.
@@ -524,11 +725,13 @@ fn spans(runs: &[Run]) -> Vec<Span> {
         .collect()
 }
 
-/// Reader text and any images restored from an agent's saved transcript.
-fn reader_rows(talk: &Talk, block: usize, passage: &str, columns: usize) -> Vec<Row> {
+/// Reader text and any images restored from an agent's saved transcript,
+/// and whether every one of those images has finished decoding.
+fn reader_rows(talk: &Talk, block: usize, passage: &str, columns: usize) -> (Vec<Row>, bool) {
     let mut rows = Vec::new();
     let mut rest = passage;
     let mut place = 0;
+    let mut decoded = true;
     while let Some(start) = rest.find("[@image](") {
         let before = &rest[..start];
         if !before.is_empty() {
@@ -539,13 +742,15 @@ fn reader_rows(talk: &Talk, block: usize, passage: &str, columns: usize) -> Vec<
             rest = &rest[start..];
             break;
         };
-        if let Some(image) = talk
+        match talk
             .transcript()
             .restored_picture(block, place, &source[..end])
         {
-            rows.push(vec![image_piece(image)]);
-        } else {
-            rows.extend(passage_rows("[Pasted image]", CHEVRON, Tone::Said, columns));
+            Decoding::Ready(image) => rows.push(vec![image_piece(image)]),
+            decoding => {
+                decoded &= !matches!(decoding, Decoding::Pending);
+                rows.extend(passage_rows("[Pasted image]", CHEVRON, Tone::Said, columns));
+            }
         }
         place += 1;
         rest = &source[end + 1..];
@@ -553,7 +758,7 @@ fn reader_rows(talk: &Talk, block: usize, passage: &str, columns: usize) -> Vec<
     if !rest.is_empty() {
         rows.extend(passage_rows(rest, CHEVRON, Tone::Said, columns));
     }
-    rows
+    (rows, decoded)
 }
 
 /// The collapsed or expanded heading for adjacent tool calls.
@@ -865,28 +1070,28 @@ fn called(call: &ToolCall, root: &Path) -> Row {
 /// it reads as one that did nothing. A terminal the call is running in shows
 /// the last of what it has written, as it writes it.
 fn result(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<String> {
-    let mut lines = Vec::new();
+    let mut shown = ResultLines::default();
     for output in &call.output {
         match output {
-            Output::Said(said) => lines.extend(wrap(said, columns)),
-            Output::Changed { path, after, .. } => lines.push(format!(
+            Output::Said(said) => shown.wrap(said, columns),
+            Output::Changed { path, after, .. } => shown.take(&format!(
                 "{} · {} lines",
                 name_of(path),
                 after.lines().count()
             )),
             Output::Terminal(terminal) => {
                 if let Some(tail) = talk.terminal_tail(terminal) {
-                    lines.extend(wrap(tail, columns));
+                    shown.wrap(tail, columns);
                 }
             }
         }
     }
-    if lines.is_empty()
+    if !shown.produced
         && let Some(returned) = &call.returned
     {
-        lines.extend(wrap(returned, columns));
+        shown.wrap(returned, columns);
     }
-    if lines.is_empty() {
+    if !shown.produced {
         return match call.status {
             Status::Pending => vec!["waiting".to_owned()],
             Status::Running => vec!["running".to_owned()],
@@ -895,13 +1100,43 @@ fn result(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<String> {
         };
     }
 
-    lines.retain(|line| !line.trim().is_empty());
-    let over = lines.len().saturating_sub(RESULT_LINES);
-    lines.truncate(RESULT_LINES);
+    let over = shown.counted.saturating_sub(RESULT_LINES);
+    let mut lines = shown.lines;
     if over > 0 {
         lines.push(format!("… {over} more lines"));
     }
     lines
+}
+
+/// The lines of a tool call's result as they are wrapped: the first
+/// [`RESULT_LINES`] with anything in them kept, and the rest only counted.
+#[derive(Default)]
+struct ResultLines {
+    /// The lines kept to be shown.
+    lines: Vec<String>,
+    /// How many lines with anything in them there were, shown or not.
+    counted: usize,
+    /// Whether any line came at all, blank ones included.
+    produced: bool,
+}
+
+impl ResultLines {
+    /// Takes in the lines `passage` breaks into at `columns` characters.
+    fn wrap(&mut self, passage: &str, columns: usize) {
+        wrap(passage, columns, |line| self.take(line));
+    }
+
+    /// Takes in one line, keeping it while there is room to show it.
+    fn take(&mut self, line: &str) {
+        self.produced = true;
+        if line.trim().is_empty() {
+            return;
+        }
+        self.counted += 1;
+        if self.lines.len() < RESULT_LINES {
+            self.lines.push(line.to_owned());
+        }
+    }
 }
 
 /// One step of the plan, marked with how far along it is.
@@ -932,10 +1167,10 @@ fn step_row(step: &Step) -> Row {
 /// drawn, and the press names it by its place there. Every piece of text
 /// writes down where it begins in the conversation and where its characters
 /// land, so a drag over it can be read back as the text it passed over.
-fn row(theme: &Theme, row: Row, at: usize, talk: &Talk) -> Div<Message> {
+fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
     let session = talk.id();
     let selection = talk.selection();
-    let height = row_height(theme, &row);
+    let height = row_height(theme, row);
     if row.is_empty() {
         return h_flex().h_px(height);
     }
@@ -952,9 +1187,9 @@ fn row(theme: &Theme, row: Row, at: usize, talk: &Talk) -> Div<Message> {
             line.on_click(Message::ToggleAgentDetails(session, block))
                 .hover_bg(theme.colors.surface_hover)
         })
-        .children(row.into_iter().map(|piece| {
-            if let Some(image) = piece.image {
-                return h_flex().child(picture(image).w_px(160.0).h_px(112.0));
+        .children(row.iter().map(|piece| {
+            if let Some(image) = &piece.image {
+                return h_flex().child(picture(image.clone()).w_px(160.0).h_px(112.0));
             }
             let color = match piece.link {
                 Some(_) => theme.colors.link,
@@ -966,7 +1201,9 @@ fn row(theme: &Theme, row: Row, at: usize, talk: &Talk) -> Div<Message> {
             let spots = talk.drawn_spots();
             let key = spots.borrow().len();
             spots.borrow_mut().push(start);
-            let styled = text(piece.text).color(color).placed(talk.drawn_text(), key);
+            let styled = text(piece.text.clone())
+                .color(color)
+                .placed(talk.drawn_text(), key);
             let styled = match selection.and_then(|chosen| picked(chosen, start, length)) {
                 Some(characters) => styled.selected(characters),
                 None => styled,
@@ -976,7 +1213,7 @@ fn row(theme: &Theme, row: Row, at: usize, talk: &Talk) -> Div<Message> {
                 Tone::Argument => styled.text_sm().font_mono(),
                 _ => styled.text_sm(),
             };
-            let Some(link) = piece.link else {
+            let Some(link) = piece.link.clone() else {
                 return h_flex().child(styled);
             };
             let links = talk.drawn_links();
@@ -1017,9 +1254,10 @@ fn picked(selection: (Spot, Spot), start: Spot, length: usize) -> Option<Range<u
 /// as and not as the lines the pane happened to break it into.
 pub fn selected_text(theme: &Theme, talk: &Talk) -> Option<String> {
     let (first, last) = talk.selection()?;
-    let rows = rows(talk, columns(theme, talk.drawn_width().get()));
+    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
     let mut copied = String::new();
-    for (at, row) in rows.iter().enumerate().take(last.row + 1).skip(first.row) {
+    for at in first.row..(last.row + 1).min(wrapped.len()) {
+        let row = wrapped.row(at);
         let wrapped = row.first().is_some_and(|piece| piece.wrapped);
         let lead = match wrapped {
             true => row[0].text.chars().count(),
@@ -1051,13 +1289,16 @@ pub fn selected_text(theme: &Theme, talk: &Talk) -> Option<String> {
 /// A word is a run of characters of one kind: letters and digits, spaces,
 /// or anything else, so a press on punctuation picks out the punctuation.
 pub fn words_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (Spot, Spot) {
-    let rows = rows(talk, columns(theme, talk.drawn_width().get()));
+    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
     let word = |spot: Spot| {
-        let line = rows.get(spot.row).map_or_else(Vec::new, |row| {
-            row.iter()
+        let line = match spot.row < wrapped.len() {
+            true => wrapped
+                .row(spot.row)
+                .iter()
                 .flat_map(|piece| piece.text.chars())
-                .collect::<Vec<_>>()
-        });
+                .collect::<Vec<_>>(),
+            false => Vec::new(),
+        };
         let (start, end) = word_at(&line, spot.column);
         (
             Spot {
@@ -1418,41 +1659,53 @@ fn columns(theme: &Theme, width: f32) -> usize {
     ((width / advance) as usize).max(NARROWEST)
 }
 
-/// `passage` broken into lines of at most `columns` characters.
+/// `passage` broken into lines of at most `columns` characters, each handed
+/// to `line` in turn.
 ///
 /// Where a line breaks is where a word ends; a word longer than the pane is
 /// wide is broken anyway, because the alternative is a line nobody can read
-/// the end of.
-fn wrap(passage: &str, columns: usize) -> Vec<String> {
-    let mut lines = Vec::new();
+/// the end of. One line is written at a time and lent out, so a long result
+/// costs no more than the lines of it that are kept.
+fn wrap(passage: &str, columns: usize, mut line: impl FnMut(&str)) {
+    let mut written = String::new();
     for paragraph in passage.split('\n') {
-        let mut line = String::new();
+        written.clear();
+        let mut width = 0;
         for word in paragraph.split(' ') {
             for part in split(word, columns) {
-                let width = line.chars().count();
-                if width > 0 && width + 1 + part.chars().count() > columns {
-                    lines.push(std::mem::take(&mut line));
+                let length = part.chars().count();
+                if width > 0 && width + 1 + length > columns {
+                    line(&written);
+                    written.clear();
+                    width = 0;
                 } else if width > 0 {
-                    line.push(' ');
+                    written.push(' ');
+                    width += 1;
                 }
-                line.push_str(&part);
+                written.push_str(part);
+                width += length;
             }
         }
-        lines.push(line);
+        line(&written);
     }
-    lines
 }
 
 /// `word` in pieces of at most `columns` characters.
-fn split(word: &str, columns: usize) -> Vec<String> {
-    if word.chars().count() <= columns {
-        return vec![word.to_owned()];
-    }
-    word.chars()
-        .collect::<Vec<_>>()
-        .chunks(columns)
-        .map(|part| part.iter().collect())
-        .collect()
+fn split(word: &str, columns: usize) -> impl Iterator<Item = &str> {
+    let mut rest = Some(word);
+    std::iter::from_fn(move || {
+        let word = rest?;
+        match word.char_indices().nth(columns) {
+            Some((at, _)) => {
+                rest = Some(&word[at..]);
+                Some(&word[..at])
+            }
+            None => {
+                rest = None;
+                Some(word)
+            }
+        }
+    })
 }
 
 /// One run of text in one colour.

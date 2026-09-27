@@ -8,7 +8,9 @@
 //! document as a [`TextLayout`], because that is the one measurement a click
 //! arriving later has to agree with.
 
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use pm_core::{Blame, Change, ChangeKind};
@@ -19,11 +21,11 @@ use pm_ui::{
     ResizePhase, Style, Styled, Theme,
 };
 
-use crate::editor::OpenFile;
 use crate::editor::display::{CursorShape, Display};
 use crate::editor::layout::{GUTTER_GAP, GUTTER_INSET, TextLayout};
 use crate::editor::minimap::{MINIMAP_WIDTH, Minimap};
 use crate::editor::search::Search;
+use crate::editor::{Document, OpenFile};
 use crate::review::conflict::{self, Action, Choice, Conflict};
 
 /// Width of the cursor while the pane is focused.
@@ -501,12 +503,12 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             .iter()
             .map(|line| document.is_folded_at(*line))
             .collect::<Vec<_>>();
-        let changes = document.changes().to_vec();
+        let changes = document.changes();
         let conflicts = match self.on_conflict.is_some() {
-            true => conflict::conflicts(&document.buffer().contents()),
-            false => Vec::new(),
+            true => conflicts_of(&self.file, document.buffer()),
+            false => Rc::from([]),
         };
-        let highlights = document.buffer_mut().highlights(span.clone());
+        let highlights = document.buffer_mut().remembered_highlights(span.clone());
         let painting = Painting {
             layout,
             font,
@@ -518,6 +520,10 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             highlights: &highlights,
             brackets: document.buffer().matching_bracket(),
             occurrences: occurrences(document.buffer(), span.clone()),
+            diagnostics: document
+                .buffer()
+                .diagnostics_touching(span.clone())
+                .collect(),
             changes: changes.clone(),
             blame: document.blame(),
             drawn,
@@ -899,7 +905,7 @@ impl<M> BufferView<M> {
             let said = lenses.join(LENS_SEPARATOR);
             self.paint_note(&said, column + LENS_GAP, top, painting, glyphs, cx);
         }
-        for diagnostic in buffer.diagnostics() {
+        for diagnostic in painting.diagnostics.iter().copied() {
             self.paint_diagnostic(diagnostic, line, top, painting, cx);
         }
         cx.pop_clip();
@@ -1150,7 +1156,7 @@ impl<M> BufferView<M> {
     /// Marks the lines that differ from what the index holds.
     fn paint_changes(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
         let layout = painting.layout;
-        for change in &painting.changes {
+        for change in painting.changes.iter() {
             let color = match change.kind {
                 ChangeKind::Added => painting.theme.colors.success,
                 ChangeKind::Modified => painting.theme.colors.warning,
@@ -1634,8 +1640,10 @@ struct Painting<'a> {
     brackets: Option<(Position, Position)>,
     /// Where else on screen what is selected appears.
     occurrences: Vec<Range<Position>>,
+    /// What a language server said about the lines being drawn.
+    diagnostics: Vec<&'a Diagnostic>,
     /// Where the file differs from what the index holds.
-    changes: Vec<Change>,
+    changes: Rc<[Change]>,
     /// Who last changed each line, when the blame column is being drawn.
     blame: &'a [Blame],
     /// The lines being drawn, in the order they are drawn.
@@ -1683,7 +1691,7 @@ fn markers(painting: &Painting<'_>) -> Vec<(usize, Rgba)> {
     for found in painting.search.matches() {
         marks.push((found.start.line, colors.warning));
     }
-    for change in &painting.changes {
+    for change in painting.changes.iter() {
         marks.push((
             change.anchor(),
             match change.kind {
@@ -1742,6 +1750,45 @@ fn occurrences(buffer: &Buffer, lines: Range<usize>) -> Vec<Range<Position>> {
         }
     }
     found
+}
+
+thread_local! {
+    /// The merge conflicts last found in each file a pane has drawn, and the
+    /// version of its text they were found in.
+    ///
+    /// The file is held weakly so that a closed one is let go of, and so
+    /// that the place it lived cannot be taken by another while it is kept.
+    static CONFLICTS: RefCell<Vec<Found>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The merge conflicts found in one file, and the version they were found in.
+type Found = (Weak<RefCell<Document>>, i32, Rc<[Conflict]>);
+
+/// The merge conflicts in `buffer`, the text of `file`, found once per
+/// version of it.
+///
+/// Finding them reads the whole file, and a pane asks every frame; between
+/// two edits the answer is the one it was.
+fn conflicts_of(file: &OpenFile, buffer: &Buffer) -> Rc<[Conflict]> {
+    let version = buffer.version();
+    CONFLICTS.with_borrow_mut(|found| {
+        found.retain(|(kept, _, _)| kept.strong_count() > 0);
+        let held = found
+            .iter()
+            .position(|(kept, _, _)| std::ptr::eq(kept.as_ptr(), Rc::as_ptr(file)));
+        if let Some(index) = held
+            && found[index].1 == version
+        {
+            return found[index].2.clone();
+        }
+        let conflicts: Rc<[Conflict]> = conflict::conflicts(&buffer.contents()).into();
+        let entry = (Rc::downgrade(file), version, conflicts.clone());
+        match held {
+            Some(index) => found[index] = entry,
+            None => found.push(entry),
+        }
+        conflicts
+    })
 }
 
 /// The colour `highlight` is drawn in.

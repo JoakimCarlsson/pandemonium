@@ -6,7 +6,9 @@ mod project;
 mod scope;
 mod session;
 
-pub use files::{Disk, Entry, EntryId, FileTree, Row, Touch, Touched, Watcher, ops, walk};
+pub use files::{
+    Disk, Entry, EntryId, FileTree, Row, Touch, Touched, Watcher, ops, walk, walk_each,
+};
 pub use git::{
     Blame, Branch, Change, ChangeKind, Changed, Commit, Edge, FileStatus, Half, Head, Hunk, Lanes,
     Line, LineKind, Merge, Operation, Said, Side, Status, Summary, abort_merge, add_worktree,
@@ -17,4 +19,6 @@ pub use git::{
 };
 pub use project::{OpenError, Project, ProjectId, Projects, Repository, repositories};
 pub use scope::Scope;
-pub use session::{Bootstrap, Session, SessionId, Sessions, StartError, Started, slug};
+pub use session::{
+    Bootstrap, Cutting, Found, Session, SessionId, Sessions, StartError, Started, slug,
+};

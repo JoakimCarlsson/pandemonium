@@ -6,14 +6,60 @@
 //! which is what a screen needs and all a screen needs, however long the
 //! file behind it is.
 
-use std::ops::Range;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::ops::{ControlFlow, Range};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use ropey::Rope;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{InputEdit, Node, Parser, Query, QueryCursor, TextProvider, Tree};
+use tree_sitter::{
+    InputEdit, Node, ParseOptions, ParseState, Parser, Query, QueryCursor, TextProvider, Tree,
+};
 
 use crate::cursor::Position;
 use crate::language::Language;
+
+/// How long one parse may run before it is given up on.
+///
+/// An edit reparses in well under a millisecond and even a large file
+/// parses from nothing in a fraction of this; a parse that runs past it is
+/// a grammar lost in a pathological file, and the frame waiting on it is
+/// worth more than its colours.
+const PARSE_BUDGET: Duration = Duration::from_millis(250);
+
+/// How many pieces of text [`highlight`] remembers the highlights of.
+///
+/// Enough for every code block a rendered document and a hover show at
+/// once, so a frame drawing them again highlights none of them afresh.
+const REMEMBERED: usize = 64;
+
+/// The highlight query of every language compiled so far, by name.
+///
+/// A query takes longer to compile than most files take to parse, so each
+/// language's is compiled once and shared by every buffer in it. A language
+/// whose query does not compile is remembered as such.
+static QUERIES: LazyLock<Mutex<Queries>> = LazyLock::new(Mutex::default);
+
+/// Each language's compiled highlight query, or `None` for one that failed.
+type Queries = HashMap<&'static str, Option<Arc<Query>>>;
+
+/// The highlights [`highlight`] worked out last, the most recent at the back.
+static HIGHLIGHTED: LazyLock<Mutex<VecDeque<Highlighted>>> = LazyLock::new(Mutex::default);
+
+/// One piece of text [`highlight`] has already highlighted.
+struct Highlighted {
+    /// The language it was read as.
+    language: &'static str,
+    /// A hash of the text, to pass over most entries without comparing it.
+    hash: u64,
+    /// The text itself.
+    text: String,
+    /// What it came to.
+    highlights: Arc<Highlights>,
+}
 
 /// What a character is, as far as colour is concerned.
 ///
@@ -158,7 +204,25 @@ impl Highlights {
 ///
 /// A signature a server wrote into a hover is code without a buffer, and it
 /// is coloured the way the same code is coloured in the file beside it.
-pub fn highlight(language: Language, text: &str) -> Highlights {
+/// Such text is drawn again every frame and changes rarely, so the last
+/// [`REMEMBERED`] answers are kept and the same text is highlighted once.
+pub fn highlight(language: Language, text: &str) -> Arc<Highlights> {
+    let hash = hash_of(text);
+    if let Some(found) = remembered(language.name(), hash, text) {
+        return found;
+    }
+    let highlights = Arc::new(highlight_afresh(language, text));
+    remember(Highlighted {
+        language: language.name(),
+        hash,
+        text: text.to_owned(),
+        highlights: highlights.clone(),
+    });
+    highlights
+}
+
+/// The highlights of `text` read as `language`, parsed and captured anew.
+fn highlight_afresh(language: Language, text: &str) -> Highlights {
     let Some(mut syntax) = Syntax::new(language) else {
         return Highlights::default();
     };
@@ -167,14 +231,63 @@ pub fn highlight(language: Language, text: &str) -> Highlights {
     syntax.highlights(&rope, 0..rope.len_lines())
 }
 
+/// The hash `text` is remembered under.
+fn hash_of(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// What `text` in `language` was last highlighted as, moved to the back as
+/// the most recently wanted.
+fn remembered(language: &str, hash: u64, text: &str) -> Option<Arc<Highlights>> {
+    let mut highlighted = HIGHLIGHTED.lock().ok()?;
+    let index = highlighted
+        .iter()
+        .position(|entry| entry.hash == hash && entry.language == language && entry.text == text)?;
+    let entry = highlighted.remove(index)?;
+    let found = entry.highlights.clone();
+    highlighted.push_back(entry);
+    Some(found)
+}
+
+/// Keeps `entry`, forgetting the least recently wanted once there are more
+/// than [`REMEMBERED`].
+fn remember(entry: Highlighted) {
+    let Ok(mut highlighted) = HIGHLIGHTED.lock() else {
+        return;
+    };
+    highlighted.push_back(entry);
+    while highlighted.len() > REMEMBERED {
+        highlighted.pop_front();
+    }
+}
+
+/// The highlight query of `language`, compiled the first time it is asked
+/// for.
+fn query(language: Language) -> Option<Arc<Query>> {
+    let mut queries = QUERIES.lock().ok()?;
+    queries
+        .entry(language.name())
+        .or_insert_with(|| {
+            Query::new(&language.grammar(), &language.highlights())
+                .ok()
+                .map(Arc::new)
+        })
+        .clone()
+}
+
 /// A parsed buffer: the grammar, the query and the tree as it stands.
 pub struct Syntax {
     /// The parser the tree is produced by.
     parser: Parser,
-    /// The query the highlights are captured by.
-    query: Query,
+    /// The query the highlights are captured by, shared by its language.
+    query: Arc<Query>,
     /// The tree as of the last parse.
     tree: Option<Tree>,
+    /// Whether a parse has run past [`PARSE_BUDGET`], after which the
+    /// buffer is not parsed again and is drawn without highlights.
+    given_up: bool,
 }
 
 impl Syntax {
@@ -184,27 +297,44 @@ impl Syntax {
     /// compile; a language whose either fails is treated as a language the
     /// editor does not know, so the file still opens.
     pub fn new(language: Language) -> Option<Self> {
-        let grammar = language.grammar();
         let mut parser = Parser::new();
-        parser.set_language(&grammar).ok()?;
-        let query = Query::new(&grammar, &language.highlights()).ok()?;
+        parser.set_language(&language.grammar()).ok()?;
+        let query = query(language)?;
 
         Some(Self {
             parser,
             query,
             tree: None,
+            given_up: false,
         })
     }
 
     /// Parses `text`, reusing what the last tree still has right.
+    ///
+    /// A parse that runs past [`PARSE_BUDGET`] is cut short, and the buffer
+    /// keeps no tree from then on: a file that hangs its grammar is shown
+    /// as plain text rather than holding up every keystroke after.
     pub fn parse(&mut self, text: &Rope) {
+        if self.given_up {
+            return;
+        }
+        let started = Instant::now();
+        let mut within_budget = |_: &ParseState| match started.elapsed() < PARSE_BUDGET {
+            true => ControlFlow::Continue(()),
+            false => ControlFlow::Break(()),
+        };
         let tree = self.parser.parse_with_options(
             &mut |byte, _| chunk_at(text, byte),
             self.tree.as_ref(),
-            None,
+            Some(ParseOptions::new().progress_callback(&mut within_budget)),
         );
-        if tree.is_some() {
-            self.tree = tree;
+        match tree {
+            Some(tree) => self.tree = Some(tree),
+            None => {
+                self.parser.reset();
+                self.tree = None;
+                self.given_up = true;
+            }
         }
     }
 

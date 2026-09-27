@@ -12,15 +12,30 @@ use crate::files::ignore::Ignore;
 
 /// Most files a worktree is listed as holding before the walk gives up.
 ///
-/// A walk is what a keystroke in the file palette waits on, so it is bounded
-/// rather than complete: a checkout with a million files in it is one the
+/// A walk is what the file palette and a search list from, and what they
+/// hold in memory, so it is bounded rather than complete: a checkout with a million files in it is one the
 /// palette lists the first hundred thousand of.
 const LIMIT: usize = 100_000;
 
 /// Every file under `root`, in the order the directories were read.
 pub fn walk(root: &Path) -> Vec<PathBuf> {
-    let ignore = Ignore::read(root);
     let mut found = Vec::new();
+    walk_each(root, |path| {
+        found.push(path);
+        true
+    });
+    found
+}
+
+/// Hands every file under `root` to `found` as it is come upon, in the
+/// order the directories were read, until `found` answers that it wants no
+/// more or the walk reaches its limit.
+///
+/// This is the walk for a caller that shows files while the rest are still
+/// being listed, or that may be told to stop before the listing is done.
+pub fn walk_each(root: &Path, mut found: impl FnMut(PathBuf) -> bool) {
+    let ignore = Ignore::read(root);
+    let mut listed = 0;
     let mut pending = vec![root.to_path_buf()];
 
     while let Some(directory) = pending.pop() {
@@ -28,8 +43,8 @@ pub fn walk(root: &Path) -> Vec<PathBuf> {
             continue;
         };
         for entry in entries.flatten() {
-            if found.len() >= LIMIT {
-                return found;
+            if listed >= LIMIT {
+                return;
             }
             let path = entry.path();
             let directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
@@ -38,10 +53,12 @@ pub fn walk(root: &Path) -> Vec<PathBuf> {
             }
             if directory {
                 pending.push(path);
-            } else {
-                found.push(path);
+                continue;
+            }
+            listed += 1;
+            if !found(path) {
+                return;
             }
         }
     }
-    found
 }

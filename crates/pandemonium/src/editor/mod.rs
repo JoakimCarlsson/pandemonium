@@ -8,6 +8,7 @@
 //! arriving later into a place in the file.
 
 mod bar;
+mod baseline;
 mod caret;
 mod completions;
 mod crumbs;

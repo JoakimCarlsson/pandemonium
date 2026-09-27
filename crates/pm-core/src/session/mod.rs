@@ -20,7 +20,7 @@ mod store;
 
 pub use bootstrap::Bootstrap;
 pub use placement::slug;
-pub use store::{Sessions, StartError, Started};
+pub use store::{Cutting, Found, Sessions, StartError, Started};
 
 use std::path::{Path, PathBuf};
 

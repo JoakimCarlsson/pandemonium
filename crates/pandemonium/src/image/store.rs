@@ -2,9 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pm_core::{ProjectId, Scope};
-use pm_gfx::Image;
+
+use crate::image::{Decodes, Decoding};
 
 /// The endings of the files opened as pictures rather than as text.
 const PICTURES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
@@ -19,10 +22,8 @@ struct Entry {
     scope: Scope,
     /// Where it lives.
     path: PathBuf,
-    /// The picture, or why it could not be read.
-    picture: Result<Image, String>,
-    /// How large the file is on disk.
-    bytes: u64,
+    /// How large the file is on disk, once it has been read.
+    bytes: Arc<AtomicU64>,
     /// Whether it is only being looked at, and gives its tab up to the next.
     preview: bool,
 }
@@ -31,8 +32,8 @@ struct Entry {
 pub struct Shown {
     /// Where it lives, from the worktree down.
     pub name: String,
-    /// The picture, or why it could not be read.
-    pub picture: Result<Image, String>,
+    /// The picture, or where it has got to.
+    pub picture: Decoding,
     /// How large the file is on disk.
     pub bytes: u64,
 }
@@ -42,6 +43,8 @@ pub struct Shown {
 pub struct Images {
     /// The open pictures, by the id the panes name them with.
     open: BTreeMap<ImageId, Entry>,
+    /// The pictures themselves, decoded away from the window.
+    pictures: Decodes<ImageId>,
     /// The id the next picture opened will be given.
     next: ImageId,
 }
@@ -67,13 +70,13 @@ impl Images {
         }
         let id = self.next;
         self.next = ImageId(id.0 + 1);
-        let (picture, bytes) = read(path);
+        let bytes = Arc::new(AtomicU64::new(0));
+        self.pictures.start(id, read(path, bytes.clone()));
         self.open.insert(
             id,
             Entry {
                 scope,
                 path: path.to_path_buf(),
-                picture,
                 bytes,
                 preview,
             },
@@ -99,8 +102,8 @@ impl Images {
                 .unwrap_or(&entry.path)
                 .display()
                 .to_string(),
-            picture: entry.picture.clone(),
-            bytes: entry.bytes,
+            picture: self.pictures.peek(&id).unwrap_or(Decoding::Pending),
+            bytes: entry.bytes.load(Ordering::Relaxed),
         })
     }
 
@@ -136,9 +139,10 @@ impl Images {
     /// whether any of them was open.
     pub fn reread_paths(&mut self, scope: Scope, paths: &BTreeSet<PathBuf>) -> bool {
         let mut reread = false;
-        for entry in self.open.values_mut() {
+        for (id, entry) in &self.open {
             if entry.scope == scope && paths.contains(&entry.path) {
-                (entry.picture, entry.bytes) = read(&entry.path);
+                self.pictures
+                    .start(*id, read(&entry.path, entry.bytes.clone()));
                 reread = true;
             }
         }
@@ -148,23 +152,27 @@ impl Images {
     /// Closes every picture no pane is holding open any more.
     pub fn retain(&mut self, held: &BTreeSet<ImageId>) {
         self.open.retain(|id, _| held.contains(id));
+        self.pictures.retain(|id| held.contains(id));
     }
 
     /// Closes every picture of `project`.
     pub fn close_project(&mut self, project: ProjectId) {
         self.open
             .retain(|_, entry| entry.scope.project() != project);
+        let open = self.open.keys().copied().collect::<BTreeSet<_>>();
+        self.pictures.retain(|id| open.contains(id));
     }
 }
 
-/// The picture at `path`, or why it could not be read, and its size on disk.
-fn read(path: &Path) -> (Result<Image, String>, u64) {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) => return (Err(error.to_string()), 0),
-    };
-    let size = bytes.len() as u64;
-    let picture = Image::decode(&bytes)
-        .ok_or_else(|| "This file is not a picture the editor can read".to_owned());
-    (picture, size)
+/// Reads the file at `path` for its picture, noting its size in `bytes`.
+fn read(
+    path: &Path,
+    bytes: Arc<AtomicU64>,
+) -> impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static {
+    let path = path.to_path_buf();
+    move || {
+        let read = std::fs::read(&path).map_err(|error| error.to_string())?;
+        bytes.store(read.len() as u64, Ordering::Relaxed);
+        Ok(read)
+    }
 }

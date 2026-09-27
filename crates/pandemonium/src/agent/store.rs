@@ -17,12 +17,15 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
 use pm_gfx::Image;
 
+use crate::agent::pane::Wrapped;
 use crate::agent::transcript::Transcript;
+use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Method, Mode, Notify,
@@ -108,8 +111,13 @@ pub struct Talk {
     prompt: Input,
     /// Files and images to send with the next prompt.
     attachments: Vec<Attachment>,
-    /// Decoded previews in the same order as the attachments.
-    attachment_previews: Vec<Option<Image>>,
+    /// The preview of each attachment, in the same order, by its key in
+    /// `previews` where the attachment is a picture.
+    attachment_previews: Vec<Option<u64>>,
+    /// The attachments' pictures, decoded away from the window.
+    previews: Decodes<u64>,
+    /// The key the next attached picture is given in `previews`.
+    next_preview: u64,
     /// Pasted images saved as files for agents without image prompt support.
     clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
@@ -125,8 +133,11 @@ pub struct Talk {
     /// Why the agent could not list saved sessions, where it failed.
     history_error: Option<String>,
     /// The worktree's files as a mention offers them, relative to its root,
-    /// listed when a mention starts and kept until the next one does.
-    mentionable: RefCell<Option<Vec<String>>>,
+    /// listed away from the window when a mention starts and kept until the
+    /// next one does.
+    mentionable: Arc<Mutex<Mentionable>>,
+    /// How the listing of those files wakes the window once it is done.
+    notify: Notify,
     /// Which of the commands a slash narrows to is selected.
     chosen: usize,
     /// Whether the reader has waved that list away for what is typed now.
@@ -174,6 +185,11 @@ pub struct Talk {
     /// The last lines each terminal the agent started has written, by the
     /// name the agent knows it by, for the tool calls that show one.
     terminals: BTreeMap<String, String>,
+    /// Counts the changes to what the pane shows that the transcript does
+    /// not hold: details opened or closed, and a terminal's latest lines.
+    shown_revision: u64,
+    /// The conversation as the pane last wrapped it.
+    wrapped: RefCell<Wrapped>,
 }
 
 /// One completion offered by a prompt prefix.
@@ -263,33 +279,44 @@ impl Talk {
         &self.attachments
     }
 
-    /// The preview of the attachment at `place`, when it is an image.
+    /// The preview of the attachment at `place`, once it is decoded.
     pub fn attachment_preview(&self, place: usize) -> Option<Image> {
-        self.attachment_previews.get(place).and_then(Clone::clone)
+        let key = self.attachment_previews.get(place).copied().flatten()?;
+        self.previews.peek(&key)?.ready()
     }
 
-    /// Adds a chosen file to the next prompt.
+    /// Whether the agent takes images inside a prompt rather than as files.
+    pub fn can_image(&self) -> bool {
+        self.conversation.can_image()
+    }
+
+    /// Adds a chosen file to the next prompt, decoding its preview away from
+    /// the window when it is a picture.
     pub fn attach_file(&mut self, path: PathBuf) {
-        let preview = crate::image::Images::is_picture(&path)
-            .then(|| fs::read(&path).ok().and_then(|bytes| Image::decode(&bytes)))
-            .flatten();
+        let preview = crate::image::Images::is_picture(&path).then(|| {
+            let key = self.preview_key();
+            self.previews.start(key, read_file(path.clone()));
+            key
+        });
         self.attachment_previews.push(preview);
         self.attachments.push(Attachment::File(path));
     }
 
-    /// Adds a pasted PNG to the next prompt in the form this agent accepts.
-    pub fn attach_image(&mut self, png: Vec<u8>) {
-        if self.conversation.can_image() {
-            self.attachment_previews.push(Image::decode(&png));
-            self.attachments.push(Attachment::Image {
-                data: base64::engine::general_purpose::STANDARD.encode(png),
-                mime_type: "image/png".to_owned(),
-            });
-        } else if let Some(path) = crate::desktop::save_pasted_image(&png) {
-            self.attachment_previews.push(Image::decode(&png));
-            self.attachments.push(Attachment::File(path.clone()));
-            self.clipboard_files.push(path);
+    /// Adds an image pasted and made ready away from the window.
+    pub fn attach_pasted(&mut self, pasted: Pasted) {
+        let key = self.preview_key();
+        if let Some(preview) = pasted.preview {
+            self.previews.put(key, preview);
         }
+        self.attachment_previews.push(Some(key));
+        self.attachments.push(pasted.attachment);
+        self.clipboard_files.extend(pasted.saved);
+    }
+
+    /// The key the next attached picture is kept under.
+    fn preview_key(&mut self) -> u64 {
+        self.next_preview += 1;
+        self.next_preview
     }
 
     /// Adds lines `first` to `last` of the file at `path`, which say `text`,
@@ -308,13 +335,25 @@ impl Talk {
     pub fn remove_attachment(&mut self, place: usize) {
         if place < self.attachments.len() {
             self.attachments.remove(place);
-            self.attachment_previews.remove(place);
+            if let Some(key) = self.attachment_previews.remove(place) {
+                self.previews.retain(|kept| *kept != key);
+            }
         }
     }
 
     /// Answers the file or terminal request raised under `ticket`.
     pub fn answer_request(&self, ticket: u64, answer: Answer) {
         self.conversation.answer_request(ticket, answer);
+    }
+
+    /// Answers the request raised under `ticket` with what `answer` comes
+    /// to, worked out away from the window.
+    pub fn answer_request_later(
+        &self,
+        ticket: u64,
+        answer: impl FnOnce() -> Answer + Send + 'static,
+    ) {
+        self.conversation.answer_request_later(ticket, answer);
     }
 
     /// The last lines the terminal the agent calls `terminal` has written.
@@ -329,6 +368,7 @@ impl Talk {
             return false;
         }
         self.terminals.insert(terminal.to_owned(), tail);
+        self.shown_revision += 1;
         true
     }
 
@@ -415,20 +455,13 @@ impl Talk {
     /// The worktree's files `named` narrows a mention to, those whose name
     /// starts with it first and shorter paths before longer ones.
     fn mentions(&self, named: &str) -> Vec<Offered> {
-        let root = self.root().to_path_buf();
-        let mut listed = self.mentionable.borrow_mut();
-        let files = listed.get_or_insert_with(|| {
-            pm_core::walk(&root)
-                .into_iter()
-                .filter_map(|path| {
-                    let relative = path.strip_prefix(&root).ok()?;
-                    Some(relative.to_string_lossy().replace('\\', "/"))
-                })
-                .collect()
-        });
+        let Some(files) = self.mentionable_files() else {
+            return Vec::new();
+        };
         let mut found = files
             .iter()
-            .filter(|file| file.to_lowercase().contains(named))
+            .filter(|(_, lowered)| lowered.contains(named))
+            .map(|(file, _)| file)
             .collect::<Vec<_>>();
         found.sort_by_key(|file| {
             let name = file.rsplit('/').next().unwrap_or(file).to_lowercase();
@@ -503,6 +536,44 @@ impl Talk {
         true
     }
 
+    /// The worktree's files a mention offers, each beside its lowercase
+    /// form, once they are listed; the first asking starts the listing.
+    fn mentionable_files(&self) -> Option<Arc<[(String, String)]>> {
+        let mut mentionable = self.mentionable.lock().ok()?;
+        if mentionable.files.is_none() && !mentionable.listing {
+            mentionable.listing = true;
+            let root = self.root().to_path_buf();
+            let shared = self.mentionable.clone();
+            let notify = self.notify.clone();
+            std::thread::spawn(move || {
+                let files = pm_core::walk(&root)
+                    .into_iter()
+                    .filter_map(|path| {
+                        let relative = path.strip_prefix(&root).ok()?;
+                        let file = relative.to_string_lossy().replace('\\', "/");
+                        let lowered = file.to_lowercase();
+                        Some((file, lowered))
+                    })
+                    .collect();
+                if let Ok(mut mentionable) = shared.lock() {
+                    mentionable.files = Some(files);
+                    mentionable.listing = false;
+                    mentionable.fresh = true;
+                }
+                notify();
+            });
+        }
+        mentionable.files.clone()
+    }
+
+    /// Whether the files a mention offers have been listed since this was
+    /// last asked.
+    fn take_listed(&self) -> bool {
+        self.mentionable
+            .lock()
+            .is_ok_and(|mut mentionable| std::mem::take(&mut mentionable.fresh))
+    }
+
     /// Starts the selection again, for a prompt that has been typed into.
     ///
     /// A mention just begun lists the worktree afresh, so a file the agent
@@ -510,8 +581,10 @@ impl Talk {
     pub fn retyped(&mut self) {
         self.chosen = 0;
         self.dismissed = false;
-        if self.naming() == Some((MENTION, String::new())) {
-            self.mentionable.borrow_mut().take();
+        if self.naming() == Some((MENTION, String::new()))
+            && let Ok(mut mentionable) = self.mentionable.lock()
+        {
+            mentionable.files = None;
         }
     }
 
@@ -810,6 +883,18 @@ impl Talk {
         if !self.expanded_details.insert(block) {
             self.expanded_details.remove(&block);
         }
+        self.shown_revision += 1;
+    }
+
+    /// Counts the changes to what the pane shows that the transcript does
+    /// not hold, so the pane can tell when its wrapped rows still stand.
+    pub fn shown_revision(&self) -> u64 {
+        self.shown_revision
+    }
+
+    /// The conversation as the pane last wrapped it, kept between frames.
+    pub(super) fn wrapped(&self) -> &RefCell<Wrapped> {
+        &self.wrapped
     }
 
     /// Sends what is in the prompt buffer, and empties it.
@@ -824,7 +909,11 @@ impl Talk {
         }
         self.prompt.clear();
         let attachments = std::mem::take(&mut self.attachments);
-        let previews = std::mem::take(&mut self.attachment_previews);
+        let previews = std::mem::take(&mut self.attachment_previews)
+            .into_iter()
+            .map(|key| key.and_then(|key| self.previews.peek(&key)?.ready()))
+            .collect::<Vec<_>>();
+        self.previews.clear();
         let labels = attachments
             .iter()
             .zip(&previews)
@@ -940,6 +1029,58 @@ impl Talk {
                 self.transcript.note(ended(&self.conversation));
             }
         }
+    }
+}
+
+/// The files a mention offers, as far as they have been listed.
+#[derive(Default)]
+struct Mentionable {
+    /// The files, relative to the worktree, each beside its lowercase form.
+    files: Option<Arc<[(String, String)]>>,
+    /// Whether they are being listed now.
+    listing: bool,
+    /// Whether a listing has come back that the window has not drawn yet.
+    fresh: bool,
+}
+
+/// An image off the clipboard, made ready to attach away from the window.
+pub struct Pasted {
+    /// What goes with the prompt.
+    attachment: Attachment,
+    /// What is shown of it beside the prompt.
+    preview: Option<Image>,
+    /// Where it was saved, for an agent that takes it as a file.
+    saved: Option<PathBuf>,
+}
+
+impl Pasted {
+    /// Makes `width` by `height` RGBA `pixels` off the clipboard into what is
+    /// attached: the image itself for an agent that `can_image`, a file of it
+    /// for any other.
+    ///
+    /// Encoding a screenshot takes long enough to be felt, so this is run
+    /// away from the window.
+    pub fn prepare(width: u32, height: u32, pixels: Vec<u8>, can_image: bool) -> Option<Self> {
+        let png = crate::desktop::encode_png(width, height, &pixels)?;
+        let preview = Image::from_rgba(width, height, pixels);
+        let (attachment, saved) = match can_image {
+            true => (
+                Attachment::Image {
+                    data: base64::engine::general_purpose::STANDARD.encode(png),
+                    mime_type: "image/png".to_owned(),
+                },
+                None,
+            ),
+            false => {
+                let path = crate::desktop::save_pasted_image(&png)?;
+                (Attachment::File(path.clone()), Some(path))
+            }
+        };
+        Some(Self {
+            attachment,
+            preview,
+            saved,
+        })
     }
 }
 
@@ -1130,9 +1271,9 @@ impl Talks {
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
         let started = match opening {
-            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify),
-            Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify),
-            Opening::New => Session::start(agent, root, env, notify),
+            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify.clone()),
+            Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
+            Opening::New => Session::start(agent, root, env, notify.clone()),
         };
         let conversation = match started {
             Ok(conversation) => conversation,
@@ -1161,6 +1302,8 @@ impl Talks {
                 prompt: Input::many_lines("Prompt"),
                 attachments: Vec::new(),
                 attachment_previews: Vec::new(),
+                previews: Decodes::default(),
+                next_preview: 0,
                 clipboard_files: Vec::new(),
                 asks: Vec::new(),
                 commands: Vec::new(),
@@ -1168,7 +1311,8 @@ impl Talks {
                 history: Vec::new(),
                 listing: false,
                 history_error: None,
-                mentionable: RefCell::new(None),
+                mentionable: Arc::default(),
+                notify: notify.clone(),
                 chosen: 0,
                 dismissed: false,
                 ready: false,
@@ -1188,6 +1332,8 @@ impl Talks {
                 selection: None,
                 following: true,
                 expanded_details: BTreeSet::new(),
+                shown_revision: 0,
+                wrapped: RefCell::default(),
                 terminals: BTreeMap::new(),
             },
         );
@@ -1318,6 +1464,7 @@ impl Talks {
     pub fn pump(&mut self) -> bool {
         let mut changed = false;
         for talk in self.talks.values_mut() {
+            changed |= talk.take_listed();
             for event in talk.conversation.drain() {
                 if let Event::Requested(ticket, request) = event {
                     self.requests.push((talk.id, ticket, request));

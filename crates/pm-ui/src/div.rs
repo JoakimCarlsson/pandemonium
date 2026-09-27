@@ -25,6 +25,48 @@ pub struct Div<M> {
     drag_cursor: PointerCursor,
     /// What this element tells the reader while it is hovered.
     tooltip: Option<String>,
+    /// What the last measurement found, for painting to reuse.
+    measured: Option<Measurement>,
+}
+
+/// What one measurement of a container found: the room its children were
+/// offered, what each of them asked for, and the size that came to.
+struct Measurement {
+    /// The space inside the padding the children were measured against.
+    content: Size,
+    /// What each child measured to, before its cross extent was settled.
+    children: Vec<Size>,
+    /// The size the container reported for itself.
+    size: Size,
+}
+
+impl Measurement {
+    /// Whether children measured this way would measure the same again with
+    /// `content` inside `bounds`, so painting need not ask them.
+    ///
+    /// Along each axis the room is either the room that was measured, or it
+    /// is smaller only because the container was sized to what its children
+    /// asked for and got exactly that. Children that asked for less than
+    /// they were offered ask for the same again when offered only that much;
+    /// a child that grows with its offer fills it, and a container around
+    /// it is then never smaller than it was offered. Room that grew, or that
+    /// shrank for any other reason, is measured again.
+    fn holds_for(&self, content: Size, bounds: Size) -> bool {
+        let axis_holds = |content: f32, measured: f32, bounds: f32, size: f32| {
+            content == measured || (content < measured && bounds == size)
+        };
+        axis_holds(
+            content.width,
+            self.content.width,
+            bounds.width,
+            self.size.width,
+        ) && axis_holds(
+            content.height,
+            self.content.height,
+            bounds.height,
+            self.size.height,
+        )
+    }
 }
 
 /// An empty container stacking children top to bottom.
@@ -37,6 +79,7 @@ pub fn div<M>() -> Div<M> {
         on_drag: None,
         drag_cursor: PointerCursor::Pointer,
         tooltip: None,
+        measured: None,
     }
 }
 
@@ -140,14 +183,11 @@ impl<M> Div<M> {
     /// `Full` or a non-zero `flex_grow` — and each of those is measured
     /// against its own share, so a child that fills its parent's width cannot
     /// widen the parent it is being fitted into.
-    fn measure_children(
-        &mut self,
-        content: Size,
-        stretch: bool,
-        cx: &mut LayoutContext<'_>,
-    ) -> Vec<Size> {
+    ///
+    /// The sizes returned are what the children asked for; how far across
+    /// the stacking axis each one reaches is [`Self::settle_cross`]'s to say.
+    fn measure_children(&mut self, content: Size, cx: &mut LayoutContext<'_>) -> Vec<Size> {
         let axis = self.style.axis;
-        let align = self.style.align;
         let gaps = self.style.gap * self.children.len().saturating_sub(1) as f32;
 
         let mut sizes = vec![Size::zero(); self.children.len()];
@@ -194,6 +234,14 @@ impl<M> Div<M> {
             sizes[index] = size;
         }
 
+        sizes
+    }
+
+    /// Settles how far across the stacking axis each child reaches, given
+    /// what it asked for in `sizes` and the room inside the padding.
+    fn settle_cross(&self, sizes: &mut [Size], content: Size, stretch: bool) {
+        let axis = self.style.axis;
+        let align = self.style.align;
         for (index, size) in sizes.iter_mut().enumerate() {
             let style = self.children[index].layout_style();
             let cross = match cross_length(&style, axis) {
@@ -204,8 +252,20 @@ impl<M> Div<M> {
             };
             axis.set_cross(size, cap_width(&style, axis, cross));
         }
+    }
 
-        sizes
+    /// What the children ask for inside `content` when painted into
+    /// `bounds`, taken from the last measurement when that still holds.
+    fn painted_children(
+        &mut self,
+        content: Size,
+        bounds: Size,
+        cx: &mut LayoutContext<'_>,
+    ) -> Vec<Size> {
+        match self.measured.take() {
+            Some(measured) if measured.holds_for(content, bounds) => measured.children,
+            _ => self.measure_children(content, cx),
+        }
     }
 
     /// The space inside the padding, given the space this container is offered.
@@ -254,7 +314,9 @@ impl<M: Clone> Element<M> for Div<M> {
     /// Measures the children, then this container around them.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
         let content = self.content_offer(available);
-        let sizes = self.measure_children(content, !self.style.fit_width, cx);
+        let children = self.measure_children(content, cx);
+        let mut sizes = children.clone();
+        self.settle_cross(&mut sizes, content, !self.style.fit_width);
         let axis = self.style.axis;
 
         let gaps = self.style.gap * sizes.len().saturating_sub(1) as f32;
@@ -281,10 +343,20 @@ impl<M: Clone> Element<M> for Div<M> {
             Length::Auto => intrinsic.height + self.style.padding.vertical(),
         };
 
-        Size::new(width, height)
+        let size = Size::new(width, height);
+        self.measured = Some(Measurement {
+            content,
+            children,
+            size,
+        });
+        size
     }
 
     /// Paints the background, then places and paints every child.
+    ///
+    /// The children are placed from what they asked for when this container
+    /// was measured, and measured again only when the bounds it was given
+    /// could change their answer.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         let interaction = match (
             self.on_drag.clone(),
@@ -327,7 +399,8 @@ impl<M: Clone> Element<M> for Div<M> {
             cx.push_clip(bounds);
         }
 
-        let sizes = self.measure_children(content.size, true, &mut cx.layout);
+        let mut sizes = self.painted_children(content.size, bounds.size, &mut cx.layout);
+        self.settle_cross(&mut sizes, content.size, true);
         let axis = self.style.axis;
         let gap = self.style.gap;
         let gaps = gap * sizes.len().saturating_sub(1) as f32;

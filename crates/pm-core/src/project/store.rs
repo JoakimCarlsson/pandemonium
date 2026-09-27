@@ -4,7 +4,7 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use crate::project::repository;
-use crate::project::{Project, ProjectId};
+use crate::project::{Project, ProjectId, Repository};
 
 /// Every project the window holds open, in the order the window lists them.
 ///
@@ -121,6 +121,38 @@ impl Projects {
     pub fn refresh(&mut self, id: ProjectId) {
         if let Some(project) = self.open.iter_mut().find(|project| project.id() == id) {
             project.refresh();
+        }
+    }
+
+    /// What reads the repositories of every open project again, and the
+    /// branch each has out, on whichever thread it is called on.
+    ///
+    /// Finding the repositories is a walk of each folder and a subprocess
+    /// per repository, so the reading is handed out rather than done here,
+    /// and what it answers comes back through [`Projects::reread`].
+    pub fn read_later(
+        &self,
+    ) -> impl FnOnce() -> Vec<(ProjectId, Vec<Repository>)> + Send + 'static + use<> {
+        let roots = self
+            .open
+            .iter()
+            .map(|project| (project.id(), project.root().to_path_buf()))
+            .collect::<Vec<_>>();
+        move || {
+            roots
+                .into_iter()
+                .map(|(id, root)| (id, Repository::under(&root)))
+                .collect()
+        }
+    }
+
+    /// Takes in the repositories [`Projects::read_later`] read; a project
+    /// closed since is passed over.
+    pub fn reread(&mut self, read: Vec<(ProjectId, Vec<Repository>)>) {
+        for (id, repositories) in read {
+            if let Some(project) = self.open.iter_mut().find(|project| project.id() == id) {
+                project.repositories = repositories;
+            }
         }
     }
 
