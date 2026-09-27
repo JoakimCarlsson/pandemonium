@@ -72,8 +72,19 @@ pub struct Restored {
     pub panes: Saved,
     /// The size and state of the window itself.
     pub window: WindowState,
-    /// The servers to run for a language, in place of the ones it names.
-    pub language_servers: BTreeMap<String, Vec<pm_text::Server>>,
+    /// The servers a language runs, in place of the ones it names or after them.
+    pub language_servers: BTreeMap<String, ServerList>,
+    /// The agents the reader added, beside the ones the editor ships.
+    pub agent_servers: Vec<pm_acp::Agent>,
+}
+
+/// The servers a reader configured for one language.
+#[derive(Clone, Debug)]
+pub enum ServerList {
+    /// These run instead of the servers the language names.
+    Replace(Vec<pm_text::Server>),
+    /// These run after the servers the language names.
+    Add(Vec<pm_text::Server>),
 }
 
 /// What the last launch left behind, or a first launch's defaults.
@@ -85,11 +96,13 @@ pub struct Restored {
 pub fn load() -> Restored {
     install_themes();
     install_keymaps();
-    paths::settings()
+    let restored = paths::settings()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_norway::from_str::<Stored>(&text).ok())
         .map(Stored::into_restored)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    pm_acp::install(restored.agent_servers.clone());
+    restored
 }
 
 /// Reads the reader's themes in again, still drawing in the family

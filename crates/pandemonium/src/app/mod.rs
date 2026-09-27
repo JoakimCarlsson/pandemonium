@@ -55,7 +55,7 @@ use crate::agent::Talks;
 use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
 use crate::app::places::Trail;
-use crate::config::{self, FontSlot, Preference, Preferences, Restored, WindowState};
+use crate::config::{self, FontSlot, Preference, Preferences, Restored, ServerList, WindowState};
 use crate::desktop;
 use crate::editor::{self, Files};
 use crate::keymap::Resolver;
@@ -287,8 +287,10 @@ pub struct App {
     renders: crate::markdown::Renders,
     /// Each worktree's changes as excerpts, for the panes editing them.
     excerpts: BTreeMap<Scope, crate::excerpts::OpenExcerpts>,
-    /// The servers to run for a language, in place of the ones it names.
-    language_servers: BTreeMap<String, Vec<pm_text::Server>>,
+    /// The servers a language runs, in place of the ones it names or after them.
+    language_servers: BTreeMap<String, ServerList>,
+    /// The agents the reader added, beside the ones the editor ships.
+    agent_servers: Vec<pm_acp::Agent>,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
@@ -403,6 +405,28 @@ pub struct App {
     proxy: EventLoopProxy<Wake>,
 }
 
+/// The replacement lists and the added lists in `configured`.
+fn partition_language_servers(
+    configured: &BTreeMap<String, ServerList>,
+) -> (
+    BTreeMap<String, Vec<pm_text::Server>>,
+    BTreeMap<String, Vec<pm_text::Server>>,
+) {
+    let mut replace = BTreeMap::new();
+    let mut add = BTreeMap::new();
+    for (language, list) in configured {
+        match list {
+            ServerList::Replace(servers) => {
+                replace.insert(language.clone(), servers.clone());
+            }
+            ServerList::Add(servers) => {
+                add.insert(language.clone(), servers.clone());
+            }
+        }
+    }
+    (replace, add)
+}
+
 impl App {
     /// The app as the last launch left it, woken through `proxy`.
     pub fn restored(proxy: EventLoopProxy<Wake>) -> Self {
@@ -503,6 +527,7 @@ impl App {
             renders: crate::markdown::Renders::default(),
             excerpts: BTreeMap::new(),
             language_servers: restored.language_servers,
+            agent_servers: restored.agent_servers,
             panes: PaneTree::default(),
             saved,
             geometry: Geometry::default(),
@@ -1735,6 +1760,7 @@ impl App {
             panes: self.saved_panes(),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
+            agent_servers: self.agent_servers.clone(),
         }
     }
 
@@ -2283,7 +2309,9 @@ impl ApplicationHandler<Wake> for App {
         self.agents.set_notify(self.waker(Wake::Agent));
         self.debuggers.set_notify(self.waker(Wake::Debug));
         self.editor.set_notify(self.waker(Wake::Language));
-        self.editor.set_language_servers(&self.language_servers);
+        let (replace, add) = partition_language_servers(&self.language_servers);
+        self.editor.set_language_servers(&replace);
+        self.editor.add_language_servers(&add);
         self.follow_preferences();
         self.reread_changes();
 

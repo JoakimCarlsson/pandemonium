@@ -18,7 +18,7 @@ mod session;
 mod transport;
 mod update;
 
-pub use agent::{AGENTS, Agent, Source};
+pub use agent::{AGENTS, Agent, Source, agents, install};
 pub use attachment::Attachment;
 pub use request::{Answer, Exit, Request, Run};
 pub use session::{Notify, Session};

@@ -8,9 +8,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use pm_acp::{Agent, Source};
 use pm_core::Bootstrap;
 use pm_text::Server;
 use serde::{Deserialize, Serialize};
+
+use super::ServerList;
 
 use crate::config::fonts::Fonts;
 use crate::config::keymap::StoredChanges;
@@ -107,8 +110,39 @@ pub(super) struct Stored {
     ensure_final_newline_on_save: Option<bool>,
     /// Whether a new session's worktree is trusted without being asked about.
     trust_worktrees: Option<bool>,
-    /// The servers to run for a language, in place of the ones it names.
-    language_servers: Option<BTreeMap<String, Vec<StoredServer>>>,
+    /// The servers to run for a language.
+    ///
+    /// A list replaces the servers that language names. An `add` list runs
+    /// after them:
+    ///
+    /// ```yaml
+    /// language_servers:
+    ///   Rust:
+    ///     - rust-analyzer
+    ///   Python:
+    ///     add:
+    ///       - mypy
+    /// ```
+    language_servers: Option<BTreeMap<String, StoredLanguageServers>>,
+    /// Agents the reader added, beside the ones the editor ships.
+    ///
+    /// The key is the agent's id. An id the editor already ships replaces
+    /// that agent.
+    ///
+    /// ```yaml
+    /// agent_servers:
+    ///   my-agent:
+    ///     command: my-agent
+    ///     args: ["acp"]
+    ///     env:
+    ///       EXAMPLE: "1"
+    /// ```
+    #[serde(
+        default,
+        deserialize_with = "read_agents",
+        skip_serializing_if = "Option::is_none"
+    )]
+    agent_servers: Option<BTreeMap<String, StoredAgent>>,
     /// Paths symlinked into a fresh worktree, relative to the repository.
     worktree_link: Option<Vec<PathBuf>>,
     /// Paths copied into it, relative to the repository.
@@ -153,6 +187,35 @@ pub(super) struct Stored {
     window_maximized: Option<bool>,
 }
 
+/// The servers configured for one language, as they are written down.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum StoredLanguageServers {
+    /// These run instead of the servers the language names.
+    Replace(Vec<StoredServer>),
+    /// These run after the servers the language names.
+    Add {
+        /// The servers to run after the language's own.
+        add: Vec<StoredServer>,
+    },
+}
+
+/// One agent the reader added, as it is written down.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct StoredAgent {
+    /// What a tab and a menu call it, when that differs from its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// The program to run.
+    command: String,
+    /// The arguments that put the program into protocol mode.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    args: Vec<String>,
+    /// The environment the program is started with, over the one it inherits.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    env: BTreeMap<String, String>,
+}
+
 /// One language server as it is written down.
 ///
 /// A server that takes no arguments is written as the command alone, which
@@ -173,6 +236,108 @@ enum StoredServer {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         options: Option<serde_norway::Value>,
     },
+}
+
+impl StoredLanguageServers {
+    /// The servers this stands for.
+    fn into_list(self) -> ServerList {
+        match self {
+            Self::Replace(servers) => {
+                ServerList::Replace(servers.into_iter().map(StoredServer::into_server).collect())
+            }
+            Self::Add { add } => {
+                ServerList::Add(add.into_iter().map(StoredServer::into_server).collect())
+            }
+        }
+    }
+
+    /// How `list` is written down.
+    fn of(list: &ServerList) -> Self {
+        match list {
+            ServerList::Replace(servers) => {
+                Self::Replace(servers.iter().map(StoredServer::of).collect())
+            }
+            ServerList::Add(servers) => Self::Add {
+                add: servers.iter().map(StoredServer::of).collect(),
+            },
+        }
+    }
+}
+
+impl StoredAgent {
+    /// The agent this stands for, named `id` for as long as the editor runs.
+    fn into_agent(self, id: String) -> Agent {
+        let name = self
+            .name
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| id.clone());
+        Agent {
+            id: leaked(id),
+            name: leaked(name),
+            program: leaked(self.command),
+            arguments: leaked_slice(self.args),
+            env: leaked_env(self.env),
+            source: Source::Command,
+        }
+    }
+
+    /// How `agent` is written down.
+    fn of(agent: &Agent) -> Self {
+        Self {
+            name: (agent.name != agent.id).then(|| agent.name.to_owned()),
+            command: agent.program.to_owned(),
+            args: agent
+                .arguments
+                .iter()
+                .map(|arg| (*arg).to_owned())
+                .collect(),
+            env: agent
+                .env
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+        }
+    }
+}
+
+/// The agents in `deserializer`, less any entry that does not name a program.
+fn read_agents<'de, D>(deserializer: D) -> Result<Option<BTreeMap<String, StoredAgent>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(raw) = Option::<BTreeMap<String, serde_norway::Value>>::deserialize(deserializer)?
+    else {
+        return Ok(None);
+    };
+    let agents = raw
+        .into_iter()
+        .filter_map(|(id, value)| {
+            if id.is_empty() {
+                return None;
+            }
+            let agent = serde_norway::from_value::<StoredAgent>(value).ok()?;
+            (!agent.command.is_empty()).then_some((id, agent))
+        })
+        .collect::<BTreeMap<_, _>>();
+    Ok((!agents.is_empty()).then_some(agents))
+}
+
+/// `value` kept for as long as the editor runs.
+fn leaked(value: String) -> &'static str {
+    value.leak()
+}
+
+/// `values` kept for as long as the editor runs.
+fn leaked_slice(values: Vec<String>) -> &'static [&'static str] {
+    values.into_iter().map(leaked).collect::<Vec<_>>().leak()
+}
+
+/// `env` kept for as long as the editor runs.
+fn leaked_env(env: BTreeMap<String, String>) -> &'static [(&'static str, &'static str)] {
+    env.into_iter()
+        .map(|(name, value)| (leaked(name), leaked(value)))
+        .collect::<Vec<_>>()
+        .leak()
 }
 
 impl StoredServer {
@@ -228,21 +393,29 @@ impl Stored {
             window: self.window(),
             panes: self.panes.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
+            agent_servers: self.agent_servers(),
             onboarded: self.finished.unwrap_or_default(),
             preferences: self.into_preferences(),
         }
     }
 
-    /// The servers this file puts in place of the ones languages name.
-    fn language_servers(&self) -> BTreeMap<String, Vec<Server>> {
+    /// The servers this file configures, keyed by the language's own name.
+    fn language_servers(&self) -> BTreeMap<String, ServerList> {
         self.language_servers
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .map(|(language, servers)| {
-                let servers = servers.into_iter().map(StoredServer::into_server).collect();
-                (language, servers)
-            })
+            .map(|(language, servers)| (canonical_language(&language), servers.into_list()))
+            .collect()
+    }
+
+    /// The agents this file adds.
+    fn agent_servers(&self) -> Vec<Agent> {
+        self.agent_servers
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, agent)| agent.into_agent(id))
             .collect()
     }
 
@@ -406,6 +579,7 @@ impl Stored {
             panes,
             window,
             language_servers,
+            agent_servers,
         } = restored;
         let bootstrap = &preferences.bootstrap;
         let (fonts, display) = (&preferences.fonts, &preferences.display);
@@ -465,9 +639,14 @@ impl Stored {
                 language_servers
                     .iter()
                     .map(|(language, servers)| {
-                        let servers = servers.iter().map(StoredServer::of).collect();
-                        (language.clone(), servers)
+                        (language.clone(), StoredLanguageServers::of(servers))
                     })
+                    .collect()
+            }),
+            agent_servers: (!agent_servers.is_empty()).then(|| {
+                agent_servers
+                    .iter()
+                    .map(|agent| (agent.id.to_owned(), StoredAgent::of(agent)))
                     .collect()
             }),
             worktree_link: Some(bootstrap.link.clone()),
@@ -493,6 +672,12 @@ impl Stored {
             window_maximized: Some(window.maximized),
         }
     }
+}
+
+/// `name` as the language it asks for, or unchanged when no language is called that.
+fn canonical_language(name: &str) -> String {
+    pm_text::Language::called(name)
+        .map_or_else(|| name.to_owned(), |language| language.name().to_owned())
 }
 
 /// Which list the sidebar beside the panes was showing, as it is written down.
