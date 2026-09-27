@@ -21,6 +21,7 @@ mod minimap;
 mod search;
 mod store;
 mod view;
+mod wrap;
 
 pub use bar::search_bar;
 pub use caret::Blink;

@@ -25,6 +25,7 @@ use crate::editor::display::{CursorShape, Display};
 use crate::editor::layout::{GUTTER_GAP, GUTTER_INSET, TextLayout};
 use crate::editor::minimap::{MINIMAP_WIDTH, Minimap};
 use crate::editor::search::Search;
+use crate::editor::wrap::Segment;
 use crate::editor::{Document, OpenFile};
 use crate::review::conflict::{self, Action, Choice, Conflict};
 
@@ -486,6 +487,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             offset: document.offset(),
             column: document.column(),
         };
+        document.set_layout(sizing);
         document.follow_cursor(sizing.rows(), sizing.columns());
 
         let layout = TextLayout {
@@ -497,7 +499,12 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         document.set_layout(layout);
 
         let rows = layout.rows();
-        let drawn = document.drawn_lines(layout.first, layout.drawn_rows());
+        let segments = document.drawn_segments(layout.drawn_rows());
+        let mut drawn = segments
+            .iter()
+            .map(|segment| segment.line)
+            .collect::<Vec<_>>();
+        drawn.dedup();
         let span = *drawn.first().unwrap_or(&0)..drawn.last().map_or(0, |last| last + 1);
         let folded = drawn
             .iter()
@@ -526,6 +533,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
                 .collect(),
             changes: changes.clone(),
             blame: document.blame(),
+            rows: segments,
             drawn,
             folded,
             hovered: cx.input().pointer.filter(|at| layout.over_folds(*at)),
@@ -607,7 +615,7 @@ impl<M> BufferView<M> {
         if !selection.is_empty() || !self.focused || self.display.whole_lines {
             return;
         }
-        let Some(top) = painting.top_of(selection.head.line) else {
+        let Some(top) = painting.place_of(selection.head).map(|at| at.y) else {
             return;
         };
         cx.quad(Quad::filled(
@@ -665,7 +673,7 @@ impl<M> BufferView<M> {
             .input()
             .pointer
             .filter(|at| column.contains(*at))
-            .and_then(|at| painting.drawn.get(layout.row_at(at)).copied())
+            .and_then(|at| painting.line_at(at))
             .filter(|line| !self.breakpoints.iter().any(|mark| mark.line == *line));
         if let Some(top) = hovered.and_then(|line| painting.top_of(line)) {
             cx.quad(
@@ -817,26 +825,38 @@ impl<M> BufferView<M> {
         cx: &mut PaintContext<'_, '_, M>,
     ) {
         let layout = painting.layout;
-        for line in range.start.line..=range.end.line {
-            let Some(top) = painting.top_of(line) else {
+        let lines = range.start.line..=range.end.line;
+        for (row, segment) in painting.rows.iter().enumerate() {
+            let line = segment.line;
+            if !lines.contains(&line) {
+                continue;
+            }
+            let Some(top) = layout.top_of(row) else {
                 continue;
             };
-            let from = if line == range.start.line {
-                painting.column_of(range.start)
-            } else {
-                0
+            let (starts_here, ends_here) = (line == range.start.line, line == range.end.line);
+            if starts_here && range.start.column >= segment.end {
+                continue;
+            }
+            let indent = segment.indent(painting.buffer);
+            let from = match starts_here && range.start.column > segment.start {
+                true => painting.column_of(range.start),
+                false => indent,
             };
-            let to = if line == range.end.line {
-                painting.column_of(range.end)
-            } else {
-                painting.buffer.display_width(line) + 1
+            let to = match (
+                ends_here && range.end.column < segment.end,
+                segment.is_last(),
+            ) {
+                (true, _) => painting.column_of(range.end),
+                (false, true) => painting.buffer.display_width(line) + 1,
+                (false, false) => painting.column_of(Position::new(line, segment.end)),
             };
             if to <= from {
                 continue;
             }
             cx.quad(Quad::filled(
                 Rect::from_xywh(
-                    layout.x_of(from),
+                    layout.x_of(from - indent),
                     top,
                     (to - from) as f32 * layout.cell.width,
                     layout.cell.height,
@@ -855,7 +875,8 @@ impl<M> BufferView<M> {
         cx: &mut PaintContext<'_, '_, M>,
     ) {
         let layout = painting.layout;
-        let Some(top) = painting.top_of(line) else {
+        let mut rows = painting.rows_of(line).into_iter().peekable();
+        let Some((mut top, mut row)) = rows.next() else {
             return;
         };
         let buffer = painting.buffer;
@@ -867,10 +888,26 @@ impl<M> BufferView<M> {
 
         cx.push_clip(layout.text_area());
         let mut column = 0;
+        let mut indent = 0;
         let mut hints = buffer.hints_on(line).peekable();
         for (index, ch) in buffer.line_chars(line).enumerate() {
+            if index == row.start {
+                indent = column;
+            }
+            if index >= row.end {
+                let Some((next_top, next)) = rows.next() else {
+                    break;
+                };
+                (top, row, indent) = (next_top, next, column);
+            }
+            let shown = index >= row.start;
             while let Some(hint) = hints.next_if(|hint| hint.position.column == index) {
-                column = self.paint_hint(hint, column, top, painting, glyphs, cx);
+                column = match shown {
+                    true => {
+                        indent + self.paint_hint(hint, column - indent, top, painting, glyphs, cx)
+                    }
+                    false => column + hint.width(),
+                };
             }
             let width = if ch == '\t' {
                 painting.buffer.tab_width() - column % painting.buffer.tab_width()
@@ -879,10 +916,10 @@ impl<M> BufferView<M> {
             };
             let drawn = column;
             column += width;
-            if ch.is_whitespace() {
+            if ch.is_whitespace() || !shown {
                 continue;
             }
-            let x = layout.x_of(drawn);
+            let x = layout.x_of(drawn - indent);
             if x + layout.cell.width < layout.text_left() {
                 continue;
             }
@@ -897,16 +934,19 @@ impl<M> BufferView<M> {
             cx.text(Point::new(x, top), run, color);
         }
 
-        for hint in hints {
-            column = self.paint_hint(hint, column, top, painting, glyphs, cx);
-        }
-        let lenses = buffer.lenses_on(line).collect::<Vec<_>>();
-        if !lenses.is_empty() {
-            let said = lenses.join(LENS_SEPARATOR);
-            self.paint_note(&said, column + LENS_GAP, top, painting, glyphs, cx);
+        if row.is_last() {
+            let mut column = column - indent;
+            for hint in hints {
+                column = self.paint_hint(hint, column, top, painting, glyphs, cx);
+            }
+            let lenses = buffer.lenses_on(line).collect::<Vec<_>>();
+            if !lenses.is_empty() {
+                let said = lenses.join(LENS_SEPARATOR);
+                self.paint_note(&said, column + LENS_GAP, top, painting, glyphs, cx);
+            }
         }
         for diagnostic in painting.diagnostics.iter().copied() {
-            self.paint_diagnostic(diagnostic, line, top, painting, cx);
+            self.paint_diagnostic(diagnostic, line, painting, cx);
         }
         cx.pop_clip();
     }
@@ -1131,7 +1171,7 @@ impl<M> BufferView<M> {
         let size = IconSize::XSmall.pixels();
 
         for (row, line) in painting.drawn.iter().copied().enumerate() {
-            let Some(top) = layout.top_of(row) else {
+            let Some(top) = painting.top_of(line) else {
                 continue;
             };
             let closed = painting.folded.get(row).copied().unwrap_or_default();
@@ -1247,7 +1287,6 @@ impl<M> BufferView<M> {
         &self,
         diagnostic: &Diagnostic,
         line: usize,
-        top: f32,
         painting: &Painting<'_>,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
@@ -1255,18 +1294,29 @@ impl<M> BufferView<M> {
         let Some(columns) = diagnostic.columns(line, painting.buffer.line_len(line)) else {
             return;
         };
-        let start = painting.column_of(Position::new(line, columns.start));
-        let end = painting.column_of(Position::new(line, columns.end));
+        let Some(top) = painting.top_of(line) else {
+            return;
+        };
         let color = severity(diagnostic.severity, painting.theme);
-        cx.quad(Quad::filled(
-            Rect::from_xywh(
-                layout.x_of(start),
-                top + layout.cell.height - SQUIGGLE_WIDTH * 2.0,
-                end.saturating_sub(start).max(1) as f32 * layout.cell.width,
-                SQUIGGLE_WIDTH,
-            ),
-            color,
-        ));
+        for (row_top, row) in painting.rows_of(line) {
+            if columns.start >= row.end || (columns.end < row.start && !row.is_last()) {
+                continue;
+            }
+            let indent = row.indent(painting.buffer);
+            let start = columns.start.clamp(row.start, row.end);
+            let end = columns.end.clamp(start, row.end);
+            let start = painting.column_of(Position::new(line, start)) - indent;
+            let end = painting.column_of(Position::new(line, end)) - indent;
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    layout.x_of(start),
+                    row_top + layout.cell.height - SQUIGGLE_WIDTH * 2.0,
+                    end.saturating_sub(start).max(1) as f32 * layout.cell.width,
+                    SQUIGGLE_WIDTH,
+                ),
+                color,
+            ));
+        }
         cx.quad(Quad::filled(
             Rect::from_xywh(
                 layout.bounds.left() + GUTTER_INSET / 2.0 + CHANGE_WIDTH,
@@ -1283,12 +1333,15 @@ impl<M> BufferView<M> {
         let Some(span) = painting.link.clone() else {
             return;
         };
-        let Some(top) = painting.top_of(span.start.line) else {
+        let Some(start) = painting.place_of(span.start) else {
             return;
         };
         let layout = painting.layout;
-        let left = layout.x_of(painting.column_of(span.start));
-        let right = layout.x_of(painting.column_of(span.end));
+        let (left, top) = (start.x, start.y);
+        let right = painting
+            .place_of(span.end)
+            .filter(|end| end.y == top)
+            .map_or(layout.text_area().right(), |end| end.x);
 
         cx.quad(Quad::filled(
             Rect::from_xywh(
@@ -1333,10 +1386,10 @@ impl<M> BufferView<M> {
 
         for selection in &painting.selections {
             let head = self.cursor_cell(selection);
-            let Some(top) = painting.top_of(head.line) else {
+            let Some(Point { x, y: top }) = painting.place_of(head) else {
                 continue;
             };
-            let (x, cell) = (layout.x_of(painting.column_of(head)), layout.cell);
+            let cell = layout.cell;
             let (rect, color) = match self.display.cursor_shape {
                 CursorShape::Bar => (Rect::from_xywh(x, top, CURSOR_WIDTH, cell.height), color),
                 CursorShape::Block => (
@@ -1646,6 +1699,8 @@ struct Painting<'a> {
     changes: Rc<[Change]>,
     /// Who last changed each line, when the blame column is being drawn.
     blame: &'a [Blame],
+    /// The rows being drawn, in the order they are drawn.
+    rows: Vec<Segment>,
     /// The lines being drawn, in the order they are drawn.
     drawn: Vec<usize>,
     /// Whether each of them has a fold closed under it.
@@ -1659,16 +1714,50 @@ struct Painting<'a> {
 }
 
 impl Painting<'_> {
-    /// The top of `line`, when it is one of the lines being drawn.
+    /// The top of `line`'s first row drawn, when it is one of the lines
+    /// being drawn.
     fn top_of(&self, line: usize) -> Option<f32> {
-        let row = self.drawn.binary_search(&line).ok()?;
+        let row = self.rows.partition_point(|segment| segment.line < line);
+        self.rows.get(row).filter(|segment| segment.line == line)?;
         self.layout.top_of(row)
+    }
+
+    /// The rows of `line` being drawn, each with its top.
+    fn rows_of(&self, line: usize) -> Vec<(f32, Segment)> {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, segment)| segment.line == line)
+            .filter_map(|(row, segment)| Some((self.layout.top_of(row)?, *segment)))
+            .collect()
+    }
+
+    /// Where the character at `position` is drawn, when it is on a row being
+    /// drawn.
+    fn place_of(&self, position: Position) -> Option<Point> {
+        let row = self
+            .rows
+            .iter()
+            .position(|segment| segment.holds(position))?;
+        let indent = self.rows[row].indent(self.buffer);
+        let column = self.column_of(position).saturating_sub(indent);
+        Some(Point::new(
+            self.layout.x_of(column),
+            self.layout.top_of(row)?,
+        ))
     }
 
     /// The line the pointer is over, when it is over the lines at all.
     fn hovered_line(&self) -> Option<usize> {
         let at = self.hovered?;
-        self.drawn.get(self.layout.row_at(at)).copied()
+        self.line_at(at)
+    }
+
+    /// The line drawn on the row `point` is level with.
+    fn line_at(&self, point: Point) -> Option<usize> {
+        self.rows
+            .get(self.layout.row_at(point))
+            .map(|segment| segment.line)
     }
 }
 

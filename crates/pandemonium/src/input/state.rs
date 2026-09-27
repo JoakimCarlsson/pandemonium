@@ -61,10 +61,11 @@ impl Input {
         }
     }
 
-    /// A box of as many lines as are typed, sent with Enter.
+    /// A box of as many lines as are typed, sent with Enter, a line too
+    /// long for the box carrying on down the next row.
     pub fn many_lines(name: &str) -> Self {
         Self {
-            text: Rc::new(RefCell::new(Document::scratch(name))),
+            text: Rc::new(RefCell::new(Document::scratch(name).wrapped())),
             lines: Lines::Many,
             submit: Submit::Enter,
         }
@@ -188,10 +189,9 @@ impl Input {
     pub fn scroll_by(&self, pixels: f32) {
         let mut text = self.text.borrow_mut();
         text.scroll_by_pixels(pixels);
-        let last = text.buffer().line_count().saturating_sub(1);
-        let deepest = text.line_after(last, 1 - text.rows().max(1) as isize);
-        if text.scroll() >= deepest {
-            text.scroll_to(deepest);
+        let deepest = text.row_after(text.last_row(), 1 - text.rows().max(1) as isize);
+        if text.top() >= deepest {
+            text.scroll_to_row(deepest);
         }
     }
 
