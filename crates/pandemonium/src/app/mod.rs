@@ -111,6 +111,8 @@ pub enum Wake {
     Debug,
     /// Git has answered a question asked away from the window.
     Reading,
+    /// A release newer than this build has been found.
+    Release,
 }
 
 /// The remote operation currently running for the active project.
@@ -393,6 +395,10 @@ pub struct App {
     terminal_scroll_origin: Option<usize>,
     /// How far down the editor was scrolled when a scrollbar drag began.
     editor_scroll_origin: Option<usize>,
+    /// Whether a release newer than this build has been published.
+    update_available: bool,
+    /// Set when the search for one finds it, until the window takes it in.
+    released: Arc<Mutex<bool>>,
     /// How the reader threads wake the event loop.
     proxy: EventLoopProxy<Wake>,
 }
@@ -548,6 +554,8 @@ impl App {
             terminal_focused: false,
             terminal_scroll_origin: None,
             editor_scroll_origin: None,
+            update_available: false,
+            released: Arc::new(Mutex::new(false)),
             proxy,
         }
     }
@@ -1403,6 +1411,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if message == Message::OpenRepository {
+            desktop::browse(crate::release::REPOSITORY);
+            return;
+        }
         if let Message::AddWorktreePath(list) = message {
             self.ask_worktree_path(list);
             self.request_redraw();
@@ -1829,6 +1841,20 @@ impl App {
         config::save(&self.state());
     }
 
+    /// Asks whether a newer release has been published, away from the window.
+    fn look_for_release(&self) {
+        let released = self.released.clone();
+        let wake = self.waker(Wake::Release);
+        std::thread::spawn(move || {
+            if crate::release::available() {
+                if let Ok(mut released) = released.lock() {
+                    *released = true;
+                }
+                wake();
+            }
+        });
+    }
+
     /// A handle the threads behind the window wake it with, sending `wake`.
     pub(super) fn waker(&self, wake: Wake) -> Arc<dyn Fn() + Send + Sync> {
         let proxy = Mutex::new(self.proxy.clone());
@@ -2086,6 +2112,7 @@ impl App {
                     menu,
                     overlays,
                 },
+                self.update_available,
             )
         } else {
             onboarding::page(&theme, &self.preferences)
@@ -2205,6 +2232,12 @@ impl ApplicationHandler<Wake> for App {
                     self.request_redraw();
                 }
             }
+            Wake::Release => {
+                if self.released.lock().is_ok_and(|released| *released) {
+                    self.update_available = true;
+                    self.request_redraw();
+                }
+            }
         }
     }
 
@@ -2259,6 +2292,7 @@ impl ApplicationHandler<Wake> for App {
 
         self.ui = Some(Ui::new(self.theme()));
         self.list = Some(DrawList::new(Size::zero()));
+        self.look_for_release();
     }
 
     /// Routes window events to the UI and the renderer.

@@ -70,6 +70,8 @@ pub enum Message {
     Finish,
     /// Open the settings pane, or bring it forward where it is open.
     OpenSettings,
+    /// Open the repository the editor is published from.
+    OpenRepository,
     /// Show this page of the settings pane, from its top.
     ShowSettingsPage(SettingsPage),
     /// Show the page of the settings pane this section is on, scrolled to it.

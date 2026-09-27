@@ -30,6 +30,7 @@ mod panel;
 mod panes;
 mod picker;
 mod prompt;
+mod release;
 mod review;
 mod settings;
 mod terminal;

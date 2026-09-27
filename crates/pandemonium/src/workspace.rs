@@ -3,12 +3,10 @@
 use pm_core::{Project, ProjectId, Projects, SessionId};
 use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
-#[cfg(not(target_os = "macos"))]
-use pm_ui::button;
 use pm_ui::{
     Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Text, Theme,
-    h_flex, icon, icon_button, layout_icon_button, measured, menu, menu_entry, menu_separator,
-    overlay, overlay_above, rule, sash, text, v_flex, view_tab,
+    button, h_flex, icon, icon_button, layout_icon_button, measured, menu, menu_entry,
+    menu_separator, overlay, overlay_above, rule, sash, text, v_flex, view_tab,
 };
 
 use crate::agent::{Standing, Tally, standing_color};
@@ -318,6 +316,7 @@ pub fn workspace(
     layout: Layout,
     command_center: Bounds,
     panes: Panes,
+    update: bool,
 ) -> Div<Message> {
     let ProjectList {
         open,
@@ -343,6 +342,7 @@ pub fn workspace(
             layout,
             whereabouts(open, sessions),
             command_center,
+            update,
         ))
         .child(
             h_flex()
@@ -912,7 +912,13 @@ pub fn counted(count: usize, noun: &str) -> String {
 /// The bar is three columns of which the outer two share what is left over
 /// equally, so the command center between them sits in the middle of the
 /// window whatever is drawn either side of it.
-fn titlebar(theme: &Theme, layout: Layout, here: String, bounds: Bounds) -> Div<Message> {
+fn titlebar(
+    theme: &Theme,
+    layout: Layout,
+    here: String,
+    bounds: Bounds,
+    update: bool,
+) -> Div<Message> {
     h_flex()
         .w_full()
         .h_px(theme.size.titlebar)
@@ -947,6 +953,13 @@ fn titlebar(theme: &Theme, layout: Layout, here: String, bounds: Bounds) -> Div<
                     h_flex()
                         .gap(1)
                         .items_center()
+                        .when(update, |bar| {
+                            bar.child(
+                                button("Update", Message::OpenRepository)
+                                    .filled()
+                                    .h_px(COMMAND_CENTER_HEIGHT),
+                            )
+                        })
                         .child(
                             icon_button(theme, IconName::Settings, Message::OpenSettings)
                                 .tooltip("Open Settings"),
