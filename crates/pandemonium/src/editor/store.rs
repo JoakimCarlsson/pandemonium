@@ -11,10 +11,74 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use pm_core::{Blame, Change, ProjectId, Scope};
 use pm_gfx::Point;
-use pm_text::{Buffer, Client, Indent, Position, Server, Servers};
+use pm_text::{Buffer, Client, Highlight, Hint, Indent, Lens, Position, Request, Server, Servers};
+
+/// A stable key for a server while the document holds its client.
+fn server_key(client: &Arc<Client>) -> usize {
+    Arc::as_ptr(client) as usize
+}
+
+/// The time a refused annotation request waits before another attempt.
+const ANNOTATION_RETRY: Duration = Duration::from_millis(150);
+
+/// One server's semantic spans.
+type SemanticSpans = Vec<(std::ops::Range<Position>, Highlight)>;
+
+/// One server's request progress for one annotation kind.
+#[derive(Default)]
+struct AnnotationRequest {
+    /// The version with a request still outstanding.
+    in_flight: Option<i32>,
+    /// The version the server answered successfully.
+    answered: Option<i32>,
+    /// The earliest time a refused request may be repeated.
+    retry_at: Option<Instant>,
+}
+
+impl AnnotationRequest {
+    /// Whether the current version needs a request now.
+    fn wants(&mut self, version: i32, edited_at: Option<Instant>) -> bool {
+        if self.answered == Some(version)
+            || self.in_flight == Some(version)
+            || edited_at.is_some_and(|at| at.elapsed() < ANNOTATION_RETRY)
+            || self.retry_at.is_some_and(|at| Instant::now() < at)
+        {
+            return false;
+        }
+        self.in_flight = Some(version);
+        true
+    }
+
+    /// Records a reply only when it belongs to the current request.
+    fn answered(&mut self, version: i32, current: i32, accepted: bool) -> bool {
+        if self.in_flight != Some(version) || version != current {
+            return false;
+        }
+        self.in_flight = None;
+        if accepted {
+            self.answered = Some(version);
+            self.retry_at = None;
+        } else {
+            self.retry_at = Some(Instant::now() + ANNOTATION_RETRY);
+        }
+        true
+    }
+
+    /// The next delayed attempt for an unanswered current version.
+    fn next_attempt(&self, version: i32, edited_at: Option<Instant>) -> Option<Instant> {
+        if self.answered == Some(version) || self.in_flight == Some(version) {
+            return None;
+        }
+        [edited_at.map(|at| at + ANNOTATION_RETRY), self.retry_at]
+            .into_iter()
+            .flatten()
+            .max()
+    }
+}
 
 use crate::editor::baseline::Baselines;
 use crate::editor::layout::TextLayout;
@@ -108,12 +172,14 @@ pub struct Document {
     blame: Vec<Blame>,
     /// Whether the blame column is being drawn.
     blame_shown: bool,
-    /// The version the server was last asked what to write into the lines.
-    hinted: Option<i32>,
-    /// The version the server was last asked what the names in the file are.
-    named: Option<i32>,
-    /// The version the server was last asked for the notes above declarations.
-    lensed: Option<i32>,
+    /// Inlay hint progress and results, per server.
+    hinted: HashMap<usize, (AnnotationRequest, Vec<Hint>)>,
+    /// Semantic token progress and results, per server.
+    named: HashMap<usize, (AnnotationRequest, SemanticSpans)>,
+    /// Code lens progress and results, per server.
+    lensed: HashMap<usize, (AnnotationRequest, Vec<Lens>)>,
+    /// When the text last changed.
+    edited_at: Option<Instant>,
     /// The version and cursor the server was last asked where the symbol is used.
     used: Option<(i32, Position)>,
     /// The runs of lines that are folded away, in the order they appear.
@@ -124,6 +190,33 @@ pub struct Document {
 }
 
 impl Document {
+    /// The next annotation request held for typing or a refusal.
+    fn next_annotation(&self) -> Option<Instant> {
+        let version = self.buffer.version();
+        self.servers
+            .iter()
+            .filter_map(|client| {
+                let key = server_key(client);
+                [
+                    (client.offers(&Request::Hints(Position::default()..Position::default())))
+                        .then(|| self.hinted.get(&key).map(|(request, _)| request))
+                        .flatten(),
+                    client
+                        .offers(&Request::Semantics)
+                        .then(|| self.named.get(&key).map(|(request, _)| request))
+                        .flatten(),
+                    client
+                        .offers(&Request::Lenses)
+                        .then(|| self.lensed.get(&key).map(|(request, _)| request))
+                        .flatten(),
+                ]
+                .into_iter()
+                .flatten()
+                .filter_map(|request| request.next_attempt(version, self.edited_at))
+                .min()
+            })
+            .min()
+    }
     /// Opens `buffer`, telling every one of `servers` that it is open.
     fn new(
         buffer: Buffer,
@@ -148,9 +241,10 @@ impl Document {
             changes: (-1, Rc::from([])),
             blame: Vec::new(),
             blame_shown: false,
-            hinted: None,
-            named: None,
-            lensed: None,
+            hinted: HashMap::new(),
+            named: HashMap::new(),
+            lensed: HashMap::new(),
+            edited_at: None,
             used: None,
             folded: Vec::new(),
             buffer,
@@ -416,47 +510,141 @@ impl Document {
 
     /// Whether the server should be asked again what to write into the lines.
     ///
-    /// Asking is the window's to do and answering the server's; the document
-    /// only says whether what it is showing is still what was asked about.
-    pub fn wants_hints(&mut self) -> bool {
-        let version = self.buffer.version();
-        if self.servers.is_empty() || self.hinted == Some(version) {
-            return false;
+    /// Tracks an outstanding question and a successful answer separately.
+    pub fn wants_hints(&mut self, client: &Arc<Client>) -> bool {
+        self.hinted
+            .entry(server_key(client))
+            .or_default()
+            .0
+            .wants(self.buffer.version(), self.edited_at)
+    }
+
+    /// Replaces one server's hints when its reply belongs to the current text.
+    pub fn answered_hints(&mut self, client: &Arc<Client>, version: i32, hints: Option<Vec<Hint>>) {
+        let entry = self.hinted.entry(server_key(client)).or_default();
+        if entry
+            .0
+            .answered(version, self.buffer.version(), hints.is_some())
+            && let Some(hints) = hints
+        {
+            entry.1 = hints;
+            self.buffer.set_hints(
+                self.hinted
+                    .values()
+                    .flat_map(|(_, hints)| hints.iter().cloned())
+                    .collect(),
+            );
         }
-        self.hinted = Some(version);
-        true
     }
 
     /// Takes every hint out of the file, and forgets it asked for them.
     fn forget_hints(&mut self) {
         self.buffer.set_hints(Vec::new());
-        self.hinted = None;
+        self.hinted.clear();
     }
 
     /// Whether the server should be asked again what the names in the file are.
-    pub fn wants_semantics(&mut self) -> bool {
-        let version = self.buffer.version();
-        if self.servers.is_empty() || self.named == Some(version) {
+    pub fn wants_semantics(&mut self, client: &Arc<Client>) -> bool {
+        self.named
+            .entry(server_key(client))
+            .or_default()
+            .0
+            .wants(self.buffer.version(), self.edited_at)
+    }
+
+    /// Replaces one server's semantic tokens for the current text.
+    pub fn answered_semantics(
+        &mut self,
+        client: &Arc<Client>,
+        version: i32,
+        spans: Option<Vec<(std::ops::Range<Position>, Highlight)>>,
+    ) -> bool {
+        let entry = self.named.entry(server_key(client)).or_default();
+        if !entry
+            .0
+            .answered(version, self.buffer.version(), spans.is_some())
+        {
             return false;
         }
-        self.named = Some(version);
+        if let Some(spans) = spans {
+            entry.1 = spans;
+            self.buffer.set_semantics(
+                self.named
+                    .values()
+                    .flat_map(|(_, spans)| spans.iter().cloned())
+                    .collect(),
+            );
+        }
         true
     }
 
     /// Whether the server should be asked again for the notes above declarations.
-    pub fn wants_lenses(&mut self) -> bool {
-        let version = self.buffer.version();
-        if self.servers.is_empty() || self.lensed == Some(version) {
+    pub fn wants_lenses(&mut self, client: &Arc<Client>) -> bool {
+        self.lensed
+            .entry(server_key(client))
+            .or_default()
+            .0
+            .wants(self.buffer.version(), self.edited_at)
+    }
+
+    /// Replaces one server's lenses for the current text.
+    pub fn answered_lenses(
+        &mut self,
+        client: &Arc<Client>,
+        version: i32,
+        lenses: Option<Vec<Lens>>,
+    ) -> bool {
+        let entry = self.lensed.entry(server_key(client)).or_default();
+        if !entry
+            .0
+            .answered(version, self.buffer.version(), lenses.is_some())
+        {
             return false;
         }
-        self.lensed = Some(version);
+        if let Some(lenses) = lenses {
+            entry.1 = lenses;
+            self.buffer.set_lenses(
+                self.lensed
+                    .values()
+                    .flat_map(|(_, lenses)| lenses.iter().cloned())
+                    .collect(),
+            );
+        }
         true
+    }
+
+    /// Updates a resolved lens in its server's results and the drawn buffer.
+    pub fn resolve_lens(&mut self, client: &Arc<Client>, lens: Lens) {
+        if let Some((_, lenses)) = self.lensed.get_mut(&server_key(client))
+            && let Some(unresolved) = lenses
+                .iter_mut()
+                .find(|item| item.title.is_none() && item.position == lens.position)
+        {
+            *unresolved = lens;
+            self.buffer.set_lenses(
+                self.lensed
+                    .values()
+                    .flat_map(|(_, lenses)| lenses.iter().cloned())
+                    .collect(),
+            );
+        }
+    }
+
+    /// Lets one server request fresh annotations of the named kind.
+    pub fn refresh_annotation(&mut self, client: &Arc<Client>, request: &Request) {
+        let key = server_key(client);
+        match request {
+            Request::Hints(_) => self.hinted.entry(key).or_default().0.answered = None,
+            Request::Semantics => self.named.entry(key).or_default().0.answered = None,
+            Request::Lenses => self.lensed.entry(key).or_default().0.answered = None,
+            _ => {}
+        }
     }
 
     /// Takes every note above a declaration out, and forgets it asked for them.
     fn forget_lenses(&mut self) {
         self.buffer.set_lenses(Vec::new());
-        self.lensed = None;
+        self.lensed.clear();
     }
 
     /// Whether the server should be asked again where the symbol at the cursor
@@ -553,9 +741,12 @@ impl Document {
             }
         }
         self.servers = servers;
-        self.hinted = None;
-        self.named = None;
-        self.lensed = None;
+        self.hinted.clear();
+        self.named.clear();
+        self.lensed.clear();
+        self.buffer.set_hints(Vec::new());
+        self.buffer.set_lenses(Vec::new());
+        self.buffer.set_semantics(Vec::new());
         self.used = None;
         self.refresh();
         true
@@ -794,12 +985,25 @@ impl Document {
             return result;
         }
         self.preview = false;
+        self.edited_at = Some(Instant::now());
         self.changed();
         result
     }
 
     /// Brings the search and the servers up to the text as it now stands.
     fn changed(&mut self) {
+        self.buffer.set_hints(Vec::new());
+        self.buffer.set_lenses(Vec::new());
+        self.buffer.set_semantics(Vec::new());
+        for (_, hints) in self.hinted.values_mut() {
+            hints.clear();
+        }
+        for (_, spans) in self.named.values_mut() {
+            spans.clear();
+        }
+        for (_, lenses) in self.lensed.values_mut() {
+            lenses.clear();
+        }
         if self.search.is_open() {
             self.search.refresh(&self.buffer);
         }
@@ -853,6 +1057,7 @@ impl Document {
         let version = self.buffer.version();
         let changed = self.buffer.reread().unwrap_or(false);
         if version != self.buffer.version() {
+            self.edited_at = Some(Instant::now());
             self.changed();
         }
         self.changes = (-1, Rc::from([]));
@@ -922,6 +1127,22 @@ pub struct Files {
 }
 
 impl Files {
+    /// The next delayed annotation request for one open file.
+    pub fn next_annotation(&self, file: FileId) -> Option<Instant> {
+        self.get(file)?.borrow().next_annotation()
+    }
+    /// Every distinct language server serving an open document.
+    pub fn clients(&self) -> Vec<Arc<Client>> {
+        let mut clients = Vec::new();
+        for entry in self.open.values() {
+            for client in entry.document.borrow().servers() {
+                if !clients.iter().any(|known| Arc::ptr_eq(known, &client)) {
+                    clients.push(client);
+                }
+            }
+        }
+        clients
+    }
     /// Wakes the window through `notify` when a server has something to say,
     /// or when what the index holds for a file has been read.
     pub fn set_notify(&mut self, notify: Arc<dyn Fn() + Send + Sync>) {
@@ -997,6 +1218,20 @@ impl Files {
     pub fn forget_lenses(&mut self) {
         for entry in self.open.values() {
             entry.document.borrow_mut().forget_lenses();
+        }
+    }
+
+    /// Invalidates one annotation kind in every document served by `client`.
+    pub fn refresh_annotation(&mut self, client: &Arc<Client>, request: &Request) {
+        for entry in self.open.values() {
+            let mut document = entry.document.borrow_mut();
+            if document
+                .servers
+                .iter()
+                .any(|server| Arc::ptr_eq(server, client))
+            {
+                document.refresh_annotation(client, request);
+            }
         }
     }
 

@@ -13,6 +13,7 @@ use pm_core::{FileStatus, Scope};
 use pm_text::{Position, Request};
 
 use crate::app::App;
+use crate::app::language::Purpose;
 use crate::desktop;
 use crate::editor::FileId;
 use crate::panes::Item;
@@ -144,12 +145,21 @@ impl App {
             let Some(file) = self.editor.open(scope, &root, &path, true) else {
                 continue;
             };
-            let wanted = self
-                .editor
-                .get(file)
-                .is_some_and(|document| document.borrow_mut().wants_semantics());
-            if wanted {
-                self.ask_about(file, Position::default(), Request::Semantics);
+            if let Some(document) = self.editor.get(file) {
+                let clients = document.borrow().servers();
+                for client in clients {
+                    if client.offers(&Request::Semantics)
+                        && document.borrow_mut().wants_semantics(&client)
+                    {
+                        self.ask_of(
+                            client,
+                            file,
+                            Position::default(),
+                            Request::Semantics,
+                            Purpose::Act,
+                        );
+                    }
+                }
             }
         }
     }

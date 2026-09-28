@@ -2286,7 +2286,11 @@ impl ApplicationHandler<Wake> for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let expired = self.notices.expire(Instant::now());
         let seen = !self.window_occluded;
-        if (self.rested() || self.blinked() || (seen && self.spun()) || expired) && seen {
+        let next_annotation = self.next_annotation().filter(|_| seen);
+        let annotation_due = next_annotation.is_some_and(|at| at <= Instant::now());
+        if (self.rested() || self.blinked() || (seen && self.spun()) || expired || annotation_due)
+            && seen
+        {
             self.request_redraw();
         }
         let next = [
@@ -2294,6 +2298,7 @@ impl ApplicationHandler<Wake> for App {
             self.next_blink(),
             self.next_spin().filter(|_| seen),
             self.notices.next_expiry(),
+            next_annotation,
         ]
         .into_iter()
         .flatten()
