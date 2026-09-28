@@ -2416,7 +2416,21 @@ impl ApplicationHandler<Wake> for App {
                 self.window_state.width,
                 self.window_state.height,
             ))
-            .with_maximized(self.window_state.maximized);
+            .with_maximized(self.window_state.maximized)
+            .with_window_icon(crate::emblem::window_icon());
+        #[cfg(target_os = "linux")]
+        let attributes = {
+            use winit::platform::wayland::WindowAttributesExtWayland;
+            use winit::platform::x11::WindowAttributesExtX11;
+
+            let attributes =
+                WindowAttributesExtWayland::with_name(attributes, crate::emblem::APP_ID, "");
+            WindowAttributesExtX11::with_name(
+                attributes,
+                crate::emblem::APP_ID,
+                crate::emblem::APP_ID,
+            )
+        };
         #[cfg(target_os = "macos")]
         let attributes = {
             use winit::platform::macos::WindowAttributesExtMacOS;

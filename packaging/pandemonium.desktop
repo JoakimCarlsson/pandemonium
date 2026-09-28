@@ -6,4 +6,5 @@ Comment=A GPU-native text editor for conducting agents
 Exec=pandemonium
 Terminal=false
 Categories=Development;TextEditor;IDE;
+Icon=pandemonium
 StartupWMClass=pandemonium
