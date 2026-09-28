@@ -93,6 +93,8 @@ struct State {
     asked: HashMap<i64, (Request, PathBuf)>,
     /// The answers that have come back and not yet been collected.
     answers: HashMap<i64, Answer>,
+    /// Annotation kinds the server has asked the editor to refresh.
+    refreshes: Vec<Request>,
     /// Whether anything has arrived since the editor last looked.
     fresh: bool,
     /// What the server said its semantic token types are, in its own order.
@@ -304,10 +306,26 @@ impl Client {
 
     /// Gives up on `asked`, for a question whose answer is no longer wanted.
     pub fn forget(&self, asked: Asked) {
-        if let Ok(mut state) = self.state.lock() {
-            state.asked.remove(&asked.0);
+        let outstanding = if let Ok(mut state) = self.state.lock() {
+            let outstanding = state.asked.remove(&asked.0).is_some();
             state.answers.remove(&asked.0);
+            outstanding
+        } else {
+            false
+        };
+        if outstanding {
+            self.notify(json!({
+                "method": "$/cancelRequest", "params": { "id": asked.0 }
+            }));
         }
+    }
+
+    /// Takes annotation refresh requests the server has sent.
+    pub fn take_refreshes(&self) -> Vec<Request> {
+        self.state
+            .lock()
+            .map(|mut state| std::mem::take(&mut state.refreshes))
+            .unwrap_or_default()
     }
 
     /// What the server last said about `path`.
@@ -517,6 +535,12 @@ impl Reader {
                 self.with_watchers(|watchers| watchers.unregister(&message["params"]));
                 self.acknowledge(message);
             }
+            Some("workspace/semanticTokens/refresh") => self.refresh(message, Request::Semantics),
+            Some("workspace/inlayHint/refresh") => self.refresh(
+                message,
+                Request::Hints(Position::default()..Position::default()),
+            ),
+            Some("workspace/codeLens/refresh") => self.refresh(message, Request::Lenses),
             Some(_) if message.get("id").is_some() => self.acknowledge(message),
             _ => {}
         }
@@ -529,6 +553,16 @@ impl Reader {
             "id": message["id"].clone(),
             "result": Value::Null,
         })));
+    }
+
+    /// Records a server request to ask again for one annotation kind.
+    fn refresh(&self, message: &Value, request: Request) {
+        if let Ok(mut state) = self.state.lock() {
+            state.refreshes.push(request);
+            state.fresh = true;
+        }
+        self.acknowledge(message);
+        (self.notify)();
     }
 
     /// Runs `change` over the files the server has asked to hear about.
@@ -712,6 +746,9 @@ fn initialize(root: &Path, server: Server) -> Value {
                 },
             },
             "workspace": {
+                "semanticTokens": { "refreshSupport": true },
+                "inlayHint": { "refreshSupport": true },
+                "codeLens": { "refreshSupport": true },
                 "workspaceEdit": { "documentChanges": true },
                 "symbol": {},
                 "didChangeWatchedFiles": {

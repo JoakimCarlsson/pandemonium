@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use pm_text::{
     Answer, Asked, Calls, Client, FileEdit, Lens, Location, NamedLocation, Position, Request,
@@ -61,9 +62,21 @@ pub struct Pending {
     request: Request,
     /// Why it was asked.
     purpose: Purpose,
+    /// The buffer version this question was about.
+    version: i32,
 }
 
 impl App {
+    /// The next delayed annotation request in a visible document.
+    pub(super) fn next_annotation(&self) -> Option<Instant> {
+        let scope = self.scope()?;
+        self.panes
+            .panes()
+            .into_iter()
+            .filter_map(|pane| self.file_in(self.panes.pane(pane)?.active(scope)?))
+            .filter_map(|file| self.editor.next_annotation(file))
+            .min()
+    }
     /// Carries out a command the language server behind the file answers.
     pub(super) fn act_on_language(&mut self, action: Action) {
         let request = match action {
@@ -175,7 +188,7 @@ impl App {
     /// A question that carries what one server handed out goes back to that
     /// server and no other: a symbol rust-analyzer named means nothing to a
     /// linter running beside it.
-    fn ask_of(
+    pub(super) fn ask_of(
         &mut self,
         client: Arc<Client>,
         file: FileId,
@@ -190,6 +203,11 @@ impl App {
             return;
         }
         let asked = client.ask(request.clone(), &path, at);
+        let version = self
+            .editor
+            .get(file)
+            .map(|document| document.borrow().buffer().version())
+            .unwrap_or_default();
         self.asked.push(Pending {
             client,
             asked,
@@ -197,6 +215,7 @@ impl App {
             at,
             request,
             purpose,
+            version,
         });
     }
 
@@ -265,6 +284,8 @@ impl App {
     /// scrolling is not a question, and a file short enough to be open is
     /// short enough to be answered about in one go.
     pub(super) fn refresh_annotations(&mut self) {
+        self.collect_annotation_refreshes();
+        self.cancel_stale_annotations();
         let Some(scope) = self.scope() else {
             return;
         };
@@ -282,20 +303,84 @@ impl App {
             let Some(document) = self.editor.get(file) else {
                 continue;
             };
-            if document.borrow_mut().wants_semantics() {
-                self.ask_about(file, Position::default(), Request::Semantics);
+            let clients = document.borrow().servers();
+            for client in clients {
+                if client.offers(&Request::Semantics)
+                    && document.borrow_mut().wants_semantics(&client)
+                {
+                    self.ask_of(
+                        client.clone(),
+                        file,
+                        Position::default(),
+                        Request::Semantics,
+                        Purpose::Act,
+                    );
+                }
+                if self.preferences.code_lens
+                    && client.offers(&Request::Lenses)
+                    && document.borrow_mut().wants_lenses(&client)
+                {
+                    self.forget_lens_resolves(file, &client);
+                    self.ask_of(
+                        client.clone(),
+                        file,
+                        Position::default(),
+                        Request::Lenses,
+                        Purpose::Act,
+                    );
+                }
+                let last = document.borrow().buffer().line_count().saturating_sub(1);
+                let span = Position::default()..Position::new(last, 0);
+                let request = Request::Hints(span);
+                if self.preferences.inlay_hints
+                    && client.offers(&request)
+                    && document.borrow_mut().wants_hints(&client)
+                {
+                    self.ask_of(client, file, Position::default(), request, Purpose::Act);
+                }
             }
-            if self.preferences.code_lens && document.borrow_mut().wants_lenses() {
-                self.ask_about(file, Position::default(), Request::Lenses);
-            }
-            let wanted = self.preferences.inlay_hints && document.borrow_mut().wants_hints();
-            if !wanted {
-                continue;
-            }
-            let last = document.borrow().buffer().line_count().saturating_sub(1);
-            let span = Position::default()..Position::new(last, 0);
-            self.ask_about(file, Position::default(), Request::Hints(span));
         }
+    }
+
+    /// Applies server refresh requests to every document they serve.
+    fn collect_annotation_refreshes(&mut self) {
+        for client in self.editor.clients() {
+            for request in client.take_refreshes() {
+                self.editor.refresh_annotation(&client, &request);
+            }
+        }
+    }
+
+    /// Cancels annotation work for text that has since changed.
+    fn cancel_stale_annotations(&mut self) {
+        self.asked.retain(|pending| {
+            let annotation = matches!(
+                pending.request,
+                Request::Hints(_) | Request::Semantics | Request::Lenses | Request::ResolveLens(_)
+            );
+            let stale = annotation
+                && self
+                    .editor
+                    .get(pending.file)
+                    .is_none_or(|document| document.borrow().buffer().version() != pending.version);
+            if stale {
+                pending.client.forget(pending.asked);
+            }
+            !stale
+        });
+    }
+
+    /// Cancels unresolved lenses superseded by a fresh list from one server.
+    fn forget_lens_resolves(&mut self, file: FileId, client: &Arc<Client>) {
+        self.asked.retain(|pending| {
+            let obsolete = pending.file == file
+                && Arc::ptr_eq(&pending.client, client)
+                && matches!(pending.request, Request::ResolveLens(_));
+            if obsolete {
+                pending.client.forget(pending.asked);
+            }
+            !obsolete
+        });
     }
 
     /// Asks where the symbol at the cursor of `file` is used, once it has
@@ -518,7 +603,9 @@ impl App {
         self.asked.retain(|pending| {
             if pending.file != file
                 || pending.purpose != purpose
-                || std::mem::discriminant(&pending.request) != kind
+                || (std::mem::discriminant(&pending.request) != kind
+                    && !(matches!(request, Request::Lenses)
+                        && matches!(pending.request, Request::ResolveLens(_))))
             {
                 return true;
             }
@@ -551,14 +638,36 @@ impl App {
 
     /// Acts on one answer, if the file it was about is still open.
     ///
-    /// An empty answer is no answer: every server behind the file is asked,
-    /// and the ones with nothing to say must not wipe out what the one with
-    /// something to say has already put on the screen.
+    /// Empty annotation replies clear only the responding server's results;
+    /// empty replies to interactive questions have nothing to display.
     fn answered(&mut self, pending: &Pending, answer: Answer) {
         if self.editor.get(pending.file).is_none() {
             return;
         }
-        if answer.is_empty() {
+        if matches!(answer, Answer::Refused) {
+            if let Some(document) = self.editor.get(pending.file) {
+                let mut document = document.borrow_mut();
+                match pending.request {
+                    Request::Hints(_) => {
+                        document.answered_hints(&pending.client, pending.version, None)
+                    }
+                    Request::Semantics => {
+                        document.answered_semantics(&pending.client, pending.version, None);
+                    }
+                    Request::Lenses => {
+                        document.answered_lenses(&pending.client, pending.version, None);
+                    }
+                    _ => {}
+                }
+            }
+            return self.save_once_formatted(pending);
+        }
+        if answer.is_empty()
+            && !matches!(
+                pending.request,
+                Request::Hints(_) | Request::Semantics | Request::Lenses
+            )
+        {
             return self.save_once_formatted(pending);
         }
         match answer {
@@ -582,12 +691,20 @@ impl App {
             }
             Answer::Hints(hints) => {
                 if let Some(document) = self.editor.get(pending.file) {
-                    document.borrow_mut().buffer_mut().set_hints(hints);
+                    document.borrow_mut().answered_hints(
+                        &pending.client,
+                        pending.version,
+                        Some(hints),
+                    );
                 }
             }
             Answer::Semantics(spans) => {
                 if let Some(document) = self.editor.get(pending.file) {
-                    document.borrow_mut().buffer_mut().set_semantics(spans);
+                    document.borrow_mut().answered_semantics(
+                        &pending.client,
+                        pending.version,
+                        Some(spans),
+                    );
                 }
                 self.repaint_review(pending.file);
             }
@@ -698,14 +815,17 @@ impl App {
         };
         if matches!(pending.request, Request::ResolveLens(_)) {
             for lens in lenses {
-                document.borrow_mut().buffer_mut().resolve_lens(lens);
+                document.borrow_mut().resolve_lens(&pending.client, lens);
             }
             return;
         }
-        document
-            .borrow_mut()
-            .buffer_mut()
-            .set_lenses(lenses.clone());
+        if !document.borrow_mut().answered_lenses(
+            &pending.client,
+            pending.version,
+            Some(lenses.clone()),
+        ) {
+            return;
+        }
         for lens in lenses.into_iter().filter(|lens| lens.title.is_none()) {
             self.ask_of(
                 pending.client.clone(),
