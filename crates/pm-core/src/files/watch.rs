@@ -5,7 +5,9 @@
 //! how the editor finds out. The platform's own notifications are gathered
 //! on a thread of their own and settled for a moment before the window is
 //! woken, so a tool that writes a file in ten pieces is one change to the
-//! window rather than ten.
+//! window rather than ten. What a path became is read from the disk after
+//! that pause: a backend may report flags rather than the order things
+//! happened in, and the disk is what the window follows.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -261,7 +263,8 @@ fn is_git_state(inside: &Path) -> bool {
 /// Waits for the disk to change and then to go quiet, and says what it did.
 ///
 /// Nothing having happened by the time the thread should check whether it
-/// is still wanted comes back as nothing.
+/// is still wanted comes back as nothing. Each path comes back once, as
+/// what the disk holds now rather than as the order the notices arrived.
 fn settle(events: &Receiver<notify::Result<Event>>) -> Vec<(PathBuf, Touch)> {
     let mut batch = Vec::new();
     let first = match events.recv_timeout(IDLE) {
@@ -280,7 +283,46 @@ fn settle(events: &Receiver<notify::Result<Event>>) -> Vec<(PathBuf, Touch)> {
             Err(_) => break,
         }
     }
-    batch
+    on_disk(batch)
+}
+
+/// One touch per path in `noticed`, taken from the disk.
+///
+/// The notices are folded first. A path that is not there was removed,
+/// whatever they said. One that is there and that the fold says was removed
+/// was taken away and put back, so it changed. One the fold says was created
+/// stays created, which is what shows it in the tree.
+fn on_disk(noticed: Vec<(PathBuf, Touch)>) -> Vec<(PathBuf, Touch)> {
+    let mut folded: BTreeMap<PathBuf, Touch> = BTreeMap::new();
+    for (path, touch) in noticed {
+        folded
+            .entry(path)
+            .and_modify(|was| *was = was.then(touch))
+            .or_insert(touch);
+    }
+    folded
+        .into_iter()
+        .map(|(path, folded)| {
+            let touch = read_touch(&path, folded);
+            (path, touch)
+        })
+        .collect()
+}
+
+/// What `folded` means for `path` once it has been looked up.
+fn read_touch(path: &Path, folded: Touch) -> Touch {
+    if !present(path) {
+        return Touch::Removed;
+    }
+    match folded {
+        Touch::Removed => Touch::Changed,
+        touch => touch,
+    }
+}
+
+/// Whether `path` is on disk, counting a dangling symlink as present.
+fn present(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
 }
 
 /// Adds what `event` says happened to `batch`.
@@ -304,7 +346,7 @@ fn gather(event: notify::Result<Event>, batch: &mut Vec<(PathBuf, Touch)>) {
             batch.extend(paths.next().map(created));
         }
         EventKind::Modify(ModifyKind::Name(_)) => {
-            batch.extend(event.paths.into_iter().map(|path| match path.exists() {
+            batch.extend(event.paths.into_iter().map(|path| match present(&path) {
                 true => created(path),
                 false => removed(path),
             }));
