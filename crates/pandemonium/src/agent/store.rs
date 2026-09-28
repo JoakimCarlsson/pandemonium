@@ -144,6 +144,8 @@ pub struct Talk {
     dismissed: bool,
     /// Whether the conversation is open and will take prompts.
     ready: bool,
+    /// Whether this newly started conversation should receive remembered options.
+    remember_on_ready: bool,
     /// Whether a turn is running.
     busy: bool,
     /// When the current turn began, for its visible activity timer.
@@ -712,41 +714,6 @@ impl Talk {
         self.conversation.switch_knob(id, !on);
     }
 
-    /// Sets the knob `id` names to the value after the one it is set to.
-    pub fn cycle_knob(&self, id: &str) {
-        let Some(knob) = self.knob(id) else {
-            return;
-        };
-        let Setting::Picked { value, picks } = knob.setting else {
-            return self.toggle_knob(id);
-        };
-        if picks.is_empty() {
-            return;
-        }
-        let at = picks
-            .iter()
-            .position(|pick| pick.id == value)
-            .map_or(0, |at| (at + 1) % picks.len());
-        self.set_knob(id, &picks[at].id);
-    }
-
-    /// Puts it into the mode after the one it is in, wrapping round.
-    ///
-    /// One chord walks the modes because there are two or three of them and
-    /// a reader changing mode is usually going to the next one; the list is
-    /// there for the times they are not.
-    pub fn cycle_mode(&self) {
-        let modes = self.modes();
-        if modes.is_empty() {
-            return;
-        }
-        let at = modes
-            .iter()
-            .position(|offered| Some(offered.id.as_str()) == self.mode())
-            .map_or(0, |at| (at + 1) % modes.len());
-        self.set_mode(&modes[at].id);
-    }
-
     /// Whether the agent's process is still there.
     pub fn is_running(&self) -> bool {
         self.conversation.is_running()
@@ -1210,6 +1177,8 @@ pub struct Talks {
     renamed: bool,
     /// The sessions whose agent went away on its own since this was asked.
     ended: Vec<TalkId>,
+    /// New conversations that became ready since the last check.
+    opened: Vec<TalkId>,
     /// The file and terminal requests the agents have raised and the window
     /// has not yet taken, with the ticket each is answered under.
     requests: Vec<(TalkId, u64, Request)>,
@@ -1270,6 +1239,7 @@ impl Talks {
         opening: Opening<'_>,
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
+        let remember_on_ready = matches!(opening, Opening::New);
         let started = match opening {
             Opening::Exact(saved) => Session::load(agent, root, env, saved, notify.clone()),
             Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
@@ -1316,6 +1286,7 @@ impl Talks {
                 chosen: 0,
                 dismissed: false,
                 ready: false,
+                remember_on_ready,
                 busy: false,
                 busy_since: None,
                 unseen: false,
@@ -1356,6 +1327,7 @@ impl Talks {
             Ok(conversation) => {
                 talk.conversation = conversation;
                 talk.ready = false;
+                talk.remember_on_ready = true;
                 talk.busy = false;
                 talk.busy_since = None;
                 talk.logins.clear();
@@ -1451,6 +1423,11 @@ impl Talks {
         std::mem::take(&mut self.ended)
     }
 
+    /// Newly started conversations ready to receive remembered options.
+    pub fn take_opened(&mut self) -> Vec<TalkId> {
+        std::mem::take(&mut self.opened)
+    }
+
     /// How many of the conversations are in the middle of a turn.
     pub fn working(&self) -> usize {
         self.talks.values().filter(|talk| talk.is_busy()).count()
@@ -1472,6 +1449,10 @@ impl Talks {
                     continue;
                 }
                 self.renamed |= matches!(event, Event::Ready | Event::Titled(_));
+                if matches!(event, Event::Ready) && talk.remember_on_ready {
+                    self.opened.push(talk.id);
+                    talk.remember_on_ready = false;
+                }
                 if matches!(event, Event::Ended) {
                     self.ended.push(talk.id);
                 }

@@ -5,6 +5,7 @@
 //! build their screens from it, both answer with the same [`Message`], and
 //! [`Preferences::apply`] is the one place either of them changes it.
 
+use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
@@ -195,9 +196,31 @@ pub struct VimBinding {
     pub when: String,
 }
 
+/// A value the reader chose for one agent knob.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum KnobValue {
+    /// An id from the knob's offered values.
+    Picked(String),
+    /// Whether a switch is on.
+    Switched(bool),
+}
+
+/// The last options the reader chose for one agent CLI.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct AgentOptions {
+    /// The last chosen protocol mode.
+    pub mode: Option<String>,
+    /// The last chosen value of each knob, by knob id.
+    pub knobs: BTreeMap<String, KnobValue>,
+}
+
 /// Everything the reader decides about how the editor draws and behaves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
+    /// The last options chosen for each agent CLI, by agent id.
+    pub agent_options: BTreeMap<String, AgentOptions>,
     /// Which theme the editor draws in.
     pub theme_mode: ThemeMode,
     /// Index into `pm_ui::families` of the theme family the editor draws in.
@@ -250,6 +273,7 @@ impl Default for Preferences {
     /// The preferences a first launch starts from.
     fn default() -> Self {
         Self {
+            agent_options: BTreeMap::new(),
             theme_mode: ThemeMode::System,
             theme_family: DEFAULT_FAMILY,
             theme_overrides: ThemeOverrides::default(),

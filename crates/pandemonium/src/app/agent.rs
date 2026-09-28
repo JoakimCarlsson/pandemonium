@@ -17,6 +17,7 @@ use winit::window::UserAttentionType;
 use crate::agent::{Standing, Talk, TalkId, Tally};
 use crate::app::places::Place;
 use crate::app::{App, Writing};
+use crate::config::{AgentOptions, KnobValue};
 use crate::desktop;
 use crate::message::Message;
 use crate::panel::PanelView;
@@ -285,12 +286,25 @@ impl App {
         let Some(talk) = self.agents.get(session) else {
             return;
         };
-        match talk.modes().is_empty() {
-            false => talk.cycle_mode(),
-            true => {
-                if let Some(knob) = talk.knob_about(About::Mode) {
-                    talk.cycle_knob(&knob.id);
+        let modes = talk.modes();
+        if !modes.is_empty() {
+            let at = modes
+                .iter()
+                .position(|mode| Some(mode.id.as_str()) == talk.mode())
+                .map_or(0, |at| (at + 1) % modes.len());
+            let mode = modes[at].id.clone();
+            self.set_agent_mode(session, &mode);
+        } else if let Some(knob) = talk.knob_about(About::Mode) {
+            match knob.setting {
+                Setting::Picked { value, picks } if !picks.is_empty() => {
+                    let at = picks
+                        .iter()
+                        .position(|pick| pick.id == value)
+                        .map_or(0, |at| (at + 1) % picks.len());
+                    self.set_knob(session, &knob.id, &picks[at].id);
                 }
+                Setting::Switched(_) => self.toggle_agent_knob(session, &knob.id),
+                _ => {}
             }
         }
     }
@@ -304,9 +318,7 @@ impl App {
             return;
         };
         let Setting::Picked { value, picks } = knob.setting else {
-            if let Some(talk) = self.agents.get(session) {
-                talk.toggle_knob(&knob.id);
-            }
+            self.toggle_agent_knob(session, &knob.id);
             return;
         };
         let rows = picks
@@ -353,8 +365,35 @@ impl App {
     /// Sets `session`'s knob `knob` to the value `value` names.
     pub(super) fn set_knob(&mut self, session: TalkId, knob: &str, value: &str) {
         if let Some(talk) = self.agents.get(session) {
+            let agent = talk.agent().id.to_owned();
             talk.set_knob(knob, value);
+            self.preferences
+                .agent_options
+                .entry(agent)
+                .or_default()
+                .knobs
+                .insert(knob.to_owned(), KnobValue::Picked(value.to_owned()));
+            self.store();
         }
+    }
+
+    /// Toggles a reader-selected switch and remembers its new value.
+    fn toggle_agent_knob(&mut self, session: TalkId, knob: &str) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let Some(Setting::Switched(on)) = talk.knob(knob).map(|knob| knob.setting) else {
+            return;
+        };
+        let agent = talk.agent().id.to_owned();
+        talk.toggle_knob(knob);
+        self.preferences
+            .agent_options
+            .entry(agent)
+            .or_default()
+            .knobs
+            .insert(knob.to_owned(), KnobValue::Switched(!on));
+        self.store();
     }
 
     /// The modes `session` can be put into, as the picker offers them.
@@ -380,7 +419,27 @@ impl App {
     /// Puts `session` into the mode `mode` names.
     pub(super) fn set_agent_mode(&mut self, session: TalkId, mode: &str) {
         if let Some(talk) = self.agents.get(session) {
+            let agent = talk.agent().id.to_owned();
             talk.set_mode(mode);
+            self.preferences
+                .agent_options
+                .entry(agent)
+                .or_default()
+                .mode = Some(mode.to_owned());
+            self.store();
+        }
+    }
+
+    /// Applies reader-selected options to each newly opened conversation.
+    pub(super) fn apply_agent_options(&mut self) {
+        for id in self.agents.take_opened() {
+            let Some(talk) = self.agents.get(id) else {
+                continue;
+            };
+            let Some(options) = self.preferences.agent_options.get(talk.agent().id) else {
+                continue;
+            };
+            apply_remembered_options(talk, options);
         }
     }
 
@@ -976,4 +1035,50 @@ fn after_colons(path: &str) -> (&str, Option<usize>) {
 fn numbered(path: &str) -> Option<(&str, &str)> {
     path.rsplit_once(':')
         .filter(|(_, number)| number.parse::<usize>().is_ok())
+}
+
+/// Sends remembered values that the newly opened conversation still offers.
+fn apply_remembered_options(talk: &Talk, options: &AgentOptions) {
+    let knobs = talk.knobs();
+    for knob in knobs.iter().filter(|knob| knob.about == About::Model) {
+        apply_remembered_knob(talk, knob, options);
+    }
+    for knob in knobs
+        .iter()
+        .filter(|knob| knob.about != About::Model && knob.about != About::Mode)
+    {
+        apply_remembered_knob(talk, knob, options);
+    }
+    if talk.modes().is_empty() {
+        for knob in knobs.iter().filter(|knob| knob.about == About::Mode) {
+            apply_remembered_knob(talk, knob, options);
+        }
+    } else if let Some(mode) = options.mode.as_deref()
+        && talk.mode() != Some(mode)
+        && talk.modes().iter().any(|offered| offered.id == mode)
+    {
+        talk.set_mode(mode);
+    }
+}
+
+/// Sends one remembered knob value when its kind and offered values still match.
+fn apply_remembered_knob(talk: &Talk, knob: &Knob, options: &AgentOptions) {
+    let Some(value) = options.knobs.get(&knob.id) else {
+        return;
+    };
+    match (&knob.setting, value) {
+        (
+            Setting::Picked {
+                value: current,
+                picks,
+            },
+            KnobValue::Picked(wanted),
+        ) if current != wanted && picks.iter().any(|pick| pick.id == *wanted) => {
+            talk.set_knob(&knob.id, wanted);
+        }
+        (Setting::Switched(current), KnobValue::Switched(wanted)) if current != wanted => {
+            talk.toggle_knob(&knob.id);
+        }
+        _ => {}
+    }
 }

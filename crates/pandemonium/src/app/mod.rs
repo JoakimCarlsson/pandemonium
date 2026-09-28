@@ -2325,6 +2325,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Agent => {
                 let before = self.agents.tally();
                 if self.agents.pump() {
+                    self.apply_agent_options();
                     self.serve_agents();
                     self.refresh_agent_history();
                     self.hear_ended_agents();
