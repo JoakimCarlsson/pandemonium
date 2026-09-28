@@ -1906,6 +1906,9 @@ name = "pm-core"
 version = "0.4.0"
 dependencies = [
  "notify",
+ "serde",
+ "serde_json",
+ "serde_norway",
  "trash",
 ]
 

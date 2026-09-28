@@ -66,6 +66,8 @@ pub struct Scenario {
     pub adapter: Option<Adapter>,
     /// Whether it starts the program or joins it.
     pub request: Request,
+    /// A task to finish successfully before starting the adapter.
+    pub before: Option<String>,
     /// What the adapter is told about the program, variables filled in.
     pub config: Map<String, Value>,
     /// Where the scenario was read from, relative to the worktree, or
@@ -123,6 +125,10 @@ fn vs_code(file: &Value, words: &Words) -> Vec<Scenario> {
                 adapter: Adapter::find(&kind),
                 kind,
                 request: Request::named(configuration.get("request").and_then(Value::as_str)),
+                before: configuration
+                    .get("preLaunchTask")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 config: words.fill_map(without(configuration, &VS_CODE_OWN)),
                 source: Some(source.clone()),
             }
@@ -144,6 +150,10 @@ fn zed(file: &Value, words: &Words) -> Vec<Scenario> {
                 adapter: Adapter::find(&kind),
                 kind,
                 request: Request::named(scenario.get("request").and_then(Value::as_str)),
+                before: scenario
+                    .get("build")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 config: words.fill_map(without(scenario, &ZED_OWN)),
                 source: Some(source.clone()),
             }
@@ -161,6 +171,7 @@ fn offered(file: Option<&Path>, words: &Words) -> Vec<Scenario> {
         kind: kind.to_owned(),
         adapter: Adapter::find(kind),
         request: Request::Launch,
+        before: None,
         config: words.fill_map(config.as_object().cloned().unwrap_or_default()),
         source: None,
     };

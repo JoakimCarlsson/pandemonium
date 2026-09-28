@@ -110,6 +110,12 @@ pub enum Action {
     FocusDown,
     /// Open a terminal in a new pane.
     NewTerminal,
+    /// Choose and run a task in the worktree in front.
+    TaskRun,
+    /// Run the last task of the worktree in front.
+    TaskRerun,
+    /// Stop the task shown in the terminal or the sole running task.
+    TaskStop,
     /// Write the focused buffer to disk.
     Save,
     /// Write every changed buffer to disk.
@@ -420,6 +426,9 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::FocusUp, "pane.focus_up", "Focus Pane Up"),
     (Action::FocusDown, "pane.focus_down", "Focus Pane Down"),
     (Action::NewTerminal, "terminal.new", "New Terminal"),
+    (Action::TaskRun, "task.run", "Tasks: Run Task"),
+    (Action::TaskRerun, "task.rerun", "Tasks: Rerun Last Task"),
+    (Action::TaskStop, "task.stop", "Tasks: Stop Task"),
     (Action::Save, "file.save", "Save"),
     (Action::SaveAll, "file.save_all", "Save All"),
     (

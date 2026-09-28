@@ -458,6 +458,8 @@ bindings:
       f5: debug.continue
       shift+f5: debug.stop
       primary+shift+f5: debug.restart
+      primary+shift+b: task.run
+      primary+alt+r: task.rerun
   - when: editor.focused
     keys:
       f9: debug.toggle_breakpoint

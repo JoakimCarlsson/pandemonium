@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use pm_core::{ProjectId, Scope};
+use pm_core::{ProjectId, Scope, Task};
 use pm_vt::{Notify, Terminal};
 
 /// Columns a shell is started with, before a pane has been drawn for it.
@@ -74,6 +74,8 @@ struct WorktreeShells {
     active: Option<ShellId>,
     /// The shells among them that agents started, by id.
     errands: BTreeMap<ShellId, Errand>,
+    /// Task shells, retained after their children exit.
+    tasks: BTreeMap<ShellId, String>,
 }
 
 impl WorktreeShells {
@@ -90,14 +92,15 @@ impl WorktreeShells {
         self.active.and_then(|id| self.get(id))
     }
 
-    /// Drops the shells whose child has exited, and says whether any had.
+    /// Drops reader shells whose child has exited, and says whether any had.
     ///
     /// The ones that exited badly are handed to `failed`, named, with the
     /// code they gave.
     ///
     /// A shell an agent still holds is kept however it ended, and one an
     /// agent started is never reported: a failing test is the agent's to
-    /// read, not the reader's to be interrupted by.
+    /// read, not the reader's to be interrupted by. Task shells remain
+    /// listed and report through the task seam.
     fn reap(&mut self, scope: Scope, failed: &mut Vec<Exited>) -> bool {
         let before = self.running.len();
         let errands = &mut self.errands;
@@ -112,6 +115,9 @@ impl WorktreeShells {
                 }
                 errands.remove(id);
                 return false;
+            }
+            if self.tasks.contains_key(id) {
+                return true;
             }
             if let Some(code) = child.exit_code().filter(|code| *code != 0) {
                 drop(child);
@@ -181,9 +187,13 @@ impl Terminals {
             shells
                 .running
                 .iter()
-                .all(|(id, _)| shells.errands.contains_key(id))
+                .all(|(id, _)| shells.errands.contains_key(id) || shells.tasks.contains_key(id))
         }) {
+            let active_task = self.active_task(scope);
             self.start(scope, root, env);
+            if let Some(task) = active_task {
+                self.activate(scope, task);
+            }
         }
         self.active(scope)
     }
@@ -253,6 +263,69 @@ impl Terminals {
         Ok(id)
     }
 
+    /// Starts a retained task shell, optionally replacing an earlier run in its list position.
+    pub fn run_task(
+        &mut self,
+        scope: Scope,
+        cwd: &Path,
+        task: &Task,
+        env: &[(String, String)],
+        replace: Option<ShellId>,
+        front: bool,
+    ) -> std::io::Result<ShellId> {
+        let notify = self
+            .notify
+            .clone()
+            .ok_or_else(|| std::io::Error::other("the window is not listening"))?;
+        let mut shell = Terminal::run(
+            cwd,
+            INITIAL_COLS,
+            INITIAL_ROWS,
+            &task.command,
+            &[],
+            env,
+            notify,
+        )?;
+        if let Some(lines) = self.scrollback {
+            shell.set_scrollback(lines);
+        }
+        let id = self.next;
+        self.next = ShellId(id.0 + 1);
+        let shells = self.worktrees.entry(scope).or_default();
+        let entry = (id, Rc::new(RefCell::new(shell)));
+        if let Some(position) =
+            replace.and_then(|old| shells.running.iter().position(|(id, _)| *id == old))
+        {
+            shells.running[position] = entry;
+            shells.tasks.remove(&replace.unwrap());
+        } else {
+            shells.running.push(entry);
+        }
+        shells.tasks.insert(id, task.label.clone());
+        if front {
+            shells.active = Some(id);
+        } else {
+            shells.active = shells.active.or(Some(id));
+        }
+        Ok(id)
+    }
+
+    /// The task shell `id` names if it is still in the worktree's list.
+    pub fn task_shell(&self, scope: Scope, id: ShellId) -> Option<Shell> {
+        let shells = self.worktrees.get(&scope)?;
+        shells
+            .tasks
+            .contains_key(&id)
+            .then(|| shells.get(id))
+            .flatten()
+    }
+
+    /// The task shell currently shown in the terminal view.
+    pub fn active_task(&self, scope: Scope) -> Option<ShellId> {
+        let shells = self.worktrees.get(&scope)?;
+        shells.active.filter(|id| shells.tasks.contains_key(id))
+    }
+
     /// The shell `id` names in `scope`, while it is listed.
     pub fn get(&self, scope: Scope, id: ShellId) -> Option<Shell> {
         self.worktrees.get(&scope)?.get(id)
@@ -294,10 +367,24 @@ impl Terminals {
             .iter()
             .map(|(id, shell)| ShellEntry {
                 id: *id,
-                name: shells
-                    .errands
-                    .get(id)
-                    .map_or_else(|| name(shell), |errand| errand.label.clone()),
+                name: shells.errands.get(id).map_or_else(
+                    || {
+                        shells.tasks.get(id).map_or_else(
+                            || name(shell),
+                            |label| {
+                                let mut child = shell.borrow_mut();
+                                if child.is_running() {
+                                    label.clone()
+                                } else if child.exit_code() == Some(0) {
+                                    format!("✓ {label}")
+                                } else {
+                                    format!("✗ {label}")
+                                }
+                            },
+                        )
+                    },
+                    |errand| errand.label.clone(),
+                ),
                 active: shells.active == Some(*id),
             })
             .collect()
@@ -317,6 +404,7 @@ impl Terminals {
         };
         shells.running.retain(|(running, _)| *running != id);
         shells.errands.remove(&id);
+        shells.tasks.remove(&id);
         if shells.active == Some(id) {
             shells.active = shells.running.last().map(|(id, _)| *id);
         }
@@ -329,6 +417,7 @@ impl Terminals {
         };
         shells.running.retain(|(running, _)| *running == id);
         shells.errands.retain(|errand, _| *errand == id);
+        shells.tasks.retain(|task, _| *task == id);
         shells.active = Some(id);
     }
 
@@ -337,6 +426,7 @@ impl Terminals {
         if let Some(shells) = self.worktrees.get_mut(&scope) {
             shells.running.clear();
             shells.errands.clear();
+            shells.tasks.clear();
             shells.active = None;
         }
     }
@@ -348,8 +438,8 @@ impl Terminals {
 
     /// Applies what every shell has written, and says whether anything changed.
     ///
-    /// A shell whose child has exited is dropped here rather than left in the
-    /// list as a dead pane: the list shows what is running.
+    /// Reader shells whose children exited leave the list; task shells stay
+    /// so their output can be read after a run.
     pub fn pump(&mut self) -> bool {
         let mut changed = false;
         for (scope, shells) in &mut self.worktrees {
