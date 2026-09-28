@@ -376,18 +376,22 @@ impl App {
                 sessions: self
                     .sessions
                     .of(project.id())
-                    .map(|session| SidebarSession {
-                        id: session.id(),
-                        name: session.name().to_owned(),
-                        drift: session.summary().line(),
-                        status_color: self.session_color(&theme, session.id()),
-                        errors: self
-                            .editor
-                            .servers_over(session.root())
-                            .iter()
-                            .map(|server| server.errors())
-                            .sum(),
-                        selected: selected == Some(session.id()),
+                    .map(|session| {
+                        let summary = session.summary();
+                        SidebarSession {
+                            id: session.id(),
+                            name: session.name().to_owned(),
+                            added: summary.added,
+                            removed: summary.removed,
+                            status_color: self.session_color(&theme, session.id()),
+                            errors: self
+                                .editor
+                                .servers_over(session.root())
+                                .iter()
+                                .map(|server| server.errors())
+                                .sum(),
+                            selected: selected == Some(session.id()),
+                        }
                     })
                     .collect(),
             })

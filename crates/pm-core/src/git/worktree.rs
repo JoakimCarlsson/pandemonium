@@ -50,15 +50,6 @@ impl Summary {
     pub fn is_empty(self) -> bool {
         self.files == 0 && self.added == 0 && self.removed == 0
     }
-
-    /// The drift as one line, the way a session row states it.
-    ///
-    /// A worktree that has changed nothing states it in the same shape as one
-    /// that has changed a great deal, because the column is read by glancing
-    /// down it: a blank is one more thing to work out.
-    pub fn line(self) -> String {
-        format!("+{} −{}", self.added, self.removed)
-    }
 }
 
 /// Cuts a worktree at `path` from `base`, in the repository at `root`.

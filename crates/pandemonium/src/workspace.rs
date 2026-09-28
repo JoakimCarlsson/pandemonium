@@ -213,8 +213,10 @@ pub struct SidebarSession {
     pub id: SessionId,
     /// Human-readable name of the work.
     pub name: String,
-    /// How far its worktree has drifted, as the row states it.
-    pub drift: String,
+    /// How many lines its worktree has added since it was cut.
+    pub added: usize,
+    /// How many lines its worktree has taken out since it was cut.
+    pub removed: usize,
     /// Colour representing the state reported by the agent.
     pub status_color: Rgba,
     /// How many errors the language servers over its worktree report.
@@ -1337,7 +1339,7 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
                     .color(theme.colors.danger),
             )
         })
-        .child(reading(theme, session.drift.clone()))
+        .child(drift(theme, session.added, session.removed))
 }
 
 /// Builds the box a project or session row is laid out in.
@@ -1372,6 +1374,23 @@ fn reading(theme: &Theme, said: String) -> Text {
         .text_xs()
         .font_mono()
         .color(theme.colors.text_subtle)
+}
+
+/// Builds how far a session has drifted: lines added, then lines taken out.
+///
+/// Each count is written in the colour a diff uses for that kind of line,
+/// the same green and red the review states an addition and a deletion in.
+fn drift(theme: &Theme, added: usize, removed: usize) -> Div<Message> {
+    h_flex()
+        .gap(1)
+        .items_center()
+        .child(count(format!("+{added}"), theme.colors.success))
+        .child(count(format!("−{removed}"), theme.colors.danger))
+}
+
+/// One count in a drift reading, in `color`.
+fn count(said: String, color: Rgba) -> Text {
+    text(said).text_xs().font_mono().color(color)
 }
 
 /// Builds the bar down the left edge of the row the window is pointed at.
