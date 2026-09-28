@@ -4,6 +4,7 @@
 
 mod agent;
 mod app;
+mod arrival;
 mod config;
 mod debug;
 mod desktop;

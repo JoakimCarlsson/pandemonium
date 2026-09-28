@@ -6,6 +6,7 @@
 //! model, submitted to `pm-gfx` as one draw list.
 
 mod agent;
+mod arrival;
 mod clicks;
 mod client;
 mod commands;
@@ -58,6 +59,7 @@ use crate::agent::Talks;
 use crate::app::clicks::Clicks;
 use crate::app::drag::{Geometry, TabDrag};
 use crate::app::places::Trail;
+use crate::arrival::Arrival;
 use crate::config::{self, FontSlot, Preference, Preferences, Restored, ServerList, WindowState};
 use crate::desktop;
 use crate::editor::{self, Files};
@@ -126,6 +128,8 @@ pub enum Wake {
     Picture,
     /// Something has been read off the clipboard into a prompt.
     Paste,
+    /// Files have been carried onto the window from outside it.
+    Arrival,
 }
 
 /// The remote operation currently running for the active project.
@@ -254,6 +258,11 @@ pub struct App {
     shifted: Arc<Mutex<Vec<tree::Shifted>>>,
     /// The rows of the file tree the pointer is carrying.
     entry_drag: Option<crate::tree::EntryDrag>,
+    /// What files carried in from outside have done away from the window
+    /// and has not been taken in yet.
+    arrivals: crate::arrival::Arrivals,
+    /// The directory files carried in from outside would land in.
+    arriving: Option<std::path::PathBuf>,
     /// The project row the pointer is carrying up or down the sidebar.
     project_drag: Option<reorder::ProjectDrag>,
     /// Where the projects sidebar's rows came out in the last frame.
@@ -455,7 +464,7 @@ pub struct App {
 }
 
 /// How many kinds of [`Wake`] there are.
-const WAKES: usize = Wake::Paste as usize + 1;
+const WAKES: usize = Wake::Arrival as usize + 1;
 
 /// One flag per kind of [`Wake`], set while one is on its way.
 type Pending = Arc<[AtomicBool; WAKES]>;
@@ -569,6 +578,8 @@ impl App {
             tree_clipboard: None,
             shifted: Arc::default(),
             entry_drag: None,
+            arrivals: Arc::default(),
+            arriving: None,
             project_drag: None,
             project_list: drag::unmeasured(),
             tree_focused: false,
@@ -2191,7 +2202,8 @@ impl App {
                         .entry_drag
                         .as_ref()
                         .filter(|drag| drag.is_carried())
-                        .and_then(|drag| drag.target.as_deref()),
+                        .and_then(|drag| drag.target.as_deref())
+                        .or(self.arriving.as_deref()),
                     focused: self.tree_focused,
                     caret,
                     scroll: tree_scroll,
@@ -2416,6 +2428,7 @@ impl ApplicationHandler<Wake> for App {
                     self.request_redraw();
                 }
             }
+            Wake::Arrival => self.take_arrivals(),
         }
     }
 
@@ -2468,6 +2481,7 @@ impl ApplicationHandler<Wake> for App {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
+        crate::arrival::listen(&window, self.arrivals.clone(), self.waker(Wake::Arrival));
         self.window = Some(window);
         self.resolver.set_keymap(self.preferences.keymap_in_force());
 
@@ -2582,6 +2596,12 @@ impl ApplicationHandler<Wake> for App {
                     self.key_pressed(&event);
                 }
             }
+            WindowEvent::HoveredFile(_) => self.arrive(Arrival::Hovering(None)),
+            WindowEvent::HoveredFileCancelled => self.arrive(Arrival::Left),
+            WindowEvent::DroppedFile(path) => self.arrive(Arrival::Dropped {
+                at: None,
+                paths: vec![path],
+            }),
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}
         }
