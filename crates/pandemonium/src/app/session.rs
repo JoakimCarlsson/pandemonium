@@ -266,13 +266,18 @@ impl App {
     /// Takes `session`, whose worktree is off disk, out of the window: its
     /// tabs, its shells, its tree and its list of changes.
     pub(super) fn forget_session(&mut self, session: SessionId) {
-        let Some(scope) = self
-            .sessions
-            .get(session)
-            .map(|held| Scope::of(held.project(), session))
-        else {
+        let Some((scope, roots)) = self.sessions.get(session).map(|held| {
+            (
+                Scope::of(held.project(), session),
+                std::iter::once(held.root())
+                    .chain(held.roots())
+                    .map(Path::to_path_buf)
+                    .collect::<Vec<_>>(),
+            )
+        }) else {
             return;
         };
+        self.editor.close_scope(scope, &roots);
         self.sessions.forget(session);
 
         self.drop_tabs(&|held| held == scope);
