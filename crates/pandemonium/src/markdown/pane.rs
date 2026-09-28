@@ -5,20 +5,21 @@
 //! column, code in the colours its language has in an editor pane, and the
 //! pictures a document names drawn where it names them.
 
+use std::cell::Cell;
 use std::path::Path;
 
-use pm_gfx::Rgba;
+use pm_gfx::{Rgba, Size};
 use pm_text::Language;
 use pm_ui::{
-    Div, Font, Paragraph, Scrolled, Styled, TextSize, Theme, h_flex, paragraph, picture,
-    scroll_area, text, v_flex,
+    Div, Font, IconName, MAX_ZOOM, Paragraph, PointerCursor, Scrolled, Styled, TextSize, Theme,
+    h_flex, icon_button, paragraph, picture, scroll_area, text, v_flex, zoom_area,
 };
 
 use crate::editor::FileId;
 use crate::editor::code_lines;
 use crate::image::Decoding;
-use crate::markdown::Renders;
 use crate::markdown::blocks::{Block, Emphasis, Item, Run};
+use crate::markdown::{DiagramZoom, Renders};
 use crate::message::Message;
 
 /// Widest the column of prose is drawn.
@@ -51,6 +52,7 @@ pub fn rendered_pane(
         scale,
         folder,
         renders,
+        diagrams: Cell::new(0),
     };
     let column = v_flex()
         .w_full()
@@ -61,6 +63,7 @@ pub fn rendered_pane(
         .gap(1.5)
         .items_stretch()
         .children(blocks.iter().map(|block| page.block(block)));
+    renders.keep_zooms(file, page.diagrams.get());
 
     v_flex()
         .w_full()
@@ -87,6 +90,9 @@ struct Page<'a> {
     folder: &'a Path,
     /// Where those pictures are read and kept.
     renders: &'a Renders,
+    /// How many diagrams have been built so far, which is the place the
+    /// next one's zoom is kept at.
+    diagrams: Cell<usize>,
 }
 
 impl Page<'_> {
@@ -201,16 +207,16 @@ impl Page<'_> {
             .children(rows)
     }
 
-    /// Draws a Mermaid diagram or its source with a quiet failure note.
+    /// Draws a Mermaid diagram with its zoom controls, or its source with a
+    /// quiet note when it cannot be drawn.
     fn diagram(&self, source: &str) -> Div<Message> {
-        match self
+        let index = self.diagrams.get();
+        self.diagrams.set(index + 1);
+        let rest = self
             .renders
-            .diagram(self.file, source, self.scale, self.theme)
-        {
-            Decoding::Ready(image) => h_flex()
-                .w_full()
-                .justify_center()
-                .child(picture(image).zoom(1.0 / self.scale)),
+            .diagram(self.file, source, self.scale, self.theme);
+        match rest {
+            Decoding::Ready(image) => self.zoomable(index, source, image),
             Decoding::Pending => self.code(Some("mermaid"), source),
             Decoding::Failed(_) => v_flex()
                 .w_full()
@@ -222,6 +228,60 @@ impl Page<'_> {
                 )
                 .child(self.code(Some("mermaid"), source)),
         }
+    }
+
+    /// Draws the diagram at place `index`, whose raster at rest is `rest`,
+    /// at its zoom: dragged about while magnified, redrawn sharper as it
+    /// grows, under a row of buttons that zoom it.
+    fn zoomable(&self, index: usize, source: &str, rest: pm_gfx::Image) -> Div<Message> {
+        let file = self.file;
+        let zoomed = self.renders.zoom(file, index);
+        let zoom = zoomed.get();
+        let natural = Size::new(
+            rest.width() as f32 / self.scale,
+            rest.height() as f32 / self.scale,
+        );
+        let sharpness = zoom.factor().ceil().min(MAX_ZOOM) as u32;
+        let image = match sharpness.next_power_of_two() {
+            1 => rest,
+            sharpness => self
+                .renders
+                .diagram(file, source, self.scale * sharpness as f32, self.theme)
+                .ready()
+                .unwrap_or(rest),
+        };
+        let area = h_flex()
+            .justify_center()
+            .child(zoom_area(zoomed, image, natural));
+        let area = match zoom.is_zoomed() {
+            true => area
+                .on_drag(move |event| Message::PanDiagram(file, index, event))
+                .drag_cursor(PointerCursor::Grab),
+            false => area,
+        };
+        let step = |name, step, tip| {
+            icon_button(self.theme, name, Message::ZoomDiagram(file, index, step)).tooltip(tip)
+        };
+        v_flex()
+            .w_full()
+            .gap(0.5)
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_end()
+                    .gap(0.5)
+                    .child(
+                        text(format!("{:.0}%", zoom.factor() * 100.0))
+                            .text_xs()
+                            .font_mono()
+                            .color(self.theme.colors.text_subtle),
+                    )
+                    .child(step(IconName::Minus, DiagramZoom::Out, "Zoom out"))
+                    .child(step(IconName::Plus, DiagramZoom::In, "Zoom in"))
+                    .child(step(IconName::Undo, DiagramZoom::Reset, "Reset zoom")),
+            )
+            .child(h_flex().w_full().justify_center().child(area))
     }
 
     /// Builds a quotation: its blocks, beside a bar that says it is quoted.
