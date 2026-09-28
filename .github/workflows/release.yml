@@ -66,6 +66,9 @@ jobs:
           else
             cp "../target/${{ matrix.target }}/dist/pandemonium" "$name/"
             cp ../packaging/pandemonium.desktop "$name/"
+            mkdir -p "$name/icons"
+            cp ../assets/brand/pandemonium.svg ../assets/brand/png/pandemonium-*.png "$name/icons/"
+            rm "$name/icons/pandemonium-1024.png"
             tar -czf "$name.tar.gz" "$name"
           fi
           if [ "${{ runner.os }}" = "macOS" ]; then

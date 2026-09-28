@@ -8,6 +8,7 @@ mod config;
 mod debug;
 mod desktop;
 mod editor;
+mod emblem;
 mod excerpts;
 mod field;
 mod image;

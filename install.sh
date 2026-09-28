@@ -15,6 +15,7 @@ REPO="JoakimCarlsson/pandemonium"
 VERSION="${PANDEMONIUM_VERSION:-latest}"
 BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+ICONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
 MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
 
 # Prints an error and exits.
@@ -64,6 +65,22 @@ verify() {
     else
         (cd "$dir" && echo "$line" | shasum -a 256 -c - >/dev/null)
     fi || fail "checksum mismatch for $archive"
+}
+
+# Adds the editor's icon to the user's hicolor theme, one size per picture.
+install_icons() {
+    pngs="$1"
+    svg="$2"
+    for png in "$pngs"/pandemonium-*.png; do
+        size="${png##*-}"
+        size="${size%.png}"
+        [ "$size" -le 512 ] || continue
+        mkdir -p "$ICONS_DIR/${size}x${size}/apps"
+        install -m 0644 "$png" "$ICONS_DIR/${size}x${size}/apps/pandemonium.png"
+    done
+    mkdir -p "$ICONS_DIR/scalable/apps"
+    install -m 0644 "$svg" "$ICONS_DIR/scalable/apps/pandemonium.svg"
+    command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$ICONS_DIR" >/dev/null 2>&1 || true
 }
 
 # Registers the editor with the desktop's application launcher.
@@ -118,6 +135,7 @@ main() {
     mkdir -p "$BIN_DIR"
     install -m 0755 "$tmp/$name/pandemonium" "$BIN_DIR/pandemonium"
     [ "$(uname -s)" = "Darwin" ] && xattr -d com.apple.quarantine "$BIN_DIR/pandemonium" 2>/dev/null || true
+    [ -d "$tmp/$name/icons" ] && [ "$(uname -s)" = "Linux" ] && install_icons "$tmp/$name/icons" "$tmp/$name/icons/pandemonium.svg"
     [ -f "$tmp/$name/pandemonium.desktop" ] && install_desktop_entry "$tmp/$name/pandemonium.desktop"
     [ "$(uname -s)" = "Darwin" ] && install_app_bundle "$base" "$name" "$tmp"
 

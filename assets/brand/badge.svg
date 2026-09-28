@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="116" height="20" viewBox="0 0 116 20" role="img" aria-label="pandemonium">
+  <title>pandemonium</title>
+  <clipPath id="round">
+    <rect width="116" height="20" rx="3"/>
+  </clipPath>
+  <g clip-path="url(#round)">
+    <rect width="116" height="20" fill="#0b0b0b"/>
+    <rect x="24" width="92" height="20" fill="#292929"/>
+  </g>
+  <g fill="#f4f2ed" shape-rendering="crispEdges" transform="translate(8 4) scale(2)">
+    <rect x="1" y="0" width="1" height="1"/><rect x="2" y="0" width="1" height="1"/><rect x="0" y="1" width="1" height="1"/><rect x="3" y="1" width="1" height="1"/><rect x="0" y="2" width="1" height="1"/><rect x="3" y="2" width="1" height="1"/><rect x="0" y="3" width="1" height="1"/><rect x="1" y="3" width="1" height="1"/><rect x="2" y="3" width="1" height="1"/><rect x="0" y="4" width="1" height="1"/><rect x="0" y="5" width="1" height="1"/>
+  </g>
+  <text x="70" y="14" fill="#f4f2ed" font-family="Verdana,DejaVu Sans,Geneva,sans-serif" font-size="11" text-anchor="middle">pandemonium</text>
+</svg>
