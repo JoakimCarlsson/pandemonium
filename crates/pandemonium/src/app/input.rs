@@ -92,7 +92,10 @@ impl App {
             && self.picker.is_none()
             && self.tree_edit.is_none();
         context.flag(keys::EDITOR_FOCUSED, editing);
-        context.flag(keys::TEXT_FOCUSED, editing || self.writing.is_some() || field);
+        context.flag(
+            keys::TEXT_FOCUSED,
+            editing || self.writing.is_some() || field,
+        );
         context.flag(keys::SEARCH_FOCUSED, self.search_focused);
         context.flag(
             keys::SEARCH_REPLACING,
