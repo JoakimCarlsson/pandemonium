@@ -282,6 +282,11 @@ impl Picker {
         &self.field
     }
 
+    /// What has been typed into it, to be typed into.
+    pub fn field_mut(&mut self) -> &mut Field {
+        &mut self.field
+    }
+
     /// Puts the field through `edit` and narrows the rows to what is left.
     pub fn edit(&mut self, edit: impl FnOnce(&mut Field)) {
         edit(&mut self.field);
@@ -400,7 +405,7 @@ impl Picker {
     }
 
     /// Narrows the rows to the ones the query matches, best match first.
-    fn filter(&mut self) {
+    pub fn filter(&mut self) {
         let query = self.kind.query(self.field.value());
         let limit = self.limit();
         if self.kind.is_prompt() || self.kind.is_queried() || query.is_empty() {

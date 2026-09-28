@@ -363,6 +363,43 @@ impl App {
         }
     }
 
+    /// The single-line field that has the keyboard, if one does.
+    ///
+    /// The picker first, then a name being typed into the tree. The search
+    /// bar lives in the open document, so it is reached through
+    /// [`Self::edit_focused_field`].
+    pub(super) fn focused_field_mut(&mut self) -> Option<&mut crate::field::Field> {
+        if let Some(picker) = self.picker.as_mut() {
+            return Some(picker.field_mut());
+        }
+        self.tree_edit.as_mut().map(|edit| edit.field_mut())
+    }
+
+    /// Puts `edit` through the single-line field that has the keyboard, if
+    /// one does.
+    ///
+    /// The picker first, then a name being typed into the tree, then the
+    /// search bar's query or replacement. This is the one place that says
+    /// which field has the keyboard.
+    pub(super) fn edit_focused_field(
+        &mut self,
+        edit: impl FnOnce(&mut crate::field::Field),
+    ) -> bool {
+        if let Some(field) = self.focused_field_mut() {
+            edit(field);
+            return true;
+        }
+        if self.search_focused {
+            let Some(file) = self.active_file() else {
+                return false;
+            };
+            file.borrow_mut()
+                .search_with(|search, buffer| search.edit_field(edit, buffer));
+            return true;
+        }
+        false
+    }
+
     /// The buffer being typed into that is not a pane's file, if there is one.
     ///
     /// A pane's file is not the only thing a reader writes in: an agent's

@@ -84,12 +84,15 @@ impl App {
         if let Some(kind) = self.focused_pane_kind() {
             context.set(keys::PANE_KIND, kind);
         }
+        let field = self.picker.is_some() || self.search_focused || self.tree_edit.is_some();
         let editing = self.focused_file().is_some()
             && self.writing.is_none()
             && !self.search_focused
-            && !self.changes_focused;
+            && !self.changes_focused
+            && self.picker.is_none()
+            && self.tree_edit.is_none();
         context.flag(keys::EDITOR_FOCUSED, editing);
-        context.flag(keys::TEXT_FOCUSED, editing || self.writing.is_some());
+        context.flag(keys::TEXT_FOCUSED, editing || self.writing.is_some() || field);
         context.flag(keys::SEARCH_FOCUSED, self.search_focused);
         context.flag(
             keys::SEARCH_REPLACING,

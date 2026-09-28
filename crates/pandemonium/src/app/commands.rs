@@ -220,8 +220,50 @@ impl App {
         window.set_fullscreen(filling);
     }
 
+    /// Routes clipboard editing to the single-line field that has the
+    /// keyboard, saying whether one did.
+    fn act_on_field(&mut self, action: Action) -> bool {
+        match action {
+            Action::Cut | Action::Copy | Action::Paste | Action::SelectAll => {}
+            _ => return false,
+        }
+        let picker = self.picker.is_some();
+        let mut copied = None;
+        let mut changed = false;
+        if !self.edit_focused_field(|field| match action {
+            Action::SelectAll => field.select_all(),
+            Action::Copy => copied = field.selected_text().map(str::to_owned),
+            Action::Cut => {
+                copied = field.cut_selection();
+                changed = copied.is_some();
+            }
+            Action::Paste => {
+                if let Some(text) = desktop::paste() {
+                    field.paste(&text);
+                    changed = true;
+                }
+            }
+            _ => {}
+        }) {
+            return false;
+        }
+        if let Some(text) = copied {
+            desktop::copy(text);
+        }
+        if changed && picker {
+            if let Some(picker) = self.picker.as_mut() {
+                picker.filter();
+            }
+            self.refilter_picker();
+        }
+        true
+    }
+
     /// Carries out a command that acts on the file the focused pane shows.
     fn act_on_buffer(&mut self, action: Action) {
+        if self.act_on_field(action) {
+            return;
+        }
         match action {
             Action::Move(travel) | Action::Select(travel) => {
                 let motion = editor::motion(travel, self.page_rows());
