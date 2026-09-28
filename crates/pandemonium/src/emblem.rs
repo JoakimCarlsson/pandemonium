@@ -11,6 +11,7 @@ use winit::window::Icon;
 const PICTURE: &[u8] = include_bytes!("../../../assets/brand/png/pandemonium-256.png");
 
 /// The application id the desktop entry is installed under.
+#[cfg(target_os = "linux")]
 pub const APP_ID: &str = "pandemonium";
 
 /// Returns the icon decoded for the window, or nothing if it will not decode.
