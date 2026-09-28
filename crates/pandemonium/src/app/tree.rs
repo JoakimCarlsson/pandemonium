@@ -320,7 +320,7 @@ impl App {
     ///
     /// A directory's row is itself; a file's row is the directory holding it,
     /// and the space below the last row is the worktree.
-    fn directory_under(&self, point: Point) -> Option<PathBuf> {
+    pub(super) fn directory_under(&self, point: Point) -> Option<PathBuf> {
         if !self.tree_showing() || !self.tree_area.get().contains(point) {
             return None;
         }
@@ -619,7 +619,7 @@ impl App {
 
     /// Moves `paths` into `directory`, or copies them there, away from the
     /// window.
-    fn move_entries(&mut self, paths: &[PathBuf], directory: &Path, copying: bool) {
+    pub(super) fn move_entries(&mut self, paths: &[PathBuf], directory: &Path, copying: bool) {
         let paths = paths.to_vec();
         let directory = directory.to_path_buf();
         self.shift_later(move || {
