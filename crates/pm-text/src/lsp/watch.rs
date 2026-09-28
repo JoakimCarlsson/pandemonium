@@ -79,7 +79,7 @@ impl Pattern {
     }
 
     /// Whether this pattern wants to hear that `path` was `touched`.
-    fn wants(&self, path: &Path, touched: Watched) -> bool {
+    fn wants(&self, root: &Path, path: &Path, touched: Watched) -> bool {
         if self.kinds & touched.bit() == 0 {
             return false;
         }
@@ -87,7 +87,12 @@ impl Pattern {
             Some(base) => path
                 .strip_prefix(base)
                 .is_ok_and(|relative| self.glob.is_match(relative)),
-            None => self.glob.is_match(path),
+            None => {
+                self.glob.is_match(path)
+                    || path
+                        .strip_prefix(root)
+                        .is_ok_and(|relative| self.glob.is_match(relative))
+            }
         }
     }
 }
@@ -140,14 +145,18 @@ impl Watchers {
 
     /// The notification telling the server about the part of `changes` it
     /// registered for, when it registered for any of it.
-    pub(super) fn notification(&self, changes: &[(PathBuf, Watched)]) -> Option<Value> {
+    pub(super) fn notification(
+        &self,
+        root: &Path,
+        changes: &[(PathBuf, Watched)],
+    ) -> Option<Value> {
         let wanted = changes
             .iter()
             .filter(|(path, touched)| {
                 self.registered
                     .values()
                     .flatten()
-                    .any(|pattern| pattern.wants(path, *touched))
+                    .any(|pattern| pattern.wants(root, path, *touched))
             })
             .map(|(path, touched)| json!({ "uri": uri::of(path), "type": touched.code() }))
             .collect::<Vec<_>>();

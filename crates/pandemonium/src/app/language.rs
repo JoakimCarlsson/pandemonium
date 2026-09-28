@@ -66,6 +66,18 @@ pub struct Pending {
     version: i32,
 }
 
+/// A code action kept with the server and document version that offered it.
+pub struct OfferedCodeAction {
+    /// The action displayed in the menu.
+    pub action: pm_text::CodeAction,
+    /// The server that runs its command, when it has one.
+    pub client: Arc<Client>,
+    /// The document it was offered for.
+    pub file: FileId,
+    /// The document version it was offered for.
+    pub version: i32,
+}
+
 impl App {
     /// The next delayed annotation request in a visible document.
     pub(super) fn next_annotation(&self) -> Option<Instant> {
@@ -165,7 +177,7 @@ impl App {
         self.ask_about_for(file, at, request, Purpose::Act);
     }
 
-    /// Asks every server behind `file` `request`, for the reason `purpose`.
+    /// Asks the first server for edits, or every server for other answers.
     pub(super) fn ask_about_for(
         &mut self,
         file: FileId,
@@ -174,12 +186,19 @@ impl App {
         purpose: Purpose,
     ) {
         self.forget(file, &request, purpose);
+        if request == Request::CodeActions {
+            self.code_actions.clear();
+        }
         let Some(document) = self.editor.get(file) else {
             return;
         };
         let clients = document.borrow().servers();
         for client in clients {
+            let offered = client.offers(&request);
             self.ask_of(client, file, at, request.clone(), purpose);
+            if offered && matches!(request, Request::Format | Request::WillSave) {
+                break;
+            }
         }
     }
 
@@ -202,12 +221,23 @@ impl App {
         if !client.offers(&request) {
             return;
         }
-        let asked = client.ask(request.clone(), &path, at);
-        let version = self
-            .editor
-            .get(file)
-            .map(|document| document.borrow().buffer().version())
-            .unwrap_or_default();
+        let Some(document) = self.editor.get(file) else {
+            return;
+        };
+        let (version, indent, selection) = {
+            let document = document.borrow();
+            let buffer = document.buffer();
+            let selected = buffer.selection();
+            let selection = if selected.anchor == selected.head {
+                Position::new(at.line, 0)..Position::new(at.line, buffer.line_len(at.line))
+            } else if selected.anchor < selected.head {
+                selected.anchor..selected.head
+            } else {
+                selected.head..selected.anchor
+            };
+            (buffer.version(), buffer.indent(), selection)
+        };
+        let asked = client.ask(request.clone(), &path, at, indent, selection);
         self.asked.push(Pending {
             client,
             asked,
@@ -616,6 +646,16 @@ impl App {
 
     /// Collects every answer that has come back, saying whether any had.
     pub(super) fn collect_answers(&mut self) -> bool {
+        let mut applied = false;
+        for client in self.editor.clients() {
+            for request in client.take_workspace_edits() {
+                let supported = request.supported;
+                let edits = request.edits.clone();
+                let success = supported && self.apply_edits(edits);
+                client.answer_workspace_edit(request, success);
+                applied = true;
+            }
+        }
         let ready = self
             .asked
             .iter()
@@ -626,7 +666,7 @@ impl App {
             })
             .collect::<Vec<_>>();
         if ready.is_empty() {
-            return false;
+            return applied;
         }
 
         for (index, answer) in ready.iter().rev() {
@@ -642,6 +682,17 @@ impl App {
     /// empty replies to interactive questions have nothing to display.
     fn answered(&mut self, pending: &Pending, answer: Answer) {
         if self.editor.get(pending.file).is_none() {
+            return;
+        }
+        let stale = self
+            .editor
+            .get(pending.file)
+            .is_some_and(|document| document.borrow().buffer().version() != pending.version);
+        if stale && (matches!(answer, Answer::Edits(_)) || pending.request == Request::CodeActions)
+        {
+            if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
+                self.finish_save();
+            }
             return;
         }
         if matches!(answer, Answer::Refused) {
@@ -684,7 +735,7 @@ impl App {
                 }
             }
             Answer::Completions(items) => self.show_completions(pending, items),
-            Answer::CodeActions(actions) => self.show_code_actions(actions),
+            Answer::CodeActions(actions) => self.show_code_actions(pending, actions),
             Answer::Edits(files) => {
                 self.apply_edits(files);
                 self.save_once_formatted(pending);
@@ -748,24 +799,53 @@ impl App {
         self.request_redraw();
     }
 
-    /// Takes the next step of a save, once every server has answered the last.
+    /// Takes the next step after one formatting or pre-save reply.
     ///
     /// A save the servers take part in is three steps: the formatter's
     /// changes, then whatever each server wants changed before the file is
-    /// written, then the writing. Each step waits for the last server to
-    /// answer, not the first, and each is asked about the text the one before
-    /// it left, so that two servers' changes never land on each other.
+    /// written, then the writing. Each server is asked after the previous
+    /// answer has been applied to the document.
     fn save_once_formatted(&mut self, pending: &Pending) {
-        if !self.saving || !matches!(pending.request, Request::Format | Request::WillSave) {
+        if !matches!(pending.request, Request::Format | Request::WillSave) {
             return;
         }
-        if self.awaits(pending.file, &pending.request) {
+        if self.ask_next_edit_server(pending) {
+            return;
+        }
+        if !self.saving {
             return;
         }
         match pending.request {
             Request::Format => self.ask_before_save(pending.file),
             _ => self.finish_save(),
         }
+    }
+
+    /// Asks the next capable server about the document left by the last one.
+    fn ask_next_edit_server(&mut self, pending: &Pending) -> bool {
+        let Some(document) = self.editor.get(pending.file) else {
+            return false;
+        };
+        let (clients, at) = {
+            let document = document.borrow();
+            (document.servers(), document.buffer().selection().head)
+        };
+        let next = clients
+            .into_iter()
+            .skip_while(|client| !Arc::ptr_eq(client, &pending.client))
+            .skip(1)
+            .find(|client| client.offers(&pending.request));
+        if let Some(client) = next {
+            self.ask_of(
+                client,
+                pending.file,
+                at,
+                pending.request.clone(),
+                pending.purpose,
+            );
+            return true;
+        }
+        false
     }
 
     /// Starts a save the servers behind the focused file take part in.
@@ -971,8 +1051,14 @@ impl App {
     }
 
     /// Opens the menu of fixes a server offers where the cursor is.
-    fn show_code_actions(&mut self, actions: Vec<pm_text::CodeAction>) {
-        self.code_actions = actions;
+    fn show_code_actions(&mut self, pending: &Pending, actions: Vec<pm_text::CodeAction>) {
+        self.code_actions
+            .extend(actions.into_iter().map(|action| OfferedCodeAction {
+                action,
+                client: pending.client.clone(),
+                file: pending.file,
+                version: pending.version,
+            }));
         if !self.code_actions.is_empty() {
             self.open_menu(crate::workspace::MenuTarget::CodeActions);
         }
@@ -980,10 +1066,23 @@ impl App {
 
     /// Takes the `index`-th code action the server offered.
     pub(super) fn take_code_action(&mut self, index: usize) {
-        let Some(action) = self.code_actions.get(index).cloned() else {
+        let Some(offered) = self.code_actions.get(index) else {
             return;
         };
-        self.apply_edits(action.edits);
+        if self
+            .editor
+            .get(offered.file)
+            .is_none_or(|document| document.borrow().buffer().version() != offered.version)
+        {
+            return;
+        }
+        let client = offered.client.clone();
+        let action = offered.action.clone();
+        if self.apply_edits(action.edits)
+            && let Some(command) = action.command
+        {
+            client.execute_command(command);
+        }
     }
 
     /// Makes the changes a rename, a formatter or a fix asked for.
@@ -991,7 +1090,8 @@ impl App {
     /// A file that is open takes its changes through the document it is open
     /// as, so the cursor, the undo history and the server all move with it; a
     /// file that is not open is rewritten on disk.
-    pub(super) fn apply_edits(&mut self, files: Vec<FileEdit>) {
+    pub(super) fn apply_edits(&mut self, files: Vec<FileEdit>) -> bool {
+        let mut applied = true;
         for FileEdit { path, edits } in files {
             if edits.is_empty() {
                 continue;
@@ -1005,10 +1105,11 @@ impl App {
                 Some(document) => document
                     .borrow_mut()
                     .edit(|buffer| buffer.apply_edits(edits)),
-                None => write_through(&path, edits),
+                None => applied &= write_through(&path, edits),
             }
         }
         self.store();
+        applied
     }
 
     /// The place `at` in the file at `path` comes to, in whichever worktree holds it.
@@ -1041,10 +1142,10 @@ impl App {
 }
 
 /// Makes `edits` to the file at `path`, which nothing has open.
-fn write_through(path: &PathBuf, edits: Vec<(std::ops::Range<Position>, String)>) {
+fn write_through(path: &PathBuf, edits: Vec<(std::ops::Range<Position>, String)>) -> bool {
     let Ok(mut buffer) = pm_text::Buffer::open(path) else {
-        return;
+        return false;
     };
     buffer.apply_edits(edits);
-    let _ = buffer.save();
+    buffer.save().is_ok()
 }

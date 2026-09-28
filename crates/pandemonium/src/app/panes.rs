@@ -1290,7 +1290,10 @@ impl App {
                 .iter()
                 .enumerate()
                 .map(|(index, action)| {
-                    pm_ui::menu_entry(action.title.clone(), Some(Message::TakeCodeAction(index)))
+                    pm_ui::menu_entry(
+                        action.action.title.clone(),
+                        Some(Message::TakeCodeAction(index)),
+                    )
                 })
                 .collect(),
             MenuTarget::Terminal(shell) => {

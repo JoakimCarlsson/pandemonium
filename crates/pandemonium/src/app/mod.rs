@@ -371,7 +371,7 @@ pub struct App {
     /// Where the pointer has been resting, and since when.
     resting: Option<(Instant, Point)>,
     /// The fixes a server last offered, for the menu that shows them.
-    code_actions: Vec<pm_text::CodeAction>,
+    code_actions: Vec<language::OfferedCodeAction>,
     /// The questions asked of servers and not yet answered.
     asked: Vec<language::Pending>,
     /// Whether the servers being waited on were asked by a save.
