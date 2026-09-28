@@ -68,6 +68,11 @@ jobs:
             cp ../packaging/pandemonium.desktop "$name/"
             tar -czf "$name.tar.gz" "$name"
           fi
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ../scripts/bundle-macos.sh "$name/pandemonium" Pandemonium.app \
+              Pandemonium io.github.joakimcarlsson.pandemonium
+            ditto -c -k --keepParent Pandemonium.app "$name.app.zip"
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
