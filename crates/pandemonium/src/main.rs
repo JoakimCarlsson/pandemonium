@@ -33,6 +33,7 @@ mod prompt;
 mod release;
 mod review;
 mod settings;
+mod shell_path;
 mod terminal;
 mod theme;
 mod tree;
@@ -49,6 +50,7 @@ fn main() {
         println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    shell_path::adopt();
     let event_loop = EventLoop::<Wake>::with_user_event()
         .build()
         .expect("event loop creation failed");

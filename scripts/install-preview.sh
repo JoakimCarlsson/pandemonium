@@ -5,6 +5,7 @@ set -eu
 
 BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
 NAME="pandemonium-preview"
 
 # Prints an error and exits.
@@ -22,6 +23,14 @@ install_desktop_entry() {
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 }
 
+# Adds the app bundle.
+install_app_bundle() {
+    mkdir -p "$MAC_APPS_DIR"
+    scripts/bundle-macos.sh target/release/pandemonium "$MAC_APPS_DIR/Pandemonium.app" \
+        Pandemonium io.github.joakimcarlsson.pandemonium
+    echo "installed $MAC_APPS_DIR/Pandemonium.app"
+}
+
 # Builds and installs the preview.
 main() {
     command -v cargo >/dev/null 2>&1 || fail "'cargo' is required but was not found"
@@ -32,7 +41,10 @@ main() {
 
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
-    [ "$(uname -s)" = "Linux" ] && install_desktop_entry
+    case "$(uname -s)" in
+        Linux) install_desktop_entry ;;
+        Darwin) install_app_bundle ;;
+    esac
 
     echo "installed $("$BIN_DIR/$NAME" --version) ($revision) to $BIN_DIR/$NAME"
     case ":$PATH:" in

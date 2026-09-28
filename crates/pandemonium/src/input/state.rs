@@ -11,6 +11,7 @@ use std::rc::Rc;
 use pm_gfx::Point;
 use pm_text::Position;
 use pm_ui::ResizePhase;
+use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::editor::{self, Document, OpenFile};
@@ -122,13 +123,13 @@ impl Input {
         }
     }
 
-    /// Applies `key` to the box, saying whether it was one the box wanted.
+    /// Applies `event` to the box, saying whether it was one the box wanted.
     ///
     /// A box of one line has no line to break: Enter that does not finish it
     /// does nothing rather than growing a box the screen has no room for.
-    pub fn press(&mut self, key: &Key, modifiers: ModifiersState) -> Typed {
+    pub fn press(&mut self, event: &KeyEvent, modifiers: ModifiersState) -> Typed {
         let rows = self.text.borrow().rows();
-        let Some(edit) = editor::edit(key, modifiers, rows) else {
+        let Some(edit) = editor::edit(event, modifiers, rows) else {
             return Typed::Ignored;
         };
         if self.lines == Lines::One && matches!(edit, editor::Edit::Newline) {

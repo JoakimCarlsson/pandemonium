@@ -327,10 +327,10 @@ pub mod keys {
     /// Set while the setup screen is up.
     pub const SETUP_OPEN: &str = "setup.open";
     /// Set while a file's text has the keyboard: not its search bar, not a
-    /// box of text beside it.
+    /// box of text beside it, and not while a palette is open over it.
     pub const EDITOR_FOCUSED: &str = "editor.focused";
-    /// Set while any text has the keyboard: a file's, an agent's prompt or
-    /// a commit message.
+    /// Set while any text has the keyboard: a file's, an agent's prompt, a
+    /// commit message, or a single-line field.
     pub const TEXT_FOCUSED: &str = "text.focused";
     /// Set while a pane's search bar has the keyboard.
     pub const SEARCH_FOCUSED: &str = "search.focused";

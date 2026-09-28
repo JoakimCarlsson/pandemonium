@@ -52,7 +52,7 @@ impl App {
         let Some(file) = self.focused_file() else {
             return false;
         };
-        let Some(key) = editor::keystroke(&event.logical_key, self.modifiers) else {
+        let Some(key) = editor::keystroke(event, self.modifiers) else {
             return false;
         };
         let (top, rows, folds) = {

@@ -19,7 +19,7 @@ use crate::agent::Pasted;
 use crate::app::{App, Pasting, Writing};
 use crate::desktop;
 use crate::editor::{self, Completions};
-use crate::field::Typed;
+use crate::field::{self, Typed};
 use crate::keymap::{self, Action, Context, Resolution, keys};
 use crate::message::Message;
 use crate::terminal;
@@ -84,18 +84,20 @@ impl App {
         if let Some(kind) = self.focused_pane_kind() {
             context.set(keys::PANE_KIND, kind);
         }
-        let field = self.picker.is_some() || self.search_focused || self.tree_edit.is_some();
+        let palette = self.picker.is_some();
+        let field = palette || self.search_focused || self.tree_edit.is_some();
         let editing = self.focused_file().is_some()
             && self.writing.is_none()
             && !self.search_focused
             && !self.changes_focused
-            && self.picker.is_none()
+            && !palette
             && self.tree_edit.is_none();
         context.flag(keys::EDITOR_FOCUSED, editing);
         context.flag(
             keys::TEXT_FOCUSED,
             editing || self.writing.is_some() || field,
         );
+        context.flag(keys::PALETTE_OPEN, palette);
         context.flag(keys::SEARCH_FOCUSED, self.search_focused);
         context.flag(
             keys::SEARCH_REPLACING,
@@ -385,22 +387,22 @@ impl App {
             return true;
         }
 
-        let (key, modifiers) = (event.logical_key.clone(), self.modifiers);
+        let modifiers = self.modifiers;
         if self
             .written_in()
-            .is_some_and(|input| input.submits(&key, modifiers))
+            .is_some_and(|input| input.submits(&event.logical_key, modifiers))
         {
             self.submit_writing(writing);
             return true;
         }
-        if self.is_window_chord_over_text(&key.as_ref()) {
+        if self.is_window_chord_over_text(&event.logical_key.as_ref()) {
             return false;
         }
 
         let Some(input) = self.written_in() else {
             return false;
         };
-        if input.press(&key, modifiers) == Typed::Ignored {
+        if input.press(event, modifiers) == Typed::Ignored {
             return false;
         }
         if let Writing::Prompt(session) = writing
@@ -552,7 +554,7 @@ impl App {
             return false;
         };
         let rows = file.borrow().rows();
-        let Some(edit) = editor::edit(&event.logical_key, self.modifiers, rows) else {
+        let Some(edit) = editor::edit(event, self.modifiers, rows) else {
             return false;
         };
         self.apply_edit(edit);
@@ -583,8 +585,10 @@ impl App {
     /// belong to the program running in it rather than to the window. What it
     /// does not take are the window's own chords — the ones on the platform
     /// key or on Ctrl-Shift — so the panel can still be closed from the
-    /// keyboard while a program is running in it. The clipboard's keys come
-    /// before either, because copy and paste mean the terminal's own text.
+    /// keyboard while a program is running in it. On macOS the word and line
+    /// chords are the terminal's, and go out before that check. The
+    /// clipboard's keys come before either, because copy and paste mean the
+    /// terminal's own text.
     fn send_to_terminal(&mut self, event: &KeyEvent) -> bool {
         let Some(shell) = self.focused_shell() else {
             return false;
@@ -593,15 +597,18 @@ impl App {
         if let Some(action) = terminal::clipboard(&event.logical_key, self.modifiers, selected) {
             return self.act_on_terminal(action);
         }
+        if let Some((key, modifiers)) = terminal::macos(&event.logical_key, self.modifiers) {
+            return shell.borrow_mut().press(key, modifiers);
+        }
         if self.is_window_chord() {
             return false;
         }
-        let Some(key) = terminal::key(&event.logical_key) else {
+        let Some(key) = terminal::key(event, self.modifiers) else {
             return false;
         };
         shell
             .borrow_mut()
-            .press(key, terminal::modifiers(self.modifiers))
+            .press(key, terminal::modifiers(self.modifiers, event))
     }
 
     /// Whether the modifiers held mark this keypress as the window's own.
@@ -614,7 +621,12 @@ impl App {
     ///
     /// Ctrl and Shift with an arrow, Home or End select by word or to either
     /// end in every box of text there is, so in a box those stay the box's.
+    /// On macOS the command key with Left, Right or Backspace edits the line
+    /// the same way, and stays the box's too.
     pub(super) fn is_window_chord_over_text(&self, key: &Key<&str>) -> bool {
+        if field::command_line(key, self.modifiers) {
+            return false;
+        }
         let selects = matches!(
             key,
             Key::Named(
