@@ -7,6 +7,7 @@
 # Environment:
 #   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: latest)
 #   PANDEMONIUM_BIN_DIR   where the binary goes              (default: ~/.local/bin)
+#   PANDEMONIUM_APP_DIR   where the macOS app goes           (default: ~/Applications)
 
 set -eu
 
@@ -14,6 +15,7 @@ REPO="JoakimCarlsson/pandemonium"
 VERSION="${PANDEMONIUM_VERSION:-latest}"
 BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
 
 # Prints an error and exits.
 fail() {
@@ -72,6 +74,24 @@ install_desktop_entry() {
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 }
 
+# Downloads, verifies and installs the macOS app bundle.
+install_app_bundle() {
+    base="$1"
+    name="$2"
+    tmp="$3"
+    if ! curl -fsSL "$base/$name.app.zip" -o "$tmp/$name.app.zip"; then
+        echo "note: this release has no macOS app; only the binary was installed"
+        return
+    fi
+    verify "$tmp" "$name.app.zip"
+    ditto -x -k "$tmp/$name.app.zip" "$tmp/app"
+    mkdir -p "$MAC_APPS_DIR"
+    rm -rf "$MAC_APPS_DIR/Pandemonium.app"
+    mv "$tmp/app/Pandemonium.app" "$MAC_APPS_DIR/Pandemonium.app"
+    xattr -dr com.apple.quarantine "$MAC_APPS_DIR/Pandemonium.app" 2>/dev/null || true
+    echo "installed $MAC_APPS_DIR/Pandemonium.app"
+}
+
 # Downloads, verifies and installs the release.
 main() {
     need curl
@@ -99,6 +119,7 @@ main() {
     install -m 0755 "$tmp/$name/pandemonium" "$BIN_DIR/pandemonium"
     [ "$(uname -s)" = "Darwin" ] && xattr -d com.apple.quarantine "$BIN_DIR/pandemonium" 2>/dev/null || true
     [ -f "$tmp/$name/pandemonium.desktop" ] && install_desktop_entry "$tmp/$name/pandemonium.desktop"
+    [ "$(uname -s)" = "Darwin" ] && install_app_bundle "$base" "$name" "$tmp"
 
     echo "installed $("$BIN_DIR/pandemonium" --version) to $BIN_DIR"
     case ":$PATH:" in

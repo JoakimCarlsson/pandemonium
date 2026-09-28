@@ -62,8 +62,8 @@ irm https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.ps
 ```
 
 Set `PANDEMONIUM_VERSION` to pin a release. The script checks the download
-against the release's `SHA256SUMS`, puts the binary in `~/.local/bin` and, on
-Linux, adds a launcher entry.
+against the release's `SHA256SUMS`, puts the binary in `~/.local/bin`, and adds
+a launcher entry on Linux or `Pandemonium.app` in `~/Applications` on macOS.
 
 ## Building
 
@@ -82,6 +82,7 @@ Other targets:
 make fmt     # cargo fmt --all
 make lint    # cargo clippy --workspace --all-targets -- -D warnings
 make install # build this checkout and install it as pandemonium-preview
+             # (on macOS also as ~/Applications/Pandemonium.app)
 make release VERSION=0.2.0   # bump, tag and push; CI builds and publishes
 ```
 
