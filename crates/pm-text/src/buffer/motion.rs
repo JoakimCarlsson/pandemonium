@@ -151,7 +151,7 @@ impl Buffer {
 
     /// Moves the cursor, extending the selection when asked.
     pub fn move_cursor(&mut self, motion: Motion, extend: bool) {
-        let head = self.moved(motion);
+        let head = self.moved(motion, extend);
         let anchor = if extend {
             self.selection().anchor
         } else {
@@ -225,12 +225,12 @@ impl Buffer {
     }
 
     /// Where `motion` takes the cursor from where it is.
-    fn moved(&mut self, motion: Motion) -> Position {
+    fn moved(&mut self, motion: Motion, extend: bool) -> Position {
         let head = self.selection().head;
         let last = self.line_count().saturating_sub(1);
         match motion {
-            Motion::Left if !self.selection().is_empty() => self.selection().start(),
-            Motion::Right if !self.selection().is_empty() => self.selection().end(),
+            Motion::Left if !extend && !self.selection().is_empty() => self.selection().start(),
+            Motion::Right if !extend && !self.selection().is_empty() => self.selection().end(),
             Motion::Left if head.column > 0 => Position::new(head.line, head.column - 1),
             Motion::Left if head.line > 0 => {
                 Position::new(head.line - 1, self.line_len(head.line - 1))
