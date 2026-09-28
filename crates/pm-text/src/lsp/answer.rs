@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 use crate::cursor::Position;
+use crate::indent::Indent;
 use crate::lsp::encoding::Files;
 use crate::lsp::uri;
 use crate::syntax::Highlight;
@@ -153,7 +154,7 @@ impl Request {
     }
 
     /// The parameters it is asked with, about `at` in the file at `path`.
-    pub(super) fn params(&self, path: &std::path::Path, at: Position) -> Value {
+    pub(super) fn params(&self, path: &std::path::Path, at: Position, indent: Indent) -> Value {
         let document = json!({ "uri": uri::of(path) });
         let position = json!({ "line": at.line, "character": at.column });
 
@@ -175,7 +176,7 @@ impl Request {
             }),
             Self::Format => json!({
                 "textDocument": document,
-                "options": { "tabSize": 4, "insertSpaces": true },
+                "options": { "tabSize": indent.width, "insertSpaces": !indent.tabs },
             }),
             Self::Symbols | Self::Semantics | Self::Lenses => json!({ "textDocument": document }),
             Self::ResolveLens(Handle(lens)) => lens.clone(),

@@ -281,15 +281,16 @@ impl Client {
     ///
     /// The answer is not waited for: a question goes out, the reader thread
     /// takes the reply down, and the window collects it on the wake that
-    /// follows. Nothing the editor asks a server may hold a frame up.
-    pub fn ask(&self, request: Request, path: &Path, at: Position) -> Asked {
+    /// follows. `indent` supplies the file's formatting options. Nothing
+    /// the editor asks a server may hold a frame up.
+    pub fn ask(&self, request: Request, path: &Path, at: Position, indent: crate::Indent) -> Asked {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let mut files = files(&self.state);
         let outgoing = request.encoded(path, &mut files);
         let message = json!({
             "id": id,
             "method": outgoing.method(),
-            "params": outgoing.params(path, files.encode(path, at)),
+            "params": outgoing.params(path, files.encode(path, at), indent),
         });
         if let Ok(mut state) = self.state.lock() {
             state.asked.insert(id, (request, path.to_path_buf()));

@@ -372,6 +372,8 @@ pub struct App {
     resting: Option<(Instant, Point)>,
     /// The fixes a server last offered, for the menu that shows them.
     code_actions: Vec<pm_text::CodeAction>,
+    /// The document and version the displayed code actions were computed for.
+    code_action_version: Option<(editor::FileId, i32)>,
     /// The questions asked of servers and not yet answered.
     asked: Vec<language::Pending>,
     /// Whether the servers being waited on were asked by a save.
@@ -648,6 +650,7 @@ impl App {
             blink: editor::Blink::default(),
             resting: None,
             code_actions: Vec::new(),
+            code_action_version: None,
             asked: Vec::new(),
             saving: false,
             workspace_symbols: (None, Vec::new()),

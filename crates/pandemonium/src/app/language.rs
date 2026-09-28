@@ -165,7 +165,7 @@ impl App {
         self.ask_about_for(file, at, request, Purpose::Act);
     }
 
-    /// Asks every server behind `file` `request`, for the reason `purpose`.
+    /// Asks the first server for edits, or every server for other answers.
     pub(super) fn ask_about_for(
         &mut self,
         file: FileId,
@@ -179,7 +179,11 @@ impl App {
         };
         let clients = document.borrow().servers();
         for client in clients {
+            let offered = client.offers(&request);
             self.ask_of(client, file, at, request.clone(), purpose);
+            if offered && matches!(request, Request::Format | Request::WillSave) {
+                break;
+            }
         }
     }
 
@@ -202,12 +206,14 @@ impl App {
         if !client.offers(&request) {
             return;
         }
-        let asked = client.ask(request.clone(), &path, at);
-        let version = self
-            .editor
-            .get(file)
-            .map(|document| document.borrow().buffer().version())
-            .unwrap_or_default();
+        let Some(document) = self.editor.get(file) else {
+            return;
+        };
+        let (version, indent) = {
+            let document = document.borrow();
+            (document.buffer().version(), document.buffer().indent())
+        };
+        let asked = client.ask(request.clone(), &path, at, indent);
         self.asked.push(Pending {
             client,
             asked,
@@ -644,6 +650,17 @@ impl App {
         if self.editor.get(pending.file).is_none() {
             return;
         }
+        let stale = self
+            .editor
+            .get(pending.file)
+            .is_some_and(|document| document.borrow().buffer().version() != pending.version);
+        if stale && (matches!(answer, Answer::Edits(_)) || pending.request == Request::CodeActions)
+        {
+            if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
+                self.finish_save();
+            }
+            return;
+        }
         if matches!(answer, Answer::Refused) {
             if let Some(document) = self.editor.get(pending.file) {
                 let mut document = document.borrow_mut();
@@ -684,7 +701,7 @@ impl App {
                 }
             }
             Answer::Completions(items) => self.show_completions(pending, items),
-            Answer::CodeActions(actions) => self.show_code_actions(actions),
+            Answer::CodeActions(actions) => self.show_code_actions(pending, actions),
             Answer::Edits(files) => {
                 self.apply_edits(files);
                 self.save_once_formatted(pending);
@@ -748,24 +765,53 @@ impl App {
         self.request_redraw();
     }
 
-    /// Takes the next step of a save, once every server has answered the last.
+    /// Takes the next step after one formatting or pre-save reply.
     ///
     /// A save the servers take part in is three steps: the formatter's
     /// changes, then whatever each server wants changed before the file is
-    /// written, then the writing. Each step waits for the last server to
-    /// answer, not the first, and each is asked about the text the one before
-    /// it left, so that two servers' changes never land on each other.
+    /// written, then the writing. Each server is asked after the previous
+    /// answer has been applied to the document.
     fn save_once_formatted(&mut self, pending: &Pending) {
-        if !self.saving || !matches!(pending.request, Request::Format | Request::WillSave) {
+        if !matches!(pending.request, Request::Format | Request::WillSave) {
             return;
         }
-        if self.awaits(pending.file, &pending.request) {
+        if self.ask_next_edit_server(pending) {
+            return;
+        }
+        if !self.saving {
             return;
         }
         match pending.request {
             Request::Format => self.ask_before_save(pending.file),
             _ => self.finish_save(),
         }
+    }
+
+    /// Asks the next capable server about the document left by the last one.
+    fn ask_next_edit_server(&mut self, pending: &Pending) -> bool {
+        let Some(document) = self.editor.get(pending.file) else {
+            return false;
+        };
+        let (clients, at) = {
+            let document = document.borrow();
+            (document.servers(), document.buffer().selection().head)
+        };
+        let next = clients
+            .into_iter()
+            .skip_while(|client| !Arc::ptr_eq(client, &pending.client))
+            .skip(1)
+            .find(|client| client.offers(&pending.request));
+        if let Some(client) = next {
+            self.ask_of(
+                client,
+                pending.file,
+                at,
+                pending.request.clone(),
+                pending.purpose,
+            );
+            return true;
+        }
+        false
     }
 
     /// Starts a save the servers behind the focused file take part in.
@@ -971,8 +1017,9 @@ impl App {
     }
 
     /// Opens the menu of fixes a server offers where the cursor is.
-    fn show_code_actions(&mut self, actions: Vec<pm_text::CodeAction>) {
+    fn show_code_actions(&mut self, pending: &Pending, actions: Vec<pm_text::CodeAction>) {
         self.code_actions = actions;
+        self.code_action_version = Some((pending.file, pending.version));
         if !self.code_actions.is_empty() {
             self.open_menu(crate::workspace::MenuTarget::CodeActions);
         }
@@ -980,6 +1027,16 @@ impl App {
 
     /// Takes the `index`-th code action the server offered.
     pub(super) fn take_code_action(&mut self, index: usize) {
+        let Some((file, version)) = self.code_action_version else {
+            return;
+        };
+        if self
+            .editor
+            .get(file)
+            .is_none_or(|document| document.borrow().buffer().version() != version)
+        {
+            return;
+        }
         let Some(action) = self.code_actions.get(index).cloned() else {
             return;
         };

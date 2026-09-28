@@ -623,12 +623,16 @@ impl Buffer {
     ///
     /// Edits arrive in the order a server thought of them and overlap only
     /// by accident; making them back to front means an earlier one never
-    /// moves the text a later one was measured against.
-    pub fn apply_edits(&mut self, mut edits: Vec<(Range<Position>, String)>) {
-        edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    /// moves the text a later one was measured against. Equal-position
+    /// inserts are applied in reverse so they read in the server's order.
+    pub fn apply_edits(&mut self, edits: Vec<(Range<Position>, String)>) {
+        let mut edits = edits.into_iter().enumerate().collect::<Vec<_>>();
+        edits.sort_by_key(|(index, (range, _))| {
+            (std::cmp::Reverse(range.start), std::cmp::Reverse(*index))
+        });
         let selection = self.selection();
         self.grouped(|buffer| {
-            for (range, text) in edits {
+            for (_, (range, text)) in edits {
                 buffer.replace(range, &text);
             }
             buffer.set_selection(Selection {
