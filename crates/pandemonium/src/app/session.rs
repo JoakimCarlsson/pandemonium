@@ -228,19 +228,23 @@ impl App {
         let Some(held) = self.sessions.get(session) else {
             return;
         };
-        let drift = held.summary();
-        let detail = vec![
-            format!("the worktree at {}", held.root().display()),
-            match drift.is_empty() {
-                true => format!("nothing changed since {}", held.base()),
-                false => format!(
-                    "{} +{} −{} that are not on any remote",
-                    counted(drift.files, "file"),
-                    drift.added,
-                    drift.removed
-                ),
-            },
-        ];
+        let risk = held.work_at_risk();
+        let mut detail = vec![format!("the worktree at {}", held.root().display())];
+        if risk.uncommitted_files > 0 {
+            detail.push(format!(
+                "{} uncommitted",
+                counted(risk.uncommitted_files, "file")
+            ));
+        }
+        if risk.unpushed_commits > 0 {
+            detail.push(format!(
+                "{} not on any remote",
+                counted(risk.unpushed_commits, "commit")
+            ));
+        }
+        if detail.len() == 1 {
+            detail.push("nothing would be lost".to_owned());
+        }
 
         self.ask_first(Prompt::asking(
             format!("Finish “{}”?", held.name()),
