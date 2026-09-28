@@ -178,6 +178,9 @@ impl App {
                 self.store();
             }
             Choice::Agent(agent) => self.start_agent(agent),
+            Choice::Task(scope, task) => {
+                self.run_task(scope, &task, crate::tasks::Shown::Front);
+            }
             Choice::AgentHistory(session, saved) => self.open_agent_history(session, &saved),
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
@@ -241,6 +244,7 @@ impl App {
             Kind::Agents => self.agent_rows(),
             Kind::AgentHistory(session) => self.agent_history_rows(session),
             Kind::Debug => self.debug_rows(),
+            Kind::Tasks => self.task_rows(),
             Kind::SessionRepositories => self.session_repository_rows(),
             Kind::Modes => self
                 .focused_talk()

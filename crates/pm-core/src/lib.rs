@@ -5,6 +5,7 @@ mod git;
 mod project;
 mod scope;
 mod session;
+mod task;
 
 pub use files::{
     Disk, Entry, EntryId, FileTree, Row, Touch, Touched, Watcher, ops, walk, walk_each,
@@ -22,3 +23,4 @@ pub use scope::Scope;
 pub use session::{
     Bootstrap, Cutting, Found, Session, SessionId, Sessions, StartError, Started, slug,
 };
+pub use task::{Task, TaskSource, tasks, tasks_checked};

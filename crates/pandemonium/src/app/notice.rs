@@ -85,7 +85,7 @@ impl App {
 
     /// What a notice calls the worktree `scope` names: the session's name,
     /// or the project's for its own checkout.
-    fn worktree_name(&self, scope: Scope) -> String {
+    pub(super) fn worktree_name(&self, scope: Scope) -> String {
         scope
             .session()
             .and_then(|session| self.sessions.get(session))

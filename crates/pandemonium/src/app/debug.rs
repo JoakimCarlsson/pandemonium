@@ -20,6 +20,7 @@ use crate::message::Message;
 use crate::panel::PanelView;
 use crate::panes::PaneId;
 use crate::picker::{Choice, Kind, Row};
+use crate::tasks::Shown;
 
 impl App {
     /// Carries out the debugging commands a keybinding or the palette names.
@@ -146,6 +147,26 @@ impl App {
 
     /// Starts debugging `scenario` in `scope`, and shows the debugger.
     pub(super) fn start_debugging(&mut self, scope: Scope, scenario: Scenario) {
+        if let Some(label) = &scenario.before {
+            let Some(task) = self
+                .available_tasks(scope)
+                .into_iter()
+                .find(|task| task.label == *label)
+            else {
+                self.notices
+                    .trouble(format!("No task called `{label}`"), None);
+                return;
+            };
+            if let Some(run) = self.run_task(scope, &task, Shown::Front) {
+                self.pending_debug.insert(run, (scope, scenario));
+            }
+            return;
+        }
+        self.start_debug_adapter(scope, scenario);
+    }
+
+    /// Starts the adapter after any task required by the scenario succeeded.
+    pub(super) fn start_debug_adapter(&mut self, scope: Scope, scenario: Scenario) {
         let Some(root) = self.root_of(scope) else {
             return;
         };

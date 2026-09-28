@@ -91,6 +91,8 @@ pub enum Kind {
     Knob,
     /// What the worktree in front can be debugged as.
     Debug,
+    /// Tasks offered by the worktree in front.
+    Tasks,
 }
 
 impl Kind {
@@ -127,6 +129,7 @@ impl Kind {
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
             Self::Debug => "Debug this worktree as",
+            Self::Tasks => "Run a task in this worktree",
         }
     }
 
@@ -214,6 +217,8 @@ pub enum Choice {
     Font(FontSlot, Option<String>),
     /// Debug this worktree as this scenario.
     Debug(Scope, Box<pm_dap::Scenario>),
+    /// Run this task in its worktree.
+    Task(Scope, Box<pm_core::Task>),
     /// Tick or untick this repository for the session about to be cut.
     SessionRepository(PathBuf),
     /// Cut the session about to be cut, of the repositories ticked.

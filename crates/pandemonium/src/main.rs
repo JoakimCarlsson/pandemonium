@@ -36,6 +36,7 @@ mod release;
 mod review;
 mod settings;
 mod shell_path;
+mod tasks;
 mod terminal;
 mod theme;
 mod tree;

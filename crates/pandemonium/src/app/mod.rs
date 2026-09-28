@@ -29,6 +29,7 @@ mod reorder;
 mod review;
 mod session;
 mod settings;
+mod tasks;
 mod terminal;
 mod tree;
 mod views;
@@ -428,6 +429,12 @@ pub struct App {
     agents: Talks,
     /// The shells the window is running, one per project.
     terminals: Terminals,
+    /// Task runs and their reported results.
+    tasks: crate::tasks::Tasks,
+    /// Debug scenarios waiting for a task to finish.
+    pending_debug: std::collections::BTreeMap<crate::tasks::RunId, (Scope, pm_dap::Scenario)>,
+    /// Worktrees whose invalid tasks file has already been reported.
+    task_errors: std::collections::BTreeSet<std::path::PathBuf>,
     /// The terminals agents have started among those shells, and what the
     /// agents are waiting to hear about them.
     errands: client::Errands,
@@ -677,6 +684,9 @@ impl App {
             menu: None,
             agents: Talks::default(),
             terminals: Terminals::default(),
+            tasks: crate::tasks::Tasks::default(),
+            pending_debug: std::collections::BTreeMap::new(),
+            task_errors: std::collections::BTreeSet::new(),
             errands: client::Errands::default(),
             logins: Vec::new(),
             notices: Notices::default(),
@@ -956,6 +966,8 @@ impl App {
         let Some(scope) = self.scope() else {
             return;
         };
+        self.tasks.stop_shell(scope, shell);
+        self.hear_finished_tasks();
         self.terminals.stop(scope, shell);
         self.close_empty_panel();
     }
@@ -1536,6 +1548,9 @@ impl App {
             self.excerpts.retain(|scope, _| scope.project() != id);
             self.trail.close_project(id);
             self.terminals.close(id);
+            self.tasks.forget(id);
+            self.pending_debug
+                .retain(|_, (scope, _)| scope.project() != id);
             self.debuggers.forget(|scope| scope.project() == id);
             self.agents.close_project(id);
             self.sessions.close_project(id);
@@ -1773,11 +1788,15 @@ impl App {
             Message::TogglePin(pane, item) => self.toggle_pin(pane, item),
             Message::CloseOtherTerminals(id) => {
                 if let Some(scope) = self.scope() {
+                    self.tasks.stop_shells_except(scope, Some(id));
+                    self.hear_finished_tasks();
                     self.terminals.stop_others(scope, id);
                 }
             }
             Message::CloseAllTerminals => {
                 if let Some(scope) = self.scope() {
+                    self.tasks.stop_shells_except(scope, None);
+                    self.hear_finished_tasks();
                     self.terminals.stop_all(scope);
                 }
                 self.close_empty_panel();
@@ -2330,8 +2349,10 @@ impl ApplicationHandler<Wake> for App {
         match event {
             Wake::Terminal => {
                 let pumped = self.terminals.pump();
+                let tasks_pumped = self.tasks.pump();
+                self.hear_finished_tasks();
                 let logged_in = self.follow_logins();
-                if pumped | self.follow_errands() | logged_in {
+                if pumped | tasks_pumped | self.follow_errands() | logged_in {
                     self.hear_failed_shells();
                     self.close_empty_panel();
                     self.request_redraw();
