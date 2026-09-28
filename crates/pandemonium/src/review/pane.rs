@@ -26,7 +26,7 @@ use pm_core::{Changed, Hunk, Line, LineKind};
 use pm_gfx::Rgba;
 use pm_text::Highlight;
 use pm_ui::{
-    Div, IconName, IconSize, Styled, Theme, checkbox, h_flex, icon, icon_button, text,
+    Div, IconName, IconSize, Side, Styled, Theme, checkbox, h_flex, icon, icon_button, text,
     turning_icon_button, v_flex,
 };
 
@@ -56,6 +56,9 @@ const MARK: f32 = 20.0;
 
 /// How many times deeper a changed line's gutter is washed than its text.
 const GUTTER_DEPTH: f32 = 2.5;
+
+/// Space separating one changed file from the next.
+const FILE_GAP: f32 = 24.0;
 
 /// Builds the review of everything one project has changed.
 ///
@@ -145,7 +148,13 @@ fn drawn(
     rows.into_iter()
         .skip(first)
         .take(DRAWN)
-        .map(|row| self::row(theme, review, row))
+        .map(|row| {
+            let outlined = shown.is_none() && !matches!(row, Row::FileGap | Row::FileEnd);
+            self::row(theme, review, row).when(outlined, |row| {
+                row.border_side(Side::Left, 1.0, theme.colors.border)
+                    .border_side(Side::Right, 1.0, theme.colors.border)
+            })
+        })
         .collect()
 }
 
@@ -391,6 +400,10 @@ fn nothing(theme: &Theme, said: &str) -> Div<Message> {
 
 /// One row of a review, in the order they are drawn.
 enum Row<'a> {
+    /// The space before another changed file begins.
+    FileGap,
+    /// The bottom edge of one changed file.
+    FileEnd,
     /// A file: its name, its counts and what can be done to it.
     File(usize, &'a Changed),
     /// Which side of the index the hunks under it are on.
@@ -427,10 +440,15 @@ fn rows(review: &Review, shown: Option<ChangeId>, split: bool) -> Vec<Row<'_>> {
             .enumerate()
             .flat_map(|(index, changed)| {
                 let folded = review.is_collapsed(&changed.path);
-                let mut rows = vec![Row::File(index, changed)];
+                let mut rows = Vec::new();
+                if index > 0 {
+                    rows.push(Row::FileGap);
+                }
+                rows.push(Row::File(index, changed));
                 if !folded {
                     rows.extend(lines(review, index, changed, split));
                 }
+                rows.push(Row::FileEnd);
                 rows
             })
             .collect();
@@ -550,6 +568,8 @@ fn paired<'a>(path: &'a Path, staged: bool, hunk: &'a Hunk) -> Vec<Row<'a>> {
 /// Builds one row of a review, whichever kind of row it is.
 fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
     match row {
+        Row::FileGap => v_flex().w_full().h_px(FILE_GAP),
+        Row::FileEnd => v_flex().w_full().h_px(1.0).bg(theme.colors.border),
         Row::File(index, changed) => file_row(theme, review, index, changed),
         Row::Side(name) => side_row(theme, name),
         Row::Heading(index, staged, at, hunk) => {
@@ -631,15 +651,22 @@ fn file_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -> 
     let collapsed = review.is_collapsed(&changed.path);
     let (added, removed) = counts(review, changed);
     let marked = review.id_of(index).is_some_and(|id| review.is_marked(id));
+    let path = relative(review, &changed.path);
+    let name = Path::new(&path)
+        .file_name()
+        .map_or(path.as_str(), |name| name.to_str().unwrap_or(&path));
+    let directory = path.strip_suffix(name).unwrap_or_default();
 
     h_flex()
         .w_full()
-        .h_px(theme.size.row)
+        .h_px(theme.size.field)
         .px(1.5)
-        .gap(0.5)
+        .gap(0.75)
         .items_center()
         .overflow_hidden()
         .bg(theme.colors.surface)
+        .border_side(Side::Top, 1.0, theme.colors.border)
+        .border_side(Side::Bottom, 1.0, theme.colors.border_variant)
         .when(marked, |row| row.bg(theme.colors.surface_selected))
         .hover_bg(theme.colors.surface_hover)
         .on_click(match changed.is_conflicted() {
@@ -661,7 +688,18 @@ fn file_row(theme: &Theme, review: &Review, index: usize, changed: &Changed) -> 
                     .color(theme.colors.text_subtle),
                 ),
         )
-        .child(text(relative(review, &changed.path)).text_sm().font_mono())
+        .child(
+            h_flex()
+                .items_center()
+                .overflow_hidden()
+                .child(
+                    text(directory.to_owned())
+                        .text_sm()
+                        .font_mono()
+                        .color(theme.colors.text_muted),
+                )
+                .child(text(name.to_owned()).text_sm().font_mono().font_semibold()),
+        )
         .child(
             text(changed.mark().letter())
                 .text_xs()
