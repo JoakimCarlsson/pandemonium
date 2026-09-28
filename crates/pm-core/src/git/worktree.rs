@@ -84,7 +84,15 @@ pub fn add_worktree(root: &Path, path: &Path, base: &str) -> Said {
 /// Whatever the worktree holds goes with it, which is what finishing a
 /// session means: the record of what the agent did is the branch or the
 /// commits it pushed, never the directory it worked in.
+///
+/// A worktree already taken away outside the editor, its directory deleted
+/// or git no longer listing it, counts as removed: git is only told to
+/// forget the stale entry it may still hold.
 pub fn remove_worktree(root: &Path, path: &Path) -> Said {
+    if !is_linked(root, path) {
+        let _ = answer(root, ["worktree", "prune"]);
+        return Ok(String::new());
+    }
     let removed = git(
         root,
         [
@@ -112,6 +120,20 @@ pub fn worktrees(root: &Path) -> Vec<PathBuf> {
         .map(PathBuf::from)
         .filter(|path| path != root)
         .collect()
+}
+
+/// Whether `path` is on disk and still one of the linked worktrees of the
+/// repository at `root`.
+///
+/// Both sides are compared as the filesystem resolves them, since git lists
+/// a worktree by its real path and a session may hold it by a linked one.
+fn is_linked(root: &Path, path: &Path) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    worktrees(root)
+        .iter()
+        .any(|listed| listed.canonicalize().is_ok_and(|listed| listed == path))
 }
 
 /// The commit `revision` names in the repository at `root`, shortened.
