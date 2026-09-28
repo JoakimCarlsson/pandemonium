@@ -38,7 +38,12 @@ impl App {
     /// Sends a keypress to modal editing, when it is on and a file has the
     /// keyboard, saying whether it was taken.
     pub(super) fn send_to_vim(&mut self, event: &KeyEvent) -> bool {
-        if !self.preferences.vim_mode || self.search_focused || self.writing.is_some() {
+        if !self.preferences.vim_mode
+            || self.search_focused
+            || self.writing.is_some()
+            || self.picker.is_some()
+            || self.tree_edit.is_some()
+        {
             return false;
         }
         if self.is_window_chord() || !self.resolver.pending().is_empty() {

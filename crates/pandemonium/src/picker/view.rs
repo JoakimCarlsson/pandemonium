@@ -127,6 +127,7 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
             .child(rule(theme))
             .child(
                 field(picker.field().value(), picker.field().caret(), solid)
+                    .selection(picker.field().selection())
                     .placeholder(picker.kind().placeholder())
                     .w_full()
                     .px(2)
@@ -144,6 +145,7 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
         .rounded(theme.radius.lg)
         .child(
             field(picker.field().value(), picker.field().caret(), solid)
+                .selection(picker.field().selection())
                 .placeholder(picker.kind().placeholder())
                 .w_full()
                 .px(2)

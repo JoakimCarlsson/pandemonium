@@ -85,13 +85,18 @@ impl App {
             context.set(keys::PANE_KIND, kind);
         }
         let palette = self.picker.is_some();
+        let field = palette || self.search_focused || self.tree_edit.is_some();
         let editing = self.focused_file().is_some()
             && self.writing.is_none()
             && !self.search_focused
             && !self.changes_focused
-            && !palette;
+            && !palette
+            && self.tree_edit.is_none();
         context.flag(keys::EDITOR_FOCUSED, editing);
-        context.flag(keys::TEXT_FOCUSED, editing || self.writing.is_some());
+        context.flag(
+            keys::TEXT_FOCUSED,
+            editing || self.writing.is_some() || field,
+        );
         context.flag(keys::PALETTE_OPEN, palette);
         context.flag(keys::SEARCH_FOCUSED, self.search_focused);
         context.flag(

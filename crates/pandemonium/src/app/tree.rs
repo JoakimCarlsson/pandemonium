@@ -965,13 +965,6 @@ impl App {
             Key::Named(NamedKey::Escape) => {
                 self.cancel_tree_edit();
             }
-            Key::Character(typed) if self.primary_held() && typed.eq_ignore_ascii_case("v") => {
-                let pasted = desktop::paste().unwrap_or_default();
-                let line = pasted.lines().next().unwrap_or_default().to_owned();
-                if let Some(edit) = self.tree_edit.as_mut() {
-                    edit.field_mut().put(&line);
-                }
-            }
             key => {
                 if let Some(edit) = self.tree_edit.as_mut()
                     && edit.field_mut().press(key, modifiers) == Typed::Ignored
@@ -991,7 +984,11 @@ impl App {
     /// deletes for good, the clipboard keys cut, copy and paste files, and a
     /// letter jumps to the next row whose name starts with it.
     pub(super) fn send_to_tree(&mut self, key: &Key<&str>) -> bool {
-        if !self.tree_focused || !self.tree_showing() || self.is_window_chord() {
+        if !self.tree_focused
+            || !self.tree_showing()
+            || self.is_window_chord()
+            || self.tree_edit.is_some()
+        {
             return false;
         }
         let (primary, shift) = (self.primary_held(), self.modifiers.shift_key());

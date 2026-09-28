@@ -190,6 +190,7 @@ fn edit_lines(
         .child(measured(
             listing.field.clone(),
             field(edit.field().value(), edit.field().caret(), listing.caret)
+                .selection(edit.field().selection())
                 .flex_1()
                 .h_px(theme.size.row - 2.0)
                 .px(1)

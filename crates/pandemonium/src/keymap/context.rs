@@ -329,8 +329,8 @@ pub mod keys {
     /// Set while a file's text has the keyboard: not its search bar, not a
     /// box of text beside it, and not while a palette is open over it.
     pub const EDITOR_FOCUSED: &str = "editor.focused";
-    /// Set while any text has the keyboard: a file's, an agent's prompt or
-    /// a commit message, and not while a palette is open over the file.
+    /// Set while any text has the keyboard: a file's, an agent's prompt, a
+    /// commit message, or a single-line field.
     pub const TEXT_FOCUSED: &str = "text.focused";
     /// Set while a pane's search bar has the keyboard.
     pub const SEARCH_FOCUSED: &str = "search.focused";

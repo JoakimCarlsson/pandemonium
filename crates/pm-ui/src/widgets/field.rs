@@ -1,11 +1,12 @@
 //! One line of text being typed into, with a caret in it.
 //!
-//! The field draws and nothing more: what the text is, where the caret sits
-//! and which field the keyboard is going to are the caller's, because a
-//! search bar, a palette and a rename prompt are three callers with one
-//! widget between them. A click reports where in the text it landed, so the
-//! caller can move its own caret there.
+//! The field draws and nothing more: what the text is, where the caret sits,
+//! which characters are selected and which field the keyboard is going to
+//! are the caller's, because a search bar, a palette and a rename prompt are
+//! three callers with one widget between them. A click reports where in the
+//! text it landed, so the caller can move its own caret there.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use pm_gfx::{Point, Quad, Rect, Size};
@@ -25,6 +26,8 @@ pub struct Field<M> {
     placeholder: String,
     /// How many characters into the value the caret sits.
     caret: usize,
+    /// The characters washed in the selection colour, when a span is selected.
+    selection: Option<Range<usize>>,
     /// Whether keystrokes are going to this field.
     focused: bool,
     /// The step of the scale the text is drawn at.
@@ -41,6 +44,7 @@ pub fn field<M>(value: impl Into<String>, caret: usize, focused: bool) -> Field<
         value: value.into(),
         placeholder: String::new(),
         caret,
+        selection: None,
         focused,
         font: Font::new(TextSize::Sm),
         on_press: None,
@@ -64,6 +68,13 @@ impl<M> Field<M> {
     /// Returns this field reporting presses through `on_press`.
     pub fn on_press(mut self, on_press: impl Fn(usize) -> M + 'static) -> Self {
         self.on_press = Some(Arc::new(on_press));
+        self
+    }
+
+    /// Returns this field with characters `selection` washed in the selection
+    /// colour.
+    pub fn selection(mut self, selection: Option<Range<usize>>) -> Self {
+        self.selection = selection;
         self
     }
 }
@@ -119,6 +130,27 @@ impl<M: 'static> Element<M> for Field<M> {
             bounds.top() + self.style.padding.top,
         );
 
+        let widths = if self.selection.is_some() || self.focused || self.on_press.is_some() {
+            self.caret_offsets(font, cx)
+        } else {
+            Vec::new()
+        };
+
+        if let Some(selected) = &self.selection
+            && !widths.is_empty()
+        {
+            let last = widths.len().saturating_sub(1);
+            let start = widths[selected.start.min(last)];
+            let end = widths[selected.end.min(last)];
+            if end > start {
+                let color = theme.colors.selection.alpha(theme.emphasis.selection);
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(origin.x + start, origin.y, end - start, font.line_height),
+                    color,
+                ));
+            }
+        }
+
         if !shown.is_empty() {
             let color = if empty {
                 theme.colors.text_subtle
@@ -129,9 +161,9 @@ impl<M: 'static> Element<M> for Field<M> {
             cx.text(origin, run, color);
         }
 
-        if self.focused {
-            let before = self.value.chars().take(self.caret).collect::<String>();
-            let offset = cx.measure(&before, font).width;
+        if self.focused && !widths.is_empty() {
+            let last = widths.len().saturating_sub(1);
+            let offset = widths[self.caret.min(last)];
             cx.quad(Quad::filled(
                 Rect::from_xywh(origin.x + offset, origin.y, CARET_WIDTH, font.line_height),
                 theme.colors.accent,
@@ -141,7 +173,6 @@ impl<M: 'static> Element<M> for Field<M> {
         let Some(on_press) = self.on_press.clone() else {
             return;
         };
-        let widths = self.caret_offsets(font, cx);
         let pointer = cx.input().pointer;
         let pressed = pointer.map(|pointer| {
             let x = pointer.x - origin.x;

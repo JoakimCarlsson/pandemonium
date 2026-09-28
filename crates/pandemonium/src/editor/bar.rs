@@ -54,6 +54,7 @@ fn query_row(theme: &Theme, pane: PaneId, search: &Search, solid: bool) -> Div<M
                 search.query().caret(),
                 focused && solid,
             )
+            .selection(search.query().selection())
             .placeholder("Find")
             .font_mono()
             .flex_1()
@@ -103,6 +104,7 @@ fn replacement_row(theme: &Theme, pane: PaneId, search: &Search, solid: bool) ->
                 search.replacement().caret(),
                 focused && solid,
             )
+            .selection(search.replacement().selection())
             .placeholder("Replace")
             .font_mono()
             .flex_1()
