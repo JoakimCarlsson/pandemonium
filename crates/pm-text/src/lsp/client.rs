@@ -1,13 +1,13 @@
 //! One language server: the process, what it has been told, and what it says.
 //!
-//! The client is deliberately half a protocol. It opens documents, keeps
-//! them in step and collects diagnostics; it asks the server for nothing
-//! else. A server is a process that can die, refuse to start or never answer
+//! The client opens documents, keeps them in step, collects diagnostics and
+//! handles server requests. A server can die, refuse to start or never answer
 //! — none of which is an error the editor reports, because a file opens and
 //! edits the same either way.
 
 use std::collections::HashMap;
 use std::io::BufReader;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -89,6 +89,14 @@ struct State {
     queued: Vec<Outgoing>,
     /// The diagnostics last published, per file.
     diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
+    /// Published diagnostics in the server's own encoding and shape.
+    wire_diagnostics: HashMap<PathBuf, Vec<Value>>,
+    /// Workspace edits awaiting the window's application and reply.
+    workspace_edits: Vec<WorkspaceEditRequest>,
+    /// Settings given to this server at startup.
+    options: Value,
+    /// The name under which this server's settings are requested.
+    options_section: String,
     /// The questions asked and not yet answered, and what they were about.
     asked: HashMap<i64, (Request, PathBuf)>,
     /// The answers that have come back and not yet been collected.
@@ -107,6 +115,16 @@ struct State {
     watchers: Watchers,
     /// What the server said it can do, once the handshake has said it.
     capabilities: Option<Value>,
+}
+
+/// An edit requested by a server, awaiting application by the window.
+pub struct WorkspaceEditRequest {
+    /// The file edits the server requested.
+    pub edits: Vec<crate::FileEdit>,
+    /// The request identifier to answer after applying them.
+    id: Value,
+    /// Whether the request contained only supported text edits.
+    pub supported: bool,
 }
 
 /// A language server the editor is talking to.
@@ -146,7 +164,11 @@ impl Client {
 
         let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"));
         let stdout = process.stdout.take().expect("stdout was piped");
-        let state = Arc::new(Mutex::new(State::default()));
+        let state = Arc::new(Mutex::new(State {
+            options: serde_json::from_str(server.options).unwrap_or(Value::Null),
+            options_section: server.command.to_owned(),
+            ..State::default()
+        }));
 
         outbox.send(Outgoing::Message(json!({
             "jsonrpc": "2.0",
@@ -283,14 +305,38 @@ impl Client {
     /// takes the reply down, and the window collects it on the wake that
     /// follows. `indent` supplies the file's formatting options. Nothing
     /// the editor asks a server may hold a frame up.
-    pub fn ask(&self, request: Request, path: &Path, at: Position, indent: crate::Indent) -> Asked {
+    pub fn ask(
+        &self,
+        request: Request,
+        path: &Path,
+        at: Position,
+        indent: crate::Indent,
+        selection: Range<Position>,
+    ) -> Asked {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let mut files = files(&self.state);
         let outgoing = request.encoded(path, &mut files);
+        let selection = files.encode(path, selection.start)..files.encode(path, selection.end);
+        let diagnostics = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|state| state.wire_diagnostics.get(path).cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|found| {
+                let start = &found["range"]["start"];
+                let end = &found["range"]["end"];
+                let first = start["line"].as_u64().unwrap_or_default() as usize;
+                let last = end["line"].as_u64().unwrap_or_default() as usize;
+                first <= selection.end.line && last >= selection.start.line
+            })
+            .filter(|_| request == Request::CodeActions)
+            .collect();
         let message = json!({
             "id": id,
             "method": outgoing.method(),
-            "params": outgoing.params(path, files.encode(path, at), indent),
+            "params": outgoing.params(path, files.encode(path, at), indent, selection, diagnostics),
         });
         if let Ok(mut state) = self.state.lock() {
             state.asked.insert(id, (request, path.to_path_buf()));
@@ -338,6 +384,31 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// Takes workspace edits the server asked the window to apply.
+    pub fn take_workspace_edits(&self) -> Vec<WorkspaceEditRequest> {
+        self.state
+            .lock()
+            .map(|mut state| std::mem::take(&mut state.workspace_edits))
+            .unwrap_or_default()
+    }
+
+    /// Reports whether the window applied a server-requested workspace edit.
+    pub fn answer_workspace_edit(&self, request: WorkspaceEditRequest, applied: bool) {
+        self.notify(json!({
+            "id": request.id,
+            "result": { "applied": applied },
+        }));
+    }
+
+    /// Runs the server command attached to a chosen code action.
+    pub fn execute_command(&self, command: crate::lsp::answer::Command) {
+        self.notify(json!({
+            "id": self.next.fetch_add(1, Ordering::Relaxed),
+            "method": "workspace/executeCommand",
+            "params": { "command": command.name, "arguments": command.arguments },
+        }));
+    }
+
     /// How many errors the server has published, across every file it has
     /// said anything about.
     pub fn errors(&self) -> usize {
@@ -376,6 +447,8 @@ impl Client {
             state.dead = true;
             state.queued.clear();
             state.diagnostics.clear();
+            state.wire_diagnostics.clear();
+            state.workspace_edits.clear();
             state.fresh = true;
         }
         let Some(process) = self
@@ -500,6 +573,8 @@ impl Reader {
         state.dead = true;
         state.queued.clear();
         state.diagnostics.clear();
+        state.wire_diagnostics.clear();
+        state.workspace_edits.clear();
         let unanswered = state.asked.drain().map(|(id, _)| id).collect::<Vec<_>>();
         for id in unanswered {
             state.answers.insert(id, Answer::Refused);
@@ -542,6 +617,8 @@ impl Reader {
                 Request::Hints(Position::default()..Position::default()),
             ),
             Some("workspace/codeLens/refresh") => self.refresh(message, Request::Lenses),
+            Some("workspace/configuration") => self.configuration(message),
+            Some("workspace/applyEdit") => self.apply_edit(message),
             Some(_) if message.get("id").is_some() => self.acknowledge(message),
             _ => {}
         }
@@ -554,6 +631,68 @@ impl Reader {
             "id": message["id"].clone(),
             "result": Value::Null,
         })));
+    }
+
+    /// Answers each requested settings section in its original order.
+    fn configuration(&self, message: &Value) {
+        let (options, options_section) = self
+            .state
+            .lock()
+            .map(|state| (state.options.clone(), state.options_section.clone()))
+            .unwrap_or((Value::Null, String::new()));
+        let values = message["params"]["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|item| {
+                let section = item["section"].as_str().unwrap_or_default();
+                let section = section
+                    .strip_prefix(&options_section)
+                    .filter(|rest| rest.is_empty() || rest.starts_with('.'))
+                    .unwrap_or(section);
+                let value = section
+                    .split('.')
+                    .filter(|part| !part.is_empty())
+                    .fold(&options, |value, part| &value[part]);
+                if value.is_null() || value.as_object().is_some_and(|map| map.is_empty()) {
+                    Value::Null
+                } else {
+                    value.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        self.outbox.send(Outgoing::Message(json!({
+            "jsonrpc": "2.0",
+            "id": message["id"].clone(),
+            "result": values,
+        })));
+    }
+
+    /// Sends a requested workspace edit to the window for application.
+    fn apply_edit(&self, message: &Value) {
+        let edit = &message["params"]["edit"];
+        let supported = (edit["documentChanges"].is_array() || edit["changes"].is_object())
+            && edit["documentChanges"].as_array().is_none_or(|changes| {
+                changes.iter().all(|change| {
+                    change["textDocument"]["uri"]
+                        .as_str()
+                        .and_then(uri::path)
+                        .is_some()
+                })
+            })
+            && edit["changes"]
+                .as_object()
+                .is_none_or(|changes| changes.keys().all(|uri| uri::path(uri).is_some()));
+        let request = WorkspaceEditRequest {
+            edits: answer::workspace_edit(edit),
+            id: message["id"].clone(),
+            supported,
+        };
+        if let Ok(mut state) = self.state.lock() {
+            state.workspace_edits.push(request);
+            state.fresh = true;
+        }
+        (self.notify)();
     }
 
     /// Records a server request to ask again for one annotation kind.
@@ -663,6 +802,14 @@ impl Reader {
             .collect();
 
         if let Ok(mut state) = self.state.lock() {
+            state.wire_diagnostics.insert(
+                path.clone(),
+                params
+                    .diagnostics
+                    .iter()
+                    .filter_map(|found| serde_json::to_value(found).ok())
+                    .collect(),
+            );
             state.diagnostics.insert(path, diagnostics);
             state.fresh = true;
         }
@@ -747,6 +894,8 @@ fn initialize(root: &Path, server: Server) -> Value {
                 },
             },
             "workspace": {
+                "configuration": true,
+                "executeCommand": {},
                 "semanticTokens": { "refreshSupport": true },
                 "inlayHint": { "refreshSupport": true },
                 "codeLens": { "refreshSupport": true },

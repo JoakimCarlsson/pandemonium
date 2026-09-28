@@ -154,7 +154,14 @@ impl Request {
     }
 
     /// The parameters it is asked with, about `at` in the file at `path`.
-    pub(super) fn params(&self, path: &std::path::Path, at: Position, indent: Indent) -> Value {
+    pub(super) fn params(
+        &self,
+        path: &std::path::Path,
+        at: Position,
+        indent: Indent,
+        selection: Range<Position>,
+        diagnostics: Vec<Value>,
+    ) -> Value {
         let document = json!({ "uri": uri::of(path) });
         let position = json!({ "line": at.line, "character": at.column });
 
@@ -171,8 +178,11 @@ impl Request {
             }),
             Self::CodeActions => json!({
                 "textDocument": document,
-                "range": { "start": position, "end": position },
-                "context": { "diagnostics": [] },
+                "range": {
+                    "start": { "line": selection.start.line, "character": selection.start.column },
+                    "end": { "line": selection.end.line, "character": selection.end.column },
+                },
+                "context": { "diagnostics": diagnostics },
             }),
             Self::Format => json!({
                 "textDocument": document,
@@ -413,6 +423,17 @@ pub struct CodeAction {
     pub title: String,
     /// The changes it makes, when it carries them itself.
     pub edits: Vec<FileEdit>,
+    /// The server command to run after applying the edit, when present.
+    pub command: Option<Command>,
+}
+
+/// A command a server offers as all or part of a code action.
+#[derive(Clone, Debug)]
+pub struct Command {
+    /// The identifier the server recognizes.
+    pub name: String,
+    /// The arguments returned by the server.
+    pub arguments: Vec<Value>,
 }
 
 /// The changes one file is asked to take.
@@ -724,7 +745,7 @@ fn signature(result: &Value) -> String {
         .to_owned()
 }
 
-/// The fixes and refactors offered, with the ones that are only commands left out.
+/// The fixes and refactors offered, including commands without edits.
 fn code_actions(result: &Value) -> Vec<CodeAction> {
     result
         .as_array()
@@ -733,16 +754,31 @@ fn code_actions(result: &Value) -> Vec<CodeAction> {
         .iter()
         .filter_map(|action| {
             let title = action["title"].as_str()?.to_owned();
-            Some(CodeAction {
+            let edits = workspace_edit(&action["edit"]);
+            let command = if action["command"].is_string() {
+                command(action)
+            } else {
+                command(&action["command"])
+            };
+            (!edits.is_empty() || command.is_some()).then_some(CodeAction {
                 title,
-                edits: workspace_edit(&action["edit"]),
+                edits,
+                command,
             })
         })
         .collect()
 }
 
+/// The executable part of a code action or a command-only action.
+fn command(value: &Value) -> Option<Command> {
+    Some(Command {
+        name: value["command"].as_str()?.to_owned(),
+        arguments: value["arguments"].as_array().cloned().unwrap_or_default(),
+    })
+}
+
 /// The changes a workspace edit asks for, file by file.
-fn workspace_edit(edit: &Value) -> Vec<FileEdit> {
+pub(super) fn workspace_edit(edit: &Value) -> Vec<FileEdit> {
     let mut files = Vec::new();
 
     if let Some(changes) = edit["changes"].as_object() {
