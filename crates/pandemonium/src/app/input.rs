@@ -1087,6 +1087,7 @@ impl App {
                 PointerCursor::ResizeHorizontal => winit::window::CursorIcon::ColResize,
                 PointerCursor::ResizeVertical => winit::window::CursorIcon::RowResize,
                 PointerCursor::Text => winit::window::CursorIcon::Text,
+                PointerCursor::Grab => winit::window::CursorIcon::Grab,
             }
         });
         if let Some(window) = self.window.as_ref() {

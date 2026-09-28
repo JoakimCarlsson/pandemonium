@@ -8,6 +8,7 @@ license.workspace = true
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 base64 = "0.23.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+mermaid-svg = "0.7.0"
 pm-acp.workspace = true
 pm-core.workspace = true
 pm-dap.workspace = true

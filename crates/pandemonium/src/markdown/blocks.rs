@@ -44,6 +44,8 @@ pub enum Block {
     Paragraph(Vec<Run>),
     /// A block of code, with the language its fence named.
     Code(Option<String>, String),
+    /// A Mermaid diagram, kept as source until it is drawn.
+    Diagram(String),
     /// A passage quoted from elsewhere, and the blocks it holds.
     Quote(Vec<Block>),
     /// A list, numbered from its first number or bulleted, and its items.
@@ -115,6 +117,9 @@ impl<'a> Reader<'a> {
                     let code = self.text_until(TagEnd::CodeBlock);
                     match language.as_deref().and_then(separator) {
                         Some(separator) => blocks.push(Block::Table(delimited(&code, separator))),
+                        None if language.as_deref() == Some("mermaid") => {
+                            blocks.push(Block::Diagram(code))
+                        }
                         None => blocks.push(Block::Code(language, code)),
                     }
                 }

@@ -7,8 +7,9 @@
 //! blocks the text last parsed into and the pictures it names.
 
 pub(crate) mod blocks;
+mod diagram;
 mod pane;
 mod store;
 
 pub use pane::rendered_pane;
-pub use store::{Renders, is_markdown};
+pub use store::{DiagramZoom, Renders, is_markdown};

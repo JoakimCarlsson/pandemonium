@@ -1174,6 +1174,10 @@ impl App {
                         theme,
                         &blocks,
                         self.renders.scroll(file),
+                        file,
+                        self.window
+                            .as_ref()
+                            .map_or(1.0, |window| window.scale_factor() as f32),
                         buffer.path(),
                         &self.renders,
                     )))

@@ -752,6 +752,9 @@ fn markdown_block_rows(
         MarkdownBlock::Code(language, code) => {
             code_rows(language.as_deref(), code, (mark, hang), columns, rows);
         }
+        MarkdownBlock::Diagram(source) => {
+            code_rows(Some("mermaid"), source, (mark, hang), columns, rows);
+        }
         MarkdownBlock::Quote(blocks) => {
             let (mark, hang) = (format!("{mark}{QUOTE}"), format!("{hang}{QUOTE}"));
             for (position, block) in blocks.iter().enumerate() {

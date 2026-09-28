@@ -5,11 +5,11 @@
 //! is a texture of its own, uploaded the first frame it is drawn and kept for
 //! as long as frames keep drawing it.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use resvg::tiny_skia::{Pixmap, Transform};
-use resvg::usvg::{Options, Tree};
+use resvg::usvg::{Options, Tree, fontdb};
 
 /// Longest side a picture is kept at, larger ones being scaled down to it.
 ///
@@ -20,6 +20,28 @@ const LONGEST_SIDE: u32 = 4096;
 /// Side an SVG document is drawn at when it gives no size of its own worth
 /// keeping, before it is scaled up to be looked at.
 const VECTOR_SIDE: f32 = 1024.0;
+
+/// Families an SVG's `sans-serif` is drawn in, the first one installed
+/// winning, led by the one the editor's own prose is shaped in.
+const SANS_SERIF: &[&str] = &["Open Sans", "Noto Sans", "DejaVu Sans", "Liberation Sans"];
+
+/// Families an SVG's `monospace` is drawn in, the first one installed winning,
+/// led by the one the editor's own code is shaped in.
+const MONOSPACE: &[&str] = &["Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono"];
+
+/// The system's fonts, loaded once for the text SVG documents draw, with the
+/// generic families named after faces that are installed.
+static FONTS: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
+    let mut fonts = fontdb::Database::new();
+    fonts.load_system_fonts();
+    if let Some(family) = installed(&fonts, SANS_SERIF) {
+        fonts.set_sans_serif_family(family);
+    }
+    if let Some(family) = installed(&fonts, MONOSPACE) {
+        fonts.set_monospace_family(family);
+    }
+    Arc::new(fonts)
+});
 
 /// The identity the next picture decoded is given.
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -60,6 +82,12 @@ impl Image {
     /// SVG document when it is none of those.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         Self::raster(bytes).or_else(|| Self::vector(bytes))
+    }
+
+    /// Rasterizes a full-colour SVG at `scale` physical pixels per logical pixel.
+    pub fn from_svg(source: &str, scale: f32) -> Option<Self> {
+        let tree = Tree::from_str(source, &svg_options()).ok()?;
+        Self::render_svg(&tree, scale)
     }
 
     /// A picture of `width` by `height` straight-alpha RGBA `pixels`, scaled
@@ -110,15 +138,26 @@ impl Image {
     /// Draws an SVG document at the size it asks for, or at a size worth
     /// looking at when it asks for a small one.
     fn vector(bytes: &[u8]) -> Option<Self> {
-        let tree = Tree::from_data(bytes, &Options::default()).ok()?;
+        let tree = Tree::from_data(bytes, &svg_options()).ok()?;
         let extent = tree.size();
         let longest = extent.width().max(extent.height()).max(f32::EPSILON);
         let scale = (VECTOR_SIDE / longest).clamp(1.0, LONGEST_SIDE as f32 / longest);
+        Self::render_svg(&tree, scale)
+    }
+
+    /// Rasterizes `tree` at `scale`, bounded by the maximum texture side.
+    fn render_svg(tree: &Tree, scale: f32) -> Option<Self> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let extent = tree.size();
+        let longest = extent.width().max(extent.height()).max(f32::EPSILON);
+        let scale = scale.min(LONGEST_SIDE as f32 / longest);
         let width = (extent.width() * scale).ceil() as u32;
         let height = (extent.height() * scale).ceil() as u32;
         let mut pixmap = Pixmap::new(width.max(1), height.max(1))?;
         resvg::render(
-            &tree,
+            tree,
             Transform::from_scale(scale, scale),
             &mut pixmap.as_mut(),
         );
@@ -148,4 +187,31 @@ impl Image {
             pixels: pixels.into(),
         }
     }
+}
+
+/// How an SVG document is read: with the system's fonts, so its text draws.
+fn svg_options() -> Options<'static> {
+    Options {
+        fontdb: FONTS.clone(),
+        ..Options::default()
+    }
+}
+
+/// The first of `families` that `fonts` holds a face of, or else the family
+/// of whichever face it holds first.
+fn installed(fonts: &fontdb::Database, families: &[&str]) -> Option<String> {
+    let has = |family: &str| {
+        fonts
+            .faces()
+            .any(|face| face.families.iter().any(|(name, _)| name == family))
+    };
+    families
+        .iter()
+        .find(|family| has(family))
+        .map(|family| (*family).to_owned())
+        .or_else(|| {
+            fonts
+                .faces()
+                .find_map(|face| face.families.first().map(|(name, _)| name.clone()))
+        })
 }
