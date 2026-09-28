@@ -31,7 +31,9 @@ pub use overrides::ThemeOverrides;
 pub use paths::{
     keymaps as keymaps_directory, settings as settings_file, themes as themes_directory, worktrees,
 };
-pub use preferences::{Preference, Preferences, Step, ThemeMode, VimBinding, WorktreePaths};
+pub use preferences::{
+    AgentOptions, KnobValue, Preference, Preferences, Step, ThemeMode, VimBinding, WorktreePaths,
+};
 
 /// The window's own size and state, as a launch leaves it.
 #[derive(Clone, Copy, Debug)]

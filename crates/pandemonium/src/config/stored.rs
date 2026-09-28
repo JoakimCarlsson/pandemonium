@@ -18,7 +18,7 @@ use super::ServerList;
 use crate::config::fonts::Fonts;
 use crate::config::keymap::StoredChanges;
 use crate::config::theme::StoredOverrides;
-use crate::config::{Preferences, Restored, ThemeMode, VimBinding, WindowState};
+use crate::config::{AgentOptions, Preferences, Restored, ThemeMode, VimBinding, WindowState};
 use crate::editor::{CursorShape, Display};
 use crate::panes::Saved;
 use crate::workspace::{Layout, SidebarView};
@@ -27,6 +27,9 @@ use crate::workspace::{Layout, SidebarView};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub(super) struct Stored {
+    /// The last options chosen for each agent CLI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agents: Option<BTreeMap<String, AgentOptions>>,
     /// Which theme the editor draws in.
     theme_mode: Option<ThemeMode>,
     /// The name of the theme family the editor draws in.
@@ -484,6 +487,7 @@ impl Stored {
         let defaults = Preferences::default();
         let bootstrap = self.bootstrap();
         Preferences {
+            agent_options: self.agents.unwrap_or_default(),
             theme_mode: self.theme_mode.unwrap_or(defaults.theme_mode),
             theme_family: self
                 .theme_family
@@ -589,6 +593,8 @@ impl Stored {
         let overrides = StoredOverrides::of(&preferences.theme_overrides);
 
         Self {
+            agents: (!preferences.agent_options.is_empty())
+                .then(|| preferences.agent_options.clone()),
             theme_mode: Some(preferences.theme_mode),
             theme_family: Some(
                 crate::theme::family(preferences.theme_family)
