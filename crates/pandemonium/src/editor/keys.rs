@@ -7,10 +7,12 @@
 //! character to take out, or a way of moving the cursor.
 
 use pm_text::Motion;
+use winit::event::KeyEvent;
 use winit::keyboard::ModifiersState;
+use winit::keyboard::{Key, NamedKey};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::keymap::Travel;
-use winit::keyboard::{Key, NamedKey};
 
 /// One thing a keypress asks of the buffer it lands in.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,15 +83,41 @@ pub fn motion(travel: Travel, rows: usize) -> Motion {
     }
 }
 
-/// What `key` asks of the buffer, given the modifiers held with it.
+/// The text Option composed `event` into, when that is what the key is.
+///
+/// On macOS a layout turns some Option chords into characters. The event's
+/// logical key is then a character its key without modifiers does not name,
+/// and that character is what gets typed. Arrows and Backspace never
+/// compose, so a word motion stays a word motion. Anywhere but macOS this
+/// is nothing.
+pub fn option_text(event: &KeyEvent, modifiers: ModifiersState) -> Option<&str> {
+    if !cfg!(target_os = "macos")
+        || !modifiers.alt_key()
+        || modifiers.control_key()
+        || modifiers.super_key()
+    {
+        return None;
+    }
+    let Key::Character(text) = event.logical_key.as_ref() else {
+        return None;
+    };
+    let bare = event.key_without_modifiers();
+    let same = matches!(bare.as_ref(), Key::Character(plain) if plain == text);
+    (!same).then_some(text)
+}
+
+/// What `event` asks of the buffer, given the modifiers held with it.
 ///
 /// A key the buffer has nothing to do with comes back as `None`, so that the
-/// window can go on to treat it as focus movement the way it always does.
-pub fn edit(key: &Key, modifiers: ModifiersState, rows: usize) -> Option<Edit> {
+/// window can go on to treat it as focus movement the way it always does. An
+/// Option key that [composed a character](option_text) types that character.
+pub fn edit(event: &KeyEvent, modifiers: ModifiersState, rows: usize) -> Option<Edit> {
+    let key = &event.logical_key;
     let extend = modifiers.shift_key();
     let word = modifiers.control_key() && !modifiers.alt_key();
     let composed = modifiers.control_key() && modifiers.alt_key();
     let plain = !modifiers.control_key() && !modifiers.super_key() && !modifiers.alt_key();
+    let option = option_text(event, modifiers).is_some();
 
     if word {
         match key.as_ref() {
@@ -120,17 +148,22 @@ pub fn edit(key: &Key, modifiers: ModifiersState, rows: usize) -> Option<Edit> {
         Key::Named(NamedKey::Tab) if extend => Some(Edit::Outdent),
         Key::Named(NamedKey::Tab) => Some(Edit::Indent),
         Key::Named(NamedKey::Space) if plain => Some(Edit::Insert(" ".to_owned())),
-        Key::Character(text) if plain || composed => Some(typed(text)),
+        Key::Character(text) if plain || composed || option => Some(typed(text)),
         _ => None,
     }
 }
 
-/// `key` as modal editing reads it, given the modifiers held with it.
+/// `event` as modal editing reads it, given the modifiers held with it.
 ///
 /// Alt and the platform key are the window's, so a key held with either is
 /// none of modal editing's business; Ctrl with Alt is how some layouts type
-/// a character, and counts as typing it.
-pub fn keystroke(key: &Key, modifiers: ModifiersState) -> Option<pm_vim::Keystroke> {
+/// a character, and counts as typing it. So does an Option key that
+/// [composed a character](option_text).
+pub fn keystroke(event: &KeyEvent, modifiers: ModifiersState) -> Option<pm_vim::Keystroke> {
+    if let Some(text) = option_text(event, modifiers) {
+        return character_keystroke(text);
+    }
+    let key = &event.logical_key;
     let composed = modifiers.control_key() && modifiers.alt_key();
     if modifiers.super_key() || (modifiers.alt_key() && !composed) {
         return None;
@@ -170,6 +203,19 @@ pub fn keystroke(key: &Key, modifiers: ModifiersState) -> Option<pm_vim::Keystro
         ctrl,
         shift: modifiers.shift_key() && !matches!(pressed, pm_vim::Key::Char(_)),
     })
+}
+
+/// `text` as one character of modal editing, when it is a single character.
+fn character_keystroke(text: &str) -> Option<pm_vim::Keystroke> {
+    let mut chars = text.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => Some(pm_vim::Keystroke {
+            key: pm_vim::Key::Char(ch),
+            ctrl: false,
+            shift: false,
+        }),
+        _ => None,
+    }
 }
 
 /// What typing `text` asks for: one character closes its pair, more do not.

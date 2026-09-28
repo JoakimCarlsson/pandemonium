@@ -7,6 +7,22 @@
 
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
+/// Whether `key` held with `modifiers` edits a line from the macOS command key.
+///
+/// Command with Left or Right moves to either end, and command with
+/// Backspace clears back to the start. The field handles those itself, so a
+/// caller hands them over before treating the command key as the window's.
+pub fn command_line(key: &Key<&str>, modifiers: ModifiersState) -> bool {
+    cfg!(target_os = "macos")
+        && modifiers.super_key()
+        && !modifiers.control_key()
+        && !modifiers.alt_key()
+        && matches!(
+            key,
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight | NamedKey::Backspace)
+        )
+}
+
 /// One line of text being typed into.
 #[derive(Clone, Debug, Default)]
 pub struct Field {
@@ -53,13 +69,21 @@ impl Field {
     ///
     /// A key the field has nothing to do with is left alone, so the caller
     /// can go on to treat it as the command it is — Enter and Escape belong
-    /// to whatever the field is part of, not to the field.
+    /// to whatever the field is part of, not to the field. On macOS the
+    /// command key moves to either end of the line and clears back to the
+    /// start, the way Home and End already do.
     pub fn press(&mut self, key: &Key<&str>, modifiers: ModifiersState) -> Typed {
-        let word = modifiers.control_key() || modifiers.alt_key();
+        let command = command_line(key, modifiers);
+        let word = !command && (modifiers.control_key() || modifiers.alt_key());
         match *key {
+            Key::Named(NamedKey::Backspace) if command => self.take_to_start(),
             Key::Named(NamedKey::Backspace) if word => self.take_word_back(),
             Key::Named(NamedKey::Backspace) => self.take_back(),
             Key::Named(NamedKey::Delete) => self.take_forward(),
+            Key::Named(NamedKey::ArrowLeft) if command => self.caret = 0,
+            Key::Named(NamedKey::ArrowRight) if command => {
+                self.caret = self.value.chars().count();
+            }
             Key::Named(NamedKey::ArrowLeft) if word => self.caret = self.word_before(),
             Key::Named(NamedKey::ArrowRight) if word => self.caret = self.word_after(),
             Key::Named(NamedKey::ArrowLeft) => self.caret = self.caret.saturating_sub(1),
@@ -101,6 +125,13 @@ impl Field {
         }
         let (from, to) = (self.byte_of(self.caret), self.byte_of(self.caret + 1));
         self.value.replace_range(from..to, "");
+    }
+
+    /// Takes out everything before the caret.
+    fn take_to_start(&mut self) {
+        let to = self.byte_of(self.caret);
+        self.value.replace_range(0..to, "");
+        self.caret = 0;
     }
 
     /// Takes out the word before the caret.
