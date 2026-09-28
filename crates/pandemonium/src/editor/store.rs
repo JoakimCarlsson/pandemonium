@@ -526,7 +526,39 @@ impl Document {
 
     /// Whether any language server is open on this file.
     pub fn is_served(&self) -> bool {
-        !self.servers.is_empty()
+        self.servers.iter().any(|server| !server.is_dead())
+    }
+
+    /// Replaces stopped servers and opens the current buffer in new ones.
+    fn set_servers(&mut self, servers: Vec<Arc<Client>>) -> bool {
+        let changed = self.servers.len() != servers.len()
+            || self
+                .servers
+                .iter()
+                .zip(&servers)
+                .any(|(old, new)| !Arc::ptr_eq(old, new));
+        if !changed {
+            return false;
+        }
+        for server in &servers {
+            if !self.servers.iter().any(|old| Arc::ptr_eq(old, server))
+                && let Some(language) = self.buffer.language()
+            {
+                server.did_open(
+                    self.buffer.path(),
+                    language.language_id(),
+                    self.buffer.version(),
+                    &self.buffer.contents(),
+                );
+            }
+        }
+        self.servers = servers;
+        self.hinted = None;
+        self.named = None;
+        self.lensed = None;
+        self.used = None;
+        self.refresh();
+        true
     }
 
     /// Puts the search through `change`, against the text as it stands.
@@ -838,9 +870,6 @@ impl Document {
     /// What they say is added together: a type checker and a linter both
     /// have squiggles to draw, and neither one's replace the other's.
     fn refresh(&mut self) {
-        if self.servers.is_empty() {
-            return;
-        }
         let faults = self
             .servers
             .iter()
@@ -871,6 +900,8 @@ fn named_servers(servers: &BTreeMap<String, Vec<Server>>) -> HashMap<&'static st
 struct Entry {
     /// The worktree the file was opened from.
     scope: Scope,
+    /// The worktree root that owns this file's language servers.
+    root: PathBuf,
     /// The document, shared with whichever panes are drawing it.
     document: OpenFile,
 }
@@ -1006,6 +1037,7 @@ impl Files {
             id,
             Entry {
                 scope,
+                root: root.to_path_buf(),
                 document: Rc::new(RefCell::new(Document::new(buffer, preview, servers, None))),
             },
         );
@@ -1201,23 +1233,39 @@ impl Files {
         self.open.retain(|id, _| held.contains(id));
     }
 
-    /// Closes every file of `project` and ends the servers over `root`.
-    pub fn close_project(&mut self, project: ProjectId, root: &Path) {
+    /// Closes every file and server of `scope` over its worktree roots.
+    pub fn close_scope(&mut self, scope: Scope, roots: &[PathBuf]) {
+        self.open.retain(|_, entry| entry.scope != scope);
+        for root in roots {
+            self.servers.close(root);
+        }
+    }
+
+    /// Closes every file of `project` and ends servers over all its roots.
+    pub fn close_project(&mut self, project: ProjectId, roots: &[PathBuf]) {
         self.open
             .retain(|_, entry| entry.scope.project() != project);
-        self.servers.close(root);
+        for root in roots {
+            self.servers.close(root);
+        }
     }
 
     /// Takes in what the servers have said and what the index has been read
     /// to hold, and says whether anything is new.
     pub fn refresh(&mut self) -> bool {
         let baselined = self.take_baselines();
-        if !self.servers.take_fresh() {
-            return baselined;
-        }
+        let fresh = self.servers.take_fresh();
+        let mut changed = baselined || fresh;
         for entry in self.open.values() {
-            entry.document.borrow_mut().refresh();
+            let language = entry.document.borrow().buffer().language();
+            if let Some(language) = language {
+                let servers = self.servers.open(&entry.root, language);
+                changed |= entry.document.borrow_mut().set_servers(servers);
+            }
+            if fresh {
+                entry.document.borrow_mut().refresh();
+            }
         }
-        true
+        changed
     }
 }

@@ -1507,7 +1507,13 @@ impl App {
                 .get(id)
                 .map(|project| project.root().to_path_buf())
             {
-                self.editor.close_project(id, &root);
+                let mut roots = vec![root];
+                roots.extend(self.sessions.of(id).flat_map(|session| {
+                    std::iter::once(session.root())
+                        .chain(session.roots())
+                        .map(|root| root.to_path_buf())
+                }));
+                self.editor.close_project(id, &roots);
                 self.images.close_project(id);
             }
             self.open.remove(id);

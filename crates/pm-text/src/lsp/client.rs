@@ -80,6 +80,8 @@ pub struct Asked(i64);
 /// What a running server has told us, and what it has not been told yet.
 #[derive(Default)]
 struct State {
+    /// Whether the server's output has ended or shutdown was requested.
+    dead: bool,
     /// Whether the handshake has been answered.
     ready: bool,
     /// Messages held back until it has been, with only the latest text of
@@ -108,7 +110,9 @@ struct State {
 /// A language server the editor is talking to.
 pub struct Client {
     /// The process itself, kept so that it can be ended.
-    process: Option<Child>,
+    process: Mutex<Option<Child>>,
+    /// When this process was started, for measuring sustained operation.
+    started: Instant,
     /// Where messages for the server are handed to its writer thread.
     outbox: Outbox,
     /// What the server has said and what it is owed.
@@ -149,7 +153,8 @@ impl Client {
             "params": initialize(root, server),
         })));
         let client = Self {
-            process: Some(process),
+            process: Mutex::new(Some(process)),
+            started: Instant::now(),
             outbox: outbox.clone(),
             state: state.clone(),
             next: AtomicI64::new(FIRST_REQUEST),
@@ -236,6 +241,9 @@ impl Client {
     /// server that turns out not to answer refuses it then.
     pub fn offers(&self, request: &Request) -> bool {
         self.state.lock().ok().is_none_or(|state| {
+            if state.dead {
+                return false;
+            }
             state
                 .capabilities
                 .as_ref()
@@ -332,6 +340,42 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// Whether this server has stopped answering.
+    pub fn is_dead(&self) -> bool {
+        self.state.lock().is_ok_and(|state| state.dead)
+    }
+
+    /// Whether a completed handshake ran long enough to break an exit streak.
+    pub fn was_stable(&self) -> bool {
+        self.started.elapsed() >= Duration::from_secs(30)
+            && self.state.lock().is_ok_and(|state| state.ready)
+    }
+
+    /// Asks the server to shut down and reaps its process after a short grace period.
+    pub fn shutdown(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.dead = true;
+            state.queued.clear();
+            state.diagnostics.clear();
+            state.fresh = true;
+        }
+        let Some(process) = self
+            .process
+            .lock()
+            .ok()
+            .and_then(|mut process| process.take())
+        else {
+            return;
+        };
+        self.outbox.send(Outgoing::Message(json!({
+            "jsonrpc": "2.0", "id": self.next.fetch_add(1, Ordering::Relaxed), "method": "shutdown"
+        })));
+        self.outbox.send(Outgoing::Message(
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ));
+        std::thread::spawn(move || reap(process));
+    }
+
     /// Keeps the text the server was last told, for counting columns by.
     fn record(&self, path: &Path, text: Rope) {
         if let Ok(mut state) = self.state.lock() {
@@ -356,6 +400,9 @@ impl Client {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
+        if state.dead {
+            return;
+        }
         match state.ready {
             true => self.outbox.send(outgoing),
             false => hold(&mut state.queued, outgoing),
@@ -370,12 +417,7 @@ impl Drop for Client {
     /// Nothing here waits: the exit is handed to the writer thread, and the
     /// waiting on the process happens on a thread of its own.
     fn drop(&mut self) {
-        self.outbox.send(Outgoing::Message(
-            json!({ "jsonrpc": "2.0", "method": "exit" }),
-        ));
-        if let Some(process) = self.process.take() {
-            std::thread::spawn(move || reap(process));
-        }
+        self.shutdown();
     }
 }
 
@@ -436,6 +478,9 @@ impl Reader {
             return;
         };
         state.capabilities = Some(Value::Null);
+        state.dead = true;
+        state.queued.clear();
+        state.diagnostics.clear();
         let unanswered = state.asked.drain().map(|(id, _)| id).collect::<Vec<_>>();
         for id in unanswered {
             state.answers.insert(id, Answer::Refused);

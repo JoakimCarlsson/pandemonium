@@ -98,6 +98,11 @@ impl Session {
         &self.root
     }
 
+    /// The root of every worktree cut for this session.
+    pub fn roots(&self) -> impl Iterator<Item = &Path> {
+        self.cuts.iter().map(|cut| cut.root.as_path())
+    }
+
     /// The commit it was cut from, or the first of them for a session cut
     /// from several repositories.
     pub fn base(&self) -> &str {

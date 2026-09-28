@@ -23,6 +23,7 @@ mod watch;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub use answer::{
     Answer, Calls, CodeAction, Completion, FileEdit, Handle, Lens, Location, NamedLocation,
@@ -31,6 +32,20 @@ pub use answer::{
 pub use client::{Asked, Client};
 pub use watch::Watched;
 
+/// How many consecutive exits are allowed before a server is abandoned.
+const RESTART_LIMIT: u32 = 4;
+
+/// One server slot and its bounded restart schedule.
+#[derive(Default)]
+struct Running {
+    /// The client currently occupying the slot.
+    client: Option<Arc<Client>>,
+    /// How often a client in this slot has died.
+    failures: u32,
+    /// The earliest time another start may be tried.
+    retry_at: Option<Instant>,
+}
+
 use crate::language::{Language, Server};
 use crate::program::installed;
 
@@ -38,7 +53,7 @@ use crate::program::installed;
 #[derive(Default)]
 pub struct Servers {
     /// One server per worktree and language, by the command that started it.
-    running: HashMap<(PathBuf, &'static str), Option<Arc<Client>>>,
+    running: HashMap<(PathBuf, &'static str), Running>,
     /// The servers to run for a language, where that was overridden by name.
     overrides: HashMap<&'static str, Vec<Server>>,
     /// The servers to run for a language after the ones it names.
@@ -86,14 +101,48 @@ impl Servers {
             .filter_map(|server| Some((server, installed(server.command)?)))
             .filter_map(|(server, program)| {
                 let notify = notify.clone();
-                self.running
+                let running = self
+                    .running
                     .entry((root.to_path_buf(), server.command))
-                    .or_insert_with(|| {
-                        Client::start(root, &program, *server, notify)
-                            .ok()
-                            .map(Arc::new)
-                    })
-                    .clone()
+                    .or_default();
+                if running
+                    .client
+                    .as_ref()
+                    .is_some_and(|client| client.is_dead())
+                {
+                    if running
+                        .client
+                        .as_ref()
+                        .is_some_and(|client| client.was_stable())
+                    {
+                        running.failures = 0;
+                    }
+                    running.client = None;
+                    running.failures += 1;
+                    if running.failures < RESTART_LIMIT {
+                        let delay = Duration::from_secs(1 << (running.failures - 1));
+                        running.retry_at = Some(Instant::now() + delay);
+                        std::thread::spawn(move || {
+                            std::thread::sleep(delay);
+                            notify();
+                        });
+                    }
+                    return None;
+                }
+                if running.failures >= RESTART_LIMIT
+                    || running.retry_at.is_some_and(|at| Instant::now() < at)
+                {
+                    return None;
+                }
+                if running.client.is_none() {
+                    running.client = Client::start(root, &program, *server, notify)
+                        .ok()
+                        .map(Arc::new);
+                    if running.client.is_none() {
+                        running.failures = RESTART_LIMIT;
+                    }
+                }
+                running.client.clone()
             })
             .collect()
     }
@@ -123,7 +172,16 @@ impl Servers {
 
     /// Ends every server started for `root`.
     pub fn close(&mut self, root: &Path) {
-        self.running.retain(|(started, _), _| started != root);
+        self.running.retain(|(started, _), running| {
+            if started == root {
+                if let Some(client) = &running.client {
+                    client.shutdown();
+                }
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// Every server running over `root`, whichever language it serves.
@@ -131,7 +189,7 @@ impl Servers {
         self.running
             .iter()
             .filter(|((started, _), _)| started == root)
-            .filter_map(|(_, client)| client.clone())
+            .filter_map(|(_, running)| running.client.clone())
             .collect()
     }
 
@@ -140,7 +198,7 @@ impl Servers {
         self.running
             .iter()
             .filter(|((started, _), _)| started == root)
-            .filter_map(|(_, client)| client.as_ref())
+            .filter_map(|(_, running)| running.client.as_ref())
             .for_each(|client| client.watched(changes));
     }
 
@@ -148,7 +206,7 @@ impl Servers {
     pub fn take_fresh(&self) -> bool {
         self.running
             .values()
-            .flatten()
+            .filter_map(|running| running.client.as_ref())
             .filter(|client| client.take_fresh())
             .count()
             > 0
