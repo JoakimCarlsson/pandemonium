@@ -45,6 +45,15 @@ pub struct Summary {
     pub removed: usize,
 }
 
+/// Work a reader would lose by removing a worktree.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WorkAtRisk {
+    /// Files with uncommitted changes, including untracked files.
+    pub uncommitted_files: usize,
+    /// Commits reachable from HEAD but from no remote-tracking ref.
+    pub unpushed_commits: usize,
+}
+
 impl Summary {
     /// Whether the worktree still holds exactly what it was cut from.
     pub fn is_empty(self) -> bool {
@@ -167,6 +176,22 @@ pub fn since(root: &Path, base: &str) -> Summary {
         }
         drift
     })
+}
+
+/// Work in the worktree at `root` that is absent from every remote.
+///
+/// Remote-tracking refs reflect the most recent fetch or push; this question
+/// does not contact a remote when the reader opens the finish prompt.
+pub fn work_at_risk(root: &Path) -> WorkAtRisk {
+    let uncommitted_files = answer(root, ["status", "--porcelain", "--untracked-files=all"])
+        .map_or(0, |status| status.lines().count());
+    let unpushed_commits = answer(root, ["rev-list", "--count", "HEAD", "--not", "--remotes"])
+        .and_then(|count| count.trim().parse().ok())
+        .unwrap_or(0);
+    WorkAtRisk {
+        uncommitted_files,
+        unpushed_commits,
+    }
 }
 
 /// Writes down what the worktree at `root` was cut from and is called.

@@ -24,7 +24,7 @@ pub use store::{Cutting, Found, Sessions, StartError, Started};
 
 use std::path::{Path, PathBuf};
 
-use crate::git::Summary;
+use crate::git::{Summary, WorkAtRisk};
 use crate::project::ProjectId;
 
 /// A session's identity for as long as the window holds it.
@@ -116,6 +116,17 @@ impl Session {
     /// How far it has drifted from what it was cut from, as git last said.
     pub fn summary(&self) -> Summary {
         self.summary
+    }
+
+    /// Work across this session's worktrees that finishing would lose now.
+    pub fn work_at_risk(&self) -> WorkAtRisk {
+        self.cuts
+            .iter()
+            .map(|cut| crate::git::work_at_risk(&cut.root))
+            .fold(WorkAtRisk::default(), |total, one| WorkAtRisk {
+                uncommitted_files: total.uncommitted_files + one.uncommitted_files,
+                unpushed_commits: total.unpushed_commits + one.unpushed_commits,
+            })
     }
 }
 

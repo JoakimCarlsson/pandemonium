@@ -42,6 +42,6 @@ pub use operation::{Merge, Operation, abort_merge, operation};
 pub use run::Said;
 pub use status::{Changed, FileStatus, Status};
 pub use worktree::{
-    Summary, add_worktree, commit_of, remember, remember_port, remembered_base, remembered_name,
-    remembered_port, remove_worktree, since, worktrees,
+    Summary, WorkAtRisk, add_worktree, commit_of, remember, remember_port, remembered_base,
+    remembered_name, remembered_port, remove_worktree, since, work_at_risk, worktrees,
 };
