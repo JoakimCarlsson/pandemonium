@@ -7,6 +7,7 @@
 //! blocks the text last parsed into and the pictures it names.
 
 pub(crate) mod blocks;
+mod diagram;
 mod pane;
 mod store;
 

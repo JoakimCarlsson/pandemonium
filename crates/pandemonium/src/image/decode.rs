@@ -126,10 +126,19 @@ impl<K: Clone + Eq + Hash + Send + 'static> Decodes<K> {
         key: &K,
         read: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
     ) -> Decoding {
+        self.get_image(key, decoded(read))
+    }
+
+    /// Where an image made by `render` has got to, starting it on the pool once.
+    pub fn get_image(
+        &self,
+        key: &K,
+        render: impl FnOnce() -> Result<Image, String> + Send + 'static,
+    ) -> Decoding {
         if let Some(slot) = self.lock().get(key) {
             return slot.state.clone();
         }
-        self.start(key.clone(), read);
+        self.start_image(key.clone(), render);
         Decoding::Pending
     }
 
@@ -141,6 +150,11 @@ impl<K: Clone + Eq + Hash + Send + 'static> Decodes<K> {
     /// Decodes the bytes `read` comes back with as the picture `key` names,
     /// whether or not it was asked for before.
     pub fn start(&self, key: K, read: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static) {
+        self.start_image(key, decoded(read));
+    }
+
+    /// Starts `render` on the pool and stores its image or failure in `key`.
+    fn start_image(&self, key: K, render: impl FnOnce() -> Result<Image, String> + Send + 'static) {
         let asked = {
             let mut slots = self.lock();
             let slot = slots.entry(key.clone()).or_insert(Slot {
@@ -153,16 +167,10 @@ impl<K: Clone + Eq + Hash + Send + 'static> Decodes<K> {
         };
         let slots = self.slots.clone();
         spawn(move || {
-            let state = match read() {
-                Ok(bytes) => Image::decode(&bytes).map_or_else(
-                    || {
-                        Decoding::Failed(
-                            "This file is not a picture the editor can read".to_owned(),
-                        )
-                    },
-                    Decoding::Ready,
-                ),
-                Err(error) => Decoding::Failed(error),
+            let state = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(render)) {
+                Ok(Ok(image)) => Decoding::Ready(image),
+                Ok(Err(error)) => Decoding::Failed(error),
+                Err(_) => Decoding::Failed("Image rendering failed".to_owned()),
             };
             if let Ok(mut slots) = slots.lock()
                 && let Some(slot) = slots.get_mut(&key)
@@ -204,6 +212,17 @@ impl<K: Clone + Eq + Hash + Send + 'static> Decodes<K> {
         self.slots
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// The picture the bytes `read` comes back with decode to, saying why when
+/// they cannot be read or are not a picture.
+fn decoded(
+    read: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
+) -> impl FnOnce() -> Result<Image, String> + Send + 'static {
+    move || {
+        Image::decode(&read()?)
+            .ok_or_else(|| "This file is not a picture the editor can read".to_owned())
     }
 }
 

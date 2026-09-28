@@ -6,17 +6,31 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use pm_gfx::Image;
-use pm_ui::Scrolled;
+use pm_ui::{Appearance, Scrolled, Theme};
 
 use crate::editor::FileId;
-use crate::image::{Decodes, read_file};
+use crate::image::{Decodes, Decoding, read_file};
 use crate::markdown::blocks::{self, Block};
+use crate::markdown::diagram::Palette;
 
 /// The endings of the files that read as markdown.
 const MARKDOWN: &[&str] = &["md", "markdown", "mdown", "mkd"];
 
 /// The blocks one file last parsed into, and the version it was at.
 type Parsed = (i32, Rc<Vec<Block>>);
+
+/// A diagram's source and all settings that affect its pixels.
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct DiagramKey {
+    /// The Mermaid source.
+    source: String,
+    /// Physical pixels per logical pixel.
+    scale: u32,
+    /// Whether the base Mermaid palette is dark.
+    dark: bool,
+    /// The editor theme colours used in the diagram.
+    palette: Palette,
+}
 
 /// Whether `path` is a markdown file, to be offered a rendered pane.
 pub fn is_markdown(path: &Path) -> bool {
@@ -40,6 +54,8 @@ pub struct Renders {
     /// The pictures the documents name, by where they are, decoded away
     /// from the window.
     pictures: Decodes<PathBuf>,
+    /// Diagram images, including failed renders, scoped to their document.
+    diagrams: Decodes<(FileId, DiagramKey)>,
 }
 
 impl Renders {
@@ -74,11 +90,30 @@ impl Renders {
         self.pictures.get(&path, read_file(path.clone())).ready()
     }
 
+    /// Returns a diagram raster, rendering it only once per source, scale and theme.
+    pub fn diagram(&self, file: FileId, source: &str, scale: f32, theme: &Theme) -> Decoding {
+        let palette = Palette::from_theme(theme);
+        let key = DiagramKey {
+            source: source.to_owned(),
+            scale: scale.to_bits(),
+            dark: theme.appearance == Appearance::Dark,
+            palette: palette.clone(),
+        };
+        let source = source.to_owned();
+        let appearance = theme.appearance;
+        self.diagrams.get_image(&(file, key), move || {
+            palette
+                .render(&source, scale, appearance)
+                .ok_or_else(|| "Diagram could not be drawn".to_owned())
+        })
+    }
+
     /// Forgets what it kept for any file no pane is rendering any more, and
     /// the pictures, which a document shown again reads afresh.
     pub fn retain(&mut self, held: &BTreeSet<FileId>) {
         self.scrolls.get_mut().retain(|file, _| held.contains(file));
         self.parsed.get_mut().retain(|file, _| held.contains(file));
+        self.diagrams.retain(|(file, _)| held.contains(file));
         if held.is_empty() {
             self.pictures.clear();
         }

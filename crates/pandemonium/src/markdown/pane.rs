@@ -14,7 +14,9 @@ use pm_ui::{
     scroll_area, text, v_flex,
 };
 
+use crate::editor::FileId;
 use crate::editor::code_lines;
+use crate::image::Decoding;
 use crate::markdown::Renders;
 use crate::markdown::blocks::{Block, Emphasis, Item, Run};
 use crate::message::Message;
@@ -37,12 +39,16 @@ pub fn rendered_pane(
     theme: &Theme,
     blocks: &[Block],
     scroll: Scrolled,
+    file: FileId,
+    scale: f32,
     path: &Path,
     renders: &Renders,
 ) -> Div<Message> {
     let folder = path.parent().unwrap_or(Path::new(""));
     let page = Page {
         theme,
+        file,
+        scale,
         folder,
         renders,
     };
@@ -72,6 +78,10 @@ pub fn rendered_pane(
 struct Page<'a> {
     /// The tokens the page is drawn from.
     theme: &'a Theme,
+    /// The file whose diagram images are kept.
+    file: FileId,
+    /// Physical pixels per logical pixel in the window.
+    scale: f32,
     /// Where the document is, which is where the pictures it names are
     /// found from.
     folder: &'a Path,
@@ -90,6 +100,7 @@ impl Page<'_> {
                 self.theme.colors.text,
             )),
             Block::Code(language, code) => self.code(language.as_deref(), code),
+            Block::Diagram(source) => self.diagram(source),
             Block::Quote(blocks) => self.quote(blocks),
             Block::List(first, items) => self.list(*first, items),
             Block::Table(rows) => self.table(rows),
@@ -188,6 +199,29 @@ impl Page<'_> {
             .rounded(self.theme.radius.md)
             .bg(self.theme.colors.surface)
             .children(rows)
+    }
+
+    /// Draws a Mermaid diagram or its source with a quiet failure note.
+    fn diagram(&self, source: &str) -> Div<Message> {
+        match self
+            .renders
+            .diagram(self.file, source, self.scale, self.theme)
+        {
+            Decoding::Ready(image) => h_flex()
+                .w_full()
+                .justify_center()
+                .child(picture(image).zoom(1.0 / self.scale)),
+            Decoding::Pending => self.code(Some("mermaid"), source),
+            Decoding::Failed(_) => v_flex()
+                .w_full()
+                .gap(0.5)
+                .child(
+                    text("Diagram could not be drawn")
+                        .text_sm()
+                        .color(self.theme.colors.text_subtle),
+                )
+                .child(self.code(Some("mermaid"), source)),
+        }
     }
 
     /// Builds a quotation: its blocks, beside a bar that says it is quoted.
