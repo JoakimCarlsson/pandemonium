@@ -50,8 +50,8 @@ pub use theme::{
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{
-    Button, ButtonVariant, Field, MenuItem, Switch, Tab, ThemePreview, ToggleState, button,
-    checkbox, field, icon_button, kbd, menu, menu_entry, menu_separator, menu_submenu, rule,
-    section, switch, switch_field, tab, tab_bar, theme_gallery, theme_preview, tinted_icon_button,
-    toggle_grid, toggle_row, turning_icon_button, view_tab,
+    Button, ButtonVariant, Field, MenuItem, SCROLLBAR_GUTTER, Scrollbar, Switch, Tab, ThemePreview,
+    ToggleState, button, checkbox, field, icon_button, kbd, menu, menu_entry, menu_separator,
+    menu_submenu, rule, scrollbar, section, switch, switch_field, tab, tab_bar, theme_gallery,
+    theme_preview, tinted_icon_button, toggle_grid, toggle_row, turning_icon_button, view_tab,
 };

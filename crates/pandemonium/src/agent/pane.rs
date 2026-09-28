@@ -21,8 +21,9 @@ use pm_acp::{
 use pm_gfx::{Image, Rgba};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Axis, Div, IconName, IconSize, PointerCursor, Scroll, Styled, Theme, button, h_flex, icon,
-    measured, picture, rule, sash, scroll_area, space, text, v_flex,
+    Axis, Div, IconName, IconSize, PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Styled, Theme,
+    button, h_flex, icon, measured, picture, rule, sash, scroll_area, scrollbar, space, text,
+    v_flex,
 };
 
 use crate::agent::{Block, Spot, Standing, Talk, TalkId};
@@ -41,6 +42,10 @@ pub const RESULT_LINES: usize = 2;
 /// How far the conversation sits from the top and foot of its area, in
 /// steps of the spacing scale.
 const INSET: f32 = 2.0;
+
+/// How far the conversation sits in from the left of its area, in steps of
+/// the spacing scale.
+const SIDE: f32 = 1.75;
 
 /// How far the edge of a bubble holding what the reader said sits from its
 /// text, in steps of the spacing scale.
@@ -174,20 +179,31 @@ pub fn agent_pane(
         .child(rule(theme))
         .child(measured(
             talk.view(),
-            scroll_area(
-                std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
-                v_flex()
-                    .w_full()
-                    .px(1.75)
-                    .py(INSET)
-                    .drag_cursor(PointerCursor::Text)
-                    .on_drag(move |event| {
-                        Message::SelectAgentText(session, event.phase, event.start, event.current)
-                    })
-                    .children(drawn),
-            )
-            .w_full()
-            .flex_1(),
+            scrollbar(
+                scroll_area(
+                    std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
+                    v_flex()
+                        .w_full()
+                        .pl(SIDE)
+                        .pr(SCROLLBAR_GUTTER / STEP)
+                        .py(INSET)
+                        .drag_cursor(PointerCursor::Text)
+                        .on_drag(move |event| {
+                            Message::SelectAgentText(
+                                session,
+                                event.phase,
+                                event.start,
+                                event.current,
+                            )
+                        })
+                        .children(drawn),
+                )
+                .w_full()
+                .flex_1(),
+                talk.drawn_height().get(),
+                talk.scroll(),
+                move |event, step| Message::ScrollAgent(session, event, step),
+            ),
         ))
         .when(!talk.logins().is_empty(), |pane| {
             pane.child(login(theme, talk))
@@ -1948,10 +1964,13 @@ fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
         )
 }
 
-/// How many characters of the conversation's type fit across `width`.
+/// How many characters of the conversation's type fit across a pane
+/// `width` logical pixels wide, once the room either side of the text and
+/// the scrollbar's gutter are taken off it.
 fn columns(theme: &Theme, width: f32) -> usize {
-    let advance = (theme.text.base.size * ADVANCE).max(1.0);
-    ((width / advance) as usize).max(NARROWEST)
+    let advance = (theme.text.lg.size * ADVANCE).max(1.0);
+    let room = width - space(SIDE) - SCROLLBAR_GUTTER;
+    ((room / advance) as usize).max(NARROWEST)
 }
 
 /// `passage` broken into lines of at most `columns` characters, each handed

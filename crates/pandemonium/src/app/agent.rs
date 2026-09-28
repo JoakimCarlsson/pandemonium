@@ -11,7 +11,7 @@ use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
 use pm_gfx::{Point, Renderer, Size};
 use pm_text::Position;
-use pm_ui::{MenuItem, ResizePhase};
+use pm_ui::{Axis, MenuItem, ResizeEvent, ResizePhase};
 use winit::window::UserAttentionType;
 
 use crate::agent::{Standing, Talk, TalkId, Tally};
@@ -89,6 +89,9 @@ impl App {
             }
             Message::SelectAgentText(session, phase, anchor, head) => {
                 self.select_agent_text(session, phase, anchor, head);
+            }
+            Message::ScrollAgent(session, event, step) => {
+                self.drag_agent_scrollbar(session, event, step);
             }
             Message::SendPrompt(session) => self.send_prompt(session),
             Message::AnswerAgent(session, ask, place) => {
@@ -786,6 +789,32 @@ impl App {
             talk.scroll_by(pixels, end);
         }
         true
+    }
+
+    /// Scrolls `session`'s conversation by a drag on its scrollbar, `step`
+    /// pixels of it to a pixel of travel.
+    ///
+    /// The offset the drag started from is remembered, because every frame
+    /// of the drag reports travel from the same press: adding the travel to
+    /// where the view has already moved would run away from the pointer.
+    fn drag_agent_scrollbar(&mut self, session: TalkId, event: ResizeEvent, step: f32) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let (drawn, view) = (talk.drawn_height().get(), talk.view().get().size);
+        let base = match event.phase {
+            ResizePhase::Started => talk.scroll(),
+            _ => self.agent_scroll_origin.unwrap_or(talk.scroll()),
+        };
+        self.agent_scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        let wanted = base + event.delta(Axis::Vertical) * step;
+        if let Some(talk) = self.agents.get_mut(session) {
+            let pixels = wanted - talk.scroll();
+            talk.scroll_by(pixels, drawn - view.height);
+        }
     }
 
     /// Marks every conversation a pane is showing as read, while the window
