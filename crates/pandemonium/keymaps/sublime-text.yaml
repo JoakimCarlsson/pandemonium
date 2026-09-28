@@ -216,7 +216,7 @@ bindings:
       primary+shift+e: files.focus
       primary+f8: git.next_change
       primary+shift+f8: git.previous_change
-  - when: "os == macos && editor.focused"
+  - when: "os == macos && text.focused"
     keys:
       ctrl+h: edit.backspace
       ctrl+d: edit.delete
@@ -256,7 +256,7 @@ bindings:
       left: cursor.left
       right: cursor.right
       primary+left: cursor.word_left
-  - when: "os == macos && editor.focused"
+  - when: "os == macos && text.focused"
     keys:
       home: cursor.line_start
       primary+right: cursor.line_end
@@ -287,7 +287,7 @@ bindings:
       alt+shift+down: edit.cursor_below
       primary+alt+shift+up: edit.duplicate_line
       primary+alt+shift+down: edit.duplicate_line
-  - when: "os == macos && editor.focused"
+  - when: "os == macos && text.focused"
     keys:
       primary+shift+left: cursor.select_line_start
       ctrl+shift+a: cursor.select_line_start
@@ -295,6 +295,20 @@ bindings:
       ctrl+shift+e: cursor.select_line_end
       ctrl+v: cursor.page_down
       ctrl+shift+v: cursor.page_up
+      ctrl+alt+backspace: edit.delete_word_left
+      ctrl+alt+h: edit.delete_word_left
+      ctrl+alt+delete: edit.delete_word_right
+      ctrl+alt+d: edit.delete_word_right
+      ctrl+alt+left: cursor.word_left
+      ctrl+alt+b: cursor.word_left
+      ctrl+alt+right: cursor.word_right
+      ctrl+alt+f: cursor.word_right
+      ctrl+alt+shift+left: cursor.select_word_left
+      ctrl+alt+shift+b: cursor.select_word_left
+      ctrl+alt+shift+right: cursor.select_word_right
+      ctrl+alt+shift+f: cursor.select_word_right
+  - when: "os == macos && editor.focused"
+    keys:
       primary+alt+g b: git.blame
       primary+alt+g m: git.edit_changes
       primary+alt+g r: git.review
@@ -314,18 +328,6 @@ bindings:
       primary+.: language.code_actions
       ctrl+g: go.line
       ctrl+j: edit.join_lines
-      ctrl+alt+backspace: edit.delete_word_left
-      ctrl+alt+h: edit.delete_word_left
-      ctrl+alt+delete: edit.delete_word_right
-      ctrl+alt+d: edit.delete_word_right
-      ctrl+alt+left: cursor.word_left
-      ctrl+alt+b: cursor.word_left
-      ctrl+alt+right: cursor.word_right
-      ctrl+alt+f: cursor.word_right
-      ctrl+alt+shift+left: cursor.select_word_left
-      ctrl+alt+shift+b: cursor.select_word_left
-      ctrl+alt+shift+right: cursor.select_word_right
-      ctrl+alt+shift+f: cursor.select_word_right
       ctrl+shift+up: edit.cursor_above
       ctrl+shift+down: edit.cursor_below
       primary+ctrl+up: edit.move_line_up
@@ -428,6 +430,14 @@ bindings:
       alt+shift+m: markdown.preview
       primary+r: palette.symbols
       primary+k primary+z: git.revert_change
+  - when: "os == macos && text.focused"
+    keys:
+      ctrl+backspace: edit.delete_word_left
+      ctrl+delete: edit.delete_word_right
+      ctrl+right: cursor.word_right
+      ctrl+left: cursor.word_left
+      ctrl+shift+right: cursor.select_word_right
+      ctrl+shift+left: cursor.select_word_left
   - when: "os == macos && editor.focused"
     keys:
       primary+alt+down: go.definition
@@ -435,12 +445,6 @@ bindings:
       ctrl+.: git.next_change
       "ctrl+,": git.previous_change
       primary+shift+j: edit.join_lines
-      ctrl+backspace: edit.delete_word_left
-      ctrl+delete: edit.delete_word_right
-      ctrl+right: cursor.word_right
-      ctrl+left: cursor.word_left
-      ctrl+shift+right: cursor.select_word_right
-      ctrl+shift+left: cursor.select_word_left
   - when: pane.kind == prompt
     keys:
       shift+tab: agent.cycle_mode

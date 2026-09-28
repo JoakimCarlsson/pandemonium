@@ -197,7 +197,7 @@ bindings:
       primary+f8: git.next_change
       primary+shift+f8: git.previous_change
       alt+shift+f: language.format
-  - when: "os == macos && editor.focused"
+  - when: "os == macos && text.focused"
     keys:
       ctrl+h: edit.backspace
       ctrl+d: edit.delete
@@ -213,7 +213,7 @@ bindings:
       primary+insert: edit.copy
       shift+insert: edit.paste
       primary+y: edit.redo
-  - when: "os == macos && editor.focused"
+  - when: "os == macos && text.focused"
     keys:
       primary+backspace: edit.delete_to_line_start
       primary+delete: edit.delete_to_line_end
@@ -271,7 +271,7 @@ bindings:
       primary+alt+shift+up: edit.duplicate_line
       primary+alt+shift+down: edit.duplicate_line
       alt+shift+right: edit.expand_selection
-  - when: "os == macos && editor.focused"
+  - when: "os == macos && text.focused"
     keys:
       primary+shift+left: cursor.select_line_start
       ctrl+shift+a: cursor.select_line_start
@@ -279,6 +279,20 @@ bindings:
       ctrl+shift+e: cursor.select_line_end
       ctrl+v: cursor.page_down
       ctrl+shift+v: cursor.page_up
+      ctrl+alt+backspace: edit.delete_word_left
+      ctrl+alt+h: edit.delete_word_left
+      ctrl+alt+delete: edit.delete_word_right
+      ctrl+alt+d: edit.delete_word_right
+      ctrl+alt+left: cursor.word_left
+      ctrl+alt+b: cursor.word_left
+      ctrl+alt+right: cursor.word_right
+      ctrl+alt+f: cursor.word_right
+      ctrl+alt+shift+left: cursor.select_word_left
+      ctrl+alt+shift+b: cursor.select_word_left
+      ctrl+alt+shift+right: cursor.select_word_right
+      ctrl+alt+shift+f: cursor.select_word_right
+  - when: "os == macos && editor.focused"
+    keys:
       primary+alt+g b: git.blame
       primary+alt+g m: git.edit_changes
       primary+alt+g r: git.review
@@ -297,18 +311,6 @@ bindings:
       ctrl+space: language.completions
       ctrl+g: go.line
       ctrl+j: edit.join_lines
-      ctrl+alt+backspace: edit.delete_word_left
-      ctrl+alt+h: edit.delete_word_left
-      ctrl+alt+delete: edit.delete_word_right
-      ctrl+alt+d: edit.delete_word_right
-      ctrl+alt+left: cursor.word_left
-      ctrl+alt+b: cursor.word_left
-      ctrl+alt+right: cursor.word_right
-      ctrl+alt+f: cursor.word_right
-      ctrl+alt+shift+left: cursor.select_word_left
-      ctrl+alt+shift+b: cursor.select_word_left
-      ctrl+alt+shift+right: cursor.select_word_right
-      ctrl+alt+shift+f: cursor.select_word_right
       primary+ctrl+shift+right: edit.expand_selection
       ctrl+enter: null
   - when: "os != macos && (pane.kind == agent || pane.kind == prompt)"
