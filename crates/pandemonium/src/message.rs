@@ -450,6 +450,9 @@ pub enum Message {
     /// Pick out this session's transcript from where a press landed to where
     /// the pointer has been dragged since.
     SelectAgentText(TalkId, ResizePhase, Point, Point),
+    /// Drag this session's scrollbar, so many pixels of the conversation to
+    /// a pixel of travel.
+    ScrollAgent(TalkId, ResizeEvent, f32),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
     /// Follow the link this session's pane drew in this place: open the

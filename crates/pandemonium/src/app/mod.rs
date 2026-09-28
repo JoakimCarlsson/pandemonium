@@ -435,6 +435,8 @@ pub struct App {
     terminal_scroll_origin: Option<usize>,
     /// How far down the editor was scrolled when a scrollbar drag began.
     editor_scroll_origin: Option<usize>,
+    /// How far down the conversation was scrolled when a scrollbar drag began.
+    agent_scroll_origin: Option<f32>,
     /// Whether a release newer than this build has been published.
     update_available: bool,
     /// Set when the search for one finds it, until the window takes it in.
@@ -671,6 +673,7 @@ impl App {
             terminal_focused: false,
             terminal_scroll_origin: None,
             editor_scroll_origin: None,
+            agent_scroll_origin: None,
             update_available: false,
             released: Arc::new(Mutex::new(false)),
             pastes: Arc::new(Mutex::new(Vec::new())),

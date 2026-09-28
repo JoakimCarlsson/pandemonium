@@ -378,7 +378,7 @@ impl<M: Clone> Element<M> for Div<M> {
 
         cx.quad(
             Quad::filled(bounds, self.background(interaction))
-                .corner_radius(self.style.corner_radius)
+                .corner_radii(self.style.corner_radii)
                 .border(self.style.border_width, self.style.border_color),
         );
         for (side, (width, color)) in Side::ALL.into_iter().zip(self.style.sides) {

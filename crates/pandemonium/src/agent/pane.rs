@@ -21,8 +21,9 @@ use pm_acp::{
 use pm_gfx::{Image, Rgba};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Axis, Div, IconName, IconSize, PointerCursor, Scroll, Styled, Theme, button, h_flex, icon,
-    measured, picture, rule, sash, scroll_area, space, text, v_flex,
+    Axis, Div, IconName, IconSize, PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Styled, Theme,
+    button, h_flex, icon, measured, picture, rule, sash, scroll_area, scrollbar, space, text,
+    v_flex,
 };
 
 use crate::agent::{Block, Spot, Standing, Talk, TalkId};
@@ -41,6 +42,10 @@ pub const RESULT_LINES: usize = 2;
 /// How far the conversation sits from the top and foot of its area, in
 /// steps of the spacing scale.
 const INSET: f32 = 2.0;
+
+/// How far the conversation sits in from the left of its area, in steps of
+/// the spacing scale.
+const SIDE: f32 = 1.75;
 
 /// How far the edge of a bubble holding what the reader said sits from its
 /// text, in steps of the spacing scale.
@@ -174,20 +179,31 @@ pub fn agent_pane(
         .child(rule(theme))
         .child(measured(
             talk.view(),
-            scroll_area(
-                std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
-                v_flex()
-                    .w_full()
-                    .px(1.75)
-                    .py(INSET)
-                    .drag_cursor(PointerCursor::Text)
-                    .on_drag(move |event| {
-                        Message::SelectAgentText(session, event.phase, event.start, event.current)
-                    })
-                    .children(drawn),
-            )
-            .w_full()
-            .flex_1(),
+            scrollbar(
+                scroll_area(
+                    std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
+                    v_flex()
+                        .w_full()
+                        .pl(SIDE)
+                        .pr(SCROLLBAR_GUTTER / STEP)
+                        .py(INSET)
+                        .drag_cursor(PointerCursor::Text)
+                        .on_drag(move |event| {
+                            Message::SelectAgentText(
+                                session,
+                                event.phase,
+                                event.start,
+                                event.current,
+                            )
+                        })
+                        .children(drawn),
+                )
+                .w_full()
+                .flex_1(),
+                talk.drawn_height().get(),
+                talk.scroll(),
+                move |event, step| Message::ScrollAgent(session, event, step),
+            ),
         ))
         .when(!talk.logins().is_empty(), |pane| {
             pane.child(login(theme, talk))
@@ -272,22 +288,20 @@ pub fn content_height(theme: &Theme, talk: &Talk, width: f32) -> f32 {
 ///
 /// Only the rows from there are built, however long the conversation runs,
 /// so the view is drawn from the row it is scrolled into and shifted up by
-/// the part of it already gone by. A row inside a bubble is drawn from the
-/// top of its bubble, so the bubble keeps its edge as it scrolls by.
+/// the part of it already gone by. A bubble is built from its first row on
+/// screen rather than from its top, so one taller than the pane scrolls
+/// through like any other rows.
 fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32) {
     let wrapped = wrapped(theme, talk, columns);
-    let heights = &wrapped.heights;
     talk.drawn_height()
         .set(wrapped.height() + space(INSET) * 2.0);
     let reached = talk.scroll() - space(INSET);
-    let mut first = wrapped.tops[1..].partition_point(|end| *end <= reached);
-    let mut top = wrapped.tops[first];
-    while first > 0 && wrapped.said.get(first) == Some(&true) && wrapped.said[first - 1] {
-        first -= 1;
-        top -= heights[first];
-    }
-    let offset = talk.scroll() - top;
-    let count = covering(&heights[first..], offset + talk.view().get().size.height);
+    let first = wrapped.tops[1..].partition_point(|end| *end <= reached);
+    let offset = talk.scroll() - wrapped.tops[first];
+    let count = covering(
+        &wrapped.heights[first..],
+        offset + talk.view().get().size.height,
+    );
     talk.drawn_links().borrow_mut().clear();
     talk.drawn_text().borrow_mut().clear();
     talk.drawn_spots().borrow_mut().clear();
@@ -297,18 +311,14 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     while let Some(at) = visible.next() {
         if wrapped.said[at] {
             let mut message = vec![self::row(theme, wrapped.row(at), at, talk)];
+            let mut last = at;
             while let Some(next) = visible.next_if(|next| wrapped.said[*next]) {
                 message.push(self::row(theme, wrapped.row(next), next, talk));
+                last = next;
             }
-            drawn.push(
-                h_flex().w_full().justify_end().child(
-                    v_flex()
-                        .p(BUBBLE)
-                        .rounded(theme.radius.xl)
-                        .bg(theme.colors.surface_hover)
-                        .children(message),
-                ),
-            );
+            let opens = at == 0 || !wrapped.said[at - 1];
+            let closes = wrapped.said.get(last + 1) != Some(&true);
+            drawn.push(bubble(theme, message, opens, closes));
         } else {
             drawn.push(self::row(theme, wrapped.row(at), at, talk));
         }
@@ -316,12 +326,31 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     (drawn, offset)
 }
 
+/// The part of a bubble holding `rows`, set against the right of the pane.
+///
+/// `opens` and `closes` say whether the bubble's own top and foot are among
+/// the rows built; only there does it get its edge and its rounded corners,
+/// so a slice of a tall bubble runs flat off the pane where it goes on.
+fn bubble(theme: &Theme, rows: Vec<Div<Message>>, opens: bool, closes: bool) -> Div<Message> {
+    let top = if opens { theme.radius.xl } else { 0.0 };
+    let foot = if closes { theme.radius.xl } else { 0.0 };
+    h_flex().w_full().justify_end().child(
+        v_flex()
+            .px(BUBBLE)
+            .when(opens, |bubble| bubble.pt(BUBBLE))
+            .when(closes, |bubble| bubble.pb(BUBBLE))
+            .rounded_corners([top, top, foot, foot])
+            .bg(theme.colors.surface_hover)
+            .children(rows),
+    )
+}
+
 /// How many of the rows `heights` measures are built to fill `reach` logical
 /// pixels, and never fewer than [`DRAWN`].
 ///
-/// The first row drawn is walked back to the top of its bubble, so one long
-/// message can put the whole view hundreds of rows past it; counting by height
-/// keeps the rows built reaching the foot of the pane however long it is.
+/// A row can be far taller than a line, a picture most of all; counting by
+/// height keeps the rows built reaching the foot of the pane whatever they
+/// hold.
 fn covering(heights: &[f32], reach: f32) -> usize {
     let mut filled = 0.0;
     let needed = heights
@@ -1935,10 +1964,13 @@ fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
         )
 }
 
-/// How many characters of the conversation's type fit across `width`.
+/// How many characters of the conversation's type fit across a pane
+/// `width` logical pixels wide, once the room either side of the text and
+/// the scrollbar's gutter are taken off it.
 fn columns(theme: &Theme, width: f32) -> usize {
-    let advance = (theme.text.base.size * ADVANCE).max(1.0);
-    ((width / advance) as usize).max(NARROWEST)
+    let advance = (theme.text.lg.size * ADVANCE).max(1.0);
+    let room = width - space(SIDE) - SCROLLBAR_GUTTER;
+    ((room / advance) as usize).max(NARROWEST)
 }
 
 /// `passage` broken into lines of at most `columns` characters, each handed

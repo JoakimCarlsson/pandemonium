@@ -113,7 +113,7 @@ impl<M: 'static> Element<M> for Field<M> {
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
         cx.quad(
             Quad::filled(bounds, self.style.background)
-                .corner_radius(self.style.corner_radius)
+                .corner_radii(self.style.corner_radii)
                 .border(self.style.border_width, self.style.border_color),
         );
 

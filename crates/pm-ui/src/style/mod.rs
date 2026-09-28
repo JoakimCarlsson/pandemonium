@@ -53,8 +53,9 @@ pub struct Style {
     /// Lines drawn inside the element's bounds along single sides, as
     /// thickness and colour, in the order of [`Side::ALL`].
     pub sides: [(f32, Rgba); 4],
-    /// Corner radius of the background and border.
-    pub corner_radius: f32,
+    /// Corner radii of the background and border, clockwise from the
+    /// top-left corner.
+    pub corner_radii: [f32; 4],
     /// Whether descendants are clipped to this element's bounds.
     pub overflow_hidden: bool,
 }
@@ -175,7 +176,7 @@ impl Default for Style {
             border_width: 0.0,
             border_color: Rgba::TRANSPARENT,
             sides: [(0.0, Rgba::TRANSPARENT); 4],
-            corner_radius: 0.0,
+            corner_radii: [0.0; 4],
             overflow_hidden: false,
         }
     }
