@@ -238,7 +238,14 @@ pub trait Styled: Sized {
 
     /// Rounds the corners by `radius` logical pixels.
     fn rounded(mut self, radius: f32) -> Self {
-        self.style().corner_radius = radius;
+        self.style().corner_radii = [radius; 4];
+        self
+    }
+
+    /// Rounds each corner on its own, clockwise from the top-left, so a
+    /// shape can be flat where it runs on past what is shown of it.
+    fn rounded_corners(mut self, radii: [f32; 4]) -> Self {
+        self.style().corner_radii = radii;
         self
     }
 
