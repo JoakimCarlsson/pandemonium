@@ -23,28 +23,31 @@ pub fn write(writer: &mut impl Write, message: &Value) -> io::Result<()> {
 
 /// Reads one frame, or `None` once the pipe has closed.
 ///
-/// A frame whose body is not JSON is skipped rather than fatal: a peer that
-/// writes a malformed message is still a peer worth listening to.
+/// A header without a length and a body that is not JSON are skipped: a peer
+/// that writes a malformed message is still a peer worth listening to.
 pub fn read(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
-    let mut length = None;
     loop {
-        let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 {
-            return Ok(None);
+        let mut length = None;
+        loop {
+            let mut header = String::new();
+            if reader.read_line(&mut header)? == 0 {
+                return Ok(None);
+            }
+            let header = header.trim_end();
+            if header.is_empty() {
+                break;
+            }
+            if let Some(value) = header.to_ascii_lowercase().strip_prefix(LENGTH) {
+                length = value.trim().parse::<usize>().ok();
+            }
         }
-        let header = header.trim_end();
-        if header.is_empty() {
-            break;
-        }
-        if let Some(value) = header.to_ascii_lowercase().strip_prefix(LENGTH) {
-            length = value.trim().parse::<usize>().ok();
+        let Some(length) = length else {
+            continue;
+        };
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body)?;
+        if let Ok(message) = serde_json::from_slice(&body) {
+            return Ok(Some(message));
         }
     }
-
-    let Some(length) = length else {
-        return Ok(None);
-    };
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body)?;
-    Ok(serde_json::from_slice(&body).ok())
 }

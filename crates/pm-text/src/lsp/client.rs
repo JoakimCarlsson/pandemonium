@@ -129,6 +129,8 @@ pub struct WorkspaceEditRequest {
 
 /// A language server the editor is talking to.
 pub struct Client {
+    /// The worktree whose paths this server watches.
+    root: PathBuf,
     /// The process itself, kept so that it can be ended.
     process: Mutex<Option<Child>>,
     /// When this process was started, for measuring sustained operation.
@@ -177,6 +179,7 @@ impl Client {
             "params": initialize(root, server),
         })));
         let client = Self {
+            root: root.to_path_buf(),
             process: Mutex::new(Some(process)),
             started: Instant::now(),
             outbox: outbox.clone(),
@@ -279,6 +282,9 @@ impl Client {
     pub fn did_close(&self, path: &Path) {
         if let Ok(mut state) = self.state.lock() {
             state.texts.remove(path);
+            state.diagnostics.remove(path);
+            state.wire_diagnostics.remove(path);
+            state.fresh = true;
         }
         self.notify(json!({
             "method": "textDocument/didClose",
@@ -291,7 +297,7 @@ impl Client {
     /// A server that registered for none of them is sent nothing.
     pub fn watched(&self, changes: &[(PathBuf, Watched)]) {
         let notification = match self.state.lock() {
-            Ok(state) => state.watchers.notification(changes),
+            Ok(state) => state.watchers.notification(&self.root, changes),
             Err(_) => None,
         };
         if let Some(notification) = notification {

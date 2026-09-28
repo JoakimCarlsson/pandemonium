@@ -54,10 +54,11 @@ impl App {
     /// whose worktree sits at `root`, up to what `disk` says happened.
     fn follow_disk(&mut self, scope: Scope, root: &std::path::Path, disk: &Disk) {
         if let Some(tree) = self.files.get_mut(&scope)
-            && disk
-                .touched
-                .iter()
-                .any(|touched| touched.touch != Touch::Changed && tree.lists_beside(&touched.path))
+            && disk.touched.iter().any(|touched| {
+                !touched.ignored
+                    && touched.touch != Touch::Changed
+                    && tree.lists_beside(&touched.path)
+            })
         {
             tree.reload();
         }
@@ -74,14 +75,15 @@ impl App {
         let followed = disk
             .touched
             .iter()
-            .filter(|touched| !touched.ignored)
             .map(|touched| (touched.path.clone(), watched(touched.touch)))
             .collect::<Vec<(PathBuf, Watched)>>();
         if followed.is_empty() {
             return;
         }
         self.editor.watched(root, &followed);
-        self.reread_review_later(scope);
+        if disk.touched.iter().any(|touched| !touched.ignored) {
+            self.reread_review_later(scope);
+        }
     }
 }
 
