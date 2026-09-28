@@ -119,42 +119,35 @@ impl Field {
     pub fn press(&mut self, key: &Key<&str>, modifiers: ModifiersState) -> Typed {
         let command = command_line(key, modifiers);
         let word = !command && (modifiers.control_key() || modifiers.alt_key());
+        let extend = modifiers.shift_key();
         match *key {
             Key::Named(NamedKey::Backspace) if command => self.take_to_start(),
             Key::Named(NamedKey::Backspace) if word => self.take_word_back(),
             Key::Named(NamedKey::Backspace) => self.take_back(),
             Key::Named(NamedKey::Delete) => self.take_forward(),
             Key::Named(NamedKey::ArrowLeft) if command => {
-                self.collapse();
-                self.caret = 0;
+                self.move_caret(0, extend);
             }
             Key::Named(NamedKey::ArrowRight) if command => {
-                self.collapse();
-                self.caret = self.value.chars().count();
+                self.move_caret(self.value.chars().count(), extend);
             }
             Key::Named(NamedKey::ArrowLeft) if word => {
-                self.collapse();
-                self.caret = self.word_before();
+                self.move_caret(self.word_before(), extend);
             }
             Key::Named(NamedKey::ArrowRight) if word => {
-                self.collapse();
-                self.caret = self.word_after();
+                self.move_caret(self.word_after(), extend);
             }
             Key::Named(NamedKey::ArrowLeft) => {
-                self.collapse();
-                self.caret = self.caret.saturating_sub(1);
+                self.move_caret(self.caret.saturating_sub(1), extend);
             }
             Key::Named(NamedKey::ArrowRight) => {
-                self.collapse();
-                self.caret = (self.caret + 1).min(self.value.chars().count());
+                self.move_caret((self.caret + 1).min(self.value.chars().count()), extend);
             }
             Key::Named(NamedKey::Home) => {
-                self.collapse();
-                self.caret = 0;
+                self.move_caret(0, extend);
             }
             Key::Named(NamedKey::End) => {
-                self.collapse();
-                self.caret = self.value.chars().count();
+                self.move_caret(self.value.chars().count(), extend);
             }
             Key::Named(NamedKey::Space) if !modifiers.control_key() => self.put(" "),
             Key::Character(text) if !modifiers.control_key() && !modifiers.super_key() => {
@@ -174,9 +167,14 @@ impl Field {
         self.caret += text.chars().count();
     }
 
-    /// Drops the selection, leaving the caret where it is.
-    fn collapse(&mut self) {
-        self.anchor = None;
+    /// Moves the caret, keeping the first position as the anchor while selecting.
+    fn move_caret(&mut self, caret: usize, extend: bool) {
+        if extend {
+            self.anchor.get_or_insert(self.caret);
+        } else {
+            self.anchor = None;
+        }
+        self.caret = caret;
     }
 
     /// The selected span as character offsets, when an anchor is set.
