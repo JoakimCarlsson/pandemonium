@@ -1105,6 +1105,9 @@ impl App {
         if self.tree_command(message) {
             return;
         }
+        if self.diagram_command(message) {
+            return;
+        }
         if self.debug_command(message) {
             self.request_redraw();
             return;

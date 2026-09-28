@@ -7,7 +7,11 @@ use pm_core::Scope;
 
 use crate::app::App;
 use crate::image::Images;
+use crate::message::Message;
 use crate::panes::{Item, PaneId, SplitDirection};
+
+/// Logical pixels of wheel travel that magnify a diagram by a factor of e.
+const WHEEL_ZOOM: f32 = 240.0;
 
 impl App {
     /// Opens the matching rendered view or SVG source beside `pane`.
@@ -109,15 +113,37 @@ impl App {
     }
 
     /// Scrolls the rendered markdown under the pointer by `delta` logical
-    /// pixels, saying whether the pointer was over any.
+    /// pixels, or zooms the diagram under it when a zoom modifier is held,
+    /// saying whether the pointer was over any.
     pub(super) fn scroll_rendered(&mut self, delta: f32) -> bool {
         let Some(Item::Rendered(file)) = self.item_under() else {
             return false;
         };
+        let zooming = self.modifiers.control_key() || self.modifiers.super_key();
+        if zooming
+            && let Some(pointer) = self.pointer
+            && self
+                .renders
+                .zoom_under(file, pointer, (delta / WHEEL_ZOOM).exp())
+        {
+            return true;
+        }
         let scroll = self.renders.scroll(file);
         let mut moved = scroll.get();
         moved.by(delta);
         scroll.set(moved);
+        true
+    }
+
+    /// Carries out `message` when it zooms or pans a rendered diagram,
+    /// saying whether it did.
+    pub(super) fn diagram_command(&mut self, message: Message) -> bool {
+        match message {
+            Message::PanDiagram(file, index, event) => self.renders.pan(file, index, event),
+            Message::ZoomDiagram(file, index, step) => self.renders.step_zoom(file, index, step),
+            _ => return false,
+        }
+        self.request_redraw();
         true
     }
 

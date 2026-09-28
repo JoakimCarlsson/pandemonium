@@ -20,6 +20,8 @@ pub enum PointerCursor {
     ResizeVertical,
     /// An I-beam over text that can be selected.
     Text,
+    /// An open hand over something that can be taken hold of and moved.
+    Grab,
 }
 
 /// Everything that survives between frames: the theme, the pointer and focus.

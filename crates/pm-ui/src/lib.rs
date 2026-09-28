@@ -27,6 +27,7 @@ mod text;
 mod theme;
 mod ui;
 mod widgets;
+mod zoom;
 
 pub use div::{Div, div, h_flex, v_flex};
 pub use element::{
@@ -55,3 +56,4 @@ pub use widgets::{
     menu_submenu, rule, scrollbar, section, switch, switch_field, tab, tab_bar, theme_gallery,
     theme_preview, tinted_icon_button, toggle_grid, toggle_row, turning_icon_button, view_tab,
 };
+pub use zoom::{MAX_ZOOM, Zoom, ZoomArea, Zoomed, zoom_area};

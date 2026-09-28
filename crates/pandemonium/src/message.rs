@@ -14,6 +14,7 @@ use crate::agent::TalkId;
 use crate::config::{FontSlot, Preference, Step, ThemeMode, WorktreePaths};
 use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::Action;
+use crate::markdown::DiagramZoom;
 use crate::notice::NoticeId;
 use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
@@ -488,4 +489,9 @@ pub enum Message {
     ShowInputMenu,
     /// Carry out this command in whatever box has the keyboard.
     EditText(Action),
+    /// Drag the magnified diagram at this place in this rendered file.
+    PanDiagram(FileId, usize, ResizeEvent),
+    /// Take this step on the zoom of the diagram at this place in this
+    /// rendered file.
+    ZoomDiagram(FileId, usize, DiagramZoom),
 }
