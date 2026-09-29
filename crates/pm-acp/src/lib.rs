@@ -13,6 +13,7 @@
 
 mod agent;
 mod attachment;
+mod process;
 mod request;
 mod session;
 mod transport;
