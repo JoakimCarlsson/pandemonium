@@ -349,6 +349,8 @@ pub struct App {
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
     saved: Saved,
+    /// The shells the last launch had running, until they are started again.
+    shells: Vec<crate::terminal::SavedShell>,
     /// Where those panes and their tabs came out in the last frame.
     geometry: Geometry,
     /// The tab the pointer is carrying, if it is carrying one.
@@ -625,6 +627,7 @@ impl App {
 
         let layout = restored.layout;
         let saved = restored.panes;
+        let shells = restored.shells;
 
         let files = open
             .iter()
@@ -734,6 +737,7 @@ impl App {
             agent_servers: restored.agent_servers,
             panes: PaneTree::default(),
             saved,
+            shells,
             geometry: Geometry::default(),
             drag: None,
             editor_focused: false,
@@ -2157,6 +2161,7 @@ impl App {
                 .map(|project| project.root().to_path_buf()),
             layout: self.layout(),
             panes: self.saved_panes(),
+            shells: self.terminals.saved(&self.worktrees()),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
             agent_servers: self.agent_servers.clone(),
@@ -2812,6 +2817,8 @@ impl ApplicationHandler<Wake> for App {
 
         let saved = std::mem::take(&mut self.saved);
         self.restore_panes(&saved);
+        let shells = std::mem::take(&mut self.shells);
+        self.restore_shells(&shells);
 
         self.ui = Some(Ui::new(self.theme()));
         self.list = Some(DrawList::new(Size::zero()));

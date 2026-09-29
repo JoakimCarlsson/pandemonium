@@ -29,6 +29,27 @@ impl App {
         self.bottom_panel_open && self.panel_view == PanelView::Terminal
     }
 
+    /// Starts again the shells the last launch had running, in the worktrees
+    /// that are still open, under the names they were given.
+    pub(super) fn restore_shells(&mut self, saved: &[crate::terminal::SavedShell]) {
+        let worktrees = self.worktrees();
+        for shell in saved {
+            let Some((scope, root)) = worktrees.iter().find(|(_, root)| *root == shell.worktree)
+            else {
+                continue;
+            };
+            let env = self.worktree_env(*scope);
+            let Some(id) = self.terminals.start(*scope, root, &env) else {
+                continue;
+            };
+            self.terminals.rename(*scope, id, &shell.name);
+            if !shell.active {
+                continue;
+            }
+            self.terminals.activate(*scope, id);
+        }
+    }
+
     /// Whether the bottom panel is open on the debugger.
     pub(super) fn showing_debugger(&self) -> bool {
         self.bottom_panel_open && self.panel_view == PanelView::Debug

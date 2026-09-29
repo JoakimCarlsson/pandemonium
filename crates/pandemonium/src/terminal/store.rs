@@ -2,11 +2,12 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use pm_core::{ProjectId, Scope, Task};
 use pm_vt::{Notify, Terminal};
+use serde::{Deserialize, Serialize};
 
 /// Columns a shell is started with, before a pane has been drawn for it.
 const INITIAL_COLS: usize = 80;
@@ -43,6 +44,21 @@ pub struct ShellEntry {
     /// What the row calls it: the name the reader gave it, or the program.
     pub name: String,
     /// Whether this is the shell the pane is showing.
+    pub active: bool,
+}
+
+/// One shell as it is written down, for the next launch to start again.
+///
+/// A shell names its worktree by where it lives rather than by the scope this
+/// run gave it, because a scope means nothing to the next launch.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SavedShell {
+    /// The root of the worktree it ran in.
+    pub worktree: PathBuf,
+    /// The name the reader gave it, empty when it goes by its program.
+    pub name: String,
+    /// Whether it was the shell its worktree's pane was showing.
     pub active: bool,
 }
 
@@ -422,6 +438,31 @@ impl Terminals {
                     |errand| errand.label.clone(),
                 ),
                 active: shells.active == Some(*id),
+            })
+            .collect()
+    }
+
+    /// Every plain shell of the worktrees in `roots`, as the next launch will
+    /// start them again.
+    ///
+    /// Shells an agent or a task started are left out: they belong to the
+    /// command that made them.
+    pub fn saved(&self, roots: &[(Scope, PathBuf)]) -> Vec<SavedShell> {
+        roots
+            .iter()
+            .filter_map(|(scope, root)| Some((self.worktrees.get(scope)?, root)))
+            .flat_map(|(shells, root)| {
+                shells
+                    .running
+                    .iter()
+                    .filter(|(id, _)| {
+                        !shells.errands.contains_key(id) && !shells.tasks.contains_key(id)
+                    })
+                    .map(|(id, _)| SavedShell {
+                        worktree: root.clone(),
+                        name: shells.names.get(id).cloned().unwrap_or_default(),
+                        active: shells.active == Some(*id),
+                    })
             })
             .collect()
     }
