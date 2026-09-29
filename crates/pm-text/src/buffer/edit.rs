@@ -642,6 +642,51 @@ impl Buffer {
         });
     }
 
+    /// Puts a chosen completion in: `text` over `range`, and the `extra`
+    /// edits it brings along, as one step, with the cursor left after `text`.
+    ///
+    /// The extra edits are the server's — the import a name needs, most
+    /// often — measured against the text before any of it changed, so they
+    /// are made latest place first, and the cursor is carried past each one
+    /// made before it. One that overlaps the completion itself is dropped:
+    /// it was measured against text the completion replaces.
+    ///
+    /// Answers the character `text` begins at once everything is in, which
+    /// is where a snippet's places are counted from.
+    pub fn complete(
+        &mut self,
+        range: Range<Position>,
+        text: &str,
+        extra: Vec<(Range<Position>, String)>,
+    ) -> usize {
+        let mut edits = extra
+            .into_iter()
+            .filter(|(span, _)| span.end <= range.start || span.start >= range.end)
+            .map(|(span, text)| (span, text, false))
+            .chain(std::iter::once((range.clone(), text.to_owned(), true)))
+            .collect::<Vec<_>>();
+        edits.sort_by_key(|(span, _, main)| (std::cmp::Reverse(span.start), !main));
+        let length = text.chars().count();
+        let mut cursor = None;
+        self.grouped(|buffer| {
+            for (span, text, main) in edits {
+                let start = buffer.char_of(span.start);
+                let removed = buffer.char_of(span.end) - start;
+                let added = text.chars().count();
+                buffer.replace(span, &text);
+                cursor = match main {
+                    true => Some(start + added),
+                    false => cursor.map(|at: usize| (at + added).saturating_sub(removed)),
+                };
+            }
+            if let Some(at) = cursor {
+                let at = buffer.position_of(at);
+                buffer.set_selection(Selection::at(at));
+            }
+        });
+        cursor.map_or(0, |at: usize| at - length)
+    }
+
     /// Takes the spaces and tabs off the end of every line, as one step.
     pub fn trim_trailing_whitespace(&mut self) {
         let edits = (0..self.line_count())
@@ -702,6 +747,7 @@ impl Buffer {
 
         self.text.remove(first..last);
         self.text.insert(first, text);
+        self.shift_places(first, last - first, text.chars().count());
 
         let head = start.after(text);
         let edit = InputEdit {

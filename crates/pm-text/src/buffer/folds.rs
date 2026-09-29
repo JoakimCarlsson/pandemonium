@@ -1,10 +1,11 @@
 //! Which lines a fold would hide, read off the shape of the text.
 //!
-//! What can be folded is worked out from indentation rather than from the
-//! syntax tree: a line that something below it is indented under holds that
-//! something, in every language anybody indents. A grammar would say it more
-//! precisely for the languages the editor has one for and say nothing at all
-//! for the rest.
+//! What can be folded is what a language server says folds, once one has
+//! said; until then, and for a file no server folds, it is worked out from
+//! indentation rather than from the syntax tree: a line that something below
+//! it is indented under holds that something, in every language anybody
+//! indents. A grammar would say it more precisely for the languages the
+//! editor has one for and say nothing at all for the rest.
 
 use std::ops::Range;
 
@@ -16,6 +17,14 @@ impl Buffer {
     /// The header itself stays: folding is hiding what a line holds, not
     /// hiding the line that says what it holds.
     pub fn fold_at(&self, line: usize) -> Option<Range<usize>> {
+        if !self.server_folds.is_empty() {
+            return self
+                .server_folds
+                .iter()
+                .filter(|fold| fold.start == line + 1 && fold.end <= self.line_count())
+                .max_by_key(|fold| fold.len())
+                .cloned();
+        }
         let outer = self.indentation(line)?;
         let mut last = line;
 
@@ -28,6 +37,32 @@ impl Buffer {
         }
 
         (last > line).then_some(line + 1..last + 1)
+    }
+
+    /// Takes the folds a language server said the file has, each as the
+    /// lines it hides, in place of the ones worked out from indentation.
+    ///
+    /// A fold whose last line only closes what its first line opened keeps
+    /// that line in sight, the way a fold by indentation does: a server
+    /// counts the closing brace in, and a folded block that loses it reads
+    /// as a block left open.
+    pub fn set_server_folds(&mut self, folds: Vec<Range<usize>>) {
+        self.server_folds = folds
+            .into_iter()
+            .map(|fold| {
+                let last = fold.end.saturating_sub(1);
+                let closes = self
+                    .line_text(last)
+                    .trim()
+                    .chars()
+                    .all(|ch| matches!(ch, '}' | ']' | ')' | ';' | ','));
+                match closes && fold.end > fold.start + 1 {
+                    true => fold.start..last,
+                    false => fold,
+                }
+            })
+            .filter(|fold| !fold.is_empty())
+            .collect();
     }
 
     /// Whether anything is indented under `line`.

@@ -63,6 +63,8 @@ pub enum Message {
     SetInstallLanguageServers(InstallLanguageServers),
     /// Install a named server from its pinned recipe.
     InstallLanguageServer(&'static str),
+    /// Open the log of a language server behind the focused file.
+    OpenServerLog,
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.

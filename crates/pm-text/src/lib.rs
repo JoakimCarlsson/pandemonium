@@ -19,6 +19,7 @@ pub mod install;
 mod language;
 mod lsp;
 pub mod program;
+pub mod snippet;
 mod syntax;
 
 pub use buffer::Buffer;
@@ -30,6 +31,7 @@ pub use indent::Indent;
 pub use language::{Language, NO_OPTIONS, Server};
 pub use lsp::{
     Answer, Asked, Calls, Client, CodeAction, Completion, FileEdit, Handle, Lens, Location,
-    NamedLocation, Request, Servers, Symbol, Watched,
+    NamedLocation, Progress, Request, Servers, Signature, Symbol, Trigger, Watched,
+    WorkspaceChange, is_tracing, set_trace,
 };
 pub use syntax::{Highlight, Highlights, SyntaxNode, highlight};

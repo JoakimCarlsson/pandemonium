@@ -28,6 +28,9 @@ const WORKTREES_DIRECTORY: &str = "worktrees";
 /// The directory editor-managed language servers live in.
 const SERVERS_DIRECTORY: &str = "servers";
 
+/// The directory language servers' logs are written in.
+const LOGS_DIRECTORY: &str = "logs";
+
 /// The editor's home: `PANDEMONIUM_HOME`, else `~/.pandemonium`.
 pub fn home() -> Option<PathBuf> {
     match std::env::var_os(HOME_VARIABLE) {
@@ -117,4 +120,9 @@ pub fn worktrees() -> Option<PathBuf> {
 /// The directory editor-managed language servers live in.
 pub fn servers() -> Option<PathBuf> {
     home().map(|home| home.join(SERVERS_DIRECTORY))
+}
+
+/// The directory language servers' logs are written in.
+pub fn logs() -> Option<PathBuf> {
+    home().map(|home| home.join(LOGS_DIRECTORY))
 }
