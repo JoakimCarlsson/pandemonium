@@ -23,6 +23,7 @@ use crate::config::{
 };
 use crate::editor::{CursorShape, Display};
 use crate::panes::Saved;
+use crate::terminal::SavedShell;
 use crate::workspace::{Layout, SidebarView};
 
 /// The preferences as they are written down.
@@ -164,6 +165,9 @@ pub(super) struct Stored {
     active_project: Option<PathBuf>,
     /// How the window was divided into panes, and what was open in them.
     panes: Option<Saved>,
+    /// The shells the window had running, and what they were called.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shells: Option<Vec<SavedShell>>,
     /// Whether the primary sidebar was visible.
     primary_sidebar_open: Option<bool>,
     /// Width of the primary sidebar.
@@ -403,6 +407,7 @@ impl Stored {
             layout: self.layout(),
             window: self.window(),
             panes: self.panes.clone().unwrap_or_default(),
+            shells: self.shells.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
             agent_servers: self.agent_servers(),
             onboarded: self.finished.unwrap_or_default(),
@@ -593,6 +598,7 @@ impl Stored {
             active,
             layout,
             panes,
+            shells,
             window,
             language_servers,
             agent_servers,
@@ -675,6 +681,7 @@ impl Stored {
             projects: Some(projects.clone()),
             active_project: active.clone(),
             panes: Some(panes.clone()),
+            shells: Some(shells.clone()),
             primary_sidebar_open: Some(layout.primary_sidebar_open),
             primary_sidebar_width: Some(layout.primary_sidebar_width),
             bottom_panel_open: Some(layout.bottom_panel_open),

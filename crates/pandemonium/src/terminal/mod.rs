@@ -12,5 +12,5 @@ mod store;
 mod view;
 
 pub use keys::{clipboard, key, macos, modifiers};
-pub use store::{Exited, Shell, ShellEntry, ShellId, Terminals};
+pub use store::{Exited, SavedShell, Shell, ShellEntry, ShellId, Terminals};
 pub use view::{screen_menu, terminal_view};

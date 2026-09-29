@@ -16,6 +16,7 @@ use crate::agent::TalkId;
 use crate::config::FontSlot;
 use crate::field::Field;
 use crate::keymap::Action;
+use crate::terminal::ShellId;
 
 /// What a query starts with to ask the file picker for commands instead.
 const COMMAND_PREFIX: char = '>';
@@ -66,6 +67,8 @@ pub enum Kind {
     Line,
     /// A new name for the symbol under the cursor, which is also a prompt.
     Rename,
+    /// What to call the terminal, which is a prompt too.
+    RenameTerminal(ShellId),
     /// The name of a local branch to create and check out.
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
@@ -137,6 +140,7 @@ impl Kind {
             Self::Search => "Search this worktree",
             Self::Line => "Go to line",
             Self::Rename => "New name",
+            Self::RenameTerminal(_) => "What the terminal is called",
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
@@ -173,6 +177,7 @@ impl Kind {
                 | Self::BreakpointLog
                 | Self::Watch
                 | Self::Rename
+                | Self::RenameTerminal(_)
                 | Self::NewBranch
                 | Self::StashMessage
                 | Self::NewSession

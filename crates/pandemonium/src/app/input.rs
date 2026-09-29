@@ -706,7 +706,7 @@ impl App {
         if let Some((key, modifiers)) = terminal::macos(&event.logical_key, self.modifiers) {
             return shell.borrow_mut().press(key, modifiers);
         }
-        if self.is_window_chord() {
+        if self.is_window_chord() || self.is_plain_rename_key(event) {
             return false;
         }
         let Some(key) = terminal::key(event, self.modifiers) else {
@@ -715,6 +715,12 @@ impl App {
         shell
             .borrow_mut()
             .press(key, terminal::modifiers(self.modifiers, event))
+    }
+
+    /// Whether `event` is F2 with no modifier held, which renames the
+    /// terminal rather than reaching the program running in it.
+    fn is_plain_rename_key(&self, event: &KeyEvent) -> bool {
+        event.logical_key == Key::Named(NamedKey::F2) && self.modifiers.is_empty()
     }
 
     /// Whether the modifiers held mark this keypress as the window's own.

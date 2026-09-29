@@ -349,6 +349,8 @@ pub struct App {
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
     saved: Saved,
+    /// The shells the last launch had running, until they are started again.
+    shells: Vec<crate::terminal::SavedShell>,
     /// Where those panes and their tabs came out in the last frame.
     geometry: Geometry,
     /// The tab the pointer is carrying, if it is carrying one.
@@ -625,6 +627,7 @@ impl App {
 
         let layout = restored.layout;
         let saved = restored.panes;
+        let shells = restored.shells;
 
         let files = open
             .iter()
@@ -734,6 +737,7 @@ impl App {
             agent_servers: restored.agent_servers,
             panes: PaneTree::default(),
             saved,
+            shells,
             geometry: Geometry::default(),
             drag: None,
             editor_focused: false,
@@ -1111,7 +1115,7 @@ impl App {
 
     /// The shell keystrokes are going to, if any is focused.
     pub(super) fn focused_shell(&self) -> Option<Shell> {
-        if !self.terminal_focused || !self.showing_terminals() {
+        if !self.terminal_focused || !self.showing_terminals() || self.picker.is_some() {
             return None;
         }
         self.terminals.active(self.scope()?)
@@ -1591,6 +1595,11 @@ impl App {
         }
         if let Message::ScrollTerminal(event, lines_per_pixel) = message {
             self.drag_terminal_scrollbar(event, lines_per_pixel);
+            self.request_redraw();
+            return;
+        }
+        if let Message::RenameTerminal(id) = message {
+            self.open_terminal_rename(id);
             self.request_redraw();
             return;
         }
@@ -2152,6 +2161,7 @@ impl App {
                 .map(|project| project.root().to_path_buf()),
             layout: self.layout(),
             panes: self.saved_panes(),
+            shells: self.terminals.saved(&self.worktrees()),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
             agent_servers: self.agent_servers.clone(),
@@ -2807,6 +2817,8 @@ impl ApplicationHandler<Wake> for App {
 
         let saved = std::mem::take(&mut self.saved);
         self.restore_panes(&saved);
+        let shells = std::mem::take(&mut self.shells);
+        self.restore_shells(&shells);
 
         self.ui = Some(Ui::new(self.theme()));
         self.list = Some(DrawList::new(Size::zero()));

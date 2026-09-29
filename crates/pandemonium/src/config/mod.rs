@@ -24,6 +24,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::panes::Saved;
+use crate::terminal::SavedShell;
 use crate::workspace::Layout;
 use stored::Stored;
 
@@ -75,6 +76,8 @@ pub struct Restored {
     pub layout: Layout,
     /// How the window was divided into panes, and what was open in them.
     pub panes: Saved,
+    /// The shells the window had running, and what they were called.
+    pub shells: Vec<SavedShell>,
     /// The size and state of the window itself.
     pub window: WindowState,
     /// The servers a language runs, in place of the ones it names or after them.

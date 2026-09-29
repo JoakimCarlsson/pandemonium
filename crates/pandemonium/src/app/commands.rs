@@ -39,6 +39,14 @@ impl App {
         match action {
             Action::ShowCommands => self.open_picker(Kind::Commands),
             Action::InstallLanguageServer => self.open_picker(Kind::LanguageServers),
+            Action::RenameTerminal => {
+                if let Some(id) = self
+                    .scope()
+                    .and_then(|scope| self.terminals.active_id(scope))
+                {
+                    self.open_terminal_rename(id);
+                }
+            }
             Action::ShowFiles => self.open_picker(Kind::Files),
             Action::ShowProjects => self.open_picker(Kind::Projects),
             Action::SearchProject => self.open_picker(Kind::Search),
