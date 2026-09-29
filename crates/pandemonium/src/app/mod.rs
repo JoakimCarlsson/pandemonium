@@ -1115,7 +1115,7 @@ impl App {
 
     /// The shell keystrokes are going to, if any is focused.
     pub(super) fn focused_shell(&self) -> Option<Shell> {
-        if !self.terminal_focused || !self.showing_terminals() {
+        if !self.terminal_focused || !self.showing_terminals() || self.picker.is_some() {
             return None;
         }
         self.terminals.active(self.scope()?)
