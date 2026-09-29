@@ -483,6 +483,9 @@ impl App {
             crate::app::Writing::Console(scope) => {
                 Some(self.debuggers.get(scope)?.console().text())
             }
+            crate::app::Writing::Comment(scope) => {
+                Some(self.reviews.get(&scope)?.comments().composing()?.text)
+            }
         }
     }
 
@@ -1294,6 +1297,7 @@ impl App {
                     self.writing == Some(crate::app::Writing::Commit),
                     self.caret_solid(),
                     self.preferences.split_diff,
+                    self.remarking(project),
                 ))),
                 None => Content::Empty,
             },
@@ -1314,6 +1318,7 @@ impl App {
                     review,
                     change,
                     self.preferences.split_diff,
+                    self.remarking(project),
                 ))),
                 None => Content::Empty,
             },
@@ -1353,7 +1358,7 @@ impl App {
                 Content::Built(Box::new(self.outline_content(theme, pane, scope)))
             }
             Some(Item::Excerpts(scope)) => match self.excerpts.get(&scope) {
-                Some(excerpts) => Content::Excerpts(excerpts.clone()),
+                Some(excerpts) => Content::Excerpts(excerpts.clone(), self.remarking(scope)),
                 None => Content::Empty,
             },
             Some(Item::Search(scope)) if self.searches.contains_key(&scope) => {

@@ -47,6 +47,7 @@ pub use run::Said;
 pub use stash::{Stash, stash_apply, stash_drop, stash_pop, stash_push, stashes};
 pub use status::{Changed, FileStatus, Status};
 pub use worktree::{
-    Summary, WorkAtRisk, add_worktree, commit_of, remember, remember_port, remembered_base,
-    remembered_name, remembered_port, remove_worktree, since, work_at_risk, worktrees,
+    Summary, WorkAtRisk, add_worktree, commit_of, remember, remember_port, remember_review,
+    remembered_base, remembered_name, remembered_port, remembered_review, remove_worktree, since,
+    work_at_risk, worktrees,
 };

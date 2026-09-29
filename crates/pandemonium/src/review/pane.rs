@@ -20,23 +20,29 @@
 //! old side set beside the new so a line and what became of it are read
 //! across rather than down.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use pm_core::{Changed, Hunk, Line, LineKind};
 use pm_gfx::Rgba;
 use pm_text::Highlight;
 use pm_ui::{
-    Div, IconName, IconSize, Side, Styled, Theme, checkbox, h_flex, icon, icon_button, text,
-    turning_icon_button, v_flex,
+    Div, IconName, IconSize, Side, Styled, Theme, checkbox, h_flex, icon, icon_button, measured,
+    text, turning_icon_button, v_flex,
 };
 
 use crate::config::Preference;
 use crate::editor::tint;
 use crate::message::Message;
 use crate::review::action::{primary_face, primary_message};
+use crate::review::comment::{Anchor, Comment, Composing, Side as CommentSide};
 use crate::review::commit_editor;
+use crate::review::gutter::revealing;
+use crate::review::remark::{
+    Delivery, block_rows, comment_block, composer_block, composer_rows, pending_bar,
+};
 use crate::review::sidebar::{staged_state, status_color};
-use crate::review::store::{ChangeId, Review};
+use crate::review::store::{ChangeId, Patch, Review};
 
 /// How many rows are built at once, however far the review runs on.
 ///
@@ -72,8 +78,10 @@ pub fn review_pane(
     typing: bool,
     solid: bool,
     split: bool,
+    remarking: Remarking,
 ) -> Div<Message> {
     let empty = review.changed().is_empty();
+    let pending = review.comments().pending();
 
     v_flex()
         .w_full()
@@ -81,7 +89,11 @@ pub fn review_pane(
         .overflow_hidden()
         .bg(theme.colors.background)
         .child(toolbar(theme, review, split))
-        .child(
+        .when(pending > 0, |pane| {
+            pane.child(pending_bar(theme, pending, remarking.delivery))
+        })
+        .child(measured(
+            review.area(None),
             v_flex()
                 .w_full()
                 .flex_1()
@@ -89,11 +101,22 @@ pub fn review_pane(
                 .when(empty, |pane| {
                     pane.child(nothing(theme, "No uncommitted changes"))
                 })
-                .children(drawn(theme, review, None, split)),
-        )
+                .children(drawn(theme, review, None, split, remarking)),
+        ))
         .when(!empty, |pane| {
             pane.child(commit_bar(theme, review, typing, solid))
         })
+}
+
+/// What a pane needs to know of the comments beyond the comments themselves.
+#[derive(Clone, Copy, Debug)]
+pub struct Remarking {
+    /// Whether the keyboard is in the box a comment is being written in.
+    pub focused: bool,
+    /// Whether the caret is in the visible half of its blink.
+    pub solid: bool,
+    /// Whether the review can be sent to the agent.
+    pub delivery: Delivery,
 }
 
 /// Builds the diff of the one changed file `id` names.
@@ -101,7 +124,13 @@ pub fn review_pane(
 /// A file that has stopped differing — committed, or put back the way it was
 /// — keeps its pane and says so, rather than the tab closing itself under a
 /// reader who was in the middle of it.
-pub fn change_pane(theme: &Theme, review: &Review, id: ChangeId, split: bool) -> Div<Message> {
+pub fn change_pane(
+    theme: &Theme,
+    review: &Review,
+    id: ChangeId,
+    split: bool,
+    remarking: Remarking,
+) -> Div<Message> {
     let name = review
         .path_of(id)
         .map(|path| relative(review, path))
@@ -133,7 +162,16 @@ pub fn change_pane(theme: &Theme, review: &Review, id: ChangeId, split: bool) ->
         .when(place.is_none(), |pane| {
             pane.child(nothing(theme, "This file no longer differs from the index"))
         })
-        .children(drawn(theme, review, Some(id), split))
+        .child(measured(
+            review.area(Some(id)),
+            v_flex().w_full().flex_1().overflow_hidden().children(drawn(
+                theme,
+                review,
+                Some(id),
+                split,
+                remarking,
+            )),
+        ))
 }
 
 /// The rows of the pane showing `shown`, from where it is scrolled to.
@@ -142,15 +180,17 @@ fn drawn(
     review: &Review,
     shown: Option<ChangeId>,
     split: bool,
+    remarking: Remarking,
 ) -> Vec<Div<Message>> {
     let rows = rows(review, shown, split);
     let first = review.scroll(shown).min(rows.len().saturating_sub(1));
+    let picked = review.comments().picked();
     rows.into_iter()
         .skip(first)
         .take(DRAWN)
         .map(|row| {
             let outlined = shown.is_none() && !matches!(row, Row::FileGap | Row::FileEnd);
-            self::row(theme, review, row).when(outlined, |row| {
+            self::row(theme, review, row, (shown, &picked), remarking).when(outlined, |row| {
                 row.border_side(Side::Left, 1.0, theme.colors.border)
                     .border_side(Side::Right, 1.0, theme.colors.border)
             })
@@ -234,6 +274,17 @@ fn toolbar(theme: &Theme, review: &Review, split: bool) -> Div<Message> {
         )
         .child(diff_stat(theme, added, removed))
         .child(h_flex().flex_1())
+        .when(review.comments().any_sent(), |bar| {
+            bar.child(worded(
+                theme,
+                match review.comments().shows_sent() {
+                    true => "Hide sent comments",
+                    false => "Show sent comments",
+                },
+                true,
+                Message::ToggleSentComments,
+            ))
+        })
         .child(layout_toggle(theme, split))
         .child(worded(theme, "Edit", files > 0, Message::OpenExcerpts))
         .child(icon_button(theme, IconName::ArrowUp, Message::PreviousHunk))
@@ -299,7 +350,7 @@ fn layout_toggle(theme: &Theme, split: bool) -> Div<Message> {
 }
 
 /// Builds one of the worded controls a bar of them is made of.
-fn worded(theme: &Theme, label: &str, enabled: bool, message: Message) -> Div<Message> {
+pub(super) fn worded(theme: &Theme, label: &str, enabled: bool, message: Message) -> Div<Message> {
     let color = match enabled {
         true => theme.colors.text_muted,
         false => theme.colors.text_subtle,
@@ -415,12 +466,17 @@ enum Row<'a> {
     /// Which file it belongs to and which side of the index it is on travel
     /// with it, because staging one hunk is done from its own heading.
     Heading(usize, bool, usize, &'a Hunk),
-    /// One line of a hunk, with the file it is in and the side of the
-    /// index its hunk is on, which together say what colour it is.
-    Line(&'a Path, bool, &'a Line),
+    /// One line of a hunk, with the place of the file it is in in the list
+    /// and the side of the index its hunk is on, which together say what
+    /// colour it is.
+    Line(usize, &'a Path, bool, &'a Line),
     /// One row of a hunk set out on two sides: the old line on the left and
     /// the new on the right, either missing where the other side has more.
-    Pair(&'a Path, bool, Option<&'a Line>, Option<&'a Line>),
+    Pair(usize, &'a Path, bool, Option<&'a Line>, Option<&'a Line>),
+    /// A comment left on lines above it, or on lines that are not drawn.
+    Comment(Comment),
+    /// The box a comment is being written in.
+    Composer(Composing),
     /// The heading of a conflict compared across its two versions.
     CompareHeading(usize, usize),
     /// A current and incoming line displayed side by side.
@@ -485,7 +541,12 @@ fn compared<'a>(review: &'a Review, changed: &'a Changed) -> Vec<Row<'a>> {
     rows
 }
 
-/// The rows of one file's diff: each side of the index, hunk by hunk.
+/// The rows of one file's diff: each side of the index, hunk by hunk, with
+/// the comments left on its lines under them.
+///
+/// A comment whose lines are not among the ones drawn — the file was
+/// commented on from a pane that shows more of it, or the lines are gone —
+/// is drawn at the top instead, so it is never a comment nobody can see.
 fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed, split: bool) -> Vec<Row<'a>> {
     if changed.is_conflicted() {
         return vec![Row::Side(
@@ -500,7 +561,37 @@ fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed, split: bool
         ("Not staged", false, &patch.unstaged),
     ];
     let both = !patch.staged.is_empty() && !patch.unstaged.is_empty();
+    let relative = review.relative(&changed.path);
+    let comments = review.comments();
+    let composing = comments
+        .composing()
+        .filter(|composing| composing.anchor.path == relative);
+    let mut placed = BTreeSet::new();
+    let mut composed = false;
     let mut rows = Vec::new();
+
+    let mut attach =
+        |rows: &mut Vec<Row<'a>>, staged: bool, old: Option<usize>, new: Option<usize>| {
+            let (old_ok, new_ok) = numbering(patch, staged);
+            for (side, number, ok) in [
+                (CommentSide::Old, old, old_ok),
+                (CommentSide::New, new, new_ok),
+            ] {
+                let Some(number) = number.filter(|_| ok) else {
+                    continue;
+                };
+                for comment in comments.ending_at(&relative, side, number) {
+                    placed.insert(comment.id);
+                    rows.push(Row::Comment(comment));
+                }
+                if let Some(composing) = composing.as_ref().filter(|composing| {
+                    composing.anchor.side == side && composing.anchor.last == number
+                }) {
+                    composed = true;
+                    rows.push(Row::Composer(composing.clone()));
+                }
+            }
+        };
 
     for (name, staged, hunks) in sides {
         if hunks.is_empty() {
@@ -512,16 +603,54 @@ fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed, split: bool
         for (at, hunk) in hunks.iter().enumerate() {
             rows.push(Row::Heading(index, staged, at, hunk));
             match split {
-                true => rows.extend(paired(&changed.path, staged, hunk)),
-                false => rows.extend(
-                    hunk.lines
-                        .iter()
-                        .map(|line| Row::Line(&changed.path, staged, line)),
-                ),
+                true => {
+                    for row in paired(index, &changed.path, staged, hunk) {
+                        let numbers = match &row {
+                            Row::Pair(_, _, _, old, new) => {
+                                (old.and_then(|line| line.old), new.and_then(|line| line.new))
+                            }
+                            _ => (None, None),
+                        };
+                        rows.push(row);
+                        attach(&mut rows, staged, numbers.0, numbers.1);
+                    }
+                }
+                false => {
+                    for line in &hunk.lines {
+                        rows.push(Row::Line(index, &changed.path, staged, line));
+                        attach(&mut rows, staged, line.old, line.new);
+                    }
+                }
             }
         }
     }
-    rows
+
+    let mut first = comments
+        .in_file(&relative)
+        .into_iter()
+        .filter(|comment| !placed.contains(&comment.id))
+        .map(Row::Comment)
+        .collect::<Vec<_>>();
+    if let Some(composing) = composing.filter(|_| !composed) {
+        first.push(Row::Composer(composing));
+    }
+    first.append(&mut rows);
+    first
+}
+
+/// Which sides of `patch`'s hunks on the `staged` side of the index are
+/// numbered the way the worktree and the last commit number their lines:
+/// whether a comment can be anchored by their old numbers, and by their new.
+///
+/// A staged hunk counts its new lines by the index, and an unstaged one its
+/// old lines by the index, so once a file is changed on both sides of the
+/// index those numbers are of a file that is neither of the two a comment
+/// can be about.
+fn numbering(patch: &Patch, staged: bool) -> (bool, bool) {
+    (
+        staged || patch.staged.is_empty(),
+        !staged || patch.unstaged.is_empty(),
+    )
 }
 
 /// The rows of `hunk` set out on two sides.
@@ -530,7 +659,7 @@ fn lines<'a>(review: &'a Review, index: usize, changed: &'a Changed, split: bool
 /// and the run put in their place are read against each other, the first
 /// taken out beside the first put in, and whichever run is longer goes on
 /// alone below the other.
-fn paired<'a>(path: &'a Path, staged: bool, hunk: &'a Hunk) -> Vec<Row<'a>> {
+fn paired<'a>(index: usize, path: &'a Path, staged: bool, hunk: &'a Hunk) -> Vec<Row<'a>> {
     let mut rows = Vec::new();
     let mut removed: Vec<&Line> = Vec::new();
     let mut added: Vec<&Line> = Vec::new();
@@ -539,6 +668,7 @@ fn paired<'a>(path: &'a Path, staged: bool, hunk: &'a Hunk) -> Vec<Row<'a>> {
             let length = removed.len().max(added.len());
             for at in 0..length {
                 rows.push(Row::Pair(
+                    index,
                     path,
                     staged,
                     removed.get(at).copied(),
@@ -559,7 +689,7 @@ fn paired<'a>(path: &'a Path, staged: bool, hunk: &'a Hunk) -> Vec<Row<'a>> {
             LineKind::Added => added.push(line),
             LineKind::Context => {
                 flush(&mut rows, &mut removed, &mut added);
-                rows.push(Row::Pair(path, staged, Some(line), Some(line)));
+                rows.push(Row::Pair(index, path, staged, Some(line), Some(line)));
             }
         }
     }
@@ -568,7 +698,13 @@ fn paired<'a>(path: &'a Path, staged: bool, hunk: &'a Hunk) -> Vec<Row<'a>> {
 }
 
 /// Builds one row of a review, whichever kind of row it is.
-fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
+fn row(
+    theme: &Theme,
+    review: &Review,
+    row: Row<'_>,
+    (shown, picked): (Option<ChangeId>, &Option<Anchor>),
+    remarking: Remarking,
+) -> Div<Message> {
     match row {
         Row::FileGap => v_flex().w_full().h_px(FILE_GAP),
         Row::FileEnd => v_flex().w_full().h_px(1.0).bg(theme.colors.border),
@@ -577,15 +713,36 @@ fn row(theme: &Theme, review: &Review, row: Row<'_>) -> Div<Message> {
         Row::Heading(index, staged, at, hunk) => {
             heading_row(theme, review, index, staged, at, hunk)
         }
-        Row::Line(path, staged, line) => line_row(theme, line, review.shade(path, staged, line)),
-        Row::Pair(path, staged, old, new) => h_flex()
-            .w_full()
-            .h_px(theme.size.row)
-            .items_stretch()
-            .overflow_hidden()
-            .child(half(theme, review, path, staged, old, false))
-            .child(v_flex().w_px(1.0).bg(theme.colors.border))
-            .child(half(theme, review, path, staged, new, true)),
+        Row::Line(index, path, staged, line) => {
+            let spot = Spot::of(review, shown, index, path, staged, picked);
+            line_row(theme, line, review.shade(path, staged, line), &spot)
+        }
+        Row::Pair(index, path, staged, old, new) => {
+            let spot = Spot::of(review, shown, index, path, staged, picked);
+            h_flex()
+                .w_full()
+                .h_px(theme.size.row)
+                .items_stretch()
+                .overflow_hidden()
+                .child(half(theme, review, path, staged, old, false, &spot))
+                .child(v_flex().w_px(1.0).bg(theme.colors.border))
+                .child(half(theme, review, path, staged, new, true, &spot))
+        }
+        Row::Comment(comment) => comment_block(
+            theme,
+            &comment,
+            theme.size.row,
+            NUMBERS + MARK,
+            review.comments().moving(),
+        ),
+        Row::Composer(composing) => composer_block(
+            theme,
+            &composing,
+            theme.size.row,
+            NUMBERS + MARK,
+            remarking.focused,
+            remarking.solid,
+        ),
         Row::CompareHeading(at, total) => compare_heading(theme, at, total),
         Row::ComparePair(current, incoming) => compare_pair(theme, current, incoming),
     }
@@ -799,6 +956,14 @@ fn heading_row(
                 .color(theme.colors.text_muted),
         )
         .child(h_flex().flex_1())
+        .when(hunk_anchor(review, index, staged, hunk).is_some(), |row| {
+            row.child(worded(
+                theme,
+                "Comment on hunk",
+                true,
+                Message::CommentOnHunk(index, staged, at),
+            ))
+        })
         .when(separate, |row| {
             row.child(worded(
                 theme,
@@ -826,14 +991,142 @@ fn range_of(hunk: &Hunk) -> String {
     )
 }
 
+/// What the number column of a row of a hunk needs to be a way to comment:
+/// which change the row is of, which sides of it can be commented on, and
+/// the lines a gesture is sweeping over now.
+struct Spot {
+    /// Which file the pane is of, when it is of one alone.
+    shown: Option<ChangeId>,
+    /// Where the file is in the list of changes.
+    index: usize,
+    /// Whether the old numbers of the row's hunk are the last commit's.
+    old: bool,
+    /// Whether the new numbers of the row's hunk are the worktree's.
+    new: bool,
+    /// Whether a comment is waiting for a line to be put on.
+    moving: bool,
+    /// The lines a gesture is sweeping over, when it is in this file.
+    picked: Option<Anchor>,
+}
+
+impl Spot {
+    /// The spot of a row in the `index`-th change's `staged` hunks.
+    fn of(
+        review: &Review,
+        shown: Option<ChangeId>,
+        index: usize,
+        path: &Path,
+        staged: bool,
+        picked: &Option<Anchor>,
+    ) -> Self {
+        let relative = review.relative(path);
+        let (old, new) = review
+            .patch(path)
+            .map_or((false, false), |patch| numbering(patch, staged));
+        Self {
+            shown,
+            index,
+            picked: picked.clone().filter(|picked| picked.path == relative),
+            old,
+            new,
+            moving: review.comments().moving().is_some(),
+        }
+    }
+
+    /// Whether `number` on `side` can be commented on.
+    fn allows(&self, side: CommentSide) -> bool {
+        match side {
+            CommentSide::Old => self.old,
+            CommentSide::New => self.new,
+        }
+    }
+
+    /// Whether a gesture is sweeping over `number` on `side`.
+    fn sweeps(&self, side: CommentSide, number: usize) -> bool {
+        self.picked.as_ref().is_some_and(|picked| {
+            picked.side == side && (picked.first..=picked.last).contains(&number)
+        })
+    }
+}
+
+/// Builds the column of numbers `numbers` is, as a place to comment on
+/// `number` on `side`: pressing it comments on that line, dragging down it
+/// comments on the run of lines, and while the pointer is on it the numbers
+/// are a button that says so.
+fn commentable(
+    theme: &Theme,
+    spot: &Spot,
+    side: CommentSide,
+    number: usize,
+    width: f32,
+    numbers: Div<Message>,
+) -> Div<Message> {
+    let (shown, index) = (spot.shown, spot.index);
+    let label = match spot.moving {
+        true => "Move here",
+        false => "+ Comment",
+    };
+    let button = h_flex()
+        .w_px(width)
+        .items_center()
+        .justify_center()
+        .bg(theme
+            .colors
+            .accent
+            .alpha(theme.emphasis.change * GUTTER_DEPTH))
+        .child(text(label).text_xs().color(theme.colors.accent));
+    h_flex()
+        .w_px(width)
+        .items_stretch()
+        .on_drag(move |event| Message::DragComment(shown, index, side, number, event))
+        .child(revealing(numbers, button))
+}
+
 /// Builds one line of a hunk: its numbers on each side, its mark, then the
 /// line itself, coloured by `shade` the way the file it came from is.
 ///
 /// This is GitHub's unified diff: the numbers sit in a gutter washed deeper
 /// than the line beside it, so the eye finds where a change is by the edge
 /// before it reads what the change is.
-fn line_row(theme: &Theme, line: &Line, shade: Option<&[Option<Highlight>]>) -> Div<Message> {
+fn line_row(
+    theme: &Theme,
+    line: &Line,
+    shade: Option<&[Option<Highlight>]>,
+    spot: &Spot,
+) -> Div<Message> {
     let (gutter, wash) = washes(theme, Some(line.kind));
+    let side = match line.kind {
+        LineKind::Removed => CommentSide::Old,
+        LineKind::Added | LineKind::Context => CommentSide::New,
+    };
+    let number_here = match side {
+        CommentSide::Old => line.old,
+        CommentSide::New => line.new,
+    }
+    .filter(|_| spot.allows(side));
+    let swept = number_here.is_some_and(|number| spot.sweeps(side, number));
+    let gutter = match swept {
+        true => Some(
+            theme
+                .colors
+                .accent
+                .alpha(theme.emphasis.change * GUTTER_DEPTH),
+        ),
+        false => gutter,
+    };
+    let numbers = h_flex()
+        .w_px(NUMBERS)
+        .px(0.5)
+        .gap(0.5)
+        .items_center()
+        .justify_end()
+        .when_some(gutter, Div::bg)
+        .child(number(theme, line.old))
+        .child(number(theme, line.new));
+    let column = match number_here {
+        Some(number) => commentable(theme, spot, side, number, NUMBERS, numbers),
+        None => numbers,
+    };
 
     h_flex()
         .w_full()
@@ -841,17 +1134,7 @@ fn line_row(theme: &Theme, line: &Line, shade: Option<&[Option<Highlight>]>) -> 
         .items_stretch()
         .overflow_hidden()
         .when_some(wash, Div::bg)
-        .child(
-            h_flex()
-                .w_px(NUMBERS)
-                .px(0.5)
-                .gap(0.5)
-                .items_center()
-                .justify_end()
-                .when_some(gutter, Div::bg)
-                .child(number(theme, line.old))
-                .child(number(theme, line.new)),
-        )
+        .child(column)
         .child(marked(theme, Some(line)))
         .child(shaded(theme, &line.text, shade.unwrap_or_default()))
 }
@@ -870,6 +1153,7 @@ fn half(
     staged: bool,
     line: Option<&Line>,
     new: bool,
+    spot: &Spot,
 ) -> Div<Message> {
     let (gutter, wash) = washes(theme, line.map(|line| line.kind));
     let number = line.and_then(|line| match new {
@@ -877,28 +1161,46 @@ fn half(
         false => line.old,
     });
     let shade = line.and_then(|line| review.shade(path, staged, line));
+    let side = match new {
+        true => CommentSide::New,
+        false => CommentSide::Old,
+    };
+    let commenting = number.filter(|_| spot.allows(side));
+    let swept = commenting.is_some_and(|number| spot.sweeps(side, number));
+    let gutter = match swept {
+        true => Some(
+            theme
+                .colors
+                .accent
+                .alpha(theme.emphasis.change * GUTTER_DEPTH),
+        ),
+        false => gutter,
+    };
+    let numbers = h_flex()
+        .w_px(SIDE_NUMBER)
+        .px(0.5)
+        .items_center()
+        .justify_end()
+        .when_some(gutter, Div::bg)
+        .when_some(number, |slot, number| {
+            slot.child(
+                text(number.to_string())
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.text_subtle),
+            )
+        });
+    let column = match commenting {
+        Some(number) => commentable(theme, spot, side, number, SIDE_NUMBER, numbers),
+        None => numbers,
+    };
 
     h_flex()
         .flex_1()
         .items_stretch()
         .overflow_hidden()
         .when_some(wash, Div::bg)
-        .child(
-            h_flex()
-                .w_px(SIDE_NUMBER)
-                .px(0.5)
-                .items_center()
-                .justify_end()
-                .when_some(gutter, Div::bg)
-                .when_some(number, |slot, number| {
-                    slot.child(
-                        text(number.to_string())
-                            .text_xs()
-                            .font_mono()
-                            .color(theme.colors.text_subtle),
-                    )
-                }),
-        )
+        .child(column)
         .child(marked(theme, line))
         .child(match line {
             Some(line) => shaded(theme, &line.text, shade.unwrap_or_default()),
@@ -996,5 +1298,102 @@ fn counts(review: &Review, changed: &Changed) -> (usize, usize) {
     let hunks = patch.staged.iter().chain(&patch.unstaged);
     hunks.fold((0, 0), |(added, removed), hunk| {
         (added + hunk.added(), removed + hunk.removed())
+    })
+}
+
+/// The run of lines a comment on `hunk` is anchored to: the lines it puts in
+/// the worktree, or the lines it removes when it puts none.
+///
+/// Nothing is answered for a hunk whose lines are numbered by the index on
+/// both counts, which no comment can be about.
+pub fn hunk_anchor(
+    review: &Review,
+    index: usize,
+    staged: bool,
+    hunk: &Hunk,
+) -> Option<(CommentSide, usize, usize)> {
+    let path = &review.change(index)?.path;
+    let (old_ok, new_ok) = numbering(review.patch(path)?, staged);
+    match () {
+        () if new_ok && hunk.new_count > 0 => Some((
+            CommentSide::New,
+            hunk.start,
+            hunk.start + hunk.new_count - 1,
+        )),
+        () if old_ok && hunk.old_count > 0 => Some((
+            CommentSide::Old,
+            hunk.old_start,
+            hunk.old_start + hunk.old_count - 1,
+        )),
+        () => None,
+    }
+}
+
+/// How tall `row` is drawn.
+///
+/// Rows have no height of their own to ask for once they are drawn, so the
+/// heights are written down here beside the rows: a gesture that ends
+/// somewhere down the pane is turned into a line by adding them up.
+fn height(theme: &Theme, row: &Row<'_>) -> f32 {
+    match row {
+        Row::FileGap => FILE_GAP,
+        Row::FileEnd => 1.0,
+        Row::File(..) => theme.size.field,
+        Row::Comment(comment) => block_rows(comment) as f32 * theme.size.row,
+        Row::Composer(_) => composer_rows() as f32 * theme.size.row,
+        _ => theme.size.row,
+    }
+}
+
+/// The line, counted on `side` in the `index`-th change, that `row` is.
+fn numbered(row: &Row<'_>, index: usize, side: CommentSide) -> Option<usize> {
+    let of = |line: &Line| match side {
+        CommentSide::Old => line.old,
+        CommentSide::New => line.new,
+    };
+    match row {
+        Row::Line(place, _, _, line) if *place == index => of(line),
+        Row::Pair(place, _, _, old, new) if *place == index => match side {
+            CommentSide::Old => old.and_then(of),
+            CommentSide::New => new.and_then(of),
+        },
+        _ => None,
+    }
+}
+
+/// The line of the `index`-th change, counted on `side`, that a pointer
+/// `y` pixels down the window has reached in the pane showing `shown`.
+///
+/// A pointer over something that is not a line of that file and side — a
+/// comment, a heading, the space past the end — is taken to be at the line
+/// nearest to it.
+pub fn line_at(
+    theme: &Theme,
+    review: &Review,
+    (shown, split): (Option<ChangeId>, bool),
+    (index, side): (usize, CommentSide),
+    y: f32,
+) -> Option<usize> {
+    let rows = rows(review, shown, split);
+    let first = review.scroll(shown).min(rows.len().saturating_sub(1));
+    let mut top = review.area(shown).get().top();
+    let mut reached = rows.len().saturating_sub(1);
+    for (at, row) in rows.iter().enumerate().skip(first) {
+        let bottom = top + height(theme, row);
+        if y < bottom {
+            reached = at;
+            break;
+        }
+        top = bottom;
+    }
+    (0..rows.len()).find_map(|distance| {
+        let below = rows
+            .get(reached + distance)
+            .and_then(|row| numbered(row, index, side));
+        let above = reached
+            .checked_sub(distance)
+            .and_then(|at| rows.get(at))
+            .and_then(|row| numbered(row, index, side));
+        below.or(above)
     })
 }

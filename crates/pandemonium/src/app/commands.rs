@@ -158,6 +158,7 @@ impl App {
             Action::ShowOutline => self.open_outline(),
             Action::NewAgentSession => return self.apply(Message::NewAgentSession),
             Action::AddSelectionToAgent => self.add_selection_to_agent(),
+            Action::AddReviewComment => return self.apply(Message::AddComment),
             Action::FinishSession => {
                 if let Some(session) = self.selected_session() {
                     return self.apply(Message::FinishSession(session));
@@ -512,6 +513,9 @@ impl App {
             return;
         }
         if self.release_commit_focus() {
+            return;
+        }
+        if self.release_comment_focus() {
             return;
         }
         if self.stop_or_release_prompt() {

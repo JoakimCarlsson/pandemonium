@@ -20,9 +20,10 @@ use std::time::Instant;
 
 use pm_core::{Changed, FileStatus, Head, Hunk, Line};
 use pm_text::{Buffer, Highlight};
-use pm_ui::Scrolled;
+use pm_ui::{Bounds, Scrolled};
 
 use crate::input::Input;
+use crate::review::comment::Comments;
 use crate::review::conflict::Conflict;
 use crate::review::reading::{self, Reading, RepositoryReading};
 use crate::review::repository::Repository;
@@ -200,6 +201,13 @@ pub struct Review {
     /// How many readings have been taken in, which names the one a read
     /// started now will answer.
     reads: u64,
+    /// What the reader has remarked on the worktree's diff, kept across
+    /// every reading of it.
+    comments: Comments,
+    /// Where the rows of the review pane were last drawn.
+    review_area: Bounds,
+    /// Where the rows of a pane showing one file's diff were last drawn.
+    change_area: Bounds,
 }
 
 impl Review {
@@ -228,6 +236,57 @@ impl Review {
             list_scroll: Scrolled::default(),
             refreshed: None,
             reads: 0,
+            comments: Comments::default(),
+            review_area: Bounds::default(),
+            change_area: Bounds::default(),
+        }
+    }
+
+    /// Where the rows of the pane showing `shown` were last drawn, for a
+    /// gesture down them to be read against.
+    pub fn area(&self, shown: Option<ChangeId>) -> Bounds {
+        match shown {
+            Some(_) => self.change_area.clone(),
+            None => self.review_area.clone(),
+        }
+    }
+
+    /// The comments left on this worktree's diff.
+    pub fn comments(&self) -> &Comments {
+        &self.comments
+    }
+
+    /// Where `path` sits in the worktree, as a comment names it.
+    pub fn relative(&self, path: &Path) -> PathBuf {
+        path.strip_prefix(&self.root).unwrap_or(path).to_path_buf()
+    }
+
+    /// The changed files in the order the review lists them, relative to the
+    /// worktree.
+    pub fn changed_relative(&self) -> Vec<PathBuf> {
+        self.changed
+            .iter()
+            .map(|changed| self.relative(&changed.path))
+            .collect()
+    }
+
+    /// Follows every comment to where its lines are now, in the text of the
+    /// files the reading brought and in the hunks that remove lines.
+    fn follow_comments(&mut self, texts: &BTreeMap<PathBuf, Option<String>>) {
+        for (path, text) in texts {
+            self.comments.reanchor(path, text.as_deref());
+        }
+        for path in self.comments.paths() {
+            let removed = self
+                .patches
+                .get(&self.root.join(&path))
+                .into_iter()
+                .flat_map(|patch| patch.staged.iter().chain(&patch.unstaged))
+                .flat_map(|hunk| &hunk.lines)
+                .filter(|line| line.kind == pm_core::LineKind::Removed)
+                .filter_map(|line| line.old)
+                .collect();
+            self.comments.reanchor_removed(&path, &removed);
         }
     }
 
@@ -263,7 +322,9 @@ impl Review {
     pub fn read_later(&self) -> impl FnOnce() -> Reading + Send + 'static {
         let root = self.root.clone();
         let reads = self.reads;
-        move || Reading::of(&root, reads)
+        let commented = self.comments.paths();
+        let restoring = self.reads == 0;
+        move || Reading::of(&root, reads, commented, restoring)
     }
 
     /// Takes in what git said the worktree held, unless the review has been
@@ -274,6 +335,11 @@ impl Review {
         if reading.reads != self.reads {
             return false;
         }
+        if self.reads == 0
+            && let Some(remembered) = &reading.remembered
+        {
+            self.comments.restore(remembered);
+        }
         self.reads += 1;
         self.find_repositories(reading.repositories);
         self.gather_changes();
@@ -281,6 +347,7 @@ impl Review {
         self.patches = reading.patches;
         self.conflicts = reading.conflicts;
         self.shades = reading.shades;
+        self.follow_comments(&reading.texts);
         self.collapsed
             .retain(|path| self.patches.contains_key(path));
         for path in self.paths(|_| true) {

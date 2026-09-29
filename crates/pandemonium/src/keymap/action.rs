@@ -296,6 +296,9 @@ pub enum Action {
     /// Attach the focused file's selection to the next prompt of an agent in
     /// its worktree.
     AddSelectionToAgent,
+    /// Leave a review comment on the selection of the focused pane, to be
+    /// sent to the session's agent with the rest of the review.
+    AddReviewComment,
     /// Finish the session in hand, which takes its worktree away.
     FinishSession,
     /// Choose which mode to put the agent in hand into.
@@ -802,6 +805,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::AddSelectionToAgent,
         "agent.add_selection",
         "Add Selection to Agent",
+    ),
+    (
+        Action::AddReviewComment,
+        "review.add_comment",
+        "Add Review Comment",
     ),
     (Action::FinishSession, "session.finish", "Finish Session"),
     (Action::ChangeAgentMode, "agent.mode", "Change Agent Mode"),

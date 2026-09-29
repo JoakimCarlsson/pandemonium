@@ -16,9 +16,9 @@ pub use git::{
     Summary, abort_merge, abort_operation, add_worktree, amend, baseline, blame, branches, changes,
     cherry_pick, clone, commit, committed, contents, continue_operation, create_branch, diff,
     diffs, discard, discard_all, fetch, fetch_from, force_push, history, last_message, named,
-    operation, pull, push_branch, push_to, remotes, remove_worktree, since, skip_operation, stage,
-    stash_apply, stash_drop, stash_pop, stash_push, stashes, switch_branch, sync, unstage,
-    untracked, worktrees, write_index,
+    operation, pull, push_branch, push_to, remember_review, remembered_review, remotes,
+    remove_worktree, since, skip_operation, stage, stash_apply, stash_drop, stash_pop, stash_push,
+    stashes, switch_branch, sync, unstage, untracked, worktrees, write_index,
 };
 pub use project::{OpenError, Project, ProjectId, Projects, Repository, repositories};
 pub use scope::Scope;

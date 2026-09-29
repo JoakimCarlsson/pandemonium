@@ -595,7 +595,7 @@ impl App {
 
     /// The agent of `scope` a selection is sent to: the one a pane is
     /// showing, or else any the worktree has open.
-    fn agent_in(&self, scope: Scope) -> Option<TalkId> {
+    pub(super) fn agent_in(&self, scope: Scope) -> Option<TalkId> {
         let panes = self
             .panes
             .panes()

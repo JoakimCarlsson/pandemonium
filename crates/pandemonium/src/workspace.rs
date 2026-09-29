@@ -221,6 +221,8 @@ pub struct SidebarSession {
     pub status_color: Rgba,
     /// How many errors the language servers over its worktree report.
     pub errors: usize,
+    /// How many review comments on its worktree are waiting to be sent.
+    pub pending: usize,
     /// Whether this session is selected.
     pub selected: bool,
 }
@@ -1357,6 +1359,14 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
                     .text_xs()
                     .font_mono()
                     .color(theme.colors.danger),
+            )
+        })
+        .when(session.pending > 0, |row| {
+            row.child(
+                text(format!("● {} ", session.pending))
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.accent),
             )
         })
         .child(drift(theme, session.added, session.removed))

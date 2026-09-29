@@ -401,6 +401,10 @@ impl App {
                                 .iter()
                                 .map(|server| server.errors())
                                 .sum(),
+                            pending: self
+                                .reviews
+                                .get(&Scope::of(project.id(), session.id()))
+                                .map_or(0, |review| review.comments().pending()),
                             selected: selected == Some(session.id()),
                         }
                     })

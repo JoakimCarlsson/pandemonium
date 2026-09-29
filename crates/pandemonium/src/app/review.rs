@@ -7,18 +7,23 @@
 //! window writes to the index.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pm_core::{FileStatus, Scope};
 use pm_text::{Position, Request};
+use pm_ui::{ResizeEvent, ResizePhase};
 
-use crate::app::App;
+use crate::agent::TalkId;
 use crate::app::language::Purpose;
+use crate::app::{App, Writing};
 use crate::desktop;
 use crate::editor::FileId;
 use crate::panes::Item;
 use crate::prompt::{Answer, Prompt};
-use crate::review::{ChangeId, Group, RepositoryAction, Review, Work};
+use crate::review::comment::{Anchor, CommentId, Quote, Side};
+use crate::review::{
+    ChangeId, Delivery, Group, Remarking, RepositoryAction, Review, Work, hunk_anchor, line_at,
+};
 
 impl App {
     /// The review of the project the window is pointed at.
@@ -715,6 +720,419 @@ impl App {
         focused
     }
 
+    /// The text of the file at `path` in `scope` as a reader sees it: the
+    /// open document when there is one, the disk otherwise.
+    fn lines_of(&self, scope: Scope, path: &Path) -> Vec<String> {
+        match self
+            .editor
+            .opened(scope, path)
+            .and_then(|file| self.editor.get(file))
+        {
+            Some(document) => {
+                let document = document.borrow();
+                let buffer = document.buffer();
+                (0..buffer.line_count())
+                    .map(|line| buffer.line_text(line))
+                    .collect()
+            }
+            None => std::fs::read_to_string(path)
+                .map(|text| text.lines().map(str::to_owned).collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The quote of lines `first..=last` of `path`, counted on `side`.
+    ///
+    /// New lines are read from the file; removed lines are read from the
+    /// hunks that remove them, which are the only place they still are.
+    fn quote_of(&self, scope: Scope, path: &Path, side: Side, first: usize, last: usize) -> Quote {
+        match side {
+            Side::New => {
+                let lines = self.lines_of(scope, path);
+                Quote::of(
+                    |number| lines.get(number.checked_sub(1)?).cloned(),
+                    first,
+                    last,
+                )
+            }
+            Side::Old => {
+                let removed = self
+                    .reviews
+                    .get(&scope)
+                    .and_then(|review| review.patch(path))
+                    .into_iter()
+                    .flat_map(|patch| patch.staged.iter().chain(&patch.unstaged))
+                    .flat_map(|hunk| &hunk.lines)
+                    .filter_map(|line| {
+                        Some((line.old?, line.text.trim_end_matches('\n').to_owned()))
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                Quote::of(|number| removed.get(&number).cloned(), first, last)
+            }
+        }
+    }
+
+    /// Starts a comment on lines `first..=last` of `path` in `scope`'s
+    /// worktree, counted on `side`, and gives the keyboard to it.
+    ///
+    /// This is the one way a comment is begun, whichever pane the lines were
+    /// pressed in. While a comment whose lines are gone is waiting for a
+    /// line, the lines take that comment instead.
+    pub(super) fn comment_on(
+        &mut self,
+        scope: Scope,
+        path: &Path,
+        side: Side,
+        first: usize,
+        last: usize,
+    ) {
+        let Some(review) = self.reviews.get(&scope) else {
+            return;
+        };
+        if !path.starts_with(review.root()) || first == 0 || last < first {
+            return;
+        }
+        let anchor = Anchor {
+            path: review.relative(path),
+            side,
+            first,
+            last,
+        };
+        let quote = self.quote_of(scope, path, side, first, last);
+        let comments = review.comments().clone();
+        match comments.moving() {
+            Some(id) => {
+                comments.relocate(id, anchor, quote);
+                self.comments_changed(scope);
+            }
+            None => {
+                comments.begin(anchor, quote);
+                self.write_in(Writing::Comment(scope));
+            }
+        }
+    }
+
+    /// Starts a comment on the `first`-th to `last`-th line of the
+    /// `index`-th change, counted on `side`.
+    pub(super) fn comment_on_change(
+        &mut self,
+        index: usize,
+        side: Side,
+        first: usize,
+        last: usize,
+    ) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        let Some(path) = self
+            .reviews
+            .get(&scope)
+            .and_then(|review| Some(review.change(index)?.path.clone()))
+        else {
+            return;
+        };
+        self.comment_on(scope, &path, side, first, last);
+    }
+
+    /// Starts a comment on the `hunk`-th hunk of the `index`-th change.
+    pub(super) fn comment_on_hunk(&mut self, index: usize, staged: bool, hunk: usize) {
+        let Some(review) = self.review() else {
+            return;
+        };
+        let Some((side, first, last)) = review.change(index).and_then(|changed| {
+            let patch = review.patch(&changed.path)?;
+            let hunks = match staged {
+                true => &patch.staged,
+                false => &patch.unstaged,
+            };
+            hunk_anchor(review, index, staged, hunks.get(hunk)?)
+        }) else {
+            return;
+        };
+        self.comment_on_change(index, side, first, last);
+    }
+
+    /// Follows a gesture down the numbers of a change: the lines it sweeps
+    /// over are marked as it goes, and let go of, they are commented on.
+    pub(super) fn drag_comment(
+        &mut self,
+        shown: Option<ChangeId>,
+        index: usize,
+        side: Side,
+        line: usize,
+        event: ResizeEvent,
+    ) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        let theme = self.theme();
+        let split = self.preferences.split_diff;
+        let Some(review) = self.reviews.get(&scope) else {
+            return;
+        };
+        let Some(path) = review.change(index).map(|changed| changed.path.clone()) else {
+            return;
+        };
+        let reached = line_at(
+            &theme,
+            review,
+            (shown, split),
+            (index, side),
+            event.current.y,
+        )
+        .unwrap_or(line);
+        let (first, last) = (line.min(reached), line.max(reached));
+        let swept = Anchor {
+            path: review.relative(&path),
+            side,
+            first,
+            last,
+        };
+        match event.phase {
+            ResizePhase::Started | ResizePhase::Moved => review.comments().pick(Some(swept)),
+            ResizePhase::Ended => {
+                review.comments().pick(None);
+                self.comment_on(scope, &path, side, first, last);
+            }
+        }
+    }
+
+    /// Starts a comment from a press on the gutter of `line` of `file`, in a
+    /// pane of excerpts: on what is selected when the line is part of it,
+    /// on the line alone otherwise.
+    pub(super) fn comment_excerpt(&mut self, file: FileId, line: usize) {
+        let Some(scope) = self.editor.scope_of(file) else {
+            return;
+        };
+        let Some((path, first, last)) = self.editor.get(file).map(|document| {
+            let document = document.borrow();
+            let buffer = document.buffer();
+            let (first, last) = selected_lines(buffer);
+            let (first, last) =
+                match (first..=last).contains(&line) && !buffer.selection().is_empty() {
+                    true => (first, last),
+                    false => (line, line),
+                };
+            (buffer.path().to_path_buf(), first + 1, last + 1)
+        }) else {
+            return;
+        };
+        self.comment_on(scope, &path, Side::New, first, last);
+    }
+
+    /// Starts a comment on what the focused pane has selected.
+    ///
+    /// Nothing selected is the line the cursor is on, the way it is when
+    /// a selection is attached to a prompt.
+    pub(super) fn add_comment(&mut self) {
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        let Some(scope) = self.editor.scope_of(file) else {
+            return;
+        };
+        let Some((path, first, last)) = self.editor.get(file).map(|document| {
+            let document = document.borrow();
+            let buffer = document.buffer();
+            let (first, last) = selected_lines(buffer);
+            (buffer.path().to_path_buf(), first + 1, last + 1)
+        }) else {
+            return;
+        };
+        self.comment_on(scope, &path, Side::New, first, last);
+    }
+
+    /// The comment box of the worktree the window is pointed at.
+    fn comments_here(&self) -> Option<crate::review::comment::Comments> {
+        Some(self.review()?.comments().clone())
+    }
+
+    /// Keeps the comment being written.
+    pub(super) fn save_comment(&mut self) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        if let Some(comments) = self.comments_here() {
+            comments.save();
+        }
+        self.leave_comment_box();
+        self.comments_changed(scope);
+    }
+
+    /// Throws away the comment being written.
+    pub(super) fn cancel_comment(&mut self) {
+        if let Some(comments) = self.comments_here() {
+            comments.cancel();
+        }
+        self.leave_comment_box();
+    }
+
+    /// Takes the keyboard away from the box a comment is written in.
+    fn leave_comment_box(&mut self) {
+        if matches!(self.writing, Some(Writing::Comment(_))) {
+            self.writing = None;
+        }
+    }
+
+    /// Lets go of the comment box on Escape: an empty one is cancelled, one
+    /// with something in it only gives up the keyboard, keeping what was
+    /// written. Answers whether the keyboard was in a comment box.
+    pub(super) fn release_comment_focus(&mut self) -> bool {
+        let Some(Writing::Comment(scope)) = self.writing else {
+            return false;
+        };
+        let empty = self
+            .reviews
+            .get(&scope)
+            .and_then(|review| review.comments().write(|input| input.is_empty()))
+            .unwrap_or(true);
+        if empty && let Some(review) = self.reviews.get(&scope) {
+            review.comments().cancel();
+        }
+        self.writing = None;
+        true
+    }
+
+    /// Rewrites the comment `id` names.
+    pub(super) fn edit_comment(&mut self, id: CommentId) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        if let Some(comments) = self.comments_here() {
+            comments.edit(id);
+            self.write_in(Writing::Comment(scope));
+        }
+    }
+
+    /// Takes the comment `id` names away.
+    pub(super) fn delete_comment(&mut self, id: CommentId) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        if let Some(comments) = self.comments_here() {
+            comments.delete(id);
+        }
+        self.comments_changed(scope);
+    }
+
+    /// Has the next line pressed take the comment `id` names, or stops
+    /// waiting for one when it already was.
+    pub(super) fn move_comment(&mut self, id: CommentId) {
+        if let Some(comments) = self.comments_here() {
+            let waiting = comments.moving() == Some(id);
+            comments.arm_move((!waiting).then_some(id));
+        }
+    }
+
+    /// Hides the comments already sent, or draws them again.
+    pub(super) fn toggle_sent_comments(&mut self) {
+        if let Some(comments) = self.comments_here() {
+            comments.toggle_sent();
+        }
+    }
+
+    /// Takes away every comment that has not been sent.
+    pub(super) fn discard_review(&mut self) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        if let Some(comments) = self.comments_here() {
+            comments.cancel();
+            comments.discard();
+        }
+        self.leave_comment_box();
+        self.comments_changed(scope);
+    }
+
+    /// The agent a review of `scope` is sent to.
+    fn reviewer_of(&self, scope: Scope) -> Option<TalkId> {
+        match scope.session() {
+            Some(session) => self.agents.of_session(session),
+            None => self.agent_in(scope),
+        }
+    }
+
+    /// Whether the review of `scope` can be sent, and if not why not.
+    fn delivery_of(&self, scope: Scope) -> Delivery {
+        match self
+            .reviewer_of(scope)
+            .and_then(|talk| self.agents.get(talk))
+        {
+            None => Delivery::NoAgent,
+            Some(talk) if talk.is_busy() => Delivery::Busy,
+            Some(_) => Delivery::Ready,
+        }
+    }
+
+    /// What the panes drawing `scope`'s review need to know of its comments.
+    pub(super) fn remarking(&self, scope: Scope) -> Remarking {
+        Remarking {
+            focused: self.writing == Some(Writing::Comment(scope)),
+            solid: self.caret_solid(),
+            delivery: self.delivery_of(scope),
+        }
+    }
+
+    /// Sends every pending comment to the session's agent as one prompt,
+    /// through the conversation the reader's own prompts go through.
+    ///
+    /// The comments become sent only once the prompt has gone, so a review
+    /// that could not be delivered is still all there to send.
+    pub(super) fn send_review(&mut self) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        if self.delivery_of(scope) != Delivery::Ready {
+            return;
+        }
+        let Some(talk) = self.reviewer_of(scope) else {
+            return;
+        };
+        let Some(review) = self.reviews.get(&scope) else {
+            return;
+        };
+        let comments = review.comments().clone();
+        let Some((prompt, sent)) = comments.prompt(&review.changed_relative()) else {
+            return;
+        };
+        if let Some(talk) = self.agents.get_mut(talk) {
+            talk.send_text(&prompt);
+        }
+        comments.mark_sent(&sent);
+        self.follow_agents();
+        self.comments_changed(scope);
+    }
+
+    /// Follows the comments of `scope` to where their lines are in the
+    /// documents that are open over them, which may hold edits the disk
+    /// does not yet.
+    pub(super) fn follow_comments_in_documents(&mut self, scope: Scope) {
+        let Some(review) = self.reviews.get(&scope) else {
+            return;
+        };
+        let comments = review.comments().clone();
+        let root = review.root().to_path_buf();
+        for path in comments.paths() {
+            let Some(document) = self
+                .editor
+                .opened(scope, &root.join(&path))
+                .and_then(|file| self.editor.get(file))
+            else {
+                continue;
+            };
+            let text = document.borrow().buffer().contents();
+            comments.reanchor(&path, Some(&text));
+        }
+        self.comments_changed(scope);
+    }
+
+    /// Writes `scope`'s comments down, away from the window, if they have
+    /// changed since they last were.
+    pub(super) fn comments_changed(&mut self, scope: Scope) {
+        self.remember_comments_later(scope);
+        self.request_redraw();
+    }
+
     /// Scrolls the review under the pointer by `rows`, saying whether one was.
     ///
     /// The pointer answers before the keyboard does, the way it does over a
@@ -772,4 +1190,19 @@ fn listed(names: &[String]) -> Vec<String> {
         more => lines.push(format!("and {more} more…")),
     }
     lines
+}
+
+/// The first and last line, counted from zero, that the selection of
+/// `buffer` covers.
+///
+/// A selection that ends at the start of a line does not cover that line;
+/// nothing selected is the line the cursor is on.
+fn selected_lines(buffer: &pm_text::Buffer) -> (usize, usize) {
+    let selection = buffer.selection();
+    let (start, end) = (selection.start(), selection.end());
+    let last = match end.column == 0 && end.line > start.line {
+        true => end.line - 1,
+        false => end.line,
+    };
+    (start.line, last)
 }
