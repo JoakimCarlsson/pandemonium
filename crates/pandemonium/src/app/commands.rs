@@ -44,6 +44,8 @@ impl App {
             Action::SearchProject => self.open_picker(Kind::Search),
             Action::ReplaceProject => self.open_project_search(None),
             Action::ShowProblems => self.open_picker(Kind::Problems),
+            Action::OpenServerLog => self.open_server_log(),
+            Action::ToggleServerTrace => self.toggle_server_trace(),
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
             Action::OpenSettings => return self.apply(Message::OpenSettings),
@@ -325,7 +327,7 @@ impl App {
                 let head = buffer.selection().head;
                 buffer.select_line(head);
             }),
-            Action::ExpandSelection => self.edit_active(Buffer::expand_selection),
+            Action::ExpandSelection => self.expand_selection(),
             Action::AddCursorAbove => {
                 self.edit_active(|buffer| buffer.add_cursor_vertically(false))
             }
@@ -452,6 +454,7 @@ impl App {
         };
         self.editor.save(file, &root);
         self.reread_changes();
+        self.follow_server_settings();
     }
 
     /// Writes every changed file to disk, each into its own worktree.
@@ -468,6 +471,7 @@ impl App {
                 .map(|(_, root)| root.clone())
         });
         self.reread_changes();
+        self.follow_server_settings();
     }
 
     /// The worktree the file `id` names was opened from.
@@ -841,30 +845,49 @@ impl App {
         let Some(completions) = self.completions.as_ref() else {
             return;
         };
-        let Some(item) = completions.at_place(place).cloned() else {
+        let Some((client, item)) = completions
+            .at_place(place)
+            .map(|(client, item)| (client.clone(), item.clone()))
+        else {
             return;
         };
         let start = completions.start();
+        let waiting = completions.is_asked(&item.handle);
         self.completions = None;
         self.edit_active(|buffer| {
             let head = buffer.selection().head;
-            buffer.replace(start..head, &item.insert);
+            let base = buffer.complete(start..head, &item.insert, item.extra.clone());
+            if !item.stops.is_empty() {
+                buffer.begin_snippet(base, item.stops.clone());
+            }
         });
+        self.await_taken_completion(client, item, start, waiting);
     }
 
     /// Follows a keystroke through: narrows the list, or asks for a new one.
     ///
-    /// Typing a word or reaching for what is behind a dot is how completion
-    /// is asked for in practice; the command exists for the times it is not
-    /// offered, not as the only way to see it.
+    /// Typing a word, or a character a server said it completes after, is
+    /// how completion is asked for in practice; the command exists for the
+    /// times it is not offered, not as the only way to see it. While a list
+    /// is up, only the servers that said theirs was not all there was are
+    /// asked again.
     pub(super) fn after_typing(&mut self, typed: Option<char>) {
         self.narrow_completions();
-        if self.completions.is_some() {
+        let Some(typed) = typed else {
+            return;
+        };
+        self.format_on_type(typed);
+        if let Some(list) = self.completions.as_ref() {
+            let again = list.incomplete().to_vec();
+            self.ask_incomplete(again);
             return;
         }
-        let offers = typed.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.');
-        if offers {
-            self.ask(pm_text::Request::Completions);
+        if self.completes_after(typed) {
+            self.ask(pm_text::Request::Completions(pm_text::Trigger::Character(
+                typed,
+            )));
+        } else if typed.is_alphanumeric() || typed == '_' {
+            self.ask(pm_text::Request::Completions(pm_text::Trigger::Invoked));
         }
     }
 
@@ -891,6 +914,7 @@ impl App {
                 if self.completions.as_ref().is_some_and(Completions::is_empty) {
                     self.completions = None;
                 }
+                self.resolve_completion();
             }
             None => self.completions = None,
         }

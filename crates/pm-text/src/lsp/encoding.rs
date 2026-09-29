@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use lsp_types::PositionEncodingKind;
 use ropey::Rope;
-use serde_json::Value;
 
 use crate::cursor::Position;
 
@@ -29,12 +29,12 @@ pub(super) enum Encoding {
 }
 
 impl Encoding {
-    /// What the server's `capabilities` say it counts in.
+    /// What the server said in its answer to the handshake it counts in.
     ///
     /// A server that says nothing is taken to count in UTF-16, which is what
     /// the protocol falls back to when nothing was agreed.
-    pub(super) fn of(capabilities: &Value) -> Self {
-        match capabilities["positionEncoding"].as_str() {
+    pub(super) fn of(stated: Option<&PositionEncodingKind>) -> Self {
+        match stated.map(PositionEncodingKind::as_str) {
             Some("utf-8") => Self::Utf8,
             Some("utf-32") => Self::Utf32,
             _ => Self::Utf16,
@@ -51,7 +51,7 @@ impl Encoding {
     }
 
     /// How far into `line` its first `column` characters reach.
-    fn outward(self, line: &str, column: usize) -> usize {
+    pub(super) fn outward(self, line: &str, column: usize) -> usize {
         if self == Self::Utf32 || line.is_ascii() {
             return column;
         }

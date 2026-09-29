@@ -258,7 +258,9 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::Knob | Kind::References | Kind::Calls | Kind::Font(_) => Vec::new(),
+            Kind::Knob | Kind::References | Kind::Calls | Kind::ServerLogs | Kind::Font(_) => {
+                Vec::new()
+            }
             Kind::Branches
             | Kind::FetchRemotes
             | Kind::PushRemotes

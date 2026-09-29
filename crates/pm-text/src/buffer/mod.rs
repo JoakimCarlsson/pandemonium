@@ -12,6 +12,7 @@ mod edit;
 mod folds;
 mod memo;
 mod motion;
+mod snippet;
 
 use std::io;
 use std::ops::Range;
@@ -73,6 +74,11 @@ pub struct Buffer {
     lenses: Vec<Lens>,
     /// What has already been worked out about the text as it stands.
     memo: Memo,
+    /// The places of a snippet being filled in, while one is.
+    places: Option<snippet::Places>,
+    /// The folds a language server said the file has, as the lines each
+    /// hides, when one has said.
+    server_folds: Vec<Range<usize>>,
 }
 
 impl Buffer {
@@ -120,6 +126,8 @@ impl Buffer {
             uses: (-1, Vec::new()),
             lenses: Vec::new(),
             memo: Memo::default(),
+            places: None,
+            server_folds: Vec::new(),
         }
     }
 

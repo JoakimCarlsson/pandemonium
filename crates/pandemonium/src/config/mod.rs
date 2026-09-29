@@ -30,8 +30,8 @@ use stored::Stored;
 pub use fonts::FontSlot;
 pub use overrides::ThemeOverrides;
 pub use paths::{
-    keymaps as keymaps_directory, servers, settings as settings_file, themes as themes_directory,
-    worktrees,
+    keymaps as keymaps_directory, logs, servers, settings as settings_file,
+    themes as themes_directory, worktrees,
 };
 pub use preferences::{
     AgentOptions, InstallLanguageServers, KnobValue, Preference, Preferences, Step, ThemeMode,
@@ -84,7 +84,7 @@ pub struct Restored {
 }
 
 /// The servers a reader configured for one language.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ServerList {
     /// These run instead of the servers the language names.
     Replace(Vec<pm_text::Server>),
@@ -122,6 +122,14 @@ pub fn reload_extensions(preferences: &mut Preferences) -> Vec<String> {
 /// Errors from extensions read during launch.
 pub fn take_extension_errors() -> Vec<String> {
     extensions::take_errors()
+}
+
+/// The language servers the settings file names now, read afresh, for a
+/// file the reader has just saved.
+pub fn language_servers() -> Option<BTreeMap<String, ServerList>> {
+    let text = fs::read_to_string(paths::settings()?).ok()?;
+    let stored = serde_norway::from_str::<Stored>(&text).ok()?;
+    Some(stored.into_restored().language_servers)
 }
 
 /// Reads the reader's themes in again, still drawing in the family

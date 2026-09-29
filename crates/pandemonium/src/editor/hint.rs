@@ -59,6 +59,9 @@ pub struct Shown {
     pub about: Option<(FileId, Range<Position>)>,
     /// The language of the file it is about, for code a server did not tag.
     pub language: Option<Language>,
+    /// The signature of the call the cursor is inside, when that is what
+    /// is being said, with the parameter being written lit.
+    pub signature: Option<pm_text::Signature>,
     /// How far what it says is scrolled, when it says more than fits.
     pub scroll: Scrolled,
     /// Where the panel was drawn last frame.
@@ -86,7 +89,7 @@ impl Shown {
 
     /// Whether there is nothing to show yet.
     pub fn is_empty(&self) -> bool {
-        self.text().trim().is_empty()
+        self.text().trim().is_empty() && self.signature.is_none()
     }
 
     /// Whether `point` is over the panel as it was last drawn.
@@ -112,7 +115,13 @@ pub type Line = Vec<(String, Rgba)>;
 /// without it going away.
 pub fn hint(theme: &Theme, shown: &Shown) -> Measured<Message> {
     let columns = ((WIDTH - INSET) / (theme.text.sm.size * ADVANCE)).floor() as usize;
-    let rows = lines(theme, &shown.text(), shown.language)
+    let mut said = shown
+        .signature
+        .as_ref()
+        .map(|signature| signature_lines(theme, signature, shown.language))
+        .unwrap_or_default();
+    said.extend(lines(theme, &shown.text(), shown.language));
+    let rows = said
         .into_iter()
         .flat_map(|line| wrap(line, columns.max(1)))
         .map(row)
@@ -154,6 +163,43 @@ fn row(line: Line) -> Div<Message> {
         runs.into_iter()
             .map(|(run, color)| text(run).text_sm().font_mono().color(color)),
     )
+}
+
+/// A signature as the panel draws it: the signature itself, the parameter
+/// being written lit in the accent colour, and what the server says about
+/// that parameter and the call beneath it.
+fn signature_lines(
+    theme: &Theme,
+    signature: &pm_text::Signature,
+    language: Option<Language>,
+) -> Vec<Line> {
+    let label = signature.label.chars().collect::<Vec<_>>();
+    let active = signature
+        .active
+        .clone()
+        .filter(|span| span.start <= span.end && span.end <= label.len())
+        .unwrap_or(0..0);
+    let run = |span: Range<usize>| label[span].iter().collect::<String>();
+    let mut first: Line = vec![(run(0..active.start), theme.colors.text)];
+    if !active.is_empty() {
+        first.push((run(active.clone()), theme.colors.accent));
+    }
+    first.push((run(active.end..label.len()), theme.colors.text));
+    first.retain(|(text, _)| !text.is_empty());
+    let notes = [
+        signature.parameter.as_str(),
+        signature.documentation.as_str(),
+    ]
+    .into_iter()
+    .filter(|note| !note.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n");
+    let mut out = vec![first];
+    if !notes.is_empty() {
+        out.push(Vec::new());
+        out.extend(lines(theme, &notes, language));
+    }
+    out
 }
 
 /// What a server said, as the lines the panel draws.

@@ -33,6 +33,7 @@ impl App {
     pub(super) fn take_disk(&mut self) -> bool {
         let mut any = false;
         let mut repository = false;
+        let mut session_changed = false;
         for (scope, root) in self.worktrees() {
             let Some(disk) = self.watchers.get(&scope).map(Watcher::take) else {
                 continue;
@@ -42,7 +43,12 @@ impl App {
             }
             any = true;
             repository |= disk.repository;
+            session_changed |= scope.session().is_some()
+                && (disk.repository || disk.touched.iter().any(|touched| !touched.ignored));
             self.follow_disk(scope, &root, &disk);
+        }
+        if session_changed {
+            self.reread_drift_later();
         }
         if repository {
             self.reread_changes();

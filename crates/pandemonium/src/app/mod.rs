@@ -20,6 +20,7 @@ mod language;
 mod listing;
 mod modal;
 mod notice;
+mod operations;
 mod panel;
 mod panes;
 mod picker;
@@ -258,6 +259,15 @@ pub struct App {
     tree_scrolls: BTreeMap<Scope, pm_ui::Scrolled>,
     /// The name being typed into the file tree, if one is.
     tree_edit: Option<crate::tree::Edit>,
+    /// A move the file tree was asked to make, waiting on the servers to
+    /// say what it changes elsewhere.
+    moving: Option<operations::Moving>,
+    /// The spans a server said the selection can grow through, for the file
+    /// and version it said them about.
+    selection_ranges: Option<(editor::FileId, i32, Vec<std::ops::Range<pm_text::Position>>)>,
+    /// When the settings file was last written, as its language servers were
+    /// last read from it.
+    settings_seen: Option<std::time::SystemTime>,
     /// What was cut or copied out of the file tree.
     tree_clipboard: Option<crate::tree::Clipboard>,
     /// The moves, copies and removals in the tree that have finished and
@@ -382,6 +392,9 @@ pub struct App {
     prompt: Option<crate::prompt::Prompt>,
     /// What could be written where the cursor is, while the list is up.
     completions: Option<crate::editor::Completions>,
+    /// A completion put in before its server had filled it in, waiting for
+    /// the edits that come with it.
+    taken_completion: Option<crate::app::language::TakenCompletion>,
     /// What the editor has to say about a place, and where to say it.
     hint: Option<editor::Shown>,
     /// The name the pointer is over, while the key that links it is held.
@@ -526,6 +539,44 @@ fn waker_through(
     })
 }
 
+/// When the settings file was last written, if it can be told.
+fn settings_written() -> Option<std::time::SystemTime> {
+    std::fs::metadata(config::settings_file()?)
+        .and_then(|found| found.modified())
+        .ok()
+}
+
+impl App {
+    /// Hands the editor the language servers the settings name, and the
+    /// settings each of them runs with.
+    fn apply_language_servers(&mut self) {
+        let (replace, add) = partition_language_servers(&self.language_servers);
+        self.editor.set_language_servers(&replace);
+        self.editor.add_language_servers(&add);
+    }
+
+    /// Reads the language servers the settings file names again when it has
+    /// been written since they were last read, which is what saving it in a
+    /// pane does, and hands running servers their new settings.
+    pub(super) fn follow_server_settings(&mut self) {
+        let written = settings_written();
+        if written.is_none() || written == self.settings_seen {
+            return;
+        }
+        self.settings_seen = written;
+        let Some(servers) = config::language_servers() else {
+            return;
+        };
+        if servers == self.language_servers {
+            return;
+        }
+        self.language_servers = servers;
+        self.apply_language_servers();
+        self.editor.refresh();
+        self.request_redraw();
+    }
+}
+
 /// The replacement lists and the added lists in `configured`.
 fn partition_language_servers(
     configured: &BTreeMap<String, ServerList>,
@@ -610,6 +661,9 @@ impl App {
             selections: BTreeMap::new(),
             tree_scrolls: BTreeMap::new(),
             tree_edit: None,
+            moving: None,
+            selection_ranges: None,
+            settings_seen: None,
             tree_clipboard: None,
             shifted: Arc::default(),
             entry_drag: None,
@@ -691,6 +745,7 @@ impl App {
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
             completions: None,
+            taken_completion: None,
             hint: None,
             link: None,
             blink: editor::Blink::default(),
@@ -1579,6 +1634,10 @@ impl App {
             self.start_server_install(command, true);
             return;
         }
+        if message == Message::OpenServerLog {
+            self.open_server_log();
+            return self.request_redraw();
+        }
         if self.session_command(message) {
             self.request_redraw();
             return;
@@ -2193,6 +2252,21 @@ impl App {
                 content: Box::new(editor::completion_list(theme, completions)),
                 backdrop: None,
             });
+            if let Some(documentation) = completions.documentation() {
+                let said = editor::Shown {
+                    at: completions.beside(),
+                    said: Some(documentation.to_owned()),
+                    language: self
+                        .active_file()
+                        .and_then(|document| document.borrow().buffer().language()),
+                    ..editor::Shown::default()
+                };
+                overlays.push(workspace::Overlaid {
+                    at: said.at,
+                    content: Box::new(editor::hint(theme, &said)),
+                    backdrop: None,
+                });
+            }
         }
 
         if let Some(hint) = self.hint.as_ref().filter(|hint| !hint.is_empty()) {
@@ -2326,6 +2400,9 @@ impl App {
             history_graph_open: layout.history_graph_open,
             changes_section_open: layout.changes_section_open,
         };
+        let activity = self
+            .active_file_id()
+            .and_then(|file| self.server_activity(file));
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
         else {
@@ -2371,6 +2448,7 @@ impl App {
                         .map_or(0, |project| self.agents.count(project.id())),
                     tally: self.agents.tally(),
                     notice: self.notices.shown(),
+                    activity,
                     menu,
                     overlays,
                 },
@@ -2402,6 +2480,9 @@ impl ApplicationHandler<Wake> for App {
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.offer_missing_servers();
+        if self.settle_moving() {
+            self.request_redraw();
+        }
         let expired = self.notices.expire(Instant::now());
         let seen = !self.window_occluded;
         let next_annotation = self.next_annotation().filter(|_| seen);
@@ -2417,6 +2498,7 @@ impl ApplicationHandler<Wake> for App {
             self.next_spin().filter(|_| seen),
             self.notices.next_expiry(),
             next_annotation,
+            self.next_move(),
         ]
         .into_iter()
         .flatten()
@@ -2460,6 +2542,10 @@ impl ApplicationHandler<Wake> for App {
             }
             Wake::Install => self.finish_server_installs(),
             Wake::Language => {
+                self.hear_server_troubles();
+                if self.settle_moving() {
+                    self.request_redraw();
+                }
                 let answered = self.collect_answers();
                 if self.editor.refresh() || answered {
                     self.request_redraw();
@@ -2598,9 +2684,11 @@ impl ApplicationHandler<Wake> for App {
         if let Some(directory) = config::servers() {
             pm_text::program::set_servers(directory);
         }
-        let (replace, add) = partition_language_servers(&self.language_servers);
-        self.editor.set_language_servers(&replace);
-        self.editor.add_language_servers(&add);
+        if let Some(directory) = config::logs() {
+            self.editor.set_logs(directory);
+        }
+        self.settings_seen = settings_written();
+        self.apply_language_servers();
         self.follow_preferences();
         self.reread_changes_now();
 

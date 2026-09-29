@@ -10,9 +10,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use globset::{GlobBuilder, GlobMatcher};
-use serde_json::{Value, json};
+use lsp_types::notification::DidChangeWatchedFiles;
+use lsp_types::{
+    DidChangeWatchedFilesParams, DidChangeWatchedFilesRegistrationOptions, FileChangeType,
+    FileEvent, FileSystemWatcher, GlobPattern, OneOf, Registration, WatchKind,
+};
+use serde_json::Value;
 
-use crate::lsp::uri;
+use crate::lsp::{rpc, uri};
 
 /// The method a server registers to be told about files changing on disk.
 const METHOD: &str = "workspace/didChangeWatchedFiles";
@@ -29,21 +34,21 @@ pub enum Watched {
 }
 
 impl Watched {
-    /// The bit a watcher's kind sets to hear about this, in the protocol's words.
-    fn bit(self) -> u64 {
+    /// The kind a watcher sets to hear about this.
+    fn kind(self) -> WatchKind {
         match self {
-            Self::Created => 1,
-            Self::Changed => 2,
-            Self::Deleted => 4,
+            Self::Created => WatchKind::Create,
+            Self::Changed => WatchKind::Change,
+            Self::Deleted => WatchKind::Delete,
         }
     }
 
     /// The change type the protocol sends this as.
-    fn code(self) -> u64 {
+    fn change(self) -> FileChangeType {
         match self {
-            Self::Created => 1,
-            Self::Changed => 2,
-            Self::Deleted => 3,
+            Self::Created => FileChangeType::CREATED,
+            Self::Changed => FileChangeType::CHANGED,
+            Self::Deleted => FileChangeType::DELETED,
         }
     }
 }
@@ -54,23 +59,25 @@ struct Pattern {
     glob: GlobMatcher,
     /// The directory the pattern is relative to, when it was given one.
     base: Option<PathBuf>,
-    /// The kinds of change wanted, as the protocol's bits.
-    kinds: u64,
+    /// The kinds of change wanted.
+    kinds: WatchKind,
 }
 
 impl Pattern {
     /// The pattern `watcher` describes, if it can be read.
-    fn read(watcher: &Value) -> Option<Self> {
-        let kinds = watcher["kind"].as_u64().unwrap_or(7);
-        let pattern = &watcher["globPattern"];
-        let (glob, base) = match pattern.as_str() {
-            Some(glob) => (glob, None),
-            None => (
-                pattern["pattern"].as_str()?,
-                Some(base_of(&pattern["baseUri"])?),
-            ),
+    fn read(watcher: FileSystemWatcher) -> Option<Self> {
+        let kinds = watcher.kind.unwrap_or(WatchKind::all());
+        let (glob, base) = match watcher.glob_pattern {
+            GlobPattern::String(glob) => (glob, None),
+            GlobPattern::Relative(relative) => {
+                let base = match relative.base_uri {
+                    OneOf::Left(folder) => uri::path_of(&folder.uri),
+                    OneOf::Right(base) => uri::path_of(&base),
+                };
+                (relative.pattern, Some(base?))
+            }
         };
-        let glob = GlobBuilder::new(glob)
+        let glob = GlobBuilder::new(&glob)
             .literal_separator(true)
             .build()
             .ok()?
@@ -80,7 +87,7 @@ impl Pattern {
 
     /// Whether this pattern wants to hear that `path` was `touched`.
     fn wants(&self, root: &Path, path: &Path, touched: Watched) -> bool {
-        if self.kinds & touched.bit() == 0 {
+        if !self.kinds.contains(touched.kind()) {
             return false;
         }
         match &self.base {
@@ -97,12 +104,6 @@ impl Pattern {
     }
 }
 
-/// The directory a relative pattern's base names: a URI, or a workspace folder.
-fn base_of(base: &Value) -> Option<PathBuf> {
-    let written = base.as_str().or_else(|| base["uri"].as_str())?;
-    uri::path(written)
-}
-
 /// Every pattern a server has registered, by the registration it came in.
 #[derive(Default)]
 pub(super) struct Watchers {
@@ -111,35 +112,32 @@ pub(super) struct Watchers {
 }
 
 impl Watchers {
-    /// Takes in the registrations of `params` that are about watched files.
-    pub(super) fn register(&mut self, params: &Value) {
-        let registrations = params["registrations"].as_array().into_iter().flatten();
+    /// Takes in the registrations among `registrations` that are about
+    /// watched files.
+    pub(super) fn register(&mut self, registrations: &[Registration]) {
         for registration in registrations {
-            if registration["method"] != METHOD {
+            if registration.method != METHOD {
                 continue;
             }
-            let Some(id) = registration["id"].as_str() else {
+            let options = registration.register_options.clone().unwrap_or(Value::Null);
+            let Ok(options) =
+                serde_json::from_value::<DidChangeWatchedFilesRegistrationOptions>(options)
+            else {
                 continue;
             };
-            let patterns = registration["registerOptions"]["watchers"]
-                .as_array()
+            let patterns = options
+                .watchers
                 .into_iter()
-                .flatten()
                 .filter_map(Pattern::read)
                 .collect();
-            self.registered.insert(id.to_owned(), patterns);
+            self.registered.insert(registration.id.clone(), patterns);
         }
     }
 
-    /// Forgets the registrations `params` takes back.
-    ///
-    /// The protocol spells the list `unregisterations`, and it is read as spelt.
-    pub(super) fn unregister(&mut self, params: &Value) {
-        let taken = params["unregisterations"].as_array().into_iter().flatten();
-        for unregistration in taken {
-            if let Some(id) = unregistration["id"].as_str() {
-                self.registered.remove(id);
-            }
+    /// Forgets the registrations whose ids are among `ids`.
+    pub(super) fn unregister<'a>(&mut self, ids: impl IntoIterator<Item = &'a String>) {
+        for id in ids {
+            self.registered.remove(id);
         }
     }
 
@@ -158,14 +156,13 @@ impl Watchers {
                     .flatten()
                     .any(|pattern| pattern.wants(root, path, *touched))
             })
-            .map(|(path, touched)| json!({ "uri": uri::of(path), "type": touched.code() }))
+            .map(|(path, touched)| FileEvent::new(uri::typed(path), touched.change()))
             .collect::<Vec<_>>();
         if wanted.is_empty() {
             return None;
         }
-        Some(json!({
-            "method": METHOD,
-            "params": { "changes": wanted },
-        }))
+        Some(rpc::notification::<DidChangeWatchedFiles>(
+            DidChangeWatchedFilesParams { changes: wanted },
+        ))
     }
 }
