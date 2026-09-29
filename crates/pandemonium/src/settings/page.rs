@@ -16,7 +16,9 @@ use pm_ui::{
     v_flex,
 };
 
-use crate::config::{FontSlot, Preference, Preferences, Step, ThemeMode, WorktreePaths};
+use crate::config::{
+    FontSlot, InstallLanguageServers, Preference, Preferences, Step, ThemeMode, WorktreePaths,
+};
 use crate::editor::CursorShape;
 use crate::keymap::{Action, Keymap};
 use crate::message::Message;
@@ -485,6 +487,14 @@ fn section_rows(
             ),
         ],
         SettingsSection::Saving => vec![
+            inline(
+                theme,
+                preferences,
+                Preference::InstallLanguageServers,
+                "Install Language Servers",
+                "How to handle a missing language server",
+                install_language_servers(preferences).w_px(space(CHOICE_WIDTH)),
+            ),
             toggle(
                 Preference::FormatOnSave,
                 "Format on Save",
@@ -1122,4 +1132,20 @@ fn shown_appearance(theme: &Theme, preferences: &Preferences) -> Option<pm_ui::A
         ThemeMode::System => None,
         _ => Some(theme.appearance),
     }
+}
+
+/// The choices for installing missing language servers.
+fn install_language_servers(preferences: &Preferences) -> Div<Message> {
+    let selected = InstallLanguageServers::ALL
+        .iter()
+        .position(|mode| *mode == preferences.install_language_servers);
+    toggle_row(
+        InstallLanguageServers::ALL.into_iter().map(|mode| {
+            (
+                mode.label().to_owned(),
+                Message::SetInstallLanguageServers(mode),
+            )
+        }),
+        selected,
+    )
 }

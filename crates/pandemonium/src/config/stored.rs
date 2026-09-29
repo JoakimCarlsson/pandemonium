@@ -18,7 +18,9 @@ use super::ServerList;
 use crate::config::fonts::Fonts;
 use crate::config::keymap::StoredChanges;
 use crate::config::theme::StoredOverrides;
-use crate::config::{AgentOptions, Preferences, Restored, ThemeMode, VimBinding, WindowState};
+use crate::config::{
+    AgentOptions, InstallLanguageServers, Preferences, Restored, ThemeMode, VimBinding, WindowState,
+};
 use crate::editor::{CursorShape, Display};
 use crate::panes::Saved;
 use crate::workspace::{Layout, SidebarView};
@@ -113,6 +115,8 @@ pub(super) struct Stored {
     ensure_final_newline_on_save: Option<bool>,
     /// Whether a new session's worktree is trusted without being asked about.
     trust_worktrees: Option<bool>,
+    /// How missing language servers are installed.
+    install_language_servers: Option<InstallLanguageServers>,
     /// The servers to run for a language.
     ///
     /// A list replaces the servers that language names. An `add` list runs
@@ -356,8 +360,9 @@ impl StoredServer {
                 options,
             } => (command, arguments, options),
         };
+        let install = pm_text::install::recipe(&command);
         Server {
-            command: command.leak(),
+            command: leaked(command),
             arguments: arguments
                 .into_iter()
                 .map(|argument| &*argument.leak())
@@ -366,6 +371,7 @@ impl StoredServer {
             options: options
                 .and_then(|options| serde_json::to_string(&options).ok())
                 .map_or(pm_text::NO_OPTIONS, |options| &*options.leak()),
+            install,
         }
     }
 
@@ -569,6 +575,9 @@ impl Stored {
                 .terminal_scrollback
                 .unwrap_or(defaults.terminal_scrollback),
             trust_worktrees: self.trust_worktrees.unwrap_or(defaults.trust_worktrees),
+            install_language_servers: self
+                .install_language_servers
+                .unwrap_or(defaults.install_language_servers),
             bootstrap,
         }
     }
@@ -644,6 +653,7 @@ impl Stored {
             remove_trailing_whitespace_on_save: Some(preferences.trim_whitespace),
             ensure_final_newline_on_save: Some(preferences.final_newline),
             trust_worktrees: Some(preferences.trust_worktrees),
+            install_language_servers: Some(preferences.install_language_servers),
             language_servers: (!language_servers.is_empty()).then(|| {
                 language_servers
                     .iter()

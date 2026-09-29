@@ -38,6 +38,7 @@ impl App {
         }
         match action {
             Action::ShowCommands => self.open_picker(Kind::Commands),
+            Action::InstallLanguageServer => self.open_picker(Kind::LanguageServers),
             Action::ShowFiles => self.open_picker(Kind::Files),
             Action::ShowProjects => self.open_picker(Kind::Projects),
             Action::SearchProject => self.open_picker(Kind::Search),

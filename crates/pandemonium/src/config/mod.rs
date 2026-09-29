@@ -29,10 +29,12 @@ use stored::Stored;
 pub use fonts::FontSlot;
 pub use overrides::ThemeOverrides;
 pub use paths::{
-    keymaps as keymaps_directory, settings as settings_file, themes as themes_directory, worktrees,
+    keymaps as keymaps_directory, servers, settings as settings_file, themes as themes_directory,
+    worktrees,
 };
 pub use preferences::{
-    AgentOptions, KnobValue, Preference, Preferences, Step, ThemeMode, VimBinding, WorktreePaths,
+    AgentOptions, InstallLanguageServers, KnobValue, Preference, Preferences, Step, ThemeMode,
+    VimBinding, WorktreePaths,
 };
 
 /// The window's own size and state, as a launch leaves it.

@@ -11,7 +11,7 @@ use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
 
 use crate::agent::TalkId;
-use crate::config::{FontSlot, Preference, Step, ThemeMode, WorktreePaths};
+use crate::config::{FontSlot, InstallLanguageServers, Preference, Step, ThemeMode, WorktreePaths};
 use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::Action;
 use crate::markdown::DiagramZoom;
@@ -48,6 +48,10 @@ pub enum Message {
     SetCursorShape(CursorShape),
     /// Share vim's unnamed register with the system clipboard this much.
     SetVimClipboard(pm_vim::ClipboardUse),
+    /// Choose how missing language servers are installed.
+    SetInstallLanguageServers(InstallLanguageServers),
+    /// Install a named server from its pinned recipe.
+    InstallLanguageServer(&'static str),
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.

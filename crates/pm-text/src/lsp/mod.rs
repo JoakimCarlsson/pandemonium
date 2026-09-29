@@ -20,7 +20,7 @@ mod outbox;
 mod uri;
 mod watch;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,6 +60,10 @@ pub struct Servers {
     added: HashMap<&'static str, Vec<Server>>,
     /// How a server wakes the window once it has something to say.
     notify: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Missing commands observed while opening documents.
+    missing: HashSet<&'static str>,
+    /// Worktrees with an open document of each language.
+    opened: HashMap<&'static str, HashSet<PathBuf>>,
 }
 
 impl Servers {
@@ -92,13 +96,23 @@ impl Servers {
     /// will not start is remembered as one that will not start: a missing
     /// rust-analyzer is tried once per worktree, not once per file opened.
     pub fn open(&mut self, root: &Path, language: Language) -> Vec<Arc<Client>> {
+        self.opened
+            .entry(language.name())
+            .or_default()
+            .insert(root.to_path_buf());
         let Some(notify) = self.notify.clone() else {
             return Vec::new();
         };
         let wanted = self.wanted(language);
         wanted
             .iter()
-            .filter_map(|server| Some((server, installed(server.command)?)))
+            .filter_map(|server| match installed(server.command) {
+                Some(program) => Some((server, program)),
+                None => {
+                    self.missing.insert(server.command);
+                    None
+                }
+            })
             .filter_map(|(server, program)| {
                 let notify = notify.clone();
                 let running = self
@@ -147,6 +161,61 @@ impl Servers {
             .collect()
     }
 
+    /// Commands wanted by open documents but absent from program lookup.
+    pub fn take_missing(&mut self) -> Vec<Server> {
+        let missing = std::mem::take(&mut self.missing);
+        missing
+            .into_iter()
+            .filter_map(|command| self.wanted_server(command))
+            .collect()
+    }
+
+    /// The first configured server named `command`.
+    fn wanted_server(&self, command: &str) -> Option<Server> {
+        self.opened
+            .keys()
+            .filter_map(|name| Language::called(name))
+            .flat_map(|language| self.wanted(language))
+            .find(|server| server.command == command)
+    }
+
+    /// Starts installed servers for each worktree with this language open.
+    pub fn reopen(&mut self, language: Language) {
+        let roots = self
+            .opened
+            .get(language.name())
+            .cloned()
+            .unwrap_or_default();
+        for root in roots {
+            self.open(&root, language);
+        }
+    }
+
+    /// Keeps only roots that still have an open document of each language.
+    pub fn retain_opened(&mut self, documents: &[(PathBuf, &'static str)]) {
+        self.opened.clear();
+        for (root, language) in documents {
+            self.opened
+                .entry(language)
+                .or_default()
+                .insert(root.clone());
+        }
+    }
+
+    /// The first installable configured server for `language`.
+    pub fn installable(&self, language: Language) -> Option<Server> {
+        self.wanted(language)
+            .into_iter()
+            .find(|server| server.install.is_some())
+    }
+
+    /// Whether the configured list for `language` includes `command`.
+    pub fn uses(&self, language: Language, command: &str) -> bool {
+        self.wanted(language)
+            .iter()
+            .any(|server| server.command == command)
+    }
+
     /// The servers to start for `language`, overrides replacing the language's
     /// own and added servers following them.
     fn wanted(&self, language: Language) -> Vec<Server> {
@@ -172,6 +241,9 @@ impl Servers {
 
     /// Ends every server started for `root`.
     pub fn close(&mut self, root: &Path) {
+        for roots in self.opened.values_mut() {
+            roots.remove(root);
+        }
         self.running.retain(|(started, _), running| {
             if started == root {
                 if let Some(client) = &running.client {

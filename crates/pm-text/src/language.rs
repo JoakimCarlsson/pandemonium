@@ -9,6 +9,8 @@ use std::fmt::{self, Debug, Formatter};
 use std::path::Path;
 
 use tree_sitter::Language as Grammar;
+
+use crate::install::{self, Recipe};
 use tree_sitter_language::LanguageFn;
 
 /// A language the editor knows about.
@@ -45,6 +47,8 @@ pub struct Server {
     /// they are told otherwise — gopls colours nothing until it is asked to
     /// — so what a server needs to be useful is named beside how to run it.
     pub options: &'static str,
+    /// The pinned installation recipe, when the editor can fetch this server.
+    pub install: Option<Recipe>,
 }
 
 /// The options of a server that needs none.
@@ -61,6 +65,7 @@ const PYTHON_SERVERS: &[Server] = &[
         command: "ruff",
         arguments: &["server"],
         options: NO_OPTIONS,
+        install: install::recipe("ruff"),
     },
     plain("pylsp"),
 ];
@@ -74,6 +79,7 @@ const TSSERVER: &[Server] = &[
         command: "tsc",
         arguments: &["--lsp", "--stdio"],
         options: NO_OPTIONS,
+        install: install::recipe("tsc"),
     },
     stdio("typescript-language-server"),
     stdio("vtsls"),
@@ -82,6 +88,7 @@ const TSSERVER: &[Server] = &[
         command: "biome",
         arguments: &["lsp-proxy"],
         options: NO_OPTIONS,
+        install: install::recipe("biome"),
     },
     TAILWIND,
 ];
@@ -96,6 +103,7 @@ const CSHARP_SERVERS: &[Server] = &[
         command: "OmniSharp",
         arguments: &["-lsp"],
         options: NO_OPTIONS,
+        install: install::recipe("OmniSharp"),
     },
 ];
 
@@ -110,6 +118,7 @@ const SQL_SERVERS: &[Server] = &[
         command: "postgrestools",
         arguments: &["lsp-proxy"],
         options: NO_OPTIONS,
+        install: install::recipe("postgrestools"),
     },
 ];
 
@@ -131,6 +140,7 @@ const fn stdio(name: &'static str) -> Server {
         command: name,
         arguments: &["--stdio"],
         options: NO_OPTIONS,
+        install: install::recipe(name),
     }
 }
 
@@ -140,6 +150,7 @@ const fn plain(name: &'static str) -> Server {
         command: name,
         arguments: &[],
         options: NO_OPTIONS,
+        install: install::recipe(name),
     }
 }
 
@@ -153,6 +164,7 @@ const BASH: Language = Language {
         command: "bash-language-server",
         arguments: &["start"],
         options: NO_OPTIONS,
+        install: install::recipe("bash-language-server"),
     }],
     line_comment: Some("#"),
 };
@@ -220,6 +232,7 @@ const GO: Language = Language {
         command: "gopls",
         arguments: &[],
         options: r#"{"semanticTokens": true}"#,
+        install: install::recipe("gopls"),
     }],
     line_comment: Some("//"),
 };
@@ -378,6 +391,7 @@ const TOML: Language = Language {
         command: "taplo",
         arguments: &["lsp", "stdio"],
         options: NO_OPTIONS,
+        install: install::recipe("taplo"),
     }],
     line_comment: Some("#"),
 };
@@ -433,6 +447,11 @@ impl Debug for Language {
 }
 
 impl Language {
+    /// Every language shipped with the editor.
+    pub const fn all() -> &'static [Self] {
+        KNOWN
+    }
+
     /// The language a file at `path` is written in.
     ///
     /// A whole file name decides first — a dotfile has no extension, and
