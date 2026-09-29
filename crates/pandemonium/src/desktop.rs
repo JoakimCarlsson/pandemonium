@@ -6,7 +6,7 @@
 //! server or without a file manager is a desktop where nothing happens, not one where the editor reports an
 //! error it cannot do anything about.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -98,6 +98,19 @@ const OPENER: &str = "explorer";
 /// answer is a paste of nothing rather than a window that stops drawing.
 pub fn paste() -> Option<String> {
     arboard::Clipboard::new().ok()?.get_text().ok()
+}
+
+/// Existing files named by the system clipboard, in clipboard order.
+pub fn paste_files() -> Option<Vec<PathBuf>> {
+    let files: Vec<_> = arboard::Clipboard::new()
+        .ok()?
+        .get()
+        .file_list()
+        .ok()?
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+    (!files.is_empty()).then_some(files)
 }
 
 /// The image on the system clipboard, as its width, its height and its

@@ -295,13 +295,48 @@ impl Talk {
     /// Adds a chosen file to the next prompt, decoding its preview away from
     /// the window when it is a picture.
     pub fn attach_file(&mut self, path: PathBuf) {
+        self.attach_path(path.clone(), Attachment::File(path));
+    }
+
+    /// Adds a clipboard file as image bytes when the agent accepts its format,
+    /// or as a link to the original file otherwise.
+    pub fn attach_pasted_file(&mut self, path: PathBuf) {
+        let mime_type = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(|extension| match extension.to_ascii_lowercase().as_str() {
+                "png" => Some("image/png"),
+                "jpg" | "jpeg" => Some("image/jpeg"),
+                "gif" => Some("image/gif"),
+                "webp" => Some("image/webp"),
+                _ => None,
+            });
+        let image = mime_type
+            .filter(|_| self.conversation.can_image())
+            .and_then(|mime_type| fs::read(&path).ok().map(|bytes| (mime_type, bytes)));
+        let attachment = match image {
+            Some((mime_type, bytes)) => Attachment::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                mime_type: mime_type.to_owned(),
+                name: Some(path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                )),
+            },
+            None => Attachment::File(path.clone()),
+        };
+        self.attach_path(path, attachment);
+    }
+
+    /// Adds a file-backed attachment and starts its preview when it is a picture.
+    fn attach_path(&mut self, path: PathBuf, attachment: Attachment) {
         let preview = crate::image::Images::is_picture(&path).then(|| {
             let key = self.preview_key();
             self.previews.start(key, read_file(path.clone()));
             key
         });
         self.attachment_previews.push(preview);
-        self.attachments.push(Attachment::File(path));
+        self.attachments.push(attachment);
     }
 
     /// Adds an image pasted and made ready away from the window.
@@ -1055,6 +1090,7 @@ impl Pasted {
                 Attachment::Image {
                     data: base64::engine::general_purpose::STANDARD.encode(png),
                     mime_type: "image/png".to_owned(),
+                    name: None,
                 },
                 None,
             ),

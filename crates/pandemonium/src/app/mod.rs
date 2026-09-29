@@ -530,6 +530,8 @@ type Pending = Arc<[AtomicBool; WAKES]>;
 
 /// What a paste into a prompt came to, read away from the window.
 pub(super) enum Pasting {
+    /// Files to attach in clipboard order.
+    Files(Vec<std::path::PathBuf>),
     /// An image, ready to attach.
     Image(crate::agent::Pasted),
     /// Text, to type in.

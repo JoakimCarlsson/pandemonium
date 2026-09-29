@@ -17,7 +17,14 @@ pub enum Attachment {
     /// A file the local agent can read through a resource link.
     File(PathBuf),
     /// A base64 encoded image the agent has said it accepts.
-    Image { data: String, mime_type: String },
+    Image {
+        /// The image bytes encoded for the ACP prompt.
+        data: String,
+        /// The MIME type of those bytes.
+        mime_type: String,
+        /// The original file name, when the image came from a file.
+        name: Option<String>,
+    },
     /// Lines picked out of a file, as they read when they were picked.
     Selection {
         /// The file they are from.
@@ -39,7 +46,7 @@ impl Attachment {
                 || path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
             ),
-            Self::Image { .. } => "Pasted image".to_owned(),
+            Self::Image { name, .. } => name.clone().unwrap_or_else(|| "Pasted image".to_owned()),
             Self::Selection {
                 path, first, last, ..
             } => {
@@ -72,7 +79,9 @@ impl Attachment {
                     "name": self.label(),
                 }),
             },
-            Self::Image { data, mime_type } => json!({
+            Self::Image {
+                data, mime_type, ..
+            } => json!({
                 "type": "image",
                 "data": data,
                 "mimeType": mime_type,
