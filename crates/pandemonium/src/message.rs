@@ -18,7 +18,8 @@ use crate::markdown::DiagramZoom;
 use crate::notice::NoticeId;
 use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
-use crate::review::{ConflictAction, Group, RepositoryAction};
+use crate::review::comment::{CommentId, Side as CommentSide};
+use crate::review::{ChangeId, ConflictAction, Group, RepositoryAction};
 use crate::settings::{SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
@@ -435,6 +436,36 @@ pub enum Message {
     ToggleHunkStaged(usize, bool, usize),
     /// Apply an inline action to the conflict starting on this file's line.
     ConflictAction(FileId, usize, ConflictAction),
+    /// Start a comment on this hunk of this change, given which side of the
+    /// index the hunk was read from.
+    CommentOnHunk(usize, bool, usize),
+    /// Carry a gesture down the numbers of the change in this place, from
+    /// this line counted on this side, to the lines it reaches.
+    DragComment(Option<ChangeId>, usize, CommentSide, usize, ResizeEvent),
+    /// Start a comment on this line of this file in a pane of excerpts,
+    /// counted from zero, or on the selection when the line is inside it.
+    CommentExcerpt(FileId, usize),
+    /// Start a comment on what the focused pane has selected.
+    AddComment,
+    /// Write the comment being written down.
+    SaveComment,
+    /// Stop writing the comment, throwing away what was written.
+    CancelComment,
+    /// Answer a press, a drag or a release of the pointer in the box a
+    /// comment is written in.
+    WriteComment(ResizePhase, Position, Position),
+    /// Rewrite this comment.
+    EditComment(CommentId),
+    /// Take this comment away.
+    DeleteComment(CommentId),
+    /// Have the next line pressed take this comment, whose lines are gone.
+    MoveComment(CommentId),
+    /// Send every pending comment to the session's agent as one prompt.
+    SendReview,
+    /// Take away every comment that has not been sent.
+    DiscardReview,
+    /// Hide the comments already sent, or draw them again.
+    ToggleSentComments,
     /// Put the list's selection on this change, or mark it alongside.
     ///
     /// Which of the two it is comes from the modifiers held at the time: the

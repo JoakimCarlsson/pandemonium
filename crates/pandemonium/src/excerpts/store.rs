@@ -1,7 +1,9 @@
 //! Which lines of which files the pane shows, and where its cursor is.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use pm_core::Change;
@@ -9,6 +11,8 @@ use pm_gfx::Point;
 use pm_text::{Finder, Position, Query};
 
 use crate::editor::{FileId, OpenFile};
+use crate::review::comment::{CommentId, Comments, Composing, Side};
+use crate::review::{block_rows, composer_rows};
 
 /// How many unchanged lines an excerpt shows either side of a change.
 const CONTEXT: usize = 3;
@@ -188,6 +192,12 @@ pub enum Row {
     Removed(usize, String),
     /// The lines of that file left out between two of its excerpts.
     Gap(usize),
+    /// One row of the block drawn for a comment on that file: the comment,
+    /// and how far down its block this row is.
+    Comment(usize, CommentId, usize),
+    /// One row of the box a comment on that file is written in, and how far
+    /// down the box it is.
+    Composer(usize, usize),
 }
 
 /// Every changed file of one worktree, as the excerpts a pane shows.
@@ -209,9 +219,23 @@ pub struct Excerpts {
     /// Just under where the pane last drew the cursor, for what opens
     /// beside it — completions, a signature — to be placed against.
     caret: Option<Point>,
+    /// The comments left on the worktree the files are of, when they are of
+    /// one: the same comments the worktree's review draws.
+    comments: Option<Comments>,
 }
 
 impl Excerpts {
+    /// Draws the comments of the worktree under the lines they are on.
+    pub fn set_comments(&mut self, comments: Comments) {
+        self.comments = Some(comments);
+    }
+
+    /// The comments drawn under the lines they are on, when there are any
+    /// to draw.
+    pub fn comments(&self) -> Option<&Comments> {
+        self.comments.as_ref()
+    }
+
     /// The changed files, in order.
     pub fn files(&self) -> &[Excerpted] {
         &self.files
@@ -268,10 +292,15 @@ impl Excerpts {
     pub fn rows(&mut self) -> Vec<Row> {
         let mut rows = Vec::new();
         for index in 0..self.files.len() {
+            let comments = self.comments.clone();
             let excerpted = &mut self.files[index];
             if excerpted.is_match_source() && excerpted.matches().is_empty() {
                 continue;
             }
+            let remarks = comments.filter(|_| !excerpted.is_match_source());
+            let relative = PathBuf::from(&excerpted.name);
+            let mut remarked = Remarked::of(remarks.as_ref(), &relative);
+            let header = rows.len();
             rows.push(Row::Header(index));
             let ranges = excerpted.ranges();
             let changes = excerpted.changes().to_vec();
@@ -283,11 +312,14 @@ impl Excerpts {
                 for line in range.clone() {
                     push_removed(&mut rows, index, &changes, line);
                     rows.push(Row::Line(index, line));
+                    remarked.push(&mut rows, index, line + 1);
                 }
                 if range.end >= count {
                     push_removed(&mut rows, index, &changes, range.end);
                 }
             }
+            let unplaced = remarked.unplaced(index);
+            rows.splice(header + 1..header + 1, unplaced);
         }
         if !rows.iter().any(|row| match row {
             Row::Header(index) => Some(self.files[*index].file) == self.active,
@@ -416,6 +448,76 @@ impl Excerpts {
                     .map(move |range| (index, range))
             })
             .collect()
+    }
+}
+
+/// The comments of one file, as they are laid among its lines.
+struct Remarked<'a> {
+    /// Every comment left on the worktree, when there are any to draw.
+    comments: Option<&'a Comments>,
+    /// The file, relative to the worktree.
+    path: &'a Path,
+    /// The comment being written, when it is on this file.
+    composing: Option<Composing>,
+    /// The comments already laid under a line.
+    placed: BTreeSet<CommentId>,
+    /// Whether the box being written in is laid under a line.
+    composed: bool,
+}
+
+impl<'a> Remarked<'a> {
+    /// The comments of `path` among `comments`.
+    fn of(comments: Option<&'a Comments>, path: &'a Path) -> Self {
+        Self {
+            comments,
+            path,
+            composing: comments
+                .and_then(Comments::composing)
+                .filter(|composing| composing.anchor.path == path),
+            placed: BTreeSet::new(),
+            composed: false,
+        }
+    }
+
+    /// Adds the rows of every comment that ends on `number`, counted from
+    /// one, and of the box being written in when it does.
+    fn push(&mut self, rows: &mut Vec<Row>, index: usize, number: usize) {
+        let Some(comments) = self.comments else {
+            return;
+        };
+        for comment in comments.ending_at(self.path, Side::New, number) {
+            self.placed.insert(comment.id);
+            rows.extend(
+                (0..block_rows(&comment)).map(|step| Row::Comment(index, comment.id, step)),
+            );
+        }
+        if self.composing.as_ref().is_some_and(|composing| {
+            composing.anchor.side == Side::New && composing.anchor.last == number
+        }) {
+            self.composed = true;
+            rows.extend((0..composer_rows()).map(|step| Row::Composer(index, step)));
+        }
+    }
+
+    /// The rows of the comments no line drawn holds — lines the pane does
+    /// not show, or lines that are gone — which go at the top of the file
+    /// so that no comment is one nobody can see.
+    fn unplaced(&self, index: usize) -> Vec<Row> {
+        let Some(comments) = self.comments else {
+            return Vec::new();
+        };
+        let mut rows = comments
+            .in_file(self.path)
+            .into_iter()
+            .filter(|comment| !self.placed.contains(&comment.id))
+            .flat_map(|comment| {
+                (0..block_rows(&comment)).map(move |step| Row::Comment(index, comment.id, step))
+            })
+            .collect::<Vec<_>>();
+        if self.composing.is_some() && !self.composed {
+            rows.extend((0..composer_rows()).map(|step| Row::Composer(index, step)));
+        }
+        rows
     }
 }
 

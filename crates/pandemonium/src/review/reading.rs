@@ -39,11 +39,21 @@ pub struct Reading {
     pub(super) conflicts: BTreeMap<PathBuf, Vec<Conflict>>,
     /// The colour of every character each file's lines are drawn in.
     pub(super) shades: BTreeMap<PathBuf, Shading>,
+    /// What the worktree wrote down of its review comments, when this is the
+    /// first reading and the comments are still to be restored.
+    pub(super) remembered: Option<String>,
+    /// The text of each file that has comments on it, relative to the
+    /// worktree, or nothing where the file is gone.
+    pub(super) texts: BTreeMap<PathBuf, Option<String>>,
 }
 
 impl Reading {
     /// Reads the worktree at `root`, as the review's `reads`-th read.
-    pub(super) fn of(root: &Path, reads: u64) -> Self {
+    ///
+    /// `commented` names the files, relative to `root`, that have review
+    /// comments on them, whose text is read for the comments to be followed
+    /// to. `restoring` asks for the comments the worktree wrote down.
+    pub(super) fn of(root: &Path, reads: u64, commented: Vec<PathBuf>, restoring: bool) -> Self {
         let repositories = pm_core::repositories(root)
             .into_iter()
             .map(|root| RepositoryReading {
@@ -85,6 +95,21 @@ impl Reading {
             })
             .collect();
         let shades = Shading::all(root, &patches);
+        let remembered = restoring
+            .then(|| pm_core::remembered_review(root))
+            .flatten();
+        let restored = remembered
+            .as_deref()
+            .map(crate::review::comment::paths_in)
+            .unwrap_or_default();
+        let texts = commented
+            .into_iter()
+            .chain(restored)
+            .map(|path| {
+                let text = std::fs::read_to_string(root.join(&path)).ok();
+                (path, text)
+            })
+            .collect();
 
         Self {
             reads,
@@ -92,6 +117,8 @@ impl Reading {
             patches,
             conflicts,
             shades,
+            remembered,
+            texts,
         }
     }
 }

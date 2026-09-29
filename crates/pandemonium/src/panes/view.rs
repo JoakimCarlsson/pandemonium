@@ -18,6 +18,7 @@ use crate::editor::{Breakpoint, Crumbs, Display, OpenFile, buffer_view, crumb_ba
 use crate::excerpts::{OpenExcerpts, excerpts_view};
 use crate::message::Message;
 use crate::panes::item::Item;
+use crate::review::Remarking;
 
 use super::tree::{Node, Pane, PaneId, PaneTree, SplitDirection};
 
@@ -56,7 +57,7 @@ pub enum Content {
     /// A file, drawn from the document the window has open.
     File(OpenFile),
     /// A worktree's changes as excerpts, drawn from the documents behind them.
-    Excerpts(OpenExcerpts),
+    Excerpts(OpenExcerpts, Remarking),
     /// A screen the window built, drawn as it arrived.
     Built(Box<dyn Element<Message>>),
 }
@@ -214,7 +215,7 @@ fn pane_view(
     };
     let conflict_file = active.and_then(Item::file).filter(|_| contents.conflicted);
     let excerpted = match &contents.content {
-        Content::Excerpts(excerpts) => Some(excerpts.clone()),
+        Content::Excerpts(excerpts, remarking) => Some((excerpts.clone(), *remarking)),
         _ => None,
     };
     let searching = showing
@@ -271,14 +272,30 @@ fn pane_view(
             };
             view.child(editor)
         })
-        .when_some(excerpted, |view, excerpts| {
+        .when_some(excerpted, |view, (excerpts, remarking)| {
             view.child(
                 excerpts_view(excerpts, focused)
                     .caret(caret)
                     .on_select(move |phase, file, anchor, head| {
                         Message::SelectExcerpt(id, phase, file, anchor, head)
                     })
-                    .on_open(move |index| Message::OpenExcerptFile(id, index)),
+                    .on_open(move |index| Message::OpenExcerptFile(id, index))
+                    .on_comment(Message::CommentExcerpt)
+                    .remarks(
+                        |theme, comment, unit, inset, moving| {
+                            crate::review::comment_block(theme, comment, unit, inset, moving)
+                        },
+                        move |theme, composing, unit, inset| {
+                            crate::review::composer_block(
+                                theme,
+                                composing,
+                                unit,
+                                inset,
+                                remarking.focused,
+                                remarking.solid,
+                            )
+                        },
+                    ),
             )
         })
         .when(empty, |view| view.child(placeholder(theme, id, &shortcuts)))
@@ -291,7 +308,7 @@ fn pane_view(
 fn built(content: Content) -> Option<Box<dyn Element<Message>>> {
     match content {
         Content::Built(screen) => Some(screen),
-        Content::Empty | Content::File(_) | Content::Excerpts(_) => None,
+        Content::Empty | Content::File(_) | Content::Excerpts(..) => None,
     }
 }
 

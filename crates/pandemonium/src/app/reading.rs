@@ -34,6 +34,8 @@ enum Back {
     Worked(Scope, Done),
     /// What the last commit holds for each file of a worktree's excerpts.
     Committed(Scope, Vec<(PathBuf, Option<String>)>),
+    /// A worktree's review comments, written down.
+    Remembered(Scope),
     /// The repositories of every project, and the sessions found on disk.
     Changes(Changes),
     /// A session's worktrees, cut or refused.
@@ -74,6 +76,10 @@ pub(super) struct Readings {
     excerpting: BTreeSet<Scope>,
     /// The worktrees whose excerpts were asked for again while they were read.
     excerpt_again: BTreeSet<Scope>,
+    /// The worktrees whose review comments are being written down now.
+    remembering: BTreeSet<Scope>,
+    /// The worktrees whose comments changed again while they were written.
+    remember_again: BTreeSet<Scope>,
     /// Whether the sessions' drift is being read now.
     drifting: bool,
     /// Whether it was asked for again while it was read.
@@ -124,6 +130,30 @@ impl App {
             .or_default()
             .push_back(work);
         self.work_next(scope);
+    }
+
+    /// Writes `scope`'s review comments into its worktree's git directory,
+    /// away from the window, when they have changed since they last were.
+    ///
+    /// One write is under way per worktree at a time, so that a later state
+    /// is never overtaken by an earlier one still being written.
+    pub(super) fn remember_comments_later(&mut self, scope: Scope) {
+        if self.readings.remembering.contains(&scope) {
+            self.readings.remember_again.insert(scope);
+            return;
+        }
+        let Some(review) = self.reviews.get(&scope) else {
+            return;
+        };
+        let Some(text) = review.comments().take_unsaved() else {
+            return;
+        };
+        let root = review.root().to_path_buf();
+        self.readings.remembering.insert(scope);
+        self.spawn_read(move || {
+            pm_core::remember_review(&root, &text);
+            Back::Remembered(scope)
+        });
     }
 
     /// Starts the next piece of work waiting for `scope`, unless git is
@@ -308,6 +338,12 @@ impl App {
                 Back::Drift(drifts) => self.take_drift(drifts),
                 Back::Worked(scope, done) => self.take_worked(scope, done),
                 Back::Committed(scope, committed) => self.take_committed(scope, committed),
+                Back::Remembered(scope) => {
+                    self.readings.remembering.remove(&scope);
+                    if self.readings.remember_again.remove(&scope) {
+                        self.remember_comments_later(scope);
+                    }
+                }
                 Back::Changes(changes) => {
                     self.readings.changing = false;
                     self.take_changes(changes);
@@ -335,6 +371,7 @@ impl App {
             self.open_reviewed_files_of(scope);
             self.repaint_reviews();
             self.refresh_excerpts_of(scope);
+            self.remember_comments_later(scope);
         }
         if self.has_queued(scope) {
             self.work_next(scope);

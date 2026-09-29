@@ -34,6 +34,7 @@ impl App {
         self.excerpts
             .entry(scope)
             .or_insert_with(|| Rc::new(RefCell::new(Excerpts::default())));
+        self.share_comments(scope);
         self.refresh_excerpts_of(scope);
 
         let item = Item::Excerpts(scope);
@@ -46,6 +47,18 @@ impl App {
             Some(pane) => self.activate_tab(pane, item),
             None => self.show_item(self.panes.focus(), scope, item, false),
         }
+    }
+
+    /// Has `scope`'s excerpts draw the comments its review holds, which are
+    /// the same comments and not a copy of them.
+    fn share_comments(&mut self, scope: Scope) {
+        let (Some(review), Some(excerpts)) = (self.reviews.get(&scope), self.excerpts.get(&scope))
+        else {
+            return;
+        };
+        excerpts
+            .borrow_mut()
+            .set_comments(review.comments().clone());
     }
 
     /// Reads every held worktree's excerpts again from its review.
@@ -65,6 +78,8 @@ impl App {
         if !self.excerpts.contains_key(&scope) {
             return;
         }
+        self.share_comments(scope);
+        self.follow_comments_in_documents(scope);
         let paths = self
             .reviews
             .get(&scope)

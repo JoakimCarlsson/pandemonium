@@ -10,7 +10,7 @@ use pm_ui::{Div, MenuItem, ResizePhase, Styled, Theme, h_flex, menu_entry, menu_
 
 use crate::keymap::Action;
 
-use crate::editor::plain_view;
+use crate::editor::{OpenFile, plain_view};
 use crate::input::state::Input;
 use crate::message::Message;
 
@@ -49,6 +49,29 @@ pub fn input_view<M: Clone + 'static>(
     on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
     on_menu: M,
 ) -> Div<M> {
+    text_view(
+        theme,
+        input.text(),
+        focused,
+        solid,
+        lines,
+        on_point,
+        on_menu,
+    )
+}
+
+/// Builds the box the buffer `text` is written in, for a screen that holds
+/// the buffer rather than the whole input; it is drawn exactly as
+/// [`input_view`] draws one.
+pub fn text_view<M: Clone + 'static>(
+    theme: &Theme,
+    text: OpenFile,
+    focused: bool,
+    solid: bool,
+    lines: f32,
+    on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
+    on_menu: M,
+) -> Div<M> {
     h_flex()
         .w_full()
         .h_px(theme.size.control * lines)
@@ -59,7 +82,7 @@ pub fn input_view<M: Clone + 'static>(
         .bg(theme.colors.background)
         .border_1(theme.colors.border)
         .child(
-            plain_view(input.text(), focused)
+            plain_view(text, focused)
                 .caret(focused && solid)
                 .on_select(on_point)
                 .on_menu(on_menu),

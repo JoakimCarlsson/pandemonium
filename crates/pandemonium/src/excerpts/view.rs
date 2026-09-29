@@ -15,11 +15,14 @@ use pm_core::ChangeKind;
 use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, Size};
 use pm_text::{Highlights, Position, Selection};
 use pm_ui::{
-    Element, Glyphs, LayoutContext, PaintContext, PointerCursor, ResizePhase, Style, Styled, Theme,
+    Div, Element, Glyphs, LayoutContext, PaintContext, PointerCursor, ResizePhase, Style, Styled,
+    Theme,
 };
 
 use crate::editor::{FileId, OpenFile, tint};
 use crate::excerpts::store::{OpenExcerpts, Row};
+use crate::review::comment::{Comment, CommentId, Composing};
+use crate::review::{block_rows, composer_rows};
 
 /// How far the gutter's numbers sit from the edge of the pane.
 const GUTTER_INSET: f32 = 12.0;
@@ -39,6 +42,23 @@ const CURSOR_WIDTH: f32 = 2.0;
 /// What a press or a drag over the text reports: its stage, the file it
 /// began in and the places it spans there.
 type SelectHandler<M> = Arc<dyn Fn(ResizePhase, FileId, Position, Position) -> M>;
+
+/// What draws the block of a comment: the theme, the comment, the height of
+/// one row, how far in from the left the block starts, and the comment
+/// waiting for a line, if there is one.
+type SavedBlock<M> = Arc<dyn Fn(&Theme, &Comment, f32, f32, Option<CommentId>) -> Div<M>>;
+
+/// What draws the box a comment is written in: the theme, the comment, the
+/// height of one row and how far in from the left the box starts.
+type ComposingBlock<M> = Arc<dyn Fn(&Theme, &Composing, f32, f32) -> Div<M>>;
+
+/// The two things the pane draws a comment as.
+struct Remarks<M> {
+    /// A comment that has been written.
+    saved: SavedBlock<M>,
+    /// The box one is being written in.
+    composing: ComposingBlock<M>,
+}
 
 /// Where each row drawn this frame came out, for a press to be read against.
 struct Drawn {
@@ -93,6 +113,10 @@ pub struct ExcerptsView<M> {
     on_select: Option<SelectHandler<M>>,
     /// What a press on a file's heading sends, given its place in the list.
     on_open: Option<Arc<dyn Fn(usize) -> M>>,
+    /// What a press on the gutter of a line sends, given its file and line.
+    on_comment: Option<Arc<dyn Fn(FileId, usize) -> M>>,
+    /// How the comments under the lines are drawn.
+    remarks: Option<Remarks<M>>,
     /// How the pane is sized within its parent.
     style: Style,
 }
@@ -105,6 +129,8 @@ pub fn excerpts_view<M>(excerpts: OpenExcerpts, focused: bool) -> ExcerptsView<M
         caret: true,
         on_select: None,
         on_open: None,
+        on_comment: None,
+        remarks: None,
         style: Style::default(),
     }
     .w_full()
@@ -124,6 +150,28 @@ impl<M> ExcerptsView<M> {
     /// Returns this pane opening a file when its heading is pressed.
     pub fn on_open(mut self, on_open: impl Fn(usize) -> M + 'static) -> Self {
         self.on_open = Some(Arc::new(on_open));
+        self
+    }
+
+    /// Returns this pane starting a comment when the gutter of a line is
+    /// pressed.
+    pub fn on_comment(mut self, on_comment: impl Fn(FileId, usize) -> M + 'static) -> Self {
+        self.on_comment = Some(Arc::new(on_comment));
+        self
+    }
+
+    /// Returns this pane drawing the comments left on the lines it shows:
+    /// `saved` draws one that was written, `composing` the box one is being
+    /// written in.
+    pub fn remarks(
+        mut self,
+        saved: impl Fn(&Theme, &Comment, f32, f32, Option<CommentId>) -> Div<M> + 'static,
+        composing: impl Fn(&Theme, &Composing, f32, f32) -> Div<M> + 'static,
+    ) -> Self {
+        self.remarks = Some(Remarks {
+            saved: Arc::new(saved),
+            composing: Arc::new(composing),
+        });
         self
     }
 
@@ -248,6 +296,7 @@ impl<M: Clone + 'static> Element<M> for ExcerptsView<M> {
             .iter()
             .map(|file| file.is_match_source())
             .collect::<Vec<_>>();
+        let comments = excerpts.comments().cloned();
         drop(excerpts);
 
         let highlights = files
@@ -307,12 +356,17 @@ impl<M: Clone + 'static> Element<M> for ExcerptsView<M> {
                 }
                 Row::Removed(_, text) => self.paint_removed(&painting, text, top, &mut glyphs, cx),
                 Row::Gap(_) => self.paint_gap(&painting, top, &mut glyphs, cx),
+                Row::Comment(..) | Row::Composer(..) => {}
             }
         }
         cx.pop_clip();
         self.excerpts.borrow_mut().set_caret(caret);
 
         self.regions(&painting, &drawn, cx);
+        if let Some(comments) = comments.filter(|_| self.remarks.is_some()) {
+            self.gutters(&painting, &drawn, &matched, cx);
+            self.blocks(&painting, &drawn, &comments, cx);
+        }
     }
 }
 
@@ -633,6 +687,111 @@ impl<M: Clone + 'static> ExcerptsView<M> {
             let run = glyphs.shape(ch, painting.font, cx);
             cx.text(Point::new(x, top), run, color);
         }
+    }
+
+    /// Takes the presses on the gutters of the lines that can be commented
+    /// on, and shows a mark on the one the pointer is over.
+    fn gutters(
+        &self,
+        painting: &Painting<'_>,
+        drawn: &[Row],
+        matched: &[bool],
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let Some(on_comment) = self.on_comment.clone() else {
+            return;
+        };
+        let (bounds, cell, theme) = (painting.bounds, painting.cell, painting.theme);
+        let width = painting.left - GUTTER_GAP / 2.0 - bounds.left();
+        let mut glyphs = Glyphs::default();
+        cx.push_clip(bounds);
+        for (at, row) in drawn.iter().enumerate() {
+            let Row::Line(index, line) = row else {
+                continue;
+            };
+            let Some((file, _)) = painting.files.get(*index) else {
+                continue;
+            };
+            if matched.get(*index).copied().unwrap_or(true) {
+                continue;
+            }
+            let top = bounds.top() + at as f32 * cell.height;
+            let gutter = Rect::from_xywh(bounds.left(), top, width, cell.height);
+            let over = cx.interactive(gutter, on_comment(*file, *line));
+            if over.hovered {
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(bounds.left(), top, width, cell.height),
+                    theme.colors.accent.alpha(theme.emphasis.change),
+                ));
+                let mark = glyphs.shape('+', painting.font, cx);
+                cx.text(
+                    Point::new(bounds.left() + GUTTER_INSET / 2.0, top),
+                    mark,
+                    theme.colors.accent,
+                );
+            }
+        }
+        cx.pop_clip();
+    }
+
+    /// Draws the block of every comment among the rows drawn, and the box
+    /// one is being written in.
+    ///
+    /// A block is several rows tall and is drawn once, from its first row;
+    /// one that begins above the top of the pane is drawn from where it
+    /// would have begun, so scrolling into the middle of it shows the rest.
+    fn blocks(
+        &self,
+        painting: &Painting<'_>,
+        drawn: &[Row],
+        comments: &crate::review::comment::Comments,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let Some(remarks) = &self.remarks else {
+            return;
+        };
+        let (bounds, cell, theme) = (painting.bounds, painting.cell, painting.theme);
+        let inset = painting.left - bounds.left() - GUTTER_GAP / 2.0;
+        cx.push_clip(bounds);
+        for (at, row) in drawn.iter().enumerate() {
+            let step = match row {
+                Row::Comment(_, _, step) | Row::Composer(_, step) => *step,
+                _ => continue,
+            };
+            if step > 0 && at > 0 {
+                continue;
+            }
+            let top = bounds.top() + (at as f32 - step as f32) * cell.height;
+            let (mut block, rows) = match row {
+                Row::Comment(_, id, _) => {
+                    let Some(comment) = comments.get(*id) else {
+                        continue;
+                    };
+                    (
+                        (remarks.saved)(theme, &comment, cell.height, inset, comments.moving()),
+                        block_rows(&comment),
+                    )
+                }
+                _ => {
+                    let Some(composing) = comments.composing() else {
+                        continue;
+                    };
+                    (
+                        (remarks.composing)(theme, &composing, cell.height, inset),
+                        composer_rows(),
+                    )
+                }
+            };
+            let area = Rect::from_xywh(
+                bounds.left(),
+                top,
+                bounds.size.width,
+                rows as f32 * cell.height,
+            );
+            block.measure(area.size, &mut cx.layout);
+            block.paint(area, cx);
+        }
+        cx.pop_clip();
     }
 
     /// Takes the presses on the headings that open a file, and the press and

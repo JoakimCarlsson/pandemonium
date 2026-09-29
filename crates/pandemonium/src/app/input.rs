@@ -453,8 +453,8 @@ impl App {
 
         let modifiers = self.modifiers;
         if self
-            .written_in()
-            .is_some_and(|input| input.submits(&event.logical_key, modifiers))
+            .with_written(|input| input.submits(&event.logical_key, modifiers))
+            .unwrap_or(false)
         {
             self.submit_writing(writing);
             return true;
@@ -463,10 +463,10 @@ impl App {
             return false;
         }
 
-        let Some(input) = self.written_in() else {
+        let Some(typed) = self.with_written(|input| input.press(event, modifiers)) else {
             return false;
         };
-        if input.press(event, modifiers) == Typed::Ignored {
+        if typed == Typed::Ignored {
             return false;
         }
         if let Writing::Prompt(session) = writing
@@ -515,6 +515,7 @@ impl App {
         match writing {
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
+            Writing::Comment(_) => self.apply(Message::SaveComment),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {
                     debugger.evaluate();

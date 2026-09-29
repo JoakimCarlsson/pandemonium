@@ -11,4 +11,4 @@ mod state;
 mod view;
 
 pub use state::{Input, Submit};
-pub use view::{input_menu, input_view};
+pub use view::{input_menu, input_view, text_view};

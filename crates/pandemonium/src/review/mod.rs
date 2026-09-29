@@ -7,11 +7,14 @@
 //! seen twice, never two stores.
 
 mod action;
+pub(crate) mod comment;
 pub(crate) mod conflict;
 mod editor;
 mod graph;
+mod gutter;
 mod pane;
 mod reading;
+mod remark;
 mod repository;
 mod shade;
 mod sidebar;
@@ -21,8 +24,11 @@ mod work;
 pub use action::RepositoryAction;
 pub use conflict::Action as ConflictAction;
 pub use editor::commit_editor;
-pub use pane::{change_pane, hunk_row, review_pane, row_count, row_of};
+pub use pane::{
+    Remarking, change_pane, hunk_anchor, hunk_row, line_at, review_pane, row_count, row_of,
+};
 pub use reading::Reading;
+pub use remark::{Delivery, block_rows, comment_block, composer_block, composer_rows};
 pub use sidebar::{SourceControlControls, change_menu, changes_sidebar, status_color};
 pub use store::{ChangeId, Group, Review, StashAction};
 pub use work::{Done, Work};

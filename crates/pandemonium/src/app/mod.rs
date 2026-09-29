@@ -100,6 +100,8 @@ pub(super) enum Writing {
     Prompt(crate::agent::TalkId),
     /// The console of the program one worktree is debugging.
     Console(Scope),
+    /// The box a review comment is being written in, in one worktree.
+    Comment(Scope),
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -859,6 +861,7 @@ impl App {
             Some(Writing::Prompt(_)) => return Some("prompt"),
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
+            Some(Writing::Comment(_)) => return Some("comment"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -1434,6 +1437,18 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::DragComment(shown, index, side, line, event) = message {
+            self.drag_comment(shown, index, side, line, event);
+            self.request_redraw();
+            return;
+        }
+        if let Message::WriteComment(phase, anchor, head) = message {
+            if let Some(scope) = self.scope() {
+                self.point_in(Writing::Comment(scope), phase, anchor, head);
+            }
+            self.request_redraw();
+            return;
+        }
         if let Message::SelectExcerpt(pane, phase, file, anchor, head) = message {
             self.select_excerpt(pane, phase, file, anchor, head);
             self.request_redraw();
@@ -1831,6 +1846,19 @@ impl App {
         match message {
             Message::OpenReview => self.open_review(),
             Message::OpenExcerpts => self.open_excerpts(),
+            Message::CommentOnHunk(index, staged, hunk) => {
+                self.comment_on_hunk(index, staged, hunk);
+            }
+            Message::CommentExcerpt(file, line) => self.comment_excerpt(file, line),
+            Message::AddComment => self.add_comment(),
+            Message::SaveComment => self.save_comment(),
+            Message::CancelComment => self.cancel_comment(),
+            Message::EditComment(id) => self.edit_comment(id),
+            Message::DeleteComment(id) => self.delete_comment(id),
+            Message::MoveComment(id) => self.move_comment(id),
+            Message::SendReview => self.send_review(),
+            Message::DiscardReview => self.discard_review(),
+            Message::ToggleSentComments => self.toggle_sent_comments(),
             Message::RefreshChanges => self.refresh_changes(),
             Message::ToggleChangeStaged(index) => self.toggle_change_staged(index),
             Message::ToggleGroupStaged(repository, group) => {
@@ -2226,7 +2254,23 @@ impl App {
                 .debuggers
                 .get_mut(scope)
                 .map(crate::debug::Debugger::console_mut),
+            Writing::Comment(_) => None,
         }
+    }
+
+    /// Puts the box of text that has the keyboard through `write`.
+    ///
+    /// The box a comment is written in is held by the comments themselves,
+    /// shared with every pane that draws them, so it is reached through
+    /// them rather than lent out.
+    pub(super) fn with_written<R>(
+        &mut self,
+        write: impl FnOnce(&mut crate::input::Input) -> R,
+    ) -> Option<R> {
+        if let Some(Writing::Comment(scope)) = self.writing {
+            return self.reviews.get(&scope)?.comments().write(write);
+        }
+        self.written_in().map(write)
     }
 
     /// Gives the keyboard to `writing`, taking it from whatever had it.
@@ -2266,9 +2310,7 @@ impl App {
                 0
             }
         };
-        if let Some(input) = self.written_in() {
-            input.point(phase, anchor, head, presses, extend);
-        }
+        self.with_written(|input| input.point(phase, anchor, head, presses, extend));
     }
 
     /// Writes the window's preferences, projects and layout down.

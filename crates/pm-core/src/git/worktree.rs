@@ -31,6 +31,10 @@ const WORKTREE_LINE: &str = "worktree ";
 /// The file inside a worktree's own git directory its memory is kept in.
 const MEMORY: &str = "pandemonium.config";
 
+/// The file inside a worktree's own git directory its review comments are
+/// kept in, beside its memory.
+const REVIEW: &str = "pandemonium.review";
+
 /// How much of a commit hash names it where one is written down.
 const SHORT_HASH: usize = 7;
 
@@ -213,6 +217,33 @@ pub fn remembered_base(root: &Path) -> Option<String> {
 /// What the worktree at `root` is called, as it wrote it down.
 pub fn remembered_name(root: &Path) -> Option<String> {
     read(root, NAME_KEY)
+}
+
+/// Writes down the review comments of the worktree at `root`, as text the
+/// caller understands and this does not.
+///
+/// The file lives beside the worktree's memory, so it goes away with the
+/// worktree. Nothing at all to say removes it rather than leaving it empty.
+pub fn remember_review(root: &Path, text: &str) {
+    let Some(file) = memory(root).map(|memory| memory.with_file_name(REVIEW)) else {
+        return;
+    };
+    match text.is_empty() {
+        true => {
+            let _ = std::fs::remove_file(file);
+        }
+        false => {
+            let _ = std::fs::write(file, text);
+        }
+    }
+}
+
+/// The review comments the worktree at `root` wrote down, as it wrote them.
+pub fn remembered_review(root: &Path) -> Option<String> {
+    let file = memory(root)?.with_file_name(REVIEW);
+    std::fs::read_to_string(file)
+        .ok()
+        .filter(|text| !text.is_empty())
 }
 
 /// The file the worktree at `root` keeps its memory in, inside the git

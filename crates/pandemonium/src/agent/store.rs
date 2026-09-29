@@ -910,7 +910,27 @@ impl Talk {
         for preview in previews.into_iter().flatten() {
             self.transcript.picture(preview);
         }
-        self.conversation.prompt(&text, attachments);
+        self.deliver(&text, attachments);
+    }
+
+    /// Sends `text` that was built outside the prompt buffer, leaving what
+    /// is typed in the buffer where it is.
+    ///
+    /// It is a turn like any other: it is put in the transcript as the
+    /// reader's, and the conversation follows what comes back.
+    pub fn send_text(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        self.transcript.say(Voice::Reader, text);
+        self.deliver(text, Vec::new());
+    }
+
+    /// Hands `text` and its `attachments` to the agent, and has the
+    /// conversation wait on the turn that follows.
+    fn deliver(&mut self, text: &str, attachments: Vec<Attachment>) {
+        self.conversation.prompt(text, attachments);
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
