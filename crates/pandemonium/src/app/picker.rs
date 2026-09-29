@@ -130,6 +130,10 @@ impl App {
             (Kind::Branches, _) if !typed.trim().is_empty() => self.create_branch(typed.trim()),
             (Kind::Line, _) => self.go_to_typed_line(&typed),
             (Kind::Rename, _) => self.rename_to(typed),
+            (Kind::BreakpointCondition | Kind::BreakpointHits | Kind::BreakpointLog, _) => {
+                self.set_breakpoint_field(kind, typed)
+            }
+            (Kind::Watch, _) => self.save_watch(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::NewSession, _) => self.start_session(&typed),
             (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
@@ -187,6 +191,7 @@ impl App {
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
             Choice::Debug(scope, scenario) => self.start_debugging(scope, *scenario),
+            Choice::Process(pid) => self.choose_attach_process(pid),
             Choice::SessionRepository(_) => {}
             Choice::StartSession => self.cut_session(),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
@@ -246,6 +251,8 @@ impl App {
             Kind::Agents => self.agent_rows(),
             Kind::AgentHistory(session) => self.agent_history_rows(session),
             Kind::Debug => self.debug_rows(),
+            Kind::Processes => self.process_rows(),
+            Kind::AttachAdapters => self.attach_adapter_rows(),
             Kind::Tasks => self.task_rows(),
             Kind::SessionRepositories => self.session_repository_rows(),
             Kind::Modes => self
@@ -259,6 +266,10 @@ impl App {
             | Kind::Symbols
             | Kind::Line
             | Kind::Rename
+            | Kind::BreakpointCondition
+            | Kind::BreakpointHits
+            | Kind::BreakpointLog
+            | Kind::Watch
             | Kind::NewBranch
             | Kind::NewSession
             | Kind::CloneUrl

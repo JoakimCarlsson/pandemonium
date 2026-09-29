@@ -260,6 +260,7 @@ fn pane_view(
                 .on_gutter(move |anchor, head| Message::SelectLines(id, anchor, head))
                 .on_fold(move |at| Message::ToggleFold(id, at))
                 .on_breakpoint(move |at| Message::ToggleBreakpoint(id, at))
+                .on_breakpoint_menu(move |at| Message::ShowBreakpointMenu(id, at))
                 .on_scroll(move |axis, event, step| Message::ScrollEditor(id, axis, event, step))
                 .on_minimap(move |line| Message::ScrollEditorTo(id, line))
                 .on_menu(Message::ShowEditorMenu(id));

@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use pm_core::Scope;
-use pm_dap::{Event, Notify, Scenario, Session, Standing};
+use pm_dap::{Breakpoint, Event, Notify, Scenario, Session, Standing};
 use pm_gfx::Point;
 use pm_ui::{Bounds, Scrolled};
 
@@ -167,7 +167,9 @@ impl Debugger {
 #[derive(Default)]
 pub struct Debuggers {
     /// The lines each file of each worktree stops on, counted from zero.
-    breakpoints: BTreeMap<Scope, BTreeMap<PathBuf, BTreeSet<usize>>>,
+    breakpoints: BTreeMap<Scope, BTreeMap<PathBuf, BTreeMap<usize, Breakpoint>>>,
+    /// Watch expressions belonging to each worktree.
+    watches: BTreeMap<Scope, Vec<String>>,
     /// The program each worktree is debugging.
     running: BTreeMap<Scope, Debugger>,
     /// What each worktree was last debugged as, to debug it as again.
@@ -182,13 +184,45 @@ impl Debuggers {
         self.notify = Some(notify);
     }
 
-    /// The lines `path` of `scope` stops on.
-    pub fn lines(&self, scope: Scope, path: &Path) -> Vec<usize> {
+    /// The full breakpoints of a file in one worktree.
+    pub fn breakpoints(&self, scope: Scope, path: &Path) -> Vec<Breakpoint> {
         self.breakpoints
             .get(&scope)
             .and_then(|files| files.get(path))
-            .map(|lines| lines.iter().copied().collect())
+            .map(|lines| lines.values().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// A breakpoint on one line, if present.
+    pub fn breakpoint(&self, scope: Scope, path: &Path, line: usize) -> Option<Breakpoint> {
+        self.breakpoints.get(&scope)?.get(path)?.get(&line).cloned()
+    }
+
+    /// Adds or edits a breakpoint, immediately telling a running adapter.
+    pub fn set_breakpoint(&mut self, scope: Scope, path: &Path, breakpoint: Breakpoint) {
+        self.breakpoints
+            .entry(scope)
+            .or_default()
+            .entry(path.to_path_buf())
+            .or_default()
+            .insert(breakpoint.line, breakpoint);
+        self.tell(scope, path);
+    }
+
+    /// The watches of one worktree.
+    pub fn watches(&self, scope: Scope) -> &[String] {
+        self.watches
+            .get(&scope)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// Replaces the watches of one worktree and updates its running session.
+    pub fn set_watches(&mut self, scope: Scope, watches: Vec<String>) {
+        self.watches.insert(scope, watches.clone());
+        if let Some(debugger) = self.running.get(&scope) {
+            debugger.session.set_watches(watches);
+        }
     }
 
     /// Sets a breakpoint on `line` of `path` in `scope`, or clears the one
@@ -196,8 +230,14 @@ impl Debuggers {
     pub fn toggle(&mut self, scope: Scope, path: &Path, line: usize) {
         let files = self.breakpoints.entry(scope).or_default();
         let lines = files.entry(path.to_path_buf()).or_default();
-        if !lines.remove(&line) {
-            lines.insert(line);
+        if lines.remove(&line).is_none() {
+            lines.insert(
+                line,
+                Breakpoint {
+                    line,
+                    ..Breakpoint::default()
+                },
+            );
         }
         if lines.is_empty() {
             files.remove(path);
@@ -230,12 +270,13 @@ impl Debuggers {
             .map(|files| {
                 files
                     .iter()
-                    .map(|(path, lines)| (path.clone(), lines.iter().copied().collect()))
+                    .map(|(path, lines)| (path.clone(), lines.values().cloned().collect()))
                     .collect()
             })
             .unwrap_or_default();
         let session = Session::start(scenario.clone(), root, breakpoints, notify)
             .map_err(|error| error.to_string())?;
+        session.set_watches(self.watches(scope).to_vec());
         self.last.insert(scope, scenario);
         self.running.insert(
             scope,
@@ -290,6 +331,7 @@ impl Debuggers {
     pub fn forget(&mut self, leaving: impl Fn(Scope) -> bool) {
         self.running.retain(|scope, _| !leaving(*scope));
         self.breakpoints.retain(|scope, _| !leaving(*scope));
+        self.watches.retain(|scope, _| !leaving(*scope));
         self.last.retain(|scope, _| !leaving(*scope));
     }
 
@@ -316,7 +358,7 @@ impl Debuggers {
         if let Some(debugger) = self.running.get(&scope) {
             debugger
                 .session
-                .set_breakpoints(path, self.lines(scope, path));
+                .set_breakpoints(path, self.breakpoints(scope, path));
         }
     }
 }

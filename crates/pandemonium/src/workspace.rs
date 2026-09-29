@@ -299,6 +299,8 @@ pub enum MenuTarget {
     Screen,
     /// The text one of the editor panes is showing.
     Text(PaneId),
+    /// The breakpoint column of a pane at a source line.
+    Breakpoint(PaneId, usize),
     /// The box of text that is being written in.
     Input,
     /// The fixes a language server offered where the cursor is.

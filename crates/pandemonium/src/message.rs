@@ -214,6 +214,16 @@ pub enum Message {
     ToggleFold(PaneId, Position),
     /// Set a breakpoint on this line of the file in this pane, or clear it.
     ToggleBreakpoint(PaneId, Position),
+    /// Open the menu for a breakpoint column's source line.
+    ShowBreakpointMenu(PaneId, Position),
+    /// Open a field prompt for one source breakpoint.
+    EditBreakpoint(PaneId, usize, crate::picker::Kind),
+    /// Remove a watch expression from the active worktree.
+    RemoveWatch(usize),
+    /// Edit a watch expression in the active worktree.
+    EditWatch(usize),
+    /// Open or close the watch section.
+    ToggleWatchSection,
     /// Carry this debugging command out on the worktree's program.
     ActOnDebugger(Action),
     /// Look at the frame of the paused program's stack this names.

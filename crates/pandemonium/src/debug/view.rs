@@ -295,10 +295,81 @@ fn frame_row(theme: &Theme, frame: &Frame, selected: bool, root: &Path) -> Div<M
 fn variables(theme: &Theme, debugger: &Debugger) -> Div<Message> {
     let session = debugger.session();
     let scopes = session.scopes();
-    if scopes.is_empty() {
-        return v_flex().w_full().child(note(theme, "Nothing to show"));
-    }
     let mut rows = Vec::new();
+    let open = debugger.is_scope_open("Watch");
+    rows.push(
+        tree_row(theme, 0, Some(open))
+            .on_click(Message::ToggleWatchSection)
+            .child(
+                text("Watch")
+                    .text_xs()
+                    .font_medium()
+                    .color(theme.colors.text_muted),
+            ),
+    );
+    if open {
+        let watched = session.watched();
+        for (index, expression) in session.watches().iter().enumerate() {
+            let result = watched
+                .iter()
+                .find(|watched| watched.expression == *expression);
+            let value = result.map(|watched| &watched.value);
+            let reference = value
+                .and_then(|value| value.as_ref().ok())
+                .map_or(0, |value| value.reference);
+            let expanded = reference != 0 && debugger.is_open(reference);
+            let color = if session.standing() == Standing::Running {
+                theme.colors.text_subtle
+            } else {
+                theme.colors.text
+            };
+            let mut row = tree_row(theme, 1, (reference != 0).then_some(expanded))
+                .child(
+                    h_flex().on_click(Message::EditWatch(index)).child(
+                        text(expression.clone())
+                            .text_xs()
+                            .font_mono()
+                            .color(theme.syntax.property),
+                    ),
+                )
+                .child(quiet(theme, "="));
+            row = match value {
+                Some(Ok(variable)) => row
+                    .child(
+                        text(first_line(&variable.value))
+                            .text_xs()
+                            .font_mono()
+                            .color(color),
+                    )
+                    .when_some(variable.kind.clone(), |row, kind| {
+                        row.child(quiet(theme, &kind))
+                    }),
+                Some(Err(error)) => {
+                    row.child(text(error.clone()).text_xs().color(theme.colors.danger))
+                }
+                None => row.child(quiet(theme, "loading…")),
+            };
+            if reference != 0 {
+                row = row.on_click(Message::ToggleVariable(reference));
+            }
+            row = row.child(h_flex().flex_1()).child(
+                icon_button(theme, IconName::Close, Message::RemoveWatch(index))
+                    .tooltip("Remove watch"),
+            );
+            rows.push(row);
+            if expanded {
+                members(theme, debugger, reference, 2, &mut rows);
+            }
+        }
+        rows.push(
+            tree_row(theme, 1, None)
+                .on_click(Message::ActOnDebugger(Action::DebugAddWatch))
+                .child(quiet(theme, "Add Watch…")),
+        );
+    }
+    if scopes.is_empty() && session.watches().is_empty() {
+        rows.push(note(theme, "Nothing to show"));
+    }
     for (place, scope) in scopes.iter().enumerate() {
         let open = debugger.is_scope_open(&scope.name);
         rows.push(

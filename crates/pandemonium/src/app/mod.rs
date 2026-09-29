@@ -430,6 +430,8 @@ pub struct App {
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
     tab_clicks: Clicks<Item>,
+    /// The last watch expression pressed, for editing on a double click.
+    watch_clicks: Clicks<usize>,
     /// The agent sessions the window is running, one per project.
     agents: Talks,
     /// The shells the window is running, one per project.
@@ -456,6 +458,12 @@ pub struct App {
     installed_servers: InstalledServers,
     /// The breakpoints each worktree keeps, and the program each debugs.
     debuggers: crate::debug::Debuggers,
+    /// The breakpoint a prompt is editing.
+    breakpoint_prompt: Option<(Scope, std::path::PathBuf, usize)>,
+    /// The watch row a prompt is editing, or none when adding.
+    watch_prompt: Option<(Scope, Option<usize>)>,
+    /// The process chosen for an attach adapter picker.
+    attach_pid: Option<u32>,
     /// Whether keystrokes go to the terminal rather than to the window.
     terminal_focused: bool,
     /// How far back the terminal was scrolled when a scrollbar drag began.
@@ -692,6 +700,7 @@ impl App {
             agent_words: false,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
+            watch_clicks: Clicks::default(),
             menu: None,
             agents: Talks::default(),
             terminals: Terminals::default(),
@@ -705,6 +714,9 @@ impl App {
             installing_servers: BTreeMap::new(),
             installed_servers: Arc::new(Mutex::new(Vec::new())),
             debuggers: crate::debug::Debuggers::default(),
+            breakpoint_prompt: None,
+            watch_prompt: None,
+            attach_pid: None,
             terminal_focused: false,
             terminal_scroll_origin: None,
             editor_scroll_origin: None,

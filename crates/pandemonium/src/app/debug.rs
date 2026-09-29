@@ -9,12 +9,12 @@
 //! or [`App::debug_command`].
 
 use pm_core::Scope;
-use pm_dap::{Event, Scenario, Standing};
+use pm_dap::{Breakpoint as DapBreakpoint, Event, Scenario, Standing};
 use pm_text::Position;
 
 use crate::app::places::Place;
 use crate::app::{App, Writing};
-use crate::editor::{Breakpoint, FileId};
+use crate::editor::{Breakpoint, FileId, Mark};
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::panel::PanelView;
@@ -30,6 +30,11 @@ impl App {
     pub(super) fn debug_action(&mut self, action: Action) -> bool {
         match action {
             Action::DebugStart => self.open_picker(Kind::Debug),
+            Action::DebugAttach => self.open_picker(Kind::Processes),
+            Action::DebugEditCondition => self.edit_cursor_breakpoint(Kind::BreakpointCondition),
+            Action::DebugEditHits => self.edit_cursor_breakpoint(Kind::BreakpointHits),
+            Action::DebugEditLog => self.edit_cursor_breakpoint(Kind::BreakpointLog),
+            Action::DebugAddWatch => self.open_watch_prompt(None),
             Action::DebugContinue => self.continue_or_start(),
             Action::DebugPause => self.with_session(pm_dap::Session::pause),
             Action::DebugStepOver => self.with_session(pm_dap::Session::step_over),
@@ -67,6 +72,31 @@ impl App {
             Message::ToggleBreakpoint(pane, at) => {
                 self.focus_pane(pane);
                 self.toggle_breakpoint(pane, at.line);
+            }
+            Message::ShowBreakpointMenu(pane, at) => {
+                self.focus_pane(pane);
+                self.open_menu(crate::workspace::MenuTarget::Breakpoint(pane, at.line));
+            }
+            Message::EditBreakpoint(pane, line, kind) => self.edit_breakpoint_at(pane, line, kind),
+            Message::RemoveWatch(index) => {
+                if let Some(scope) = self.scope() {
+                    let mut watches = self.debuggers.watches(scope).to_vec();
+                    if index < watches.len() {
+                        watches.remove(index);
+                        self.debuggers.set_watches(scope, watches);
+                    }
+                }
+            }
+            Message::EditWatch(index) => {
+                if self.watch_clicks.press(index) == 2 {
+                    self.open_watch_prompt(Some(index));
+                }
+            }
+            Message::ToggleWatchSection => {
+                if let Some(debugger) = self.scope().and_then(|scope| self.debuggers.get_mut(scope))
+                {
+                    debugger.toggle_scope("Watch");
+                }
             }
             Message::ActOnDebugger(action) => {
                 self.debug_action(action);
@@ -145,6 +175,54 @@ impl App {
             .collect()
     }
 
+    /// Lists processes the editor can attach to.
+    pub(super) fn process_rows(&self) -> Vec<Row> {
+        pm_dap::processes()
+            .into_iter()
+            .map(|process| Row {
+                section: None,
+                label: process.name,
+                detail: format!("{} · {}", process.pid, process.command),
+                choice: Choice::Process(process.pid),
+                enabled: true,
+            })
+            .collect()
+    }
+
+    /// Lists installed adapters able to attach to the chosen process.
+    pub(super) fn attach_adapter_rows(&self) -> Vec<Row> {
+        let Some(pid) = self.attach_pid else {
+            return Vec::new();
+        };
+        let Some(scope) = self.scope() else {
+            return Vec::new();
+        };
+        let python = pm_dap::processes()
+            .iter()
+            .find(|process| process.pid == pid)
+            .is_some_and(|process| process.name.starts_with("python"));
+        let adapters = if python { [2, 0, 1, 3] } else { [0, 1, 3, 2] };
+        adapters
+            .into_iter()
+            .filter_map(|index| {
+                let adapter = pm_dap::ADAPTERS[index];
+                adapter.installed().then(|| Row {
+                    section: None,
+                    label: adapter.name.to_owned(),
+                    detail: format!("Attach to {pid}"),
+                    choice: Choice::Debug(scope, Box::new(adapter.attach(pid))),
+                    enabled: true,
+                })
+            })
+            .collect()
+    }
+
+    /// Opens the adapter picker for one process.
+    pub(super) fn choose_attach_process(&mut self, pid: u32) {
+        self.attach_pid = Some(pid);
+        self.open_picker(Kind::AttachAdapters);
+    }
+
     /// Starts debugging `scenario` in `scope`, and shows the debugger.
     pub(super) fn start_debugging(&mut self, scope: Scope, scenario: Scenario) {
         if let Some(label) = &scenario.before {
@@ -189,6 +267,9 @@ impl App {
                 Event::Paused(frame) if self.scope() == Some(scope) => {
                     self.bring_up(scope, &frame);
                 }
+                Event::StartRefused(reason) => {
+                    self.say_trouble("Debugging could not start", &reason)
+                }
                 Event::Paused(_) | Event::Ended => {}
             }
         }
@@ -224,13 +305,36 @@ impl App {
             .map(|session| session.placed(&path))
             .unwrap_or_default();
         self.debuggers
-            .lines(scope, &path)
+            .breakpoints(scope, &path)
             .into_iter()
-            .map(|line| Breakpoint {
-                line,
+            .map(|breakpoint| Breakpoint {
+                line: breakpoint.line,
+                kind: if breakpoint
+                    .log
+                    .as_ref()
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    Mark::Log
+                } else if breakpoint
+                    .condition
+                    .as_ref()
+                    .is_some_and(|value| !value.is_empty())
+                    || breakpoint
+                        .hits
+                        .as_ref()
+                        .is_some_and(|value| !value.is_empty())
+                {
+                    Mark::Conditional
+                } else {
+                    Mark::Plain
+                },
+                message: placed
+                    .iter()
+                    .find(|mark| mark.line == breakpoint.line)
+                    .and_then(|mark| mark.message.clone()),
                 placed: placed
                     .iter()
-                    .find(|mark| mark.line == line)
+                    .find(|mark| mark.line == breakpoint.line)
                     .is_none_or(|mark| mark.verified),
             })
             .collect()
@@ -262,6 +366,90 @@ impl App {
             return;
         };
         self.debuggers.toggle(scope, &path, line);
+    }
+
+    /// Opens a breakpoint field prompt on the cursor's line.
+    fn edit_cursor_breakpoint(&mut self, kind: Kind) {
+        let Some(line) = self.with_buffer(|buffer| buffer.selection().head.line) else {
+            return;
+        };
+        self.edit_breakpoint_at(self.panes.focus(), line, kind);
+    }
+
+    /// Opens a breakpoint field prompt for a pane's source line.
+    pub(super) fn edit_breakpoint_at(&mut self, pane: PaneId, line: usize, kind: Kind) {
+        let Some(file) = self
+            .panes
+            .pane(pane)
+            .and_then(|pane| pane.active(self.scope()))
+            .and_then(|item| self.file_in(item))
+        else {
+            return;
+        };
+        let (Some(scope), Some(path)) = (self.editor.scope_of(file), self.editor.path(file)) else {
+            return;
+        };
+        let breakpoint = self.debuggers.breakpoint(scope, &path, line);
+        let seeded = breakpoint
+            .and_then(|breakpoint| match kind {
+                Kind::BreakpointCondition => breakpoint.condition,
+                Kind::BreakpointHits => breakpoint.hits,
+                Kind::BreakpointLog => breakpoint.log,
+                _ => None,
+            })
+            .unwrap_or_default();
+        self.breakpoint_prompt = Some((scope, path, line));
+        self.open_picker_with(kind, Vec::new(), seeded);
+    }
+
+    /// Saves one field of the breakpoint held by the prompt.
+    pub(super) fn set_breakpoint_field(&mut self, kind: Kind, typed: String) {
+        let Some((scope, path, line)) = self.breakpoint_prompt.take() else {
+            return;
+        };
+        let mut breakpoint =
+            self.debuggers
+                .breakpoint(scope, &path, line)
+                .unwrap_or(DapBreakpoint {
+                    line,
+                    ..DapBreakpoint::default()
+                });
+        let value = (!typed.is_empty()).then_some(typed);
+        match kind {
+            Kind::BreakpointCondition => breakpoint.condition = value,
+            Kind::BreakpointHits => breakpoint.hits = value,
+            Kind::BreakpointLog => breakpoint.log = value,
+            _ => return,
+        }
+        self.debuggers.set_breakpoint(scope, &path, breakpoint);
+    }
+
+    /// Opens the watch prompt, seeded from a row or the selected text.
+    pub(super) fn open_watch_prompt(&mut self, index: Option<usize>) {
+        let Some(scope) = self.scope() else { return };
+        let seeded = index
+            .and_then(|index| self.debuggers.watches(scope).get(index).cloned())
+            .or_else(|| self.with_buffer(pm_text::Buffer::selected_text))
+            .unwrap_or_default();
+        self.watch_prompt = Some((scope, index));
+        self.open_picker_with(Kind::Watch, Vec::new(), seeded);
+    }
+
+    /// Adds or edits a watch expression in the worktree held by the prompt.
+    pub(super) fn save_watch(&mut self, typed: String) {
+        let Some((scope, index)) = self.watch_prompt.take() else {
+            return;
+        };
+        if typed.trim().is_empty() {
+            return;
+        }
+        let mut watches = self.debuggers.watches(scope).to_vec();
+        if let Some(index) = index.and_then(|index| watches.get_mut(index)) {
+            *index = typed;
+        } else {
+            watches.push(typed);
+        }
+        self.debuggers.set_watches(scope, watches);
     }
 
     /// Runs the paused program on, or starts debugging where nothing is.

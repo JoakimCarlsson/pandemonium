@@ -136,12 +136,27 @@ const BREAKPOINT_HINT_ALPHA: f32 = 0.35;
 const BREAKPOINT_RING: f32 = 1.5;
 
 /// One breakpoint, as the gutter marks it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Breakpoint {
     /// The line it is on, counted from zero.
     pub line: usize,
     /// Whether the debugger could put it there, or has not been asked yet.
     pub placed: bool,
+    /// The visual kind of breakpoint.
+    pub kind: Mark,
+    /// Why the adapter could not place it, when known.
+    pub message: Option<String>,
+}
+
+/// The shape of a breakpoint in the gutter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Mark {
+    /// A plain stopping breakpoint.
+    Plain,
+    /// A breakpoint with a condition or hit count.
+    Conditional,
+    /// A logpoint that prints without stopping.
+    Log,
 }
 
 /// How much there is to scroll through, and how far in the view has reached.
@@ -183,6 +198,8 @@ pub struct BufferView<M> {
     /// What a press in the breakpoint column sends, given the line it
     /// landed on.
     on_breakpoint: Option<Arc<dyn Fn(Position) -> M>>,
+    /// What a secondary press in the breakpoint column sends.
+    on_breakpoint_menu: Option<Arc<dyn Fn(Position) -> M>>,
     /// The breakpoints of the file, to mark in the gutter.
     breakpoints: Vec<Breakpoint>,
     /// The line a paused program stands on in this file, if it does.
@@ -222,6 +239,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_gutter: None,
         on_fold: None,
         on_breakpoint: None,
+        on_breakpoint_menu: None,
         breakpoints: Vec::new(),
         stopped: None,
         on_scroll: None,
@@ -363,6 +381,12 @@ impl<M> BufferView<M> {
     /// `on_breakpoint`, by presses left of the line numbers.
     pub fn on_breakpoint(mut self, on_breakpoint: impl Fn(Position) -> M + 'static) -> Self {
         self.on_breakpoint = Some(Arc::new(on_breakpoint));
+        self
+    }
+
+    /// Returns this pane opening a breakpoint menu on a secondary press.
+    pub fn on_breakpoint_menu(mut self, on_menu: impl Fn(Position) -> M + 'static) -> Self {
+        self.on_breakpoint_menu = Some(Arc::new(on_menu));
         self
     }
 
@@ -685,11 +709,27 @@ impl<M> BufferView<M> {
             let Some(top) = painting.top_of(mark.line) else {
                 continue;
             };
+            if let Some(message) = &mark.message {
+                cx.tooltip(dot(top), message.clone());
+            }
             let quad = match mark.placed {
                 true => Quad::filled(dot(top), danger),
                 false => Quad::filled(dot(top), Rgba::TRANSPARENT).border(BREAKPOINT_RING, danger),
             };
-            cx.quad(quad.corner_radius(size / 2.0));
+            cx.quad(quad.corner_radius(if mark.kind == Mark::Log {
+                size * 0.2
+            } else {
+                size / 2.0
+            }));
+            if mark.kind == Mark::Conditional {
+                let bar = Rect::from_xywh(
+                    dot(top).left() + size * 0.18,
+                    dot(top).top() + size * 0.43,
+                    size * 0.64,
+                    size * 0.14,
+                );
+                cx.quad(Quad::filled(bar, painting.theme.colors.background));
+            }
         }
         if let Some(top) = self.stopped.and_then(|line| painting.top_of(line)) {
             let icon = IconSize::XSmall.pixels();
@@ -1523,7 +1563,12 @@ impl<M: Clone + 'static> BufferView<M> {
         let file = self.file.clone();
         let pointer = cx.input().pointer;
         let pressed = pointer.map(|at| on_breakpoint(file.borrow().position_at(at)));
-        cx.clickable(layout.breakpoint_column(), pressed, self.on_menu.clone());
+        let menu = pointer.and_then(|at| {
+            self.on_breakpoint_menu
+                .as_ref()
+                .map(|on_menu| on_menu(file.borrow().position_at(at)))
+        });
+        cx.clickable(layout.breakpoint_column(), pressed, menu);
     }
 
     /// Takes the press and the drag on the minimap that move the view.
