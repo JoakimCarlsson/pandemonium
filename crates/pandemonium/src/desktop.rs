@@ -111,6 +111,9 @@ pub fn paste_image() -> Option<(u32, u32, Vec<u8>)> {
     ))
 }
 
+/// The longest side of a pasted image sent to an agent.
+pub const PASTED_IMAGE_MAX_SIDE: u32 = 2048;
+
 /// `width` by `height` RGBA `pixels` as a PNG, compressed quickly rather than
 /// small: a screenshot is sent once and waited on while it is encoded.
 pub fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {

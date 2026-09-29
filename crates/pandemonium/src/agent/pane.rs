@@ -697,6 +697,18 @@ fn wrap_part(talk: &Talk, key: PartKey) -> Part {
         }
         Block::Planned(steps) => steps.iter().map(step_row).collect(),
         Block::Note(note) => passage_rows(note, BULLET, Tone::Note, columns),
+        Block::Failure(message, compact) => {
+            let mut rows = passage_rows(message, BULLET, Tone::Note, columns);
+            if *compact {
+                rows.extend(markdown_rows(
+                    "[Run /compact](pandemonium:agent/compact)",
+                    BULLET,
+                    Tone::Note,
+                    columns,
+                ));
+            }
+            rows
+        }
     };
     Part {
         key,

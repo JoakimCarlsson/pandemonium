@@ -749,6 +749,16 @@ impl App {
         let Some(link) = talk.drawn_link(place) else {
             return;
         };
+        if link == "pandemonium:agent/compact" {
+            if self
+                .agents
+                .get_mut(session)
+                .is_some_and(|talk| talk.take_compact_command())
+            {
+                self.focus_prompt(session);
+            }
+            return;
+        }
         match linked_file(talk.root(), &link) {
             Some((path, line)) => {
                 let place = Place {

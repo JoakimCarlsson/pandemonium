@@ -25,6 +25,8 @@ pub enum Block {
     Planned(Vec<Step>),
     /// Something the editor has to say about the conversation itself.
     Note(String),
+    /// A failed turn and whether the agent offered a compact command.
+    Failure(String, bool),
 }
 
 /// Everything one conversation has come to.
@@ -142,6 +144,11 @@ impl Transcript {
     /// Adds something the editor itself has to say.
     pub fn note(&mut self, note: impl Into<String>) {
         self.push(Block::Note(note.into()));
+    }
+
+    /// Adds an agent failure and its available recovery action.
+    pub fn failure(&mut self, message: String, compact: bool) {
+        self.push(Block::Failure(message, compact));
     }
 
     /// Puts `block` in place of the one at `at`.
