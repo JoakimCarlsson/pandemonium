@@ -22,7 +22,10 @@ pub struct Process {
 
 /// Lists visible processes, newest first where the platform exposes them.
 pub fn processes() -> Vec<Process> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let mut found = Vec::new();
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let found = Vec::new();
     #[cfg(target_os = "linux")]
     {
         let mut started = std::collections::HashMap::new();

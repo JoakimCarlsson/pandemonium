@@ -44,6 +44,8 @@ pub enum Travel {
 pub enum Action {
     /// Open the command palette.
     ShowCommands,
+    /// Choose a language server to install.
+    InstallLanguageServer,
     /// Open the file palette, over every open project.
     ShowFiles,
     /// Open the project palette.
@@ -375,6 +377,11 @@ pub enum Action {
 /// commands sit together rather than alphabetically.
 const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::ShowCommands, "palette.commands", "Show Commands"),
+    (
+        Action::InstallLanguageServer,
+        "language.install_server",
+        "Install Language Server…",
+    ),
     (Action::ShowFiles, "palette.files", "Go to File"),
     (Action::ShowProjects, "palette.projects", "Go to Project"),
     (Action::ShowSessions, "palette.sessions", "Go to Session"),

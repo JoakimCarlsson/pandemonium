@@ -25,11 +25,13 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::agent::Agent;
 use crate::attachment::Attachment;
+use crate::process::{self, Containment};
 use crate::request::{self, Answer, Request, Shape};
 use crate::transport;
 use crate::update::{self, Event, Knob, Method, Mode, Setting, Stop, Tools};
@@ -57,6 +59,9 @@ const INVALID: i64 = -32602;
 
 /// How much of what an agent writes on its error pipe is kept.
 const TROUBLE: usize = 8 * 1024;
+
+/// How long the agent's process group has to end before it is killed.
+const END_WITHIN: Duration = Duration::from_secs(2);
 
 /// How a session wakes the window once it has something to say.
 pub type Notify = Arc<dyn Fn() + Send + Sync>;
@@ -100,6 +105,11 @@ struct Owed {
 enum Outgoing {
     /// A message ready to be written as it stands.
     Message(Value),
+    /// Closes the agent's input after earlier messages have been written.
+    Close {
+        /// Notifies the shutdown worker once the input pipe is closed.
+        closed: Sender<()>,
+    },
     /// A turn, whose content is read and built only once it is written.
     Turn {
         /// The identifier the request goes under.
@@ -127,6 +137,7 @@ impl Outgoing {
     fn build(self) -> Value {
         match self {
             Self::Message(message) => message,
+            Self::Close { .. } => unreachable!("a close is handled before building"),
             Self::Turn {
                 id,
                 session,
@@ -219,6 +230,8 @@ pub struct Session {
     root: PathBuf,
     /// The process itself, kept so that it can be ended, until it has been.
     process: Mutex<Option<Child>>,
+    /// The operating system container for every process the agent starts.
+    containment: Containment,
     /// Where messages for the agent are handed to the writer thread.
     outbox: Sender<Outgoing>,
     /// What the agent has said and what it is owed.
@@ -286,14 +299,23 @@ impl Session {
         resume_fallback: bool,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        let mut process = agent
-            .command()
+        let mut command = agent.command();
+        command
             .current_dir(root)
             .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        process::configure(&mut command);
+        let mut process = command.spawn()?;
+        let containment = match Containment::new(&process) {
+            Ok(containment) => containment,
+            Err(error) => {
+                let _ = process.kill();
+                std::thread::spawn(move || process.wait());
+                return Err(error);
+            }
+        };
 
         let stdin = process.stdin.take().expect("stdin was piped");
         let stdout = process.stdout.take().expect("stdout was piped");
@@ -306,6 +328,7 @@ impl Session {
             agent,
             root: root.to_path_buf(),
             process: Mutex::new(Some(process)),
+            containment,
             outbox: outbox.clone(),
             state: state.clone(),
             next: next.clone(),
@@ -687,16 +710,31 @@ impl Session {
 }
 
 impl Drop for Session {
-    /// Ends the agent's process when the session is closed.
+    /// Ends the agent's process group when the session is closed.
     ///
-    /// The process is killed here and reaped on a thread of its own, so a
-    /// closing pane never waits on a process that is slow to go.
+    /// The writer closes stdin after cancellation; a worker gives the group
+    /// a short grace period before killing it and reaping the direct child.
     fn drop(&mut self) {
-        let Some(mut process) = self.process.get_mut().ok().and_then(Option::take) else {
+        self.cancel();
+        let (closed, closing) = mpsc::channel();
+        let _ = self.outbox.send(Outgoing::Close { closed });
+        let Some(mut process) = self
+            .process
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
             return;
         };
-        let _ = process.kill();
-        std::thread::spawn(move || process.wait());
+        let containment = std::mem::replace(&mut self.containment, Containment::empty());
+        process::finish(std::thread::spawn(move || {
+            let _ = closing.recv_timeout(Duration::from_millis(100));
+            containment.terminate();
+            std::thread::sleep(END_WITHIN);
+            containment.kill();
+            let _ = process.kill();
+            let _ = process.wait();
+        }));
     }
 }
 
@@ -704,6 +742,11 @@ impl Drop for Session {
 /// until every sender has gone or the pipe has.
 fn write(mut stdin: ChildStdin, pending: &Receiver<Outgoing>) {
     for outgoing in pending {
+        if let Outgoing::Close { closed } = outgoing {
+            drop(stdin);
+            let _ = closed.send(());
+            return;
+        }
         if transport::write(&mut stdin, &outgoing.build()).is_err() {
             return;
         }

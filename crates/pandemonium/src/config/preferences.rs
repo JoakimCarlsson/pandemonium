@@ -76,6 +76,33 @@ impl ThemeMode {
     }
 }
 
+/// How the editor handles a missing installable language server.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallLanguageServers {
+    /// Ask before installing.
+    #[default]
+    Ask,
+    /// Install when a language first needs the server.
+    Always,
+    /// Never offer an automatic install.
+    Never,
+}
+
+impl InstallLanguageServers {
+    /// Choices shown in the settings pane.
+    pub const ALL: [Self; 3] = [Self::Ask, Self::Always, Self::Never];
+
+    /// The short label shown in the settings pane.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask",
+            Self::Always => "Always",
+            Self::Never => "Never",
+        }
+    }
+}
+
 /// One preference, named so it can be put back to its default on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Preference {
@@ -158,6 +185,8 @@ pub enum Preference {
     TerminalScrollback,
     /// Whether a new session's worktree is trusted without being asked about.
     TrustWorktrees,
+    /// How a missing language server is installed.
+    InstallLanguageServers,
     /// The paths symlinked into a new session's worktree.
     WorktreeLink,
     /// The paths copied into it.
@@ -265,6 +294,8 @@ pub struct Preferences {
     pub terminal_scrollback: usize,
     /// Whether a new session's worktree is trusted without being asked about.
     pub trust_worktrees: bool,
+    /// How missing language servers are installed.
+    pub install_language_servers: InstallLanguageServers,
     /// What a session's fresh worktree is given, git having left it out.
     pub bootstrap: Bootstrap,
 }
@@ -296,6 +327,7 @@ impl Default for Preferences {
             final_newline: false,
             terminal_scrollback: pm_vt::SCROLLBACK,
             trust_worktrees: false,
+            install_language_servers: InstallLanguageServers::Ask,
             bootstrap: Bootstrap::default(),
         }
     }
@@ -401,6 +433,7 @@ fields! {
     TerminalFontSize => fonts.terminal_size,
     TerminalScrollback => terminal_scrollback,
     TrustWorktrees => trust_worktrees,
+    InstallLanguageServers => install_language_servers,
     WorktreeLink => bootstrap.link,
     WorktreeCopy => bootstrap.copy,
     WorktreePort => bootstrap.port,
@@ -426,6 +459,7 @@ impl Preferences {
             Message::StepPreference(preference, step) => self.step(preference, step),
             Message::SetCursorShape(shape) => self.display.cursor_shape = shape,
             Message::SetVimClipboard(sharing) => self.vim_clipboard = sharing,
+            Message::SetInstallLanguageServers(mode) => self.install_language_servers = mode,
             Message::SetWrapGuide(column) => self.display.wrap_guide = column,
             Message::RemoveWorktreePath(list, index) => {
                 let paths = self.paths_mut(list);

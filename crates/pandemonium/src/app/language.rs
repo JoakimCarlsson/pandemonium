@@ -79,6 +79,87 @@ pub struct OfferedCodeAction {
 }
 
 impl App {
+    /// Offers one missing installable server per launch according to the preference.
+    pub(super) fn offer_missing_servers(&mut self) {
+        for server in self.editor.take_missing_servers() {
+            if !self.offered_servers.insert(server.command) {
+                continue;
+            }
+            match self.preferences.install_language_servers {
+                crate::config::InstallLanguageServers::Ask => self.notices.trouble(
+                    format!("{} is not installed. Install it?", server.command),
+                    Some(crate::message::Message::InstallLanguageServer(
+                        server.command,
+                    )),
+                ),
+                crate::config::InstallLanguageServers::Always => {
+                    self.start_server_install(server.command, false);
+                }
+                crate::config::InstallLanguageServers::Never => {}
+            }
+            self.request_redraw();
+        }
+    }
+
+    /// Starts one pinned install away from the window thread.
+    pub(super) fn start_server_install(&mut self, command: &'static str, manual: bool) {
+        if self.installing_servers.contains_key(command) {
+            return;
+        }
+        let Some(recipe) = pm_text::install::recipe(command) else {
+            return;
+        };
+        let Some(directory) = crate::config::servers() else {
+            self.notices.trouble(
+                format!("Installing {command} needs an editor home directory."),
+                None,
+            );
+            return;
+        };
+        if manual {
+            self.offered_servers.insert(command);
+        }
+        let notice = self.notices.progress(format!("Installing {command}…"));
+        self.installing_servers.insert(command, notice);
+        let results = self.installed_servers.clone();
+        let wake = self.waker(crate::app::Wake::Install);
+        std::thread::spawn(move || {
+            let result = pm_text::install::install(&directory, command, recipe).map(|_| ());
+            results.lock().unwrap().push((command, result));
+            wake();
+        });
+        self.request_redraw();
+    }
+
+    /// Reports finished installs and attaches their servers to open documents.
+    pub(super) fn finish_server_installs(&mut self) {
+        let finished = std::mem::take(&mut *self.installed_servers.lock().unwrap());
+        for (command, result) in finished {
+            if let Some(notice) = self.installing_servers.remove(command) {
+                self.notices.dismiss(notice);
+            }
+            match result {
+                Ok(()) => {
+                    let started = self.editor.reopen_command(command);
+                    if started
+                        && let Some(directory) = crate::config::servers()
+                        && let Some(recipe) = pm_text::install::recipe(command)
+                    {
+                        pm_text::install::prune_older(&directory, command, recipe.version());
+                    }
+                    if let Some(recipe) = pm_text::install::recipe(command) {
+                        self.notices
+                            .done(format!("Installed {command} {}", recipe.version()), None);
+                    }
+                }
+                Err(error) => self
+                    .notices
+                    .trouble(format!("Could not install {command}: {error}"), None),
+            }
+        }
+        self.request_redraw();
+    }
+
     /// The next delayed annotation request in a visible document.
     pub(super) fn next_annotation(&self) -> Option<Instant> {
         let scope = self.scope()?;
@@ -127,15 +208,25 @@ impl App {
         if document.borrow().is_served() {
             return false;
         }
-        let language = document
-            .borrow()
-            .buffer()
-            .language()
-            .map(|language| language.name().to_owned())
-            .unwrap_or_else(|| String::from("this file"));
+        let (language, installable) = document.borrow().buffer().language().map_or_else(
+            || (String::from("this file"), false),
+            |language| {
+                (
+                    language.name().to_owned(),
+                    self.editor.installable_server(language).is_some(),
+                )
+            },
+        );
 
         let mut hint = Shown::at(self.cursor_point());
-        hint.said = Some(format!("No language server is running for {language}."));
+        hint.said = Some(format!(
+            "No language server is running for {language}.{}",
+            if installable {
+                " Install it from the palette."
+            } else {
+                ""
+            }
+        ));
         self.hint = Some(hint);
         self.request_redraw();
         true

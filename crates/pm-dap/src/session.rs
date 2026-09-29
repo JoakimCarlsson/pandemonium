@@ -619,16 +619,18 @@ impl Reader {
             Sent::Evaluate => state.say(Category::Error, said),
             Sent::Launch => {
                 state.say(Category::Error, &format!("{command}: {said}"));
-                let mut reason = said.to_owned();
+                let reason = said.to_owned();
                 #[cfg(target_os = "linux")]
-                if self.request == Request::Attach
+                let reason = if self.request == Request::Attach
                     && std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
                         .ok()
                         .and_then(|value| value.trim().parse::<u32>().ok())
                         .is_some_and(|scope| scope >= 1)
                 {
-                    reason.push_str(". Attaching is restricted by kernel.yama.ptrace_scope");
-                }
+                    format!("{reason}. Attaching is restricted by kernel.yama.ptrace_scope")
+                } else {
+                    reason
+                };
                 state.events.push(Event::StartRefused(reason));
                 state.end();
             }

@@ -81,6 +81,9 @@ use crate::workspace::{
 /// The blames that have come back from the threads that asked for them.
 type Blamed = Arc<Mutex<Vec<(editor::FileId, Vec<pm_core::Blame>)>>>;
 
+/// Results sent by background language server installers.
+type InstalledServers = Arc<Mutex<Vec<(&'static str, Result<(), String>)>>>;
+
 /// Which box of text the keyboard is going to, when it is going to one.
 ///
 /// A window has more than one thing that is written in and only one keyboard,
@@ -105,6 +108,8 @@ pub enum Wake {
     Agent,
     /// A language server has said something about a file that is open.
     Language,
+    /// A language server installation has finished.
+    Install,
     /// A blame has come back for a file that asked for one.
     Blame,
     /// A remote Git operation has finished.
@@ -445,6 +450,12 @@ pub struct App {
     logins: Vec<(crate::agent::TalkId, Scope, crate::terminal::ShellId)>,
     /// What the reader is being told about in the status bar.
     notices: Notices,
+    /// Servers already offered or tried this launch.
+    offered_servers: BTreeSet<&'static str>,
+    /// Running installs and their status-bar notices.
+    installing_servers: BTreeMap<&'static str, crate::notice::NoticeId>,
+    /// Results delivered by installer worker threads.
+    installed_servers: InstalledServers,
     /// The breakpoints each worktree keeps, and the program each debugs.
     debuggers: crate::debug::Debuggers,
     /// The breakpoint a prompt is editing.
@@ -699,6 +710,9 @@ impl App {
             errands: client::Errands::default(),
             logins: Vec::new(),
             notices: Notices::default(),
+            offered_servers: BTreeSet::new(),
+            installing_servers: BTreeMap::new(),
+            installed_servers: Arc::new(Mutex::new(Vec::new())),
             debuggers: crate::debug::Debuggers::default(),
             breakpoint_prompt: None,
             watch_prompt: None,
@@ -1516,6 +1530,10 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::InstallLanguageServer(command) = message {
+            self.start_server_install(command, true);
+            return;
+        }
         if self.session_command(message) {
             self.request_redraw();
             return;
@@ -2330,6 +2348,7 @@ impl ApplicationHandler<Wake> for App {
     /// holding still, a caret blinking and a remote being waited on are the
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.offer_missing_servers();
         let expired = self.notices.expire(Instant::now());
         let seen = !self.window_occluded;
         let next_annotation = self.next_annotation().filter(|_| seen);
@@ -2386,6 +2405,7 @@ impl ApplicationHandler<Wake> for App {
                     self.store();
                 }
             }
+            Wake::Install => self.finish_server_installs(),
             Wake::Language => {
                 let answered = self.collect_answers();
                 if self.editor.refresh() || answered {
@@ -2522,6 +2542,9 @@ impl ApplicationHandler<Wake> for App {
         self.agents.set_notify(self.waker(Wake::Agent));
         self.debuggers.set_notify(self.waker(Wake::Debug));
         self.editor.set_notify(self.waker(Wake::Language));
+        if let Some(directory) = config::servers() {
+            pm_text::program::set_servers(directory);
+        }
         let (replace, add) = partition_language_servers(&self.language_servers);
         self.editor.set_language_servers(&replace);
         self.editor.add_language_servers(&add);

@@ -1190,6 +1190,72 @@ impl Files {
         self.servers.set_added(named_servers(added));
     }
 
+    /// The first installable absent server for each unserved open language.
+    pub fn take_missing_servers(&mut self) -> Vec<Server> {
+        let missing = self.servers.take_missing();
+        missing
+            .into_iter()
+            .filter(|server| {
+                self.open.values().any(|entry| {
+                    let document = entry.document.borrow();
+                    document.buffer().language().is_some_and(|language| {
+                        !document.is_served()
+                            && self
+                                .servers
+                                .installable(language)
+                                .is_some_and(|first| first.command == server.command)
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// The first installable configured server for `language`.
+    pub fn installable_server(&self, language: pm_text::Language) -> Option<Server> {
+        self.servers.installable(language)
+    }
+
+    /// Starts installed servers again for every open document of `language`.
+    pub fn reopen_language(&mut self, language: pm_text::Language) {
+        self.servers.reopen(language);
+        for entry in self.open.values() {
+            if entry
+                .document
+                .borrow()
+                .buffer()
+                .language()
+                .is_some_and(|open| open.name() == language.name())
+            {
+                let servers = self.servers.open(&entry.root, language);
+                entry.document.borrow_mut().set_servers(servers);
+            }
+        }
+    }
+
+    /// Starts `command` for every open language that configures it.
+    pub fn reopen_command(&mut self, command: &str) -> bool {
+        let languages = self
+            .open
+            .values()
+            .filter_map(|entry| entry.document.borrow().buffer().language())
+            .filter(|language| self.servers.uses(*language, command))
+            .collect::<Vec<_>>();
+        let mut seen = BTreeSet::new();
+        for language in languages {
+            if seen.insert(language.name()) {
+                self.reopen_language(language);
+            }
+        }
+        self.open.values().any(|entry| {
+            let document = entry.document.borrow();
+            document.is_served()
+                && document
+                    .buffer()
+                    .language()
+                    .is_some_and(|language| self.servers.uses(language, command))
+        })
+    }
+
     /// Writes files the way `habits` say from now on, the open ones
     /// included.
     pub fn set_habits(&mut self, habits: Habits) {
@@ -1466,6 +1532,17 @@ impl Files {
     /// the same file open in two panes survives one of them being closed.
     pub fn retain(&mut self, held: &BTreeSet<FileId>) {
         self.open.retain(|id, _| held.contains(id));
+        let documents = self
+            .open
+            .values()
+            .filter_map(|entry| {
+                Some((
+                    entry.root.clone(),
+                    entry.document.borrow().buffer().language()?.name(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        self.servers.retain_opened(&documents);
     }
 
     /// Closes every file and server of `scope` over its worktree roots.

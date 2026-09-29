@@ -31,6 +31,8 @@ const SHOWN: usize = 200;
 pub enum Kind {
     /// Every command the window can carry out.
     Commands,
+    /// Every server the editor can install.
+    LanguageServers,
     /// Every file of the worktree the window is pointed at.
     Files,
     /// The projects the window holds open.
@@ -112,6 +114,7 @@ impl Kind {
     pub fn placeholder(self) -> &'static str {
         match self {
             Self::Commands => "Run a command",
+            Self::LanguageServers => "Install Language Server…",
             Self::Files => "Search files by name, > for commands, # for symbols",
             Self::Projects => "Go to a project",
             Self::Branches => "Switch or type to create a branch…",
@@ -215,6 +218,8 @@ impl Kind {
 pub enum Choice {
     /// Carry out this command.
     Act(Action),
+    /// Install this language server.
+    InstallLanguageServer(&'static str),
     /// Open this file of this worktree.
     Open(Scope, PathBuf),
     /// Open this file of this worktree and go to this place in it.

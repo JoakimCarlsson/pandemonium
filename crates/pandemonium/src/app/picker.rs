@@ -163,6 +163,7 @@ impl App {
     fn take(&mut self, choice: Choice) {
         match choice {
             Choice::Act(action) => self.act(action),
+            Choice::InstallLanguageServer(command) => self.start_server_install(command, true),
             Choice::Open(scope, path) => {
                 self.jump_to(&Place {
                     scope,
@@ -243,6 +244,7 @@ impl App {
     fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
             Kind::Commands => self.command_rows(),
+            Kind::LanguageServers => self.language_server_rows(),
             Kind::Files | Kind::WorkspaceSymbols => self.listed_file_rows(),
             Kind::Projects => self.project_rows(),
             Kind::Problems => self.problem_rows(),
@@ -292,6 +294,31 @@ impl App {
                 detail: self.keys_for(action, &context).unwrap_or_default(),
                 choice: Choice::Act(action),
                 enabled: has_buffer || !action.needs_buffer(),
+            })
+            .collect()
+    }
+
+    /// Every server the editor can install, with installed ones marked.
+    fn language_server_rows(&self) -> Vec<Row> {
+        let commands = pm_text::Language::all()
+            .iter()
+            .flat_map(|language| language.servers())
+            .filter(|server| server.install.is_some())
+            .map(|server| server.command)
+            .collect::<std::collections::BTreeSet<_>>();
+        commands
+            .into_iter()
+            .map(|command| Row {
+                section: None,
+                label: command.to_owned(),
+                detail: if pm_text::program::installed(command).is_some() {
+                    "Installed"
+                } else {
+                    "Not installed"
+                }
+                .to_owned(),
+                choice: Choice::InstallLanguageServer(command),
+                enabled: true,
             })
             .collect()
     }
