@@ -650,12 +650,15 @@ impl Buffer {
     /// are made latest place first, and the cursor is carried past each one
     /// made before it. One that overlaps the completion itself is dropped:
     /// it was measured against text the completion replaces.
+    ///
+    /// Answers the character `text` begins at once everything is in, which
+    /// is where a snippet's places are counted from.
     pub fn complete(
         &mut self,
         range: Range<Position>,
         text: &str,
         extra: Vec<(Range<Position>, String)>,
-    ) {
+    ) -> usize {
         let mut edits = extra
             .into_iter()
             .filter(|(span, _)| span.end <= range.start || span.start >= range.end)
@@ -663,8 +666,9 @@ impl Buffer {
             .chain(std::iter::once((range.clone(), text.to_owned(), true)))
             .collect::<Vec<_>>();
         edits.sort_by_key(|(span, _, main)| (std::cmp::Reverse(span.start), !main));
+        let length = text.chars().count();
+        let mut cursor = None;
         self.grouped(|buffer| {
-            let mut cursor = None;
             for (span, text, main) in edits {
                 let start = buffer.char_of(span.start);
                 let removed = buffer.char_of(span.end) - start;
@@ -680,6 +684,7 @@ impl Buffer {
                 buffer.set_selection(Selection::at(at));
             }
         });
+        cursor.map_or(0, |at: usize| at - length)
     }
 
     /// Takes the spaces and tabs off the end of every line, as one step.
@@ -742,6 +747,7 @@ impl Buffer {
 
         self.text.remove(first..last);
         self.text.insert(first, text);
+        self.shift_places(first, last - first, text.chars().count());
 
         let head = start.after(text);
         let edit = InputEdit {

@@ -435,16 +435,32 @@ impl App {
             return;
         }
         let target = edit.target();
-        let done = match edit.kind() {
+        if edit.kind() == EditKind::Rename && self.ask_before_moving(edit.at(), &target) {
+            return;
+        }
+        self.carry_out_tree_edit(edit.kind(), edit.at(), &target);
+    }
+
+    /// Makes, or moves `at` to, `target` on disk, and brings the tree, the
+    /// tabs and the servers along.
+    pub(super) fn carry_out_tree_edit(&mut self, kind: EditKind, at: &Path, target: &Path) {
+        let target = target.to_path_buf();
+        let done = match kind {
             EditKind::NewFile => ops::create_file(&target),
             EditKind::NewFolder => ops::create_dir(&target),
-            EditKind::Rename => ops::rename(edit.at(), &target),
+            EditKind::Rename => ops::rename(at, &target),
         };
         if done.is_err() {
             return;
         }
-        if edit.kind() == EditKind::Rename {
-            self.retarget_tabs(edit.at(), &target);
+        match kind {
+            EditKind::Rename => {
+                self.retarget_tabs(at, &target);
+                self.tell_servers_moved(&[(at.to_path_buf(), target.clone())]);
+            }
+            EditKind::NewFile | EditKind::NewFolder => {
+                self.tell_servers_made(std::slice::from_ref(&target));
+            }
         }
         self.reread_worktree();
         if let Some(tree) = self.scope().and_then(|scope| self.files.get_mut(&scope)) {
@@ -454,7 +470,7 @@ impl App {
             selection.select(&target);
         }
         self.scroll_tree_to(&target);
-        if edit.kind() == EditKind::NewFile {
+        if kind == EditKind::NewFile {
             self.open_tree_file(&target, self.panes.focus(), false);
         }
     }
@@ -557,6 +573,7 @@ impl App {
                     for path in &removed {
                         self.close_tabs_of(path);
                     }
+                    self.tell_servers_removed(&removed);
                     self.reread_worktree();
                 }
                 Shifted::Placed {
@@ -567,6 +584,7 @@ impl App {
                     for (from, to) in &moved {
                         self.retarget_tabs(from, to);
                     }
+                    self.tell_servers_moved(&moved);
                     if let Some(directory) = directory
                         && let Some(tree) =
                             self.scope().and_then(|scope| self.files.get_mut(&scope))

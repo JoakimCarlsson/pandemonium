@@ -5,7 +5,7 @@
 //! — none of which is an error the editor reports, because a file opens and
 //! edits the same either way. What it says about why goes to its log.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -15,23 +15,28 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use lsp_types::notification::{
-    DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, Exit, Initialized, LogMessage,
+    DidChangeConfiguration, DidCloseTextDocument, DidCreateFiles, DidDeleteFiles,
+    DidOpenTextDocument, DidRenameFiles, DidSaveTextDocument, Exit, Initialized, LogMessage,
     Notification, Progress as ProgressNotification, PublishDiagnostics, ShowMessage,
     WillSaveTextDocument,
 };
 use lsp_types::request::{
     ApplyWorkspaceEdit, CodeLensRefresh, DocumentDiagnosticRequest, ExecuteCommand, Initialize,
-    InlayHintRefreshRequest, RegisterCapability, Request as LspRequest, SemanticTokensRefresh,
-    ShowDocument, ShowMessageRequest, Shutdown, UnregisterCapability, WorkDoneProgressCreate,
+    InlayHintRefreshRequest, RegisterCapability, Request as LspRequest,
+    SemanticTokensFullDeltaRequest, SemanticTokensFullRequest, SemanticTokensRefresh, ShowDocument,
+    ShowMessageRequest, Shutdown, UnregisterCapability, WorkDoneProgressCreate,
     WorkspaceConfiguration, WorkspaceDiagnosticRefresh, WorkspaceFoldersRequest,
 };
 use lsp_types::{
-    ApplyWorkspaceEditResponse, DiagnosticSeverity, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
-    DocumentDiagnosticReport, DocumentDiagnosticReportKind, DocumentDiagnosticReportResult,
-    ExecuteCommandParams, InitializeResult, InitializedParams, MessageType, PartialResultParams,
-    ShowDocumentResult, TextDocumentIdentifier, TextDocumentItem, TextDocumentSaveReason,
-    TextDocumentSyncKind, WillSaveTextDocumentParams, WorkDoneProgressParams,
+    ApplyWorkspaceEditResponse, CreateFilesParams, DeleteFilesParams, DiagnosticSeverity,
+    DidChangeConfigurationParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
+    DocumentDiagnosticReportKind, DocumentDiagnosticReportResult, ExecuteCommandParams, FileCreate,
+    FileDelete, FileRename, InitializeResult, InitializedParams, MessageType, PartialResultParams,
+    RenameFilesParams, SemanticToken, SemanticTokensDeltaParams, SemanticTokensEdit,
+    SemanticTokensFullDeltaResult, SemanticTokensResult, ShowDocumentResult,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentSaveReason, TextDocumentSyncKind,
+    WillSaveTextDocumentParams, WorkDoneProgressParams,
 };
 use ropey::Rope;
 use serde_json::Value;
@@ -134,6 +139,11 @@ struct State {
     works: Works,
     /// What the server has asked to be shown that went wrong, not yet shown.
     troubles: Vec<String>,
+    /// The semantic tokens last sent for each file, under the id the server
+    /// gave them, for asking only what changed since.
+    tokens: HashMap<PathBuf, (String, Vec<SemanticToken>)>,
+    /// The semantic token questions asked as what changed since the last.
+    deltas: HashSet<i64>,
 }
 
 impl State {
@@ -224,7 +234,7 @@ impl Client {
             log.follow(stderr);
         }
 
-        let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"));
+        let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"), log.clone());
         let stdout = process.stdout.take().expect("stdout was piped");
         let state = Arc::new(Mutex::new(State {
             options: serde_json::from_str(server.options).unwrap_or(Value::Null),
@@ -400,6 +410,121 @@ impl Client {
         })
     }
 
+    /// Hands the server the settings `options`, a JSON object, when they are
+    /// not the ones it already has.
+    ///
+    /// The settings go in the notification itself, and are what the server
+    /// is answered with when it asks for them after.
+    pub fn configure(&self, options: &str) {
+        let options = serde_json::from_str::<Value>(options).unwrap_or(Value::Null);
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.options == options {
+            return;
+        }
+        state.options = options.clone();
+        let message = rpc::notification::<DidChangeConfiguration>(DidChangeConfigurationParams {
+            settings: options,
+        });
+        post(&mut state, &self.wire, Outgoing::Message(message));
+    }
+
+    /// Tells the server that `paths` were made, those of them it asked to
+    /// hear about.
+    pub fn did_create(&self, paths: &[PathBuf]) {
+        let files = self.wanted("workspace/didCreateFiles", paths.iter());
+        if files.is_empty() {
+            return;
+        }
+        self.post_message(rpc::notification::<DidCreateFiles>(CreateFilesParams {
+            files: files
+                .into_iter()
+                .map(|path| FileCreate { uri: uri::of(path) })
+                .collect(),
+        }));
+    }
+
+    /// Tells the server that files and folders were moved, those of them it
+    /// asked to hear about.
+    pub fn did_rename(&self, moves: &[(PathBuf, PathBuf)]) {
+        let wanted = self.wanted("workspace/didRenameFiles", moves.iter().map(|(_, to)| to));
+        let files = moves
+            .iter()
+            .filter(|(_, to)| wanted.contains(&to))
+            .map(|(from, to)| FileRename {
+                old_uri: uri::of(from),
+                new_uri: uri::of(to),
+            })
+            .collect::<Vec<_>>();
+        if files.is_empty() {
+            return;
+        }
+        self.post_message(rpc::notification::<DidRenameFiles>(RenameFilesParams {
+            files,
+        }));
+    }
+
+    /// Tells the server that `paths` were taken away, those of them it asked
+    /// to hear about.
+    pub fn did_delete(&self, paths: &[PathBuf]) {
+        let files = self.wanted("workspace/didDeleteFiles", paths.iter());
+        if files.is_empty() {
+            return;
+        }
+        self.post_message(rpc::notification::<DidDeleteFiles>(DeleteFilesParams {
+            files: files
+                .into_iter()
+                .map(|path| FileDelete { uri: uri::of(path) })
+                .collect(),
+        }));
+    }
+
+    /// The paths among `paths` the server asked to hear `method` about.
+    fn wanted<'a>(
+        &self,
+        method: &str,
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> Vec<&'a PathBuf> {
+        let Ok(state) = self.state.lock() else {
+            return Vec::new();
+        };
+        paths
+            .filter(|path| state.capabilities.file_operation(method, path))
+            .collect()
+    }
+
+    /// Hands one message to the writer, or holds it until the handshake.
+    fn post_message(&self, message: Value) {
+        if let Ok(mut state) = self.state.lock() {
+            post(&mut state, &self.wire, Outgoing::Message(message));
+        }
+    }
+
+    /// The characters the server formats after in the file at `path`.
+    pub fn on_type_triggers(&self, path: &Path) -> Vec<char> {
+        self.state
+            .lock()
+            .map(|state| {
+                state
+                    .capabilities
+                    .on_type_triggers(Some(state.document(path)))
+            })
+            .unwrap_or_default()
+    }
+
+    /// The characters the server completes after in the file at `path`.
+    pub fn completion_triggers(&self, path: &Path) -> Vec<char> {
+        self.state
+            .lock()
+            .map(|state| {
+                state
+                    .capabilities
+                    .completion_triggers(Some(state.document(path)))
+            })
+            .unwrap_or_default()
+    }
+
     /// Tells the server a file is no longer open.
     pub fn did_close(&self, path: &Path) {
         let Ok(mut state) = self.state.lock() else {
@@ -407,6 +532,7 @@ impl Client {
         };
         state.texts.remove(path);
         state.languages.remove(path);
+        state.tokens.remove(path);
         state.pushed.remove(path);
         state.pulled.remove(path);
         let pulling = state
@@ -484,7 +610,28 @@ impl Client {
             indent,
             diagnostics,
         };
-        match encoded.message(id, asking) {
+        let previous = match request {
+            Request::Semantics if state.capabilities.sends_semantic_deltas() => {
+                state.tokens.get(path).map(|(result, _)| result.clone())
+            }
+            _ => None,
+        };
+        let message = match previous {
+            Some(previous_result_id) => {
+                state.deltas.insert(id);
+                Some(rpc::request::<SemanticTokensFullDeltaRequest>(
+                    id,
+                    SemanticTokensDeltaParams {
+                        work_done_progress_params: WorkDoneProgressParams::default(),
+                        partial_result_params: PartialResultParams::default(),
+                        text_document: TextDocumentIdentifier::new(uri::typed(path)),
+                        previous_result_id,
+                    },
+                ))
+            }
+            None => encoded.message(id, asking),
+        };
+        match message {
             Some(message) => {
                 state.asked.insert(id, (request, path.to_path_buf()));
                 post(&mut state, &self.wire, Outgoing::Message(message));
@@ -798,6 +945,7 @@ impl Reader {
     /// on it for ever.
     fn run(mut self) {
         while let Ok(Some(message)) = frame::read(&mut self.stdout) {
+            self.log.trace("<--", &message);
             if let Some(message) = Incoming::read(message) {
                 self.dispatch(message);
             }
@@ -1138,7 +1286,11 @@ impl Reader {
         };
 
         let mut files = files(&self.state);
-        let mut answer = request.read(&path, result, &legend).unwrap_or_else(|| {
+        let read = match request {
+            Request::Semantics => self.semantics(id, &path, result, &legend),
+            _ => request.read(&path, result, &legend),
+        };
+        let mut answer = read.unwrap_or_else(|| {
             self.log.write(&format!(
                 "{} was answered in a shape the editor could not read",
                 request.method()
@@ -1154,6 +1306,57 @@ impl Reader {
         (self.notify)();
     }
 
+    /// What a file's semantic tokens come to, from a reply that holds all of
+    /// them or one that holds what changed since the ones last sent.
+    ///
+    /// Tokens the server gave an id are kept under it, to ask after them by
+    /// next time; a reply to what changed is made against the ones kept.
+    fn semantics(
+        &self,
+        id: i64,
+        path: &Path,
+        result: Value,
+        legend: &[Option<Highlight>],
+    ) -> Option<Answer> {
+        let (delta, kept) = self
+            .with_state(|state| {
+                (
+                    state.deltas.remove(&id),
+                    state.tokens.get(path).map(|(_, tokens)| tokens.clone()),
+                )
+            })
+            .unwrap_or((false, None));
+        let (result_id, tokens) = match delta {
+            true => match rpc::result::<SemanticTokensFullDeltaRequest>(result)? {
+                None => (None, Vec::new()),
+                Some(SemanticTokensFullDeltaResult::Tokens(tokens)) => {
+                    (tokens.result_id, tokens.data)
+                }
+                Some(SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
+                    (delta.result_id, changed(kept?, delta.edits))
+                }
+                Some(SemanticTokensFullDeltaResult::PartialTokensDelta { edits }) => {
+                    (None, changed(kept?, edits))
+                }
+            },
+            false => match rpc::result::<SemanticTokensFullRequest>(result)? {
+                None => (None, Vec::new()),
+                Some(SemanticTokensResult::Tokens(tokens)) => (tokens.result_id, tokens.data),
+                Some(SemanticTokensResult::Partial(partial)) => (None, partial.data),
+            },
+        };
+        let spans = answer::semantics(&tokens, legend);
+        self.with_state(|state| match result_id {
+            Some(result_id) => {
+                state.tokens.insert(path.to_path_buf(), (result_id, tokens));
+            }
+            None => {
+                state.tokens.remove(path);
+            }
+        });
+        Some(Answer::Semantics(spans))
+    }
+
     /// Takes down that the server answered a question with an error.
     ///
     /// An error is not a short answer: a rename the server refused has not
@@ -1166,7 +1369,10 @@ impl Reader {
     fn gave_up(&self, id: i64, failure: &rpc::Failure) {
         let asked = self
             .with_state(|state| {
-                let (request, _) = state.asked.remove(&id)?;
+                let (request, path) = state.asked.remove(&id)?;
+                if state.deltas.remove(&id) {
+                    state.tokens.remove(&path);
+                }
                 state.answers.insert(id, Answer::Refused);
                 state.fresh = true;
                 Some(request)
@@ -1259,6 +1465,23 @@ impl Reader {
         });
         (self.notify)();
     }
+}
+
+/// `tokens` with the server's `edits` made to them, latest first.
+///
+/// An edit counts in the protocol's integers, five to a token.
+fn changed(
+    mut tokens: Vec<SemanticToken>,
+    mut edits: Vec<SemanticTokensEdit>,
+) -> Vec<SemanticToken> {
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.start));
+    for edit in edits {
+        let start = (edit.start / 5) as usize;
+        let end = (start + (edit.delete_count / 5) as usize).min(tokens.len());
+        let start = start.min(end);
+        tokens.splice(start..end, edit.data.unwrap_or_default());
+    }
+    tokens
 }
 
 /// What a server said is wrong with the file at `path`, kept both ways.

@@ -13,7 +13,7 @@ use std::time::Instant;
 use pm_core::ops;
 use pm_text::{
     Answer, Asked, Calls, Client, FileEdit, Handle, Lens, Location, NamedLocation, Position,
-    Request, WorkspaceChange,
+    Request, Trigger, WorkspaceChange,
 };
 
 use crate::app::App;
@@ -282,21 +282,179 @@ impl App {
             Action::GoToDeclaration => Request::Declaration,
             Action::FindReferences => Request::References,
             Action::ShowHover => Request::Hover,
-            Action::ShowCompletions => Request::Completions,
+            Action::ShowCompletions => Request::Completions(Trigger::Invoked),
             Action::ShowSignature => Request::Signature,
             Action::ShowCodeActions => Request::CodeActions,
-            Action::Format => Request::Format,
+            Action::Format => self.format_request(),
             Action::ShowSymbols => Request::Symbols,
             Action::ShowIncomingCalls => Request::PrepareCalls(Calls::Incoming),
             Action::ShowOutgoingCalls => Request::PrepareCalls(Calls::Outgoing),
             Action::ShowWorkspaceSymbols => return self.open_picker(Kind::WorkspaceSymbols),
-            Action::Rename => return self.open_prompt(Action::Rename),
+            Action::Rename => return self.prepare_rename(),
             _ => return,
         };
         if self.say_unserved() {
             return;
         }
         self.ask(request);
+    }
+
+    /// The formatting question the focused file is asked: its selected lines
+    /// when something is selected and a server formats a range, else all of it.
+    fn format_request(&self) -> Request {
+        let selected = self
+            .active_file()
+            .is_some_and(|document| !document.borrow().buffer().selection().is_empty());
+        let ranged = selected
+            && self.active_file_id().is_some_and(|file| {
+                let (Some(document), Some(path)) = (self.editor.get(file), self.editor.path(file))
+                else {
+                    return false;
+                };
+                let servers = document.borrow().servers();
+                servers
+                    .iter()
+                    .any(|client| client.offers(&Request::FormatSelection, &path))
+            });
+        match ranged {
+            true => Request::FormatSelection,
+            false => Request::Format,
+        }
+    }
+
+    /// Asks the first server behind the focused file that formats as the
+    /// reader types what it would change now that `typed` was typed.
+    pub(super) fn format_on_type(&mut self, typed: char) {
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        let (Some(document), Some(path)) = (self.editor.get(file), self.editor.path(file)) else {
+            return;
+        };
+        let (servers, at) = {
+            let document = document.borrow();
+            (document.servers(), document.buffer().selection().head)
+        };
+        let request = Request::FormatOnType(typed);
+        let Some(client) = servers.into_iter().find(|client| {
+            client.offers(&request, &path) && client.on_type_triggers(&path).contains(&typed)
+        }) else {
+            return;
+        };
+        self.ask_of(client, file, at, request, Purpose::Act);
+    }
+
+    /// Opens the prompt for a new name, having asked the server first
+    /// whether the symbol under the cursor can be renamed and what it is
+    /// called, when the server says.
+    fn prepare_rename(&mut self) {
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        let (Some(document), Some(path)) = (self.editor.get(file), self.editor.path(file)) else {
+            return;
+        };
+        let (servers, at) = {
+            let document = document.borrow();
+            (document.servers(), document.buffer().selection().head)
+        };
+        let request = Request::PrepareRename;
+        match servers
+            .into_iter()
+            .find(|client| client.offers(&request, &path))
+        {
+            Some(client) => {
+                self.forget(file, &request, Purpose::Act);
+                self.ask_of(client, file, at, request, Purpose::Act);
+            }
+            None => self.open_prompt(Action::Rename),
+        }
+    }
+
+    /// Grows the selection to the next span out the servers said it can
+    /// grow through, asking them when they have not said for this text, and
+    /// by the syntax tree when no server answers it.
+    pub(super) fn expand_selection(&mut self) {
+        if self.grow_selection() {
+            return;
+        }
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        let (Some(document), Some(path)) = (self.editor.get(file), self.editor.path(file)) else {
+            return;
+        };
+        let (servers, at) = {
+            let document = document.borrow();
+            (document.servers(), document.buffer().selection().head)
+        };
+        let request = Request::SelectionRanges;
+        match servers
+            .into_iter()
+            .find(|client| client.offers(&request, &path))
+        {
+            Some(client) => self.ask_of(client, file, at, request, Purpose::Act),
+            None => self.edit_active(pm_text::Buffer::expand_selection),
+        }
+    }
+
+    /// Grows the selection to the first span the servers said it can grow
+    /// through that holds more than it does, answering whether there was one.
+    fn grow_selection(&mut self) -> bool {
+        let Some(file) = self.active_file_id() else {
+            return false;
+        };
+        let Some(document) = self.editor.get(file) else {
+            return false;
+        };
+        let Some((known, version, spans)) = self.selection_ranges.as_ref() else {
+            return false;
+        };
+        if *known != file || *version != document.borrow().buffer().version() {
+            return false;
+        }
+        let selection = document.borrow().buffer().selection();
+        let (start, end) = match selection.anchor <= selection.head {
+            true => (selection.anchor, selection.head),
+            false => (selection.head, selection.anchor),
+        };
+        let Some(span) = spans
+            .iter()
+            .find(|span| {
+                span.start <= start && span.end >= end && (span.start, span.end) != (start, end)
+            })
+            .cloned()
+        else {
+            return false;
+        };
+        self.edit_active(|buffer| {
+            buffer.set_selection(pm_text::Selection {
+                anchor: span.start,
+                head: span.end,
+            });
+        });
+        true
+    }
+
+    /// Writes every message to and from the language servers to their logs,
+    /// or stops, and says which.
+    pub(super) fn toggle_server_trace(&mut self) {
+        let on = !pm_text::is_tracing();
+        pm_text::set_trace(on);
+        self.notices.done(
+            match on {
+                true => "Tracing language servers into their logs",
+                false => "Stopped tracing language servers",
+            },
+            Some(crate::message::Message::OpenServerLog),
+        );
+    }
+
+    /// Says `said` in the panel at the cursor.
+    fn say_at_cursor(&mut self, said: &str) {
+        let mut hint = Shown::at(self.cursor_point());
+        hint.said = Some(said.to_owned());
+        self.hint = Some(hint);
     }
 
     /// Says that the file has no server, when it has none.
@@ -388,7 +546,12 @@ impl App {
         for client in clients {
             let offered = client.offers(&request, &path);
             self.ask_of(client, file, at, request.clone(), purpose);
-            if offered && matches!(request, Request::Format | Request::WillSave) {
+            if offered
+                && matches!(
+                    request,
+                    Request::Format | Request::FormatSelection | Request::WillSave
+                )
+            {
                 break;
             }
         }
@@ -552,6 +715,17 @@ impl App {
                         Purpose::Act,
                     );
                 }
+                if client.offers(&Request::Folds, &path)
+                    && document.borrow_mut().wants_folds(&client)
+                {
+                    self.ask_of(
+                        client.clone(),
+                        file,
+                        Position::default(),
+                        Request::Folds,
+                        Purpose::Act,
+                    );
+                }
                 let last = document.borrow().buffer().line_count().saturating_sub(1);
                 let span = Position::default()..Position::new(last, 0);
                 let request = Request::Hints(span);
@@ -579,7 +753,11 @@ impl App {
         self.asked.retain(|pending| {
             let annotation = matches!(
                 pending.request,
-                Request::Hints(_) | Request::Semantics | Request::Lenses | Request::ResolveLens(_)
+                Request::Hints(_)
+                    | Request::Semantics
+                    | Request::Lenses
+                    | Request::ResolveLens(_)
+                    | Request::Folds
             );
             let stale = annotation
                 && self
@@ -903,15 +1081,23 @@ impl App {
                     Request::Lenses => {
                         document.answered_lenses(&pending.client, pending.version, None);
                     }
+                    Request::Folds => {
+                        document.answered_folds(&pending.client, pending.version, None);
+                    }
                     _ => {}
                 }
+            }
+            match pending.request {
+                Request::PrepareRename => self.say_at_cursor("This can't be renamed."),
+                Request::SelectionRanges => self.edit_active(pm_text::Buffer::expand_selection),
+                _ => {}
             }
             return self.save_once_formatted(pending);
         }
         if answer.is_empty()
             && !matches!(
                 pending.request,
-                Request::Hints(_) | Request::Semantics | Request::Lenses
+                Request::Hints(_) | Request::Semantics | Request::Lenses | Request::Folds
             )
         {
             return self.save_once_formatted(pending);
@@ -924,12 +1110,41 @@ impl App {
                 self.show_references(found);
             }
             Answer::Locations(found) => self.go_to_first(&found),
-            Answer::Hover(text) | Answer::Signature(text) => {
+            Answer::Hover(text) => {
                 if let Some(hint) = self.hint.as_mut() {
                     hint.said = Some(text);
                 }
             }
-            Answer::Completions(items) => self.show_completions(pending, items),
+            Answer::Signature(signature) => {
+                if let Some(hint) = self.hint.as_mut() {
+                    hint.signature = Some(signature);
+                }
+            }
+            Answer::Renamable { span, placeholder } => {
+                let seeded = placeholder.or_else(|| {
+                    let document = self.editor.get(pending.file)?;
+                    let document = document.borrow();
+                    let buffer = document.buffer();
+                    Some(buffer.text_in(span.unwrap_or_else(|| buffer.word_at(pending.at))))
+                });
+                self.open_picker_with(Kind::Rename, Vec::new(), seeded.unwrap_or_default());
+            }
+            Answer::Folds(folds) => {
+                if let Some(document) = self.editor.get(pending.file) {
+                    document.borrow_mut().answered_folds(
+                        &pending.client,
+                        pending.version,
+                        Some(folds),
+                    );
+                }
+            }
+            Answer::Selections(spans) => {
+                self.selection_ranges = Some((pending.file, pending.version, spans));
+                self.grow_selection();
+            }
+            Answer::Completions { items, incomplete } => {
+                self.show_completions(pending, items, incomplete);
+            }
             Answer::Resolved(item) => self.take_resolved(pending, item),
             Answer::CodeActions(actions) => self.show_code_actions(pending, actions),
             Answer::Edits(files) => {
@@ -1231,7 +1446,15 @@ impl App {
     }
 
     /// Offers what could be written where the cursor is.
-    fn show_completions(&mut self, pending: &Pending, items: Vec<pm_text::Completion>) {
+    ///
+    /// What a server offers for the word the list is already up for joins
+    /// the list, in place of what that server offered before.
+    fn show_completions(
+        &mut self,
+        pending: &Pending,
+        items: Vec<pm_text::Completion>,
+        incomplete: bool,
+    ) {
         if items.is_empty() {
             return;
         }
@@ -1248,10 +1471,59 @@ impl App {
         let point = pm_gfx::Point::new(at.x, at.y + under);
         drop(document);
 
-        let mut completions = Completions::new(items, word.start, point, pending.client.clone());
-        completions.narrow(&typed);
-        self.completions = (!completions.is_empty()).then_some(completions);
+        if self
+            .completions
+            .as_ref()
+            .is_none_or(|list| list.start() != word.start)
+        {
+            let mut list = Completions::new(word.start, point);
+            list.narrow(&typed);
+            self.completions = Some(list);
+        }
+        if let Some(list) = self.completions.as_mut() {
+            list.offer(&pending.client, items, incomplete);
+        }
+        if self.completions.as_ref().is_some_and(Completions::is_empty) {
+            self.completions = None;
+        }
         self.resolve_completion();
+    }
+
+    /// Whether a server behind the focused file completes after `typed`.
+    pub(super) fn completes_after(&self, typed: char) -> bool {
+        let Some(file) = self.active_file_id() else {
+            return false;
+        };
+        let (Some(document), Some(path)) = (self.editor.get(file), self.editor.path(file)) else {
+            return false;
+        };
+        let servers = document.borrow().servers();
+        servers
+            .iter()
+            .any(|client| client.completion_triggers(&path).contains(&typed))
+    }
+
+    /// Asks `clients` again what could be written where the cursor is, for
+    /// lists they said were not all there was.
+    pub(super) fn ask_incomplete(&mut self, clients: Vec<Arc<Client>>) {
+        if clients.is_empty() {
+            return;
+        }
+        let Some(file) = self.active_file_id() else {
+            return;
+        };
+        let Some(at) = self
+            .editor
+            .get(file)
+            .map(|document| document.borrow().buffer().selection().head)
+        else {
+            return;
+        };
+        let request = Request::Completions(Trigger::Incomplete);
+        self.forget(file, &request, Purpose::Act);
+        for client in clients {
+            self.ask_of(client, file, at, request.clone(), Purpose::Act);
+        }
     }
 
     /// Asks the server that offered the completions to fill in the selected
@@ -1270,9 +1542,8 @@ impl App {
         let Some(path) = self.editor.path(file) else {
             return;
         };
-        let client = completions.client().clone();
         let start = completions.start();
-        let Some(handle) = completions.unasked() else {
+        let Some((client, handle)) = completions.unasked() else {
             return;
         };
         let request = Request::ResolveCompletion(handle);
@@ -1418,11 +1689,15 @@ impl App {
                     ignore_if_exists,
                 } => {
                     shifted = true;
-                    applied &= match std::fs::symlink_metadata(&path).is_ok() {
+                    let made = match std::fs::symlink_metadata(&path).is_ok() {
                         true if overwrite => std::fs::write(&path, "").is_ok(),
                         true => ignore_if_exists,
                         false => ops::create_file(&path).is_ok(),
                     };
+                    if made {
+                        self.tell_servers_made(std::slice::from_ref(&path));
+                    }
+                    applied &= made;
                 }
                 WorkspaceChange::Rename {
                     from,
@@ -1443,6 +1718,7 @@ impl App {
                     applied &= moved.is_ok();
                     if moved.is_ok() {
                         self.retarget_tabs(&from, &to);
+                        self.tell_servers_moved(&[(from, to)]);
                     }
                 }
                 WorkspaceChange::Delete {
@@ -1455,6 +1731,7 @@ impl App {
                         false => ignore_if_not_exists,
                     };
                     self.close_tabs_of(&path);
+                    self.tell_servers_removed(std::slice::from_ref(&path));
                 }
             }
         }

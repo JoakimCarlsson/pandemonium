@@ -19,6 +19,23 @@ use lsp_types::MessageType;
 /// How large a log may grow before the next start begins it afresh.
 const LIMIT: u64 = 4 * 1024 * 1024;
 
+/// How much of one message a trace writes down; the rest of a whole file's
+/// text is no help in reading what was said.
+const TRACED: usize = 8 * 1024;
+
+/// Whether every message to and from every server is written to its log.
+static TRACING: AtomicBool = AtomicBool::new(false);
+
+/// Writes every message to and from every server to its log, or stops.
+pub fn set_trace(on: bool) {
+    TRACING.store(on, Ordering::Relaxed);
+}
+
+/// Whether every message to and from every server is written to its log.
+pub fn is_tracing() -> bool {
+    TRACING.load(Ordering::Relaxed)
+}
+
 /// Where one server writes what it says, and whether it has said more.
 #[derive(Clone)]
 pub struct Log {
@@ -77,6 +94,25 @@ impl Log {
         {
             self.grew.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// Writes `message` down marked with which way it went, while the
+    /// protocol is being traced.
+    pub(super) fn trace(&self, direction: &str, message: &serde_json::Value) {
+        if !is_tracing() {
+            return;
+        }
+        let written = message.to_string();
+        let cut = written
+            .char_indices()
+            .nth(TRACED)
+            .map_or(written.as_str(), |(at, _)| &written[..at]);
+        let more = if cut.len() < written.len() {
+            " …"
+        } else {
+            ""
+        };
+        self.write(&format!("{direction} {cut}{more}"));
     }
 
     /// Writes one message the server logged or showed, marked with its kind.

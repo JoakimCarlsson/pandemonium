@@ -83,7 +83,7 @@ pub struct Restored {
 }
 
 /// The servers a reader configured for one language.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ServerList {
     /// These run instead of the servers the language names.
     Replace(Vec<pm_text::Server>),
@@ -107,6 +107,14 @@ pub fn load() -> Restored {
         .unwrap_or_default();
     pm_acp::install(restored.agent_servers.clone());
     restored
+}
+
+/// The language servers the settings file names now, read afresh, for a
+/// file the reader has just saved.
+pub fn language_servers() -> Option<BTreeMap<String, ServerList>> {
+    let text = fs::read_to_string(paths::settings()?).ok()?;
+    let stored = serde_norway::from_str::<Stored>(&text).ok()?;
+    Some(stored.into_restored().language_servers)
 }
 
 /// Reads the reader's themes in again, still drawing in the family

@@ -178,6 +178,8 @@ pub struct Document {
     named: HashMap<usize, (AnnotationRequest, SemanticSpans)>,
     /// Code lens progress and results, per server.
     lensed: HashMap<usize, (AnnotationRequest, Vec<Lens>)>,
+    /// Folding range progress and results, per server.
+    outlined: HashMap<usize, (AnnotationRequest, Vec<std::ops::Range<usize>>)>,
     /// When the text last changed.
     edited_at: Option<Instant>,
     /// The version and cursor the server was last asked where the symbol is used.
@@ -212,6 +214,10 @@ impl Document {
                         .offers(&Request::Lenses, self.buffer.path())
                         .then(|| self.lensed.get(&key).map(|(request, _)| request))
                         .flatten(),
+                    client
+                        .offers(&Request::Folds, self.buffer.path())
+                        .then(|| self.outlined.get(&key).map(|(request, _)| request))
+                        .flatten(),
                 ]
                 .into_iter()
                 .flatten()
@@ -245,6 +251,7 @@ impl Document {
             blame: Vec::new(),
             blame_shown: false,
             hinted: HashMap::new(),
+            outlined: HashMap::new(),
             named: HashMap::new(),
             lensed: HashMap::new(),
             edited_at: None,
@@ -581,6 +588,43 @@ impl Document {
         true
     }
 
+    /// Whether the server should be asked again where the file folds.
+    pub fn wants_folds(&mut self, client: &Arc<Client>) -> bool {
+        self.outlined
+            .entry(server_key(client))
+            .or_default()
+            .0
+            .wants(self.buffer.version(), self.edited_at)
+    }
+
+    /// Replaces one server's folds when its reply belongs to the current text.
+    ///
+    /// The folds of the servers behind the file are drawn together; until
+    /// one has said, the file folds by its indentation.
+    pub fn answered_folds(
+        &mut self,
+        client: &Arc<Client>,
+        version: i32,
+        folds: Option<Vec<std::ops::Range<usize>>>,
+    ) {
+        let entry = self.outlined.entry(server_key(client)).or_default();
+        if entry
+            .0
+            .answered(version, self.buffer.version(), folds.is_some())
+            && let Some(folds) = folds
+        {
+            entry.1 = folds;
+            let mut all = self
+                .outlined
+                .values()
+                .flat_map(|(_, folds)| folds.iter().cloned())
+                .collect::<Vec<_>>();
+            all.sort_by_key(|fold| (fold.start, std::cmp::Reverse(fold.end)));
+            all.dedup();
+            self.buffer.set_server_folds(all);
+        }
+    }
+
     /// Whether the server should be asked again for the notes above declarations.
     pub fn wants_lenses(&mut self, client: &Arc<Client>) -> bool {
         self.lensed
@@ -640,6 +684,7 @@ impl Document {
             Request::Hints(_) => self.hinted.entry(key).or_default().0.answered = None,
             Request::Semantics => self.named.entry(key).or_default().0.answered = None,
             Request::Lenses => self.lensed.entry(key).or_default().0.answered = None,
+            Request::Folds => self.outlined.entry(key).or_default().0.answered = None,
             _ => {}
         }
     }

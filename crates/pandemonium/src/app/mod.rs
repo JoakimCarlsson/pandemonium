@@ -20,6 +20,7 @@ mod language;
 mod listing;
 mod modal;
 mod notice;
+mod operations;
 mod panel;
 mod panes;
 mod picker;
@@ -258,6 +259,15 @@ pub struct App {
     tree_scrolls: BTreeMap<Scope, pm_ui::Scrolled>,
     /// The name being typed into the file tree, if one is.
     tree_edit: Option<crate::tree::Edit>,
+    /// A move the file tree was asked to make, waiting on the servers to
+    /// say what it changes elsewhere.
+    moving: Option<operations::Moving>,
+    /// The spans a server said the selection can grow through, for the file
+    /// and version it said them about.
+    selection_ranges: Option<(editor::FileId, i32, Vec<std::ops::Range<pm_text::Position>>)>,
+    /// When the settings file was last written, as its language servers were
+    /// last read from it.
+    settings_seen: Option<std::time::SystemTime>,
     /// What was cut or copied out of the file tree.
     tree_clipboard: Option<crate::tree::Clipboard>,
     /// The moves, copies and removals in the tree that have finished and
@@ -529,6 +539,44 @@ fn waker_through(
     })
 }
 
+/// When the settings file was last written, if it can be told.
+fn settings_written() -> Option<std::time::SystemTime> {
+    std::fs::metadata(config::settings_file()?)
+        .and_then(|found| found.modified())
+        .ok()
+}
+
+impl App {
+    /// Hands the editor the language servers the settings name, and the
+    /// settings each of them runs with.
+    fn apply_language_servers(&mut self) {
+        let (replace, add) = partition_language_servers(&self.language_servers);
+        self.editor.set_language_servers(&replace);
+        self.editor.add_language_servers(&add);
+    }
+
+    /// Reads the language servers the settings file names again when it has
+    /// been written since they were last read, which is what saving it in a
+    /// pane does, and hands running servers their new settings.
+    pub(super) fn follow_server_settings(&mut self) {
+        let written = settings_written();
+        if written.is_none() || written == self.settings_seen {
+            return;
+        }
+        self.settings_seen = written;
+        let Some(servers) = config::language_servers() else {
+            return;
+        };
+        if servers == self.language_servers {
+            return;
+        }
+        self.language_servers = servers;
+        self.apply_language_servers();
+        self.editor.refresh();
+        self.request_redraw();
+    }
+}
+
 /// The replacement lists and the added lists in `configured`.
 fn partition_language_servers(
     configured: &BTreeMap<String, ServerList>,
@@ -609,6 +657,9 @@ impl App {
             selections: BTreeMap::new(),
             tree_scrolls: BTreeMap::new(),
             tree_edit: None,
+            moving: None,
+            selection_ranges: None,
+            settings_seen: None,
             tree_clipboard: None,
             shifted: Arc::default(),
             entry_drag: None,
@@ -2425,6 +2476,9 @@ impl ApplicationHandler<Wake> for App {
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.offer_missing_servers();
+        if self.settle_moving() {
+            self.request_redraw();
+        }
         let expired = self.notices.expire(Instant::now());
         let seen = !self.window_occluded;
         let next_annotation = self.next_annotation().filter(|_| seen);
@@ -2440,6 +2494,7 @@ impl ApplicationHandler<Wake> for App {
             self.next_spin().filter(|_| seen),
             self.notices.next_expiry(),
             next_annotation,
+            self.next_move(),
         ]
         .into_iter()
         .flatten()
@@ -2484,6 +2539,9 @@ impl ApplicationHandler<Wake> for App {
             Wake::Install => self.finish_server_installs(),
             Wake::Language => {
                 self.hear_server_troubles();
+                if self.settle_moving() {
+                    self.request_redraw();
+                }
                 let answered = self.collect_answers();
                 if self.editor.refresh() || answered {
                     self.request_redraw();
@@ -2625,9 +2683,8 @@ impl ApplicationHandler<Wake> for App {
         if let Some(directory) = config::logs() {
             self.editor.set_logs(directory);
         }
-        let (replace, add) = partition_language_servers(&self.language_servers);
-        self.editor.set_language_servers(&replace);
-        self.editor.add_language_servers(&add);
+        self.settings_seen = settings_written();
+        self.apply_language_servers();
         self.follow_preferences();
         self.reread_changes_now();
 

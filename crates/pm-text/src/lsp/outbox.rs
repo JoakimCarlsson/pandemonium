@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use crate::frame;
 use crate::lsp::encoding::Encoding;
+use crate::lsp::log::Log;
 use crate::lsp::{rpc, sync};
 
 /// One message on its way to a server, as it was handed over.
@@ -87,9 +88,11 @@ impl Outbox {
     ///
     /// The thread lasts as long as anyone can still hand it a message, or
     /// until the pipe breaks, and closes the server's input as it ends.
-    pub(super) fn start(stdin: ChildStdin) -> Self {
+    ///
+    /// Everything written goes to `log` as well while the protocol is traced.
+    pub(super) fn start(stdin: ChildStdin, log: Log) -> Self {
         let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || write(stdin, receiver));
+        std::thread::spawn(move || write(stdin, receiver, log));
         Self(sender)
     }
 
@@ -102,10 +105,12 @@ impl Outbox {
 
 /// Writes everything handed over to `stdin`, until nothing more can come or
 /// the pipe has gone.
-fn write(stdin: ChildStdin, receiver: Receiver<Outgoing>) {
+fn write(stdin: ChildStdin, receiver: Receiver<Outgoing>, log: Log) {
     let mut stdin = BufWriter::new(stdin);
     for outgoing in receiver {
-        if frame::write(&mut stdin, &outgoing.into_message()).is_err() {
+        let message = outgoing.into_message();
+        log.trace("-->", &message);
+        if frame::write(&mut stdin, &message).is_err() {
             return;
         }
     }

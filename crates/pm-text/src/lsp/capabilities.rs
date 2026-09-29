@@ -35,6 +35,14 @@ use lsp_types::{
     WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
     WorkspaceFolder, WorkspaceSymbolClientCapabilities,
 };
+use lsp_types::{
+    DocumentOnTypeFormattingClientCapabilities, DocumentOnTypeFormattingOptions,
+    DocumentRangeFormattingClientCapabilities, FileOperationFilter, FileOperationPatternKind,
+    FileOperationRegistrationOptions, FoldingRangeClientCapabilities,
+    FoldingRangeProviderCapability, ParameterInformationSettings, RenameOptions,
+    SelectionRangeClientCapabilities, SelectionRangeProviderCapability,
+    SignatureInformationSettings, WorkspaceFileOperationsClientCapabilities,
+};
 use serde_json::Value;
 
 use crate::language::Server;
@@ -100,6 +108,12 @@ const COMPLETION: &str = "textDocument/completion";
 
 /// The method a registration of code lenses names.
 const CODE_LENS: &str = "textDocument/codeLens";
+
+/// The method a registration of renaming names.
+const RENAME: &str = "textDocument/rename";
+
+/// The method a registration of formatting as the reader types names.
+const ON_TYPE: &str = "textDocument/onTypeFormatting";
 
 /// The method a registration of pulled diagnostics names.
 const DIAGNOSTIC: &str = "textDocument/diagnostic";
@@ -288,6 +302,120 @@ impl Capabilities {
             })
     }
 
+    /// Whether the server wants to hear about the file operation `method` on
+    /// `path`, by what its answer to the handshake or a registration says.
+    ///
+    /// A path that is no longer on disk matches a filter for files and one
+    /// for folders alike, since what it was can no longer be asked.
+    pub(super) fn file_operation(&self, method: &str, path: &Path) -> bool {
+        let Some(stated) = self.stated.as_ref() else {
+            return false;
+        };
+        let operations = stated
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.file_operations.as_ref());
+        let stated = operations.and_then(|operations| match method {
+            "workspace/didCreateFiles" => operations.did_create.clone(),
+            "workspace/didRenameFiles" => operations.did_rename.clone(),
+            "workspace/willRenameFiles" => operations.will_rename.clone(),
+            "workspace/didDeleteFiles" => operations.did_delete.clone(),
+            _ => None,
+        });
+        let registered = self.registrations(method, None).filter_map(|options| {
+            serde_json::from_value::<FileOperationRegistrationOptions>(options.clone()).ok()
+        });
+        let folder = std::fs::metadata(path).ok().map(|found| found.is_dir());
+        stated
+            .into_iter()
+            .chain(registered)
+            .flat_map(|options| options.filters)
+            .any(|filter| files(&filter, path, folder))
+    }
+
+    /// Whether the server says whether a place can be renamed before it is.
+    pub(super) fn prepares_renames(&self, document: Option<Document>) -> bool {
+        let stated = self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.rename_provider.as_ref())
+            .is_some_and(|provider| {
+                matches!(provider, OneOf::Right(options) if options.prepare_provider == Some(true))
+            });
+        stated
+            || self.registrations(RENAME, document).any(|options| {
+                serde_json::from_value::<RenameOptions>(options.clone())
+                    .is_ok_and(|options| options.prepare_provider == Some(true))
+            })
+    }
+
+    /// The characters the server formats after, as soon as one is typed.
+    pub(super) fn on_type_triggers(&self, document: Option<Document>) -> Vec<char> {
+        let stated = self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.document_on_type_formatting_provider.clone());
+        let registered = self.registrations(ON_TYPE, document).filter_map(|options| {
+            serde_json::from_value::<DocumentOnTypeFormattingOptions>(options.clone()).ok()
+        });
+        stated
+            .into_iter()
+            .chain(registered)
+            .flat_map(|options| {
+                std::iter::once(options.first_trigger_character)
+                    .chain(options.more_trigger_character.unwrap_or_default())
+            })
+            .filter_map(|written| written.chars().next())
+            .collect()
+    }
+
+    /// Whether the server answers what changed in a file's semantic tokens
+    /// since it last sent them, rather than all of them again.
+    pub(super) fn sends_semantic_deltas(&self) -> bool {
+        let delta = |full: &Option<SemanticTokensFullOptions>| {
+            matches!(
+                full,
+                Some(SemanticTokensFullOptions::Delta { delta: Some(true) })
+            )
+        };
+        let stated = self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.semantic_tokens_provider.as_ref())
+            .is_some_and(|provider| match provider {
+                SemanticTokensServerCapabilities::SemanticTokensOptions(options) => {
+                    delta(&options.full)
+                }
+                SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
+                    delta(&options.semantic_tokens_options.full)
+                }
+            });
+        stated
+            || self.registrations(SEMANTIC_TOKENS, None).any(|options| {
+                serde_json::from_value::<lsp_types::SemanticTokensOptions>(options.clone())
+                    .is_ok_and(|options| delta(&options.full))
+            })
+    }
+
+    /// The characters the server completes after, as soon as one is typed.
+    pub(super) fn completion_triggers(&self, document: Option<Document>) -> Vec<char> {
+        let stated = self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.completion_provider.as_ref())
+            .and_then(|options| options.trigger_characters.clone())
+            .unwrap_or_default();
+        let registered = self
+            .registrations(COMPLETION, document)
+            .filter_map(|options| serde_json::from_value::<CompletionOptions>(options.clone()).ok())
+            .flat_map(|options| options.trigger_characters.unwrap_or_default());
+        stated
+            .into_iter()
+            .chain(registered)
+            .filter_map(|written| written.chars().next())
+            .collect()
+    }
+
     /// Whether the server says what a code lens it sent unsaid says, when asked.
     pub(super) fn resolves_lenses(&self, document: Option<Document>) -> bool {
         let stated = self
@@ -357,6 +485,32 @@ fn sync_rank(kind: &TextDocumentSyncKind) -> u8 {
     }
 }
 
+/// Whether the file operation filter `filter` takes in `path`, which is a
+/// folder when `folder` says so and either when it cannot be told.
+fn files(filter: &FileOperationFilter, path: &Path, folder: Option<bool>) -> bool {
+    let scheme = filter
+        .scheme
+        .as_deref()
+        .is_none_or(|scheme| scheme == "file");
+    let kind = !matches!(
+        (&filter.pattern.matches, folder),
+        (Some(FileOperationPatternKind::File), Some(true))
+            | (Some(FileOperationPatternKind::Folder), Some(false))
+    );
+    let ignore_case = filter
+        .pattern
+        .options
+        .as_ref()
+        .and_then(|options| options.ignore_case)
+        .unwrap_or(false);
+    let glob = GlobBuilder::new(&filter.pattern.glob)
+        .literal_separator(true)
+        .case_insensitive(ignore_case)
+        .build()
+        .is_ok_and(|glob| glob.compile_matcher().is_match(path));
+    scheme && kind && glob
+}
+
 /// Whether any filter of `selector` picks out `document`.
 fn selects(selector: &DocumentSelector, document: Document) -> bool {
     selector.iter().any(|filter| picks(filter, document))
@@ -423,6 +577,18 @@ impl Provides for DeclarationCapability {
     }
 }
 
+impl Provides for FoldingRangeProviderCapability {
+    fn provides(&self) -> bool {
+        !matches!(self, Self::Simple(false))
+    }
+}
+
+impl Provides for SelectionRangeProviderCapability {
+    fn provides(&self) -> bool {
+        !matches!(self, Self::Simple(false))
+    }
+}
+
 impl Provides for CallHierarchyServerCapability {
     fn provides(&self) -> bool {
         !matches!(self, Self::Simple(false))
@@ -448,6 +614,10 @@ fn states(stated: &ServerCapabilities, method: &str) -> bool {
         "textDocument/codeAction" => on(stated.code_action_provider.as_ref()),
         "textDocument/rename" => on(stated.rename_provider.as_ref()),
         "textDocument/formatting" => on(stated.document_formatting_provider.as_ref()),
+        "textDocument/rangeFormatting" => on(stated.document_range_formatting_provider.as_ref()),
+        "textDocument/onTypeFormatting" => stated.document_on_type_formatting_provider.is_some(),
+        "textDocument/foldingRange" => on(stated.folding_range_provider.as_ref()),
+        "textDocument/selectionRange" => on(stated.selection_range_provider.as_ref()),
         "textDocument/documentSymbol" => on(stated.document_symbol_provider.as_ref()),
         "textDocument/inlayHint" => on(stated.inlay_hint_provider.as_ref()),
         "textDocument/semanticTokens" => {
@@ -566,7 +736,7 @@ fn text_document() -> TextDocumentClientCapabilities {
                 }),
                 ..CompletionItemCapability::default()
             }),
-            context_support: Some(false),
+            context_support: Some(true),
             ..CompletionClientCapabilities::default()
         }),
         hover: Some(HoverClientCapabilities {
@@ -575,6 +745,13 @@ fn text_document() -> TextDocumentClientCapabilities {
         }),
         signature_help: Some(SignatureHelpClientCapabilities {
             dynamic_registration: dynamic(),
+            signature_information: Some(SignatureInformationSettings {
+                documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
+                parameter_information: Some(ParameterInformationSettings {
+                    label_offset_support: Some(true),
+                }),
+                active_parameter_support: Some(true),
+            }),
             ..SignatureHelpClientCapabilities::default()
         }),
         references: Some(ReferenceClientCapabilities {
@@ -589,6 +766,20 @@ fn text_document() -> TextDocumentClientCapabilities {
             ..DocumentSymbolClientCapabilities::default()
         }),
         formatting: Some(DocumentFormattingClientCapabilities {
+            dynamic_registration: dynamic(),
+        }),
+        range_formatting: Some(DocumentRangeFormattingClientCapabilities {
+            dynamic_registration: dynamic(),
+        }),
+        on_type_formatting: Some(DocumentOnTypeFormattingClientCapabilities {
+            dynamic_registration: dynamic(),
+        }),
+        folding_range: Some(FoldingRangeClientCapabilities {
+            dynamic_registration: dynamic(),
+            line_folding_only: Some(true),
+            ..FoldingRangeClientCapabilities::default()
+        }),
+        selection_range: Some(SelectionRangeClientCapabilities {
             dynamic_registration: dynamic(),
         }),
         declaration: goto(),
@@ -609,7 +800,7 @@ fn text_document() -> TextDocumentClientCapabilities {
         }),
         rename: Some(RenameClientCapabilities {
             dynamic_registration: dynamic(),
-            prepare_support: Some(false),
+            prepare_support: Some(true),
             ..RenameClientCapabilities::default()
         }),
         publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
@@ -623,7 +814,7 @@ fn text_document() -> TextDocumentClientCapabilities {
             dynamic_registration: dynamic(),
             requests: SemanticTokensClientCapabilitiesRequests {
                 range: Some(false),
-                full: Some(SemanticTokensFullOptions::Bool(true)),
+                full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
             },
             token_types: TOKEN_TYPES.map(SemanticTokenType::new).to_vec(),
             token_modifiers: Vec::new(),
@@ -671,6 +862,18 @@ fn workspace() -> WorkspaceClientCapabilities {
         }),
         workspace_folders: Some(true),
         configuration: Some(true),
+        did_change_configuration: Some(DynamicRegistrationClientCapabilities {
+            dynamic_registration: dynamic(),
+        }),
+        file_operations: Some(WorkspaceFileOperationsClientCapabilities {
+            dynamic_registration: dynamic(),
+            did_create: Some(true),
+            will_create: Some(false),
+            did_rename: Some(true),
+            will_rename: Some(true),
+            did_delete: Some(true),
+            will_delete: Some(false),
+        }),
         semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
             refresh_support: Some(true),
         }),

@@ -32,9 +32,10 @@ use std::time::{Duration, Instant};
 
 pub use answer::{
     Answer, Calls, CodeAction, Completion, FileEdit, Handle, Lens, Location, NamedLocation,
-    Request, Symbol, WorkspaceChange,
+    Request, Signature, Symbol, Trigger, WorkspaceChange,
 };
 pub use client::{Asked, Client};
+pub use log::{is_tracing, set_trace};
 pub use progress::Progress;
 pub use watch::Watched;
 
@@ -92,6 +93,7 @@ impl Servers {
     /// a list that was added to could not do that.
     pub fn set_overrides(&mut self, overrides: HashMap<&'static str, Vec<Server>>) {
         self.overrides = overrides;
+        self.reconfigure();
     }
 
     /// Runs `added` for the languages they name, after the servers those
@@ -101,6 +103,17 @@ impl Servers {
     /// language that was also overridden are not run.
     pub fn set_added(&mut self, added: HashMap<&'static str, Vec<Server>>) {
         self.added = added;
+        self.reconfigure();
+    }
+
+    /// Hands every running server the settings it is now configured with,
+    /// so that a change to them takes without a restart.
+    fn reconfigure(&self) {
+        for ((_, command), running) in &self.running {
+            if let (Some(client), Some(server)) = (&running.client, self.wanted_server(command)) {
+                client.configure(server.options);
+            }
+        }
     }
 
     /// Every server for `language` over `root`, started if not running.

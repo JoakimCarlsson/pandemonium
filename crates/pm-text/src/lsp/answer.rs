@@ -13,24 +13,28 @@ use std::path::{Path, PathBuf};
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, CodeLensRequest, CodeLensResolve, Completion as CompletionRequest,
-    DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDeclaration, GotoDefinition,
-    GotoImplementation, GotoTypeDefinition, HoverRequest, InlayHintRequest, References, Rename,
-    ResolveCompletionItem, SemanticTokensFullRequest, SignatureHelpRequest, WillSaveWaitUntil,
-    WorkspaceSymbolRequest,
+    DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, Formatting,
+    GotoDeclaration, GotoDefinition, GotoImplementation, GotoTypeDefinition, HoverRequest,
+    InlayHintRequest, OnTypeFormatting, PrepareRenameRequest, RangeFormatting, References, Rename,
+    ResolveCompletionItem, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
+    WillRenameFiles, WillSaveWaitUntil, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CallHierarchyIncomingCallsParams, CallHierarchyItem, CallHierarchyOutgoingCallsParams,
     CallHierarchyPrepareParams, CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeLens,
-    CodeLensParams, CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DocumentChangeOperation, DocumentChanges, DocumentFormattingParams,
-    DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    Documentation, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents,
-    HoverParams, InlayHint, InlayHintLabel, InlayHintParams, InsertTextFormat, MarkedString, OneOf,
-    PartialResultParams, ReferenceContext, ReferenceParams, RenameParams, ResourceOp,
-    SemanticTokensParams, SemanticTokensResult, SignatureHelpParams, SymbolInformation, SymbolKind,
-    TextDocumentIdentifier, TextDocumentPositionParams, TextDocumentSaveReason, TextEdit,
-    WillSaveTextDocumentParams, WorkDoneProgressParams, WorkspaceEdit, WorkspaceSymbolParams,
-    WorkspaceSymbolResponse,
+    CodeLensParams, CompletionContext, CompletionItem, CompletionItemKind, CompletionParams,
+    CompletionResponse, CompletionTextEdit, CompletionTriggerKind, DocumentChangeOperation,
+    DocumentChanges, DocumentFormattingParams, DocumentHighlightParams,
+    DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbol,
+    DocumentSymbolParams, DocumentSymbolResponse, Documentation, FileRename, FoldingRangeParams,
+    FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents, HoverParams,
+    InlayHint, InlayHintLabel, InlayHintParams, InsertTextFormat, MarkedString, OneOf,
+    ParameterLabel, PartialResultParams, PrepareRenameResponse, ReferenceContext, ReferenceParams,
+    RenameFilesParams, RenameParams, ResourceOp, SelectionRangeParams, SemanticToken,
+    SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
+    SymbolInformation, SymbolKind, TextDocumentIdentifier, TextDocumentPositionParams,
+    TextDocumentSaveReason, TextEdit, WillSaveTextDocumentParams, WorkDoneProgressParams,
+    WorkspaceEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use serde_json::Value;
 
@@ -56,8 +60,8 @@ pub enum Request {
     References,
     /// What the server has to say about the symbol here.
     Hover,
-    /// What could be written here.
-    Completions,
+    /// What could be written here, and what made the editor ask.
+    Completions(Trigger),
     /// The rest of what one of those completions says, for a server that
     /// sent it short.
     ResolveCompletion(Handle),
@@ -69,6 +73,17 @@ pub enum Request {
     Rename(String),
     /// Lay the whole file out the way the server's formatter would.
     Format,
+    /// Lay the selected lines out the way the server's formatter would.
+    FormatSelection,
+    /// What the server would change now that this character was typed.
+    FormatOnType(char),
+    /// Whether the symbol here can be renamed, and what it is called.
+    PrepareRename,
+    /// The runs of lines the server says fold together.
+    Folds,
+    /// The spans around the cursor, from the smallest out, that the
+    /// selection can grow through.
+    SelectionRanges,
     /// The symbols the file declares.
     Symbols,
     /// What the server would write into the lines of this span.
@@ -89,6 +104,21 @@ pub enum Request {
     WorkspaceSymbols(String),
     /// What the server would change in the file before it is saved.
     WillSave,
+    /// What the server would change elsewhere before these files and
+    /// folders are moved: the imports and declarations that name them.
+    WillRenameFiles(Vec<(PathBuf, PathBuf)>),
+}
+
+/// What made the editor ask what could be written.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Trigger {
+    /// The reader asked, or typed a word.
+    Invoked,
+    /// The reader typed a character a server said it completes after.
+    Character(char),
+    /// The reader typed on while a server's last list said it was not all
+    /// there was.
+    Incomplete,
 }
 
 /// Which way along a symbol's calls to follow.
@@ -146,11 +176,16 @@ impl Request {
             Self::Declaration => "textDocument/declaration",
             Self::References => "textDocument/references",
             Self::Hover => "textDocument/hover",
-            Self::Completions | Self::ResolveCompletion(_) => "textDocument/completion",
+            Self::Completions(_) | Self::ResolveCompletion(_) => "textDocument/completion",
             Self::Signature => "textDocument/signatureHelp",
             Self::CodeActions => "textDocument/codeAction",
             Self::Rename(_) => "textDocument/rename",
             Self::Format => "textDocument/formatting",
+            Self::FormatSelection => "textDocument/rangeFormatting",
+            Self::FormatOnType(_) => "textDocument/onTypeFormatting",
+            Self::PrepareRename => "textDocument/rename",
+            Self::Folds => "textDocument/foldingRange",
+            Self::SelectionRanges => "textDocument/selectionRange",
             Self::Symbols => "textDocument/documentSymbol",
             Self::Hints(_) => "textDocument/inlayHint",
             Self::Semantics => "textDocument/semanticTokens",
@@ -159,6 +194,7 @@ impl Request {
             Self::PrepareCalls(_) | Self::Calls(..) => "textDocument/prepareCallHierarchy",
             Self::WorkspaceSymbols(_) => "workspace/symbol",
             Self::WillSave => "textDocument/willSaveWaitUntil",
+            Self::WillRenameFiles(_) => "workspace/willRenameFiles",
         }
     }
 
@@ -167,6 +203,7 @@ impl Request {
         match self {
             Self::Semantics => "textDocument/semanticTokens/full",
             Self::ResolveCompletion(_) => "completionItem/resolve",
+            Self::PrepareRename => "textDocument/prepareRename",
             Self::ResolveLens(_) => "codeLens/resolve",
             Self::Calls(Calls::Incoming, _) => "callHierarchy/incomingCalls",
             Self::Calls(Calls::Outgoing, _) => "callHierarchy/outgoingCalls",
@@ -183,11 +220,17 @@ impl Request {
         capabilities: &Capabilities,
         document: Option<Document>,
     ) -> bool {
+        if let Self::WillRenameFiles(moves) = self {
+            return moves
+                .iter()
+                .any(|(from, _)| capabilities.file_operation(self.capability(), from));
+        }
         if !capabilities.offers(self.capability(), document) {
             return false;
         }
         match self {
             Self::ResolveCompletion(_) => capabilities.resolves_completions(document),
+            Self::PrepareRename => capabilities.prepares_renames(document),
             Self::ResolveLens(_) => capabilities.resolves_lenses(document),
             _ => true,
         }
@@ -242,13 +285,26 @@ impl Request {
                     work_done_progress_params: WorkDoneProgressParams::default(),
                 },
             ),
-            Self::Completions => rpc::request::<CompletionRequest>(
+            Self::Completions(trigger) => rpc::request::<CompletionRequest>(
                 id,
                 CompletionParams {
                     text_document_position: place,
                     work_done_progress_params: WorkDoneProgressParams::default(),
                     partial_result_params: PartialResultParams::default(),
-                    context: None,
+                    context: Some(match trigger {
+                        Trigger::Invoked => CompletionContext {
+                            trigger_kind: CompletionTriggerKind::INVOKED,
+                            trigger_character: None,
+                        },
+                        Trigger::Character(typed) => CompletionContext {
+                            trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+                            trigger_character: Some(typed.to_string()),
+                        },
+                        Trigger::Incomplete => CompletionContext {
+                            trigger_kind: CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
+                            trigger_character: None,
+                        },
+                    }),
                 },
             ),
             Self::ResolveCompletion(handle) => match &handle.0 {
@@ -291,12 +347,43 @@ impl Request {
                 id,
                 DocumentFormattingParams {
                     text_document: document,
-                    options: FormattingOptions {
-                        tab_size: asking.indent.width as u32,
-                        insert_spaces: !asking.indent.tabs,
-                        ..FormattingOptions::default()
-                    },
+                    options: formatting(asking.indent),
                     work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ),
+            Self::FormatSelection => rpc::request::<RangeFormatting>(
+                id,
+                DocumentRangeFormattingParams {
+                    text_document: document,
+                    range: wire_range(asking.selection),
+                    options: formatting(asking.indent),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ),
+            Self::FormatOnType(typed) => rpc::request::<OnTypeFormatting>(
+                id,
+                DocumentOnTypeFormattingParams {
+                    text_document_position: place,
+                    ch: typed.to_string(),
+                    options: formatting(asking.indent),
+                },
+            ),
+            Self::PrepareRename => rpc::request::<PrepareRenameRequest>(id, place),
+            Self::Folds => rpc::request::<FoldingRangeRequest>(
+                id,
+                FoldingRangeParams {
+                    text_document: document,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                },
+            ),
+            Self::SelectionRanges => rpc::request::<SelectionRangeRequest>(
+                id,
+                SelectionRangeParams {
+                    text_document: document,
+                    positions: vec![wire(asking.at)],
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
                 },
             ),
             Self::Symbols => rpc::request::<DocumentSymbolRequest>(
@@ -389,6 +476,18 @@ impl Request {
                     reason: TextDocumentSaveReason::MANUAL,
                 },
             ),
+            Self::WillRenameFiles(moves) => rpc::request::<WillRenameFiles>(
+                id,
+                RenameFilesParams {
+                    files: moves
+                        .iter()
+                        .map(|(from, to)| FileRename {
+                            old_uri: uri::of(from),
+                            new_uri: uri::of(to),
+                        })
+                        .collect(),
+                },
+            ),
         })
     }
 
@@ -426,8 +525,12 @@ impl Request {
                     .map(|hover| hover_text(hover.contents))
                     .unwrap_or_default(),
             ),
-            Self::Completions => {
-                Answer::Completions(completions(rpc::result::<CompletionRequest>(result)?))
+            Self::Completions(_) => {
+                let found = rpc::result::<CompletionRequest>(result)?;
+                Answer::Completions {
+                    incomplete: matches!(&found, Some(CompletionResponse::List(list)) if list.is_incomplete),
+                    items: completions(found),
+                }
             }
             Self::ResolveCompletion(_) => {
                 let item = rpc::result::<ResolveCompletionItem>(result)?;
@@ -435,16 +538,54 @@ impl Request {
             }
             Self::Signature => Answer::Signature(
                 rpc::result::<SignatureHelpRequest>(result)?
-                    .and_then(|help| {
-                        let active = help.active_signature.unwrap_or_default() as usize;
-                        let mut signatures = help.signatures;
-                        match active < signatures.len() {
-                            true => Some(signatures.swap_remove(active).label),
-                            false => signatures
-                                .into_iter()
-                                .next()
-                                .map(|signature| signature.label),
-                        }
+                    .and_then(signature)
+                    .unwrap_or_default(),
+            ),
+            Self::FormatSelection => Answer::Edits(vec![FileEdit {
+                path: path.to_path_buf(),
+                edits: text_edits(rpc::result::<RangeFormatting>(result)?.unwrap_or_default()),
+            }]),
+            Self::FormatOnType(_) => Answer::Edits(vec![FileEdit {
+                path: path.to_path_buf(),
+                edits: text_edits(rpc::result::<OnTypeFormatting>(result)?.unwrap_or_default()),
+            }]),
+            Self::PrepareRename => match rpc::result::<PrepareRenameRequest>(result)? {
+                None => Answer::Refused,
+                Some(PrepareRenameResponse::Range(span)) => Answer::Renamable {
+                    span: Some(range(span)),
+                    placeholder: None,
+                },
+                Some(PrepareRenameResponse::RangeWithPlaceholder {
+                    range: span,
+                    placeholder,
+                }) => Answer::Renamable {
+                    span: Some(range(span)),
+                    placeholder: Some(placeholder),
+                },
+                Some(PrepareRenameResponse::DefaultBehavior { .. }) => Answer::Renamable {
+                    span: None,
+                    placeholder: None,
+                },
+            },
+            Self::Folds => Answer::Folds(
+                rpc::result::<FoldingRangeRequest>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|fold| fold.end_line > fold.start_line)
+                    .map(|fold| fold.start_line as usize + 1..fold.end_line as usize + 1)
+                    .collect(),
+            ),
+            Self::SelectionRanges => Answer::Selections(
+                rpc::result::<SelectionRangeRequest>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .next()
+                    .map(|innermost| {
+                        std::iter::successors(Some(innermost), |span| {
+                            span.parent.as_deref().cloned()
+                        })
+                        .map(|span| range(span.range))
+                        .collect()
                     })
                     .unwrap_or_default(),
             ),
@@ -475,7 +616,11 @@ impl Request {
                     .collect(),
             ),
             Self::Semantics => Answer::Semantics(semantics(
-                rpc::result::<SemanticTokensFullRequest>(result)?,
+                &match rpc::result::<SemanticTokensFullRequest>(result)? {
+                    None => Vec::new(),
+                    Some(SemanticTokensResult::Tokens(tokens)) => tokens.data,
+                    Some(SemanticTokensResult::Partial(partial)) => partial.data,
+                },
                 legend,
             )),
             Self::Occurrences => Answer::Occurrences(
@@ -530,6 +675,11 @@ impl Request {
                 path: path.to_path_buf(),
                 edits: text_edits(rpc::result::<WillSaveWaitUntil>(result)?.unwrap_or_default()),
             }]),
+            Self::WillRenameFiles(_) => Answer::Changes(
+                rpc::result::<WillRenameFiles>(result)?
+                    .map(|edit| workspace_edit(&edit))
+                    .unwrap_or_default(),
+            ),
         })
     }
 }
@@ -541,12 +691,30 @@ pub enum Answer {
     Locations(Vec<Location>),
     /// What the server says about a place, as text.
     Hover(String),
-    /// What could be written where the cursor is.
-    Completions(Vec<Completion>),
+    /// What could be written where the cursor is, and whether the server
+    /// said there is more than it sent, to be asked for as the reader types.
+    Completions {
+        /// What could be written.
+        items: Vec<Completion>,
+        /// Whether the list is not all there is.
+        incomplete: bool,
+    },
     /// One of those, filled in with what the server left out of the list.
     Resolved(Completion),
     /// The signature of the call the cursor is inside.
-    Signature(String),
+    Signature(Signature),
+    /// Whether the symbol asked about can be renamed: the span of its name,
+    /// and what to offer as the new one, when the server said.
+    Renamable {
+        /// Where the name is, when the server said.
+        span: Option<Range<Position>>,
+        /// What the name is, when the server said.
+        placeholder: Option<String>,
+    },
+    /// The runs of lines that fold together, as the lines each would hide.
+    Folds(Vec<Range<usize>>),
+    /// The spans the selection can grow through, from the smallest out.
+    Selections(Vec<Range<Position>>),
     /// The fixes and refactors offered where the cursor is.
     CodeActions(Vec<CodeAction>),
     /// Changes to make to one file, from a formatter.
@@ -589,8 +757,16 @@ impl Answer {
                         .map(|span| files.decode_span(path, span));
                 }
             }
-            Self::Hover(_) | Self::Signature(_) => {}
-            Self::Completions(items) => {
+            Self::Hover(_) | Self::Signature(_) | Self::Folds(_) => {}
+            Self::Renamable { span, .. } => {
+                *span = span.clone().map(|span| files.decode_span(path, span));
+            }
+            Self::Selections(spans) => {
+                for span in spans {
+                    *span = files.decode_span(path, span.clone());
+                }
+            }
+            Self::Completions { items, .. } => {
                 for item in items {
                     decode_completion(item, path, files);
                 }
@@ -646,8 +822,12 @@ impl Answer {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Locations(found) => found.is_empty(),
-            Self::Hover(text) | Self::Signature(text) => text.is_empty(),
-            Self::Completions(items) => items.is_empty(),
+            Self::Hover(text) => text.is_empty(),
+            Self::Signature(signature) => signature.label.is_empty(),
+            Self::Renamable { .. } => false,
+            Self::Folds(folds) => folds.is_empty(),
+            Self::Selections(spans) => spans.is_empty(),
+            Self::Completions { items, .. } => items.is_empty(),
             Self::Resolved(_) => false,
             Self::CodeActions(actions) => actions.is_empty(),
             Self::Edits(files) => files.iter().all(|file| file.edits.is_empty()),
@@ -691,6 +871,21 @@ fn decode_edits(edited: &mut [FileEdit], files: &mut Files) {
     }
 }
 
+/// The signature of the call the cursor is inside, and where in it the
+/// cursor's argument is.
+#[derive(Clone, Debug, Default)]
+pub struct Signature {
+    /// The signature, as the server writes it.
+    pub label: String,
+    /// The span of the label that names the parameter being written, in
+    /// characters, when the server said which it is.
+    pub active: Option<Range<usize>>,
+    /// What the server says about that parameter.
+    pub parameter: String,
+    /// What the server says about the function as a whole.
+    pub documentation: String,
+}
+
 /// One place in one file.
 #[derive(Clone, Debug)]
 pub struct Location {
@@ -720,6 +915,9 @@ pub struct Completion {
     pub documentation: String,
     /// What goes into the buffer when it is chosen.
     pub insert: String,
+    /// The places in that to fill in afterwards, in order, each as the
+    /// spans of it the place covers, in characters; empty for plain text.
+    pub stops: Vec<Vec<Range<usize>>>,
     /// What kind of thing it is, as one word.
     pub kind: &'static str,
     /// The span it replaces, when the server named one.
@@ -861,6 +1059,72 @@ fn wire_range(span: Range<Position>) -> lsp_types::Range {
     lsp_types::Range::new(wire(span.start), wire(span.end))
 }
 
+/// How a file is to be laid out, as a formatter is told it.
+fn formatting(indent: Indent) -> FormattingOptions {
+    FormattingOptions {
+        tab_size: indent.width as u32,
+        insert_spaces: !indent.tabs,
+        ..FormattingOptions::default()
+    }
+}
+
+/// The text of a server's documentation, whichever way it wrote it.
+fn documentation(written: Option<Documentation>) -> String {
+    match written {
+        Some(Documentation::String(text)) => text,
+        Some(Documentation::MarkupContent(markup)) => markup.value,
+        None => String::new(),
+    }
+    .trim()
+    .to_owned()
+}
+
+/// The active signature of `help`, with the parameter being written in it.
+///
+/// A parameter the server names by offsets counts them in UTF-16 code
+/// units, which are turned into characters of the label here.
+fn signature(help: SignatureHelp) -> Option<Signature> {
+    let active = help.active_signature.unwrap_or_default() as usize;
+    let mut signatures = help.signatures;
+    let chosen = match active < signatures.len() {
+        true => signatures.swap_remove(active),
+        false => signatures.into_iter().next()?,
+    };
+    let index = chosen
+        .active_parameter
+        .or(help.active_parameter)
+        .unwrap_or_default() as usize;
+    let parameter = chosen.parameters.unwrap_or_default().into_iter().nth(index);
+    let active = parameter
+        .as_ref()
+        .and_then(|parameter| match &parameter.label {
+            ParameterLabel::Simple(name) => chosen.label.find(name.as_str()).map(|byte| {
+                let start = chosen.label[..byte].chars().count();
+                start..start + name.chars().count()
+            }),
+            ParameterLabel::LabelOffsets([start, end]) => {
+                let at = |units: u32| {
+                    let mut counted = 0;
+                    chosen
+                        .label
+                        .chars()
+                        .take_while(|ch| {
+                            counted += ch.len_utf16() as u32;
+                            counted <= units
+                        })
+                        .count()
+                };
+                Some(at(*start)..at(*end))
+            }
+        });
+    Some(Signature {
+        active,
+        parameter: documentation(parameter.and_then(|parameter| parameter.documentation)),
+        documentation: documentation(chosen.documentation),
+        label: chosen.label,
+    })
+}
+
 /// One place a server named, if it is a file the editor can open.
 fn location(found: lsp_types::Location) -> Option<Location> {
     Some(Location {
@@ -936,10 +1200,16 @@ fn completion(item: CompletionItem) -> Option<Completion> {
         }
         None => (None, None),
     };
-    let snippet = item.insert_text_format == Some(InsertTextFormat::SNIPPET);
-    let insert = text
+    let written = text
         .or_else(|| item.insert_text.clone())
         .unwrap_or_else(|| label.clone());
+    let snippet = match item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
+        true => crate::snippet::parse(&written),
+        false => crate::snippet::Snippet {
+            text: written,
+            stops: Vec::new(),
+        },
+    };
     Some(Completion {
         filter: item.filter_text.clone().unwrap_or_else(|| label.clone()),
         detail: item.detail.clone().unwrap_or_default(),
@@ -951,54 +1221,13 @@ fn completion(item: CompletionItem) -> Option<Completion> {
         .trim()
         .to_owned(),
         kind: item.kind.map_or("", completion_kind),
-        insert: plain(&insert, snippet),
+        insert: snippet.text,
+        stops: snippet.stops,
         range: span,
         extra: text_edits(item.additional_text_edits.clone().unwrap_or_default()),
         label,
         handle: Handle(Handed::Completion(Box::new(item))),
     })
-}
-
-/// A snippet written out as the plain text it would insert.
-///
-/// A snippet's placeholders are a second editing mode of their own; until
-/// there is one, what goes in is the text with the placeholders taken out,
-/// which is what the reader was going to type anyway.
-fn plain(text: &str, snippet: bool) -> String {
-    if !snippet {
-        return text.to_owned();
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => out.extend(chars.next()),
-            '$' if chars.peek() == Some(&'{') => {
-                chars.next();
-                let mut depth = 1;
-                let mut body = String::new();
-                for ch in chars.by_ref() {
-                    match ch {
-                        '{' => depth += 1,
-                        '}' if depth == 1 => break,
-                        '}' => depth -= 1,
-                        _ => {}
-                    }
-                    body.push(ch);
-                }
-                if let Some((_, rest)) = body.split_once(':') {
-                    out.push_str(rest);
-                }
-            }
-            '$' => {
-                while chars.peek().is_some_and(char::is_ascii_digit) {
-                    chars.next();
-                }
-            }
-            ch => out.push(ch),
-        }
-    }
-    out
 }
 
 /// What a completion's kind is called.
@@ -1314,15 +1543,10 @@ pub(super) fn legend(capabilities: &Capabilities) -> Vec<Option<Highlight>> {
 /// length, a type and its modifiers. A token whose type the editor draws no
 /// differently is left out here rather than carried to the painter to be
 /// discarded there.
-fn semantics(
-    found: Option<SemanticTokensResult>,
+pub(super) fn semantics(
+    tokens: &[SemanticToken],
     legend: &[Option<Highlight>],
 ) -> Vec<(Range<Position>, Highlight)> {
-    let tokens = match found {
-        None => return Vec::new(),
-        Some(SemanticTokensResult::Tokens(tokens)) => tokens.data,
-        Some(SemanticTokensResult::Partial(partial)) => partial.data,
-    };
     let mut spans = Vec::new();
     let (mut line, mut column) = (0_usize, 0_usize);
     for token in tokens {

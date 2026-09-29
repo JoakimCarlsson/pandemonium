@@ -58,6 +58,9 @@ pub enum Action {
     ShowWorkspaceSymbols,
     /// Open the log of a language server behind the focused file.
     OpenServerLog,
+    /// Write every message to and from the language servers to their logs,
+    /// or stop.
+    ToggleServerTrace,
     /// Open the list of every error and warning in the open files.
     ShowProblems,
     /// Add a repository to the window as a project.
@@ -404,6 +407,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::OpenServerLog,
         "language.server_log",
         "Open Language Server Log",
+    ),
+    (
+        Action::ToggleServerTrace,
+        "language.trace",
+        "Toggle Language Server Trace",
     ),
     (Action::AddProject, "project.add", "Add Project"),
     (Action::RemoveProject, "project.remove", "Remove Project"),
