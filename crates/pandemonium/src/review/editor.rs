@@ -5,7 +5,7 @@
 //! keys, the same menu under the right button. It is the window's one kind of
 //! text box, asked for at whatever size the screen has room for.
 
-use pm_ui::{Div, Theme};
+use pm_ui::{Div, Styled, Theme, h_flex, text};
 
 use crate::input::input_view;
 use crate::message::Message;
@@ -27,6 +27,22 @@ pub fn commit_editor(
     focused: bool,
     solid: bool,
 ) -> Div<Message> {
+    if let Some(pm_core::Operation::Rebase(rebase)) = &held.head().operation {
+        return h_flex()
+            .w_full()
+            .h_px(theme.size.control * MESSAGE_LINES)
+            .px(1)
+            .py(0.5)
+            .overflow_hidden()
+            .rounded(theme.radius.md)
+            .bg(theme.colors.background)
+            .border_1(theme.colors.border)
+            .child(
+                text(rebase.message.clone())
+                    .text_sm()
+                    .color(theme.colors.text_muted),
+            );
+    }
     input_view(
         theme,
         held.message(),

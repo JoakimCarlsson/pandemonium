@@ -217,14 +217,13 @@ fn repository_heading(
                 .font_light()
                 .color(theme.colors.text_muted),
         })
-        .when_some(
-            held.head().operation.as_ref(),
-            |row, operation| match operation {
-                pm_core::Operation::Merge(_) => {
-                    row.child(text("Merging").text_xs().color(theme.colors.text_muted))
-                }
-            },
-        )
+        .when_some(held.head().operation.as_ref(), |row, operation| {
+            row.child(
+                text(operation.label())
+                    .text_xs()
+                    .color(theme.colors.text_muted),
+            )
+        })
         .child(h_flex().flex_1())
         .child(
             h_flex()
@@ -280,10 +279,11 @@ fn history_graph(
     let visible = ((controls.history_graph_height - row_height) / row_height)
         .floor()
         .max(1.0) as usize;
+    let first = review.history_scroll(controls.history_all, visible);
     let commits = review
         .history(controls.history_all)
         .iter()
-        .skip(review.history_scroll(controls.history_all, visible))
+        .skip(first)
         .take(visible)
         .cloned()
         .collect::<Vec<_>>();
@@ -351,11 +351,9 @@ fn history_graph(
                 ),
         )
         .when(open, |graph| {
-            graph.children(
-                commits
-                    .into_iter()
-                    .map(|commit| history_row(theme, commit, columns)),
-            )
+            graph.children(commits.into_iter().enumerate().map(|(row, commit)| {
+                history_row(theme, commit, columns, review.active(), first + row)
+            }))
         })
 }
 
@@ -363,7 +361,13 @@ fn history_graph(
 const SHOWN_REFS: usize = 2;
 
 /// Builds one commit of the graph: its lanes, its references and its summary.
-fn history_row(theme: &Theme, commit: pm_core::Commit, columns: usize) -> Div<Message> {
+fn history_row(
+    theme: &Theme,
+    commit: pm_core::Commit,
+    columns: usize,
+    repository: usize,
+    row: usize,
+) -> Div<Message> {
     let color = lane_color(theme, commit.lanes.color);
     h_flex()
         .w_full()
@@ -372,6 +376,7 @@ fn history_row(theme: &Theme, commit: pm_core::Commit, columns: usize) -> Div<Me
         .gap(0.75)
         .items_center()
         .overflow_hidden()
+        .on_secondary_click(Message::ShowHistoryMenu(repository, row))
         .child(graph_cell(theme, commit.lanes, columns))
         .child(
             text(commit.id)
@@ -477,6 +482,18 @@ fn heading(theme: &Theme, review: &Review) -> Div<Message> {
                 .font_light()
                 .color(theme.colors.text),
         )
+        .when(review.repositories().len() == 1, |heading| {
+            heading.when_some(
+                review.head().and_then(|head| head.operation.as_ref()),
+                |heading, operation| {
+                    heading.child(
+                        text(operation.label())
+                            .text_xs()
+                            .color(theme.colors.text_muted),
+                    )
+                },
+            )
+        })
         .child(
             h_flex()
                 .gap(0.5)

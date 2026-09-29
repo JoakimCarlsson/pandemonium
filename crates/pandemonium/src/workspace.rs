@@ -319,6 +319,8 @@ pub enum MenuTarget {
     SourceControl,
     /// The Graph history-reference filter.
     HistoryRefs,
+    /// A commit row in the active repository's history.
+    History(usize, usize),
     /// The status bar's count of agents standing one way.
     Agents(Standing),
 }

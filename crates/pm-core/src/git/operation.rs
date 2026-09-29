@@ -1,14 +1,18 @@
 //! In-progress git operations in one worktree.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::git::run::{Said, answer, git};
 
-/// An operation waiting for its final commit.
+/// An operation waiting for its next step.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Operation {
     /// A merge awaiting conflict resolution or a commit.
     Merge(Merge),
+    /// A rebase replaying commits.
+    Rebase(Rebase),
+    /// A cherry-pick awaiting conflict resolution.
+    CherryPick(CherryPick),
 }
 
 /// The merge pending in one worktree.
@@ -20,32 +24,102 @@ pub struct Merge {
     pub message: String,
 }
 
-/// Reads the operation pending in `root`, if any.
-pub fn operation(root: &Path) -> Option<Operation> {
-    let path = answer(root, ["rev-parse", "--git-path", "MERGE_HEAD"])?;
+/// The rebase pending in one worktree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rebase {
+    /// The target commit or branch.
+    pub onto: String,
+    /// The branch being rebased.
+    pub branch: String,
+    /// The current replay step.
+    pub step: usize,
+    /// The total replay steps.
+    pub total: usize,
+    /// The message of the commit currently being replayed.
+    pub message: String,
+}
+
+/// The cherry-pick pending in one worktree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CherryPick {
+    /// The commit being picked.
+    pub commit: String,
+    /// The message git prepared for the picked commit.
+    pub message: String,
+}
+
+/// Resolves a git control file or directory in `root`, including linked worktrees.
+fn git_path(root: &Path, name: &str) -> Option<PathBuf> {
+    let path = answer(root, ["rev-parse", "--git-path", name])?;
     let path = Path::new(path.trim());
-    let path = if path.is_absolute() {
+    Some(if path.is_absolute() {
         path.to_path_buf()
     } else {
         root.join(path)
-    };
-    let incoming = std::fs::read_to_string(path).ok()?.trim().to_owned();
-    let path = answer(root, ["rev-parse", "--git-path", "MERGE_MSG"])?;
-    let path = Path::new(path.trim());
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    let message = std::fs::read_to_string(path)
+    })
+}
+
+/// Reads `name` in the worktree's git directory.
+fn git_file(root: &Path, name: &str) -> Option<String> {
+    std::fs::read_to_string(git_path(root, name)?)
+        .ok()
+        .map(|value| value.trim().to_owned())
+}
+
+/// Reads the message git prepared, without its instructional comment lines.
+fn prepared_message(root: &Path) -> String {
+    git_file(root, "MERGE_MSG")
         .unwrap_or_default()
         .lines()
         .filter(|line| !line.starts_with('#'))
         .collect::<Vec<_>>()
         .join("\n")
         .trim()
-        .to_owned();
-    Some(Operation::Merge(Merge { incoming, message }))
+        .to_owned()
+}
+
+/// Reads the operation pending in `root`, if any.
+pub fn operation(root: &Path) -> Option<Operation> {
+    for directory in ["rebase-merge", "rebase-apply"] {
+        if git_path(root, directory)?.is_dir() {
+            let read = |name: &str| git_file(root, &format!("{directory}/{name}"));
+            let onto = read("onto").unwrap_or_default();
+            let onto = answer(root, ["name-rev", "--name-only", &onto])
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty() && name != "undefined")
+                .unwrap_or(onto);
+            return Some(Operation::Rebase(Rebase {
+                onto,
+                branch: read("head-name")
+                    .unwrap_or_default()
+                    .trim_start_matches("refs/heads/")
+                    .to_owned(),
+                step: read("msgnum")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+                total: read("end")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+                message: read("message")
+                    .or_else(|| {
+                        answer(root, ["log", "-1", "--pretty=%B", "REBASE_HEAD"])
+                            .map(|value| value.trim().to_owned())
+                    })
+                    .unwrap_or_default(),
+            }));
+        }
+    }
+    if let Some(commit) = git_file(root, "CHERRY_PICK_HEAD") {
+        return Some(Operation::CherryPick(CherryPick {
+            commit,
+            message: prepared_message(root),
+        }));
+    }
+    let incoming = git_file(root, "MERGE_HEAD")?;
+    Some(Operation::Merge(Merge {
+        incoming,
+        message: prepared_message(root),
+    }))
 }
 
 impl Operation {
@@ -59,7 +133,58 @@ impl Operation {
                     |incoming| format!("Merging {incoming}"),
                 )
             }
+            Self::Rebase(rebase) => format!(
+                "Rebasing {}/{} onto {}",
+                rebase.step, rebase.total, rebase.onto
+            ),
+            Self::CherryPick(pick) => format!(
+                "Cherry-picking {}",
+                &pick.commit[..pick.commit.len().min(7)]
+            ),
         }
+    }
+
+    /// The verb naming this operation in menu actions.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Merge(_) => "Merge",
+            Self::Rebase(_) => "Rebase",
+            Self::CherryPick(_) => "Cherry-Pick",
+        }
+    }
+}
+
+/// Writes a chosen message and advances the operation in `root`.
+pub fn continue_operation(root: &Path, operation: &Operation) -> Said {
+    match operation {
+        Operation::Merge(merge) => git(root, ["commit", "-m", &merge.message]),
+        Operation::Rebase(_) => git(root, ["-c", "core.editor=true", "rebase", "--continue"]),
+        Operation::CherryPick(pick) => {
+            let path = git_path(root, "MERGE_MSG").ok_or("Cannot find MERGE_MSG")?;
+            std::fs::write(path, &pick.message).map_err(|error| error.to_string())?;
+            git(
+                root,
+                ["-c", "core.editor=true", "cherry-pick", "--continue"],
+            )
+        }
+    }
+}
+
+/// Skips the stopped commit in a rebase or cherry-pick.
+pub fn skip_operation(root: &Path, operation: &Operation) -> Said {
+    match operation {
+        Operation::Rebase(_) => git(root, ["rebase", "--skip"]),
+        Operation::CherryPick(_) => git(root, ["cherry-pick", "--skip"]),
+        Operation::Merge(_) => Err("A merge cannot skip a commit".to_owned()),
+    }
+}
+
+/// Aborts the operation pending in `root`.
+pub fn abort_operation(root: &Path, operation: &Operation) -> Said {
+    match operation {
+        Operation::Merge(_) => git(root, ["merge", "--abort"]),
+        Operation::Rebase(_) => git(root, ["rebase", "--abort"]),
+        Operation::CherryPick(_) => git(root, ["cherry-pick", "--abort"]),
     }
 }
 

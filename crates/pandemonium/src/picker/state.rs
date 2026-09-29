@@ -39,6 +39,10 @@ pub enum Kind {
     Projects,
     /// The local branches of the active project.
     Branches,
+    /// The active repository's saved stashes.
+    Stashes,
+    /// A message for saving a stash.
+    StashMessage,
     /// A remote to fetch from.
     FetchRemotes,
     /// A remote to push to.
@@ -118,6 +122,8 @@ impl Kind {
             Self::Files => "Search files by name, > for commands, # for symbols",
             Self::Projects => "Go to a project",
             Self::Branches => "Switch or type to create a branch…",
+            Self::Stashes => "Choose a stash",
+            Self::StashMessage => "Stash message (optional)",
             Self::FetchRemotes => "Pick which remote to fetch",
             Self::PushRemotes => "Pick which remote to push to",
             Self::Symbols => "Go to a symbol",
@@ -165,6 +171,7 @@ impl Kind {
                 | Self::Watch
                 | Self::Rename
                 | Self::NewBranch
+                | Self::StashMessage
                 | Self::NewSession
                 | Self::CloneUrl
                 | Self::LinkedPath
@@ -228,6 +235,8 @@ pub enum Choice {
     Project(ProjectId),
     /// Check out this local branch of this project.
     Branch(ProjectId, String),
+    /// Act on a stash in the active repository.
+    Stash(usize),
     /// Fetch this project's named remote.
     FetchRemote(ProjectId, String),
     /// Push this project to the named remote.

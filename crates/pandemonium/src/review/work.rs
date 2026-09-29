@@ -85,6 +85,15 @@ pub struct Done {
 }
 
 impl Done {
+    /// Git's words for any failed work, before the review takes this result.
+    pub fn troubles(&self) -> Vec<String> {
+        self.heard
+            .iter()
+            .filter_map(|(_, said)| said.as_ref().err().cloned())
+            .filter(|words| !words.is_empty())
+            .collect()
+    }
+
     /// Whether git did everything it was asked to.
     pub(super) fn went_through(&self) -> bool {
         self.heard.iter().all(|(_, said)| said.is_ok())
