@@ -615,6 +615,21 @@ impl Talk {
         self.dismissed = false;
     }
 
+    /// Puts the agent's advertised compact command into the prompt.
+    pub fn take_compact_command(&mut self) -> bool {
+        let Some(command) = self
+            .commands
+            .iter()
+            .find(|command| command.name.eq_ignore_ascii_case("compact"))
+        else {
+            return false;
+        };
+        self.prompt.set(&format!("/{}", command.name));
+        self.chosen = 0;
+        self.dismissed = false;
+        true
+    }
+
     /// Whether the conversation is open and will take prompts.
     pub fn is_ready(&self) -> bool {
         self.ready
@@ -1007,7 +1022,24 @@ impl Talk {
                 self.busy = false;
                 self.busy_since = None;
                 self.unseen = true;
-                self.transcript.note(trouble);
+                let bad_request = trouble.to_ascii_lowercase().contains("bad request");
+                let mut message = format!("The agent reported an error: {trouble}");
+                let stderr = self.conversation.trouble();
+                if !stderr.trim().is_empty() {
+                    message.push_str("\n\nRecent agent errors:\n");
+                    message.push_str(stderr.trim());
+                }
+                if bad_request {
+                    message.push_str(
+                        "\n\nThe conversation may be too large to send. Start a new session to continue.",
+                    );
+                }
+                let compact = bad_request
+                    && self
+                        .commands
+                        .iter()
+                        .any(|command| command.name.eq_ignore_ascii_case("compact"));
+                self.transcript.failure(message, compact);
             }
             Event::Ended => {
                 self.busy = false;
@@ -1048,7 +1080,22 @@ impl Pasted {
     /// Encoding a screenshot takes long enough to be felt, so this is run
     /// away from the window.
     pub fn prepare(width: u32, height: u32, pixels: Vec<u8>, can_image: bool) -> Option<Self> {
-        let png = crate::desktop::encode_png(width, height, &pixels)?;
+        let longest = width.max(height);
+        let png = if longest > crate::desktop::PASTED_IMAGE_MAX_SIDE {
+            let cap = crate::desktop::PASTED_IMAGE_MAX_SIDE;
+            let scaled =
+                |side: u32| ((u64::from(side) * u64::from(cap) / u64::from(longest)) as u32).max(1);
+            let source = image::RgbaImage::from_raw(width, height, pixels.clone())?;
+            let resized = image::imageops::resize(
+                &source,
+                scaled(width),
+                scaled(height),
+                image::imageops::FilterType::Triangle,
+            );
+            crate::desktop::encode_png(resized.width(), resized.height(), resized.as_raw())?
+        } else {
+            crate::desktop::encode_png(width, height, &pixels)?
+        };
         let preview = Image::from_rgba(width, height, pixels);
         let (attachment, saved) = match can_image {
             true => (
