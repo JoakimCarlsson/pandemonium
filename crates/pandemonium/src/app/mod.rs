@@ -382,6 +382,9 @@ pub struct App {
     prompt: Option<crate::prompt::Prompt>,
     /// What could be written where the cursor is, while the list is up.
     completions: Option<crate::editor::Completions>,
+    /// A completion put in before its server had filled it in, waiting for
+    /// the edits that come with it.
+    taken_completion: Option<crate::app::language::TakenCompletion>,
     /// What the editor has to say about a place, and where to say it.
     hint: Option<editor::Shown>,
     /// The name the pointer is over, while the key that links it is held.
@@ -687,6 +690,7 @@ impl App {
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
             completions: None,
+            taken_completion: None,
             hint: None,
             link: None,
             blink: editor::Blink::default(),
@@ -1575,6 +1579,10 @@ impl App {
             self.start_server_install(command, true);
             return;
         }
+        if message == Message::OpenServerLog {
+            self.open_server_log();
+            return self.request_redraw();
+        }
         if self.session_command(message) {
             self.request_redraw();
             return;
@@ -2189,6 +2197,21 @@ impl App {
                 content: Box::new(editor::completion_list(theme, completions)),
                 backdrop: None,
             });
+            if let Some(documentation) = completions.documentation() {
+                let said = editor::Shown {
+                    at: completions.beside(),
+                    said: Some(documentation.to_owned()),
+                    language: self
+                        .active_file()
+                        .and_then(|document| document.borrow().buffer().language()),
+                    ..editor::Shown::default()
+                };
+                overlays.push(workspace::Overlaid {
+                    at: said.at,
+                    content: Box::new(editor::hint(theme, &said)),
+                    backdrop: None,
+                });
+            }
         }
 
         if let Some(hint) = self.hint.as_ref().filter(|hint| !hint.is_empty()) {
@@ -2322,6 +2345,9 @@ impl App {
             history_graph_open: layout.history_graph_open,
             changes_section_open: layout.changes_section_open,
         };
+        let activity = self
+            .active_file_id()
+            .and_then(|file| self.server_activity(file));
         let (Some(renderer), Some(ui), Some(list)) =
             (self.renderer.as_mut(), self.ui.as_mut(), self.list.as_mut())
         else {
@@ -2367,6 +2393,7 @@ impl App {
                         .map_or(0, |project| self.agents.count(project.id())),
                     tally: self.agents.tally(),
                     notice: self.notices.shown(),
+                    activity,
                     menu,
                     overlays,
                 },
@@ -2456,6 +2483,7 @@ impl ApplicationHandler<Wake> for App {
             }
             Wake::Install => self.finish_server_installs(),
             Wake::Language => {
+                self.hear_server_troubles();
                 let answered = self.collect_answers();
                 if self.editor.refresh() || answered {
                     self.request_redraw();
@@ -2593,6 +2621,9 @@ impl ApplicationHandler<Wake> for App {
         self.editor.set_notify(self.waker(Wake::Language));
         if let Some(directory) = config::servers() {
             pm_text::program::set_servers(directory);
+        }
+        if let Some(directory) = config::logs() {
+            self.editor.set_logs(directory);
         }
         let (replace, add) = partition_language_servers(&self.language_servers);
         self.editor.set_language_servers(&replace);

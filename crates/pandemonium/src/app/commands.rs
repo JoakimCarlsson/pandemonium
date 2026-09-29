@@ -44,6 +44,7 @@ impl App {
             Action::SearchProject => self.open_picker(Kind::Search),
             Action::ReplaceProject => self.open_project_search(None),
             Action::ShowProblems => self.open_picker(Kind::Problems),
+            Action::OpenServerLog => self.open_server_log(),
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
             Action::OpenSettings => return self.apply(Message::OpenSettings),
@@ -845,11 +846,14 @@ impl App {
             return;
         };
         let start = completions.start();
+        let waiting = completions.is_asked(&item.handle);
+        let client = completions.client().clone();
         self.completions = None;
         self.edit_active(|buffer| {
             let head = buffer.selection().head;
-            buffer.replace(start..head, &item.insert);
+            buffer.complete(start..head, &item.insert, item.extra.clone());
         });
+        self.await_taken_completion(client, item, start, waiting);
     }
 
     /// Follows a keystroke through: narrows the list, or asks for a new one.
@@ -891,6 +895,7 @@ impl App {
                 if self.completions.as_ref().is_some_and(Completions::is_empty) {
                     self.completions = None;
                 }
+                self.resolve_completion();
             }
             None => self.completions = None,
         }

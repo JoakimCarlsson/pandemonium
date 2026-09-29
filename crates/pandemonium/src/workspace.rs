@@ -251,6 +251,8 @@ pub struct Panes {
     pub tally: Tally,
     /// The newest thing the reader is being told about, if anything.
     pub notice: Option<Shown>,
+    /// What a language server behind the focused file says it is working on.
+    pub activity: Option<String>,
     /// The tab menu that is open, and what it holds.
     pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
     /// What is drawn over the panes, each at a point of its own.
@@ -571,6 +573,8 @@ struct Status {
     indent: Option<String>,
     /// What that file is written in.
     language: Option<&'static str>,
+    /// What a language server behind that file says it is working on.
+    activity: Option<String>,
     /// The mode modal editing has that file in, with the keys typed towards
     /// a command and the register being recorded into.
     modal: Option<String>,
@@ -605,6 +609,7 @@ impl Status {
             agents: panes.agents,
             tally: panes.tally,
             notice: panes.notice.clone(),
+            activity: panes.activity.clone(),
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
@@ -676,6 +681,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         cursors,
         indent,
         language,
+        activity,
         problems,
         modal,
     } = status;
@@ -768,6 +774,15 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         })
         .when_some(indent, |bar, indent| {
             bar.child(status_item(theme, None, indent, None, false))
+        })
+        .when_some(activity, |bar, activity| {
+            bar.child(status_item(
+                theme,
+                Some(IconName::LoadCircle),
+                activity,
+                Some(Message::OpenServerLog),
+                false,
+            ))
         })
         .when_some(language, |bar, language| {
             bar.child(status_item(theme, None, language, None, false))

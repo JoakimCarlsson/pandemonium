@@ -3,17 +3,42 @@
 //! The protocol's own shapes stop here. A request is one of a closed set of
 //! questions, an answer is one of a closed set of replies, and both are in
 //! the editor's own terms — paths and [`Position`]s — so nothing above this
-//! layer ever sees a `file://` URI or a JSON value.
+//! layer ever sees a `file://` URI or a JSON value. Below it everything is
+//! the protocol's own type for the method being asked: each question is
+//! built as that method's params and each reply read as that method's result.
 
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use lsp_types::request::{
+    CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
+    CodeActionRequest, CodeLensRequest, CodeLensResolve, Completion as CompletionRequest,
+    DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDeclaration, GotoDefinition,
+    GotoImplementation, GotoTypeDefinition, HoverRequest, InlayHintRequest, References, Rename,
+    ResolveCompletionItem, SemanticTokensFullRequest, SignatureHelpRequest, WillSaveWaitUntil,
+    WorkspaceSymbolRequest,
+};
+use lsp_types::{
+    CallHierarchyIncomingCallsParams, CallHierarchyItem, CallHierarchyOutgoingCallsParams,
+    CallHierarchyPrepareParams, CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeLens,
+    CodeLensParams, CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
+    CompletionTextEdit, DocumentChangeOperation, DocumentChanges, DocumentFormattingParams,
+    DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    Documentation, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents,
+    HoverParams, InlayHint, InlayHintLabel, InlayHintParams, InsertTextFormat, MarkedString, OneOf,
+    PartialResultParams, ReferenceContext, ReferenceParams, RenameParams, SemanticTokensParams,
+    SemanticTokensResult, SignatureHelpParams, SymbolInformation, SymbolKind,
+    TextDocumentIdentifier, TextDocumentPositionParams, TextDocumentSaveReason, TextEdit,
+    WillSaveTextDocumentParams, WorkDoneProgressParams, WorkspaceEdit, WorkspaceSymbolParams,
+    WorkspaceSymbolResponse,
+};
+use serde_json::Value;
 
 use crate::cursor::Position;
 use crate::indent::Indent;
+use crate::lsp::capabilities::{Capabilities, Document};
 use crate::lsp::encoding::Files;
-use crate::lsp::uri;
+use crate::lsp::{rpc, uri};
 use crate::syntax::Highlight;
 
 /// One thing a language server can be asked about a place in a file.
@@ -33,6 +58,9 @@ pub enum Request {
     Hover,
     /// What could be written here.
     Completions,
+    /// The rest of what one of those completions says, for a server that
+    /// sent it short.
+    ResolveCompletion(Handle),
     /// The signature of the call this place is inside.
     Signature,
     /// The fixes and refactors the server offers here.
@@ -53,9 +81,9 @@ pub enum Request {
     Lenses,
     /// What one of those notes says, for a server that sent it unsaid.
     ResolveLens(Handle),
-    /// The symbol here, as something whose calls can be followed.
+    /// The symbol here, as the server will follow its calls one way.
     PrepareCalls(Calls),
-    /// The calls into or out of a symbol the server named.
+    /// The calls one way along from a symbol the server named.
     Calls(Calls, Handle),
     /// The symbols of the whole workspace whose names match this.
     WorkspaceSymbols(String),
@@ -74,15 +102,43 @@ pub enum Calls {
 
 /// Something a server handed out to be handed back to it as it was.
 ///
-/// A code lens to resolve and a symbol whose calls are to be followed are
-/// both the server's own records: the editor keeps them without reading
-/// them and returns them to the server that made them.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Handle(Value);
+/// A code lens to resolve, a completion to fill in and a symbol whose calls
+/// are to be followed are all the server's own records: the editor keeps
+/// them without reading them and returns them to the server that made them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Handle(Handed);
+
+impl Eq for Handle {}
+
+/// What a server handed out, by the question it will be handed back with.
+#[derive(Clone, Debug, PartialEq)]
+enum Handed {
+    /// A code lens, to be resolved.
+    Lens(Box<CodeLens>),
+    /// A symbol, whose calls are to be followed.
+    Call(Box<CallHierarchyItem>),
+    /// A completion, to be filled in.
+    Completion(Box<CompletionItem>),
+}
+
+/// Where a question is asked, already counted the server's way.
+pub(super) struct Asking<'a> {
+    /// The file it is about.
+    pub path: &'a Path,
+    /// The place in it.
+    pub at: Position,
+    /// The span selected in it, or the line the place is on.
+    pub selection: Range<Position>,
+    /// How the file is indented, for a formatter.
+    pub indent: Indent,
+    /// What the server said is wrong across the selection, for its fixes.
+    pub diagnostics: Vec<lsp_types::Diagnostic>,
+}
 
 impl Request {
-    /// The method a server is asked by.
-    pub(super) fn method(&self) -> &'static str {
+    /// The method a server registers to answer this, and states it answers
+    /// in its answer to the handshake.
+    fn capability(&self) -> &'static str {
         match self {
             Self::Definition => "textDocument/definition",
             Self::TypeDefinition => "textDocument/typeDefinition",
@@ -90,53 +146,51 @@ impl Request {
             Self::Declaration => "textDocument/declaration",
             Self::References => "textDocument/references",
             Self::Hover => "textDocument/hover",
-            Self::Completions => "textDocument/completion",
+            Self::Completions | Self::ResolveCompletion(_) => "textDocument/completion",
             Self::Signature => "textDocument/signatureHelp",
             Self::CodeActions => "textDocument/codeAction",
             Self::Rename(_) => "textDocument/rename",
             Self::Format => "textDocument/formatting",
             Self::Symbols => "textDocument/documentSymbol",
             Self::Hints(_) => "textDocument/inlayHint",
-            Self::Semantics => "textDocument/semanticTokens/full",
+            Self::Semantics => "textDocument/semanticTokens",
             Self::Occurrences => "textDocument/documentHighlight",
-            Self::Lenses => "textDocument/codeLens",
-            Self::ResolveLens(_) => "codeLens/resolve",
-            Self::PrepareCalls(_) => "textDocument/prepareCallHierarchy",
-            Self::Calls(Calls::Incoming, _) => "callHierarchy/incomingCalls",
-            Self::Calls(Calls::Outgoing, _) => "callHierarchy/outgoingCalls",
+            Self::Lenses | Self::ResolveLens(_) => "textDocument/codeLens",
+            Self::PrepareCalls(_) | Self::Calls(..) => "textDocument/prepareCallHierarchy",
             Self::WorkspaceSymbols(_) => "workspace/symbol",
             Self::WillSave => "textDocument/willSaveWaitUntil",
         }
     }
 
-    /// Whether a server that declared `capabilities` answers this request.
+    /// The method this is asked by, for the log.
+    pub(super) fn method(&self) -> &'static str {
+        match self {
+            Self::Semantics => "textDocument/semanticTokens/full",
+            Self::ResolveCompletion(_) => "completionItem/resolve",
+            Self::ResolveLens(_) => "codeLens/resolve",
+            Self::Calls(Calls::Incoming, _) => "callHierarchy/incomingCalls",
+            Self::Calls(Calls::Outgoing, _) => "callHierarchy/outgoingCalls",
+            request => request.capability(),
+        }
+    }
+
+    /// Whether a server that said `capabilities` answers this about `document`.
     ///
     /// A server asked what it never offered answers with an error at best,
     /// and a save that waits on the answer waits on a refusal.
-    pub(super) fn is_offered(&self, capabilities: &Value) -> bool {
-        let offered = match self {
-            Self::Definition => &capabilities["definitionProvider"],
-            Self::TypeDefinition => &capabilities["typeDefinitionProvider"],
-            Self::Implementation => &capabilities["implementationProvider"],
-            Self::Declaration => &capabilities["declarationProvider"],
-            Self::References => &capabilities["referencesProvider"],
-            Self::Hover => &capabilities["hoverProvider"],
-            Self::Completions => &capabilities["completionProvider"],
-            Self::Signature => &capabilities["signatureHelpProvider"],
-            Self::CodeActions => &capabilities["codeActionProvider"],
-            Self::Rename(_) => &capabilities["renameProvider"],
-            Self::Format => &capabilities["documentFormattingProvider"],
-            Self::Symbols => &capabilities["documentSymbolProvider"],
-            Self::Hints(_) => &capabilities["inlayHintProvider"],
-            Self::Semantics => &capabilities["semanticTokensProvider"],
-            Self::Occurrences => &capabilities["documentHighlightProvider"],
-            Self::Lenses => &capabilities["codeLensProvider"],
-            Self::ResolveLens(_) => &capabilities["codeLensProvider"]["resolveProvider"],
-            Self::PrepareCalls(_) | Self::Calls(..) => &capabilities["callHierarchyProvider"],
-            Self::WorkspaceSymbols(_) => &capabilities["workspaceSymbolProvider"],
-            Self::WillSave => &capabilities["textDocumentSync"]["willSaveWaitUntil"],
-        };
-        !matches!(offered, Value::Null | Value::Bool(false))
+    pub(super) fn is_offered(
+        &self,
+        capabilities: &Capabilities,
+        document: Option<Document>,
+    ) -> bool {
+        if !capabilities.offers(self.capability(), document) {
+            return false;
+        }
+        match self {
+            Self::ResolveCompletion(_) => capabilities.resolves_completions(document),
+            Self::ResolveLens(_) => capabilities.resolves_lenses(document),
+            _ => true,
+        }
     }
 
     /// This request with every place named in it counted the server's way.
@@ -144,7 +198,7 @@ impl Request {
     /// Only a request carrying a span of its own has anything to translate;
     /// the place the rest are asked about is translated by the client as it
     /// asks them.
-    pub(super) fn encoded(&self, path: &std::path::Path, files: &mut Files) -> Self {
+    pub(super) fn encoded(&self, path: &Path, files: &mut Files) -> Self {
         match self {
             Self::Hints(span) => {
                 Self::Hints(files.encode(path, span.start)..files.encode(path, span.end))
@@ -153,104 +207,330 @@ impl Request {
         }
     }
 
-    /// The parameters it is asked with, about `at` in the file at `path`.
-    pub(super) fn params(
-        &self,
-        path: &std::path::Path,
-        at: Position,
-        indent: Indent,
-        selection: Range<Position>,
-        diagnostics: Vec<Value>,
-    ) -> Value {
-        let document = json!({ "uri": uri::of(path) });
-        let position = json!({ "line": at.line, "character": at.column });
-
-        match self {
-            Self::References => json!({
-                "textDocument": document,
-                "position": position,
-                "context": { "includeDeclaration": false },
-            }),
-            Self::Rename(name) => json!({
-                "textDocument": document,
-                "position": position,
-                "newName": name,
-            }),
-            Self::CodeActions => json!({
-                "textDocument": document,
-                "range": {
-                    "start": { "line": selection.start.line, "character": selection.start.column },
-                    "end": { "line": selection.end.line, "character": selection.end.column },
+    /// The message asking this under `id`, about what `asking` says.
+    ///
+    /// A question carrying something a server handed out of another kind
+    /// than it asks about has nothing to ask with.
+    pub(super) fn message(&self, id: i64, asking: Asking) -> Option<Value> {
+        let document = TextDocumentIdentifier::new(uri::typed(asking.path));
+        let place = TextDocumentPositionParams::new(document.clone(), wire(asking.at));
+        let goto = GotoDefinitionParams {
+            text_document_position_params: place.clone(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        Some(match self {
+            Self::Definition => rpc::request::<GotoDefinition>(id, goto),
+            Self::TypeDefinition => rpc::request::<GotoTypeDefinition>(id, goto),
+            Self::Implementation => rpc::request::<GotoImplementation>(id, goto),
+            Self::Declaration => rpc::request::<GotoDeclaration>(id, goto),
+            Self::References => rpc::request::<References>(
+                id,
+                ReferenceParams {
+                    text_document_position: place,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                    context: ReferenceContext {
+                        include_declaration: false,
+                    },
                 },
-                "context": { "diagnostics": diagnostics },
-            }),
-            Self::Format => json!({
-                "textDocument": document,
-                "options": { "tabSize": indent.width, "insertSpaces": !indent.tabs },
-            }),
-            Self::Symbols | Self::Semantics | Self::Lenses => json!({ "textDocument": document }),
-            Self::ResolveLens(Handle(lens)) => lens.clone(),
-            Self::Calls(_, Handle(item)) => json!({ "item": item }),
-            Self::WorkspaceSymbols(query) => json!({ "query": query }),
-            Self::WillSave => json!({ "textDocument": document, "reason": 1 }),
-            Self::Hints(span) => json!({
-                "textDocument": document,
-                "range": {
-                    "start": { "line": span.start.line, "character": span.start.column },
-                    "end": { "line": span.end.line, "character": span.end.column },
+            ),
+            Self::Hover => rpc::request::<HoverRequest>(
+                id,
+                HoverParams {
+                    text_document_position_params: place,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
                 },
-            }),
-            _ => json!({ "textDocument": document, "position": position }),
-        }
+            ),
+            Self::Completions => rpc::request::<CompletionRequest>(
+                id,
+                CompletionParams {
+                    text_document_position: place,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                    context: None,
+                },
+            ),
+            Self::ResolveCompletion(handle) => match &handle.0 {
+                Handed::Completion(item) => {
+                    rpc::request::<ResolveCompletionItem>(id, *item.clone())
+                }
+                _ => return None,
+            },
+            Self::Signature => rpc::request::<SignatureHelpRequest>(
+                id,
+                SignatureHelpParams {
+                    context: None,
+                    text_document_position_params: place,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ),
+            Self::CodeActions => rpc::request::<CodeActionRequest>(
+                id,
+                CodeActionParams {
+                    text_document: document,
+                    range: wire_range(asking.selection),
+                    context: CodeActionContext {
+                        diagnostics: asking.diagnostics,
+                        only: None,
+                        trigger_kind: None,
+                    },
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                },
+            ),
+            Self::Rename(name) => rpc::request::<Rename>(
+                id,
+                RenameParams {
+                    text_document_position: place,
+                    new_name: name.clone(),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ),
+            Self::Format => rpc::request::<Formatting>(
+                id,
+                DocumentFormattingParams {
+                    text_document: document,
+                    options: FormattingOptions {
+                        tab_size: asking.indent.width as u32,
+                        insert_spaces: !asking.indent.tabs,
+                        ..FormattingOptions::default()
+                    },
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ),
+            Self::Symbols => rpc::request::<DocumentSymbolRequest>(
+                id,
+                DocumentSymbolParams {
+                    text_document: document,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                },
+            ),
+            Self::Hints(span) => rpc::request::<InlayHintRequest>(
+                id,
+                InlayHintParams {
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    text_document: document,
+                    range: wire_range(span.clone()),
+                },
+            ),
+            Self::Semantics => rpc::request::<SemanticTokensFullRequest>(
+                id,
+                SemanticTokensParams {
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                    text_document: document,
+                },
+            ),
+            Self::Occurrences => rpc::request::<DocumentHighlightRequest>(
+                id,
+                DocumentHighlightParams {
+                    text_document_position_params: place,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                },
+            ),
+            Self::Lenses => rpc::request::<CodeLensRequest>(
+                id,
+                CodeLensParams {
+                    text_document: document,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                },
+            ),
+            Self::ResolveLens(handle) => match &handle.0 {
+                Handed::Lens(lens) => rpc::request::<CodeLensResolve>(id, *lens.clone()),
+                _ => return None,
+            },
+            Self::PrepareCalls(_) => rpc::request::<CallHierarchyPrepare>(
+                id,
+                CallHierarchyPrepareParams {
+                    text_document_position_params: place,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ),
+            Self::Calls(direction, handle) => {
+                let Handed::Call(item) = &handle.0 else {
+                    return None;
+                };
+                let item = *item.clone();
+                match direction {
+                    Calls::Incoming => rpc::request::<CallHierarchyIncomingCalls>(
+                        id,
+                        CallHierarchyIncomingCallsParams {
+                            item,
+                            work_done_progress_params: WorkDoneProgressParams::default(),
+                            partial_result_params: PartialResultParams::default(),
+                        },
+                    ),
+                    Calls::Outgoing => rpc::request::<CallHierarchyOutgoingCalls>(
+                        id,
+                        CallHierarchyOutgoingCallsParams {
+                            item,
+                            work_done_progress_params: WorkDoneProgressParams::default(),
+                            partial_result_params: PartialResultParams::default(),
+                        },
+                    ),
+                }
+            }
+            Self::WorkspaceSymbols(query) => rpc::request::<WorkspaceSymbolRequest>(
+                id,
+                WorkspaceSymbolParams {
+                    partial_result_params: PartialResultParams::default(),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    query: query.clone(),
+                },
+            ),
+            Self::WillSave => rpc::request::<WillSaveWaitUntil>(
+                id,
+                WillSaveTextDocumentParams {
+                    text_document: document,
+                    reason: TextDocumentSaveReason::MANUAL,
+                },
+            ),
+        })
     }
 
     /// What a server's reply to this request, made about `path`, comes to.
     ///
     /// `legend` is what the server said its token types are, in the order it
-    /// numbers them; only a reply about semantics is read through it.
+    /// numbers them; only a reply about semantics is read through it. A reply
+    /// that is not the shape its method's result is comes to nothing.
     pub(super) fn read(
         &self,
-        path: &std::path::Path,
-        result: &Value,
+        path: &Path,
+        result: Value,
         legend: &[Option<Highlight>],
-    ) -> Answer {
-        match self {
-            Self::Definition
-            | Self::TypeDefinition
-            | Self::Implementation
-            | Self::Declaration
-            | Self::References => Answer::Locations(locations(result)),
-            Self::Hover => Answer::Hover(hover(result)),
-            Self::Completions => Answer::Completions(completions(result)),
-            Self::Signature => Answer::Signature(signature(result)),
-            Self::CodeActions => Answer::CodeActions(code_actions(result)),
-            Self::Rename(_) => Answer::Edits(workspace_edit(result)),
-            Self::Format => Answer::Edits(vec![FileEdit {
-                path: path.to_path_buf(),
-                edits: text_edits(result),
-            }]),
-            Self::Symbols => Answer::Symbols(symbols(result)),
-            Self::Hints(_) => Answer::Hints(hints(result)),
-            Self::Semantics => Answer::Semantics(semantics(result, legend)),
-            Self::Occurrences => Answer::Occurrences(spans(result)),
-            Self::Lenses => Answer::Lenses(lenses(result)),
-            Self::ResolveLens(_) => Answer::Lenses(lens(result).into_iter().collect()),
-            Self::PrepareCalls(_) => Answer::CallItems(
-                result
-                    .as_array()
-                    .cloned()
+    ) -> Option<Answer> {
+        Some(match self {
+            Self::Definition => Answer::Locations(gone_to(rpc::result::<GotoDefinition>(result)?)),
+            Self::TypeDefinition => {
+                Answer::Locations(gone_to(rpc::result::<GotoTypeDefinition>(result)?))
+            }
+            Self::Implementation => {
+                Answer::Locations(gone_to(rpc::result::<GotoImplementation>(result)?))
+            }
+            Self::Declaration => {
+                Answer::Locations(gone_to(rpc::result::<GotoDeclaration>(result)?))
+            }
+            Self::References => Answer::Locations(
+                rpc::result::<References>(result)?
                     .unwrap_or_default()
                     .into_iter()
-                    .map(Handle)
+                    .filter_map(location)
                     .collect(),
             ),
-            Self::Calls(direction, _) => Answer::Named(calls(*direction, result)),
-            Self::WorkspaceSymbols(_) => Answer::Named(workspace_symbols(result)),
+            Self::Hover => Answer::Hover(
+                rpc::result::<HoverRequest>(result)?
+                    .map(|hover| hover_text(hover.contents))
+                    .unwrap_or_default(),
+            ),
+            Self::Completions => {
+                Answer::Completions(completions(rpc::result::<CompletionRequest>(result)?))
+            }
+            Self::ResolveCompletion(_) => {
+                let item = rpc::result::<ResolveCompletionItem>(result)?;
+                Answer::Resolved(completion(item)?)
+            }
+            Self::Signature => Answer::Signature(
+                rpc::result::<SignatureHelpRequest>(result)?
+                    .and_then(|help| {
+                        let active = help.active_signature.unwrap_or_default() as usize;
+                        let mut signatures = help.signatures;
+                        match active < signatures.len() {
+                            true => Some(signatures.swap_remove(active).label),
+                            false => signatures
+                                .into_iter()
+                                .next()
+                                .map(|signature| signature.label),
+                        }
+                    })
+                    .unwrap_or_default(),
+            ),
+            Self::CodeActions => Answer::CodeActions(
+                rpc::result::<CodeActionRequest>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(code_action)
+                    .collect(),
+            ),
+            Self::Rename(_) => Answer::Edits(
+                rpc::result::<Rename>(result)?
+                    .map(|edit| workspace_edit(&edit))
+                    .unwrap_or_default(),
+            ),
+            Self::Format => Answer::Edits(vec![FileEdit {
+                path: path.to_path_buf(),
+                edits: text_edits(rpc::result::<Formatting>(result)?.unwrap_or_default()),
+            }]),
+            Self::Symbols => {
+                Answer::Symbols(symbols(rpc::result::<DocumentSymbolRequest>(result)?))
+            }
+            Self::Hints(_) => Answer::Hints(
+                rpc::result::<InlayHintRequest>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(hint)
+                    .collect(),
+            ),
+            Self::Semantics => Answer::Semantics(semantics(
+                rpc::result::<SemanticTokensFullRequest>(result)?,
+                legend,
+            )),
+            Self::Occurrences => Answer::Occurrences(
+                rpc::result::<DocumentHighlightRequest>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|highlight| range(highlight.range))
+                    .collect(),
+            ),
+            Self::Lenses => Answer::Lenses(
+                rpc::result::<CodeLensRequest>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(lens)
+                    .collect(),
+            ),
+            Self::ResolveLens(_) => {
+                Answer::Lenses(vec![lens(rpc::result::<CodeLensResolve>(result)?)])
+            }
+            Self::PrepareCalls(_) => Answer::CallItems(
+                rpc::result::<CallHierarchyPrepare>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|item| Handle(Handed::Call(Box::new(item))))
+                    .collect(),
+            ),
+            Self::Calls(Calls::Incoming, _) => Answer::Named(
+                rpc::result::<CallHierarchyIncomingCalls>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|call| {
+                        let span = call
+                            .from_ranges
+                            .first()
+                            .copied()
+                            .unwrap_or(call.from.selection_range);
+                        call_item(&call.from, span)
+                    })
+                    .collect(),
+            ),
+            Self::Calls(Calls::Outgoing, _) => Answer::Named(
+                rpc::result::<CallHierarchyOutgoingCalls>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|call| call_item(&call.to, call.to.selection_range))
+                    .collect(),
+            ),
+            Self::WorkspaceSymbols(_) => Answer::Named(workspace_symbols(rpc::result::<
+                WorkspaceSymbolRequest,
+            >(result)?)),
             Self::WillSave => Answer::Edits(vec![FileEdit {
                 path: path.to_path_buf(),
-                edits: text_edits(result),
+                edits: text_edits(rpc::result::<WillSaveWaitUntil>(result)?.unwrap_or_default()),
             }]),
-        }
+        })
     }
 }
 
@@ -263,6 +543,8 @@ pub enum Answer {
     Hover(String),
     /// What could be written where the cursor is.
     Completions(Vec<Completion>),
+    /// One of those, filled in with what the server left out of the list.
+    Resolved(Completion),
     /// The signature of the call the cursor is inside.
     Signature(String),
     /// The fixes and refactors offered where the cursor is.
@@ -293,7 +575,7 @@ impl Answer {
     /// The file a place is in is the file it is counted against, which is
     /// not always the file that was asked about: a definition is somewhere
     /// else by definition, and a rename is in as many files as it touches.
-    pub(super) fn decode(&mut self, path: &std::path::Path, files: &mut Files) {
+    pub(super) fn decode(&mut self, path: &Path, files: &mut Files) {
         match self {
             Self::Locations(found) => {
                 for location in found {
@@ -308,9 +590,10 @@ impl Answer {
             Self::Hover(_) | Self::Signature(_) => {}
             Self::Completions(items) => {
                 for item in items {
-                    item.range = item.range.clone().map(|span| files.decode_span(path, span));
+                    decode_completion(item, path, files);
                 }
             }
+            Self::Resolved(item) => decode_completion(item, path, files),
             Self::CodeActions(actions) => {
                 for action in actions {
                     decode_edits(&mut action.edits, files);
@@ -362,6 +645,7 @@ impl Answer {
             Self::Locations(found) => found.is_empty(),
             Self::Hover(text) | Self::Signature(text) => text.is_empty(),
             Self::Completions(items) => items.is_empty(),
+            Self::Resolved(_) => false,
             Self::CodeActions(actions) => actions.is_empty(),
             Self::Edits(files) => files.iter().all(|file| file.edits.is_empty()),
             Self::Symbols(symbols) => symbols.is_empty(),
@@ -373,6 +657,14 @@ impl Answer {
             Self::Named(found) => found.is_empty(),
             Self::Refused => true,
         }
+    }
+}
+
+/// Counts the places one completion names the editor's way.
+fn decode_completion(item: &mut Completion, path: &Path, files: &mut Files) {
+    item.range = item.range.clone().map(|span| files.decode_span(path, span));
+    for (span, _) in &mut item.extra {
+        *span = files.decode_span(path, span.clone());
     }
 }
 
@@ -406,14 +698,24 @@ pub struct Location {
 pub struct Completion {
     /// What the list calls it.
     pub label: String,
+    /// What the list narrows it by as the reader types, which is the label
+    /// unless the server said otherwise.
+    pub filter: String,
     /// What is said beside it: a type, a signature, a module.
     pub detail: String,
+    /// What the server says about it at length, once it has said.
+    pub documentation: String,
     /// What goes into the buffer when it is chosen.
     pub insert: String,
     /// What kind of thing it is, as one word.
     pub kind: &'static str,
     /// The span it replaces, when the server named one.
     pub range: Option<Range<Position>>,
+    /// Changes elsewhere in the file that choosing it brings along: the
+    /// import a name needs, most often.
+    pub extra: Vec<(Range<Position>, String)>,
+    /// The server's own record of it, to have it filled in by.
+    pub handle: Handle,
 }
 
 /// One fix or refactor the server offers.
@@ -432,7 +734,7 @@ pub struct CodeAction {
 pub struct Command {
     /// The identifier the server recognizes.
     pub name: String,
-    /// The arguments returned by the server.
+    /// The arguments returned by the server, which only it reads.
     pub arguments: Vec<Value>,
 }
 
@@ -485,187 +787,121 @@ pub struct Lens {
 }
 
 /// One end of a span, in the editor's own terms.
-fn position(value: &Value) -> Position {
-    Position::new(
-        value["line"].as_u64().unwrap_or_default() as usize,
-        value["character"].as_u64().unwrap_or_default() as usize,
-    )
+pub(super) fn position(at: lsp_types::Position) -> Position {
+    Position::new(at.line as usize, at.character as usize)
 }
 
 /// One span, in the editor's own terms.
-fn range(value: &Value) -> Range<Position> {
-    position(&value["start"])..position(&value["end"])
+pub(super) fn range(span: lsp_types::Range) -> Range<Position> {
+    position(span.start)..position(span.end)
 }
 
-/// The spans a list of ranged things covers, whatever else each says.
-fn spans(result: &Value) -> Vec<Range<Position>> {
-    result
-        .as_array()
-        .map(|found| found.iter().map(|each| range(&each["range"])).collect())
-        .unwrap_or_default()
+/// One end of a span, in the protocol's terms.
+pub(super) fn wire(at: Position) -> lsp_types::Position {
+    lsp_types::Position::new(at.line as u32, at.column as u32)
 }
 
-/// The notes a server would put above a file's declarations.
-fn lenses(result: &Value) -> Vec<Lens> {
-    result
-        .as_array()
-        .map(|found| found.iter().filter_map(lens).collect())
-        .unwrap_or_default()
+/// One span, in the protocol's terms.
+fn wire_range(span: Range<Position>) -> lsp_types::Range {
+    lsp_types::Range::new(wire(span.start), wire(span.end))
 }
 
-/// One note, said or waiting to be resolved.
-fn lens(value: &Value) -> Option<Lens> {
-    value.get("range")?;
-    Some(Lens {
-        position: position(&value["range"]["start"]),
-        title: value["command"]["title"].as_str().map(str::to_owned),
-        handle: Handle(value.clone()),
+/// One place a server named, if it is a file the editor can open.
+fn location(found: lsp_types::Location) -> Option<Location> {
+    Some(Location {
+        path: uri::path_of(&found.uri)?,
+        range: range(found.range),
+        origin: None,
     })
 }
 
-/// The symbol a call hierarchy item names, and where it is.
-fn call_item(item: &Value, span: &Value) -> Option<NamedLocation> {
-    Some(NamedLocation {
-        name: item["name"].as_str()?.to_owned(),
-        detail: item["detail"].as_str().unwrap_or_default().to_owned(),
-        kind: symbol_kind(item["kind"].as_u64().unwrap_or_default()),
-        location: Location {
-            path: uri::path(item["uri"].as_str()?)?,
-            range: range(span),
-            origin: None,
-        },
-    })
-}
-
-/// The calls into or out of a symbol, each as the symbol at its other end.
-///
-/// A caller is shown where it makes the call, which is what a reader
-/// following calls upward wants to read; a callee is shown where it is
-/// declared, since the call itself is in the file already open.
-fn calls(direction: Calls, result: &Value) -> Vec<NamedLocation> {
-    result
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|call| match direction {
-            Calls::Incoming => {
-                let item = &call["from"];
-                let span = call["fromRanges"].get(0).unwrap_or(&item["selectionRange"]);
-                call_item(item, span)
-            }
-            Calls::Outgoing => call_item(&call["to"], &call["to"]["selectionRange"]),
-        })
-        .collect()
-}
-
-/// The symbols of a workspace a query matched, in the order the server ranked them.
-///
-/// A symbol whose location names only its file, which a server may send to
-/// have it resolved later, is taken to be at the top of that file.
-fn workspace_symbols(result: &Value) -> Vec<NamedLocation> {
-    result
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|symbol| {
-            let location = &symbol["location"];
-            Some(NamedLocation {
-                name: symbol["name"].as_str()?.to_owned(),
-                detail: symbol["containerName"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-                kind: symbol_kind(symbol["kind"].as_u64().unwrap_or_default()),
-                location: Location {
-                    path: uri::path(location["uri"].as_str()?)?,
-                    range: range(&location["range"]),
-                    origin: None,
-                },
+/// The places a go-to answer names: a location, a list of them, or links.
+fn gone_to(found: Option<GotoDefinitionResponse>) -> Vec<Location> {
+    match found {
+        None => Vec::new(),
+        Some(GotoDefinitionResponse::Scalar(found)) => location(found).into_iter().collect(),
+        Some(GotoDefinitionResponse::Array(found)) => {
+            found.into_iter().filter_map(location).collect()
+        }
+        Some(GotoDefinitionResponse::Link(links)) => links
+            .into_iter()
+            .filter_map(|link| {
+                Some(Location {
+                    path: uri::path_of(&link.target_uri)?,
+                    range: range(link.target_selection_range),
+                    origin: link.origin_selection_range.map(range),
+                })
             })
-        })
-        .collect()
-}
-
-/// The places a location, a link or a list of either names.
-fn locations(result: &Value) -> Vec<Location> {
-    let values = match result {
-        Value::Array(values) => values.clone(),
-        Value::Null => return Vec::new(),
-        value => vec![value.clone()],
-    };
-
-    values
-        .iter()
-        .filter_map(|value| {
-            let uri = value["uri"]
-                .as_str()
-                .or_else(|| value["targetUri"].as_str())?;
-            let span = if value.get("targetSelectionRange").is_some() {
-                &value["targetSelectionRange"]
-            } else if value.get("targetRange").is_some() {
-                &value["targetRange"]
-            } else {
-                &value["range"]
-            };
-            Some(Location {
-                path: uri::path(uri)?,
-                range: range(span),
-                origin: value.get("originSelectionRange").map(range),
-            })
-        })
-        .collect()
+            .collect(),
+    }
 }
 
 /// What a hover says, with the protocol's wrappers taken off.
-fn hover(result: &Value) -> String {
-    let contents = &result["contents"];
+fn hover_text(contents: HoverContents) -> String {
+    let marked = |marked: MarkedString| match marked {
+        MarkedString::String(text) => text,
+        MarkedString::LanguageString(code) => code.value,
+    };
     let text = match contents {
-        Value::String(text) => text.clone(),
-        Value::Array(parts) => parts
-            .iter()
-            .map(|part| match part {
-                Value::String(text) => text.clone(),
-                part => part["value"].as_str().unwrap_or_default().to_owned(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        part => part["value"].as_str().unwrap_or_default().to_owned(),
+        HoverContents::Scalar(part) => marked(part),
+        HoverContents::Array(parts) => parts.into_iter().map(marked).collect::<Vec<_>>().join("\n"),
+        HoverContents::Markup(markup) => markup.value,
     };
     text.trim().to_owned()
 }
 
 /// What could be written, in the order the server ranked it.
-fn completions(result: &Value) -> Vec<Completion> {
-    let items = match result {
-        Value::Array(items) => items.clone(),
-        value => value["items"].as_array().cloned().unwrap_or_default(),
+///
+/// A server ranks by the sort text it gives each item, not by the order it
+/// happens to list them in.
+fn completions(found: Option<CompletionResponse>) -> Vec<Completion> {
+    let mut items = match found {
+        None => Vec::new(),
+        Some(CompletionResponse::Array(items)) => items,
+        Some(CompletionResponse::List(list)) => list.items,
     };
+    items.sort_by(|a, b| {
+        let rank =
+            |item: &CompletionItem| item.sort_text.clone().unwrap_or_else(|| item.label.clone());
+        rank(a).cmp(&rank(b))
+    });
+    items.into_iter().filter_map(completion).collect()
+}
 
-    items
-        .iter()
-        .filter_map(|item| {
-            let label = item["label"].as_str()?.trim().to_owned();
-            let edit = &item["textEdit"];
-            let span = edit
-                .get("range")
-                .map(range)
-                .or_else(|| edit.get("replace").map(range));
-            let insert = edit["newText"]
-                .as_str()
-                .or_else(|| item["insertText"].as_str())
-                .unwrap_or(&label)
-                .to_owned();
-            Some(Completion {
-                detail: item["detail"].as_str().unwrap_or_default().to_owned(),
-                kind: completion_kind(item["kind"].as_u64().unwrap_or_default()),
-                insert: plain(&insert, item["insertTextFormat"].as_u64() == Some(2)),
-                range: span,
-                label,
-            })
-        })
-        .collect()
+/// One thing that could be written, in the editor's own terms.
+fn completion(item: CompletionItem) -> Option<Completion> {
+    let label = item.label.trim().to_owned();
+    if label.is_empty() {
+        return None;
+    }
+    let (span, text) = match item.text_edit.clone() {
+        Some(CompletionTextEdit::Edit(edit)) => (Some(range(edit.range)), Some(edit.new_text)),
+        Some(CompletionTextEdit::InsertAndReplace(edit)) => {
+            (Some(range(edit.replace)), Some(edit.new_text))
+        }
+        None => (None, None),
+    };
+    let snippet = item.insert_text_format == Some(InsertTextFormat::SNIPPET);
+    let insert = text
+        .or_else(|| item.insert_text.clone())
+        .unwrap_or_else(|| label.clone());
+    Some(Completion {
+        filter: item.filter_text.clone().unwrap_or_else(|| label.clone()),
+        detail: item.detail.clone().unwrap_or_default(),
+        documentation: match item.documentation.clone() {
+            Some(Documentation::String(text)) => text,
+            Some(Documentation::MarkupContent(markup)) => markup.value,
+            None => String::new(),
+        }
+        .trim()
+        .to_owned(),
+        kind: item.kind.map_or("", completion_kind),
+        insert: plain(&insert, snippet),
+        range: span,
+        extra: text_edits(item.additional_text_edits.clone().unwrap_or_default()),
+        label,
+        handle: Handle(Handed::Completion(Box::new(item))),
+    })
 }
 
 /// A snippet written out as the plain text it would insert.
@@ -710,217 +946,293 @@ fn plain(text: &str, snippet: bool) -> String {
     out
 }
 
-/// What a completion's numeric kind is called.
-fn completion_kind(kind: u64) -> &'static str {
+/// What a completion's kind is called.
+fn completion_kind(kind: CompletionItemKind) -> &'static str {
     match kind {
-        2 => "method",
-        3 => "function",
-        4 => "constructor",
-        5 => "field",
-        6 => "variable",
-        7 => "class",
-        8 => "interface",
-        9 => "module",
-        10 => "property",
-        13 => "enum",
-        14 => "keyword",
-        15 => "snippet",
-        21 => "constant",
-        22 => "struct",
-        23 => "event",
-        25 => "type",
+        CompletionItemKind::METHOD => "method",
+        CompletionItemKind::FUNCTION => "function",
+        CompletionItemKind::CONSTRUCTOR => "constructor",
+        CompletionItemKind::FIELD => "field",
+        CompletionItemKind::VARIABLE => "variable",
+        CompletionItemKind::CLASS => "class",
+        CompletionItemKind::INTERFACE => "interface",
+        CompletionItemKind::MODULE => "module",
+        CompletionItemKind::PROPERTY => "property",
+        CompletionItemKind::ENUM => "enum",
+        CompletionItemKind::KEYWORD => "keyword",
+        CompletionItemKind::SNIPPET => "snippet",
+        CompletionItemKind::CONSTANT => "constant",
+        CompletionItemKind::STRUCT => "struct",
+        CompletionItemKind::EVENT => "event",
+        CompletionItemKind::TYPE_PARAMETER => "type",
         _ => "",
     }
 }
 
-/// The signature the server is offering, as one line.
-fn signature(result: &Value) -> String {
-    let signatures = result["signatures"].as_array().cloned().unwrap_or_default();
-    let active = result["activeSignature"].as_u64().unwrap_or_default() as usize;
-    signatures
-        .get(active)
-        .or_else(|| signatures.first())
-        .and_then(|signature| signature["label"].as_str())
-        .unwrap_or_default()
-        .to_owned()
-}
-
-/// The fixes and refactors offered, including commands without edits.
-fn code_actions(result: &Value) -> Vec<CodeAction> {
-    result
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|action| {
-            let title = action["title"].as_str()?.to_owned();
-            let edits = workspace_edit(&action["edit"]);
-            let command = if action["command"].is_string() {
-                command(action)
-            } else {
-                command(&action["command"])
-            };
-            (!edits.is_empty() || command.is_some()).then_some(CodeAction {
-                title,
-                edits,
-                command,
-            })
-        })
-        .collect()
-}
-
-/// The executable part of a code action or a command-only action.
-fn command(value: &Value) -> Option<Command> {
-    Some(Command {
-        name: value["command"].as_str()?.to_owned(),
-        arguments: value["arguments"].as_array().cloned().unwrap_or_default(),
+/// One fix or refactor offered, if it can be taken.
+///
+/// An action the server says is disabled is one the menu has no use for,
+/// and one that neither edits nor runs anything does nothing when taken.
+fn code_action(offered: CodeActionOrCommand) -> Option<CodeAction> {
+    let (title, edits, command) = match offered {
+        CodeActionOrCommand::Command(command) => (command.title.clone(), Vec::new(), Some(command)),
+        CodeActionOrCommand::CodeAction(action) => {
+            if action.disabled.is_some() {
+                return None;
+            }
+            let edits = action.edit.as_ref().map(workspace_edit).unwrap_or_default();
+            (action.title, edits, action.command)
+        }
+    };
+    let command = command.map(|command| Command {
+        name: command.command,
+        arguments: command.arguments.unwrap_or_default(),
+    });
+    (!edits.is_empty() || command.is_some()).then_some(CodeAction {
+        title,
+        edits,
+        command,
     })
 }
 
 /// The changes a workspace edit asks for, file by file.
-pub(super) fn workspace_edit(edit: &Value) -> Vec<FileEdit> {
+pub(super) fn workspace_edit(edit: &WorkspaceEdit) -> Vec<FileEdit> {
     let mut files = Vec::new();
-
-    if let Some(changes) = edit["changes"].as_object() {
-        for (uri, edits) in changes {
-            if let Some(path) = uri::path(uri) {
-                files.push(FileEdit {
-                    path,
-                    edits: text_edits(edits),
-                });
-            }
-        }
-    }
-
-    for change in edit["documentChanges"].as_array().unwrap_or(&Vec::new()) {
-        let Some(uri) = change["textDocument"]["uri"].as_str() else {
-            continue;
-        };
-        if let Some(path) = uri::path(uri) {
+    for (uri, edits) in edit.changes.iter().flatten() {
+        if let Some(path) = uri::path_of(uri) {
             files.push(FileEdit {
                 path,
-                edits: text_edits(&change["edits"]),
+                edits: text_edits(edits.clone()),
+            });
+        }
+    }
+    let documents = match &edit.document_changes {
+        None => Vec::new(),
+        Some(DocumentChanges::Edits(edits)) => edits.iter().collect(),
+        Some(DocumentChanges::Operations(operations)) => operations
+            .iter()
+            .filter_map(|operation| match operation {
+                DocumentChangeOperation::Edit(edit) => Some(edit),
+                DocumentChangeOperation::Op(_) => None,
+            })
+            .collect(),
+    };
+    for document in documents {
+        if let Some(path) = uri::path_of(&document.text_document.uri) {
+            files.push(FileEdit {
+                path,
+                edits: document
+                    .edits
+                    .iter()
+                    .map(|edit| match edit {
+                        OneOf::Left(edit) => edit,
+                        OneOf::Right(annotated) => &annotated.text_edit,
+                    })
+                    .map(|edit| (range(edit.range), edit.new_text.clone()))
+                    .collect(),
             });
         }
     }
     files
 }
 
-/// The spans one file is asked to replace, and what with.
-pub(super) fn text_edits(edits: &Value) -> Vec<(Range<Position>, String)> {
-    edits
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
+/// Whether the editor can make every change `edit` asks for.
+///
+/// Files are changed, not made, moved or removed: an edit that asks for
+/// any of those is one the editor would only make part of.
+pub(super) fn is_supported(edit: &WorkspaceEdit) -> bool {
+    let operations = match &edit.document_changes {
+        Some(DocumentChanges::Operations(operations)) => operations.as_slice(),
+        _ => &[],
+    };
+    let changes = edit
+        .changes
         .iter()
-        .map(|edit| {
-            (
-                range(&edit["range"]),
-                edit["newText"].as_str().unwrap_or_default().to_owned(),
-            )
-        })
+        .flatten()
+        .all(|(uri, _)| uri::path_of(uri).is_some());
+    let documents = match &edit.document_changes {
+        Some(DocumentChanges::Edits(edits)) => edits
+            .iter()
+            .all(|edit| uri::path_of(&edit.text_document.uri).is_some()),
+        _ => true,
+    };
+    let operations = operations.iter().all(|operation| match operation {
+        DocumentChangeOperation::Edit(edit) => uri::path_of(&edit.text_document.uri).is_some(),
+        DocumentChangeOperation::Op(_) => false,
+    });
+    (edit.changes.is_some() || edit.document_changes.is_some())
+        && changes
+        && documents
+        && operations
+}
+
+/// The spans one file is asked to replace, and what with.
+fn text_edits(edits: Vec<TextEdit>) -> Vec<(Range<Position>, String)> {
+    edits
+        .into_iter()
+        .map(|edit| (range(edit.range), edit.new_text))
         .collect()
 }
 
-/// What a server would write into the lines, in the editor's own terms.
+/// What a server would write into a line, in the editor's own terms.
 ///
 /// A hint's label is either a string or a run of parts, each of which may
 /// carry a link back into the source; what is drawn is the text of them,
 /// because a hint is a note in the margin of a line and not a control.
-fn hints(result: &Value) -> Vec<crate::hint::Hint> {
-    result
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|hint| {
-            let text = match &hint["label"] {
-                Value::String(text) => text.clone(),
-                Value::Array(parts) => parts
-                    .iter()
-                    .map(|part| part["value"].as_str().unwrap_or_default())
-                    .collect(),
-                _ => return None,
-            };
-            let padded = format!(
-                "{}{}{}",
-                if hint["paddingLeft"] == json!(true) {
-                    " "
-                } else {
-                    ""
-                },
-                text.trim(),
-                if hint["paddingRight"] == json!(true) {
-                    " "
-                } else {
-                    ""
-                },
-            );
-            (!padded.trim().is_empty()).then(|| crate::hint::Hint {
-                position: position(&hint["position"]),
-                text: padded,
-            })
-        })
-        .collect()
-}
-
-/// The symbols a file declares, flattened in the order they appear.
-fn symbols(result: &Value) -> Vec<Symbol> {
-    let mut found = Vec::new();
-    collect_symbols(result, 0, &mut found);
-    found
-}
-
-/// Walks one level of the symbol tree, and the levels under it.
-fn collect_symbols(value: &Value, depth: usize, found: &mut Vec<Symbol>) {
-    for symbol in value.as_array().unwrap_or(&Vec::new()) {
-        let Some(name) = symbol["name"].as_str() else {
-            continue;
-        };
-        let at = if symbol.get("selectionRange").is_some() {
-            position(&symbol["selectionRange"]["start"])
+fn hint(hint: InlayHint) -> Option<crate::hint::Hint> {
+    let text = match hint.label {
+        InlayHintLabel::String(text) => text,
+        InlayHintLabel::LabelParts(parts) => parts.into_iter().map(|part| part.value).collect(),
+    };
+    let padded = format!(
+        "{}{}{}",
+        if hint.padding_left == Some(true) {
+            " "
         } else {
-            position(&symbol["location"]["range"]["start"])
-        };
-        found.push(Symbol {
-            name: name.to_owned(),
-            detail: symbol["detail"].as_str().unwrap_or_default().to_owned(),
-            kind: symbol_kind(symbol["kind"].as_u64().unwrap_or_default()),
-            position: at,
-            depth,
-        });
-        collect_symbols(&symbol["children"], depth + 1, found);
+            ""
+        },
+        text.trim(),
+        if hint.padding_right == Some(true) {
+            " "
+        } else {
+            ""
+        },
+    );
+    (!padded.trim().is_empty()).then(|| crate::hint::Hint {
+        position: position(hint.position),
+        text: padded,
+    })
+}
+
+/// A note above a declaration, said or waiting to be resolved.
+fn lens(lens: CodeLens) -> Lens {
+    Lens {
+        position: position(lens.range.start),
+        title: lens.command.as_ref().map(|command| command.title.clone()),
+        handle: Handle(Handed::Lens(Box::new(lens))),
     }
 }
 
-/// What a symbol's numeric kind is called.
-fn symbol_kind(kind: u64) -> &'static str {
+/// The symbol a call hierarchy item names, shown at `span`.
+fn call_item(item: &CallHierarchyItem, span: lsp_types::Range) -> Option<NamedLocation> {
+    Some(NamedLocation {
+        name: item.name.clone(),
+        detail: item.detail.clone().unwrap_or_default(),
+        kind: symbol_kind(item.kind),
+        location: Location {
+            path: uri::path_of(&item.uri)?,
+            range: range(span),
+            origin: None,
+        },
+    })
+}
+
+/// The symbols of a workspace a query matched, in the order the server ranked them.
+///
+/// A symbol whose location names only its file, which a server may send to
+/// have it resolved later, is taken to be at the top of that file.
+fn workspace_symbols(found: Option<WorkspaceSymbolResponse>) -> Vec<NamedLocation> {
+    match found {
+        None => Vec::new(),
+        Some(WorkspaceSymbolResponse::Flat(symbols)) => {
+            symbols.into_iter().filter_map(information).collect()
+        }
+        Some(WorkspaceSymbolResponse::Nested(symbols)) => symbols
+            .into_iter()
+            .filter_map(|symbol| {
+                let (uri, span) = match symbol.location {
+                    OneOf::Left(location) => (location.uri, location.range),
+                    OneOf::Right(location) => (location.uri, lsp_types::Range::default()),
+                };
+                Some(NamedLocation {
+                    name: symbol.name,
+                    detail: symbol.container_name.unwrap_or_default(),
+                    kind: symbol_kind(symbol.kind),
+                    location: Location {
+                        path: uri::path_of(&uri)?,
+                        range: range(span),
+                        origin: None,
+                    },
+                })
+            })
+            .collect(),
+    }
+}
+
+/// One symbol a server listed flat, with where it is.
+#[allow(deprecated)]
+fn information(symbol: SymbolInformation) -> Option<NamedLocation> {
+    Some(NamedLocation {
+        location: location(symbol.location)?,
+        name: symbol.name,
+        detail: symbol.container_name.unwrap_or_default(),
+        kind: symbol_kind(symbol.kind),
+    })
+}
+
+/// The symbols a file declares, flattened in the order they appear.
+#[allow(deprecated)]
+fn symbols(found: Option<DocumentSymbolResponse>) -> Vec<Symbol> {
+    let mut symbols = Vec::new();
+    match found {
+        None => {}
+        Some(DocumentSymbolResponse::Flat(flat)) => {
+            symbols.extend(flat.into_iter().map(|symbol| Symbol {
+                position: position(symbol.location.range.start),
+                detail: symbol.container_name.unwrap_or_default(),
+                kind: symbol_kind(symbol.kind),
+                name: symbol.name,
+                depth: 0,
+            }));
+        }
+        Some(DocumentSymbolResponse::Nested(nested)) => collect_symbols(nested, 0, &mut symbols),
+    }
+    symbols
+}
+
+/// Walks one level of the symbol tree, and the levels under it.
+fn collect_symbols(level: Vec<DocumentSymbol>, depth: usize, found: &mut Vec<Symbol>) {
+    for symbol in level {
+        found.push(Symbol {
+            name: symbol.name,
+            detail: symbol.detail.unwrap_or_default(),
+            kind: symbol_kind(symbol.kind),
+            position: position(symbol.selection_range.start),
+            depth,
+        });
+        collect_symbols(symbol.children.unwrap_or_default(), depth + 1, found);
+    }
+}
+
+/// What a symbol's kind is called.
+fn symbol_kind(kind: SymbolKind) -> &'static str {
     match kind {
-        2 => "module",
-        5 => "class",
-        6 => "method",
-        7 => "property",
-        8 => "field",
-        9 => "constructor",
-        10 => "enum",
-        11 => "interface",
-        12 => "function",
-        13 => "variable",
-        14 => "constant",
-        23 => "struct",
-        26 => "type",
+        SymbolKind::MODULE => "module",
+        SymbolKind::CLASS => "class",
+        SymbolKind::METHOD => "method",
+        SymbolKind::PROPERTY => "property",
+        SymbolKind::FIELD => "field",
+        SymbolKind::CONSTRUCTOR => "constructor",
+        SymbolKind::ENUM => "enum",
+        SymbolKind::INTERFACE => "interface",
+        SymbolKind::FUNCTION => "function",
+        SymbolKind::VARIABLE => "variable",
+        SymbolKind::CONSTANT => "constant",
+        SymbolKind::STRUCT => "struct",
+        SymbolKind::TYPE_PARAMETER => "type",
         _ => "",
     }
 }
 
 /// The legend a server publishes, as the highlight each of its types means.
-pub(super) fn legend(capabilities: &Value) -> Vec<Option<Highlight>> {
-    capabilities["semanticTokensProvider"]["legend"]["tokenTypes"]
-        .as_array()
-        .map(|types| {
-            types
+pub(super) fn legend(capabilities: &Capabilities) -> Vec<Option<Highlight>> {
+    capabilities
+        .legend()
+        .map(|legend| {
+            legend
+                .token_types
                 .iter()
-                .map(|kind| kind.as_str().and_then(Highlight::of_token))
+                .map(|kind| Highlight::of_token(kind.as_str()))
                 .collect()
         })
         .unwrap_or_default()
@@ -928,32 +1240,35 @@ pub(super) fn legend(capabilities: &Value) -> Vec<Option<Highlight>> {
 
 /// The spans a server's semantic tokens come to, in the file's own terms.
 ///
-/// The protocol sends them as five numbers each, every one of them relative
-/// to the token before it: a line down from the last token's, a column along
-/// from it when they share a line, a length, a type and its modifiers. A
-/// token whose type the editor draws no differently is left out here rather
-/// than carried to the painter to be discarded there.
-fn semantics(result: &Value, legend: &[Option<Highlight>]) -> Vec<(Range<Position>, Highlight)> {
-    const STRIDE: usize = 5;
-
-    let Some(data) = result["data"].as_array() else {
-        return Vec::new();
+/// The protocol sends them relative to the token before each: a line down
+/// from the last token's, a column along from it when they share a line, a
+/// length, a type and its modifiers. A token whose type the editor draws no
+/// differently is left out here rather than carried to the painter to be
+/// discarded there.
+fn semantics(
+    found: Option<SemanticTokensResult>,
+    legend: &[Option<Highlight>],
+) -> Vec<(Range<Position>, Highlight)> {
+    let tokens = match found {
+        None => return Vec::new(),
+        Some(SemanticTokensResult::Tokens(tokens)) => tokens.data,
+        Some(SemanticTokensResult::Partial(partial)) => partial.data,
     };
     let mut spans = Vec::new();
     let (mut line, mut column) = (0_usize, 0_usize);
-
-    for token in data.as_chunks::<STRIDE>().0 {
-        let [down, along, length, kind, _] =
-            std::array::from_fn(|index| token[index].as_u64().unwrap_or_default() as usize);
-
+    for token in tokens {
+        let down = token.delta_line as usize;
         line += down;
-        column = if down == 0 { column + along } else { along };
-
-        let Some(Some(highlight)) = legend.get(kind) else {
+        column = if down == 0 {
+            column + token.delta_start as usize
+        } else {
+            token.delta_start as usize
+        };
+        let Some(Some(highlight)) = legend.get(token.token_type as usize) else {
             continue;
         };
         let start = Position::new(line, column);
-        let end = Position::new(line, column + length);
+        let end = Position::new(line, column + token.length as usize);
         spans.push((start..end, *highlight));
     }
     spans

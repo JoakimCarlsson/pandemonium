@@ -198,15 +198,18 @@ impl Document {
             .filter_map(|client| {
                 let key = server_key(client);
                 [
-                    (client.offers(&Request::Hints(Position::default()..Position::default())))
-                        .then(|| self.hinted.get(&key).map(|(request, _)| request))
-                        .flatten(),
+                    (client.offers(
+                        &Request::Hints(Position::default()..Position::default()),
+                        self.buffer.path(),
+                    ))
+                    .then(|| self.hinted.get(&key).map(|(request, _)| request))
+                    .flatten(),
                     client
-                        .offers(&Request::Semantics)
+                        .offers(&Request::Semantics, self.buffer.path())
                         .then(|| self.named.get(&key).map(|(request, _)| request))
                         .flatten(),
                     client
-                        .offers(&Request::Lenses)
+                        .offers(&Request::Lenses, self.buffer.path())
                         .then(|| self.lensed.get(&key).map(|(request, _)| request))
                         .flatten(),
                 ]
@@ -1184,6 +1187,11 @@ impl Files {
         self.servers.set_overrides(named_servers(overrides));
     }
 
+    /// Writes every language server's log into `directory`.
+    pub fn set_logs(&mut self, directory: PathBuf) {
+        self.servers.set_logs(directory);
+    }
+
     /// Runs `added` for the languages they name, after the servers those
     /// languages name.
     pub fn add_language_servers(&mut self, added: &BTreeMap<String, Vec<Server>>) {
@@ -1583,6 +1591,20 @@ impl Files {
         let baselined = self.take_baselines();
         let fresh = self.servers.take_fresh();
         let mut changed = baselined || fresh;
+        let grown = self
+            .clients()
+            .into_iter()
+            .filter(|client| client.take_log_grown())
+            .filter_map(|client| client.log_path().map(Path::to_path_buf))
+            .collect::<Vec<_>>();
+        for entry in self.open.values() {
+            let log = grown
+                .iter()
+                .any(|path| entry.document.borrow().buffer().path() == path);
+            if log && !entry.document.borrow().buffer().is_dirty() {
+                changed |= entry.document.borrow_mut().reread();
+            }
+        }
         for entry in self.open.values() {
             let language = entry.document.borrow().buffer().language();
             if let Some(language) = language {

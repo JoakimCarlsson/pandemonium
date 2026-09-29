@@ -14,9 +14,14 @@
 //! which runs more servers after the ones the language names.
 
 mod answer;
+mod capabilities;
 mod client;
 mod encoding;
+mod log;
 mod outbox;
+mod progress;
+mod rpc;
+mod sync;
 mod uri;
 mod watch;
 
@@ -30,6 +35,7 @@ pub use answer::{
     Request, Symbol,
 };
 pub use client::{Asked, Client};
+pub use progress::Progress;
 pub use watch::Watched;
 
 /// How many consecutive exits are allowed before a server is abandoned.
@@ -64,12 +70,19 @@ pub struct Servers {
     missing: HashSet<&'static str>,
     /// Worktrees with an open document of each language.
     opened: HashMap<&'static str, HashSet<PathBuf>>,
+    /// The directory every server's log is written in, when logs are kept.
+    logs: Option<PathBuf>,
 }
 
 impl Servers {
     /// Wakes the window through `notify` when a server says something.
     pub fn set_notify(&mut self, notify: Arc<dyn Fn() + Send + Sync>) {
         self.notify = Some(notify);
+    }
+
+    /// Writes every server's log into `directory`.
+    pub fn set_logs(&mut self, directory: PathBuf) {
+        self.logs = Some(directory);
     }
 
     /// Runs `overrides` in place of what the languages named by name.
@@ -104,6 +117,7 @@ impl Servers {
             return Vec::new();
         };
         let wanted = self.wanted(language);
+        let logs = self.logs.clone();
         wanted
             .iter()
             .filter_map(|server| match installed(server.command) {
@@ -149,9 +163,10 @@ impl Servers {
                     return None;
                 }
                 if running.client.is_none() {
-                    running.client = Client::start(root, &program, *server, notify)
-                        .ok()
-                        .map(Arc::new);
+                    running.client =
+                        Client::start(root, &program, *server, notify, logs.as_deref())
+                            .ok()
+                            .map(Arc::new);
                     if running.client.is_none() {
                         running.failures = RESTART_LIMIT;
                     }

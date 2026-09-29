@@ -321,6 +321,7 @@ impl App {
         if let Some(completions) = self.completions.as_mut() {
             completions.step(step);
         }
+        self.resolve_completion();
         true
     }
 

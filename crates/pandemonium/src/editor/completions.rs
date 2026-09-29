@@ -6,14 +6,20 @@
 //! than instead of it. It closes when nothing matches any more, or when the
 //! cursor leaves the word it was offered for.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use pm_gfx::Point;
-use pm_text::{Completion, Position};
+use pm_text::{Client, Completion, Handle, Position};
 use pm_ui::{Div, Styled, Theme, h_flex, text, v_flex};
 
 use crate::message::Message;
 
 /// Widest the list is drawn.
 const WIDTH: f32 = 420.0;
+
+/// How far from the list what it says about the selected completion is drawn.
+const GAP: f32 = 4.0;
 
 /// Height of one row of it.
 const ROW_HEIGHT: f32 = 24.0;
@@ -33,17 +39,23 @@ pub struct Completions {
     start: Position,
     /// Where on screen the list hangs from.
     at: Point,
+    /// The server that offered them, which is the one that fills them in.
+    client: Arc<Client>,
+    /// Which of them it has been asked to fill in.
+    asked: HashSet<usize>,
 }
 
 impl Completions {
-    /// The list of `items`, offered for the word beginning at `start`.
-    pub fn new(items: Vec<Completion>, start: Position, at: Point) -> Self {
+    /// The list of `items` `client` offered for the word beginning at `start`.
+    pub fn new(items: Vec<Completion>, start: Position, at: Point, client: Arc<Client>) -> Self {
         let mut list = Self {
             items,
             matched: Vec::new(),
             selected: 0,
             start,
             at,
+            client,
+            asked: HashSet::new(),
         };
         list.narrow("");
         list
@@ -59,6 +71,12 @@ impl Completions {
         self.at
     }
 
+    /// Where on screen what is said about the selected completion hangs from:
+    /// beside the list, level with its top.
+    pub fn beside(&self) -> Point {
+        Point::new(self.at.x + WIDTH + GAP, self.at.y)
+    }
+
     /// Whether the list has anything left to offer.
     pub fn is_empty(&self) -> bool {
         self.matched.is_empty()
@@ -71,7 +89,7 @@ impl Completions {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, item)| item.label.to_lowercase().starts_with(&typed))
+            .filter(|(_, item)| item.filter.to_lowercase().starts_with(&typed))
             .map(|(index, _)| index)
             .collect();
         self.selected = 0;
@@ -94,6 +112,53 @@ impl Completions {
     /// The `place`-th completion shown, if there is one.
     pub fn at_place(&self, place: usize) -> Option<&Completion> {
         self.items.get(*self.matched.get(place)?)
+    }
+
+    /// The server that offered the list.
+    pub fn client(&self) -> &Arc<Client> {
+        &self.client
+    }
+
+    /// The selected completion's record, the first time it is asked for, so
+    /// that the server can be asked to fill it in once and only once.
+    pub fn unasked(&mut self) -> Option<Handle> {
+        let index = *self.matched.get(self.selected)?;
+        self.asked
+            .insert(index)
+            .then(|| self.items[index].handle.clone())
+    }
+
+    /// Whether the completion `handle` names has been asked to be filled in.
+    pub fn is_asked(&self, handle: &Handle) -> bool {
+        self.items
+            .iter()
+            .position(|item| item.handle == *handle)
+            .is_some_and(|index| self.asked.contains(&index))
+    }
+
+    /// Takes in what the server filled the completion `handle` names in with.
+    ///
+    /// What it inserts stays as it was offered: a server may only add to an
+    /// item when it resolves it, and the list was narrowed by what it said.
+    pub fn fill(&mut self, handle: &Handle, filled: Completion) {
+        let Some(item) = self.items.iter_mut().find(|item| item.handle == *handle) else {
+            return;
+        };
+        if !filled.detail.is_empty() {
+            item.detail = filled.detail;
+        }
+        if !filled.documentation.is_empty() {
+            item.documentation = filled.documentation;
+        }
+        if !filled.extra.is_empty() {
+            item.extra = filled.extra;
+        }
+    }
+
+    /// What the server says at length about the selected completion.
+    pub fn documentation(&self) -> Option<&str> {
+        let item = self.at_place(self.selected)?;
+        (!item.documentation.is_empty()).then_some(item.documentation.as_str())
     }
 
     /// The rows shown, and which of them is selected.

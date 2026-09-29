@@ -54,6 +54,8 @@ pub enum Kind {
     WorkspaceSymbols,
     /// Whatever calls, or is called by, the symbol under the cursor.
     Calls,
+    /// The logs of the language servers behind the focused file.
+    ServerLogs,
     /// Every place a query was found in the worktree the window is pointed at.
     Search,
     /// A line number to go to, which is a prompt rather than a list.
@@ -125,6 +127,7 @@ impl Kind {
             Self::References => "Go to a use of this symbol",
             Self::WorkspaceSymbols => "Go to a symbol in the workspace",
             Self::Calls => "Go to a call",
+            Self::ServerLogs => "Open a language server's log",
             Self::Search => "Search this worktree",
             Self::Line => "Go to line",
             Self::Rename => "New name",
