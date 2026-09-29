@@ -533,6 +533,7 @@ pub fn terminal_menu(shells: &[ShellEntry], id: ShellId) -> Vec<MenuItem<Message
     let others = shells.len() > 1;
 
     vec![
+        menu_entry("Rename…", Some(Message::RenameTerminal(id))),
         menu_entry("Close", Some(Message::CloseTerminal(id))),
         menu_entry(
             "Close Others",

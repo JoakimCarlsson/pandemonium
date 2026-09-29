@@ -352,6 +352,7 @@ bindings:
       primary+enter: git.commit
   - when: "os != macos && pane.kind == terminal"
     keys:
+      f2: terminal.rename
       primary+insert: edit.copy
       primary+shift+c: edit.copy
       shift+insert: edit.paste
@@ -362,6 +363,7 @@ bindings:
       primary+shift+5: pane.split_right
   - when: "os == macos && pane.kind == terminal"
     keys:
+      f2: terminal.rename
       primary+c: edit.copy
       primary+v: edit.paste
       primary+f: search.find

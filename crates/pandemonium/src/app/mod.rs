@@ -1594,6 +1594,11 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::RenameTerminal(id) = message {
+            self.open_terminal_rename(id);
+            self.request_redraw();
+            return;
+        }
         if let Message::CloseTerminal(id) = message {
             self.stop_shell(id);
             self.request_redraw();

@@ -40,7 +40,7 @@ pub struct ShellId(u64);
 pub struct ShellEntry {
     /// Which shell this row is.
     pub id: ShellId,
-    /// What the row calls it: the program, or the title the program set.
+    /// What the row calls it: the name the reader gave it, or the program.
     pub name: String,
     /// Whether this is the shell the pane is showing.
     pub active: bool,
@@ -76,6 +76,8 @@ struct WorktreeShells {
     errands: BTreeMap<ShellId, Errand>,
     /// Task shells, retained after their children exit.
     tasks: BTreeMap<ShellId, String>,
+    /// The names the reader gave shells, by id.
+    names: BTreeMap<ShellId, String>,
 }
 
 impl WorktreeShells {
@@ -92,6 +94,12 @@ impl WorktreeShells {
         self.active.and_then(|id| self.get(id))
     }
 
+    /// What the list calls the plain shell `id` names: the name the reader
+    /// gave it, or else the program it runs.
+    fn label(&self, id: ShellId, shell: &Shell) -> String {
+        self.names.get(&id).cloned().unwrap_or_else(|| name(shell))
+    }
+
     /// Drops reader shells whose child has exited, and says whether any had.
     ///
     /// The ones that exited badly are handed to `failed`, named, with the
@@ -104,6 +112,7 @@ impl WorktreeShells {
     fn reap(&mut self, scope: Scope, failed: &mut Vec<Exited>) -> bool {
         let before = self.running.len();
         let errands = &mut self.errands;
+        let names = &mut self.names;
         self.running.retain(|(id, shell)| {
             let mut child = shell.borrow_mut();
             if child.is_running() {
@@ -119,11 +128,12 @@ impl WorktreeShells {
             if self.tasks.contains_key(id) {
                 return true;
             }
+            let given = names.remove(id);
             if let Some(code) = child.exit_code().filter(|code| *code != 0) {
                 drop(child);
                 failed.push(Exited {
                     scope,
-                    name: name(shell),
+                    name: given.unwrap_or_else(|| name(shell)),
                     code,
                 });
             }
@@ -343,6 +353,32 @@ impl Terminals {
         }
     }
 
+    /// The id of the shell `scope` is showing, if it has one.
+    pub fn active_id(&self, scope: Scope) -> Option<ShellId> {
+        let shells = self.worktrees.get(&scope)?;
+        shells.active.filter(|id| shells.get(*id).is_some())
+    }
+
+    /// Calls the shell `id` names `name` from now on, or by its program again
+    /// when `name` is empty once trimmed.
+    ///
+    /// Shells an agent or a task started keep the label they were started with.
+    pub fn rename(&mut self, scope: Scope, id: ShellId, name: &str) {
+        let Some(shells) = self.worktrees.get_mut(&scope) else {
+            return;
+        };
+        if shells.get(id).is_none()
+            || shells.errands.contains_key(&id)
+            || shells.tasks.contains_key(&id)
+        {
+            return;
+        }
+        match name.trim() {
+            "" => shells.names.remove(&id),
+            name => shells.names.insert(id, name.to_owned()),
+        };
+    }
+
     /// The shell `scope` is showing, if it has one.
     pub fn active(&self, scope: Scope) -> Option<Shell> {
         self.worktrees.get(&scope)?.active()
@@ -370,7 +406,7 @@ impl Terminals {
                 name: shells.errands.get(id).map_or_else(
                     || {
                         shells.tasks.get(id).map_or_else(
-                            || name(shell),
+                            || shells.label(*id, shell),
                             |label| {
                                 let mut child = shell.borrow_mut();
                                 if child.is_running() {
@@ -405,6 +441,7 @@ impl Terminals {
         shells.running.retain(|(running, _)| *running != id);
         shells.errands.remove(&id);
         shells.tasks.remove(&id);
+        shells.names.remove(&id);
         if shells.active == Some(id) {
             shells.active = shells.running.last().map(|(id, _)| *id);
         }
@@ -418,6 +455,7 @@ impl Terminals {
         shells.running.retain(|(running, _)| *running == id);
         shells.errands.retain(|errand, _| *errand == id);
         shells.tasks.retain(|task, _| *task == id);
+        shells.names.retain(|named, _| *named == id);
         shells.active = Some(id);
     }
 
@@ -427,6 +465,7 @@ impl Terminals {
             shells.running.clear();
             shells.errands.clear();
             shells.tasks.clear();
+            shells.names.clear();
             shells.active = None;
         }
     }
@@ -457,7 +496,8 @@ impl Terminals {
     }
 }
 
-/// What a tab calls `shell`: the program it runs, as `bash` or `zsh`.
+/// What a tab calls `shell` until the reader names it: the program it runs,
+/// as `bash` or `zsh`.
 ///
 /// The title a shell sets is its whole prompt, which is far too long to name
 /// a tab with and says the same thing on every one of them. The prompt

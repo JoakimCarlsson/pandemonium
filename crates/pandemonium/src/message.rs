@@ -157,6 +157,8 @@ pub enum Message {
     SelectTerminal(ShellId),
     /// End this shell.
     CloseTerminal(ShellId),
+    /// Ask what to call this shell.
+    RenameTerminal(ShellId),
     /// Drag the terminal's scrollbar, so many lines to a pixel of travel.
     ScrollTerminal(ResizeEvent, f32),
     /// Toggle the secondary sidebar.

@@ -78,6 +78,30 @@ impl App {
         self.open_picker_with(kind, Vec::new(), seeded);
     }
 
+    /// Opens the prompt for what to call the shell `id` names, showing what
+    /// the list calls it now.
+    pub(super) fn open_terminal_rename(&mut self, id: crate::terminal::ShellId) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        let seeded = self
+            .terminals
+            .list(scope)
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.name)
+            .unwrap_or_default();
+        self.open_picker_with(Kind::RenameTerminal(id), Vec::new(), seeded);
+    }
+
+    /// Calls the shell `id` names `typed`, or by its program when `typed` is
+    /// blank.
+    fn rename_terminal(&mut self, id: crate::terminal::ShellId, typed: &str) {
+        if let Some(scope) = self.scope() {
+            self.terminals.rename(scope, id, typed);
+        }
+    }
+
     /// Puts the picker away, saying whether one was open.
     pub(super) fn dismiss_picker(&mut self) -> bool {
         self.branch_picker_at = None;
@@ -133,6 +157,7 @@ impl App {
             (Kind::BreakpointCondition | Kind::BreakpointHits | Kind::BreakpointLog, _) => {
                 self.set_breakpoint_field(kind, typed)
             }
+            (Kind::RenameTerminal(id), _) => self.rename_terminal(id, &typed),
             (Kind::Watch, _) => self.save_watch(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
@@ -304,6 +329,7 @@ impl App {
             | Kind::Symbols
             | Kind::Line
             | Kind::Rename
+            | Kind::RenameTerminal(_)
             | Kind::BreakpointCondition
             | Kind::BreakpointHits
             | Kind::BreakpointLog
@@ -325,6 +351,9 @@ impl App {
     fn command_rows(&self) -> Vec<Row> {
         let context = self.context();
         let has_buffer = self.active_file().is_some();
+        let has_shell = self
+            .scope()
+            .is_some_and(|scope| self.terminals.active_id(scope).is_some());
 
         Action::all()
             .map(|action| Row {
@@ -332,7 +361,8 @@ impl App {
                 label: action.title().to_owned(),
                 detail: self.keys_for(action, &context).unwrap_or_default(),
                 choice: Choice::Act(action),
-                enabled: has_buffer || !action.needs_buffer(),
+                enabled: (has_buffer || !action.needs_buffer())
+                    && (action != Action::RenameTerminal || has_shell),
             })
             .collect()
     }
