@@ -337,6 +337,16 @@ pub enum Action {
     Cancel,
     /// Choose what to debug in the worktree in front, and start it.
     DebugStart,
+    /// Choose a running process to attach to.
+    DebugAttach,
+    /// Edit the cursor line's breakpoint condition.
+    DebugEditCondition,
+    /// Edit the cursor line's breakpoint hit count.
+    DebugEditHits,
+    /// Edit the cursor line's log message.
+    DebugEditLog,
+    /// Add the selected text as a watch expression.
+    DebugAddWatch,
     /// Run the paused program on, or start debugging when nothing is.
     DebugContinue,
     /// Pause the running program.
@@ -826,6 +836,27 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::Cancel, "window.cancel", "Cancel"),
     (Action::DebugStart, "debug.start", "Debug: Start Debugging"),
     (
+        Action::DebugAttach,
+        "debug.attach",
+        "Debug: Attach to Process",
+    ),
+    (
+        Action::DebugEditCondition,
+        "debug.edit_condition",
+        "Debug: Edit Breakpoint Condition",
+    ),
+    (
+        Action::DebugEditHits,
+        "debug.edit_hits",
+        "Debug: Edit Breakpoint Hit Count",
+    ),
+    (
+        Action::DebugEditLog,
+        "debug.edit_log",
+        "Debug: Add Logpoint",
+    ),
+    (Action::DebugAddWatch, "debug.add_watch", "Debug: Add Watch"),
+    (
         Action::DebugContinue,
         "debug.continue",
         "Debug: Start or Continue",
@@ -979,6 +1010,10 @@ impl Action {
                 | Self::RevertChange
                 | Self::OpenMarkdownPreview
                 | Self::ToggleBreakpoint
+                | Self::DebugEditCondition
+                | Self::DebugEditHits
+                | Self::DebugEditLog
+                | Self::DebugAddWatch
         )
     }
 

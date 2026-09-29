@@ -27,7 +27,8 @@ use serde_json::{Value, json};
 use crate::adapter::Connect;
 use crate::scenario::{Request, Scenario};
 use crate::state::{
-    Category, Event, Frame, Line, Placed, Scope, Sent, Standing, State, Thread, Variable,
+    Breakpoint, Category, Event, Frame, Line, Placed, Scope, Sent, Standing, State, Thread,
+    Variable, Watched,
 };
 use crate::wire::{self, Wire};
 
@@ -71,7 +72,7 @@ impl Session {
     pub fn start(
         scenario: Scenario,
         root: &Path,
-        breakpoints: BTreeMap<PathBuf, Vec<usize>>,
+        breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
         notify: Notify,
     ) -> io::Result<Self> {
         let adapter = scenario.adapter.ok_or_else(|| {
@@ -106,7 +107,7 @@ impl Session {
         let process = Arc::new(Mutex::new(Some(process)));
         let (outbox, queued) = mpsc::channel();
         let wire = Wire::new(outbox);
-        let state = Arc::new(Mutex::new(State::new(breakpoints)));
+        let state = Arc::new(Mutex::new(State::new(breakpoints, adapter.name)));
         let reader = Reader {
             process: process.clone(),
             state: state.clone(),
@@ -225,6 +226,30 @@ impl Session {
         self.read(|state| state.placed.get(path).cloned().unwrap_or_default())
     }
 
+    /// The latest results of the watch expressions.
+    pub fn watched(&self) -> Vec<Watched> {
+        self.read(|state| state.watched.clone())
+    }
+
+    /// The watch expressions currently held by this session.
+    pub fn watches(&self) -> Vec<String> {
+        self.read(|state| state.watches.clone())
+    }
+
+    /// Replaces the watch expressions and evaluates them in the selected frame.
+    pub fn set_watches(&self, watches: Vec<String>) {
+        let frame = self.change(|state| {
+            state.watches = watches;
+            state.watched.clear();
+            (state.standing == Standing::Stopped)
+                .then_some(state.frame)
+                .flatten()
+        });
+        if let Some(frame) = frame {
+            evaluate_watches(&self.wire, &self.state, frame);
+        }
+    }
+
     /// What the window has to act on, oldest first.
     pub fn take_events(&self) -> Vec<Event> {
         self.change(|state| std::mem::take(&mut state.events))
@@ -240,7 +265,7 @@ impl Session {
     /// Before the adapter is ready for breakpoints they are only kept, and
     /// all of them go at once when it is; after, the file's go as they
     /// change.
-    pub fn set_breakpoints(&self, path: &Path, lines: Vec<usize>) {
+    pub fn set_breakpoints(&self, path: &Path, lines: Vec<Breakpoint>) {
         let configured = self.change(|state| {
             state.breakpoints.insert(path.to_path_buf(), lines.clone());
             state.configured && state.standing != Standing::Ended
@@ -295,6 +320,7 @@ impl Session {
             state.variables.clear();
         });
         self.ask("scopes", json!({ "frameId": id }), Sent::Scopes(id));
+        evaluate_watches(&self.wire, &self.state, id);
     }
 
     /// Asks what is behind `reference`, where it has not been asked yet.
@@ -326,7 +352,7 @@ impl Session {
         }
         self.ask(
             "disconnect",
-            json!({ "restart": false, "terminateDebuggee": true }),
+            json!({ "restart": false, "terminateDebuggee": self.scenario.request == Request::Launch }),
             Sent::Disconnect,
         );
     }
@@ -478,14 +504,47 @@ impl Reader {
                 self.ask(self.request.command(), self.arguments.clone(), Sent::Launch);
             }
             Sent::Breakpoints(path) => {
-                let placed = body
+                let requested = {
+                    let state = lock(&self.state);
+                    let unsupported = state.placed.get(&path);
+                    state
+                        .breakpoints
+                        .get(&path)
+                        .into_iter()
+                        .flatten()
+                        .filter(|breakpoint| {
+                            !unsupported.is_some_and(|marks| {
+                                marks
+                                    .iter()
+                                    .any(|mark| mark.line == breakpoint.line && !mark.verified)
+                            })
+                        })
+                        .map(|breakpoint| breakpoint.line)
+                        .collect::<Vec<_>>()
+                };
+                let mut placed: Vec<Placed> = body
                     .get("breakpoints")
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(placed)
+                    .zip(requested)
+                    .map(|(breakpoint, line)| placed(breakpoint, line))
                     .collect();
-                lock(&self.state).placed.insert(path, placed);
+                let mut state = lock(&self.state);
+                placed.extend(
+                    state
+                        .placed
+                        .get(&path)
+                        .into_iter()
+                        .flatten()
+                        .filter(|mark| {
+                            mark.message
+                                .as_ref()
+                                .is_some_and(|message| message.contains("does not support"))
+                        })
+                        .cloned(),
+                );
+                state.placed.insert(path, placed);
             }
             Sent::ConfigurationDone => {
                 let mut state = lock(&self.state);
@@ -512,6 +571,30 @@ impl Reader {
                     lock(&self.state).say(Category::Answer, result);
                 }
             }
+            Sent::Watch(index) => {
+                let expression = lock(&self.state).watches.get(index).cloned();
+                if let Some(expression) = expression {
+                    let value = Variable {
+                        name: expression.clone(),
+                        value: text(&body, "result"),
+                        kind: body.get("type").and_then(Value::as_str).map(str::to_owned),
+                        reference: body
+                            .get("variablesReference")
+                            .and_then(Value::as_i64)
+                            .unwrap_or_default(),
+                    };
+                    let mut state = lock(&self.state);
+                    if state.watches.get(index) == Some(&expression) {
+                        state
+                            .watched
+                            .retain(|watched| watched.expression != expression);
+                        state.watched.push(Watched {
+                            expression,
+                            value: Ok(value),
+                        });
+                    }
+                }
+            }
             Sent::Launch | Sent::Exceptions | Sent::Resume | Sent::Disconnect => {}
         }
     }
@@ -534,6 +617,32 @@ impl Reader {
         let mut state = lock(&self.state);
         match sent {
             Sent::Evaluate => state.say(Category::Error, said),
+            Sent::Launch => {
+                state.say(Category::Error, &format!("{command}: {said}"));
+                let mut reason = said.to_owned();
+                #[cfg(target_os = "linux")]
+                if self.request == Request::Attach
+                    && std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
+                        .ok()
+                        .and_then(|value| value.trim().parse::<u32>().ok())
+                        .is_some_and(|scope| scope >= 1)
+                {
+                    reason.push_str(". Attaching is restricted by kernel.yama.ptrace_scope");
+                }
+                state.events.push(Event::StartRefused(reason));
+                state.end();
+            }
+            Sent::Watch(index) => {
+                if let Some(expression) = state.watches.get(*index).cloned() {
+                    state
+                        .watched
+                        .retain(|watched| watched.expression != expression);
+                    state.watched.push(Watched {
+                        expression,
+                        value: Err(said.to_owned()),
+                    });
+                }
+            }
             Sent::Disconnect => state.end(),
             _ => state.say(Category::Error, &format!("{command}: {said}")),
         }
@@ -564,7 +673,7 @@ impl Reader {
                 lock(&self.state).end();
                 self.ask(
                     "disconnect",
-                    json!({ "restart": false, "terminateDebuggee": true }),
+                    json!({ "restart": false, "terminateDebuggee": self.request == Request::Launch }),
                     Sent::Disconnect,
                 );
             }
@@ -684,6 +793,7 @@ impl Reader {
         };
         if let Some(top) = top {
             self.ask("scopes", json!({ "frameId": top.id }), Sent::Scopes(top.id));
+            evaluate_watches(&self.wire, &self.state, top.id);
         }
     }
 
@@ -748,20 +858,111 @@ fn ask_variables(wire: &Wire, state: &Mutex<State>, reference: i64) {
     );
 }
 
+/// Evaluates every watch in the selected frame.
+fn evaluate_watches(wire: &Wire, state: &Mutex<State>, frame: i64) {
+    let watches = {
+        let mut state = lock(state);
+        state.watched.clear();
+        state.watches.clone()
+    };
+    for (index, expression) in watches.into_iter().enumerate() {
+        ask(
+            wire,
+            state,
+            "evaluate",
+            json!({ "expression": expression, "frameId": frame, "context": "watch" }),
+            Sent::Watch(index),
+        );
+    }
+}
+
 /// Tells the adapter the breakpoints of `path` are on `lines`.
-fn send_breakpoints(wire: &Wire, state: &Mutex<State>, path: &Path, lines: &[usize]) {
+fn send_breakpoints(wire: &Wire, state: &Mutex<State>, path: &Path, lines: &[Breakpoint]) {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let (capabilities, adapter_name) = {
+        let state = lock(state);
+        (state.capabilities.clone(), state.adapter_name)
+    };
+    let mut unsupported = Vec::new();
+    let breakpoints = lines
+        .iter()
+        .filter_map(|breakpoint| {
+            let missing = [
+                (
+                    "supportsConditionalBreakpoints",
+                    breakpoint.condition.as_ref(),
+                    "conditional breakpoints",
+                ),
+                (
+                    "supportsHitConditionalBreakpoints",
+                    breakpoint.hits.as_ref(),
+                    "hit conditions",
+                ),
+                ("supportsLogPoints", breakpoint.log.as_ref(), "logpoints"),
+            ]
+            .into_iter()
+            .find(|(capability, value, _)| {
+                value.is_some_and(|value| !value.is_empty())
+                    && capabilities.get(capability).and_then(Value::as_bool) != Some(true)
+            });
+            if let Some((_, _, feature)) = missing {
+                unsupported.push(Placed {
+                    line: breakpoint.line,
+                    verified: false,
+                    message: Some(format!("{adapter_name} does not support {feature}")),
+                });
+                return None;
+            }
+            let mut item = json!({ "line": breakpoint.line + 1 });
+            for (field, capability, value) in [
+                (
+                    "condition",
+                    "supportsConditionalBreakpoints",
+                    &breakpoint.condition,
+                ),
+                (
+                    "hitCondition",
+                    "supportsHitConditionalBreakpoints",
+                    &breakpoint.hits,
+                ),
+                ("logMessage", "supportsLogPoints", &breakpoint.log),
+            ] {
+                if capabilities.get(capability).and_then(Value::as_bool) == Some(true)
+                    && let Some(value) = value.as_ref().filter(|value| !value.is_empty())
+                {
+                    item[field] = json!(value);
+                }
+            }
+            Some(item)
+        })
+        .collect::<Vec<_>>();
+    let sent_lines = lines
+        .iter()
+        .filter(|breakpoint| !unsupported.iter().any(|mark| mark.line == breakpoint.line))
+        .map(|breakpoint| breakpoint.line + 1)
+        .collect::<Vec<_>>();
+    {
+        let mut state = lock(state);
+        for mark in &unsupported {
+            if let Some(reason) = &mark.message
+                && state.reported_breakpoints.insert(reason.clone())
+            {
+                state.say(Category::Error, reason);
+            }
+        }
+        state.placed.insert(path.to_path_buf(), unsupported);
+    }
     ask(
         wire,
         state,
         "setBreakpoints",
         json!({
             "source": { "path": path, "name": name },
-            "breakpoints": lines.iter().map(|line| json!({ "line": line + 1 })).collect::<Vec<_>>(),
-            "lines": lines.iter().map(|line| line + 1).collect::<Vec<_>>(),
+            "breakpoints": breakpoints,
+            "lines": sent_lines,
             "sourceModified": false,
         }),
         Sent::Breakpoints(path.to_path_buf()),
@@ -848,15 +1049,20 @@ fn from_one(value: &Value, key: &str) -> usize {
 }
 
 /// One breakpoint as the adapter placed it.
-fn placed(breakpoint: &Value) -> Option<Placed> {
-    breakpoint.get("line")?;
-    Some(Placed {
-        line: from_one(breakpoint, "line"),
+fn placed(breakpoint: &Value, requested_line: usize) -> Placed {
+    Placed {
+        line: breakpoint
+            .get("line")
+            .map_or(requested_line, |_| from_one(breakpoint, "line")),
         verified: breakpoint
             .get("verified")
             .and_then(Value::as_bool)
             .unwrap_or_default(),
-    })
+        message: breakpoint
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    }
 }
 
 /// One frame of a stack.

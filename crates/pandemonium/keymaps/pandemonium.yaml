@@ -463,6 +463,7 @@ bindings:
   - when: editor.focused
     keys:
       f9: debug.toggle_breakpoint
+      shift+f9: debug.edit_log
   - when: debug.active
     keys:
       f6: debug.pause

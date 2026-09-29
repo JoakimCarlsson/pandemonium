@@ -21,6 +21,8 @@ pub struct TextMenu {
     pub file: FileId,
     /// Whether anything is selected.
     pub selected: bool,
+    /// Whether this worktree has a live debugger.
+    pub debugging: bool,
     /// Whether a language server is watching the file.
     pub served: bool,
     /// Whether the file is in a repository the editor can read.
@@ -33,6 +35,7 @@ pub fn text_menu(target: &TextMenu) -> Vec<MenuItem<Message>> {
         pane,
         file,
         selected,
+        debugging,
         served,
         tracked,
     } = *target;
@@ -63,6 +66,10 @@ pub fn text_menu(target: &TextMenu) -> Vec<MenuItem<Message>> {
         menu_entry(
             "Find Selection",
             selected.then_some(Message::PaneAction(pane, Action::FindSelection)),
+        ),
+        menu_entry(
+            "Add to Watch",
+            (selected && debugging).then_some(Message::PaneAction(pane, Action::DebugAddWatch)),
         ),
         menu_separator(),
         menu_entry(

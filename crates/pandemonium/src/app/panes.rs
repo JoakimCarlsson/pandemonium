@@ -1229,9 +1229,56 @@ impl App {
                     pane,
                     file,
                     selected: !document.buffer().selection().is_empty(),
+                    debugging: self
+                        .editor
+                        .scope_of(file)
+                        .is_some_and(|scope| self.debuggers.live(scope).is_some()),
                     served: document.is_served(),
                     tracked: document.is_tracked(),
                 })
+            }
+            MenuTarget::Breakpoint(pane, line) => {
+                let file = self.file_in(self.panes.pane(pane)?.active(self.scope()?)?)?;
+                let scope = self.editor.scope_of(file)?;
+                let path = self.editor.path(file)?;
+                let present = self.debuggers.breakpoint(scope, &path, line).is_some();
+                vec![
+                    pm_ui::menu_entry(
+                        if present {
+                            "Remove Breakpoint"
+                        } else {
+                            "Add Breakpoint"
+                        },
+                        Some(Message::ToggleBreakpoint(
+                            pane,
+                            pm_text::Position::new(line, 0),
+                        )),
+                    ),
+                    pm_ui::menu_entry(
+                        "Edit Condition…",
+                        Some(Message::EditBreakpoint(
+                            pane,
+                            line,
+                            crate::picker::Kind::BreakpointCondition,
+                        )),
+                    ),
+                    pm_ui::menu_entry(
+                        "Edit Hit Count…",
+                        Some(Message::EditBreakpoint(
+                            pane,
+                            line,
+                            crate::picker::Kind::BreakpointHits,
+                        )),
+                    ),
+                    pm_ui::menu_entry(
+                        "Edit Log Message…",
+                        Some(Message::EditBreakpoint(
+                            pane,
+                            line,
+                            crate::picker::Kind::BreakpointLog,
+                        )),
+                    ),
+                ]
             }
             MenuTarget::Input => {
                 let selected = self

@@ -13,12 +13,16 @@
 //! write it in; [`Session`] is one of them running.
 
 mod adapter;
+mod attach;
 mod scenario;
 mod session;
 mod state;
 mod wire;
 
 pub use adapter::{ADAPTERS, Adapter, Connect};
+pub use attach::{Process, processes};
 pub use scenario::{Request, Scenario, scenarios};
 pub use session::{Notify, Session};
-pub use state::{Category, Event, Frame, Line, Placed, Scope, Standing, Thread, Variable};
+pub use state::{
+    Breakpoint, Category, Event, Frame, Line, Placed, Scope, Standing, Thread, Variable, Watched,
+};

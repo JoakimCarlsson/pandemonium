@@ -91,6 +91,18 @@ pub enum Kind {
     Knob,
     /// What the worktree in front can be debugged as.
     Debug,
+    /// Visible processes to attach to.
+    Processes,
+    /// Installed adapters able to attach to the selected process.
+    AttachAdapters,
+    /// Edit a breakpoint's condition.
+    BreakpointCondition,
+    /// Edit a breakpoint's hit count.
+    BreakpointHits,
+    /// Edit a breakpoint's log message.
+    BreakpointLog,
+    /// Add or edit a watch expression.
+    Watch,
     /// Tasks offered by the worktree in front.
     Tasks,
 }
@@ -129,6 +141,12 @@ impl Kind {
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
             Self::Debug => "Debug this worktree as",
+            Self::Processes => "Attach to a process",
+            Self::AttachAdapters => "Attach using an adapter",
+            Self::BreakpointCondition => "Condition as the adapter reads it",
+            Self::BreakpointHits => "Hit count, e.g. 5 or >= 5",
+            Self::BreakpointLog => "Log message, e.g. i is {i}",
+            Self::Watch => "Watch expression",
             Self::Tasks => "Run a task in this worktree",
         }
     }
@@ -138,6 +156,10 @@ impl Kind {
         matches!(
             self,
             Self::Line
+                | Self::BreakpointCondition
+                | Self::BreakpointHits
+                | Self::BreakpointLog
+                | Self::Watch
                 | Self::Rename
                 | Self::NewBranch
                 | Self::NewSession
@@ -217,6 +239,8 @@ pub enum Choice {
     Font(FontSlot, Option<String>),
     /// Debug this worktree as this scenario.
     Debug(Scope, Box<pm_dap::Scenario>),
+    /// A process selected for attaching.
+    Process(u32),
     /// Run this task in its worktree.
     Task(Scope, Box<pm_core::Task>),
     /// Tick or untick this repository for the session about to be cut.

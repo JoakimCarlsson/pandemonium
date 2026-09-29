@@ -307,6 +307,11 @@ fn hint(theme: &Theme, kind: Kind) -> Div<Message> {
     let label = match kind {
         Kind::Line => "Enter a line number, or a line and column",
         Kind::Rename => "Enter the new name, everywhere the symbol is used",
+        Kind::BreakpointCondition | Kind::BreakpointHits => {
+            "Passed to the adapter as typed, e.g. 5 or >= 5"
+        }
+        Kind::BreakpointLog => "Use {expression} to interpolate a value",
+        Kind::Watch => "Evaluated each time the program pauses",
         Kind::LinkedPath | Kind::CopiedPath => {
             "A path from the repository's root, like .env or web/node_modules"
         }

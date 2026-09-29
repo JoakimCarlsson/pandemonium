@@ -6,7 +6,7 @@
 //! that picture, kept up by the reader thread; the rest of this module is
 //! the shapes it is drawn in.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -32,6 +32,8 @@ pub enum Standing {
 pub enum Event {
     /// The program paused here, which the window brings into view.
     Paused(Frame),
+    /// The adapter refused to launch or attach to the program.
+    StartRefused(String),
     /// The session is over.
     Ended,
 }
@@ -84,13 +86,37 @@ pub struct Variable {
     pub reference: i64,
 }
 
+/// A source breakpoint, with optional adapter-specific behavior.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Breakpoint {
+    /// The source line, counted from zero.
+    pub line: usize,
+    /// An expression that must hold before stopping.
+    pub condition: Option<String>,
+    /// The adapter's hit-count expression.
+    pub hits: Option<String>,
+    /// A message to print without stopping.
+    pub log: Option<String>,
+}
+
+/// The latest result of evaluating a watch expression.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Watched {
+    /// The expression being watched.
+    pub expression: String,
+    /// Its value, or the adapter's reason it could not be evaluated.
+    pub value: Result<Variable, String>,
+}
+
 /// Where a breakpoint came to rest, as the adapter placed it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Placed {
     /// The line it stops on, counted from zero.
     pub line: usize,
     /// Whether the adapter could put it there at all.
     pub verified: bool,
+    /// The adapter's explanation when it could not place the breakpoint.
+    pub message: Option<String>,
 }
 
 /// Who a line of the console is from.
@@ -144,12 +170,16 @@ pub(crate) enum Sent {
     Resume,
     /// An expression the reader asked about.
     Evaluate,
+    /// A watch expression, identified by its position in the current list.
+    Watch(usize),
     /// The end of the session.
     Disconnect,
 }
 
 /// What the adapter has said, and what it has not been told yet.
 pub(crate) struct State {
+    /// The adapter's name in unsupported-feature messages.
+    pub adapter_name: &'static str,
     /// What the adapter said it can do, once the handshake has said it.
     pub capabilities: Value,
     /// Where the session has got to.
@@ -160,9 +190,11 @@ pub(crate) struct State {
     /// change rather than all at once.
     pub configured: bool,
     /// The lines each file has breakpoints on, as the window last set them.
-    pub breakpoints: BTreeMap<PathBuf, Vec<usize>>,
+    pub breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
     /// Where the adapter put each of them.
     pub placed: BTreeMap<PathBuf, Vec<Placed>>,
+    /// Unsupported breakpoint messages already written to the console.
+    pub reported_breakpoints: BTreeSet<String>,
     /// The requests sent and not yet answered, and what each was for.
     pub sent: HashMap<i64, Sent>,
     /// The program's threads, as last listed.
@@ -177,6 +209,10 @@ pub(crate) struct State {
     pub scopes: Vec<Scope>,
     /// The variables behind every reference asked about since the last pause.
     pub variables: HashMap<i64, Vec<Variable>>,
+    /// Expressions retained across pauses.
+    pub watches: Vec<String>,
+    /// The last result for each expression.
+    pub watched: Vec<Watched>,
     /// The console, oldest line first.
     pub lines: Vec<Line>,
     /// Whether the last line of the console is still being written.
@@ -189,14 +225,19 @@ pub(crate) struct State {
 
 impl State {
     /// The state of a session about to start, with `breakpoints` to set.
-    pub(crate) fn new(breakpoints: BTreeMap<PathBuf, Vec<usize>>) -> Self {
+    pub(crate) fn new(
+        breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
+        adapter_name: &'static str,
+    ) -> Self {
         Self {
+            adapter_name,
             capabilities: Value::Null,
             standing: Standing::Starting,
             reason: None,
             configured: false,
             breakpoints,
             placed: BTreeMap::new(),
+            reported_breakpoints: BTreeSet::new(),
             sent: HashMap::new(),
             threads: Vec::new(),
             thread: None,
@@ -204,6 +245,8 @@ impl State {
             frame: None,
             scopes: Vec::new(),
             variables: HashMap::new(),
+            watches: Vec::new(),
+            watched: Vec::new(),
             lines: Vec::new(),
             open: false,
             events: Vec::new(),
