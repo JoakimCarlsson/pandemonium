@@ -10,6 +10,7 @@
 mod buffer;
 mod cursor;
 mod diagnostic;
+mod find;
 pub mod frame;
 mod hint;
 mod history;
@@ -22,6 +23,7 @@ mod syntax;
 pub use buffer::Buffer;
 pub use cursor::{Motion, Position, Selection};
 pub use diagnostic::{Diagnostic, Severity};
+pub use find::{Finder, Query};
 pub use hint::Hint;
 pub use indent::Indent;
 pub use language::{Language, NO_OPTIONS, Server};

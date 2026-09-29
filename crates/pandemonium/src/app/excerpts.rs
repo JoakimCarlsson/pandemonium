@@ -142,6 +142,14 @@ impl App {
             && let Some(excerpts) = self.excerpts.get(&scope)
         {
             excerpts.borrow_mut().activate(file);
+        } else if let Some(Item::Search(scope)) = self
+            .panes
+            .pane(pane)
+            .and_then(|held| held.active(self.scope()))
+            && let Some(search) = self.searches.get(&scope)
+        {
+            search.excerpts.borrow_mut().activate(file);
+            self.project_search_field = None;
         }
         self.select_text(pane, phase, anchor, head);
     }
@@ -149,14 +157,25 @@ impl App {
     /// Opens the file in the `index`-th place of `pane`'s excerpts on its
     /// own, at the line of its first change.
     pub(super) fn open_excerpt_file(&mut self, pane: PaneId, index: usize) {
-        let Some(Item::Excerpts(scope)) = self
+        let Some(Item::Excerpts(scope) | Item::Search(scope)) = self
             .panes
             .pane(pane)
             .and_then(|held| held.active(self.scope()))
         else {
             return;
         };
-        let Some((file, line)) = self.excerpts.get(&scope).and_then(|excerpts| {
+        let excerpts = match self
+            .panes
+            .pane(pane)
+            .and_then(|held| held.active(self.scope()))
+        {
+            Some(Item::Search(_)) => self
+                .searches
+                .get(&scope)
+                .map(|search| search.excerpts.clone()),
+            _ => self.excerpts.get(&scope).cloned(),
+        };
+        let Some((file, line)) = excerpts.and_then(|excerpts| {
             let mut excerpts = excerpts.borrow_mut();
             let excerpted = excerpts.files_mut().get_mut(index)?;
             let line = excerpted.ranges().first().map_or(0, |range| range.start);
@@ -178,10 +197,17 @@ impl App {
     /// Only the focused pane's are moved: the same document may be open in
     /// another pane, and a cursor moved there is not one to chase here.
     pub(super) fn settle_excerpts(&mut self) {
-        let Some(Item::Excerpts(scope)) = self.active_tab() else {
+        let Some(Item::Excerpts(scope) | Item::Search(scope)) = self.active_tab() else {
             return;
         };
-        let Some(excerpts) = self.excerpts.get(&scope).cloned() else {
+        let excerpts = match self.active_tab() {
+            Some(Item::Search(_)) => self
+                .searches
+                .get(&scope)
+                .map(|search| search.excerpts.clone()),
+            _ => self.excerpts.get(&scope).cloned(),
+        };
+        let Some(excerpts) = excerpts else {
             return;
         };
         let Some((file, at)) = excerpts.borrow_mut().resettle() else {
@@ -195,10 +221,14 @@ impl App {
     /// Scrolls the excerpts under the pointer by `rows`, saying whether the
     /// pointer was over any.
     pub(super) fn scroll_excerpts(&mut self, rows: isize) -> bool {
-        let Some(Item::Excerpts(scope)) = self.item_under() else {
+        let Some(Item::Excerpts(scope) | Item::Search(scope)) = self.item_under() else {
             return false;
         };
-        let Some(excerpts) = self.excerpts.get(&scope) else {
+        let excerpts = match self.item_under() {
+            Some(Item::Search(_)) => self.searches.get(&scope).map(|search| &search.excerpts),
+            _ => self.excerpts.get(&scope),
+        };
+        let Some(excerpts) = excerpts else {
             return false;
         };
         excerpts.borrow_mut().scroll_by(rows);

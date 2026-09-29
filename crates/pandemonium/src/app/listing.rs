@@ -9,20 +9,24 @@
 //! for branches and remotes away from the window too. Each wakes the window
 //! with what it found, and what belongs to a picker no longer open is let go.
 
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use pm_core::Scope;
-use pm_text::Position;
+use pm_text::{Finder, Position, Query};
 
 use crate::app::picker::{file_row, relative};
 use crate::app::{App, Wake};
 use crate::picker::{Choice, Kind, Row};
 
 /// Most results a project-wide search gathers before it stops looking.
-const SEARCH_LIMIT: usize = 500;
+pub(super) const SEARCH_LIMIT: usize = 500;
 
 /// Longest a line of context beside a search result is drawn.
 const CONTEXT: usize = 120;
@@ -35,13 +39,35 @@ const SNIFFED_BYTES: usize = 8 << 10;
 
 /// How long a search waits after a keystroke before it starts reading, so
 /// that a word typed quickly is searched for once rather than once a letter.
-const DEBOUNCE: Duration = Duration::from_millis(80);
+pub(super) const DEBOUNCE: Duration = Duration::from_millis(80);
 
 /// How long a search that has caught up with the listing waits for more.
 const CAUGHT_UP: Duration = Duration::from_millis(5);
 
 /// Most files, or results, held back before they are handed to the window.
 const BATCH: usize = 256;
+
+/// One file's matches returned by a background worktree search.
+pub(super) struct FileMatches {
+    /// The file in the worktree.
+    pub(super) path: PathBuf,
+    /// Every shown match in the file.
+    pub(super) ranges: Vec<Range<Position>>,
+    /// Fingerprint of the text that produced those ranges.
+    pub(super) fingerprint: u64,
+}
+
+/// A batch of worktree search results.
+pub(super) struct SearchBatch {
+    /// The query generation it belongs to.
+    pub(super) generation: u64,
+    /// Files completed in this batch.
+    pub(super) files: Vec<FileMatches>,
+    /// Whether the walk has finished.
+    pub(super) done: bool,
+    /// Whether the search found more matches than it can show.
+    pub(super) limited: bool,
+}
 
 /// Longest something found is held back before it is handed to the window.
 const FLUSH: Duration = Duration::from_millis(40);
@@ -166,10 +192,16 @@ impl App {
         let Some(files) = self.files_listing() else {
             return;
         };
-        let needle = query.chars().flat_map(char::to_lowercase).collect();
+        let Ok(finder) = Finder::new(&Query {
+            text: query.to_owned(),
+            ..Query::default()
+        }) else {
+            return;
+        };
         let search = Search {
+            snapshots: self.editor.search_snapshots(files.scope),
             files,
-            needle,
+            finder,
             generation,
             wanted: self.listings.search.clone(),
         };
@@ -215,7 +247,7 @@ impl App {
                 Found::Rows(opening, kind, rows) => self.show_asked(opening, kind, rows),
             };
         }
-        changed
+        changed | self.take_project_searches()
     }
 
     /// Hands the picker the files listed since it was last given any, or
@@ -322,11 +354,13 @@ fn list(files: &Files, wake: &(dyn Fn() + Send + Sync)) {
 }
 
 /// One search of a worktree's files for a query, away from the window.
-struct Search {
+pub(super) struct Search {
     /// The files searched, as they are listed.
     files: Arc<Files>,
-    /// What is searched for, lower-cased.
-    needle: Vec<char>,
+    /// The compiled query.
+    finder: Finder,
+    /// Open documents as they stood when the search began.
+    snapshots: HashMap<PathBuf, String>,
     /// Which search this is.
     generation: u64,
     /// Which search is wanted now.
@@ -334,6 +368,70 @@ struct Search {
 }
 
 impl Search {
+    /// Searches a worktree for a results pane on a background thread.
+    pub(super) fn run_project(
+        root: PathBuf,
+        snapshots: HashMap<PathBuf, String>,
+        finder: Finder,
+        generation: u64,
+        wanted: Arc<AtomicU64>,
+        pending: Arc<Mutex<Vec<SearchBatch>>>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        std::thread::spawn(move || {
+            std::thread::sleep(DEBOUNCE);
+            let mut files = Vec::new();
+            let mut count = 0;
+            let mut limited = false;
+            let mut flushed = Instant::now();
+            pm_core::walk_each(&root, |path| {
+                if wanted.load(Ordering::Acquire) != generation {
+                    return false;
+                }
+                let Some(content) = search_text(&path, &snapshots) else {
+                    return true;
+                };
+                let mut ranges = match_ranges(&content, &finder, SEARCH_LIMIT - count + 1);
+                if ranges.len() > SEARCH_LIMIT - count {
+                    ranges.truncate(SEARCH_LIMIT - count);
+                    limited = true;
+                }
+                count += ranges.len();
+                if !ranges.is_empty() {
+                    files.push(FileMatches {
+                        path,
+                        ranges,
+                        fingerprint: fingerprint(&content),
+                    });
+                }
+                if !files.is_empty() && (files.len() >= 32 || flushed.elapsed() >= FLUSH || limited)
+                {
+                    if let Ok(mut pending) = pending.lock() {
+                        pending.push(SearchBatch {
+                            generation,
+                            files: std::mem::take(&mut files),
+                            done: false,
+                            limited,
+                        });
+                    }
+                    wake();
+                    flushed = Instant::now();
+                }
+                !limited
+            });
+            if wanted.load(Ordering::Acquire) == generation {
+                if let Ok(mut pending) = pending.lock() {
+                    pending.push(SearchBatch {
+                        generation,
+                        files,
+                        done: true,
+                        limited,
+                    });
+                }
+                wake();
+            }
+        });
+    }
     /// Whether this search is still wanted.
     fn live(&self) -> bool {
         self.wanted.load(Ordering::Acquire) == self.generation
@@ -399,67 +497,79 @@ impl Search {
     /// A file too big to be source, one that is not text, or one that cannot
     /// be read is passed over.
     fn search_file(&self, path: &Path, rows: &mut Vec<Row>, room: usize) {
-        if !std::fs::metadata(path).is_ok_and(|meta| meta.len() <= SEARCHED_BYTES) {
-            return;
-        }
-        let Ok(bytes) = std::fs::read(path) else {
+        let Some(text) = search_text(path, &self.snapshots) else {
             return;
         };
-        if bytes[..bytes.len().min(SNIFFED_BYTES)].contains(&0) {
-            return;
-        }
-        let Ok(text) = std::str::from_utf8(&bytes) else {
-            return;
-        };
-        for (line, content) in text.lines().enumerate() {
-            if rows.len() >= room {
-                return;
-            }
-            let Some(column) = found_at(content, &self.needle) else {
-                continue;
-            };
+        let lines = search_lines(&text);
+        for found in match_ranges(&text, &self.finder, room.saturating_sub(rows.len())) {
+            let line = found.start.line;
+            let content = lines.get(line).copied().unwrap_or_default();
             rows.push(Row {
                 section: None,
                 label: content.trim().chars().take(CONTEXT).collect(),
                 detail: format!("{}:{}", relative(&self.files.root, path), line + 1),
-                choice: Choice::OpenAt(
-                    self.files.scope,
-                    path.to_path_buf(),
-                    Position::new(line, column),
-                ),
+                choice: Choice::OpenAt(self.files.scope, path.to_path_buf(), found.start),
                 enabled: true,
             });
         }
     }
 }
 
-/// Which character of `line` the lower-cased `needle` first appears at.
-///
-/// The comparison is made a character at a time, lower-casing each as it is
-/// read, because lower-casing a line can change how many bytes it takes: an
-/// offset into a folded copy is not an offset into the line it came from.
-/// Nothing is allocated, which is what a search over every line of a
-/// worktree needs.
-fn found_at(line: &str, needle: &[char]) -> Option<usize> {
-    if needle.is_empty() {
+/// Reads a file's current open text or its disk copy for background search.
+pub(super) fn search_text(path: &Path, snapshots: &HashMap<PathBuf, String>) -> Option<String> {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return None;
     }
-    line.char_indices()
-        .enumerate()
-        .find(|(_, (byte, _))| starts_folded(&line[*byte..], needle))
-        .map(|(column, _)| column)
+    if let Some(snapshot) = snapshots.get(path) {
+        return Some(snapshot.clone());
+    }
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.len() <= SEARCHED_BYTES) {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if bytes[..bytes.len().min(SNIFFED_BYTES)].contains(&0) {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
 }
 
-/// Whether `text`, lower-cased, starts with `needle`.
-fn starts_folded(text: &str, needle: &[char]) -> bool {
-    let mut wanted = needle.iter();
-    let mut want = wanted.next();
-    for lower in text.chars().flat_map(char::to_lowercase) {
-        match want {
-            None => return true,
-            Some(ch) if *ch == lower => want = wanted.next(),
-            Some(_) => return false,
+/// Returns at most `room` match ranges in one file, measured in character columns.
+pub(super) fn match_ranges(text: &str, finder: &Finder, room: usize) -> Vec<Range<Position>> {
+    let mut found = Vec::new();
+    for (line, content) in search_lines(text).into_iter().enumerate() {
+        for range in finder.line(content) {
+            if found.len() == room {
+                return found;
+            }
+            found.push(Position::new(line, range.start)..Position::new(line, range.end));
         }
     }
-    want.is_none()
+    found
+}
+
+/// Splits a file into editor lines, retaining its empty final line.
+fn search_lines(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'\r' || bytes[at] == b'\n' {
+            lines.push(&text[start..at]);
+            if bytes[at] == b'\r' && bytes.get(at + 1) == Some(&b'\n') {
+                at += 1;
+            }
+            start = at + 1;
+        }
+        at += 1;
+    }
+    lines.push(&text[start..]);
+    lines
+}
+
+/// Fingerprints a file snapshot so stale results are discarded after an edit.
+pub(super) fn fingerprint(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }

@@ -214,10 +214,16 @@ pub enum Action {
     ReplaceMatch,
     /// Replace every match at once.
     ReplaceAll,
+    /// Replace all matches in the current file of a project search.
+    ReplaceInFile,
+    /// Open search and replace results for the focused worktree.
+    ReplaceProject,
     /// Match case in the focused pane's search, or stop matching it.
     ToggleSearchCase,
     /// Match whole words in the focused pane's search, or stop.
     ToggleSearchWord,
+    /// Toggle regular expression matching in the focused search.
+    ToggleSearchRegex,
     /// Show the focused pane's replacement field, or hide it.
     ToggleSearchReplace,
     /// Search every file of every open project.
@@ -649,6 +655,16 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     ),
     (Action::ReplaceAll, "search.replace_all", "Replace All"),
     (
+        Action::ReplaceInFile,
+        "search.replace_in_file",
+        "Replace in File",
+    ),
+    (
+        Action::ReplaceProject,
+        "search.replace_project",
+        "Search: Replace in Project",
+    ),
+    (
         Action::ToggleSearchCase,
         "search.toggle_case",
         "Toggle Match Case",
@@ -657,6 +673,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::ToggleSearchWord,
         "search.toggle_word",
         "Toggle Whole Word",
+    ),
+    (
+        Action::ToggleSearchRegex,
+        "search.toggle_regex",
+        "Toggle Regular Expression",
     ),
     (
         Action::ToggleSearchReplace,
@@ -921,6 +942,7 @@ impl Action {
                 | Self::Tab
                 | Self::ToggleSearchCase
                 | Self::ToggleSearchWord
+                | Self::ToggleSearchRegex
                 | Self::ToggleSearchReplace
                 | Self::Undo
                 | Self::Redo
@@ -954,6 +976,7 @@ impl Action {
                 | Self::FindPrevious
                 | Self::FindSelection
                 | Self::ReplaceMatch
+                | Self::ReplaceInFile
                 | Self::ReplaceAll
                 | Self::GoToLine
                 | Self::ShowSymbols

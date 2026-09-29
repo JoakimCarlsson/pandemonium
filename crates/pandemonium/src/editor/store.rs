@@ -1295,6 +1295,21 @@ impl Files {
         self.find(scope, path)
     }
 
+    /// Snapshots the current text of open files in one worktree for background search.
+    pub fn search_snapshots(&self, scope: Scope) -> HashMap<PathBuf, String> {
+        self.open
+            .values()
+            .filter(|entry| entry.scope == scope)
+            .map(|entry| {
+                let document = entry.document.borrow();
+                (
+                    document.buffer().path().to_path_buf(),
+                    document.buffer().contents(),
+                )
+            })
+            .collect()
+    }
+
     /// The document `id` names, if it is still open.
     pub fn get(&self, id: FileId) -> Option<OpenFile> {
         self.open.get(&id).map(|entry| entry.document.clone())

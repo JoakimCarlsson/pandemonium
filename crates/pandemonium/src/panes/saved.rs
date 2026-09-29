@@ -64,6 +64,8 @@ pub enum SavedKind {
     Rendered,
     /// The worktree's changes, as excerpts to edit.
     Excerpts,
+    /// A worktree's search and replace pane.
+    Search,
     /// The worktree's changes, gathered for review.
     Review,
     /// The diff of one file of the worktree.

@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use pm_core::Change;
 use pm_gfx::Point;
-use pm_text::Position;
+use pm_text::{Finder, Position, Query};
 
 use crate::editor::{FileId, OpenFile};
 
@@ -29,10 +29,20 @@ pub struct Excerpted {
     /// Where the file sits in its worktree.
     pub name: String,
     /// What the last commit holds for it, when it holds anything.
-    committed: Option<String>,
+    source: Source,
     /// Where the document differs from that, and at which version it was
     /// worked out.
     changes: (i32, Vec<Change>),
+    /// Cached match ranges and the buffer version they came from.
+    matches: (i32, Vec<Range<Position>>),
+}
+
+/// The reason a file appears in an excerpts pane.
+enum Source {
+    /// Lines changed relative to the last commit.
+    Changes(Option<String>),
+    /// Lines matched by a project search.
+    Matches(Query),
 }
 
 impl Excerpted {
@@ -42,18 +52,72 @@ impl Excerpted {
             file,
             document,
             name,
-            committed,
+            source: Source::Changes(committed),
             changes: (-1, Vec::new()),
+            matches: (-1, Vec::new()),
         }
+    }
+
+    /// The document of `file`, called `name`, showing matches for `query`.
+    pub fn matched(
+        file: FileId,
+        document: OpenFile,
+        name: String,
+        query: Query,
+        ranges: Vec<Range<Position>>,
+    ) -> Self {
+        let version = document.borrow().buffer().version();
+        Self {
+            file,
+            document,
+            name,
+            source: Source::Matches(query),
+            changes: (-1, Vec::new()),
+            matches: (version, ranges),
+        }
+    }
+
+    /// The match ranges in this file, refreshed after each buffer edit.
+    pub fn matches(&mut self) -> &[Range<Position>] {
+        let Source::Matches(query) = &self.source else {
+            return &[];
+        };
+        let document = self.document.borrow();
+        let buffer = document.buffer();
+        if self.matches.0 != buffer.version() {
+            let mut found = Vec::new();
+            if let Ok(finder) = Finder::new(query) {
+                for line in 0..buffer.line_count() {
+                    found.extend(
+                        finder
+                            .line(&buffer.line_text(line))
+                            .into_iter()
+                            .map(|range| {
+                                Position::new(line, range.start)..Position::new(line, range.end)
+                            }),
+                    );
+                }
+            }
+            self.matches = (buffer.version(), found);
+        }
+        &self.matches.1
+    }
+
+    /// Whether this file is shown for search matches rather than changes.
+    pub fn is_match_source(&self) -> bool {
+        matches!(self.source, Source::Matches(_))
     }
 
     /// Where the document differs from the last commit, worked out again
     /// only when it has been edited since the last time it was asked.
     pub fn changes(&mut self) -> &[Change] {
+        let Source::Changes(committed) = &self.source else {
+            return &[];
+        };
         let document = self.document.borrow();
         let version = document.buffer().version();
         if self.changes.0 != version {
-            let before = self.committed.as_deref().unwrap_or_default();
+            let before = committed.as_deref().unwrap_or_default();
             self.changes = (
                 version,
                 pm_core::changes(before, &document.buffer().contents()),
@@ -70,9 +134,25 @@ impl Excerpted {
     pub fn ranges(&mut self) -> Vec<Range<usize>> {
         let count = self.document.borrow().buffer().line_count();
         let mut ranges: Vec<Range<usize>> = Vec::new();
-        for change in self.changes() {
-            let start = change.lines.start.saturating_sub(CONTEXT);
-            let end = (change.lines.end.max(change.lines.start + 1) + CONTEXT).min(count);
+        let (lines, context) = match self.source {
+            Source::Changes(_) => (
+                self.changes()
+                    .iter()
+                    .map(|change| change.lines.clone())
+                    .collect::<Vec<_>>(),
+                CONTEXT,
+            ),
+            Source::Matches(_) => (
+                self.matches()
+                    .iter()
+                    .map(|found| found.start.line..found.end.line + 1)
+                    .collect(),
+                1,
+            ),
+        };
+        for run in lines {
+            let start = run.start.saturating_sub(context);
+            let end = (run.end.max(run.start + 1) + context).min(count);
             match ranges.last_mut() {
                 Some(last) if start <= last.end => last.end = last.end.max(end),
                 _ => ranges.push(start..end.max(start)),
@@ -83,6 +163,9 @@ impl Excerpted {
 
     /// How many lines the file adds and takes out against the last commit.
     pub fn counts(&mut self) -> (usize, usize) {
+        if matches!(self.source, Source::Matches(_)) {
+            return (self.matches().len(), 0);
+        }
         self.changes()
             .iter()
             .fold((0, 0), |(added, removed), change| {
@@ -152,6 +235,15 @@ impl Excerpts {
         self.followed = None;
     }
 
+    /// Appends one file of streamed search results.
+    pub fn push_file(&mut self, file: Excerpted) {
+        if self.active.is_none() {
+            self.active = Some(file.file);
+        }
+        self.files.push(file);
+        self.followed = None;
+    }
+
     /// The file holding the cursor.
     pub fn active(&self) -> Option<FileId> {
         self.active
@@ -176,8 +268,11 @@ impl Excerpts {
     pub fn rows(&mut self) -> Vec<Row> {
         let mut rows = Vec::new();
         for index in 0..self.files.len() {
-            rows.push(Row::Header(index));
             let excerpted = &mut self.files[index];
+            if excerpted.is_match_source() && excerpted.matches().is_empty() {
+                continue;
+            }
+            rows.push(Row::Header(index));
             let ranges = excerpted.ranges();
             let changes = excerpted.changes().to_vec();
             let count = excerpted.document.borrow().buffer().line_count();
@@ -193,6 +288,15 @@ impl Excerpts {
                     push_removed(&mut rows, index, &changes, range.end);
                 }
             }
+        }
+        if !rows.iter().any(|row| match row {
+            Row::Header(index) => Some(self.files[*index].file) == self.active,
+            _ => false,
+        }) {
+            self.active = rows.iter().find_map(|row| match row {
+                Row::Header(index) => Some(self.files[*index].file),
+                _ => None,
+            });
         }
         rows
     }

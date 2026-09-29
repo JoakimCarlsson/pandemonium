@@ -85,10 +85,13 @@ impl App {
             context.set(keys::PANE_KIND, kind);
         }
         let palette = self.picker.is_some();
-        let field = palette || self.search_focused || self.tree_edit.is_some();
+        let project_search = matches!(self.active_tab(), Some(crate::panes::Item::Search(_)))
+            && self.project_search_field.is_some();
+        let field = palette || self.search_focused || project_search || self.tree_edit.is_some();
         let editing = self.focused_file().is_some()
             && self.writing.is_none()
             && !self.search_focused
+            && !project_search
             && !self.changes_focused
             && !palette
             && self.tree_edit.is_none();
@@ -188,6 +191,9 @@ impl App {
         if self.send_to_search(event) {
             return self.request_redraw();
         }
+        if self.send_to_project_search(event) {
+            return self.request_redraw();
+        }
         if self.send_to_editor(event) {
             return self.request_redraw();
         }
@@ -240,6 +246,23 @@ impl App {
         let modifiers = self.modifiers;
         match event.logical_key.as_ref() {
             Key::Named(NamedKey::Escape) => self.dismiss_picker(),
+            Key::Named(NamedKey::Enter) if modifiers.control_key() || modifiers.super_key() => {
+                if self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.kind() == crate::picker::Kind::Search)
+                {
+                    let query = self
+                        .picker
+                        .as_ref()
+                        .map(|picker| picker.field().value().to_owned());
+                    self.dismiss_picker();
+                    self.open_project_search(query);
+                    return true;
+                }
+                self.confirm_picker();
+                true
+            }
             Key::Named(NamedKey::Enter) => {
                 self.confirm_picker();
                 true
@@ -540,6 +563,47 @@ impl App {
             }
         }
         true
+    }
+
+    /// Sends text editing keys to the focused project search field.
+    fn send_to_project_search(&mut self, event: &KeyEvent) -> bool {
+        let Some(crate::panes::Item::Search(scope)) = self.active_tab() else {
+            return false;
+        };
+        let Some(which) = self.project_search_field else {
+            return false;
+        };
+        if self.is_window_chord_over_text(&event.logical_key.as_ref()) {
+            return false;
+        }
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Tab) => {
+                self.project_search_field = Some(match which {
+                    crate::editor::SearchField::Query => crate::editor::SearchField::Replacement,
+                    crate::editor::SearchField::Replacement => crate::editor::SearchField::Query,
+                });
+                true
+            }
+            Key::Named(NamedKey::Enter) => {
+                self.project_search_field = None;
+                true
+            }
+            key => {
+                let Some(search) = self.searches.get_mut(&scope) else {
+                    return false;
+                };
+                let field = match which {
+                    crate::editor::SearchField::Query => &mut search.query,
+                    crate::editor::SearchField::Replacement => &mut search.replacement,
+                };
+                let before = field.value().to_owned();
+                let taken = field.press(&key, self.modifiers) == Typed::Taken;
+                if before != field.value() && which == crate::editor::SearchField::Query {
+                    self.run_project_search(scope);
+                }
+                taken
+            }
+        }
     }
 
     /// Sends a keypress to the editor pane, when the pane has the keyboard.

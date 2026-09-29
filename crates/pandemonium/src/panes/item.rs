@@ -34,6 +34,8 @@ pub enum Item {
     /// Everything that has changed in one worktree, as excerpts of the files
     /// themselves, edited in place in one pane.
     Excerpts(Scope),
+    /// Search and replace results for one worktree.
+    Search(Scope),
     /// One conversation held in a worktree, with everything said in it.
     Agent(Scope, TalkId),
     /// The editor's preferences, which belong to the window, not a worktree.
@@ -84,7 +86,7 @@ impl Item {
     /// The worktree whose changes this holds as excerpts, when it does.
     pub fn excerpts(self) -> Option<Scope> {
         match self {
-            Self::Excerpts(scope) => Some(scope),
+            Self::Excerpts(scope) | Self::Search(scope) => Some(scope),
             _ => None,
         }
     }
