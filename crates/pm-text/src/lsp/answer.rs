@@ -1011,6 +1011,8 @@ pub struct Symbol {
     pub kind: &'static str,
     /// Where it is declared.
     pub position: Position,
+    /// The full declaration, including its body.
+    pub range: Range<Position>,
     /// How many symbols it sits inside.
     pub depth: usize,
 }
@@ -1477,6 +1479,7 @@ fn symbols(found: Option<DocumentSymbolResponse>) -> Vec<Symbol> {
         Some(DocumentSymbolResponse::Flat(flat)) => {
             symbols.extend(flat.into_iter().map(|symbol| Symbol {
                 position: position(symbol.location.range.start),
+                range: range(symbol.location.range),
                 detail: symbol.container_name.unwrap_or_default(),
                 kind: symbol_kind(symbol.kind),
                 name: symbol.name,
@@ -1496,6 +1499,7 @@ fn collect_symbols(level: Vec<DocumentSymbol>, depth: usize, found: &mut Vec<Sym
             detail: symbol.detail.unwrap_or_default(),
             kind: symbol_kind(symbol.kind),
             position: position(symbol.selection_range.start),
+            range: range(symbol.range),
             depth,
         });
         collect_symbols(symbol.children.unwrap_or_default(), depth + 1, found);

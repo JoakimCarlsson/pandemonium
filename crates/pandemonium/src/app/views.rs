@@ -14,6 +14,14 @@ use crate::panes::{Item, PaneId, SplitDirection};
 const WHEEL_ZOOM: f32 = 240.0;
 
 impl App {
+    /// Opens the worktree's outline beside the focused pane or brings it forward.
+    pub(super) fn open_outline(&mut self) {
+        let Some(scope) = self.scope() else {
+            return;
+        };
+        self.open_beside(self.panes.focus(), Item::Outline(scope));
+        self.refresh_annotations();
+    }
     /// Opens the matching rendered view or SVG source beside `pane`.
     pub(super) fn open_file_preview(&mut self, pane: PaneId) {
         let active = self

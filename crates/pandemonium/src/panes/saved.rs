@@ -62,6 +62,8 @@ pub enum SavedKind {
     Image,
     /// A markdown file of the worktree, read as it renders.
     Rendered,
+    /// A worktree's file outline.
+    Outline,
     /// The worktree's changes, as excerpts to edit.
     Excerpts,
     /// A worktree's search and replace pane.

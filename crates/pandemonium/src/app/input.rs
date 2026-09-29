@@ -160,6 +160,9 @@ impl App {
         if self.send_to_picker(event) {
             return self.request_redraw();
         }
+        if self.send_to_outline(event) {
+            return self.request_redraw();
+        }
         if self.send_to_tree_edit(&event.logical_key.as_ref()) {
             return self.request_redraw();
         }
@@ -1056,7 +1059,7 @@ impl App {
             return;
         }
         let (rows, carry) = self.wheel_split(delta, text.code.line_height);
-        if self.scroll_review(-rows) || self.scroll_excerpts(-rows) {
+        if self.scroll_outline(-rows) || self.scroll_review(-rows) || self.scroll_excerpts(-rows) {
             self.wheel_carry = carry;
             self.request_redraw();
             return;

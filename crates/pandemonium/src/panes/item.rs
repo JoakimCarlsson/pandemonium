@@ -23,6 +23,8 @@ pub enum Item {
     /// An open file read as it renders — markdown as its headings, lists
     /// and code — beside the text it is rendered from.
     Rendered(FileId),
+    /// A live tree of declarations in the last focused file of a worktree.
+    Outline(Scope),
     /// Everything that has changed in one worktree, gathered for review.
     ///
     /// The review is the worktree's rather than the tab's: two panes showing

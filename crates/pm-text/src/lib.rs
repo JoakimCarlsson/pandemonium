@@ -37,4 +37,4 @@ pub use lsp::{
     NamedLocation, Progress, Request, Servers, Signature, Symbol, Trigger, Watched,
     WorkspaceChange, is_tracing, set_trace,
 };
-pub use syntax::{Highlight, Highlights, SyntaxNode, highlight};
+pub use syntax::{Highlight, Highlights, SyntaxNode, highlight, is_declaration};

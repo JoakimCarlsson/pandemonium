@@ -147,6 +147,7 @@ impl App {
                 return self.apply(Message::OpenExcerpts);
             }
             Action::OpenMarkdownPreview => self.open_rendered(),
+            Action::ShowOutline => self.open_outline(),
             Action::NewAgentSession => return self.apply(Message::NewAgentSession),
             Action::AddSelectionToAgent => self.add_selection_to_agent(),
             Action::FinishSession => {

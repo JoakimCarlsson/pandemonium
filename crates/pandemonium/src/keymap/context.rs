@@ -314,7 +314,7 @@ impl std::error::Error for ParseWhenError {}
 /// The vocabulary lives here so that a clause in a keymap table and the window
 /// that fills the context in spell the same key.
 pub mod keys {
-    /// What the focused pane holds: `file`, `diff`, `review`, `agent`,
+    /// What the focused pane holds: `file`, `outline`, `diff`, `review`, `agent`,
     /// `terminal`, `prompt` — an agent's prompt — `console` — the debug
     /// console — or `commit`.
     pub const PANE_KIND: &str = "pane.kind";

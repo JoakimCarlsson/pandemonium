@@ -20,6 +20,7 @@ mod language;
 mod listing;
 mod modal;
 mod notice;
+mod outline;
 mod operations;
 mod panel;
 mod panes;
@@ -332,6 +333,8 @@ pub struct App {
     images: crate::image::Images,
     /// What the markdown the panes are rendering keeps between frames.
     renders: crate::markdown::Renders,
+    /// The file followed and symbols shown by each worktree's outline.
+    outlines: crate::outline::Store,
     /// Each worktree's changes as excerpts, for the panes editing them.
     excerpts: BTreeMap<Scope, crate::excerpts::OpenExcerpts>,
     /// Each worktree's search pane state.
@@ -723,6 +726,7 @@ impl App {
             editor: Files::default(),
             images: crate::image::Images::default(),
             renders: crate::markdown::Renders::default(),
+            outlines: crate::outline::Store::default(),
             excerpts: BTreeMap::new(),
             searches: BTreeMap::new(),
             project_search_field: None,
@@ -855,6 +859,7 @@ impl App {
         }
         match (self.editor_focused, self.terminal_focused) {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
+            (true, _) if showing(|item| matches!(item, Item::Outline(_))) => Some("outline"),
             (true, _) if showing(|item| matches!(item, Item::Search(_))) => Some("search"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
@@ -1136,6 +1141,10 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if self.apply_outline(message) {
+            self.request_redraw();
+            return;
+        }
         if let Message::ShowTabMenu(pane, item) = message {
             self.open_menu(MenuTarget::Tab(pane, item));
             return;

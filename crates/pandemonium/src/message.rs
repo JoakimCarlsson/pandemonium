@@ -5,7 +5,7 @@
 //! is built from the result. There is no widget state anywhere in between,
 //! and no screen reaches into the window behind its back.
 
-use pm_core::{EntryId, ProjectId, SessionId};
+use pm_core::{EntryId, ProjectId, Scope, SessionId};
 use pm_gfx::Point;
 use pm_text::Position;
 use pm_ui::{ResizeEvent, ResizePhase};
@@ -195,6 +195,8 @@ pub enum Message {
     SplitItem(PaneId, Item, SplitDirection),
     /// Open a rendered view or editable source beside this pane's file.
     PreviewFile(PaneId),
+    /// Open the outline for the file named by a tab's context menu.
+    OpenOutline(PaneId, FileId),
     /// Open the menu of things that can be done to this pane.
     ShowPaneMenu(PaneId),
     /// Carry this pane's tab across the window, and let go of it somewhere.
@@ -221,6 +223,12 @@ pub enum Message {
     ScrollEditorTo(PaneId, usize),
     /// Put this pane's cursor at this place, the way a jump does.
     JumpTo(PaneId, Position),
+    /// Select and jump to a symbol in the worktree's outline.
+    OutlineSelect(Scope, usize),
+    /// Expand or collapse one symbol in the worktree's outline.
+    OutlineToggle(Scope, usize),
+    /// Give the outline filter its caret at this character.
+    OutlineFilterFocus(Scope, usize),
     /// Select every line a drag down this pane's gutter reaches.
     SelectLines(PaneId, Position, Position),
     /// Open the menu of things that can be done to the text in this pane.

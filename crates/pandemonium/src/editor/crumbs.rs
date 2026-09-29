@@ -9,34 +9,11 @@
 
 use std::path::Path;
 
-use pm_text::{Buffer, Position};
+use pm_text::{Buffer, Position, is_declaration};
 use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, text};
 
 use crate::message::Message;
 use crate::panes::PaneId;
-
-/// The words a grammar's node kinds carry when they declare something the
-/// reader would name: a function, a type, the block implementing one.
-const DECLARING: &[&str] = &[
-    "function",
-    "method",
-    "class",
-    "struct",
-    "impl",
-    "trait",
-    "enum",
-    "interface",
-    "module",
-    "mod_item",
-    "namespace",
-    "union",
-    "object",
-    "protocol",
-];
-
-/// The words a node kind carries when it uses a declaration rather than
-/// making one: a call is not where the cursor is.
-const USING: &[&str] = &["call", "invocation", "parameter", "argument", "identifier"];
 
 /// Most characters a declaration's name is drawn with before it is cut.
 const LONGEST_NAME: usize = 40;
@@ -70,12 +47,6 @@ impl Crumbs {
 
         Self { path, symbols }
     }
-}
-
-/// Whether a node of `kind` declares something a breadcrumb names.
-fn is_declaration(kind: &str) -> bool {
-    DECLARING.iter().any(|word| kind.contains(word))
-        && !USING.iter().any(|word| kind.contains(word))
 }
 
 /// `name` on one line, cut short when it runs long.

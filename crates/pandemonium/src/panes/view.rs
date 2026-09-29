@@ -491,5 +491,9 @@ pub fn tab_menu(pane: &Pane, tabs: &[TabEntry], target: Item) -> Vec<MenuItem<Me
         menu_separator(),
         menu_entry("Reveal in File Manager", file.map(Message::RevealFile)),
         menu_entry("Open in Terminal", file.map(Message::OpenFileInTerminal)),
+        menu_entry(
+            "Show Outline",
+            file.map(|file| Message::OpenOutline(id, file)),
+        ),
     ]
 }

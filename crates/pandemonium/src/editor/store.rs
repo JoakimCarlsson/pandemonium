@@ -178,6 +178,8 @@ pub struct Document {
     named: HashMap<usize, (AnnotationRequest, SemanticSpans)>,
     /// Code lens progress and results, per server.
     lensed: HashMap<usize, (AnnotationRequest, Vec<Lens>)>,
+    /// The buffer version last requested for a followed outline.
+    outline_version: Option<i32>,
     /// Folding range progress and results, per server.
     outlined: HashMap<usize, (AnnotationRequest, Vec<std::ops::Range<usize>>)>,
     /// When the text last changed.
@@ -254,6 +256,7 @@ impl Document {
             outlined: HashMap::new(),
             named: HashMap::new(),
             lensed: HashMap::new(),
+            outline_version: None,
             edited_at: None,
             used: None,
             folded: Vec::new(),
@@ -529,6 +532,16 @@ impl Document {
             .wants(self.buffer.version(), self.edited_at)
     }
 
+    /// Whether the followed outline needs the symbols of a newer buffer version.
+    pub fn wants_outline(&mut self) -> bool {
+        let version = self.buffer.version();
+        if self.outline_version == Some(version) {
+            return false;
+        }
+        self.outline_version = Some(version);
+        true
+    }
+
     /// Replaces one server's hints when its reply belongs to the current text.
     pub fn answered_hints(&mut self, client: &Arc<Client>, version: i32, hints: Option<Vec<Hint>>) {
         let entry = self.hinted.entry(server_key(client)).or_default();
@@ -792,6 +805,7 @@ impl Document {
         self.hinted.clear();
         self.named.clear();
         self.lensed.clear();
+        self.outline_version = None;
         self.buffer.set_hints(Vec::new());
         self.buffer.set_lenses(Vec::new());
         self.buffer.set_semantics(Vec::new());
