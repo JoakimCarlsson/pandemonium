@@ -115,8 +115,9 @@ pub(super) fn shipped() -> Vec<KeymapFile> {
 /// Every keymap written in the editor's home, in the order their files sort.
 pub(super) fn installed() -> Vec<KeymapFile> {
     paths::texts(paths::keymaps(), EXTENSION)
-        .iter()
-        .filter_map(|text| serde_norway::from_str::<StoredKeymap>(text).ok())
+        .into_iter()
+        .chain(super::extensions::keymaps())
+        .filter_map(|text| serde_norway::from_str::<StoredKeymap>(&text).ok())
         .map(|stored| stored.into_file(false))
         .collect()
 }

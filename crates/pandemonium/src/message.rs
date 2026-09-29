@@ -51,6 +51,8 @@ pub enum Message {
     SaveKeymap,
     /// Read the keymaps in the editor's home in again.
     ReloadKeymaps,
+    /// Read installed extensions again.
+    ReloadExtensions,
     /// Turn this preference, which is a switch, on or off.
     TogglePreference(Preference),
     /// Move this preference, which is a number, one step this way.

@@ -22,6 +22,9 @@ const THEMES_DIRECTORY: &str = "themes";
 /// The directory keymaps are read from, inside the editor's home.
 const KEYMAPS_DIRECTORY: &str = "keymaps";
 
+/// The directory installed extensions live in.
+const EXTENSIONS_DIRECTORY: &str = "extensions";
+
 /// The directory session worktrees are cut into, inside the editor's home.
 const WORKTREES_DIRECTORY: &str = "worktrees";
 
@@ -52,6 +55,11 @@ pub fn themes() -> Option<PathBuf> {
 /// The directory a reader's own keymaps live in.
 pub fn keymaps() -> Option<PathBuf> {
     home().map(|home| home.join(KEYMAPS_DIRECTORY))
+}
+
+/// The directory installed extensions live in.
+pub fn extensions() -> Option<PathBuf> {
+    home().map(|home| home.join(EXTENSIONS_DIRECTORY))
 }
 
 /// The text of every file in `directory` with `extension`, in the order
