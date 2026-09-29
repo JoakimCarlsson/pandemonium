@@ -365,7 +365,7 @@ impl App {
         true
     }
 
-    /// Pastes clipboard image or text into the focused agent prompt.
+    /// Pastes clipboard files, image data or text into the focused agent prompt.
     fn paste_agent_prompt(&mut self, event: &KeyEvent) -> bool {
         let Some(Writing::Prompt(session)) = self.writing else {
             return false;
@@ -383,11 +383,12 @@ impl App {
         let pastes = self.pastes.clone();
         let wake = self.waker(crate::app::Wake::Paste);
         std::thread::spawn(move || {
-            let pasting = match desktop::paste_image() {
-                Some((width, height, pixels)) => {
-                    Pasted::prepare(width, height, pixels, can_image).map(Pasting::Image)
-                }
-                None => desktop::paste().map(Pasting::Text),
+            let pasting = if let Some(files) = desktop::paste_files() {
+                Some(Pasting::Files(files))
+            } else if let Some((width, height, pixels)) = desktop::paste_image() {
+                Pasted::prepare(width, height, pixels, can_image).map(Pasting::Image)
+            } else {
+                desktop::paste().map(Pasting::Text)
             };
             if let Some(pasting) = pasting
                 && let Ok(mut pastes) = pastes.lock()
@@ -414,6 +415,11 @@ impl App {
                 continue;
             };
             match pasting {
+                Pasting::Files(files) => {
+                    for path in files {
+                        talk.attach_pasted_file(path);
+                    }
+                }
                 Pasting::Image(pasted) => talk.attach_pasted(pasted),
                 Pasting::Text(text) => {
                     talk.prompt_mut().paste(&text);
