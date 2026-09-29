@@ -534,6 +534,12 @@ fn section_rows(
                 vim_clipboards(preferences).w_px(space(CHOICE_WIDTH)),
             ),
             keymap_folder_row(theme),
+            action(
+                theme,
+                "Reload Extensions",
+                "Read installed languages, themes and keymaps again",
+                button("Reload", Message::ReloadExtensions).outlined(),
+            ),
         ],
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
         SettingsSection::Terminal => vec![

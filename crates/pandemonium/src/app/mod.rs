@@ -571,6 +571,10 @@ impl App {
         let pending: Pending = Arc::new(std::array::from_fn(|_| AtomicBool::new(false)));
         crate::image::wake_with(waker_through(&proxy, &pending, Wake::Picture));
 
+        let mut notices = Notices::default();
+        for error in config::take_extension_errors() {
+            notices.trouble(error, None);
+        }
         Self {
             window: None,
             window_focused: true,
@@ -716,7 +720,7 @@ impl App {
             task_errors: std::collections::BTreeSet::new(),
             errands: client::Errands::default(),
             logins: Vec::new(),
-            notices: Notices::default(),
+            notices,
             offered_servers: BTreeSet::new(),
             installing_servers: BTreeMap::new(),
             installed_servers: Arc::new(Mutex::new(Vec::new())),

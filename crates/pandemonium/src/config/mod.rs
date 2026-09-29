@@ -10,6 +10,7 @@
 //! or outdated file is a first launch, and a write that cannot land leaves the
 //! running editor alone.
 
+mod extensions;
 mod fonts;
 mod keymap;
 mod overrides;
@@ -98,6 +99,7 @@ pub enum ServerList {
 /// there are: a launch that read the preferences first could not find a
 /// theme it had not loaded yet.
 pub fn load() -> Restored {
+    extensions::reload();
     install_themes();
     install_keymaps();
     let restored = paths::settings()
@@ -107,6 +109,19 @@ pub fn load() -> Restored {
         .unwrap_or_default();
     pm_acp::install(restored.agent_servers.clone());
     restored
+}
+
+/// Reads extensions again and immediately follows their theme and keymap changes.
+pub fn reload_extensions(preferences: &mut Preferences) -> Vec<String> {
+    extensions::reload();
+    reload_themes(preferences);
+    reload_keymaps(preferences);
+    extensions::take_errors()
+}
+
+/// Errors from extensions read during launch.
+pub fn take_extension_errors() -> Vec<String> {
+    extensions::take_errors()
 }
 
 /// Reads the reader's themes in again, still drawing in the family

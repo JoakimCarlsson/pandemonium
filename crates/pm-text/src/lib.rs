@@ -12,6 +12,7 @@ mod cursor;
 mod diagnostic;
 mod find;
 pub mod frame;
+mod grammar;
 mod hint;
 mod history;
 mod indent;
@@ -27,7 +28,9 @@ pub use diagnostic::{Diagnostic, Severity};
 pub use find::{Finder, Query};
 pub use hint::Hint;
 pub use indent::Indent;
-pub use language::{Language, NO_OPTIONS, Server};
+pub use language::{
+    ExtensionLanguage, Language, NO_OPTIONS, Server, install_languages, load_grammar,
+};
 pub use lsp::{
     Answer, Asked, Calls, Client, CodeAction, Completion, FileEdit, Handle, Lens, Location,
     NamedLocation, Request, Servers, Symbol, Watched,
