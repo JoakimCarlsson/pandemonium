@@ -41,6 +41,17 @@ const NOTHING_TO_COMMIT: &str = "Nothing to commit";
 /// How long the refresh control takes to turn once round after a press.
 const REFRESH_TURN: std::time::Duration = std::time::Duration::from_millis(700);
 
+/// What to do with a selected stash.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StashAction {
+    /// Restore it and leave it saved.
+    Apply,
+    /// Restore it and remove it.
+    Pop,
+    /// Remove it without restoring it.
+    Drop,
+}
+
 /// What the button under the commit message does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Primary {
@@ -382,6 +393,17 @@ impl Review {
             .map_or(&[], |repository| repository.history(all))
     }
 
+    /// Whether the active branch's cached history contains `object`.
+    pub fn contains_commit(&self, object: &str) -> bool {
+        self.active_repository()
+            .is_some_and(|repository| repository.contains_commit(object))
+    }
+
+    /// Lists stashes only when the caller opens a stash command.
+    pub fn stashes(&self) -> Vec<pm_core::Stash> {
+        self.active_root().map_or_else(Vec::new, pm_core::stashes)
+    }
+
     /// The first visible commit under the selected history filter.
     pub fn history_scroll(&self, all: bool, visible: usize) -> usize {
         self.active_repository()
@@ -491,28 +513,32 @@ impl Review {
     /// what the control says in its place.
     pub fn committable(&self, repository: usize) -> (String, Option<&'static str>) {
         let staged = self.staged_of(repository);
-        let merging = self
+        let operation = self
             .repositories
             .get(repository)
-            .is_some_and(|held| held.head().operation.is_some());
-        let title = if merging {
-            "Commit Merge".to_owned()
-        } else {
-            match staged {
-                0 => "Commit Tracked".to_owned(),
-                _ => "Commit".to_owned(),
-            }
-        };
+            .and_then(|held| held.head().operation.as_ref());
+        let title = match operation {
+            Some(pm_core::Operation::Merge(_)) => "Commit Merge",
+            Some(pm_core::Operation::Rebase(_)) => "Continue Rebase",
+            Some(pm_core::Operation::CherryPick(_)) => "Continue Cherry-Pick",
+            None if staged == 0 => "Commit Tracked",
+            None => "Commit",
+        }
+        .to_owned();
         let unsaid = self
             .repositories
             .get(repository)
             .is_none_or(Repository::unsaid);
 
         let stopped = if self.changed_in(repository).any(Changed::is_conflicted) {
-            Some("Resolve the conflicts before committing")
-        } else if !merging && staged == 0 && self.tracked(repository) == 0 {
+            Some(if matches!(operation, Some(pm_core::Operation::Merge(_))) {
+                "Resolve the conflicts before committing"
+            } else {
+                "Resolve the conflicts before continuing"
+            })
+        } else if operation.is_none() && staged == 0 && self.tracked(repository) == 0 {
             Some(NOTHING_TO_COMMIT)
-        } else if unsaid {
+        } else if unsaid && !matches!(operation, Some(pm_core::Operation::Rebase(_))) {
             Some("No commit message")
         } else {
             None
@@ -1128,20 +1154,111 @@ impl Review {
         let repository = self.active_repository()?;
         let root = repository.root().to_path_buf();
         let message = repository.said();
+        let operation = repository.head().operation.clone().map(|mut operation| {
+            match &mut operation {
+                pm_core::Operation::Merge(merge) => merge.message = message.clone(),
+                pm_core::Operation::CherryPick(pick) => pick.message = message.clone(),
+                pm_core::Operation::Rebase(_) => {}
+            }
+            operation
+        });
         let work = Work::new(vec![root.clone()], "Committing…", move || {
-            let said = pm_core::commit(&root, &message, tracked);
+            let said = match operation {
+                Some(operation) => pm_core::continue_operation(&root, &operation),
+                None => pm_core::commit(&root, &message, tracked),
+            };
             vec![(root, said)]
         });
         Some(work.committing())
     }
 
-    /// The work of aborting the active repository's pending merge.
-    pub fn abort_merge(&self) -> Option<Work> {
+    /// The work of aborting the active repository's pending operation.
+    pub fn abort_operation(&self) -> Option<Work> {
+        let operation = self.active_repository()?.head().operation.clone()?;
         let root = self.active_root()?.to_path_buf();
         Some(Work::new(vec![root.clone()], "Aborting…", move || {
-            let said = pm_core::abort_merge(&root);
+            let said = pm_core::abort_operation(&root, &operation);
             vec![(root, said)]
         }))
+    }
+
+    /// The work of skipping a stopped rebase or cherry-pick commit.
+    pub fn skip_operation(&self) -> Option<Work> {
+        let operation = self.active_repository()?.head().operation.clone()?;
+        let root = self.active_root()?.to_path_buf();
+        Some(Work::new(vec![root.clone()], "Skipping…", move || {
+            let said = pm_core::skip_operation(&root, &operation);
+            vec![(root, said)]
+        }))
+    }
+
+    /// The work of rewriting the latest commit with the message in the box.
+    pub fn amend(&self) -> Option<Work> {
+        let repository = self.active_repository()?;
+        let root = repository.root().to_path_buf();
+        let message = repository.said();
+        let tracked = self.staged_of(self.active) == 0;
+        Some(
+            Work::new(vec![root.clone()], "Amending…", move || {
+                let said = pm_core::amend(&root, &message, tracked);
+                vec![(root, said)]
+            })
+            .committing(),
+        )
+    }
+
+    /// Fills an empty commit box with the last commit's message.
+    pub fn prefill_last_message(&mut self) -> bool {
+        let Some(repository) = self.active_repository_mut() else {
+            return false;
+        };
+        if !repository.unsaid() {
+            return false;
+        }
+        let Some(message) = pm_core::last_message(repository.root()) else {
+            return false;
+        };
+        repository.message_mut().set(&message);
+        true
+    }
+
+    /// The work of picking a full commit object into the active branch.
+    pub fn cherry_pick(&self, object: String) -> Option<Work> {
+        let root = self.active_root()?.to_path_buf();
+        Some(Work::new(
+            vec![root.clone()],
+            "Cherry-picking…",
+            move || {
+                let said = pm_core::cherry_pick(&root, &object);
+                vec![(root, said)]
+            },
+        ))
+    }
+
+    /// The work of saving tracked and untracked changes.
+    pub fn stash_push(&self, message: String) -> Option<Work> {
+        let root = self.active_root()?.to_path_buf();
+        Some(Work::new(vec![root.clone()], "Stashing…", move || {
+            let said = pm_core::stash_push(&root, &message, true);
+            vec![(root, said)]
+        }))
+    }
+
+    /// The work of applying, popping or dropping one stash.
+    pub fn stash_action(&self, index: usize, action: StashAction) -> Option<Work> {
+        let root = self.active_root()?.to_path_buf();
+        Some(Work::new(
+            vec![root.clone()],
+            "Applying stash…",
+            move || {
+                let said = match action {
+                    StashAction::Apply => pm_core::stash_apply(&root, index),
+                    StashAction::Pop => pm_core::stash_pop(&root, index),
+                    StashAction::Drop => pm_core::stash_drop(&root, index),
+                };
+                vec![(root, said)]
+            },
+        ))
     }
 
     /// Shows `work` being done on the buttons of the repositories it is

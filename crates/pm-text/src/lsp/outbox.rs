@@ -10,36 +10,45 @@ use std::io::BufWriter;
 use std::process::ChildStdin;
 use std::sync::mpsc::{self, Receiver, Sender};
 
+use lsp_types::notification::DidChangeTextDocument;
+use lsp_types::{DidChangeTextDocumentParams, Uri, VersionedTextDocumentIdentifier};
 use ropey::Rope;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::frame;
+use crate::lsp::encoding::Encoding;
+use crate::lsp::log::Log;
+use crate::lsp::{rpc, sync};
 
 /// One message on its way to a server, as it was handed over.
 pub(super) enum Outgoing {
     /// A message whose body is already built.
     Message(Value),
-    /// A file's whole new text, built into a `didChange` only as it is
-    /// written.
+    /// A file's new text, built into a `didChange` only as it is written.
     ///
-    /// The rope is the buffer's own, shared rather than copied, so telling a
-    /// server about a keystroke costs the window nothing the size of the
-    /// file.
+    /// The ropes are the buffer's own, shared rather than copied, so telling
+    /// a server about a keystroke costs the window nothing the size of the
+    /// file: what changed between them is worked out on the writer thread.
     Change {
         /// The file, as the server names it.
-        uri: String,
+        uri: Uri,
         /// The version the text is at.
         version: i32,
-        /// The text itself.
-        text: Rope,
+        /// The text the server was last told, when it asked to be told only
+        /// what changed since.
+        before: Option<Rope>,
+        /// The text as it now stands.
+        after: Rope,
+        /// How the server counts a column, for the span that changed.
+        encoding: Encoding,
     },
 }
 
 impl Outgoing {
     /// Whether this is about the document at `uri`.
-    pub(super) fn is_about(&self, uri: &str) -> bool {
+    pub(super) fn is_about(&self, uri: &Uri) -> bool {
         match self {
-            Self::Message(message) => message["params"]["textDocument"]["uri"] == uri,
+            Self::Message(message) => message["params"]["textDocument"]["uri"] == uri.as_str(),
             Self::Change { uri: changed, .. } => changed == uri,
         }
     }
@@ -53,13 +62,18 @@ impl Outgoing {
     fn into_message(self) -> Value {
         match self {
             Self::Message(message) => message,
-            Self::Change { uri, version, text } => json!({
-                "jsonrpc": "2.0",
-                "method": "textDocument/didChange",
-                "params": {
-                    "textDocument": { "uri": uri, "version": version },
-                    "contentChanges": [{ "text": text.to_string() }],
-                },
+            Self::Change {
+                uri,
+                version,
+                before,
+                after,
+                encoding,
+            } => rpc::notification::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier::new(uri, version),
+                content_changes: vec![match before {
+                    Some(before) => sync::ranged(&before, &after, encoding),
+                    None => sync::whole(&after),
+                }],
             }),
         }
     }
@@ -74,9 +88,11 @@ impl Outbox {
     ///
     /// The thread lasts as long as anyone can still hand it a message, or
     /// until the pipe breaks, and closes the server's input as it ends.
-    pub(super) fn start(stdin: ChildStdin) -> Self {
+    ///
+    /// Everything written goes to `log` as well while the protocol is traced.
+    pub(super) fn start(stdin: ChildStdin, log: Log) -> Self {
         let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || write(stdin, receiver));
+        std::thread::spawn(move || write(stdin, receiver, log));
         Self(sender)
     }
 
@@ -89,10 +105,12 @@ impl Outbox {
 
 /// Writes everything handed over to `stdin`, until nothing more can come or
 /// the pipe has gone.
-fn write(stdin: ChildStdin, receiver: Receiver<Outgoing>) {
+fn write(stdin: ChildStdin, receiver: Receiver<Outgoing>, log: Log) {
     let mut stdin = BufWriter::new(stdin);
     for outgoing in receiver {
-        if frame::write(&mut stdin, &outgoing.into_message()).is_err() {
+        let message = outgoing.into_message();
+        log.trace("-->", &message);
+        if frame::write(&mut stdin, &message).is_err() {
             return;
         }
     }

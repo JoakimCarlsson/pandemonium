@@ -179,7 +179,9 @@ pub struct Document {
     /// Code lens progress and results, per server.
     lensed: HashMap<usize, (AnnotationRequest, Vec<Lens>)>,
     /// The buffer version last requested for a followed outline.
-    outlined: Option<i32>,
+    outline_version: Option<i32>,
+    /// Folding range progress and results, per server.
+    outlined: HashMap<usize, (AnnotationRequest, Vec<std::ops::Range<usize>>)>,
     /// When the text last changed.
     edited_at: Option<Instant>,
     /// The version and cursor the server was last asked where the symbol is used.
@@ -200,16 +202,23 @@ impl Document {
             .filter_map(|client| {
                 let key = server_key(client);
                 [
-                    (client.offers(&Request::Hints(Position::default()..Position::default())))
-                        .then(|| self.hinted.get(&key).map(|(request, _)| request))
-                        .flatten(),
+                    (client.offers(
+                        &Request::Hints(Position::default()..Position::default()),
+                        self.buffer.path(),
+                    ))
+                    .then(|| self.hinted.get(&key).map(|(request, _)| request))
+                    .flatten(),
                     client
-                        .offers(&Request::Semantics)
+                        .offers(&Request::Semantics, self.buffer.path())
                         .then(|| self.named.get(&key).map(|(request, _)| request))
                         .flatten(),
                     client
-                        .offers(&Request::Lenses)
+                        .offers(&Request::Lenses, self.buffer.path())
                         .then(|| self.lensed.get(&key).map(|(request, _)| request))
+                        .flatten(),
+                    client
+                        .offers(&Request::Folds, self.buffer.path())
+                        .then(|| self.outlined.get(&key).map(|(request, _)| request))
                         .flatten(),
                 ]
                 .into_iter()
@@ -244,9 +253,10 @@ impl Document {
             blame: Vec::new(),
             blame_shown: false,
             hinted: HashMap::new(),
+            outlined: HashMap::new(),
             named: HashMap::new(),
             lensed: HashMap::new(),
-            outlined: None,
+            outline_version: None,
             edited_at: None,
             used: None,
             folded: Vec::new(),
@@ -525,10 +535,10 @@ impl Document {
     /// Whether the followed outline needs the symbols of a newer buffer version.
     pub fn wants_outline(&mut self) -> bool {
         let version = self.buffer.version();
-        if self.outlined == Some(version) {
+        if self.outline_version == Some(version) {
             return false;
         }
-        self.outlined = Some(version);
+        self.outline_version = Some(version);
         true
     }
 
@@ -591,6 +601,43 @@ impl Document {
         true
     }
 
+    /// Whether the server should be asked again where the file folds.
+    pub fn wants_folds(&mut self, client: &Arc<Client>) -> bool {
+        self.outlined
+            .entry(server_key(client))
+            .or_default()
+            .0
+            .wants(self.buffer.version(), self.edited_at)
+    }
+
+    /// Replaces one server's folds when its reply belongs to the current text.
+    ///
+    /// The folds of the servers behind the file are drawn together; until
+    /// one has said, the file folds by its indentation.
+    pub fn answered_folds(
+        &mut self,
+        client: &Arc<Client>,
+        version: i32,
+        folds: Option<Vec<std::ops::Range<usize>>>,
+    ) {
+        let entry = self.outlined.entry(server_key(client)).or_default();
+        if entry
+            .0
+            .answered(version, self.buffer.version(), folds.is_some())
+            && let Some(folds) = folds
+        {
+            entry.1 = folds;
+            let mut all = self
+                .outlined
+                .values()
+                .flat_map(|(_, folds)| folds.iter().cloned())
+                .collect::<Vec<_>>();
+            all.sort_by_key(|fold| (fold.start, std::cmp::Reverse(fold.end)));
+            all.dedup();
+            self.buffer.set_server_folds(all);
+        }
+    }
+
     /// Whether the server should be asked again for the notes above declarations.
     pub fn wants_lenses(&mut self, client: &Arc<Client>) -> bool {
         self.lensed
@@ -650,6 +697,7 @@ impl Document {
             Request::Hints(_) => self.hinted.entry(key).or_default().0.answered = None,
             Request::Semantics => self.named.entry(key).or_default().0.answered = None,
             Request::Lenses => self.lensed.entry(key).or_default().0.answered = None,
+            Request::Folds => self.outlined.entry(key).or_default().0.answered = None,
             _ => {}
         }
     }
@@ -757,7 +805,7 @@ impl Document {
         self.hinted.clear();
         self.named.clear();
         self.lensed.clear();
-        self.outlined = None;
+        self.outline_version = None;
         self.buffer.set_hints(Vec::new());
         self.buffer.set_lenses(Vec::new());
         self.buffer.set_semantics(Vec::new());
@@ -1198,6 +1246,11 @@ impl Files {
         self.servers.set_overrides(named_servers(overrides));
     }
 
+    /// Writes every language server's log into `directory`.
+    pub fn set_logs(&mut self, directory: PathBuf) {
+        self.servers.set_logs(directory);
+    }
+
     /// Runs `added` for the languages they name, after the servers those
     /// languages name.
     pub fn add_language_servers(&mut self, added: &BTreeMap<String, Vec<Server>>) {
@@ -1227,6 +1280,11 @@ impl Files {
     /// The first installable configured server for `language`.
     pub fn installable_server(&self, language: pm_text::Language) -> Option<Server> {
         self.servers.installable(language)
+    }
+
+    /// What the servers for `language` need that the editor cannot install.
+    pub fn server_needs(&self, language: pm_text::Language) -> Option<&'static str> {
+        self.servers.needs(language)
     }
 
     /// Starts installed servers again for every open document of `language`.
@@ -1597,6 +1655,20 @@ impl Files {
         let baselined = self.take_baselines();
         let fresh = self.servers.take_fresh();
         let mut changed = baselined || fresh;
+        let grown = self
+            .clients()
+            .into_iter()
+            .filter(|client| client.take_log_grown())
+            .filter_map(|client| client.log_path().map(Path::to_path_buf))
+            .collect::<Vec<_>>();
+        for entry in self.open.values() {
+            let log = grown
+                .iter()
+                .any(|path| entry.document.borrow().buffer().path() == path);
+            if log && !entry.document.borrow().buffer().is_dirty() {
+                changed |= entry.document.borrow_mut().reread();
+            }
+        }
         for entry in self.open.values() {
             let language = entry.document.borrow().buffer().language();
             if let Some(language) = language {

@@ -70,11 +70,28 @@ const REMEMBERED: usize = 64;
 /// whose query does not compile is remembered as such.
 static QUERIES: LazyLock<Mutex<Queries>> = LazyLock::new(Mutex::default);
 
+/// Remembers a failed extension query by language name.
+pub(crate) fn remember_failed_query(name: &'static str) {
+    if let Ok(mut queries) = QUERIES.lock() {
+        queries.insert(name, None);
+    }
+}
+
 /// Each language's compiled highlight query, or `None` for one that failed.
 type Queries = HashMap<&'static str, Option<Arc<Query>>>;
 
 /// The highlights [`highlight`] worked out last, the most recent at the back.
 static HIGHLIGHTED: LazyLock<Mutex<VecDeque<Highlighted>>> = LazyLock::new(Mutex::default);
+
+/// Drops cached queries and excerpts for reloaded extension languages.
+pub(crate) fn forget_languages(names: &[&str]) {
+    if let Ok(mut queries) = QUERIES.lock() {
+        queries.retain(|name, _| !names.contains(name));
+    }
+    if let Ok(mut highlighted) = HIGHLIGHTED.lock() {
+        highlighted.retain(|entry| !names.contains(&entry.language));
+    }
+}
 
 /// One piece of text [`highlight`] has already highlighted.
 struct Highlighted {
@@ -325,6 +342,9 @@ impl Syntax {
     /// editor does not know, so the file still opens.
     pub fn new(language: Language) -> Option<Self> {
         let mut parser = Parser::new();
+        if language.is_wasm() {
+            crate::grammar::prepare(&mut parser).ok()?;
+        }
         parser.set_language(&language.grammar()).ok()?;
         let query = query(language)?;
 

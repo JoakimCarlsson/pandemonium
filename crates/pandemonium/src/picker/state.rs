@@ -39,6 +39,10 @@ pub enum Kind {
     Projects,
     /// The local branches of the active project.
     Branches,
+    /// The active repository's saved stashes.
+    Stashes,
+    /// A message for saving a stash.
+    StashMessage,
     /// A remote to fetch from.
     FetchRemotes,
     /// A remote to push to.
@@ -54,6 +58,8 @@ pub enum Kind {
     WorkspaceSymbols,
     /// Whatever calls, or is called by, the symbol under the cursor.
     Calls,
+    /// The logs of the language servers behind the focused file.
+    ServerLogs,
     /// Every place a query was found in the worktree the window is pointed at.
     Search,
     /// A line number to go to, which is a prompt rather than a list.
@@ -118,6 +124,8 @@ impl Kind {
             Self::Files => "Search files by name, > for commands, # for symbols",
             Self::Projects => "Go to a project",
             Self::Branches => "Switch or type to create a branch…",
+            Self::Stashes => "Choose a stash",
+            Self::StashMessage => "Stash message (optional)",
             Self::FetchRemotes => "Pick which remote to fetch",
             Self::PushRemotes => "Pick which remote to push to",
             Self::Symbols => "Go to a symbol",
@@ -125,6 +133,7 @@ impl Kind {
             Self::References => "Go to a use of this symbol",
             Self::WorkspaceSymbols => "Go to a symbol in the workspace",
             Self::Calls => "Go to a call",
+            Self::ServerLogs => "Open a language server's log",
             Self::Search => "Search this worktree",
             Self::Line => "Go to line",
             Self::Rename => "New name",
@@ -165,6 +174,7 @@ impl Kind {
                 | Self::Watch
                 | Self::Rename
                 | Self::NewBranch
+                | Self::StashMessage
                 | Self::NewSession
                 | Self::CloneUrl
                 | Self::LinkedPath
@@ -228,6 +238,8 @@ pub enum Choice {
     Project(ProjectId),
     /// Check out this local branch of this project.
     Branch(ProjectId, String),
+    /// Act on a stash in the active repository.
+    Stash(usize),
     /// Fetch this project's named remote.
     FetchRemote(ProjectId, String),
     /// Push this project to the named remote.

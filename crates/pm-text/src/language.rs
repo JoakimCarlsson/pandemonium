@@ -7,6 +7,7 @@
 
 use std::fmt::{self, Debug, Formatter};
 use std::path::Path;
+use std::sync::{LazyLock, Mutex};
 
 use tree_sitter::Language as Grammar;
 
@@ -19,7 +20,11 @@ pub struct Language {
     /// The name the status bar shows.
     name: &'static str,
     /// The grammar the syntax tree is parsed with.
-    grammar: LanguageFn,
+    grammar: GrammarSource,
+    /// File extensions this installed language claims.
+    extensions: &'static [&'static str],
+    /// Whole file names this installed language claims.
+    file_names: &'static [&'static str],
     /// The queries the highlights are captured by, in the order they apply.
     ///
     /// A dialect is its base language's query followed by its own: TypeScript
@@ -32,6 +37,56 @@ pub struct Language {
     servers: &'static [Server],
     /// What begins a comment that runs to the end of the line, if anything.
     line_comment: Option<&'static str>,
+}
+
+/// Data supplied by an extension for one language.
+pub struct ExtensionLanguage {
+    /// The status bar name.
+    pub name: String,
+    /// The identifier told to language servers.
+    pub language_id: String,
+    /// The loaded WASM grammar.
+    pub grammar: &'static Grammar,
+    /// Highlight query texts in order.
+    pub highlights: Vec<String>,
+    /// File extensions it claims.
+    pub extensions: Vec<String>,
+    /// Whole file names it claims.
+    pub file_names: Vec<String>,
+    /// Servers started for each worktree.
+    pub servers: Vec<Server>,
+    /// The prefix for a line comment.
+    pub line_comment: Option<String>,
+}
+
+/// A built-in grammar or a loaded WASM grammar.
+#[derive(Clone, Copy)]
+enum GrammarSource {
+    /// A grammar linked into the binary.
+    Builtin(LanguageFn),
+    /// A grammar loaded from an extension.
+    Wasm(&'static Grammar),
+}
+
+/// Installed languages, in extension id order.
+static INSTALLED: LazyLock<Mutex<Vec<Language>>> = LazyLock::new(Mutex::default);
+
+/// Replaces the installed languages while leaving the built-ins intact.
+pub fn install_languages(languages: Vec<Language>) {
+    if let Ok(mut installed) = INSTALLED.lock() {
+        let names = installed
+            .iter()
+            .chain(languages.iter())
+            .map(|language| language.name)
+            .collect::<Vec<_>>();
+        crate::syntax::forget_languages(&names);
+        *installed = languages;
+    }
+}
+
+/// Loads a WASM grammar by its exported language name.
+pub fn load_grammar(name: &str, bytes: &[u8]) -> Result<&'static Grammar, String> {
+    crate::grammar::load(name, bytes)
 }
 
 /// A language server, as the command that starts one.
@@ -158,7 +213,9 @@ const fn plain(name: &'static str) -> Server {
 const BASH: Language = Language {
     name: "Bash",
     language_id: "shellscript",
-    grammar: tree_sitter_bash::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_bash::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_bash::HIGHLIGHT_QUERY],
     servers: &[Server {
         command: "bash-language-server",
@@ -173,7 +230,9 @@ const BASH: Language = Language {
 const C: Language = Language {
     name: "C",
     language_id: "c",
-    grammar: tree_sitter_c::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_c::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_c::HIGHLIGHT_QUERY],
     servers: CLANGD,
     line_comment: Some("//"),
@@ -183,7 +242,9 @@ const C: Language = Language {
 const CPP: Language = Language {
     name: "C++",
     language_id: "cpp",
-    grammar: tree_sitter_cpp::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_cpp::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[
         tree_sitter_c::HIGHLIGHT_QUERY,
         tree_sitter_cpp::HIGHLIGHT_QUERY,
@@ -196,7 +257,9 @@ const CPP: Language = Language {
 const CSHARP: Language = Language {
     name: "C#",
     language_id: "csharp",
-    grammar: tree_sitter_c_sharp::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_c_sharp::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_c_sharp::HIGHLIGHTS_QUERY],
     servers: CSHARP_SERVERS,
     line_comment: Some("//"),
@@ -206,7 +269,9 @@ const CSHARP: Language = Language {
 const CSS: Language = Language {
     name: "CSS",
     language_id: "css",
-    grammar: tree_sitter_css::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_css::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_css::HIGHLIGHTS_QUERY],
     servers: CSS_SERVER,
     line_comment: None,
@@ -216,7 +281,9 @@ const CSS: Language = Language {
 const DOCKERFILE: Language = Language {
     name: "Dockerfile",
     language_id: "dockerfile",
-    grammar: tree_sitter_containerfile::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_containerfile::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_containerfile::HIGHLIGHTS_QUERY],
     servers: &[stdio("docker-langserver")],
     line_comment: Some("#"),
@@ -226,7 +293,9 @@ const DOCKERFILE: Language = Language {
 const GO: Language = Language {
     name: "Go",
     language_id: "go",
-    grammar: tree_sitter_go::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_go::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_go::HIGHLIGHTS_QUERY],
     servers: &[Server {
         command: "gopls",
@@ -241,7 +310,9 @@ const GO: Language = Language {
 const HTML: Language = Language {
     name: "HTML",
     language_id: "html",
-    grammar: tree_sitter_html::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_html::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_html::HIGHLIGHTS_QUERY],
     servers: HTML_SERVER,
     line_comment: None,
@@ -251,7 +322,9 @@ const HTML: Language = Language {
 const JAVA: Language = Language {
     name: "Java",
     language_id: "java",
-    grammar: tree_sitter_java::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_java::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_java::HIGHLIGHTS_QUERY],
     servers: &[plain("jdtls")],
     line_comment: Some("//"),
@@ -261,7 +334,9 @@ const JAVA: Language = Language {
 const JAVASCRIPT: Language = Language {
     name: "JavaScript",
     language_id: "javascript",
-    grammar: tree_sitter_javascript::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_javascript::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[
         tree_sitter_javascript::HIGHLIGHT_QUERY,
         tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
@@ -285,7 +360,9 @@ const JSX: Language = Language {
 const JSON: Language = Language {
     name: "JSON",
     language_id: "json",
-    grammar: tree_sitter_json::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_json::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_json::HIGHLIGHTS_QUERY],
     servers: JSON_SERVER,
     line_comment: None,
@@ -295,7 +372,9 @@ const JSON: Language = Language {
 const JSONC: Language = Language {
     name: "JSONC",
     language_id: "jsonc",
-    grammar: tree_sitter_json::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_json::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_json::HIGHLIGHTS_QUERY],
     servers: JSON_SERVER,
     line_comment: Some("//"),
@@ -305,7 +384,9 @@ const JSONC: Language = Language {
 const KOTLIN: Language = Language {
     name: "Kotlin",
     language_id: "kotlin",
-    grammar: tree_sitter_kotlin_sg::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_kotlin_sg::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY],
     servers: KOTLIN_SERVERS,
     line_comment: Some("//"),
@@ -315,7 +396,9 @@ const KOTLIN: Language = Language {
 const LUA: Language = Language {
     name: "Lua",
     language_id: "lua",
-    grammar: tree_sitter_lua::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_lua::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_lua::HIGHLIGHTS_QUERY],
     servers: &[plain("lua-language-server")],
     line_comment: Some("--"),
@@ -325,7 +408,9 @@ const LUA: Language = Language {
 const MARKDOWN: Language = Language {
     name: "Markdown",
     language_id: "markdown",
-    grammar: tree_sitter_md::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_md::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
     servers: &[plain("marksman")],
     line_comment: None,
@@ -335,7 +420,9 @@ const MARKDOWN: Language = Language {
 const PHP: Language = Language {
     name: "PHP",
     language_id: "php",
-    grammar: tree_sitter_php::LANGUAGE_PHP,
+    grammar: GrammarSource::Builtin(tree_sitter_php::LANGUAGE_PHP),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_php::HIGHLIGHTS_QUERY],
     servers: &[stdio("intelephense")],
     line_comment: Some("//"),
@@ -345,7 +432,9 @@ const PHP: Language = Language {
 const PYTHON: Language = Language {
     name: "Python",
     language_id: "python",
-    grammar: tree_sitter_python::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_python::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_python::HIGHLIGHTS_QUERY],
     servers: PYTHON_SERVERS,
     line_comment: Some("#"),
@@ -355,7 +444,9 @@ const PYTHON: Language = Language {
 const RUBY: Language = Language {
     name: "Ruby",
     language_id: "ruby",
-    grammar: tree_sitter_ruby::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_ruby::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_ruby::HIGHLIGHTS_QUERY],
     servers: &[plain("ruby-lsp")],
     line_comment: Some("#"),
@@ -365,7 +456,9 @@ const RUBY: Language = Language {
 const RUST: Language = Language {
     name: "Rust",
     language_id: "rust",
-    grammar: tree_sitter_rust::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_rust::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
     servers: &[plain("rust-analyzer")],
     line_comment: Some("//"),
@@ -375,7 +468,9 @@ const RUST: Language = Language {
 const SQL: Language = Language {
     name: "SQL",
     language_id: "sql",
-    grammar: tree_sitter_sequel::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_sequel::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_sequel::HIGHLIGHTS_QUERY],
     servers: SQL_SERVERS,
     line_comment: Some("--"),
@@ -385,7 +480,9 @@ const SQL: Language = Language {
 const TOML: Language = Language {
     name: "TOML",
     language_id: "toml",
-    grammar: tree_sitter_toml_ng::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_toml_ng::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_toml_ng::HIGHLIGHTS_QUERY],
     servers: &[Server {
         command: "taplo",
@@ -400,7 +497,9 @@ const TOML: Language = Language {
 const TSX: Language = Language {
     name: "TSX",
     language_id: "typescriptreact",
-    grammar: tree_sitter_typescript::LANGUAGE_TSX,
+    grammar: GrammarSource::Builtin(tree_sitter_typescript::LANGUAGE_TSX),
+    extensions: &[],
+    file_names: &[],
     highlights: &[
         tree_sitter_javascript::HIGHLIGHT_QUERY,
         tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
@@ -414,7 +513,9 @@ const TSX: Language = Language {
 const TYPESCRIPT: Language = Language {
     name: "TypeScript",
     language_id: "typescript",
-    grammar: tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+    grammar: GrammarSource::Builtin(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+    extensions: &[],
+    file_names: &[],
     highlights: &[
         tree_sitter_javascript::HIGHLIGHT_QUERY,
         tree_sitter_typescript::HIGHLIGHTS_QUERY,
@@ -427,7 +528,9 @@ const TYPESCRIPT: Language = Language {
 const YAML: Language = Language {
     name: "YAML",
     language_id: "yaml",
-    grammar: tree_sitter_yaml::LANGUAGE,
+    grammar: GrammarSource::Builtin(tree_sitter_yaml::LANGUAGE),
+    extensions: &[],
+    file_names: &[],
     highlights: &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
     servers: YAML_SERVER,
     line_comment: Some("#"),
@@ -448,8 +551,17 @@ impl Debug for Language {
 
 impl Language {
     /// Every language shipped with the editor.
-    pub const fn all() -> &'static [Self] {
+    pub const fn builtins() -> &'static [Self] {
         KNOWN
+    }
+
+    /// Every shipped and installed language.
+    pub fn all() -> Vec<Self> {
+        let mut languages = KNOWN.to_vec();
+        if let Ok(installed) = INSTALLED.lock() {
+            languages.extend(installed.iter().copied());
+        }
+        languages
     }
 
     /// The language a file at `path` is written in.
@@ -462,7 +574,19 @@ impl Language {
         if let Some(language) = Self::named(name) {
             return Some(language);
         }
-        Self::extended(path.extension()?.to_str()?)
+        if let Some(extension) = path.extension().and_then(|extension| extension.to_str())
+            && let Some(language) = Self::extended(extension)
+        {
+            return Some(language);
+        }
+        let installed = INSTALLED.lock().ok()?;
+        installed.iter().copied().find(|language| {
+            language.file_names.contains(&name)
+                || path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| language.extensions.contains(&extension))
+        })
     }
 
     /// The language a fenced block of markdown tagged `tag` is written in.
@@ -486,7 +610,16 @@ impl Language {
             "typescriptreact" => Some(TSX),
             _ => None,
         };
-        named.or_else(|| Self::extended(&tag))
+        named.or_else(|| Self::extended(&tag)).or_else(|| {
+            INSTALLED.lock().ok()?.iter().copied().find(|language| {
+                language.name.eq_ignore_ascii_case(&tag)
+                    || language.language_id.eq_ignore_ascii_case(&tag)
+                    || language
+                        .extensions
+                        .iter()
+                        .any(|extension| extension.eq_ignore_ascii_case(&tag))
+            })
+        })
     }
 
     /// The language a file called `name` is written in, when its whole name
@@ -533,6 +666,49 @@ impl Language {
         }
     }
 
+    /// Creates a language loaded from an extension.
+    pub fn extension(extension: ExtensionLanguage) -> Self {
+        let leak = |value: String| -> &'static str { value.leak() };
+        let slice = |values: Vec<String>| -> &'static [&'static str] {
+            values
+                .into_iter()
+                .map(|value| value.leak() as &'static str)
+                .collect::<Vec<_>>()
+                .leak()
+        };
+        Self {
+            name: leak(extension.name),
+            language_id: leak(extension.language_id),
+            grammar: GrammarSource::Wasm(extension.grammar),
+            highlights: slice(extension.highlights),
+            extensions: slice(extension.extensions),
+            file_names: slice(extension.file_names),
+            servers: extension.servers.leak(),
+            line_comment: extension.line_comment.map(leak),
+        }
+    }
+
+    /// Whether this language came from an extension.
+    pub fn is_wasm(self) -> bool {
+        matches!(self.grammar, GrammarSource::Wasm(_))
+    }
+
+    /// File extensions this installed language claims.
+    pub fn extensions(self) -> &'static [&'static str] {
+        self.extensions
+    }
+
+    /// Checks that this language's highlight query compiles against its grammar.
+    pub fn validate_highlights(self) -> Result<(), String> {
+        let result = tree_sitter::Query::new(&self.grammar(), &self.highlights())
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        if result.is_err() {
+            crate::syntax::remember_failed_query(self.name);
+        }
+        result
+    }
+
     /// The name the status bar shows.
     pub const fn name(self) -> &'static str {
         self.name
@@ -542,10 +718,19 @@ impl Language {
     /// a server is told.
     #[must_use]
     pub fn called(name: &str) -> Option<Self> {
-        KNOWN.iter().copied().find(|language| {
-            language.name.eq_ignore_ascii_case(name)
-                || language.language_id.eq_ignore_ascii_case(name)
-        })
+        KNOWN
+            .iter()
+            .copied()
+            .find(|language| {
+                language.name.eq_ignore_ascii_case(name)
+                    || language.language_id.eq_ignore_ascii_case(name)
+            })
+            .or_else(|| {
+                INSTALLED.lock().ok()?.iter().copied().find(|language| {
+                    language.name.eq_ignore_ascii_case(name)
+                        || language.language_id.eq_ignore_ascii_case(name)
+                })
+            })
     }
 
     /// The identifier a server is told a document in this language is in.
@@ -555,7 +740,10 @@ impl Language {
 
     /// The grammar the syntax tree is parsed with.
     pub fn grammar(self) -> Grammar {
-        Grammar::new(self.grammar)
+        match self.grammar {
+            GrammarSource::Builtin(grammar) => Grammar::new(grammar),
+            GrammarSource::Wasm(grammar) => grammar.clone(),
+        }
     }
 
     /// The queries the highlights are captured by, as one query.

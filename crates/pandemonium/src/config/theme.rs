@@ -133,8 +133,9 @@ pub(super) fn shipped() -> Vec<ThemeFile> {
 /// Every theme written in the editor's home, in the order their files sort.
 pub(super) fn installed() -> Vec<ThemeFile> {
     paths::texts(paths::themes(), EXTENSION)
-        .iter()
-        .filter_map(|text| serde_norway::from_str::<StoredFamily>(text).ok())
+        .into_iter()
+        .chain(super::extensions::themes())
+        .filter_map(|text| serde_norway::from_str::<StoredFamily>(&text).ok())
         .map(StoredFamily::into_file)
         .collect()
 }

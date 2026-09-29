@@ -24,5 +24,5 @@ pub use editor::commit_editor;
 pub use pane::{change_pane, hunk_row, review_pane, row_count, row_of};
 pub use reading::Reading;
 pub use sidebar::{SourceControlControls, change_menu, changes_sidebar, status_color};
-pub use store::{ChangeId, Group, Review};
+pub use store::{ChangeId, Group, Review, StashAction};
 pub use work::{Done, Work};

@@ -3,7 +3,7 @@
 mod recipes;
 mod worker;
 
-pub use recipes::recipe;
+pub use recipes::{needs, recipe};
 pub use worker::{install, platform, prune_older};
 
 /// A platform release asset and its expected SHA-256 digest.

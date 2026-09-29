@@ -231,7 +231,7 @@ struct StoredAgent {
 /// is what nearly all of them are; one that takes arguments spells them out.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
-enum StoredServer {
+pub(super) enum StoredServer {
     /// The command, run with no arguments.
     Command(String),
     /// The command, the arguments to run it with, and what to configure it
@@ -351,7 +351,7 @@ fn leaked_env(env: BTreeMap<String, String>) -> &'static [(&'static str, &'stati
 
 impl StoredServer {
     /// The server this stands for, named for as long as the editor runs.
-    fn into_server(self) -> Server {
+    pub(super) fn into_server(self) -> Server {
         let (command, arguments, options) = match self {
             Self::Command(command) => (command, Vec::new(), None),
             Self::Invocation {

@@ -172,6 +172,9 @@ impl App {
         if self.send_to_completions(event) {
             return self.request_redraw();
         }
+        if self.send_to_snippet(event) {
+            return self.request_redraw();
+        }
         if self.send_to_terminal(event) {
             return self.request_redraw();
         }
@@ -323,6 +326,41 @@ impl App {
         };
         if let Some(completions) = self.completions.as_mut() {
             completions.step(step);
+        }
+        self.resolve_completion();
+        true
+    }
+
+    /// Sends a keypress to the snippet being filled in, if the focused file
+    /// has one.
+    ///
+    /// Tab goes on to the next place and Shift+Tab back to the one before;
+    /// Escape stops filling in and, with modal editing on, goes on to leave
+    /// insert mode as well.
+    fn send_to_snippet(&mut self, event: &KeyEvent) -> bool {
+        if self.typed_into().is_some() {
+            return false;
+        }
+        let Some(document) = self.active_file() else {
+            return false;
+        };
+        if !document.borrow().buffer().in_snippet() {
+            return false;
+        }
+        let mut document = document.borrow_mut();
+        let buffer = document.buffer_mut();
+        match event.logical_key.as_ref() {
+            Key::Named(NamedKey::Tab) if self.modifiers.shift_key() => {
+                buffer.previous_place();
+            }
+            Key::Named(NamedKey::Tab) => {
+                buffer.next_place();
+            }
+            Key::Named(NamedKey::Escape) => {
+                buffer.end_snippet();
+                return !self.preferences.vim_mode;
+            }
+            _ => return false,
         }
         true
     }
@@ -632,6 +670,7 @@ impl App {
     pub(super) fn apply_edit(&mut self, edit: editor::Edit) {
         let typed = match edit {
             editor::Edit::Type(ch) => Some(ch),
+            editor::Edit::Newline => Some('\n'),
             _ => None,
         };
         let line_wise = matches!(edit, editor::Edit::Indent | editor::Edit::Outdent);

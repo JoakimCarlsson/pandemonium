@@ -51,6 +51,8 @@ pub enum Message {
     SaveKeymap,
     /// Read the keymaps in the editor's home in again.
     ReloadKeymaps,
+    /// Read installed extensions again.
+    ReloadExtensions,
     /// Turn this preference, which is a switch, on or off.
     TogglePreference(Preference),
     /// Move this preference, which is a number, one step this way.
@@ -63,6 +65,8 @@ pub enum Message {
     SetInstallLanguageServers(InstallLanguageServers),
     /// Install a named server from its pinned recipe.
     InstallLanguageServer(&'static str),
+    /// Open the log of a language server behind the focused file.
+    OpenServerLog,
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.
@@ -400,6 +404,12 @@ pub enum Message {
     ShowHistoryRefsMenu,
     /// Set the Graph history-reference filter to Auto or All.
     SetHistoryFilter(bool),
+    /// Open actions for a commit row of one repository.
+    ShowHistoryMenu(usize, usize),
+    /// Apply the captured history commit to the current branch.
+    CherryPickHistory,
+    /// Copy the captured full commit hash.
+    CopyCommitHash,
     /// Return the Graph to the checked-out commit.
     RevealCurrentHistoryItem,
     /// Ask which configured remote to fetch from.
@@ -471,6 +481,22 @@ pub enum Message {
     Commit,
     /// Commit what the index holds, then push the active branch.
     CommitAndPush,
+    /// Rewrite the active repository's last commit.
+    Amend,
+    /// Open a prompt to save changes in a stash.
+    StashPush,
+    /// Choose a stash for this action.
+    ShowStashes(crate::review::StashAction),
+    /// Confirm dropping this stash.
+    DropStash(usize),
+    /// Act on the stash after confirmation.
+    ConfirmDropStash(usize),
+    /// Ask before rewriting a pushed commit.
+    ConfirmAmend,
+    /// Ask before skipping the stopped commit.
+    SkipOperation,
+    /// Skip the stopped commit after confirmation.
+    ConfirmSkipOperation,
     /// Ask before discarding the active repository's merge resolution.
     AbortMerge,
     /// Abort the active repository's merge after confirmation.

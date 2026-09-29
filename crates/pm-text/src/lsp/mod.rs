@@ -14,9 +14,14 @@
 //! which runs more servers after the ones the language names.
 
 mod answer;
+mod capabilities;
 mod client;
 mod encoding;
+mod log;
 mod outbox;
+mod progress;
+mod rpc;
+mod sync;
 mod uri;
 mod watch;
 
@@ -27,9 +32,11 @@ use std::time::{Duration, Instant};
 
 pub use answer::{
     Answer, Calls, CodeAction, Completion, FileEdit, Handle, Lens, Location, NamedLocation,
-    Request, Symbol,
+    Request, Signature, Symbol, Trigger, WorkspaceChange,
 };
 pub use client::{Asked, Client};
+pub use log::{is_tracing, set_trace};
+pub use progress::Progress;
 pub use watch::Watched;
 
 /// How many consecutive exits are allowed before a server is abandoned.
@@ -64,12 +71,19 @@ pub struct Servers {
     missing: HashSet<&'static str>,
     /// Worktrees with an open document of each language.
     opened: HashMap<&'static str, HashSet<PathBuf>>,
+    /// The directory every server's log is written in, when logs are kept.
+    logs: Option<PathBuf>,
 }
 
 impl Servers {
     /// Wakes the window through `notify` when a server says something.
     pub fn set_notify(&mut self, notify: Arc<dyn Fn() + Send + Sync>) {
         self.notify = Some(notify);
+    }
+
+    /// Writes every server's log into `directory`.
+    pub fn set_logs(&mut self, directory: PathBuf) {
+        self.logs = Some(directory);
     }
 
     /// Runs `overrides` in place of what the languages named by name.
@@ -79,6 +93,7 @@ impl Servers {
     /// a list that was added to could not do that.
     pub fn set_overrides(&mut self, overrides: HashMap<&'static str, Vec<Server>>) {
         self.overrides = overrides;
+        self.reconfigure();
     }
 
     /// Runs `added` for the languages they name, after the servers those
@@ -88,6 +103,17 @@ impl Servers {
     /// language that was also overridden are not run.
     pub fn set_added(&mut self, added: HashMap<&'static str, Vec<Server>>) {
         self.added = added;
+        self.reconfigure();
+    }
+
+    /// Hands every running server the settings it is now configured with,
+    /// so that a change to them takes without a restart.
+    fn reconfigure(&self) {
+        for ((_, command), running) in &self.running {
+            if let (Some(client), Some(server)) = (&running.client, self.wanted_server(command)) {
+                client.configure(server.options);
+            }
+        }
     }
 
     /// Every server for `language` over `root`, started if not running.
@@ -104,6 +130,7 @@ impl Servers {
             return Vec::new();
         };
         let wanted = self.wanted(language);
+        let logs = self.logs.clone();
         wanted
             .iter()
             .filter_map(|server| match installed(server.command) {
@@ -149,9 +176,10 @@ impl Servers {
                     return None;
                 }
                 if running.client.is_none() {
-                    running.client = Client::start(root, &program, *server, notify)
-                        .ok()
-                        .map(Arc::new);
+                    running.client =
+                        Client::start(root, &program, *server, notify, logs.as_deref())
+                            .ok()
+                            .map(Arc::new);
                     if running.client.is_none() {
                         running.failures = RESTART_LIMIT;
                     }
@@ -207,6 +235,21 @@ impl Servers {
         self.wanted(language)
             .into_iter()
             .find(|server| server.install.is_some())
+    }
+
+    /// What the servers for `language` need that the editor cannot install,
+    /// when none of them is installed or installable.
+    pub fn needs(&self, language: Language) -> Option<&'static str> {
+        let wanted = self.wanted(language);
+        if wanted
+            .iter()
+            .any(|server| server.install.is_some() || installed(server.command).is_some())
+        {
+            return None;
+        }
+        wanted
+            .iter()
+            .find_map(|server| crate::install::needs(server.command))
     }
 
     /// Whether the configured list for `language` includes `command`.

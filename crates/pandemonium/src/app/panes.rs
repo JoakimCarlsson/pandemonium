@@ -1459,49 +1459,79 @@ impl App {
                 crate::input::input_menu(selected)
             }
             MenuTarget::Change => crate::review::change_menu(self.review()?),
-            MenuTarget::Commit => vec![
-                pm_ui::menu_entry("Commit", Some(Message::Commit)),
-                pm_ui::menu_entry("Commit and Push", Some(Message::CommitAndPush)),
-            ]
-            .into_iter()
-            .chain(
-                self.review()
-                    .is_some_and(|review| {
-                        review.head().is_some_and(|head| head.operation.is_some())
-                    })
-                    .then(|| pm_ui::menu_entry("Abort Merge", Some(Message::AbortMerge))),
-            )
-            .collect(),
-            MenuTarget::SourceControl => vec![
-                pm_ui::menu_entry("Pull", Some(Message::Pull)),
-                pm_ui::menu_entry("Push", Some(Message::PushBranch)),
-                pm_ui::menu_entry("Clone Repository…", Some(Message::CloneProject)),
-                pm_ui::menu_entry("Checkout…", Some(Message::ShowStatusBranches)),
-                pm_ui::menu_entry("Fetch", Some(Message::Fetch)),
-                pm_ui::menu_separator(),
-                pm_ui::menu_entry("Stage All Changes", Some(Message::StageAll)),
-                pm_ui::menu_entry("Unstage All Changes", Some(Message::UnstageAll)),
-                pm_ui::menu_entry("Pull (Rebase)", Some(Message::PullRebase)),
-                pm_ui::menu_entry("Force Push", Some(Message::ForcePush)),
-                pm_ui::menu_separator(),
-                pm_ui::menu_entry("Commit", Some(Message::Commit)),
-                pm_ui::menu_entry("Commit and Push", Some(Message::CommitAndPush)),
-                pm_ui::menu_entry("Refresh", Some(Message::RefreshChanges)),
-            ]
-            .into_iter()
-            .chain(
-                self.review()
-                    .is_some_and(|review| {
-                        review.head().is_some_and(|head| head.operation.is_some())
-                    })
-                    .then(|| pm_ui::menu_entry("Abort Merge", Some(Message::AbortMerge))),
-            )
-            .collect(),
+            MenuTarget::Commit => {
+                let operation = self
+                    .review()
+                    .and_then(|review| review.head())
+                    .and_then(|head| head.operation.as_ref());
+                commit_menu_items(operation)
+            }
+            MenuTarget::SourceControl => {
+                let operation = self
+                    .review()
+                    .and_then(|review| review.head())
+                    .and_then(|head| head.operation.as_ref());
+                let has_stashes = self.stash_available;
+                let mut items = vec![
+                    pm_ui::menu_entry("Pull", Some(Message::Pull)),
+                    pm_ui::menu_entry("Push", Some(Message::PushBranch)),
+                    pm_ui::menu_entry("Clone Repository…", Some(Message::CloneProject)),
+                    pm_ui::menu_entry("Checkout…", Some(Message::ShowStatusBranches)),
+                    pm_ui::menu_entry("Fetch", Some(Message::Fetch)),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Stage All Changes", Some(Message::StageAll)),
+                    pm_ui::menu_entry("Unstage All Changes", Some(Message::UnstageAll)),
+                    pm_ui::menu_entry("Pull (Rebase)", Some(Message::PullRebase)),
+                    pm_ui::menu_entry("Force Push", Some(Message::ForcePush)),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Refresh", Some(Message::RefreshChanges)),
+                ];
+                items.extend(commit_menu_items(operation));
+                items.extend([
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Stash…", Some(Message::StashPush)),
+                    pm_ui::menu_entry(
+                        "Apply Stash…",
+                        has_stashes
+                            .then_some(Message::ShowStashes(crate::review::StashAction::Apply)),
+                    ),
+                    pm_ui::menu_entry(
+                        "Pop Stash…",
+                        has_stashes
+                            .then_some(Message::ShowStashes(crate::review::StashAction::Pop)),
+                    ),
+                    pm_ui::menu_entry(
+                        "Drop Stash…",
+                        has_stashes
+                            .then_some(Message::ShowStashes(crate::review::StashAction::Drop)),
+                    ),
+                ]);
+                items
+            }
             MenuTarget::Agents(standing) => self.agents_menu(standing),
             MenuTarget::HistoryRefs => vec![
                 pm_ui::menu_entry("Auto", Some(Message::SetHistoryFilter(false))),
                 pm_ui::menu_entry("All", Some(Message::SetHistoryFilter(true))),
             ],
+            MenuTarget::History(repository, _) => {
+                let review = self.review()?;
+                let object = self.history_menu_object.as_ref()?;
+                if self.scope() != self.history_menu_scope {
+                    return None;
+                }
+                let head = review.head();
+                let can_pick = review.active() == repository
+                    && head.is_some_and(|head| head.operation.is_none())
+                    && !review.contains_commit(object);
+                let branch = head.map(pm_core::Head::name).unwrap_or_default();
+                vec![
+                    pm_ui::menu_entry(
+                        format!("Cherry-Pick into {branch}"),
+                        can_pick.then_some(Message::CherryPickHistory),
+                    ),
+                    pm_ui::menu_entry("Copy Commit Hash", Some(Message::CopyCommitHash)),
+                ]
+            }
             MenuTarget::Unsaved(pane, file) => {
                 let name = self.editor.entry(file)?.name;
                 panes::unsaved_menu(pane, file, &name)
@@ -1535,6 +1565,38 @@ impl App {
         };
         Some((open, items))
     }
+}
+
+/// The commit and operation commands shared by both source control menus.
+fn commit_menu_items(operation: Option<&pm_core::Operation>) -> Vec<MenuItem<Message>> {
+    let title = match operation {
+        Some(pm_core::Operation::Merge(_)) => "Commit Merge",
+        Some(pm_core::Operation::Rebase(_)) => "Continue Rebase",
+        Some(pm_core::Operation::CherryPick(_)) => "Continue Cherry-Pick",
+        None => "Commit",
+    };
+    let mut items = vec![
+        pm_ui::menu_entry(title, Some(Message::Commit)),
+        pm_ui::menu_entry(
+            "Commit and Push",
+            operation.is_none().then_some(Message::CommitAndPush),
+        ),
+    ];
+    if let Some(operation) = operation {
+        items.push(pm_ui::menu_entry(
+            format!("Abort {}", operation.name()),
+            Some(Message::AbortMerge),
+        ));
+        if !matches!(operation, pm_core::Operation::Merge(_)) {
+            items.push(pm_ui::menu_entry(
+                "Skip Commit",
+                Some(Message::SkipOperation),
+            ));
+        }
+    } else {
+        items.push(pm_ui::menu_entry("Amend Last Commit", Some(Message::Amend)));
+    }
+    items
 }
 
 /// `title` held to what a tab has room for, cut at a word where it can be.

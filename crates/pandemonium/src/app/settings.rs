@@ -118,6 +118,12 @@ impl App {
                 config::reload_keymaps(&mut self.preferences);
                 self.follow_keymap();
             }
+            Message::ReloadExtensions => {
+                for error in config::reload_extensions(&mut self.preferences) {
+                    self.notices.trouble(error, None);
+                }
+                self.follow_keymap();
+            }
             Message::RecordBinding(action) => self.settings.record(action),
             Message::UnbindAction(action) => {
                 self.preferences.unbind(action);

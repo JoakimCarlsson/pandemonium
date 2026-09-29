@@ -147,8 +147,9 @@ impl App {
             };
             if let Some(document) = self.editor.get(file) {
                 let clients = document.borrow().servers();
+                let served = document.borrow().buffer().path().to_path_buf();
                 for client in clients {
-                    if client.offers(&Request::Semantics)
+                    if client.offers(&Request::Semantics, &served)
                         && document.borrow_mut().wants_semantics(&client)
                     {
                         self.ask_of(

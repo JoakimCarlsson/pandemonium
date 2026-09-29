@@ -12,6 +12,7 @@ mod cursor;
 mod diagnostic;
 mod find;
 pub mod frame;
+mod grammar;
 mod hint;
 mod history;
 mod indent;
@@ -19,6 +20,7 @@ pub mod install;
 mod language;
 mod lsp;
 pub mod program;
+pub mod snippet;
 mod syntax;
 
 pub use buffer::Buffer;
@@ -27,9 +29,12 @@ pub use diagnostic::{Diagnostic, Severity};
 pub use find::{Finder, Query};
 pub use hint::Hint;
 pub use indent::Indent;
-pub use language::{Language, NO_OPTIONS, Server};
+pub use language::{
+    ExtensionLanguage, Language, NO_OPTIONS, Server, install_languages, load_grammar,
+};
 pub use lsp::{
     Answer, Asked, Calls, Client, CodeAction, Completion, FileEdit, Handle, Lens, Location,
-    NamedLocation, Request, Servers, Symbol, Watched,
+    NamedLocation, Progress, Request, Servers, Signature, Symbol, Trigger, Watched,
+    WorkspaceChange, is_tracing, set_trace,
 };
 pub use syntax::{Highlight, Highlights, SyntaxNode, highlight, is_declaration};

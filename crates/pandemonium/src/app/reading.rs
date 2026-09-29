@@ -350,6 +350,14 @@ impl App {
     fn take_worked(&mut self, scope: Scope, done: Done) {
         self.readings.working.remove(&scope);
         let push = done.wants_push();
+        for trouble in done.troubles() {
+            self.notices.trouble(
+                trouble,
+                Some(crate::message::Message::SetSidebarView(
+                    crate::workspace::SidebarView::Changes,
+                )),
+            );
+        }
         if let Some(review) = self.reviews.get_mut(&scope) {
             review.finished(done);
         }

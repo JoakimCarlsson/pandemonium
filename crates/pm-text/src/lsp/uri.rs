@@ -26,6 +26,18 @@ pub fn of(path: &Path) -> String {
     uri
 }
 
+/// `path` as the protocol's own URI type.
+pub fn typed(path: &Path) -> lsp_types::Uri {
+    of(path)
+        .parse()
+        .expect("a path with every other byte percent-escaped is a valid URI")
+}
+
+/// The path the protocol's URI `uri` names, if it names one.
+pub fn path_of(uri: &lsp_types::Uri) -> Option<PathBuf> {
+    path(uri.as_str())
+}
+
 /// The path a `file://` URI names, if it names one.
 pub fn path(uri: &str) -> Option<PathBuf> {
     let escaped = uri.strip_prefix("file://")?;
