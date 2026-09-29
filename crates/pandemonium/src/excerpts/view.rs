@@ -7,6 +7,7 @@
 //! Only the file holding the cursor draws one; the others are text to read
 //! until a press puts the cursor in them.
 
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -158,6 +159,8 @@ struct Painting<'a> {
     highlights: Vec<Highlights>,
     /// How each drawn line of each file differs from the last commit.
     kinds: Vec<Vec<(std::ops::Range<usize>, ChangeKind)>>,
+    /// Search matches in each file.
+    matches: Vec<Vec<Range<Position>>>,
     /// The file holding the cursor, by its place in the list.
     active: Option<usize>,
     /// Every cursor of that file.
@@ -225,6 +228,11 @@ impl<M: Clone + 'static> Element<M> for ExcerptsView<M> {
                     .collect()
             })
             .collect();
+        let matches = excerpts
+            .files_mut()
+            .iter_mut()
+            .map(|excerpted| excerpted.matches().to_vec())
+            .collect();
         let counts = excerpts
             .files_mut()
             .iter_mut()
@@ -234,6 +242,11 @@ impl<M: Clone + 'static> Element<M> for ExcerptsView<M> {
             .files()
             .iter()
             .map(|excerpted| excerpted.name.clone())
+            .collect::<Vec<_>>();
+        let matched = excerpts
+            .files()
+            .iter()
+            .map(|file| file.is_match_source())
             .collect::<Vec<_>>();
         drop(excerpts);
 
@@ -267,6 +280,7 @@ impl<M: Clone + 'static> Element<M> for ExcerptsView<M> {
             files,
             highlights,
             kinds,
+            matches,
             active,
             selections,
         };
@@ -278,7 +292,14 @@ impl<M: Clone + 'static> Element<M> for ExcerptsView<M> {
             let top = bounds.top() + at as f32 * cell.height;
             match row {
                 Row::Header(index) => {
-                    self.paint_header(&painting, *index, &names[*index], counts[*index], top, cx);
+                    self.paint_header(
+                        &painting,
+                        *index,
+                        &names[*index],
+                        (counts[*index].0, counts[*index].1, matched[*index]),
+                        top,
+                        cx,
+                    );
                 }
                 Row::Line(index, line) => {
                     let drawn = self.paint_line(&painting, *index, *line, top, &mut glyphs, cx);
@@ -303,7 +324,7 @@ impl<M: Clone + 'static> ExcerptsView<M> {
         painting: &Painting<'_>,
         index: usize,
         name: &str,
-        (added, removed): (usize, usize),
+        (added, removed, matched): (usize, usize, bool),
         top: f32,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
@@ -330,8 +351,22 @@ impl<M: Clone + 'static> ExcerptsView<M> {
                 },
                 theme.colors.text_muted,
             ),
-            (format!("+{added}"), theme.colors.success),
-            (format!("−{removed}"), theme.colors.danger),
+            (
+                if matched {
+                    format!("{added} matches")
+                } else {
+                    format!("+{added}")
+                },
+                theme.colors.success,
+            ),
+            (
+                if matched {
+                    String::new()
+                } else {
+                    format!("−{removed}")
+                },
+                theme.colors.danger,
+            ),
         ];
         let mut x = bounds.left() + GUTTER_INSET;
         let middle = top + (painting.cell.height - font.line_height) / 2.0;
@@ -385,6 +420,38 @@ impl<M: Clone + 'static> ExcerptsView<M> {
         }
 
         let active = painting.active == Some(index);
+        let head = buffer.selection().head;
+        let current_match = painting.matches[index]
+            .iter()
+            .find(|found| found.start <= head && head < found.end)
+            .or_else(|| {
+                painting.matches[index]
+                    .iter()
+                    .find(|found| found.start >= head)
+            })
+            .or_else(|| painting.matches[index].first());
+        for found in &painting.matches[index] {
+            if found.start.line != line {
+                continue;
+            }
+            let start = buffer.display_column(found.start);
+            let end = buffer.display_column(found.end);
+            let current = active && current_match == Some(found);
+            let strength = if current {
+                theme.emphasis.search_current
+            } else {
+                theme.emphasis.search
+            };
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    painting.left + start as f32 * cell.width,
+                    top,
+                    (end.saturating_sub(start)).max(1) as f32 * cell.width,
+                    cell.height,
+                ),
+                theme.colors.warning.alpha(strength),
+            ));
+        }
         if active {
             self.paint_selection(painting, buffer, line, top, cx);
         }

@@ -28,6 +28,9 @@ pub fn search_bar(theme: &Theme, pane: PaneId, search: &Search, solid: bool) -> 
         .bg(theme.colors.surface)
         .border_1(theme.colors.border)
         .child(query_row(theme, pane, search, solid))
+        .when_some(search.error(), |bar, error| {
+            bar.child(text(error.to_owned()).text_xs().color(theme.colors.danger))
+        })
         .when(search.is_replacing(), |bar| {
             bar.child(replacement_row(theme, pane, search, solid))
         })
@@ -55,7 +58,7 @@ fn query_row(theme: &Theme, pane: PaneId, search: &Search, solid: bool) -> Div<M
                 focused && solid,
             )
             .selection(search.query().selection())
-            .placeholder("Find")
+            .placeholder("Find (one line at a time)")
             .font_mono()
             .flex_1()
             .h_px(ROW_HEIGHT - 6.0)
@@ -70,6 +73,12 @@ fn query_row(theme: &Theme, pane: PaneId, search: &Search, solid: bool) -> Div<M
             })
             .on_press(move |caret| Message::FocusSearch(pane, SearchField::Query, caret)),
         )
+        .child(toggle(
+            theme,
+            ".*",
+            search.is_regex(),
+            Message::ToggleSearchRegex(pane),
+        ))
         .child(toggle(
             theme,
             "Aa",
@@ -129,7 +138,13 @@ fn standing(theme: &Theme, search: &Search) -> Div<Message> {
     let label = match search.standing() {
         Some((at, of)) => format!("{at} of {of}"),
         None if search.query().is_empty() => String::new(),
-        None => "No results".to_owned(),
+        None => {
+            if search.error().is_some() {
+                String::new()
+            } else {
+                "No results".to_owned()
+            }
+        }
     };
 
     h_flex()

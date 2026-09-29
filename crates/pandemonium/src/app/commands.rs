@@ -15,7 +15,7 @@ use crate::desktop;
 use crate::editor::{self, Completions, Document, Edit, SearchField};
 use crate::keymap::{Action, Travel};
 use crate::message::Message;
-use crate::panes::{PaneId, SplitDirection};
+use crate::panes::{Item, PaneId, SplitDirection};
 use crate::picker::Kind;
 
 /// How far one step of zoom moves the editor's text.
@@ -42,6 +42,7 @@ impl App {
             Action::ShowFiles => self.open_picker(Kind::Files),
             Action::ShowProjects => self.open_picker(Kind::Projects),
             Action::SearchProject => self.open_picker(Kind::Search),
+            Action::ReplaceProject => self.open_project_search(None),
             Action::ShowProblems => self.open_picker(Kind::Problems),
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
@@ -69,11 +70,23 @@ impl App {
                     return self.apply(message);
                 }
             }
+            Action::ToggleSearchCase if matches!(self.active_tab(), Some(Item::Search(_))) => {
+                self.toggle_project_search(crate::message::ProjectSearchOption::Case)
+            }
             Action::ToggleSearchCase => {
                 return self.apply(Message::ToggleSearchCase(self.panes.focus()));
             }
+            Action::ToggleSearchWord if matches!(self.active_tab(), Some(Item::Search(_))) => {
+                self.toggle_project_search(crate::message::ProjectSearchOption::Word)
+            }
             Action::ToggleSearchWord => {
                 return self.apply(Message::ToggleSearchWord(self.panes.focus()));
+            }
+            Action::ToggleSearchRegex if matches!(self.active_tab(), Some(Item::Search(_))) => {
+                self.toggle_project_search(crate::message::ProjectSearchOption::Regex)
+            }
+            Action::ToggleSearchRegex => {
+                return self.apply(Message::ToggleSearchRegex(self.panes.focus()));
             }
             Action::ToggleSearchReplace => {
                 return self.apply(Message::ToggleSearchReplace(self.panes.focus()));
@@ -354,9 +367,22 @@ impl App {
                 let selected = self.with_buffer(Buffer::selected_text);
                 self.open_search(false, selected);
             }
+            Action::FindNext if matches!(self.active_tab(), Some(Item::Search(_))) => {
+                self.step_project_match(true)
+            }
             Action::FindNext => self.step_search(true),
+            Action::FindPrevious if matches!(self.active_tab(), Some(Item::Search(_))) => {
+                self.step_project_match(false)
+            }
             Action::FindPrevious => self.step_search(false),
+            Action::ReplaceMatch if matches!(self.active_tab(), Some(Item::Search(_))) => {
+                self.replace_project(false, false)
+            }
             Action::ReplaceMatch => self.replace_match(),
+            Action::ReplaceInFile => self.replace_project(true, false),
+            Action::ReplaceAll if matches!(self.active_tab(), Some(Item::Search(_))) => {
+                self.ask_project_replace_all()
+            }
             Action::ReplaceAll => self.replace_all(),
             Action::GoToLine => self.open_prompt(action),
             Action::NextDiagnostic => self.step_diagnostic(true),
@@ -552,7 +578,14 @@ impl App {
         let Some(found) = document.search().current() else {
             return;
         };
-        let replacement = document.search().replacement().value().to_owned();
+        let Ok(finder) = document.search().finder() else {
+            return;
+        };
+        let replacement = finder.replacement(
+            &document.buffer().line_text(found.start.line),
+            found.start.column..found.end.column,
+            document.search().replacement().value(),
+        );
         document.edit(|buffer| buffer.replace(found, &replacement));
         document.search_with(|search, buffer| search.refresh(buffer));
     }
@@ -567,10 +600,19 @@ impl App {
         if found.is_empty() {
             return;
         }
-        let replacement = document.search().replacement().value().to_owned();
+        let Ok(finder) = document.search().finder() else {
+            return;
+        };
         let edits = found
             .into_iter()
-            .map(|range| (range, replacement.clone()))
+            .map(|range| {
+                let replacement = finder.replacement(
+                    &document.buffer().line_text(range.start.line),
+                    range.start.column..range.end.column,
+                    document.search().replacement().value(),
+                );
+                (range, replacement)
+            })
             .collect();
         document.edit(|buffer| buffer.apply_edits(edits));
         document.search_with(|search, buffer| search.refresh(buffer));

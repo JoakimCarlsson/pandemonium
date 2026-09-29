@@ -749,6 +749,7 @@ impl App {
             | Item::Image(_)
             | Item::Rendered(_)
             | Item::Excerpts(_)
+            | Item::Search(_)
             | Item::Agent(..)
             | Item::Settings => None,
         }

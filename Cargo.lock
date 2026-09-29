@@ -2032,6 +2032,7 @@ dependencies = [
  "flate2",
  "globset",
  "lsp-types",
+ "regex",
  "ropey",
  "serde_json",
  "sha2",

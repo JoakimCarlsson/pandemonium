@@ -23,6 +23,17 @@ use crate::settings::{SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
 
+/// A matching option on a project search pane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ProjectSearchOption {
+    /// Regular expression syntax.
+    Regex,
+    /// Letter case.
+    Case,
+    /// Whole words.
+    Word,
+}
+
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
@@ -238,10 +249,18 @@ pub enum Message {
     PaneAction(PaneId, Action),
     /// Send later keystrokes to this field of this pane's search bar.
     FocusSearch(PaneId, SearchField, usize),
+    /// Focuses one field of a worktree search pane.
+    FocusProjectSearch(PaneId, SearchField, usize),
+    /// Flips a matching option in a worktree search pane.
+    ToggleProjectSearch(PaneId, ProjectSearchOption),
+    /// Confirms replacing all matches across multiple files.
+    ConfirmProjectReplace,
     /// Turn matching upper case against upper case on or off.
     ToggleSearchCase(PaneId),
     /// Turn matching whole words only on or off.
     ToggleSearchWord(PaneId),
+    /// Toggles regular expression matching in the search bar.
+    ToggleSearchRegex(PaneId),
     /// Show or hide the replacement field of this pane's search bar.
     ToggleSearchReplace(PaneId),
     /// Close this pane's search bar.

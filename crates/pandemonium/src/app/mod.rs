@@ -27,6 +27,7 @@ mod places;
 mod reading;
 mod reorder;
 mod review;
+mod search;
 mod session;
 mod settings;
 mod tasks;
@@ -323,6 +324,10 @@ pub struct App {
     renders: crate::markdown::Renders,
     /// Each worktree's changes as excerpts, for the panes editing them.
     excerpts: BTreeMap<Scope, crate::excerpts::OpenExcerpts>,
+    /// Each worktree's search pane state.
+    searches: BTreeMap<Scope, search::ProjectSearch>,
+    /// Which project search field has the keyboard.
+    project_search_field: Option<editor::SearchField>,
     /// The servers a language runs, in place of the ones it names or after them.
     language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
@@ -653,6 +658,8 @@ impl App {
             images: crate::image::Images::default(),
             renders: crate::markdown::Renders::default(),
             excerpts: BTreeMap::new(),
+            searches: BTreeMap::new(),
+            project_search_field: None,
             language_servers: restored.language_servers,
             agent_servers: restored.agent_servers,
             panes: PaneTree::default(),
@@ -777,6 +784,7 @@ impl App {
         }
         match (self.editor_focused, self.terminal_focused) {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
+            (true, _) if showing(|item| matches!(item, Item::Search(_))) => Some("search"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
             (true, _) if showing(crate::panes::Item::is_window_wide) => Some("settings"),
@@ -1403,6 +1411,31 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::FocusProjectSearch(pane, field, caret) = message {
+            self.focus_pane(pane);
+            if let Some(Item::Search(scope)) = self.active_tab()
+                && let Some(search) = self.searches.get_mut(&scope)
+            {
+                match field {
+                    editor::SearchField::Query => search.query.place(caret),
+                    editor::SearchField::Replacement => search.replacement.place(caret),
+                }
+                self.project_search_field = Some(field);
+            }
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleProjectSearch(pane, option) = message {
+            self.focus_pane(pane);
+            self.toggle_project_search(option);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::ConfirmProjectReplace {
+            self.replace_project(false, true);
+            self.request_redraw();
+            return;
+        }
         if let Message::ToggleSearchCase(pane) = message {
             self.focus_pane(pane);
             self.with_document(|document| {
@@ -1415,6 +1448,14 @@ impl App {
             self.focus_pane(pane);
             self.with_document(|document| {
                 document.search_with(super::editor::Search::toggle_whole_word);
+            });
+            self.request_redraw();
+            return;
+        }
+        if let Message::ToggleSearchRegex(pane) = message {
+            self.focus_pane(pane);
+            self.with_document(|document| {
+                document.search_with(super::editor::Search::toggle_regex);
             });
             self.request_redraw();
             return;
@@ -2181,6 +2222,14 @@ impl App {
                 .excerpts
                 .get(&scope)
                 .and_then(|excerpts| excerpts.borrow().caret())
+        {
+            return caret;
+        }
+        if let Some(Item::Search(scope)) = self.active_tab()
+            && let Some(caret) = self
+                .searches
+                .get(&scope)
+                .and_then(|search| search.excerpts.borrow().caret())
         {
             return caret;
         }

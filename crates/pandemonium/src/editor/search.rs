@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use pm_text::{Buffer, Position};
+use pm_text::{Buffer, Finder, Position, Query};
 
 use crate::field::Field;
 
@@ -32,6 +32,8 @@ pub struct Search {
     case_sensitive: bool,
     /// Whether a match has to be a whole word.
     whole_word: bool,
+    /// Whether the query uses regular expression syntax.
+    regex: bool,
     /// Whether the bar is open over the pane.
     open: bool,
     /// Whether the bar is showing its replacement field.
@@ -42,6 +44,8 @@ pub struct Search {
     matches: Vec<Range<Position>>,
     /// Which of them is the one being looked at.
     current: Option<usize>,
+    /// The error produced by an invalid regular expression.
+    error: Option<String>,
 }
 
 impl Search {
@@ -95,6 +99,26 @@ impl Search {
     /// Whether a match has to be a whole word.
     pub fn is_whole_word(&self) -> bool {
         self.whole_word
+    }
+
+    /// Whether the query uses regular expression syntax.
+    pub fn is_regex(&self) -> bool {
+        self.regex
+    }
+
+    /// The invalid regular expression error, when present.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Compiles the current query for matching and replacement.
+    pub fn finder(&self) -> Result<Finder, String> {
+        Finder::new(&Query {
+            text: self.query.value().to_owned(),
+            regex: self.regex,
+            case_sensitive: self.case_sensitive,
+            whole_word: self.whole_word,
+        })
     }
 
     /// Every match, in the order they appear in the file.
@@ -158,6 +182,12 @@ impl Search {
         self.refresh(buffer);
     }
 
+    /// Turns regular expression matching on or off.
+    pub fn toggle_regex(&mut self, buffer: &Buffer) {
+        self.regex = !self.regex;
+        self.refresh(buffer);
+    }
+
     /// Shows or hides the replacement field.
     pub fn toggle_replacing(&mut self) {
         self.replacing = !self.replacing;
@@ -169,7 +199,16 @@ impl Search {
     /// Finds every match again, keeping the one nearest the cursor current.
     pub fn refresh(&mut self, buffer: &Buffer) {
         let head = buffer.selection().start();
-        self.matches = self.find_all(buffer);
+        match self.finder() {
+            Ok(finder) => {
+                self.error = None;
+                self.matches = self.find_all(buffer, &finder);
+            }
+            Err(error) => {
+                self.error = Some(error);
+                self.matches.clear();
+            }
+        }
         self.current = self
             .matches
             .iter()
@@ -207,50 +246,16 @@ impl Search {
     /// The file is walked a line at a time: a query with a line break in it
     /// is not something this bar looks for, and a line is short enough that
     /// searching it is a scan rather than an index.
-    fn find_all(&self, buffer: &Buffer) -> Vec<Range<Position>> {
+    fn find_all(&self, buffer: &Buffer, finder: &Finder) -> Vec<Range<Position>> {
         if self.query.is_empty() {
             return Vec::new();
         }
-        let needle = self.folded(self.query.value());
         let mut found = Vec::new();
-
         for line in 0..buffer.line_count() {
-            let text = self.folded(&buffer.line_text(line));
-            let chars = text.chars().collect::<Vec<_>>();
-            let pattern = needle.chars().collect::<Vec<_>>();
-            if pattern.is_empty() || pattern.len() > chars.len() {
-                continue;
-            }
-            for start in 0..=chars.len() - pattern.len() {
-                if chars[start..start + pattern.len()] != pattern[..] {
-                    continue;
-                }
-                let end = start + pattern.len();
-                if self.whole_word && !is_word_bounded(&chars, start, end) {
-                    continue;
-                }
+            for Range { start, end } in finder.line(&buffer.line_text(line)) {
                 found.push(Position::new(line, start)..Position::new(line, end));
             }
         }
         found
     }
-
-    /// `text` in the case matching compares in.
-    fn folded(&self, text: &str) -> String {
-        if self.case_sensitive {
-            text.to_owned()
-        } else {
-            text.to_lowercase()
-        }
-    }
-}
-
-/// Whether the run from `start` to `end` of `chars` is a whole word.
-fn is_word_bounded(chars: &[char], start: usize, end: usize) -> bool {
-    let word = |ch: &char| ch.is_alphanumeric() || *ch == '_';
-    !start
-        .checked_sub(1)
-        .and_then(|before| chars.get(before))
-        .is_some_and(word)
-        && !chars.get(end).is_some_and(word)
 }

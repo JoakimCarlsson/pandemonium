@@ -115,6 +115,7 @@ impl App {
     pub(super) fn file_in(&self, item: Item) -> Option<FileId> {
         match item {
             Item::Excerpts(scope) => self.excerpts.get(&scope)?.borrow().active(),
+            Item::Search(scope) => self.searches.get(&scope)?.excerpts.borrow().active(),
             item => item.file(),
         }
     }
@@ -182,6 +183,7 @@ impl App {
             Item::Rendered(_)
             | Item::Review(_)
             | Item::Excerpts(_)
+            | Item::Search(_)
             | Item::Agent(..)
             | Item::Settings => false,
         }
@@ -191,6 +193,15 @@ impl App {
     fn is_dirty(&self, item: Item) -> bool {
         match item {
             Item::Excerpts(scope) => self.excerpts_dirty(scope),
+            Item::Search(scope) => self.searches.get(&scope).is_some_and(|search| {
+                search.held.iter().any(|file| self.editor.is_dirty(*file))
+                    || search
+                        .excerpts
+                        .borrow()
+                        .files()
+                        .iter()
+                        .any(|file| self.editor.is_dirty(file.file))
+            }),
             item => item.file().is_some_and(|file| self.editor.is_dirty(file)),
         }
     }
@@ -236,6 +247,14 @@ impl App {
 
     /// Closes `pane`, leaving the window as it was when it has only the one.
     pub(super) fn close_pane(&mut self, pane: PaneId) {
+        if let Some(search) = self
+            .tabs_of(pane)
+            .into_iter()
+            .find(|item| matches!(item, Item::Search(_)) && self.is_dirty(*item))
+        {
+            self.close_item(pane, search);
+            return;
+        }
         if self.panes.close(pane) {
             self.editor_focused = true;
             self.terminal_focused = false;
@@ -260,6 +279,7 @@ impl App {
             Item::Review(scope)
             | Item::Change(scope, _)
             | Item::Excerpts(scope)
+            | Item::Search(scope)
             | Item::Agent(scope, _) => Some(scope),
             Item::Settings => None,
         }
@@ -273,6 +293,30 @@ impl App {
     pub(super) fn close_item(&mut self, pane: PaneId, item: Item) {
         if let Some(file) = item.file().filter(|file| self.editor.is_dirty(*file)) {
             return self.open_menu(crate::workspace::MenuTarget::Unsaved(pane, file));
+        }
+        if let Item::Search(scope) = item
+            && let Some(search) = self.searches.get(&scope)
+        {
+            let dirty = search
+                .held
+                .iter()
+                .copied()
+                .chain(
+                    search
+                        .excerpts
+                        .borrow()
+                        .files()
+                        .iter()
+                        .map(|file| file.file),
+                )
+                .filter(|file| self.editor.is_dirty(*file))
+                .collect::<BTreeSet<_>>();
+            for file in dirty {
+                self.editor.keep(file);
+                if let Some(open) = self.panes.pane_mut(pane) {
+                    open.open(scope, Item::File(file));
+                }
+            }
         }
         self.close_tabs(pane, |pane| pane.close(item));
     }
@@ -387,6 +431,21 @@ impl App {
     ) -> bool {
         if let Some(field) = self.focused_field_mut() {
             edit(field);
+            return true;
+        }
+        if let Some(Item::Search(scope)) = self.active_tab()
+            && let Some(which) = self.project_search_field
+            && let Some(search) = self.searches.get_mut(&scope)
+        {
+            let field = match which {
+                crate::editor::SearchField::Query => &mut search.query,
+                crate::editor::SearchField::Replacement => &mut search.replacement,
+            };
+            let before = field.value().to_owned();
+            edit(field);
+            if which == crate::editor::SearchField::Query && before != field.value() {
+                self.run_project_search(scope);
+            }
             return true;
         }
         if self.search_focused {
@@ -515,6 +574,14 @@ impl App {
                     ..SavedTab::default()
                 });
             }
+            if matches!(item, Item::Search(_)) {
+                return Some(SavedTab {
+                    kind: SavedKind::Search,
+                    project,
+                    worktree,
+                    ..SavedTab::default()
+                });
+            }
             let Some(file) = item.file() else {
                 return Some(SavedTab {
                     kind: SavedKind::Review,
@@ -554,6 +621,7 @@ impl App {
         let editor = &mut self.editor;
         let images = &mut self.images;
         let excerpts = &mut self.excerpts;
+        let searches = &mut self.searches;
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
         let sessions = &self.sessions;
@@ -603,6 +671,12 @@ impl App {
                 });
                 return Some((Some(scope), Item::Excerpts(scope)));
             }
+            if tab.kind == SavedKind::Search {
+                searches
+                    .entry(scope)
+                    .or_insert_with(super::search::ProjectSearch::new);
+                return Some((Some(scope), Item::Search(scope)));
+            }
             if tab.kind == SavedKind::Image {
                 let image = images.open(scope, &tab.path, tab.preview);
                 return Some((Some(scope), Item::Image(image)));
@@ -646,6 +720,11 @@ impl App {
         let held = self.panes.held();
         self.excerpts
             .retain(|scope, _| held.contains(&Item::Excerpts(*scope)));
+        self.searches
+            .retain(|scope, _| held.contains(&Item::Search(*scope)));
+        for search in self.searches.values_mut() {
+            search.held.retain(|file| self.editor.is_dirty(*file));
+        }
         let rendered = held
             .iter()
             .copied()
@@ -664,6 +743,20 @@ impl App {
         files.extend(&rendered);
         files.extend(self.reviewed_files());
         files.extend(self.excerpted_files());
+        files.extend(self.searches.values().flat_map(|search| {
+            search
+                .excerpts
+                .borrow()
+                .files()
+                .iter()
+                .map(|file| file.file)
+                .collect::<Vec<_>>()
+        }));
+        files.extend(
+            self.searches
+                .values()
+                .flat_map(|search| search.held.iter().copied()),
+        );
         self.images.retain(&images);
         self.renders.retain(&rendered);
         let sessions = held
@@ -754,6 +847,7 @@ impl App {
                 Item::Rendered(_)
                 | Item::Review(_)
                 | Item::Excerpts(_)
+                | Item::Search(_)
                 | Item::Agent(..)
                 | Item::Settings => {}
             }
@@ -913,6 +1007,14 @@ impl App {
                 preview: false,
                 pinned: false,
             }),
+            Item::Search(scope) => Some(TabEntry {
+                item,
+                name: "Search: Replace in Project".to_owned(),
+                icon: IconName::Search,
+                dirty: self.is_dirty(Item::Search(scope)),
+                preview: false,
+                pinned: false,
+            }),
             Item::Review(scope) => Some(TabEntry {
                 item,
                 name: match self.open.get(scope.project()) {
@@ -1033,7 +1135,7 @@ impl App {
                     })
                     .collect(),
                 active,
-                content: self.shown(theme, active, bounds.get().size.width),
+                content: self.shown(theme, pane.id(), active, bounds.get().size.width),
                 conflicted,
                 bounds,
                 bar,
@@ -1116,7 +1218,7 @@ impl App {
     }
 
     /// What a pane showing `item` draws beneath its bar of tabs.
-    fn shown(&self, theme: &Theme, item: Option<Item>, width: f32) -> Content {
+    fn shown(&self, theme: &Theme, pane: PaneId, item: Option<Item>, width: f32) -> Content {
         match item {
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),
@@ -1188,6 +1290,10 @@ impl App {
                 Some(excerpts) => Content::Excerpts(excerpts.clone()),
                 None => Content::Empty,
             },
+            Some(Item::Search(scope)) if self.searches.contains_key(&scope) => {
+                Content::Built(self.project_search_content(theme, pane, scope))
+            }
+            Some(Item::Search(_)) => Content::Empty,
             Some(Item::Settings) => self.settings_content(theme),
             None => Content::Empty,
         }
