@@ -180,6 +180,7 @@ impl SettingsSection {
                 Preference::FormatOnSave,
                 Preference::TrimWhitespace,
                 Preference::FinalNewline,
+                Preference::InstallLanguageServers,
             ],
             Self::Keymap => &[
                 Preference::Keymap,

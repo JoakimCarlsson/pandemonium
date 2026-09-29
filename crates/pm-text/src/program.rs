@@ -8,6 +8,29 @@
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use crate::install;
+
+/// The directory where the editor installs servers.
+static SERVERS: OnceLock<PathBuf> = OnceLock::new();
+
+/// Registers the editor's server directory for program lookup.
+pub fn set_servers(directory: PathBuf) {
+    let _ = SERVERS.set(directory);
+}
+
+/// The directory where the editor installs servers, if registered.
+pub fn servers() -> Option<&'static Path> {
+    SERVERS.get().map(PathBuf::as_path)
+}
+
+/// The installed program named by a completed version directory.
+pub fn managed_in(directory: &Path) -> Option<PathBuf> {
+    let relative = std::fs::read_to_string(directory.join(".program")).ok()?;
+    let program = directory.join(relative);
+    program.is_file().then_some(program)
+}
 
 /// The directories a program is looked for in besides the path.
 ///
@@ -49,6 +72,10 @@ pub fn installed(command: &str) -> Option<PathBuf> {
         ])
         .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
         .find(|program| program.is_file())
+        .or_else(|| {
+            let version = install::recipe(command)?.version();
+            managed_in(&servers()?.join(command).join(version))
+        })
 }
 
 /// The file names `program` is installed under on this platform.

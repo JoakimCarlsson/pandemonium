@@ -5,11 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+flate2 = "1.1.10"
 globset = "0.4.20"
 lsp-types = "0.97.0"
 ropey = "1.6.1"
 serde_json = "1.0.151"
+sha2 = "0.11.0"
 streaming-iterator = "0.1.9"
+tar = "0.4.46"
 tree-sitter = "0.27.0"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.2"
@@ -34,3 +37,5 @@ tree-sitter-sequel = "0.3.11"
 tree-sitter-toml-ng = "0.7.0"
 tree-sitter-typescript = "0.23.2"
 tree-sitter-yaml = "0.7.2"
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

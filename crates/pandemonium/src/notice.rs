@@ -75,6 +75,16 @@ impl Notices {
         self.push(Tone::Done, text.into(), action);
     }
 
+    /// Holds a running operation in the status bar until it is dismissed.
+    pub fn progress(&mut self, text: impl Into<String>) -> NoticeId {
+        let id = self.next;
+        self.push(Tone::Done, text.into(), None);
+        if let Some(notice) = self.held.last_mut() {
+            notice.at += Duration::from_secs(24 * 60 * 60);
+        }
+        id
+    }
+
     /// Holds one notice after the rest.
     fn push(&mut self, tone: Tone, text: String, action: Option<Message>) {
         let id = self.next;

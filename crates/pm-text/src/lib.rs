@@ -14,6 +14,7 @@ pub mod frame;
 mod hint;
 mod history;
 mod indent;
+pub mod install;
 mod language;
 mod lsp;
 pub mod program;

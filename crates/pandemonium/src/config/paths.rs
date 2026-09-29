@@ -25,6 +25,9 @@ const KEYMAPS_DIRECTORY: &str = "keymaps";
 /// The directory session worktrees are cut into, inside the editor's home.
 const WORKTREES_DIRECTORY: &str = "worktrees";
 
+/// The directory editor-managed language servers live in.
+const SERVERS_DIRECTORY: &str = "servers";
+
 /// The editor's home: `PANDEMONIUM_HOME`, else `~/.pandemonium`.
 pub fn home() -> Option<PathBuf> {
     match std::env::var_os(HOME_VARIABLE) {
@@ -109,4 +112,9 @@ fn slug(name: &str) -> String {
 /// editor's own home.
 pub fn worktrees() -> Option<PathBuf> {
     home().map(|home| home.join(WORKTREES_DIRECTORY))
+}
+
+/// The directory editor-managed language servers live in.
+pub fn servers() -> Option<PathBuf> {
+    home().map(|home| home.join(SERVERS_DIRECTORY))
 }
