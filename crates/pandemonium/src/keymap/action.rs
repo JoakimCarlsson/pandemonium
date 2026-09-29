@@ -54,6 +54,8 @@ pub enum Action {
     ShowSessions,
     /// Open the palette of symbols in the focused file.
     ShowSymbols,
+    /// Open the current worktree's file outline.
+    ShowOutline,
     /// Open the palette of symbols across the focused file's workspace.
     ShowWorkspaceSymbols,
     /// Open the list of every error and warning in the open files.
@@ -392,6 +394,7 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::ShowProjects, "palette.projects", "Go to Project"),
     (Action::ShowSessions, "palette.sessions", "Go to Session"),
     (Action::ShowSymbols, "palette.symbols", "Go to Symbol"),
+    (Action::ShowOutline, "view.outline", "Show Outline"),
     (
         Action::ShowWorkspaceSymbols,
         "palette.workspace_symbols",

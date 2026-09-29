@@ -129,6 +129,8 @@ pub struct WorkspaceEditRequest {
 
 /// A language server the editor is talking to.
 pub struct Client {
+    /// The command that names this language server.
+    name: &'static str,
     /// The worktree whose paths this server watches.
     root: PathBuf,
     /// The process itself, kept so that it can be ended.
@@ -179,6 +181,7 @@ impl Client {
             "params": initialize(root, server),
         })));
         let client = Self {
+            name: server.command,
             root: root.to_path_buf(),
             process: Mutex::new(Some(process)),
             started: Instant::now(),
@@ -196,6 +199,11 @@ impl Client {
         std::thread::spawn(move || reader.run());
 
         Ok(client)
+    }
+
+    /// The name of the language server supplying this client's answers.
+    pub fn name(&self) -> &'static str {
+        self.name
     }
 
     /// Tells the server a file is open, what language it is in and what is

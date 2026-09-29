@@ -456,6 +456,8 @@ pub struct Symbol {
     pub kind: &'static str,
     /// Where it is declared.
     pub position: Position,
+    /// The full declaration, including its body.
+    pub range: Range<Position>,
     /// How many symbols it sits inside.
     pub depth: usize,
 }
@@ -887,6 +889,11 @@ fn collect_symbols(value: &Value, depth: usize, found: &mut Vec<Symbol>) {
             detail: symbol["detail"].as_str().unwrap_or_default().to_owned(),
             kind: symbol_kind(symbol["kind"].as_u64().unwrap_or_default()),
             position: at,
+            range: if symbol.get("range").is_some() {
+                range(&symbol["range"])
+            } else {
+                range(&symbol["location"]["range"])
+            },
             depth,
         });
         collect_symbols(&symbol["children"], depth + 1, found);

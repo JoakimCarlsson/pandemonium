@@ -748,6 +748,7 @@ impl App {
             Item::File(_)
             | Item::Image(_)
             | Item::Rendered(_)
+            | Item::Outline(_)
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)

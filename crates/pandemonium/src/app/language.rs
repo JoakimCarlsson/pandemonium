@@ -31,6 +31,8 @@ pub enum Purpose {
     Act,
     /// The pointer is resting on a name; only say whether it leads anywhere.
     Link,
+    /// Refresh the followed file's persistent outline.
+    Outline,
 }
 
 /// The name the pointer is over, and what the server made of it.
@@ -405,11 +407,13 @@ impl App {
     /// scrolling is not a question, and a file short enough to be open is
     /// short enough to be answered about in one go.
     pub(super) fn refresh_annotations(&mut self) {
+        self.follow_focused_file();
         self.collect_annotation_refreshes();
         self.cancel_stale_annotations();
         let Some(scope) = self.scope() else {
             return;
         };
+        self.refresh_outline(scope);
         let showing = self
             .panes
             .panes()
@@ -463,6 +467,68 @@ impl App {
         }
     }
 
+    /// Refreshes the open outline from syntax, then asks the first offering server.
+    fn refresh_outline(&mut self, scope: pm_core::Scope) {
+        if !self
+            .panes
+            .held()
+            .contains(&crate::panes::Item::Outline(scope))
+        {
+            return;
+        }
+        let Some(file) = self.outlines.followed(scope) else {
+            return;
+        };
+        let Some(document) = self.editor.get(file) else {
+            return;
+        };
+        let outline_pane = self.panes.panes().into_iter().find(|pane| {
+            self.panes.pane(*pane).is_some_and(|pane| {
+                pane.active(Some(scope)) == Some(crate::panes::Item::Outline(scope))
+            })
+        });
+        let height = self
+            .geometry
+            .pane_size(outline_pane.unwrap_or_else(|| self.panes.focus()))
+            .map_or(400.0, |size| size.height);
+        let visible_rows = ((height - 70.0) / crate::outline::ROW_HEIGHT).max(1.0) as usize;
+        let (version, symbols, cursor, clients) = {
+            let mut document = document.borrow_mut();
+            let buffer = document.buffer();
+            let cursor = buffer.selection().head;
+            if !document.wants_outline() {
+                self.outlines
+                    .get_mut(file)
+                    .follow_cursor(cursor, visible_rows);
+                return;
+            }
+            (
+                document.buffer().version(),
+                document.buffer().declarations(),
+                cursor,
+                document.servers(),
+            )
+        };
+        self.outlines
+            .get_mut(file)
+            .replace(version, symbols, "syntax".to_owned());
+        self.outlines
+            .get_mut(file)
+            .follow_cursor(cursor, visible_rows);
+        if let Some(client) = clients
+            .into_iter()
+            .find(|client| client.offers(&Request::Symbols))
+        {
+            self.ask_of(
+                client,
+                file,
+                Position::default(),
+                Request::Symbols,
+                Purpose::Outline,
+            );
+        }
+    }
+
     /// Applies server refresh requests to every document they serve.
     fn collect_annotation_refreshes(&mut self) {
         for client in self.editor.clients() {
@@ -479,7 +545,7 @@ impl App {
                 pending.request,
                 Request::Hints(_) | Request::Semantics | Request::Lenses | Request::ResolveLens(_)
             );
-            let stale = annotation
+            let stale = (annotation || pending.purpose == Purpose::Outline)
                 && self
                     .editor
                     .get(pending.file)
@@ -779,6 +845,12 @@ impl App {
             .editor
             .get(pending.file)
             .is_some_and(|document| document.borrow().buffer().version() != pending.version);
+        if pending.purpose == Purpose::Outline {
+            if !stale {
+                self.outline_answered(pending, answer);
+            }
+            return;
+        }
         if stale && (matches!(answer, Answer::Edits(_)) || pending.request == Request::CodeActions)
         {
             if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
@@ -888,6 +960,43 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    /// Takes the first nonempty server outline or asks the next offering server.
+    fn outline_answered(&mut self, pending: &Pending, answer: Answer) {
+        if let Answer::Symbols(symbols) = answer
+            && !symbols.is_empty()
+        {
+            self.outlines.get_mut(pending.file).replace(
+                pending.version,
+                symbols,
+                pending.client.name().to_owned(),
+            );
+            self.request_redraw();
+            return;
+        }
+        let Some(document) = self.editor.get(pending.file) else {
+            return;
+        };
+        let clients = document.borrow().servers();
+        let next = clients
+            .iter()
+            .position(|client| Arc::ptr_eq(client, &pending.client))
+            .and_then(|index| {
+                clients
+                    .into_iter()
+                    .skip(index + 1)
+                    .find(|client| client.offers(&Request::Symbols))
+            });
+        if let Some(client) = next {
+            self.ask_of(
+                client,
+                pending.file,
+                Position::default(),
+                Request::Symbols,
+                Purpose::Outline,
+            );
+        }
     }
 
     /// Takes the next step after one formatting or pre-save reply.

@@ -22,6 +22,33 @@ use tree_sitter::{
 use crate::cursor::Position;
 use crate::language::Language;
 
+/// Words in syntax node kinds that indicate a declaration.
+const DECLARING: &[&str] = &[
+    "function",
+    "method",
+    "class",
+    "struct",
+    "impl",
+    "trait",
+    "enum",
+    "interface",
+    "module",
+    "mod_item",
+    "namespace",
+    "union",
+    "object",
+    "protocol",
+];
+
+/// Words in syntax node kinds that indicate a use rather than a declaration.
+const USING: &[&str] = &["call", "invocation", "parameter", "argument", "identifier"];
+
+/// Whether a syntax node declares a named symbol.
+pub fn is_declaration(kind: &str) -> bool {
+    DECLARING.iter().any(|word| kind.contains(word))
+        && !USING.iter().any(|word| kind.contains(word))
+}
+
 /// How long one parse may run before it is given up on.
 ///
 /// An edit reparses in well under a millisecond and even a large file

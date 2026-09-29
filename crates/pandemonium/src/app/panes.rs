@@ -123,10 +123,18 @@ impl App {
     /// Gives the keyboard to `pane`, taking it from the terminal.
     pub(super) fn focus_pane(&mut self, pane: PaneId) {
         self.panes.set_focus(pane);
+        self.follow_focused_file();
         self.editor_focused = true;
         self.terminal_focused = false;
         self.changes_focused = false;
         self.tree_focused = false;
+    }
+
+    /// Remembers the active file after focus or a tab changes.
+    pub(super) fn follow_focused_file(&mut self) {
+        if let (Some(scope), Some(file)) = (self.scope(), self.active_file_id()) {
+            self.outlines.follow(scope, file, self.panes.focus());
+        }
     }
 
     /// Opens `file` in `pane`, as a preview or to stay.
@@ -181,6 +189,7 @@ impl App {
             Item::Image(image) => self.images.is_preview(image),
             Item::Change(scope, change) => self.is_change_preview(scope, change),
             Item::Rendered(_)
+            | Item::Outline(_)
             | Item::Review(_)
             | Item::Excerpts(_)
             | Item::Search(_)
@@ -242,6 +251,7 @@ impl App {
         }
         self.editor_focused = true;
         self.terminal_focused = false;
+        self.follow_focused_file();
         self.store();
     }
 
@@ -259,6 +269,7 @@ impl App {
             self.editor_focused = true;
             self.terminal_focused = false;
             self.sweep();
+            self.follow_focused_file();
             self.store();
         }
     }
@@ -277,6 +288,7 @@ impl App {
             Item::File(file) | Item::Rendered(file) => self.editor.scope_of(file),
             Item::Image(image) => self.images.scope_of(image),
             Item::Review(scope)
+            | Item::Outline(scope)
             | Item::Change(scope, _)
             | Item::Excerpts(scope)
             | Item::Search(scope)
@@ -483,6 +495,7 @@ impl App {
         self.panes.close_empty();
         self.remember_closed(&before);
         self.sweep();
+        self.follow_focused_file();
     }
 
     /// Takes down every file that was held before and is not held now.
@@ -574,6 +587,19 @@ impl App {
                     ..SavedTab::default()
                 });
             }
+            if matches!(item, Item::Outline(_)) {
+                return Some(SavedTab {
+                    kind: SavedKind::Outline,
+                    project,
+                    worktree,
+                    path: self
+                        .outlines
+                        .followed(scope)
+                        .and_then(|file| self.editor.path(file))
+                        .unwrap_or_default(),
+                    ..SavedTab::default()
+                });
+            }
             if matches!(item, Item::Search(_)) {
                 return Some(SavedTab {
                     kind: SavedKind::Search,
@@ -626,6 +652,7 @@ impl App {
         let agents = &mut self.agents;
         let sessions = &self.sessions;
         let bootstrap = &self.preferences.bootstrap;
+        let mut followed_outlines = Vec::new();
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
             if tab.kind == SavedKind::Settings {
                 return Some((None, Item::Settings));
@@ -661,6 +688,12 @@ impl App {
             }
             if tab.kind == SavedKind::Review {
                 return Some((Some(scope), Item::Review(scope)));
+            }
+            if tab.kind == SavedKind::Outline {
+                if !tab.path.as_os_str().is_empty() {
+                    followed_outlines.push((scope, tab.path.clone()));
+                }
+                return Some((Some(scope), Item::Outline(scope)));
             }
             if tab.kind == SavedKind::Excerpts {
                 reviews
@@ -700,6 +733,19 @@ impl App {
             }
             Some((Some(scope), Item::File(file)))
         });
+        for (scope, path) in followed_outlines {
+            let Some(file) = self.editor.opened(scope, &path) else {
+                continue;
+            };
+            let pane = self.panes.panes().into_iter().find(|pane| {
+                self.panes
+                    .pane(*pane)
+                    .is_some_and(|pane| pane.items().any(|item| item == Item::File(file)))
+            });
+            if let Some(pane) = pane {
+                self.outlines.follow(scope, file, pane);
+            }
+        }
         let unread = self
             .reviews
             .iter()
@@ -765,6 +811,7 @@ impl App {
             .filter_map(Item::session)
             .collect::<BTreeSet<_>>();
         self.editor.retain(&files);
+        self.outlines.retain(|file| files.contains(&file));
         self.agents.retain(&sessions);
         self.sweep_errands();
         if let Some(crate::app::Writing::Prompt(open)) = self.writing
@@ -845,6 +892,7 @@ impl App {
                 Item::Image(image) => self.images.keep(image),
                 Item::Change(project, change) => self.keep_change(project, change),
                 Item::Rendered(_)
+                | Item::Outline(_)
                 | Item::Review(_)
                 | Item::Excerpts(_)
                 | Item::Search(_)
@@ -992,6 +1040,21 @@ impl App {
                 item,
                 name: format!("Preview {}", self.editor.entry(file)?.name),
                 icon: IconName::Eye,
+                dirty: false,
+                preview: false,
+                pinned: false,
+            }),
+            Item::Outline(scope) => Some(TabEntry {
+                item,
+                name: self
+                    .outlines
+                    .followed(scope)
+                    .and_then(|file| self.editor.entry(file))
+                    .map_or_else(
+                        || "Outline".to_owned(),
+                        |entry| format!("Outline · {}", entry.name),
+                    ),
+                icon: IconName::Collapse,
                 dirty: false,
                 preview: false,
                 pinned: false,
@@ -1286,6 +1349,9 @@ impl App {
                 }
                 None => Content::Empty,
             },
+            Some(Item::Outline(scope)) => {
+                Content::Built(Box::new(self.outline_content(theme, pane, scope)))
+            }
             Some(Item::Excerpts(scope)) => match self.excerpts.get(&scope) {
                 Some(excerpts) => Content::Excerpts(excerpts.clone()),
                 None => Content::Empty,

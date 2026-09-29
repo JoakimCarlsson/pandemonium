@@ -26,7 +26,7 @@ use crate::hint::Hint;
 use crate::history::History;
 use crate::indent::Indent;
 use crate::language::Language;
-use crate::lsp::Lens;
+use crate::lsp::{Lens, Symbol};
 use crate::syntax::{Highlight, Highlights, Syntax};
 
 use self::memo::Memo;
@@ -447,6 +447,54 @@ impl Buffer {
         self.syntax
             .as_ref()
             .map_or_else(Vec::new, |syntax| syntax.nodes(&self.text, keep))
+    }
+
+    /// Named declarations in syntax order, nested by their source ranges.
+    pub fn declarations(&self) -> Vec<Symbol> {
+        let mut parents: Vec<Range<Position>> = Vec::new();
+        self.syntax_nodes(&crate::syntax::is_declaration)
+            .into_iter()
+            .filter_map(|node| {
+                let mut name = node.name?;
+                let kind = if node.kind.contains("impl") {
+                    name = format!("impl {name}");
+                    "impl"
+                } else if node.kind.contains("struct") {
+                    "struct"
+                } else if node.kind.contains("class") {
+                    "class"
+                } else if node.kind.contains("trait") {
+                    "trait"
+                } else if node.kind.contains("enum") {
+                    "enum"
+                } else if node.kind.contains("method") {
+                    "method"
+                } else if node.kind.contains("function") {
+                    "function"
+                } else if node.kind.contains("module") || node.kind.contains("mod_item") {
+                    "module"
+                } else {
+                    "symbol"
+                };
+                while parents.last().is_some_and(|parent| {
+                    node.range.start < parent.start || node.range.end > parent.end
+                }) {
+                    parents.pop();
+                }
+                let depth = parents.len();
+                let position = node.range.start;
+                let range = node.range;
+                parents.push(range.clone());
+                Some(Symbol {
+                    name,
+                    detail: String::new(),
+                    kind,
+                    position,
+                    range,
+                    depth,
+                })
+            })
+            .collect()
     }
 
     /// The nodes of the syntax tree whose kind `keep` accepts that hold

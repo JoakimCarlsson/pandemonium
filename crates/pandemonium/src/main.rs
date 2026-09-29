@@ -28,6 +28,7 @@ mod markdown;
 mod message;
 mod notice;
 mod onboarding;
+mod outline;
 mod panel;
 mod panes;
 mod picker;
