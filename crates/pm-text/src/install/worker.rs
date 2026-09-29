@@ -227,7 +227,11 @@ fn find_executable(directory: &Path, command: &str) -> Result<Option<PathBuf>, S
 
 /// Finds a required installation tool or explains its absence.
 fn tool(name: &str, command: &str) -> Result<PathBuf, String> {
-    program::installed(name).ok_or_else(|| format!("Installing {command} needs {name}, which was not found. Install {}, or install the server yourself.", if name == "npm" { "Node.js" } else { name }))
+    program::installed(name).ok_or_else(|| format!("Installing {command} needs {name}, which was not found. Install {}, or install the server yourself.", match name {
+        "npm" => "Node.js",
+        "go" => "Go",
+        name => name,
+    }))
 }
 
 /// Runs an installer and includes its own stderr in a failure.

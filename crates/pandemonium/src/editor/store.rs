@@ -1223,6 +1223,11 @@ impl Files {
         self.servers.installable(language)
     }
 
+    /// What the servers for `language` need that the editor cannot install.
+    pub fn server_needs(&self, language: pm_text::Language) -> Option<&'static str> {
+        self.servers.needs(language)
+    }
+
     /// Starts installed servers again for every open document of `language`.
     pub fn reopen_language(&mut self, language: pm_text::Language) {
         self.servers.reopen(language);

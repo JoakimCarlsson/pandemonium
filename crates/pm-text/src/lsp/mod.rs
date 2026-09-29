@@ -224,6 +224,21 @@ impl Servers {
             .find(|server| server.install.is_some())
     }
 
+    /// What the servers for `language` need that the editor cannot install,
+    /// when none of them is installed or installable.
+    pub fn needs(&self, language: Language) -> Option<&'static str> {
+        let wanted = self.wanted(language);
+        if wanted
+            .iter()
+            .any(|server| server.install.is_some() || installed(server.command).is_some())
+        {
+            return None;
+        }
+        wanted
+            .iter()
+            .find_map(|server| crate::install::needs(server.command))
+    }
+
     /// Whether the configured list for `language` includes `command`.
     pub fn uses(&self, language: Language, command: &str) -> bool {
         self.wanted(language)

@@ -305,10 +305,32 @@ pub const fn recipe(command: &str) -> Option<Recipe> {
     if same(command, "vscode-json-language-server")
         || same(command, "vscode-css-language-server")
         || same(command, "vscode-html-language-server")
+        || same(command, "vscode-eslint-language-server")
     {
         return Some(Recipe::Npm {
             package: "vscode-langservers-extracted",
             version: "4.10.0",
+            extra: &[],
+        });
+    }
+    if same(command, "tsc") {
+        return Some(Recipe::Npm {
+            package: "typescript",
+            version: "7.0.2",
+            extra: &[],
+        });
+    }
+    if same(command, "vtsls") {
+        return Some(Recipe::Npm {
+            package: "@vtsls/language-server",
+            version: "0.3.0",
+            extra: &[],
+        });
+    }
+    if same(command, "pyright-langserver") {
+        return Some(Recipe::Npm {
+            package: "pyright",
+            version: "1.1.414",
             extra: &[],
         });
     }
@@ -329,6 +351,29 @@ pub const fn recipe(command: &str) -> Option<Recipe> {
             package: "python-lsp-server",
             version: "1.15.0",
         });
+    }
+    None
+}
+
+/// What `command` needs that the editor cannot install for it, and how to
+/// get it, for a server with no recipe because it runs on a runtime of its own.
+pub const fn needs(command: &str) -> Option<&'static str> {
+    if same(command, "jdtls") {
+        return Some("jdtls needs Java 21 or newer; install a JDK and jdtls yourself.");
+    }
+    if same(command, "kotlin-lsp") || same(command, "kotlin-language-server") {
+        return Some("The Kotlin server needs Java; install a JDK and kotlin-lsp yourself.");
+    }
+    if same(command, "csharp-ls") {
+        return Some(
+            "csharp-ls needs .NET; install the .NET SDK, then run dotnet tool install -g csharp-ls.",
+        );
+    }
+    if same(command, "OmniSharp") {
+        return Some("OmniSharp needs .NET; install the .NET SDK and OmniSharp yourself.");
+    }
+    if same(command, "ruby-lsp") {
+        return Some("ruby-lsp needs Ruby; install Ruby, then run gem install ruby-lsp.");
     }
     None
 }

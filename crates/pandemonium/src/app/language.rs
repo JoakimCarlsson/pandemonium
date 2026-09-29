@@ -311,25 +311,22 @@ impl App {
         if document.borrow().is_served() {
             return false;
         }
-        let (language, installable) = document.borrow().buffer().language().map_or_else(
-            || (String::from("this file"), false),
+        let (language, advice) = document.borrow().buffer().language().map_or_else(
+            || (String::from("this file"), None),
             |language| {
-                (
-                    language.name().to_owned(),
-                    self.editor.installable_server(language).is_some(),
-                )
+                let advice = match self.editor.installable_server(language) {
+                    Some(_) => Some("Install it from the palette."),
+                    None => self.editor.server_needs(language),
+                };
+                (language.name().to_owned(), advice)
             },
         );
 
         let mut hint = Shown::at(self.cursor_point());
-        hint.said = Some(format!(
-            "No language server is running for {language}.{}",
-            if installable {
-                " Install it from the palette."
-            } else {
-                ""
-            }
-        ));
+        hint.said = Some(match advice {
+            Some(advice) => format!("No language server is running for {language}. {advice}"),
+            None => format!("No language server is running for {language}."),
+        });
         self.hint = Some(hint);
         self.request_redraw();
         true
