@@ -10,9 +10,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use pm_core::ops;
 use pm_text::{
     Answer, Asked, Calls, Client, FileEdit, Handle, Lens, Location, NamedLocation, Position,
-    Request,
+    Request, WorkspaceChange,
 };
 
 use crate::app::App;
@@ -846,7 +847,7 @@ impl App {
             for request in client.take_workspace_edits() {
                 let supported = request.supported;
                 let edits = request.edits.clone();
-                let success = supported && self.apply_edits(edits);
+                let success = supported && self.apply_changes(edits);
                 client.answer_workspace_edit(request, success);
                 applied = true;
             }
@@ -883,7 +884,9 @@ impl App {
             .editor
             .get(pending.file)
             .is_some_and(|document| document.borrow().buffer().version() != pending.version);
-        if stale && (matches!(answer, Answer::Edits(_)) || pending.request == Request::CodeActions)
+        if stale
+            && (matches!(answer, Answer::Edits(_) | Answer::Changes(_))
+                || pending.request == Request::CodeActions)
         {
             if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
                 self.finish_save();
@@ -935,6 +938,9 @@ impl App {
             Answer::Edits(files) => {
                 self.apply_edits(files);
                 self.save_once_formatted(pending);
+            }
+            Answer::Changes(changes) => {
+                self.apply_changes(changes);
             }
             Answer::Hints(hints) => {
                 if let Some(document) = self.editor.get(pending.file) {
@@ -1370,38 +1376,166 @@ impl App {
         }
         let client = offered.client.clone();
         let action = offered.action.clone();
-        if self.apply_edits(action.edits)
+        if self.apply_changes(action.edits)
             && let Some(command) = action.command
         {
             client.execute_command(command);
         }
     }
 
-    /// Makes the changes a rename, a formatter or a fix asked for.
+    /// Makes the changes a formatter asked for.
+    pub(super) fn apply_edits(&mut self, files: Vec<FileEdit>) -> bool {
+        self.apply_changes(files.into_iter().map(WorkspaceChange::Edit).collect())
+    }
+
+    /// Makes the changes a rename or a fix asked for, in the order asked.
     ///
     /// A file that is open takes its changes through the document it is open
     /// as, so the cursor, the undo history and the server all move with it; a
-    /// file that is not open is rewritten on disk.
-    pub(super) fn apply_edits(&mut self, files: Vec<FileEdit>) -> bool {
+    /// file that is not open is rewritten on disk. Files are made, moved and
+    /// taken away the way the file tree does it, and the tabs showing them
+    /// follow. Nothing is done at all when a file to be moved or taken away
+    /// has changes the reader has not saved: those are the reader's, and a
+    /// server's rename is not something to lose them to.
+    pub(super) fn apply_changes(&mut self, changes: Vec<WorkspaceChange>) -> bool {
+        if let Some(unsaved) = changes.iter().find_map(|change| self.unsaved_under(change)) {
+            self.notices.trouble(
+                format!(
+                    "Save {} before a server moves or removes it.",
+                    unsaved.display()
+                ),
+                None,
+            );
+            return false;
+        }
         let mut applied = true;
-        for FileEdit { path, edits } in files {
-            if edits.is_empty() {
-                continue;
+        let mut shifted = false;
+        for change in changes {
+            match change {
+                WorkspaceChange::Edit(FileEdit { path, edits }) => {
+                    applied &= self.edit_file(&path, edits);
+                }
+                WorkspaceChange::Create {
+                    path,
+                    overwrite,
+                    ignore_if_exists,
+                } => {
+                    shifted = true;
+                    applied &= match std::fs::symlink_metadata(&path).is_ok() {
+                        true if overwrite => std::fs::write(&path, "").is_ok(),
+                        true => ignore_if_exists,
+                        false => ops::create_file(&path).is_ok(),
+                    };
+                }
+                WorkspaceChange::Rename {
+                    from,
+                    to,
+                    overwrite,
+                    ignore_if_exists,
+                } => {
+                    shifted = true;
+                    self.save_under(&from);
+                    let taken = std::fs::symlink_metadata(&to).is_ok() && from != to;
+                    let moved = match taken {
+                        true if ignore_if_exists && !overwrite => continue,
+                        true if overwrite => {
+                            ops::remove(&to).and_then(|()| ops::rename(&from, &to))
+                        }
+                        _ => ops::rename(&from, &to),
+                    };
+                    applied &= moved.is_ok();
+                    if moved.is_ok() {
+                        self.retarget_tabs(&from, &to);
+                    }
+                }
+                WorkspaceChange::Delete {
+                    path,
+                    ignore_if_not_exists,
+                } => {
+                    shifted = true;
+                    applied &= match std::fs::symlink_metadata(&path).is_ok() {
+                        true => ops::trash(&path).is_ok(),
+                        false => ignore_if_not_exists,
+                    };
+                    self.close_tabs_of(&path);
+                }
             }
-            let opened = self
-                .scopes()
-                .into_iter()
-                .find_map(|scope| self.editor.opened(scope, &path));
-
-            match opened.and_then(|file| self.editor.get(file)) {
-                Some(document) => document
-                    .borrow_mut()
-                    .edit(|buffer| buffer.apply_edits(edits)),
-                None => applied &= write_through(&path, edits),
-            }
+        }
+        if shifted {
+            self.reread_worktree();
         }
         self.store();
         applied
+    }
+
+    /// Makes `edits` to the file at `path`: through its document when it is
+    /// open, on disk when it is not.
+    fn edit_file(
+        &mut self,
+        path: &std::path::Path,
+        edits: Vec<(std::ops::Range<Position>, String)>,
+    ) -> bool {
+        if edits.is_empty() {
+            return true;
+        }
+        match self
+            .opened_file(path)
+            .and_then(|file| self.editor.get(file))
+        {
+            Some(document) => {
+                document
+                    .borrow_mut()
+                    .edit(|buffer| buffer.apply_edits(edits));
+                true
+            }
+            None => write_through(path, edits),
+        }
+    }
+
+    /// The open file at `path`, in whichever worktree has it open.
+    fn opened_file(&self, path: &std::path::Path) -> Option<FileId> {
+        self.scopes()
+            .into_iter()
+            .find_map(|scope| self.editor.opened(scope, path))
+    }
+
+    /// The open files at or under `path`.
+    fn opened_under(&self, path: &std::path::Path) -> Vec<FileId> {
+        self.panes
+            .held()
+            .into_iter()
+            .filter_map(|item| item.file())
+            .filter(|file| {
+                self.editor
+                    .path(*file)
+                    .is_some_and(|open| open.starts_with(path))
+            })
+            .collect()
+    }
+
+    /// A file with unsaved changes that `change` would move or take away.
+    fn unsaved_under(&self, change: &WorkspaceChange) -> Option<PathBuf> {
+        let path = match change {
+            WorkspaceChange::Rename { from, .. } => from,
+            WorkspaceChange::Delete { path, .. } => path,
+            WorkspaceChange::Edit(_) | WorkspaceChange::Create { .. } => return None,
+        };
+        self.opened_under(path)
+            .into_iter()
+            .find(|file| self.editor.is_dirty(*file))
+            .and_then(|file| self.editor.path(file))
+    }
+
+    /// Writes the open files at or under `path` to disk, so that what a
+    /// server changed in them moves with them.
+    fn save_under(&mut self, path: &std::path::Path) {
+        for file in self.opened_under(path) {
+            if self.editor.is_dirty(file)
+                && let Some(root) = self.worktree_of(file)
+            {
+                self.editor.save(file, &root);
+            }
+        }
     }
 
     /// The place `at` in the file at `path` comes to, in whichever worktree holds it.
@@ -1434,7 +1568,7 @@ impl App {
 }
 
 /// Makes `edits` to the file at `path`, which nothing has open.
-fn write_through(path: &PathBuf, edits: Vec<(std::ops::Range<Position>, String)>) -> bool {
+fn write_through(path: &std::path::Path, edits: Vec<(std::ops::Range<Position>, String)>) -> bool {
     let Ok(mut buffer) = pm_text::Buffer::open(path) else {
         return false;
     };

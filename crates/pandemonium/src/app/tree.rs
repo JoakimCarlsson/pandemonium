@@ -757,7 +757,7 @@ impl App {
     ///
     /// A file with changes that are not on disk keeps its tab where it is,
     /// so nothing typed into it is lost to a rename.
-    fn retarget_tabs(&mut self, from: &Path, to: &Path) {
+    pub(super) fn retarget_tabs(&mut self, from: &Path, to: &Path) {
         let moving = self
             .panes
             .held()
@@ -784,7 +784,7 @@ impl App {
 
     /// Closes every tab showing a file at or under `path`, having nothing
     /// unsaved in it.
-    fn close_tabs_of(&mut self, path: &Path) {
+    pub(super) fn close_tabs_of(&mut self, path: &Path) {
         let gone = self
             .panes
             .held()

@@ -148,8 +148,8 @@ impl State {
 
 /// An edit requested by a server, awaiting application by the window.
 pub struct WorkspaceEditRequest {
-    /// The file edits the server requested.
-    pub edits: Vec<crate::FileEdit>,
+    /// The changes the server requested, in the order they are to be made.
+    pub edits: Vec<crate::WorkspaceChange>,
     /// The request identifier to answer after applying them.
     id: Value,
     /// Whether the request contained only supported text edits.

@@ -26,8 +26,8 @@ use lsp_types::{
     DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
     Documentation, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents,
     HoverParams, InlayHint, InlayHintLabel, InlayHintParams, InsertTextFormat, MarkedString, OneOf,
-    PartialResultParams, ReferenceContext, ReferenceParams, RenameParams, SemanticTokensParams,
-    SemanticTokensResult, SignatureHelpParams, SymbolInformation, SymbolKind,
+    PartialResultParams, ReferenceContext, ReferenceParams, RenameParams, ResourceOp,
+    SemanticTokensParams, SemanticTokensResult, SignatureHelpParams, SymbolInformation, SymbolKind,
     TextDocumentIdentifier, TextDocumentPositionParams, TextDocumentSaveReason, TextEdit,
     WillSaveTextDocumentParams, WorkDoneProgressParams, WorkspaceEdit, WorkspaceSymbolParams,
     WorkspaceSymbolResponse,
@@ -455,7 +455,7 @@ impl Request {
                     .filter_map(code_action)
                     .collect(),
             ),
-            Self::Rename(_) => Answer::Edits(
+            Self::Rename(_) => Answer::Changes(
                 rpc::result::<Rename>(result)?
                     .map(|edit| workspace_edit(&edit))
                     .unwrap_or_default(),
@@ -549,8 +549,10 @@ pub enum Answer {
     Signature(String),
     /// The fixes and refactors offered where the cursor is.
     CodeActions(Vec<CodeAction>),
-    /// Changes to make to files, from a rename or a formatter.
+    /// Changes to make to one file, from a formatter.
     Edits(Vec<FileEdit>),
+    /// Changes to make across the workspace, in order, from a rename.
+    Changes(Vec<WorkspaceChange>),
     /// The symbols a file declares.
     Symbols(Vec<Symbol>),
     /// What the server would write into the lines it was asked about.
@@ -596,10 +598,11 @@ impl Answer {
             Self::Resolved(item) => decode_completion(item, path, files),
             Self::CodeActions(actions) => {
                 for action in actions {
-                    decode_edits(&mut action.edits, files);
+                    decode_changes(&mut action.edits, files);
                 }
             }
             Self::Edits(edited) => decode_edits(edited, files),
+            Self::Changes(changes) => decode_changes(changes, files),
             Self::Symbols(symbols) => {
                 for symbol in symbols {
                     symbol.position = files.decode(path, symbol.position);
@@ -648,6 +651,7 @@ impl Answer {
             Self::Resolved(_) => false,
             Self::CodeActions(actions) => actions.is_empty(),
             Self::Edits(files) => files.iter().all(|file| file.edits.is_empty()),
+            Self::Changes(changes) => changes.iter().all(WorkspaceChange::is_empty),
             Self::Symbols(symbols) => symbols.is_empty(),
             Self::Hints(hints) => hints.is_empty(),
             Self::Semantics(spans) => spans.is_empty(),
@@ -665,6 +669,15 @@ fn decode_completion(item: &mut Completion, path: &Path, files: &mut Files) {
     item.range = item.range.clone().map(|span| files.decode_span(path, span));
     for (span, _) in &mut item.extra {
         *span = files.decode_span(path, span.clone());
+    }
+}
+
+/// Counts the places every edit among `changes` names the editor's way.
+pub(super) fn decode_changes(changes: &mut [WorkspaceChange], files: &mut Files) {
+    for change in changes {
+        if let WorkspaceChange::Edit(file) = change {
+            decode_edits(std::slice::from_mut(file), files);
+        }
     }
 }
 
@@ -723,8 +736,8 @@ pub struct Completion {
 pub struct CodeAction {
     /// What the menu calls it.
     pub title: String,
-    /// The changes it makes, when it carries them itself.
-    pub edits: Vec<FileEdit>,
+    /// The changes it makes, in order, when it carries them itself.
+    pub edits: Vec<WorkspaceChange>,
     /// The server command to run after applying the edit, when present.
     pub command: Option<Command>,
 }
@@ -745,6 +758,48 @@ pub struct FileEdit {
     pub path: PathBuf,
     /// The spans to replace, and what to put in their place.
     pub edits: Vec<(Range<Position>, String)>,
+}
+
+/// One change a server asks for across the workspace: text to change in a
+/// file, or a file to make, move or take away.
+#[derive(Clone, Debug)]
+pub enum WorkspaceChange {
+    /// Text to change in one file.
+    Edit(FileEdit),
+    /// A file to make.
+    Create {
+        /// Where it goes.
+        path: PathBuf,
+        /// Whether a file already there is emptied rather than kept.
+        overwrite: bool,
+        /// Whether a file already there is left alone rather than refused.
+        ignore_if_exists: bool,
+    },
+    /// A file or directory to move.
+    Rename {
+        /// Where it is.
+        from: PathBuf,
+        /// Where it goes.
+        to: PathBuf,
+        /// Whether whatever is already at `to` is replaced rather than refused.
+        overwrite: bool,
+        /// Whether whatever is already at `to` means the move is skipped.
+        ignore_if_exists: bool,
+    },
+    /// A file or directory to take away.
+    Delete {
+        /// Where it is.
+        path: PathBuf,
+        /// Whether nothing being there is fine rather than a failure.
+        ignore_if_not_exists: bool,
+    },
+}
+
+impl WorkspaceChange {
+    /// Whether this changes nothing: an edit with no edits in it.
+    fn is_empty(&self) -> bool {
+        matches!(self, Self::Edit(file) if file.edits.is_empty())
+    }
 }
 
 /// One symbol a file declares.
@@ -995,75 +1050,89 @@ fn code_action(offered: CodeActionOrCommand) -> Option<CodeAction> {
     })
 }
 
-/// The changes a workspace edit asks for, file by file.
-pub(super) fn workspace_edit(edit: &WorkspaceEdit) -> Vec<FileEdit> {
-    let mut files = Vec::new();
+/// The changes a workspace edit asks for, in the order they are to be made.
+///
+/// Its document changes are an ordered list — a file is made before it is
+/// written into, and moved after the edits that name it by its old name —
+/// and are taken in that order, after the changes it lists by file.
+pub(super) fn workspace_edit(edit: &WorkspaceEdit) -> Vec<WorkspaceChange> {
+    let mut changes = Vec::new();
     for (uri, edits) in edit.changes.iter().flatten() {
         if let Some(path) = uri::path_of(uri) {
-            files.push(FileEdit {
+            changes.push(WorkspaceChange::Edit(FileEdit {
                 path,
                 edits: text_edits(edits.clone()),
-            });
+            }));
         }
     }
-    let documents = match &edit.document_changes {
-        None => Vec::new(),
-        Some(DocumentChanges::Edits(edits)) => edits.iter().collect(),
-        Some(DocumentChanges::Operations(operations)) => operations
-            .iter()
-            .filter_map(|operation| match operation {
-                DocumentChangeOperation::Edit(edit) => Some(edit),
-                DocumentChangeOperation::Op(_) => None,
-            })
-            .collect(),
-    };
-    for document in documents {
-        if let Some(path) = uri::path_of(&document.text_document.uri) {
-            files.push(FileEdit {
-                path,
-                edits: document
-                    .edits
-                    .iter()
-                    .map(|edit| match edit {
-                        OneOf::Left(edit) => edit,
-                        OneOf::Right(annotated) => &annotated.text_edit,
-                    })
-                    .map(|edit| (range(edit.range), edit.new_text.clone()))
-                    .collect(),
-            });
-        }
-    }
-    files
-}
-
-/// Whether the editor can make every change `edit` asks for.
-///
-/// Files are changed, not made, moved or removed: an edit that asks for
-/// any of those is one the editor would only make part of.
-pub(super) fn is_supported(edit: &WorkspaceEdit) -> bool {
     let operations = match &edit.document_changes {
-        Some(DocumentChanges::Operations(operations)) => operations.as_slice(),
-        _ => &[],
-    };
-    let changes = edit
-        .changes
-        .iter()
-        .flatten()
-        .all(|(uri, _)| uri::path_of(uri).is_some());
-    let documents = match &edit.document_changes {
+        None => Vec::new(),
         Some(DocumentChanges::Edits(edits)) => edits
             .iter()
-            .all(|edit| uri::path_of(&edit.text_document.uri).is_some()),
-        _ => true,
+            .cloned()
+            .map(DocumentChangeOperation::Edit)
+            .collect(),
+        Some(DocumentChanges::Operations(operations)) => operations.clone(),
     };
-    let operations = operations.iter().all(|operation| match operation {
-        DocumentChangeOperation::Edit(edit) => uri::path_of(&edit.text_document.uri).is_some(),
-        DocumentChangeOperation::Op(_) => false,
-    });
-    (edit.changes.is_some() || edit.document_changes.is_some())
-        && changes
-        && documents
-        && operations
+    changes.extend(operations.into_iter().filter_map(operation));
+    changes
+}
+
+/// One document change, in the editor's own terms, if it names files the
+/// editor can reach.
+fn operation(operation: DocumentChangeOperation) -> Option<WorkspaceChange> {
+    Some(match operation {
+        DocumentChangeOperation::Edit(document) => WorkspaceChange::Edit(FileEdit {
+            path: uri::path_of(&document.text_document.uri)?,
+            edits: document
+                .edits
+                .into_iter()
+                .map(|edit| match edit {
+                    OneOf::Left(edit) => edit,
+                    OneOf::Right(annotated) => annotated.text_edit,
+                })
+                .map(|edit| (range(edit.range), edit.new_text))
+                .collect(),
+        }),
+        DocumentChangeOperation::Op(ResourceOp::Create(create)) => {
+            let options = create.options.as_ref();
+            WorkspaceChange::Create {
+                path: uri::path_of(&create.uri)?,
+                overwrite: options.and_then(|options| options.overwrite) == Some(true),
+                ignore_if_exists: options.and_then(|options| options.ignore_if_exists)
+                    == Some(true),
+            }
+        }
+        DocumentChangeOperation::Op(ResourceOp::Rename(rename)) => {
+            let options = rename.options.as_ref();
+            WorkspaceChange::Rename {
+                from: uri::path_of(&rename.old_uri)?,
+                to: uri::path_of(&rename.new_uri)?,
+                overwrite: options.and_then(|options| options.overwrite) == Some(true),
+                ignore_if_exists: options.and_then(|options| options.ignore_if_exists)
+                    == Some(true),
+            }
+        }
+        DocumentChangeOperation::Op(ResourceOp::Delete(delete)) => WorkspaceChange::Delete {
+            path: uri::path_of(&delete.uri)?,
+            ignore_if_not_exists: delete
+                .options
+                .and_then(|options| options.ignore_if_not_exists)
+                == Some(true),
+        },
+    })
+}
+
+/// Whether the editor can make every change `edit` asks for: whether every
+/// file it names is one the editor can reach.
+pub(super) fn is_supported(edit: &WorkspaceEdit) -> bool {
+    let named = edit.changes.iter().flatten().count()
+        + match &edit.document_changes {
+            None => 0,
+            Some(DocumentChanges::Edits(edits)) => edits.len(),
+            Some(DocumentChanges::Operations(operations)) => operations.len(),
+        };
+    named > 0 && workspace_edit(edit).len() == named
 }
 
 /// The spans one file is asked to replace, and what with.

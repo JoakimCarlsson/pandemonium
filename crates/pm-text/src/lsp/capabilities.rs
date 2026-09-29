@@ -24,16 +24,16 @@ use lsp_types::{
     ImplementationProviderCapability, InitializeParams, InlayHintClientCapabilities,
     InlayHintWorkspaceClientCapabilities, MarkupKind, OneOf, PositionEncodingKind,
     PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities, Registration,
-    RenameClientCapabilities, SaveOptions, SemanticTokenType, SemanticTokensClientCapabilities,
-    SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensServerCapabilities, SemanticTokensWorkspaceClientCapabilities,
-    ServerCapabilities, SignatureHelpClientCapabilities, TextDocumentChangeRegistrationOptions,
-    TextDocumentClientCapabilities, TextDocumentRegistrationOptions,
-    TextDocumentSaveRegistrationOptions, TextDocumentSyncCapability,
-    TextDocumentSyncClientCapabilities, TextDocumentSyncKind, TextDocumentSyncSaveOptions,
-    TokenFormat, TypeDefinitionProviderCapability, WindowClientCapabilities,
-    WorkspaceClientCapabilities, WorkspaceEditClientCapabilities, WorkspaceFolder,
-    WorkspaceSymbolClientCapabilities,
+    RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenType,
+    SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
+    SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
+    TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
+    TextDocumentRegistrationOptions, TextDocumentSaveRegistrationOptions,
+    TextDocumentSyncCapability, TextDocumentSyncClientCapabilities, TextDocumentSyncKind,
+    TextDocumentSyncSaveOptions, TokenFormat, TypeDefinitionProviderCapability,
+    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+    WorkspaceFolder, WorkspaceSymbolClientCapabilities,
 };
 use serde_json::Value;
 
@@ -651,6 +651,11 @@ fn workspace() -> WorkspaceClientCapabilities {
         apply_edit: Some(true),
         workspace_edit: Some(WorkspaceEditClientCapabilities {
             document_changes: Some(true),
+            resource_operations: Some(vec![
+                ResourceOperationKind::Create,
+                ResourceOperationKind::Rename,
+                ResourceOperationKind::Delete,
+            ]),
             ..WorkspaceEditClientCapabilities::default()
         }),
         did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {

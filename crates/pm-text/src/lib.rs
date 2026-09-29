@@ -30,6 +30,6 @@ pub use indent::Indent;
 pub use language::{Language, NO_OPTIONS, Server};
 pub use lsp::{
     Answer, Asked, Calls, Client, CodeAction, Completion, FileEdit, Handle, Lens, Location,
-    NamedLocation, Progress, Request, Servers, Symbol, Watched,
+    NamedLocation, Progress, Request, Servers, Symbol, Watched, WorkspaceChange,
 };
 pub use syntax::{Highlight, Highlights, SyntaxNode, highlight};

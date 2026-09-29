@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 pub use answer::{
     Answer, Calls, CodeAction, Completion, FileEdit, Handle, Lens, Location, NamedLocation,
-    Request, Symbol,
+    Request, Symbol, WorkspaceChange,
 };
 pub use client::{Asked, Client};
 pub use progress::Progress;
