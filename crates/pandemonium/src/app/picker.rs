@@ -135,6 +135,7 @@ impl App {
             }
             (Kind::Watch, _) => self.save_watch(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
+            (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
             (Kind::NewSession, _) => self.start_session(&typed),
             (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
                 self.toggle_session_repository(root, typed, place);
@@ -195,6 +196,15 @@ impl App {
             Choice::SessionRepository(_) => {}
             Choice::StartSession => self.cut_session(),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
+            Choice::Stash(index) => {
+                if let Some(action) = self.stash_action.take() {
+                    if action == crate::review::StashAction::Drop {
+                        self.apply(crate::message::Message::DropStash(index));
+                    } else {
+                        self.change_by(|review| review.stash_action(index, action));
+                    }
+                }
+            }
             Choice::FetchRemote(project, remote) => {
                 self.run_in(
                     self.git_scope(project),
@@ -254,6 +264,32 @@ impl App {
             Kind::Processes => self.process_rows(),
             Kind::AttachAdapters => self.attach_adapter_rows(),
             Kind::Tasks => self.task_rows(),
+            Kind::Stashes => self.review().map_or_else(Vec::new, |review| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |time| time.as_secs());
+                review
+                    .stashes()
+                    .into_iter()
+                    .map(|stash| {
+                        let age = now.saturating_sub(stash.when.max(0) as u64);
+                        let age = if age < 3600 {
+                            format!("{}m ago", age / 60)
+                        } else if age < 86400 {
+                            format!("{}h ago", age / 3600)
+                        } else {
+                            format!("{}d ago", age / 86400)
+                        };
+                        Row {
+                            section: None,
+                            label: format!("stash@{{{}}} {}", stash.index, stash.message),
+                            detail: age,
+                            choice: Choice::Stash(stash.index),
+                            enabled: true,
+                        }
+                    })
+                    .collect()
+            }),
             Kind::SessionRepositories => self.session_repository_rows(),
             Kind::Modes => self
                 .focused_talk()
@@ -273,6 +309,7 @@ impl App {
             | Kind::BreakpointLog
             | Kind::Watch
             | Kind::NewBranch
+            | Kind::StashMessage
             | Kind::NewSession
             | Kind::CloneUrl
             | Kind::LinkedPath

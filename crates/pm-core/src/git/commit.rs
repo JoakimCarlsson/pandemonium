@@ -14,6 +14,8 @@ use crate::git::run::{Said, answer, git};
 /// One commit in the recent history of a worktree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Commit {
+    /// The full commit object name.
+    pub object: String,
     /// How the commit's row of the graph is drawn.
     pub lanes: Lanes,
     /// The abbreviated object name.
@@ -45,6 +47,24 @@ pub fn commit(root: &Path, message: &str, tracked: bool) -> Said {
     arguments.push(OsStr::new(message));
 
     git(root, arguments)
+}
+
+/// Rewrites the latest commit with `message` and the staged or tracked changes.
+pub fn amend(root: &Path, message: &str, tracked: bool) -> Said {
+    if message.trim().is_empty() {
+        return Err("A commit needs a message".to_owned());
+    }
+    let mut arguments = vec![OsStr::new("commit"), OsStr::new("--amend")];
+    if tracked {
+        arguments.push(OsStr::new("--all"));
+    }
+    arguments.extend([OsStr::new("-m"), OsStr::new(message)]);
+    git(root, arguments)
+}
+
+/// Applies `object` as a new commit in the worktree at `root`.
+pub fn cherry_pick(root: &Path, object: &str) -> Said {
+    git(root, ["cherry-pick", object])
 }
 
 /// What the last commit of the worktree at `root` was called.
@@ -84,6 +104,7 @@ pub fn history(root: &Path, limit: usize, all: bool) -> Vec<Commit> {
         .into_iter()
         .zip(rows)
         .map(|(commit, lanes)| Commit {
+            object: commit.object,
             lanes,
             id: commit.id,
             refs: commit.refs,

@@ -90,10 +90,12 @@ impl Repository {
 
     /// Takes in what git said the repository held and what led up to it.
     pub(super) fn take(&mut self, reading: RepositoryReading) {
-        if self.unsaid()
-            && let Some(pm_core::Operation::Merge(merge)) = &reading.status.head().operation
-        {
-            self.message.set(&merge.message);
+        if self.unsaid() {
+            match &reading.status.head().operation {
+                Some(pm_core::Operation::Merge(merge)) => self.message.set(&merge.message),
+                Some(pm_core::Operation::CherryPick(pick)) => self.message.set(&pick.message),
+                _ => {}
+            }
         }
         self.status = reading.status;
         self.history = reading.history;
@@ -181,6 +183,14 @@ impl Repository {
             true => &self.history.all,
             false => &self.history.auto,
         }
+    }
+
+    /// Whether the checked-out branch already contains `object`.
+    pub(super) fn contains_commit(&self, object: &str) -> bool {
+        self.history
+            .auto
+            .iter()
+            .any(|commit| commit.object == object)
     }
 
     /// The first visible commit under the selected history filter.

@@ -32,7 +32,11 @@ where
 
     match output.status.success() {
         true => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
-        false => Err(String::from_utf8_lossy(&output.stderr).trim().to_owned()),
+        false => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Err(format!("{stdout}{stderr}").trim().to_owned())
+        }
     }
 }
 

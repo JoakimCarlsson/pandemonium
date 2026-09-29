@@ -11,12 +11,14 @@ pub use files::{
     Disk, Entry, EntryId, FileTree, Row, Touch, Touched, Watcher, ops, walk, walk_each,
 };
 pub use git::{
-    Blame, Branch, Change, ChangeKind, Changed, Commit, Edge, FileStatus, Half, Head, Hunk, Lanes,
-    Line, LineKind, Merge, Operation, Revision, Said, Side, Status, Summary, abort_merge,
-    add_worktree, baseline, blame, branches, changes, clone, commit, committed, contents,
-    create_branch, diff, diffs, discard, discard_all, fetch, fetch_from, force_push, history,
-    last_message, named, operation, pull, push_branch, push_to, remotes, remove_worktree, since,
-    stage, switch_branch, sync, unstage, untracked, worktrees, write_index,
+    Blame, Branch, Change, ChangeKind, Changed, CherryPick, Commit, Edge, FileStatus, Half, Head,
+    Hunk, Lanes, Line, LineKind, Merge, Operation, Rebase, Revision, Said, Side, Stash, Status,
+    Summary, abort_merge, abort_operation, add_worktree, amend, baseline, blame, branches, changes,
+    cherry_pick, clone, commit, committed, contents, continue_operation, create_branch, diff,
+    diffs, discard, discard_all, fetch, fetch_from, force_push, history, last_message, named,
+    operation, pull, push_branch, push_to, remotes, remove_worktree, since, skip_operation, stage,
+    stash_apply, stash_drop, stash_pop, stash_push, stashes, switch_branch, sync, unstage,
+    untracked, worktrees, write_index,
 };
 pub use project::{OpenError, Project, ProjectId, Projects, Repository, repositories};
 pub use scope::Scope;

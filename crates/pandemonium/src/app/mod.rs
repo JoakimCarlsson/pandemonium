@@ -376,6 +376,14 @@ pub struct App {
     changes_area: pm_ui::Bounds,
     /// Whether the Graph includes all history references.
     history_all: bool,
+    /// The action requested before opening the stash picker.
+    stash_action: Option<crate::review::StashAction>,
+    /// Whether stashes existed when the source control menu opened.
+    stash_available: bool,
+    /// The full object captured when a history row menu opened.
+    history_menu_object: Option<String>,
+    /// The project and worktree whose history row opened the menu.
+    history_menu_scope: Option<Scope>,
     /// Remote Git work currently running away from the UI thread.
     remote_operation: Option<RemoteOperation>,
     /// When the spinner shown while a remote is waited on last turned.
@@ -733,6 +741,10 @@ impl App {
             history_graph_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             changes_area: pm_ui::Bounds::default(),
             history_all: layout.history_all,
+            stash_action: None,
+            stash_available: false,
+            history_menu_object: None,
+            history_menu_scope: None,
             remote_operation: None,
             spun: std::time::Instant::now(),
             git_results: Arc::new(Mutex::new(Vec::new())),
@@ -1129,6 +1141,18 @@ impl App {
             self.open_menu(MenuTarget::Change);
             return;
         }
+        if let Message::ShowHistoryMenu(repository, row) = message {
+            self.history_menu_scope = self.scope();
+            self.history_menu_object = self
+                .review()
+                .filter(|review| review.active() == repository)
+                .and_then(|review| review.history(self.history_all).get(row))
+                .map(|commit| commit.object.clone());
+            if self.history_menu_object.is_some() {
+                self.open_menu(MenuTarget::History(repository, row));
+            }
+            return;
+        }
         if let Message::ChoosePrompt(place) = message {
             let taken = self.prompt.take().and_then(|asked| asked.taken(place));
             match taken {
@@ -1142,7 +1166,15 @@ impl App {
             return;
         }
         if message == Message::ConfirmAbortMerge {
-            self.change_by(Review::abort_merge);
+            self.change_by(Review::abort_operation);
+            return;
+        }
+        if message == Message::ConfirmAmend {
+            self.change_by(Review::amend);
+            return;
+        }
+        if message == Message::ConfirmSkipOperation {
+            self.change_by(Review::skip_operation);
             return;
         }
         if message == Message::ConfirmDiscard {
@@ -1796,11 +1828,78 @@ impl App {
             Message::StageAll => self.change_by(Review::stage_all),
             Message::UnstageAll => self.change_by(Review::unstage_all),
             Message::Commit => self.change_by(Review::commit),
-            Message::AbortMerge => self.ask_first(crate::prompt::Prompt::asking(
-                "Abort merge?".to_owned(),
-                vec!["The merge resolution will be discarded.".to_owned()],
+            Message::Amend => {
+                let filled = self.review_mut().is_some_and(Review::prefill_last_message);
+                if !filled {
+                    let pushed = self
+                        .review()
+                        .and_then(|review| review.head())
+                        .is_some_and(|head| head.upstream.is_some() && head.ahead == 0);
+                    if pushed {
+                        self.ask_first(crate::prompt::Prompt::asking(
+                            "Rewrite pushed commit?".to_owned(),
+                            vec!["A force push will be needed.".to_owned()],
+                            vec![
+                                crate::prompt::Answer::new("Amend", Message::ConfirmAmend),
+                                crate::prompt::Answer::cancel(),
+                            ],
+                        ));
+                    } else {
+                        self.change_by(Review::amend);
+                    }
+                }
+            }
+            Message::StashPush => self.open_picker(crate::picker::Kind::StashMessage),
+            Message::ShowStashes(action) => {
+                self.stash_action = Some(action);
+                self.open_picker(crate::picker::Kind::Stashes);
+            }
+            Message::DropStash(index) => self.ask_first(crate::prompt::Prompt::asking(
+                "Drop stash?".to_owned(),
+                vec![format!("stash@{{{index}}} will be removed.")],
                 vec![
-                    crate::prompt::Answer::new("Abort Merge", Message::ConfirmAbortMerge),
+                    crate::prompt::Answer::new("Drop Stash", Message::ConfirmDropStash(index)),
+                    crate::prompt::Answer::cancel(),
+                ],
+            )),
+            Message::ConfirmDropStash(index) => self
+                .change_by(|review| review.stash_action(index, crate::review::StashAction::Drop)),
+            Message::CherryPickHistory => {
+                if self.scope() == self.history_menu_scope
+                    && let Some(object) = self.history_menu_object.take()
+                {
+                    self.change_by(|review| review.cherry_pick(object));
+                }
+            }
+            Message::CopyCommitHash => {
+                if let Some(object) = self.history_menu_object.take() {
+                    desktop::copy(object);
+                }
+            }
+            Message::AbortMerge => {
+                let name = self
+                    .review()
+                    .and_then(|review| review.head())
+                    .and_then(|head| head.operation.as_ref())
+                    .map(pm_core::Operation::name)
+                    .unwrap_or("Operation");
+                self.ask_first(crate::prompt::Prompt::asking(
+                    format!("Abort {name}?"),
+                    vec![format!("The {name} resolution will be discarded.")],
+                    vec![
+                        crate::prompt::Answer::new(
+                            format!("Abort {name}"),
+                            Message::ConfirmAbortMerge,
+                        ),
+                        crate::prompt::Answer::cancel(),
+                    ],
+                ));
+            }
+            Message::SkipOperation => self.ask_first(crate::prompt::Prompt::asking(
+                "Skip commit?".to_owned(),
+                vec!["The stopped commit will be skipped.".to_owned()],
+                vec![
+                    crate::prompt::Answer::new("Skip Commit", Message::ConfirmSkipOperation),
                     crate::prompt::Answer::cancel(),
                 ],
             )),
@@ -1856,6 +1955,11 @@ impl App {
     /// The menu is placed rather than anchored: the pointer is the one place
     /// every tab, however narrow and however far along the bar, agrees on.
     fn open_menu(&mut self, target: MenuTarget) {
+        if target == MenuTarget::SourceControl {
+            self.stash_available = self
+                .review()
+                .is_some_and(|review| !review.stashes().is_empty());
+        }
         self.menu = self.pointer.map(|at| TabMenu { at, target });
         self.request_redraw();
     }
