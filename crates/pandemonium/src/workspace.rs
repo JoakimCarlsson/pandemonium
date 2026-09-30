@@ -734,22 +734,28 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
             ))
         })
         .when(changes > 0, |bar| {
-            bar.child(status_item(
-                theme,
-                Some(IconName::GitCompare),
-                counted(changes, "change"),
-                Some(Message::SetSidebarView(SidebarView::Changes)),
-                false,
-            ))
+            bar.child(
+                status_item(
+                    theme,
+                    Some(IconName::GitCompare),
+                    changes.to_string(),
+                    Some(Message::SetSidebarView(SidebarView::Changes)),
+                    false,
+                )
+                .tooltip(counted(changes, "change")),
+            )
         })
         .when(sessions > 0, |bar| {
-            bar.child(status_item(
-                theme,
-                Some(IconName::GitFork),
-                counted(sessions, "session"),
-                None,
-                false,
-            ))
+            bar.child(
+                status_item(
+                    theme,
+                    Some(IconName::GitFork),
+                    sessions.to_string(),
+                    None,
+                    false,
+                )
+                .tooltip(counted(sessions, "session")),
+            )
         })
         .when(problems != (0, 0), |bar| {
             bar.child(status_item(
@@ -799,23 +805,36 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         .when_some(language, |bar, language| {
             bar.child(status_item(theme, None, language, None, false))
         })
-        .child(status_item(
-            theme,
-            Some(IconName::Sparkle),
-            match agents {
+        .child(
+            status_item(
+                theme,
+                Some(IconName::Sparkle),
+                match agents {
+                    0 => "New agent".to_owned(),
+                    running => running.to_string(),
+                },
+                Some(Message::NewAgentSession),
+                agents > 0,
+            )
+            .tooltip(match agents {
                 0 => "New agent".to_owned(),
                 running => counted(running, "agent"),
-            },
-            Some(Message::NewAgentSession),
-            agents > 0,
-        ))
-        .child(status_item(
-            theme,
-            Some(IconName::Terminal),
-            counted(shells, "shell"),
-            Some(Message::TogglePanelView(PanelView::Terminal)),
-            panel_open,
-        ))
+            }),
+        )
+        .child(
+            status_item(
+                theme,
+                Some(IconName::Terminal),
+                if shells == 0 {
+                    String::new()
+                } else {
+                    shells.to_string()
+                },
+                Some(Message::TogglePanelView(PanelView::Terminal)),
+                panel_open,
+            )
+            .tooltip(counted(shells, "shell")),
+        )
 }
 
 /// Builds the status bar's notice: what happened, which takes the reader to
