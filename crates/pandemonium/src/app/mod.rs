@@ -26,6 +26,7 @@ mod panel;
 mod panes;
 mod picker;
 mod places;
+mod predict;
 mod reading;
 mod reorder;
 mod review;
@@ -567,7 +568,24 @@ impl App {
     /// Hands the editor the language servers the settings name, and the
     /// settings each of them runs with.
     fn apply_language_servers(&mut self) {
-        let (replace, add) = partition_language_servers(&self.language_servers);
+        let (mut replace, mut add) = partition_language_servers(&self.language_servers);
+        if self.preferences.edit_predictions.enabled
+            && let Some(server) = self.preferences.edit_predictions.server
+        {
+            for language in pm_text::Language::all() {
+                let name = language.name().to_owned();
+                let servers = match replace.get_mut(&name) {
+                    Some(servers) => servers,
+                    None => add.entry(name).or_default(),
+                };
+                if !servers
+                    .iter()
+                    .any(|existing| existing.command == server.command)
+                {
+                    servers.push(server);
+                }
+            }
+        }
         self.editor.set_language_servers(&replace);
         self.editor.add_language_servers(&add);
     }
@@ -1824,6 +1842,14 @@ impl App {
         }
         if self.preferences.apply(message) {
             self.follow_preferences();
+            if matches!(
+                message,
+                Message::TogglePreference(Preference::EditPredictions)
+                    | Message::ResetPreference(Preference::EditPredictions)
+            ) {
+                self.apply_language_servers();
+                self.editor.refresh();
+            }
         }
         if matches!(
             message,
@@ -2653,6 +2679,11 @@ impl ApplicationHandler<Wake> for App {
         let expired = self.notices.expire(Instant::now());
         let seen = !self.window_occluded;
         let next_annotation = self.next_annotation().filter(|_| seen);
+        let prediction_due = self.next_prediction().filter(|_| seen);
+        let prediction_ready = prediction_due.is_some_and(|at| at <= Instant::now());
+        if prediction_ready {
+            self.ask_prediction();
+        }
         let annotation_due = next_annotation.is_some_and(|at| at <= Instant::now());
         if (self.rested() || self.blinked() || (seen && self.spun()) || expired || annotation_due)
             && seen
@@ -2665,6 +2696,7 @@ impl ApplicationHandler<Wake> for App {
             self.next_spin().filter(|_| seen),
             self.notices.next_expiry(),
             next_annotation,
+            self.next_prediction().filter(|_| seen),
             self.next_move(),
         ]
         .into_iter()
@@ -2713,7 +2745,7 @@ impl ApplicationHandler<Wake> for App {
                 if self.settle_moving() {
                     self.request_redraw();
                 }
-                let answered = self.collect_answers();
+                let answered = self.collect_answers() | self.collect_prediction();
                 if self.editor.refresh() || answered {
                     self.request_redraw();
                 }

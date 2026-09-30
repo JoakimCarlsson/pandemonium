@@ -159,6 +159,12 @@ pub enum Action {
     DeleteToLineEnd,
     /// Put one step of indentation in, or indent what is selected.
     Tab,
+    /// Insert the entire shown prediction.
+    AcceptPrediction,
+    /// Insert the next word of the shown prediction.
+    AcceptPredictionWord,
+    /// Hide the shown prediction.
+    DismissPrediction,
     /// Take back the last change to the focused buffer.
     Undo,
     /// Put back the change that was taken back last.
@@ -614,6 +620,21 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "Delete to Line End",
     ),
     (Action::Tab, "edit.tab", "Tab"),
+    (
+        Action::AcceptPrediction,
+        "edit.accept_prediction",
+        "Accept Prediction",
+    ),
+    (
+        Action::AcceptPredictionWord,
+        "edit.accept_prediction_word",
+        "Accept Prediction Word",
+    ),
+    (
+        Action::DismissPrediction,
+        "edit.dismiss_prediction",
+        "Dismiss Prediction",
+    ),
     (Action::Undo, "edit.undo", "Undo"),
     (Action::Redo, "edit.redo", "Redo"),
     (Action::Cut, "edit.cut", "Cut"),

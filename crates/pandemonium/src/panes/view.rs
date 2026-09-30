@@ -90,6 +90,8 @@ pub struct Contents {
     pub stopped: Option<usize>,
     /// Whether the caret is solid this instant, for its blink.
     pub caret: bool,
+    /// Whether inline predictions are visible in this pane.
+    pub prediction_visible: bool,
     /// What a pane of text draws around its text.
     pub display: Display,
     /// Where the text in front is, for the bar above it, when it is drawn.
@@ -208,6 +210,7 @@ fn pane_view(
     let breakpoints = contents.breakpoints.clone();
     let stopped = contents.stopped;
     let caret = contents.caret;
+    let prediction_visible = contents.prediction_visible;
     let display = contents.display;
     let showing = match &contents.content {
         Content::File(file) => Some(file.clone()),
@@ -250,6 +253,7 @@ fn pane_view(
         .when_some(searching, Div::child)
         .when_some(showing, |view, file| {
             let editor = buffer_view(file, focused)
+                .prediction_visible(prediction_visible)
                 .link(link)
                 .hovered(hovered)
                 .found(found)

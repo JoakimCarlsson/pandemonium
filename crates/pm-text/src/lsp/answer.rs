@@ -15,9 +15,10 @@ use lsp_types::request::{
     CodeActionRequest, CodeLensRequest, CodeLensResolve, Completion as CompletionRequest,
     DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, Formatting,
     GotoDeclaration, GotoDefinition, GotoImplementation, GotoTypeDefinition, HoverRequest,
-    InlayHintRequest, OnTypeFormatting, PrepareRenameRequest, RangeFormatting, References, Rename,
-    ResolveCompletionItem, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
-    WillRenameFiles, WillSaveWaitUntil, WorkspaceSymbolRequest,
+    InlayHintRequest, InlineCompletionRequest, OnTypeFormatting, PrepareRenameRequest,
+    RangeFormatting, References, Rename, ResolveCompletionItem, SelectionRangeRequest,
+    SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles, WillSaveWaitUntil,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CallHierarchyIncomingCallsParams, CallHierarchyItem, CallHierarchyOutgoingCallsParams,
@@ -28,7 +29,8 @@ use lsp_types::{
     DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbol,
     DocumentSymbolParams, DocumentSymbolResponse, Documentation, FileRename, FoldingRangeParams,
     FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents, HoverParams,
-    InlayHint, InlayHintLabel, InlayHintParams, InsertTextFormat, MarkedString, OneOf,
+    InlayHint, InlayHintLabel, InlayHintParams, InlineCompletionContext, InlineCompletionParams,
+    InlineCompletionResponse, InlineCompletionTriggerKind, InsertTextFormat, MarkedString, OneOf,
     ParameterLabel, PartialResultParams, PrepareRenameResponse, ReferenceContext, ReferenceParams,
     RenameFilesParams, RenameParams, ResourceOp, SelectionRangeParams, SemanticToken,
     SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
@@ -43,6 +45,7 @@ use crate::indent::Indent;
 use crate::lsp::capabilities::{Capabilities, Document};
 use crate::lsp::encoding::Files;
 use crate::lsp::{rpc, uri};
+use crate::predict::Prediction;
 use crate::syntax::Highlight;
 
 /// One thing a language server can be asked about a place in a file.
@@ -62,6 +65,8 @@ pub enum Request {
     Hover,
     /// What could be written here, and what made the editor ask.
     Completions(Trigger),
+    /// Text predicted after the cursor from its surrounding code.
+    InlineCompletion,
     /// The rest of what one of those completions says, for a server that
     /// sent it short.
     ResolveCompletion(Handle),
@@ -177,6 +182,7 @@ impl Request {
             Self::References => "textDocument/references",
             Self::Hover => "textDocument/hover",
             Self::Completions(_) | Self::ResolveCompletion(_) => "textDocument/completion",
+            Self::InlineCompletion => "textDocument/inlineCompletion",
             Self::Signature => "textDocument/signatureHelp",
             Self::CodeActions => "textDocument/codeAction",
             Self::Rename(_) => "textDocument/rename",
@@ -305,6 +311,17 @@ impl Request {
                             trigger_character: None,
                         },
                     }),
+                },
+            ),
+            Self::InlineCompletion => rpc::request::<InlineCompletionRequest>(
+                id,
+                InlineCompletionParams {
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    text_document_position: place,
+                    context: InlineCompletionContext {
+                        trigger_kind: InlineCompletionTriggerKind::Automatic,
+                        selected_completion_info: None,
+                    },
                 },
             ),
             Self::ResolveCompletion(handle) => match &handle.0 {
@@ -532,6 +549,24 @@ impl Request {
                     items: completions(found),
                 }
             }
+            Self::InlineCompletion => {
+                let found = rpc::result::<InlineCompletionRequest>(result)?;
+                let items = match found {
+                    Some(InlineCompletionResponse::Array(items)) => items,
+                    Some(InlineCompletionResponse::List(list)) => list.items,
+                    None => Vec::new(),
+                };
+                Answer::Inline(
+                    items
+                        .into_iter()
+                        .map(|item| Prediction {
+                            range: item.range.map(range).unwrap_or_default(),
+                            text: item.insert_text,
+                            version: 0,
+                        })
+                        .collect(),
+                )
+            }
             Self::ResolveCompletion(_) => {
                 let item = rpc::result::<ResolveCompletionItem>(result)?;
                 Answer::Resolved(completion(item)?)
@@ -699,6 +734,8 @@ pub enum Answer {
         /// Whether the list is not all there is.
         incomplete: bool,
     },
+    /// Text predicted for insertion at the cursor.
+    Inline(Vec<Prediction>),
     /// One of those, filled in with what the server left out of the list.
     Resolved(Completion),
     /// The signature of the call the cursor is inside.
@@ -771,6 +808,11 @@ impl Answer {
                     decode_completion(item, path, files);
                 }
             }
+            Self::Inline(items) => {
+                for item in items {
+                    item.range = files.decode_span(path, item.range.clone());
+                }
+            }
             Self::Resolved(item) => decode_completion(item, path, files),
             Self::CodeActions(actions) => {
                 for action in actions {
@@ -828,6 +870,7 @@ impl Answer {
             Self::Folds(folds) => folds.is_empty(),
             Self::Selections(spans) => spans.is_empty(),
             Self::Completions { items, .. } => items.is_empty(),
+            Self::Inline(items) => items.is_empty(),
             Self::Resolved(_) => false,
             Self::CodeActions(actions) => actions.is_empty(),
             Self::Edits(files) => files.iter().all(|file| file.edits.is_empty()),

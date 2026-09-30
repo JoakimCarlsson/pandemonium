@@ -35,8 +35,8 @@ pub use paths::{
     themes as themes_directory, worktrees,
 };
 pub use preferences::{
-    AgentOptions, InstallLanguageServers, KnobValue, Preference, Preferences, Step, ThemeMode,
-    VimBinding, WorktreePaths,
+    AgentOptions, EditPredictions, InstallLanguageServers, KnobValue, Preference, Preferences,
+    Step, ThemeMode, VimBinding, WorktreePaths,
 };
 
 /// The window's own size and state, as a launch leaves it.

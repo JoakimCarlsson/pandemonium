@@ -77,6 +77,9 @@ impl App {
         if !outcome.handled {
             return false;
         }
+        if !file.borrow().modal().mode().is_typing() {
+            file.borrow_mut().dismiss_prediction();
+        }
         if file.borrow().modal().mode() != Mode::Insert {
             self.dismiss_popup();
         }

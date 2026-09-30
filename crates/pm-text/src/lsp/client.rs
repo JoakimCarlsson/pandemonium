@@ -661,6 +661,11 @@ impl Client {
         }
     }
 
+    /// Cancels an outstanding question at the server and discards its answer.
+    pub fn cancel(&self, asked: Asked) {
+        self.forget(asked);
+    }
+
     /// Takes annotation refresh requests the server has sent.
     pub fn take_refreshes(&self) -> Vec<Request> {
         self.state

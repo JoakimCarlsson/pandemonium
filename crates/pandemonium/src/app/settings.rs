@@ -151,6 +151,9 @@ impl App {
         if !preferences.code_lens {
             self.editor.forget_lenses();
         }
+        if !preferences.edit_predictions.enabled {
+            self.editor.dismiss_predictions();
+        }
         self.vim.share_clipboard(self.preferences.vim_clipboard);
         self.bind_vim_keys();
     }

@@ -22,9 +22,9 @@ use lsp_types::{
     DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
     GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, HoverProviderCapability,
     ImplementationProviderCapability, InitializeParams, InlayHintClientCapabilities,
-    InlayHintWorkspaceClientCapabilities, MarkupKind, OneOf, PositionEncodingKind,
-    PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities, Registration,
-    RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenType,
+    InlayHintWorkspaceClientCapabilities, InlineCompletionClientCapabilities, MarkupKind, OneOf,
+    PositionEncodingKind, PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities,
+    Registration, RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenType,
     SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
@@ -610,6 +610,7 @@ fn states(stated: &ServerCapabilities, method: &str) -> bool {
         "textDocument/references" => on(stated.references_provider.as_ref()),
         "textDocument/hover" => on(stated.hover_provider.as_ref()),
         "textDocument/completion" => stated.completion_provider.is_some(),
+        "textDocument/inlineCompletion" => on(stated.inline_completion_provider.as_ref()),
         "textDocument/signatureHelp" => stated.signature_help_provider.is_some(),
         "textDocument/codeAction" => on(stated.code_action_provider.as_ref()),
         "textDocument/rename" => on(stated.rename_provider.as_ref()),
@@ -738,6 +739,9 @@ fn text_document() -> TextDocumentClientCapabilities {
             }),
             context_support: Some(true),
             ..CompletionClientCapabilities::default()
+        }),
+        inline_completion: Some(InlineCompletionClientCapabilities {
+            dynamic_registration: dynamic(),
         }),
         hover: Some(HoverClientCapabilities {
             dynamic_registration: dynamic(),

@@ -217,6 +217,8 @@ pub struct BufferView<M> {
     found: Vec<Range<Position>>,
     /// Whether the caret is solid this instant, for its blink.
     caret: bool,
+    /// Whether a shown inline prediction should be drawn.
+    prediction_visible: bool,
     /// Whether the pane is the text and nothing else.
     ///
     /// A commit message is edited in the same editor a file is, but none of
@@ -249,6 +251,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         hovered: None,
         found: Vec::new(),
         caret: true,
+        prediction_visible: true,
         plain: false,
         display: Display::default(),
         style: Style::default(),
@@ -456,6 +459,12 @@ impl<M> BufferView<M> {
         self
     }
 
+    /// Returns this view with inline predictions shown or hidden.
+    pub fn prediction_visible(mut self, visible: bool) -> Self {
+        self.prediction_visible = visible;
+        self
+    }
+
     /// Returns this pane drawing what `display` asks for around its text.
     pub fn display(mut self, display: Display) -> Self {
         self.display = display;
@@ -545,6 +554,10 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             font,
             theme: &theme,
             buffer: document.buffer(),
+            prediction: self
+                .prediction_visible
+                .then(|| document.prediction().cloned())
+                .flatten(),
             search: document.search(),
             selection: document.buffer().selection(),
             selections: document.buffer().selections(),
@@ -587,6 +600,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         for line in painting.drawn.clone() {
             self.paint_line(line, &painting, &mut glyphs, cx);
         }
+        self.paint_prediction_lines(&painting, &mut glyphs, cx);
         self.paint_conflict_actions(&painting, &conflicts, &mut glyphs, cx);
         self.paint_brackets(&painting, cx);
         self.paint_link(&painting, cx);
@@ -929,6 +943,7 @@ impl<M> BufferView<M> {
         cx.push_clip(layout.text_area());
         let mut column = 0;
         let mut indent = 0;
+        let mut ghost_drawn = false;
         let mut hints = buffer.hints_on(line).peekable();
         for (index, ch) in buffer.line_chars(line).enumerate() {
             if index == row.start {
@@ -948,6 +963,16 @@ impl<M> BufferView<M> {
                     }
                     false => column + hint.width(),
                 };
+            }
+            if let Some(prediction) = painting
+                .prediction
+                .as_ref()
+                .filter(|item| item.range.start.line == line && item.range.start.column == index)
+            {
+                let first = prediction.text.split('\n').next().unwrap_or_default();
+                self.paint_note(first, column - indent, top, painting, glyphs, cx);
+                column += first.chars().count();
+                ghost_drawn = true;
             }
             let width = if ch == '\t' {
                 painting.buffer.tab_width() - column % painting.buffer.tab_width()
@@ -976,6 +1001,16 @@ impl<M> BufferView<M> {
 
         if row.is_last() {
             let mut column = column - indent;
+            if !ghost_drawn
+                && let Some(prediction) = painting.prediction.as_ref().filter(|item| {
+                    item.range.start.line == line
+                        && item.range.start.column == buffer.line_len(line)
+                })
+            {
+                let first = prediction.text.split('\n').next().unwrap_or_default();
+                self.paint_note(first, column, top, painting, glyphs, cx);
+                column += first.chars().count();
+            }
             for hint in hints {
                 column = self.paint_hint(hint, column, top, painting, glyphs, cx);
             }
@@ -987,6 +1022,58 @@ impl<M> BufferView<M> {
         }
         for diagnostic in painting.diagnostics.iter().copied() {
             self.paint_diagnostic(diagnostic, line, painting, cx);
+        }
+        cx.pop_clip();
+    }
+
+    /// Covers the rows below the cursor with the extra prediction lines.
+    fn paint_prediction_lines(
+        &self,
+        painting: &Painting<'_>,
+        glyphs: &mut Glyphs,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let Some(prediction) = painting.prediction.as_ref() else {
+            return;
+        };
+        let Some(top) = painting.top_of(prediction.range.start.line) else {
+            return;
+        };
+        let layout = painting.layout;
+        cx.push_clip(layout.text_area());
+        if prediction.range.end > prediction.range.start
+            && prediction.range.end.line == prediction.range.start.line
+        {
+            let ghost_width = prediction
+                .text
+                .split('\n')
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .count();
+            let from = layout.x_of(prediction.range.start.column + ghost_width);
+            let width = (prediction.range.end.column - prediction.range.start.column) as f32
+                * layout.cell.width;
+            cx.quad(Quad::filled(
+                Rect::from_xywh(from, top + layout.cell.height * 0.52, width, 1.0),
+                painting.theme.colors.text_subtle,
+            ));
+        }
+        for (offset, line) in prediction.text.split('\n').skip(1).enumerate() {
+            let row_top = top + layout.cell.height * (offset + 1) as f32;
+            if row_top > layout.bounds.bottom() {
+                break;
+            }
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    layout.text_left(),
+                    row_top,
+                    layout.text_area().size.width,
+                    layout.cell.height,
+                ),
+                painting.theme.colors.background,
+            ));
+            self.paint_note(line, 0, row_top, painting, glyphs, cx);
         }
         cx.pop_clip();
     }
@@ -1726,6 +1813,8 @@ struct Painting<'a> {
     theme: &'a Theme,
     /// The text being drawn.
     buffer: &'a Buffer,
+    /// Inline text predicted for this document at the cursor.
+    prediction: Option<pm_text::Prediction>,
     /// What is being looked for in it, and where that was found.
     search: &'a Search,
     /// What the primary cursor has selected, and where it is.

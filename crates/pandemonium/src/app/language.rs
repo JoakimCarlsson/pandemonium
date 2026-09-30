@@ -1176,6 +1176,7 @@ impl App {
             return self.save_once_formatted(pending);
         }
         match answer {
+            Answer::Inline(_) => {}
             Answer::Locations(found) if pending.purpose == Purpose::Link => {
                 self.link_found(pending, &found);
             }

@@ -15,7 +15,10 @@ use std::time::{Duration, Instant};
 
 use pm_core::{Blame, Change, ProjectId, Scope};
 use pm_gfx::Point;
-use pm_text::{Buffer, Client, Highlight, Hint, Indent, Lens, Position, Request, Server, Servers};
+use pm_text::{
+    Buffer, Client, Highlight, Hint, Indent, Lens, Position, Prediction, Predictor, Request,
+    Server, Servers, Ticket, server_predictor,
+};
 
 /// A stable key for a server while the document holds its client.
 fn server_key(client: &Arc<Client>) -> usize {
@@ -184,6 +187,14 @@ pub struct Document {
     outlined: HashMap<usize, (AnnotationRequest, Vec<std::ops::Range<usize>>)>,
     /// When the text last changed.
     edited_at: Option<Instant>,
+    /// The inline prediction currently offered to this document.
+    prediction: Option<Prediction>,
+    /// The one prediction request still awaiting a reply.
+    prediction_ticket: Option<Ticket>,
+    /// The provider that owns the ticket in flight.
+    prediction_provider: Option<Box<dyn Predictor>>,
+    /// The next time typing may ask for a prediction.
+    prediction_due: Option<Instant>,
     /// The version and cursor the server was last asked where the symbol is used.
     used: Option<(i32, Position)>,
     /// The runs of lines that are folded away, in the order they appear.
@@ -258,6 +269,10 @@ impl Document {
             lensed: HashMap::new(),
             outline_version: None,
             edited_at: None,
+            prediction: None,
+            prediction_ticket: None,
+            prediction_provider: None,
+            prediction_due: None,
             used: None,
             folded: Vec::new(),
             buffer,
@@ -773,6 +788,144 @@ impl Document {
         self.servers.clone()
     }
 
+    /// The prediction currently valid at the cursor.
+    pub fn prediction(&self) -> Option<&Prediction> {
+        self.prediction.as_ref().filter(|item| {
+            item.version == self.buffer.version()
+                && item.range.start == self.buffer.selection().head
+                && self.buffer.selection().is_empty()
+                && !self.buffer.has_many_cursors()
+        })
+    }
+
+    /// The next time this document is due to ask for a prediction.
+    pub fn next_prediction(&self) -> Option<Instant> {
+        self.prediction_due
+    }
+
+    /// Cancels the pending request and hides the current proposal.
+    pub fn dismiss_prediction(&mut self) {
+        self.cancel_prediction_ticket();
+        self.prediction = None;
+        self.prediction_due = None;
+    }
+
+    /// Cancels only the request, leaving the shown proposal intact.
+    fn cancel_prediction_ticket(&mut self) {
+        if let Some(ticket) = self.prediction_ticket.take()
+            && let Some(provider) = self.prediction_provider.take()
+        {
+            provider.cancel(ticket);
+        }
+    }
+
+    /// Sends a due request to a document's first capable server.
+    pub fn ask_prediction(&mut self, preferred: Option<&str>) {
+        self.prediction_due = None;
+        let at = self.buffer.selection().head;
+        let clients = self
+            .servers
+            .iter()
+            .filter(|client| preferred.is_none_or(|name| client.name() == name))
+            .cloned()
+            .collect();
+        let provider = server_predictor(clients);
+        self.prediction_ticket = Some(provider.ask(
+            self.buffer.path(),
+            self.buffer.version(),
+            at,
+            &self.buffer.contents(),
+        ));
+        self.prediction_provider = Some(provider);
+    }
+
+    /// Takes an answered prediction only while its buffer and cursor still match.
+    pub fn collect_prediction(&mut self) -> bool {
+        let Some(ticket) = self.prediction_ticket.as_ref() else {
+            return false;
+        };
+        let Some(answer) = self
+            .prediction_provider
+            .as_ref()
+            .and_then(|provider| provider.take(ticket.clone()))
+        else {
+            return false;
+        };
+        let (version, at) = ticket.place();
+        self.prediction_ticket = None;
+        self.prediction_provider = None;
+        if version != self.buffer.version()
+            || at != self.buffer.selection().head
+            || !self.buffer.selection().is_empty()
+            || self.buffer.has_many_cursors()
+        {
+            return false;
+        }
+        self.prediction = answer.and_then(|mut item| {
+            if item.range.start < at && item.range.end >= at {
+                let prefix = self.buffer.text_in(item.range.start..at);
+                if !item.text.starts_with(&prefix) {
+                    return None;
+                }
+                item.text.drain(..prefix.len());
+                item.range.start = at;
+            }
+            (item.range.start == at && !item.text.is_empty()).then_some(item)
+        });
+        self.prediction.is_some()
+    }
+
+    /// Accepts the whole proposal or its next word, in one buffer edit.
+    pub fn accept_prediction(&mut self, word: bool) -> bool {
+        let Some(mut item) = self.prediction.take() else {
+            return false;
+        };
+        let accepted = if word {
+            let count = item
+                .text
+                .chars()
+                .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                .count();
+            let count = count.max(1);
+            item.text.chars().take(count).collect::<String>()
+        } else {
+            item.text.clone()
+        };
+        let start = item.range.start;
+        let end = if word { start } else { item.range.end };
+        let remaining_range = if word {
+            Some(Self::range_after_insert(item.range.clone(), &accepted))
+        } else {
+            None
+        };
+        self.edit(|buffer| buffer.replace(start..end, &accepted));
+        self.prediction_due = None;
+        if word && accepted.len() < item.text.len() {
+            item.text.drain(..accepted.len());
+            item.range = remaining_range.unwrap_or(start..start);
+            item.version = self.buffer.version();
+            self.prediction = Some(item);
+        }
+        true
+    }
+
+    /// Moves a replacement span past text inserted at its beginning.
+    fn range_after_insert(
+        range: std::ops::Range<Position>,
+        inserted: &str,
+    ) -> std::ops::Range<Position> {
+        let start = range.start.after(inserted);
+        let end = if inserted.contains('\n') {
+            Position::new(
+                start.line,
+                start.column + range.end.column.saturating_sub(range.start.column),
+            )
+        } else {
+            Position::new(range.end.line, range.end.column + inserted.chars().count())
+        };
+        start..end
+    }
+
     /// Whether any language server is open on this file.
     pub fn is_served(&self) -> bool {
         self.servers.iter().any(|server| !server.is_dead())
@@ -789,6 +942,7 @@ impl Document {
         if !changed {
             return false;
         }
+        self.dismiss_prediction();
         for server in &servers {
             if !self.servers.iter().any(|old| Arc::ptr_eq(old, server))
                 && let Some(language) = self.buffer.language()
@@ -1042,10 +1196,37 @@ impl Document {
     /// [`Self::edit`] does to the buffer alone, answering what `edit` did.
     pub fn edit_modal<R>(&mut self, edit: impl FnOnce(&mut Buffer, &mut pm_vim::State) -> R) -> R {
         let version = self.buffer.version();
+        let at = self.buffer.selection().head;
+        let shown = self.prediction.take();
         let result = edit(&mut self.buffer, &mut self.modal);
         if version == self.buffer.version() {
+            self.prediction = shown.filter(|item| item.range.start == self.buffer.selection().head);
+            if at != self.buffer.selection().head {
+                self.dismiss_prediction();
+            }
             return result;
         }
+        self.cancel_prediction_ticket();
+        let mut consumed_prediction = false;
+        let typed_through = shown.and_then(|mut item| {
+            let ch = item.text.chars().next()?;
+            let next = at.after(&ch.to_string());
+            if item.range.start != at
+                || item.range.end != at
+                || self.buffer.selection().head != next
+                || (ch != '\n' && self.buffer.line_chars(at.line).nth(at.column) != Some(ch))
+            {
+                return None;
+            }
+            consumed_prediction = true;
+            item.text.drain(..ch.len_utf8());
+            item.range = next..next;
+            item.version = self.buffer.version();
+            (!item.text.is_empty()).then_some(item)
+        });
+        self.prediction_due =
+            (!consumed_prediction).then(|| Instant::now() + Duration::from_millis(150));
+        self.prediction = typed_through;
         self.preview = false;
         self.edited_at = Some(Instant::now());
         self.changed();
@@ -1084,6 +1265,7 @@ impl Document {
     /// Only a file with changes is tidied: saving everything must not
     /// rewrite a file nobody touched because it was untidy when it opened.
     pub fn save(&mut self, habits: Habits) {
+        self.dismiss_prediction();
         if self.buffer.is_dirty() {
             if habits.trim_whitespace {
                 self.edit(Buffer::trim_trailing_whitespace);
@@ -1092,6 +1274,7 @@ impl Document {
                 self.edit(Buffer::ensure_final_newline);
             }
         }
+        self.dismiss_prediction();
         for server in &self.servers {
             server.will_save(self.buffer.path());
         }
@@ -1119,6 +1302,7 @@ impl Document {
         let version = self.buffer.version();
         let changed = self.buffer.reread().unwrap_or(false);
         if version != self.buffer.version() {
+            self.dismiss_prediction();
             self.edited_at = Some(Instant::now());
             self.changed();
         }
@@ -1189,6 +1373,12 @@ pub struct Files {
 }
 
 impl Files {
+    /// Hides all inline predictions and cancels their requests.
+    pub fn dismiss_predictions(&mut self) {
+        for entry in self.open.values() {
+            entry.document.borrow_mut().dismiss_prediction();
+        }
+    }
     /// The next delayed annotation request for one open file.
     pub fn next_annotation(&self, file: FileId) -> Option<Instant> {
         self.get(file)?.borrow().next_annotation()
