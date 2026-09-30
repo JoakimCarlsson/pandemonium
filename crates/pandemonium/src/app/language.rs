@@ -1134,7 +1134,7 @@ impl App {
         }
         if stale
             && (matches!(answer, Answer::Edits(_) | Answer::Changes(_))
-                || pending.request == Request::CodeActions)
+                || matches!(pending.request, Request::CodeActions | Request::Signature))
         {
             if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
                 self.finish_save();
@@ -1190,7 +1190,11 @@ impl App {
                 }
             }
             Answer::Signature(signature) => {
-                if let Some(hint) = self.hint.as_mut() {
+                let current = self.active_file_id() == Some(pending.file)
+                    && self.editor.get(pending.file).is_some_and(|document| {
+                        document.borrow().buffer().selection().head == pending.at
+                    });
+                if let Some(hint) = self.hint.as_mut().filter(|_| current) {
                     hint.signature = Some(signature);
                 }
             }
@@ -1613,6 +1617,52 @@ impl App {
         servers
             .iter()
             .any(|client| client.completion_triggers(&path).contains(&typed))
+    }
+
+    /// Refreshes a visible call signature or opens one after a server trigger.
+    pub(super) fn signature_after_typing(&mut self, typed: Option<char>) {
+        let showing = self
+            .hint
+            .as_ref()
+            .is_some_and(|hint| hint.signature.is_some());
+        let file = self.active_file_id();
+        let awaiting = file.is_some_and(|file| self.awaits(file, &Request::Signature));
+        let Some(typed) = typed else {
+            if showing || awaiting {
+                self.hint = None;
+                if let Some(file) = file {
+                    self.forget(file, &Request::Signature, Purpose::Act);
+                }
+            }
+            return;
+        };
+        if (showing || awaiting) && typed == ')' {
+            self.hint = None;
+            if let Some(file) = file {
+                self.forget(file, &Request::Signature, Purpose::Act);
+            }
+            return;
+        }
+        if showing {
+            let at = self.cursor_point();
+            if let Some(hint) = self.hint.as_mut() {
+                hint.at = at;
+            }
+        }
+        let Some(file) = file else {
+            return;
+        };
+        let (Some(document), Some(path)) = (self.editor.get(file), self.editor.path(file)) else {
+            return;
+        };
+        let servers = document.borrow().servers();
+        if awaiting
+            || servers
+                .iter()
+                .any(|client| client.signature_triggers(&path, showing).contains(&typed))
+        {
+            self.ask(Request::Signature);
+        }
     }
 
     /// Asks `clients` again what could be written where the cursor is, for

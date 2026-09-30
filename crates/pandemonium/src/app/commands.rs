@@ -890,6 +890,7 @@ impl App {
     /// asked again.
     pub(super) fn after_typing(&mut self, typed: Option<char>) {
         self.narrow_completions();
+        self.signature_after_typing(typed);
         let Some(typed) = typed else {
             return;
         };

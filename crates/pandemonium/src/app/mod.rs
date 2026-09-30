@@ -2378,7 +2378,8 @@ impl App {
     /// Each is placed where it belongs rather than laid out — the picker
     /// over the command center in the title bar, a completion list under the
     /// word it completes, a hint beside the cursor — because none of them
-    /// takes room from the screen they cover.
+    /// takes room from the screen they cover. A signature rises above the
+    /// cursor while completions open below it.
     fn overlays(&self, theme: &Theme) -> Vec<workspace::Overlaid> {
         let mut overlays = Vec::new();
 
@@ -2420,6 +2421,7 @@ impl App {
                     self.caret_solid(),
                 )),
                 backdrop: (!agent_choices).then_some(Message::DismissPopup),
+                above: false,
             });
         }
 
@@ -2436,16 +2438,21 @@ impl App {
                         .child(crate::prompt::prompt(theme, asked, width)),
                 ),
                 backdrop: Some(Message::DismissPrompt),
+                above: false,
             });
         }
 
+        let signature = self.hint.as_ref().filter(|hint| hint.signature.is_some());
         if let Some(completions) = self.completions.as_ref() {
             overlays.push(workspace::Overlaid {
                 at: completions.at(),
                 content: Box::new(editor::completion_list(theme, completions)),
                 backdrop: None,
+                above: false,
             });
-            if let Some(documentation) = completions.documentation() {
+            if signature.is_none()
+                && let Some(documentation) = completions.documentation()
+            {
                 let said = editor::Shown {
                     at: completions.beside(),
                     said: Some(documentation.to_owned()),
@@ -2458,15 +2465,26 @@ impl App {
                     at: said.at,
                     content: Box::new(editor::hint(theme, &said)),
                     backdrop: None,
+                    above: false,
                 });
             }
         }
 
         if let Some(hint) = self.hint.as_ref().filter(|hint| !hint.is_empty()) {
+            let above = hint.signature.is_some();
+            let at = if above {
+                let height = self
+                    .active_file()
+                    .map_or(0.0, |file| file.borrow().layout().cell.height);
+                Point::new(hint.at.x, hint.at.y - height - 4.0)
+            } else {
+                hint.at
+            };
             overlays.push(workspace::Overlaid {
-                at: hint.at,
+                at,
                 content: Box::new(editor::hint(theme, hint)),
                 backdrop: None,
+                above,
             });
         }
         overlays

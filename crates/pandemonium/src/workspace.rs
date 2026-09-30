@@ -273,6 +273,8 @@ pub struct Overlaid {
     pub content: Box<dyn Element<Message>>,
     /// What a click anywhere else sends, when it is modal.
     pub backdrop: Option<Message>,
+    /// Whether the panel grows upward from `at`.
+    pub above: bool,
 }
 
 /// A menu of what can be done to one tab, open at a point of the window.
@@ -402,9 +404,14 @@ pub fn workspace(
                 at,
                 content,
                 backdrop: sheet,
+                above,
             } = overlaid;
             let sheet = sheet.map(|message| overlay(Point::new(0.0, 0.0), backdrop(message)));
-            sheet.into_iter().chain([overlay(at, content)])
+            let panel = match above {
+                true => overlay_above(at, content),
+                false => overlay(at, content),
+            };
+            sheet.into_iter().chain([panel])
         }))
         .when_some(open_menu, |screen, (open, items)| {
             screen

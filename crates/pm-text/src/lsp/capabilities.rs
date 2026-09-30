@@ -28,7 +28,7 @@ use lsp_types::{
     SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
-    TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
+    SignatureHelpOptions, TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
     TextDocumentRegistrationOptions, TextDocumentSaveRegistrationOptions,
     TextDocumentSyncCapability, TextDocumentSyncClientCapabilities, TextDocumentSyncKind,
     TextDocumentSyncSaveOptions, TokenFormat, TypeDefinitionProviderCapability,
@@ -105,6 +105,9 @@ const SEMANTIC_TOKENS: &str = "textDocument/semanticTokens";
 
 /// The method a registration of completion names.
 const COMPLETION: &str = "textDocument/completion";
+
+/// The method a registration of signature help names.
+const SIGNATURE_HELP: &str = "textDocument/signatureHelp";
 
 /// The method a registration of code lenses names.
 const CODE_LENS: &str = "textDocument/codeLens";
@@ -412,6 +415,38 @@ impl Capabilities {
         stated
             .into_iter()
             .chain(registered)
+            .filter_map(|written| written.chars().next())
+            .collect()
+    }
+
+    /// The characters that start or refresh signature help for `document`.
+    pub(super) fn signature_triggers(
+        &self,
+        document: Option<Document>,
+        showing: bool,
+    ) -> Vec<char> {
+        let stated = self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.signature_help_provider.as_ref());
+        let registered = self
+            .registrations(SIGNATURE_HELP, document)
+            .filter_map(|options| {
+                serde_json::from_value::<SignatureHelpOptions>(options.clone()).ok()
+            });
+        stated
+            .cloned()
+            .into_iter()
+            .chain(registered)
+            .flat_map(|options| {
+                options.trigger_characters.into_iter().flatten().chain(
+                    options
+                        .retrigger_characters
+                        .into_iter()
+                        .flatten()
+                        .filter(|_| showing),
+                )
+            })
             .filter_map(|written| written.chars().next())
             .collect()
     }
