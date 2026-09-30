@@ -19,7 +19,8 @@ use crate::config::fonts::Fonts;
 use crate::config::keymap::StoredChanges;
 use crate::config::theme::StoredOverrides;
 use crate::config::{
-    AgentOptions, InstallLanguageServers, Preferences, Restored, ThemeMode, VimBinding, WindowState,
+    AgentOptions, EditPredictions, InstallLanguageServers, Preferences, Restored, ThemeMode,
+    VimBinding, WindowState,
 };
 use crate::editor::{CursorShape, Display};
 use crate::panes::Saved;
@@ -102,6 +103,8 @@ pub(super) struct Stored {
     inlay_hints: Option<bool>,
     /// Whether a language server's notes are written after declarations.
     code_lens: Option<bool>,
+    /// Inline prediction settings and optional dedicated server.
+    edit_predictions: Option<StoredEditPredictions>,
     /// How the caret is drawn.
     cursor_shape: Option<StoredCursorShape>,
     /// Whether the caret blinks.
@@ -249,6 +252,22 @@ pub(super) enum StoredServer {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         options: Option<serde_norway::Value>,
     },
+}
+
+/// Inline prediction settings as written to settings.yaml.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct StoredEditPredictions {
+    /// Whether requests are enabled.
+    #[serde(default = "enabled_by_default")]
+    enabled: bool,
+    /// A server added to every language when named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    server: Option<StoredServer>,
+}
+
+/// The default value of the inline prediction switch.
+fn enabled_by_default() -> bool {
+    true
 }
 
 impl StoredLanguageServers {
@@ -565,6 +584,12 @@ impl Stored {
             split_diff: self.split_diff.unwrap_or(defaults.split_diff),
             inlay_hints: self.inlay_hints.unwrap_or(defaults.inlay_hints),
             code_lens: self.code_lens.unwrap_or(defaults.code_lens),
+            edit_predictions: self
+                .edit_predictions
+                .map_or(defaults.edit_predictions, |stored| EditPredictions {
+                    enabled: stored.enabled,
+                    server: stored.server.map(StoredServer::into_server),
+                }),
             cursor_blink: self.cursor_blink.unwrap_or(defaults.cursor_blink),
             scroll_sensitivity: self
                 .scroll_sensitivity
@@ -652,6 +677,14 @@ impl Stored {
             wrap_guide: display.wrap_guide,
             inlay_hints: Some(preferences.inlay_hints),
             code_lens: Some(preferences.code_lens),
+            edit_predictions: Some(StoredEditPredictions {
+                enabled: preferences.edit_predictions.enabled,
+                server: preferences
+                    .edit_predictions
+                    .server
+                    .as_ref()
+                    .map(StoredServer::of),
+            }),
             cursor_shape: Some(StoredCursorShape::of(display.cursor_shape)),
             cursor_blink: Some(preferences.cursor_blink),
             scroll_sensitivity: Some(preferences.scroll_sensitivity),

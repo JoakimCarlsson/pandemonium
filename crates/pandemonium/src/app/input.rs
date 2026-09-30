@@ -97,6 +97,14 @@ impl App {
             && self.tree_edit.is_none();
         context.flag(keys::EDITOR_FOCUSED, editing);
         context.flag(
+            keys::PREDICTION_SHOWN,
+            editing
+                && self.completions.is_none()
+                && self
+                    .focused_file()
+                    .is_some_and(|file| file.borrow().prediction().is_some()),
+        );
+        context.flag(
             keys::TEXT_FOCUSED,
             editing || self.writing.is_some() || field,
         );
@@ -170,6 +178,9 @@ impl App {
             return self.request_redraw();
         }
         if self.send_to_completions(event) {
+            return self.request_redraw();
+        }
+        if self.send_to_prediction(event) {
             return self.request_redraw();
         }
         if self.send_to_snippet(event) {
@@ -348,6 +359,7 @@ impl App {
             return false;
         }
         let mut document = document.borrow_mut();
+        document.dismiss_prediction();
         let buffer = document.buffer_mut();
         match event.logical_key.as_ref() {
             Key::Named(NamedKey::Tab) if self.modifiers.shift_key() => {

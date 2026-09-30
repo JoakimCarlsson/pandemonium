@@ -37,6 +37,9 @@ impl App {
             return self.request_redraw();
         }
         match action {
+            Action::AcceptPrediction => self.accept_prediction(false),
+            Action::AcceptPredictionWord => self.accept_prediction(true),
+            Action::DismissPrediction => self.dismiss_prediction(),
             Action::ShowCommands => self.open_picker(Kind::Commands),
             Action::InstallLanguageServer => self.open_picker(Kind::LanguageServers),
             Action::RenameTerminal => {
@@ -867,6 +870,7 @@ impl App {
         let start = completions.start();
         let waiting = completions.is_asked(&item.handle);
         self.completions = None;
+        self.dismiss_prediction();
         self.edit_active(|buffer| {
             let head = buffer.selection().head;
             let base = buffer.complete(start..head, &item.insert, item.extra.clone());
@@ -886,6 +890,7 @@ impl App {
     /// asked again.
     pub(super) fn after_typing(&mut self, typed: Option<char>) {
         self.narrow_completions();
+        self.signature_after_typing(typed);
         let Some(typed) = typed else {
             return;
         };

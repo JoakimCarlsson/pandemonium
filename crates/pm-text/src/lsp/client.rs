@@ -525,6 +525,18 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// The characters that start or refresh signature help in the file at `path`.
+    pub fn signature_triggers(&self, path: &Path, showing: bool) -> Vec<char> {
+        self.state
+            .lock()
+            .map(|state| {
+                state
+                    .capabilities
+                    .signature_triggers(Some(state.document(path)), showing)
+            })
+            .unwrap_or_default()
+    }
+
     /// Tells the server a file is no longer open.
     pub fn did_close(&self, path: &Path) {
         let Ok(mut state) = self.state.lock() else {
@@ -659,6 +671,11 @@ impl Client {
         if outstanding {
             post(&mut state, &self.wire, Outgoing::Message(cancel(asked.0)));
         }
+    }
+
+    /// Cancels an outstanding question at the server and discards its answer.
+    pub fn cancel(&self, asked: Asked) {
+        self.forget(asked);
     }
 
     /// Takes annotation refresh requests the server has sent.

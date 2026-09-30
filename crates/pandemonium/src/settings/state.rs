@@ -174,6 +174,7 @@ impl SettingsSection {
                 Preference::SplitDiff,
                 Preference::InlayHints,
                 Preference::CodeLens,
+                Preference::EditPredictions,
                 Preference::ScrollSensitivity,
             ],
             Self::Saving => &[

@@ -122,6 +122,9 @@ impl App {
 
     /// Gives the keyboard to `pane`, taking it from the terminal.
     pub(super) fn focus_pane(&mut self, pane: PaneId) {
+        if pane != self.panes.focus() {
+            self.dismiss_prediction();
+        }
         self.panes.set_focus(pane);
         self.follow_focused_file();
         self.editor_focused = true;
@@ -923,6 +926,7 @@ impl App {
     /// so the place left behind goes on the trail: going back returns to the
     /// tab that was in front, at the line it was left at.
     pub(super) fn activate_tab(&mut self, pane: PaneId, item: Item) {
+        self.dismiss_prediction();
         if self
             .scope()
             .and_then(|scope| self.panes.pane(pane)?.active(scope))
@@ -1220,6 +1224,8 @@ impl App {
                     .unwrap_or_default(),
                 stopped: file.and_then(|file| self.stopped_in(file)),
                 caret,
+                prediction_visible: self.preferences.edit_predictions.enabled
+                    && self.completions.is_none(),
                 display,
                 crumbs: file
                     .filter(|_| display.breadcrumbs)

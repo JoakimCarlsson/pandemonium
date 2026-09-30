@@ -19,6 +19,7 @@ mod indent;
 pub mod install;
 mod language;
 mod lsp;
+mod predict;
 pub mod program;
 pub mod snippet;
 mod syntax;
@@ -37,4 +38,5 @@ pub use lsp::{
     NamedLocation, Progress, Request, Servers, Signature, Symbol, Trigger, Watched,
     WorkspaceChange, is_tracing, set_trace,
 };
+pub use predict::{Prediction, Predictor, ServerPredictor, Ticket, server_predictor};
 pub use syntax::{Highlight, Highlights, SyntaxNode, highlight, is_declaration};

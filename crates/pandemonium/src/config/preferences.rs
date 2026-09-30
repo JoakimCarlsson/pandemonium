@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 use pm_core::Bootstrap;
-use pm_text::Indent;
+use pm_text::{Indent, Server};
 use pm_ui::Appearance;
 use serde::{Deserialize, Serialize};
 
@@ -167,6 +167,8 @@ pub enum Preference {
     InlayHints,
     /// Whether a language server's notes are written after declarations.
     CodeLens,
+    /// Whether the editor asks for inline predictions.
+    EditPredictions,
     /// How the caret is drawn.
     CursorShape,
     /// Whether the caret blinks.
@@ -245,6 +247,25 @@ pub struct AgentOptions {
     pub knobs: BTreeMap<String, KnobValue>,
 }
 
+/// Whether inline predictions run, and a server dedicated to them if named.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditPredictions {
+    /// Whether the editor asks for predictions.
+    pub enabled: bool,
+    /// The extra server run for every language when configured.
+    pub server: Option<Server>,
+}
+
+impl Default for EditPredictions {
+    /// Enables prediction from any capable language server.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            server: None,
+        }
+    }
+}
+
 /// Everything the reader decides about how the editor draws and behaves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
@@ -280,6 +301,8 @@ pub struct Preferences {
     pub inlay_hints: bool,
     /// Whether a language server's notes are written after declarations.
     pub code_lens: bool,
+    /// Inline prediction settings and optional dedicated server.
+    pub edit_predictions: EditPredictions,
     /// Whether the caret blinks.
     pub cursor_blink: bool,
     /// How far a notch of the wheel scrolls, against its usual distance.
@@ -320,6 +343,7 @@ impl Default for Preferences {
             split_diff: false,
             inlay_hints: true,
             code_lens: true,
+            edit_predictions: EditPredictions::default(),
             cursor_blink: true,
             scroll_sensitivity: 1.0,
             format_on_save: false,
@@ -372,6 +396,7 @@ flags! {
     SplitDiff => split_diff,
     InlayHints => inlay_hints,
     CodeLens => code_lens,
+    EditPredictions => edit_predictions.enabled,
     CursorBlink => cursor_blink,
     FormatOnSave => format_on_save,
     TrimWhitespace => trim_whitespace,
@@ -424,6 +449,7 @@ fields! {
     WrapGuide => display.wrap_guide,
     InlayHints => inlay_hints,
     CodeLens => code_lens,
+    EditPredictions => edit_predictions.enabled,
     CursorShape => display.cursor_shape,
     CursorBlink => cursor_blink,
     ScrollSensitivity => scroll_sensitivity,

@@ -22,13 +22,13 @@ use lsp_types::{
     DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
     GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, HoverProviderCapability,
     ImplementationProviderCapability, InitializeParams, InlayHintClientCapabilities,
-    InlayHintWorkspaceClientCapabilities, MarkupKind, OneOf, PositionEncodingKind,
-    PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities, Registration,
-    RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenType,
+    InlayHintWorkspaceClientCapabilities, InlineCompletionClientCapabilities, MarkupKind, OneOf,
+    PositionEncodingKind, PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities,
+    Registration, RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenType,
     SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
-    TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
+    SignatureHelpOptions, TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
     TextDocumentRegistrationOptions, TextDocumentSaveRegistrationOptions,
     TextDocumentSyncCapability, TextDocumentSyncClientCapabilities, TextDocumentSyncKind,
     TextDocumentSyncSaveOptions, TokenFormat, TypeDefinitionProviderCapability,
@@ -105,6 +105,9 @@ const SEMANTIC_TOKENS: &str = "textDocument/semanticTokens";
 
 /// The method a registration of completion names.
 const COMPLETION: &str = "textDocument/completion";
+
+/// The method a registration of signature help names.
+const SIGNATURE_HELP: &str = "textDocument/signatureHelp";
 
 /// The method a registration of code lenses names.
 const CODE_LENS: &str = "textDocument/codeLens";
@@ -416,6 +419,38 @@ impl Capabilities {
             .collect()
     }
 
+    /// The characters that start or refresh signature help for `document`.
+    pub(super) fn signature_triggers(
+        &self,
+        document: Option<Document>,
+        showing: bool,
+    ) -> Vec<char> {
+        let stated = self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.signature_help_provider.as_ref());
+        let registered = self
+            .registrations(SIGNATURE_HELP, document)
+            .filter_map(|options| {
+                serde_json::from_value::<SignatureHelpOptions>(options.clone()).ok()
+            });
+        stated
+            .cloned()
+            .into_iter()
+            .chain(registered)
+            .flat_map(|options| {
+                options.trigger_characters.into_iter().flatten().chain(
+                    options
+                        .retrigger_characters
+                        .into_iter()
+                        .flatten()
+                        .filter(|_| showing),
+                )
+            })
+            .filter_map(|written| written.chars().next())
+            .collect()
+    }
+
     /// Whether the server says what a code lens it sent unsaid says, when asked.
     pub(super) fn resolves_lenses(&self, document: Option<Document>) -> bool {
         let stated = self
@@ -610,6 +645,7 @@ fn states(stated: &ServerCapabilities, method: &str) -> bool {
         "textDocument/references" => on(stated.references_provider.as_ref()),
         "textDocument/hover" => on(stated.hover_provider.as_ref()),
         "textDocument/completion" => stated.completion_provider.is_some(),
+        "textDocument/inlineCompletion" => on(stated.inline_completion_provider.as_ref()),
         "textDocument/signatureHelp" => stated.signature_help_provider.is_some(),
         "textDocument/codeAction" => on(stated.code_action_provider.as_ref()),
         "textDocument/rename" => on(stated.rename_provider.as_ref()),
@@ -738,6 +774,9 @@ fn text_document() -> TextDocumentClientCapabilities {
             }),
             context_support: Some(true),
             ..CompletionClientCapabilities::default()
+        }),
+        inline_completion: Some(InlineCompletionClientCapabilities {
+            dynamic_registration: dynamic(),
         }),
         hover: Some(HoverClientCapabilities {
             dynamic_registration: dynamic(),

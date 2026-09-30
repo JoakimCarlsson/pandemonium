@@ -480,6 +480,11 @@ fn section_rows(
                 "Code Lens",
                 "Let a language server write counts of uses and ways to run a declaration after it",
             ),
+            toggle(
+                Preference::EditPredictions,
+                "Edit Predictions",
+                "Show inline text predicted by a language server while typing",
+            ),
             stepper(
                 Preference::ScrollSensitivity,
                 "Scroll Sensitivity",
