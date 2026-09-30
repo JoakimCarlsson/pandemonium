@@ -2,6 +2,8 @@
 
 Yet another text editor you don't need.
 
+![An agent's diff with review comments on it, ready to send back to the agent](assets/screenshots/review.png)
+
 There are already plenty of good ones. This one exists because I wanted an
 editor shaped exactly like the way I work, and it is quite opinionated about
 it. If your workflow looks like mine, you might like it. If it doesn't, Zed,
@@ -40,6 +42,10 @@ side of the real work. pandemonium treats it as the real work.
   continues.
 - **GPU-native.** Rendered with wgpu, windowed with winit, with a UI layer
   written from scratch. No web view, no Electron, no UI framework.
+
+![Codex asking to run clippy, beside the file it just edited](assets/screenshots/agent.png)
+
+![A Rust file with rust-analyzer hints and the outline pane](assets/screenshots/editor.png)
 
 ## Status
 
