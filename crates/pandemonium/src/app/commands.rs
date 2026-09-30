@@ -869,16 +869,45 @@ impl App {
         };
         let start = completions.start();
         let waiting = completions.is_asked(&item.handle);
+        let callable = matches!(item.kind, "function" | "method" | "constructor");
+        let mut show_signature = false;
         self.completions = None;
         self.dismiss_prediction();
         self.edit_active(|buffer| {
-            let head = buffer.selection().head;
-            let base = buffer.complete(start..head, &item.insert, item.extra.clone());
-            if !item.stops.is_empty() {
-                buffer.begin_snippet(base, item.stops.clone());
-            }
+            buffer.grouped(|buffer| {
+                let head = buffer.selection().head;
+                let base = buffer.complete(start..head, &item.insert, item.extra.clone());
+                if !item.stops.is_empty() {
+                    buffer.begin_snippet(base, item.stops.clone());
+                }
+                if callable {
+                    if item.insert.contains('(') {
+                        if item.insert.ends_with("()") && buffer.selection().is_empty() {
+                            let head = buffer.selection().head;
+                            if head.column > 0
+                                && buffer.char_at(Position::new(head.line, head.column - 1))
+                                    == Some(')')
+                            {
+                                buffer.place(Position::new(head.line, head.column - 1), false);
+                            }
+                        }
+                        show_signature = true;
+                    } else if item.stops.is_empty() {
+                        let head = buffer.selection().head;
+                        if buffer.char_at(head) == Some('(') {
+                            buffer.place(Position::new(head.line, head.column + 1), false);
+                        } else {
+                            buffer.insert_typed('(');
+                        }
+                        show_signature = true;
+                    }
+                }
+            });
         });
         self.await_taken_completion(client, item, start, waiting);
+        if show_signature {
+            self.ask(pm_text::Request::Signature);
+        }
     }
 
     /// Follows a keystroke through: narrows the list, or asks for a new one.
@@ -904,7 +933,7 @@ impl App {
             self.ask(pm_text::Request::Completions(pm_text::Trigger::Character(
                 typed,
             )));
-        } else if typed.is_alphanumeric() || typed == '_' {
+        } else if typed == '.' || typed.is_alphanumeric() || typed == '_' {
             self.ask(pm_text::Request::Completions(pm_text::Trigger::Invoked));
         }
     }

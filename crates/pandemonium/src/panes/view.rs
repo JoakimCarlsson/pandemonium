@@ -342,15 +342,17 @@ fn pane_actions(theme: &Theme, id: PaneId, divided: bool, previewable: bool) -> 
         .gap(1)
         .items_center()
         .when(previewable, |actions| {
-            actions.child(icon_button(theme, IconName::Eye, Message::PreviewFile(id)))
+            actions.child(
+                icon_button(theme, IconName::Eye, Message::PreviewFile(id)).tooltip("Open Preview"),
+            )
         })
-        .child(icon_button(
-            theme,
-            IconName::Split,
-            Message::ShowPaneMenu(id),
-        ))
+        .child(
+            icon_button(theme, IconName::Split, Message::ShowPaneMenu(id)).tooltip("Pane Actions"),
+        )
         .when(divided, |actions| {
-            actions.child(icon_button(theme, IconName::Close, Message::ClosePane(id)))
+            actions.child(
+                icon_button(theme, IconName::Close, Message::ClosePane(id)).tooltip("Close Pane"),
+            )
         })
 }
 

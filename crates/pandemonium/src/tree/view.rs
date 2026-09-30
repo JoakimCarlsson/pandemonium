@@ -79,6 +79,12 @@ pub fn files_sidebar(theme: &Theme, listing: Option<&Listing<'_>>, width: f32) -
 
 /// Builds the line above the tree: the worktree it lists and its tools.
 fn header(theme: &Theme, tree: &FileTree) -> Div<Message> {
+    let root = tree.root();
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or_else(|| crate::workspace::shortened(root), str::to_owned);
+
     h_flex()
         .w_full()
         .h_px(theme.size.row)
@@ -88,12 +94,17 @@ fn header(theme: &Theme, tree: &FileTree) -> Div<Message> {
         .items_center()
         .overflow_hidden()
         .child(
-            text(crate::workspace::shortened(tree.root()))
-                .text_sm()
-                .font_mono()
-                .color(theme.colors.text_subtle),
+            h_flex()
+                .flex_1()
+                .overflow_hidden()
+                .tooltip(crate::workspace::shortened(root))
+                .child(
+                    text(name)
+                        .text_sm()
+                        .font_mono()
+                        .color(theme.colors.text_subtle),
+                ),
         )
-        .child(h_flex().flex_1())
         .child(icon_button(theme, IconName::FileAdd, Message::NewTreeFile).tooltip("New File…"))
         .child(
             icon_button(theme, IconName::FolderAdd, Message::NewTreeFolder).tooltip("New Folder…"),
@@ -294,7 +305,22 @@ fn file_row(theme: &Theme, listing: &Listing<'_>, row: &Row<'_>) -> Div<Message>
                 .color(theme.colors.text_subtle),
         )
         .child(v_flex().w(1))
-        .child(text(entry.name().to_owned()).color(name_color(theme, status, directory, cut)))
+        .child(
+            h_flex().flex_1().overflow_hidden().child(
+                text(entry.name().to_owned()).color(name_color(theme, status, directory, cut)),
+            ),
+        )
+        .when_some(status, |line, status| {
+            line.child(
+                h_flex().tooltip(format!("{status:?}")).child(
+                    text(status.letter())
+                        .text_xs()
+                        .font_mono()
+                        .color(status_color(theme, status)),
+                ),
+            )
+            .child(v_flex().w(1))
+        })
 }
 
 /// The colour a row's name is written in.

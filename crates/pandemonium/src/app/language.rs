@@ -1571,17 +1571,19 @@ impl App {
         items: Vec<pm_text::Completion>,
         incomplete: bool,
     ) {
-        if items.is_empty() {
+        if items.is_empty() || self.active_file_id() != Some(pending.file) {
             return;
         }
         let Some(document) = self.editor.get(pending.file) else {
             return;
         };
         let document = document.borrow();
-        let word = document.buffer().word_at(pending.at);
-        let typed = document
-            .buffer()
-            .text_in(word.start..document.buffer().selection().head);
+        let head = document.buffer().selection().head;
+        let word = document.buffer().word_at(head);
+        if pending.at.line != head.line || pending.at < word.start || pending.at > head {
+            return;
+        }
+        let typed = document.buffer().text_in(word.start..head);
         let under = document.layout().cell.height;
         let at = document.point_of(word.start);
         let point = pm_gfx::Point::new(at.x, at.y + under);
