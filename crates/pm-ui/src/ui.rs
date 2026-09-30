@@ -1,5 +1,7 @@
 //! The window's UI state: input, focus and the frame the tree is drawn into.
 
+use std::sync::Arc;
+
 use pm_gfx::{DrawList, Point, Rect, Size, TextSystem};
 
 use crate::element::{Element, Input, LayoutContext, PaintContext, Region, RegionAction};
@@ -24,6 +26,16 @@ pub enum PointerCursor {
     Grab,
 }
 
+/// The handler and cursor captured for the lifetime of one pointer press.
+struct CapturedDrag<M> {
+    /// The original target's handler, independent of subsequent painted regions.
+    handler: Arc<dyn Fn(ResizeEvent) -> M>,
+    /// The cursor requested by the original target.
+    cursor: PointerCursor,
+    /// The latest position, also used for a release outside the window.
+    current: Point,
+}
+
 /// Everything that survives between frames: the theme, the pointer and focus.
 ///
 /// The element tree does not survive: the caller rebuilds it every frame and
@@ -40,7 +52,7 @@ pub struct Ui<M> {
     /// The regions painted by the last frame, in paint order.
     regions: Vec<Region<M>>,
     /// The drag target captured by the current pointer press.
-    drag: Option<usize>,
+    drag: Option<CapturedDrag<M>>,
 }
 
 impl<M> Ui<M> {
@@ -68,15 +80,16 @@ impl<M> Ui<M> {
     /// Records the pointer at `pointer`.
     pub fn pointer_moved(&mut self, pointer: Point) -> Option<M> {
         self.input.pointer = Some(pointer);
+        if let Some(drag) = self.drag.as_mut() {
+            drag.current = pointer;
+        }
         let start = self.input.pressed_at?;
         self.drag_message(start, pointer, ResizePhase::Moved)
     }
 
-    /// Records the pointer having left the window.
+    /// Records the pointer leaving the window while preserving a held drag.
     pub fn pointer_left(&mut self) {
         self.input.pointer = None;
-        self.input.pressed_at = None;
-        self.drag = None;
     }
 
     /// Records a press and leaves keyboard focus to keyboard navigation.
@@ -85,8 +98,14 @@ impl<M> Ui<M> {
         let pointer = self.input.pointer?;
         let index = self.region_at(pointer);
         self.focus = None;
-        self.drag =
-            index.filter(|index| matches!(self.regions[*index].action, RegionAction::Drag { .. }));
+        self.drag = index.and_then(|index| match &self.regions[index].action {
+            RegionAction::Drag { handler, cursor } => Some(CapturedDrag {
+                handler: handler.clone(),
+                cursor: *cursor,
+                current: pointer,
+            }),
+            RegionAction::Click(_) | RegionAction::Inert => None,
+        });
         self.drag_message(pointer, pointer, ResizePhase::Started)
     }
 
@@ -96,12 +115,10 @@ impl<M> Ui<M> {
         M: Clone,
     {
         let pressed_at = self.input.pressed_at.take()?;
-        let pointer = self.input.pointer?;
         if self.drag.is_some() {
-            let message = self.drag_message(pressed_at, pointer, ResizePhase::Ended);
-            self.drag = None;
-            return message;
+            return self.end_drag(pressed_at);
         }
+        let pointer = self.input.pointer?;
         let index = self.region_at(pointer)?;
         let region = &self.regions[index];
         match &region.action {
@@ -110,6 +127,12 @@ impl<M> Ui<M> {
             }
             RegionAction::Click(_) | RegionAction::Drag { .. } | RegionAction::Inert => None,
         }
+    }
+
+    /// Ends a captured gesture on focus loss without activating a click target.
+    pub fn pointer_cancelled(&mut self) -> Option<M> {
+        let start = self.input.pressed_at.take()?;
+        self.end_drag(start)
     }
 
     /// The message of the region under a press of the secondary button.
@@ -154,9 +177,10 @@ impl<M> Ui<M> {
 
     /// Returns the cursor requested by the captured or hovered region.
     pub fn pointer_cursor(&self) -> PointerCursor {
-        let index = self
-            .drag
-            .or_else(|| self.input.pointer.and_then(|point| self.region_at(point)));
+        if let Some(drag) = &self.drag {
+            return drag.cursor;
+        }
+        let index = self.input.pointer.and_then(|point| self.region_at(point));
         match index.and_then(|index| self.regions.get(index)) {
             Some(Region {
                 action: RegionAction::Click(_),
@@ -217,21 +241,24 @@ impl<M> Ui<M> {
             .rposition(|region| region.bounds.contains(point))
     }
 
-    /// Builds the message for the captured drag from `start` to `pointer`.
-    ///
-    /// Where the gesture began is passed in rather than read back out of the
-    /// input, because the release that ends a drag has already let go of the
-    /// press it began with by the time the last event is built.
+    /// Builds a message from the captured handler without consulting painted regions.
     fn drag_message(&self, start: Point, pointer: Point, phase: ResizePhase) -> Option<M> {
-        let region = self.regions.get(self.drag?)?;
-        match &region.action {
-            RegionAction::Drag { handler, .. } => Some(handler(ResizeEvent {
-                phase,
-                start,
-                current: pointer,
-            })),
-            RegionAction::Click(_) | RegionAction::Inert => None,
-        }
+        let drag = self.drag.as_ref()?;
+        Some((drag.handler)(ResizeEvent {
+            phase,
+            start,
+            current: pointer,
+        }))
+    }
+
+    /// Releases the captured handler and sends its final pointer position.
+    fn end_drag(&mut self, start: Point) -> Option<M> {
+        let drag = self.drag.take()?;
+        Some((drag.handler)(ResizeEvent {
+            phase: ResizePhase::Ended,
+            start,
+            current: self.input.pointer.unwrap_or(drag.current),
+        }))
     }
 
     /// Focus moved by `step` places in tab order, wrapping around.

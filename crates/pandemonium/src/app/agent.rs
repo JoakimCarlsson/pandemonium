@@ -6,6 +6,7 @@
 //! answers to goes through [`App::agent_command`].
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
@@ -14,7 +15,7 @@ use pm_text::Position;
 use pm_ui::{Axis, MenuItem, ResizeEvent, ResizePhase};
 use winit::window::UserAttentionType;
 
-use crate::agent::{Standing, Talk, TalkId, Tally};
+use crate::agent::{Spot, Standing, Talk, TalkId, Tally};
 use crate::app::places::Place;
 use crate::app::{App, Writing};
 use crate::config::{AgentOptions, KnobValue};
@@ -28,6 +29,22 @@ use crate::workspace::{MenuTarget, TabMenu};
 
 /// How far above the status bar its agent menu stops.
 const MENU_GAP: f32 = 4.0;
+
+/// The interval between scroll steps while a selection is held past a pane edge.
+const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
+
+/// A transcript selection captured against its conversation for one press.
+#[derive(Clone, Copy)]
+pub(super) struct SelectionDrag {
+    /// The conversation in which the press began.
+    session: TalkId,
+    /// The conversation position picked at the press, preserved across scrolling.
+    anchor: Spot,
+    /// The latest pointer position, used against each newly painted frame.
+    pointer: Point,
+    /// When the next automatic scroll step may run.
+    next_scroll: Instant,
+}
 
 impl App {
     /// Opens the menu of the agents standing as `standing` does, rising from
@@ -785,26 +802,116 @@ impl App {
         anchor: Point,
         head: Point,
     ) {
-        let theme = self.theme();
-        let Some(talk) = self.agents.get_mut(session) else {
-            return;
-        };
-        let (Some(anchor), Some(head)) = (talk.spot_at(anchor), talk.spot_at(head)) else {
-            return;
-        };
         if phase == ResizePhase::Started {
-            self.agent_words = self.agent_clicks.press(head) == 2;
+            self.agent_selection_drag = None;
+            let Some(talk) = self.agents.get_mut(session) else {
+                return;
+            };
+            let Some(anchor) = talk.spot_at(anchor) else {
+                return;
+            };
+            self.agent_words = self.agent_clicks.press(anchor) == 2;
             if !self.agent_words {
-                return talk.clear_selection();
+                talk.clear_selection();
             }
-        } else if anchor != head {
+            self.agent_selection_drag = Some(SelectionDrag {
+                session,
+                anchor,
+                pointer: head,
+                next_scroll: Instant::now(),
+            });
+        } else if let Some(drag) = self.agent_selection_drag.as_mut()
+            && drag.session == session
+        {
+            drag.pointer = head;
+        } else {
+            return;
+        }
+        self.refresh_agent_selection();
+        if phase == ResizePhase::Ended {
+            self.agent_selection_drag = None;
+        }
+    }
+
+    /// Extends the captured selection through the placements from the latest paint.
+    ///
+    /// Only the head is hit-tested again, so a wheel scroll preserves the press's
+    /// conversation position even when different rows occupy its old pixels.
+    pub(super) fn refresh_agent_selection(&mut self) -> bool {
+        let Some(drag) = self.agent_selection_drag else {
+            return false;
+        };
+        let theme = self.theme();
+        let Some(talk) = self.agents.get_mut(drag.session) else {
+            return false;
+        };
+        let view = talk.view().get();
+        let pointer = Point::new(
+            drag.pointer.x,
+            drag.pointer
+                .y
+                .clamp(view.top(), view.bottom().max(view.top())),
+        );
+        let Some(head) = talk.spot_at(pointer) else {
+            return false;
+        };
+        if drag.anchor != head {
             self.agent_clicks.clear();
         }
         let (anchor, head) = match self.agent_words {
-            true => crate::agent::words_between(&theme, talk, anchor, head),
-            false => (anchor, head),
+            true => crate::agent::words_between(&theme, talk, drag.anchor, head),
+            false => (drag.anchor, head),
         };
+        let before = talk.selection();
         talk.select(anchor, head);
+        before != talk.selection()
+    }
+
+    /// The signed scroll step for a selection held above or below its conversation.
+    fn agent_selection_scroll_step(&self) -> Option<f32> {
+        let drag = self.agent_selection_drag?;
+        if self.pointer.is_none() || !self.window_focused || self.window_occluded {
+            return None;
+        }
+        let talk = self.agents.get(drag.session)?;
+        let view = talk.view().get();
+        let end = (talk.drawn_height().get() - view.size.height).max(0.0);
+        let distance = if drag.pointer.y < view.top() && talk.scroll() > 0.0 {
+            drag.pointer.y - view.top()
+        } else if drag.pointer.y > view.bottom() && talk.scroll() < end {
+            drag.pointer.y - view.bottom()
+        } else {
+            return None;
+        };
+        Some(distance.signum() * (distance.abs() * 0.25).clamp(4.0, 40.0))
+    }
+
+    /// When a held selection outside the conversation next needs a scroll step.
+    pub(super) fn next_agent_selection_scroll(&self) -> Option<Instant> {
+        self.agent_selection_scroll_step()?;
+        Some(self.agent_selection_drag?.next_scroll)
+    }
+
+    /// Scrolls toward off-screen text while a selection is held beyond a pane edge.
+    pub(super) fn autoscroll_agent_selection(&mut self) -> bool {
+        let Some(step) = self.agent_selection_scroll_step() else {
+            return false;
+        };
+        let Some(drag) = self.agent_selection_drag.as_mut() else {
+            return false;
+        };
+        let now = Instant::now();
+        if now < drag.next_scroll {
+            return false;
+        }
+        drag.next_scroll = now + SELECTION_SCROLL_INTERVAL;
+        let Some(talk) = self.agents.get_mut(drag.session) else {
+            return false;
+        };
+        let end = talk.drawn_height().get() - talk.view().get().size.height;
+        let before = talk.scroll();
+        talk.scroll_by(step, end);
+        before != talk.scroll()
     }
 
     /// Puts what the reader picked out of the focused agent's transcript on
