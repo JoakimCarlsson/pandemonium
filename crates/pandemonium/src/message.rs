@@ -113,6 +113,10 @@ pub enum Message {
     DragProject(ProjectId, ResizeEvent),
     /// Cut a session of the active project from the branch it has out.
     NewSession,
+    /// Runs health checks in the named worktree.
+    RunChecks(Scope),
+    /// Shows the retained output of a worktree check.
+    ShowCheckOutput(Scope),
     /// Cut a session of this project from the branch in this place of its list.
     NewSessionFrom(ProjectId, usize),
     /// Show or hide the branches a new session can be cut from.

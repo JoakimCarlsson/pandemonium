@@ -560,6 +560,9 @@ impl App {
     /// Sends what `session`'s prompt holds, and follows what comes back.
     pub(super) fn send_prompt(&mut self, session: TalkId) {
         if let Some(talk) = self.agents.get_mut(session) {
+            if !talk.prompt().value().trim().is_empty() || !talk.attachments().is_empty() {
+                self.checks.reset(talk.scope());
+            }
             talk.send();
         }
         self.focus_prompt(session);

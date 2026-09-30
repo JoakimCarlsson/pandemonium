@@ -37,6 +37,12 @@ impl App {
             return self.request_redraw();
         }
         match action {
+            Action::ShowSessions => self.open_picker(Kind::Sessions),
+            Action::RunChecks => {
+                if let Some(scope) = self.scope() {
+                    self.run_checks(scope, false);
+                }
+            }
             Action::AcceptPrediction => self.accept_prediction(false),
             Action::AcceptPredictionWord => self.accept_prediction(true),
             Action::DismissPrediction => self.dismiss_prediction(),

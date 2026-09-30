@@ -33,11 +33,16 @@ pub struct Task {
     pub env: Vec<(String, String)>,
     /// The file that defined or implied it.
     pub source: TaskSource,
+    /// Whether this task contributes to worktree health.
+    pub check: bool,
 }
 
 /// The YAML representation of one project task.
 #[derive(Deserialize)]
 struct WrittenTask {
+    /// Whether this command is a health check.
+    #[serde(default)]
+    check: bool,
     /// Its label.
     label: String,
     /// Its shell command.
@@ -68,6 +73,7 @@ pub fn tasks_checked(root: &Path) -> (Vec<Task>, Option<String>) {
                         cwd: task.cwd,
                         env: task.env.into_iter().collect(),
                         source: TaskSource::File,
+                        check: task.check,
                     })
                     .collect::<Vec<_>>(),
                 None,
@@ -119,6 +125,7 @@ fn detected(root: &Path) -> Vec<Task> {
             cwd: None,
             env: Vec::new(),
             source: TaskSource::Detected(source),
+            check: false,
         })
     };
     if let Ok(cargo) = fs::read_to_string(root.join("Cargo.toml")) {

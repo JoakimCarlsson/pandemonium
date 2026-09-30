@@ -118,6 +118,7 @@ impl App {
     /// Turns task exits into foreground notices and starts waiting debuggers.
     pub(super) fn hear_finished_tasks(&mut self) {
         for finished in self.tasks.take_finished() {
+            self.take_check_result(finished.run, &finished.outcome);
             if let Some((scope, scenario)) = self.pending_debug.remove(&finished.run) {
                 if self.tasks.outcome(finished.run) == Some(Outcome::Succeeded) {
                     self.start_debug_adapter(scope, scenario);
@@ -149,6 +150,7 @@ impl App {
                 Some(Message::ShowPanelView(PanelView::Terminal)),
             );
         }
+        self.advance_checks();
     }
 }
 

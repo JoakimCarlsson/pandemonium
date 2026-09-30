@@ -187,6 +187,10 @@ pub enum Preference {
     TerminalScrollback,
     /// Whether a new session's worktree is trusted without being asked about.
     TrustWorktrees,
+    /// Whether failed automatic checks are sent back to the agent.
+    HealthFeedback,
+    /// Maximum automatic repair prompts before stopping.
+    HealthRetries,
     /// How a missing language server is installed.
     InstallLanguageServers,
     /// The paths symlinked into a new session's worktree.
@@ -317,6 +321,10 @@ pub struct Preferences {
     pub terminal_scrollback: usize,
     /// Whether a new session's worktree is trusted without being asked about.
     pub trust_worktrees: bool,
+    /// Whether failed checks trigger an agent repair prompt.
+    pub health_feedback: bool,
+    /// Maximum automatic repair prompts per worktree.
+    pub health_retries: usize,
     /// How missing language servers are installed.
     pub install_language_servers: InstallLanguageServers,
     /// What a session's fresh worktree is given, git having left it out.
@@ -351,6 +359,8 @@ impl Default for Preferences {
             final_newline: false,
             terminal_scrollback: pm_vt::SCROLLBACK,
             trust_worktrees: false,
+            health_feedback: false,
+            health_retries: 3,
             install_language_servers: InstallLanguageServers::Ask,
             bootstrap: Bootstrap::default(),
         }
@@ -402,6 +412,7 @@ flags! {
     TrimWhitespace => trim_whitespace,
     FinalNewline => final_newline,
     TrustWorktrees => trust_worktrees,
+    HealthFeedback => health_feedback,
 }
 
 /// Declares the part of [`Preferences::reset`] that puts a field back as it
@@ -459,6 +470,8 @@ fields! {
     TerminalFontSize => fonts.terminal_size,
     TerminalScrollback => terminal_scrollback,
     TrustWorktrees => trust_worktrees,
+    HealthFeedback => health_feedback,
+    HealthRetries => health_retries,
     InstallLanguageServers => install_language_servers,
     WorktreeLink => bootstrap.link,
     WorktreeCopy => bootstrap.copy,
@@ -524,6 +537,10 @@ impl Preferences {
                 let lines = stepped(self.terminal_scrollback as f32, step, 1_000.0, SCROLLBACKS);
                 self.terminal_scrollback = lines as usize;
             }
+            Preference::HealthRetries => {
+                self.health_retries =
+                    stepped(self.health_retries as f32, step, 1.0, 0.0..=100.0) as usize;
+            }
             Preference::TabSize => {
                 self.tab_size = stepped(self.tab_size as f32, step, 1.0, TAB_SIZES) as usize;
             }
@@ -546,6 +563,7 @@ impl Preferences {
             Preference::BufferLineHeight => format!("{:.1}", fonts.buffer_line_height),
             Preference::TerminalFontSize => format!("{}", fonts.terminal_size),
             Preference::TerminalScrollback => format!("{}", self.terminal_scrollback),
+            Preference::HealthRetries => self.health_retries.to_string(),
             Preference::TabSize => format!("{}", self.tab_size),
             Preference::ScrollSensitivity => format!("{:.2}×", self.scroll_sensitivity),
             _ => return None,

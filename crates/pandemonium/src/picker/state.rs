@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use pm_core::{ProjectId, Scope};
+use pm_core::{ProjectId, Scope, SessionId};
 use pm_text::Position;
 
 use crate::agent::TalkId;
@@ -38,6 +38,8 @@ pub enum Kind {
     Files,
     /// The projects the window holds open.
     Projects,
+    /// Sessions in every open project.
+    Sessions,
     /// The local branches of the active project.
     Branches,
     /// The active repository's saved stashes.
@@ -125,6 +127,7 @@ impl Kind {
             Self::Commands => "Run a command",
             Self::LanguageServers => "Install Language Server…",
             Self::Files => "Search files by name, > for commands, # for symbols",
+            Self::Sessions => "Go to a session",
             Self::Projects => "Go to a project",
             Self::Branches => "Switch or type to create a branch…",
             Self::Stashes => "Choose a stash",
@@ -231,6 +234,8 @@ impl Kind {
 /// What choosing one row does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Choice {
+    /// Points at an existing session worktree.
+    Session(SessionId, crate::health::Health),
     /// Carry out this command.
     Act(Action),
     /// Install this language server.

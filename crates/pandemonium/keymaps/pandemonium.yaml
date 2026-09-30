@@ -23,6 +23,7 @@ bindings:
   - when: project.focused
     keys:
       primary+shift+n: session.new
+      primary+k primary+shift+b: session::RunChecks
       primary+k primary+shift+o: project.remove
       primary+k primary+g: git.review
       primary+k primary+e: git.edit_changes

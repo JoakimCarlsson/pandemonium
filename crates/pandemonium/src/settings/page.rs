@@ -564,6 +564,18 @@ fn section_rows(
             "Trust New Worktrees",
             "Run language servers and tasks in a session's worktree without asking first",
         ))
+        .chain([
+            toggle(
+                Preference::HealthFeedback,
+                "Health Feedback",
+                "Send failing checks to the session agent after its turn",
+            ),
+            stepper(
+                Preference::HealthRetries,
+                "Health Retries",
+                "Maximum automatic repair prompts before stopping",
+            ),
+        ])
         .chain(bootstrap_rows(theme, preferences))
         .collect(),
     }

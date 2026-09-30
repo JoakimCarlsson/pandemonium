@@ -12,6 +12,7 @@ mod editor;
 mod emblem;
 mod excerpts;
 mod field;
+mod health;
 mod image;
 #[allow(
     dead_code,

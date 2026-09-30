@@ -192,6 +192,8 @@ impl SettingsSection {
             Self::Terminal => &[Preference::TerminalFontSize, Preference::TerminalScrollback],
             Self::Sessions => &[
                 Preference::TrustWorktrees,
+                Preference::HealthFeedback,
+                Preference::HealthRetries,
                 Preference::WorktreeLink,
                 Preference::WorktreeCopy,
                 Preference::WorktreePort,

@@ -209,6 +209,7 @@ impl App {
                 self.store();
             }
             Choice::Agent(agent) => self.start_agent(agent),
+            Choice::Session(session, _) => self.select_session(session),
             Choice::Task(scope, task) => {
                 self.run_task(scope, &task, crate::tasks::Shown::Front);
             }
@@ -288,6 +289,7 @@ impl App {
             Kind::Debug => self.debug_rows(),
             Kind::Processes => self.process_rows(),
             Kind::AttachAdapters => self.attach_adapter_rows(),
+            Kind::Sessions => self.session_rows(),
             Kind::Tasks => self.task_rows(),
             Kind::Stashes => self.review().map_or_else(Vec::new, |review| {
                 let now = std::time::SystemTime::now()
