@@ -1,6 +1,6 @@
 //! The editor workspace shown after onboarding has finished.
 
-use pm_core::{Project, ProjectId, Projects, SessionId};
+use pm_core::{Project, ProjectId, Projects, Scope, SessionId};
 use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
 use pm_ui::{
@@ -11,6 +11,7 @@ use pm_ui::{
 
 use crate::agent::{Standing, Tally, standing_color};
 use crate::editor::{FileId, OpenFile};
+use crate::health::Health;
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::notice::{Shown, Tone};
@@ -37,6 +38,9 @@ const BAR_INSET: f32 = 4.0;
 
 /// How far a session row sits in from the project row above it.
 const SESSION_INDENT: f32 = 12.0;
+
+/// Maximum branch reading width, keeping project health visible.
+const PROJECT_READING_WIDTH: f32 = 96.0;
 
 /// Width of the bar marking the row the window is pointed at.
 const MARKER_WIDTH: f32 = 2.0;
@@ -203,6 +207,10 @@ pub struct SidebarProject {
     pub project: ProjectId,
     /// Whether the window is pointed at the project's own checkout.
     pub at_checkout: bool,
+    /// The checkout health shared with session presentations.
+    pub health: Health,
+    /// Check failures, diagnostics and feedback limit for its badge.
+    pub health_detail: String,
     /// Sessions belonging to that project.
     pub sessions: Vec<SidebarSession>,
 }
@@ -219,6 +227,10 @@ pub struct SidebarSession {
     pub removed: usize,
     /// Colour representing the state reported by the agent.
     pub status_color: Rgba,
+    /// Computed worktree health, independent of the agent standing.
+    pub health: Health,
+    /// Check failures, diagnostics and feedback limit for its badge.
+    pub health_detail: String,
     /// How many errors the language servers over its worktree report.
     pub errors: usize,
     /// How many review comments on its worktree are waiting to be sent.
@@ -486,9 +498,16 @@ pub fn add_project_items() -> Vec<MenuItem<Message>> {
 ///
 /// A session is a worktree and the work in it: going to it is what the row
 /// itself does, so what is left is ending it, which takes the worktree away.
-pub fn session_menu_items(session: SessionId) -> Vec<MenuItem<Message>> {
+pub fn session_menu_items(
+    session: SessionId,
+    scope: Scope,
+    detail: String,
+) -> Vec<MenuItem<Message>> {
     vec![
         menu_entry("Go to Session", Some(Message::SelectSession(session))),
+        menu_entry(detail, None),
+        menu_entry("Run Checks", Some(Message::RunChecks(scope))),
+        menu_entry("Show Check Output", Some(Message::ShowCheckOutput(scope))),
         menu_separator(),
         menu_entry("Finish Session…", Some(Message::FinishSession(session))),
     ]
@@ -531,6 +550,11 @@ pub fn project_menu_items(
 
     vec![
         session,
+        menu_entry("Run Checks", Some(Message::RunChecks(Scope::checkout(id)))),
+        menu_entry(
+            "Show Check Output",
+            Some(Message::ShowCheckOutput(Scope::checkout(id))),
+        ),
         menu_separator(),
         menu_entry("Open Project…", Some(Message::OpenProject)),
         menu_entry("Close Project", Some(Message::CloseProject(id))),
@@ -1321,7 +1345,7 @@ fn sessions_of<'a>(project: &Project, sessions: &'a [SidebarProject]) -> &'a [Si
 fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div<Message> {
     v_flex()
         .w_full()
-        .child(project_row(theme, project, entry.at_checkout))
+        .child(project_row(theme, project, entry))
         .children(
             entry
                 .sessions
@@ -1338,7 +1362,8 @@ fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div
 /// repositories states how many it holds, and a plain folder states nothing
 /// beside its name. The row is carried to reorder the projects, and a press
 /// that goes nowhere activates it.
-fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message> {
+fn project_row(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div<Message> {
+    let selected = entry.at_checkout;
     let id = project.id();
     row(theme, selected)
         .on_drag(move |event| Message::DragProject(id, event))
@@ -1351,7 +1376,14 @@ fn project_row(theme: &Theme, project: &Project, selected: bool) -> Div<Message>
                 .font_medium()
                 .color(theme.colors.text),
         ))
-        .children(project_reading(project).map(|said| reading(theme, said)))
+        .children(project_reading(project).map(|said| {
+            h_flex()
+                .max_w_px(PROJECT_READING_WIDTH)
+                .overflow_hidden()
+                .tooltip(said.clone())
+                .child(reading(theme, said))
+        }))
+        .child(entry.health.badge(theme, &entry.health_detail))
 }
 
 /// What a project's row states beside its name: the branch it has out, or
@@ -1379,14 +1411,6 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
                 .font_light()
                 .color(theme.colors.text),
         ))
-        .when(session.errors > 0, |row| {
-            row.child(
-                text(format!("{} ", session.errors))
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.danger),
-            )
-        })
         .when(session.pending > 0, |row| {
             row.child(
                 text(format!("● {} ", session.pending))
@@ -1396,6 +1420,14 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
             )
         })
         .child(drift(theme, session.added, session.removed))
+        .child(session.health.badge(
+            theme,
+            &if session.errors == 0 {
+                format!("{} · no errors", session.health_detail)
+            } else {
+                session.health_detail.clone()
+            },
+        ))
 }
 
 /// Builds the box a project or session row is laid out in.

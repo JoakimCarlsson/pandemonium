@@ -123,6 +123,8 @@ pub enum Action {
     RenameTerminal,
     /// Choose and run a task in the worktree in front.
     TaskRun,
+    /// Runs the current worktree health checks.
+    RunChecks,
     /// Run the last task of the worktree in front.
     TaskRerun,
     /// Stop the task shown in the terminal or the sole running task.
@@ -479,6 +481,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (Action::FocusDown, "pane.focus_down", "Focus Pane Down"),
     (Action::NewTerminal, "terminal.new", "New Terminal"),
     (Action::RenameTerminal, "terminal.rename", "Rename Terminal"),
+    (
+        Action::RunChecks,
+        "session::RunChecks",
+        "Session: Run Checks",
+    ),
     (Action::TaskRun, "task.run", "Tasks: Run Task"),
     (Action::TaskRerun, "task.rerun", "Tasks: Rerun Last Task"),
     (Action::TaskStop, "task.stop", "Tasks: Stop Task"),

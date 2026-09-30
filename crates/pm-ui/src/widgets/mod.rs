@@ -9,6 +9,7 @@
 mod button;
 mod checkbox;
 mod field;
+mod icon_badge;
 mod icon_button;
 mod kbd;
 mod menu;
@@ -28,6 +29,7 @@ mod view_tab;
 pub use button::{Button, ButtonVariant, button};
 pub use checkbox::{ToggleState, checkbox};
 pub use field::{Field, field};
+pub use icon_badge::icon_badge;
 pub use icon_button::{icon_button, tinted_icon_button, turning_icon_button};
 pub use kbd::kbd;
 pub use menu::{MenuItem, menu, menu_entry, menu_separator, menu_submenu};

@@ -31,6 +31,8 @@ impl App {
             return true;
         }
         match message {
+            Message::RunChecks(scope) => self.run_checks(scope, false),
+            Message::ShowCheckOutput(scope) => self.show_check_output(scope),
             Message::NewSession => self.name_session_here(),
             Message::NewSessionFrom(project, place) => self.name_session(project, place),
             Message::SelectSession(session) => self.select_session(session),
@@ -287,6 +289,8 @@ impl App {
         self.drop_tabs(&|held| held == scope);
         self.terminals.stop_all(scope);
         self.tasks.forget_scope(scope);
+        self.checks.forget(scope);
+        self.advance_checks();
         self.pending_debug.retain(|_, (held, _)| *held != scope);
         self.debuggers.forget(|held| held == scope);
         self.files.remove(&scope);
@@ -384,6 +388,8 @@ impl App {
             .map(|project| SidebarProject {
                 project: project.id(),
                 at_checkout: scope == Some(Scope::checkout(project.id())),
+                health: self.checks.health(Scope::checkout(project.id())),
+                health_detail: self.checks.detail(Scope::checkout(project.id())),
                 sessions: self
                     .sessions
                     .of(project.id())
@@ -395,6 +401,10 @@ impl App {
                             added: summary.added,
                             removed: summary.removed,
                             status_color: self.session_color(&theme, session.id()),
+                            health: self.checks.health(Scope::of(project.id(), session.id())),
+                            health_detail: self
+                                .checks
+                                .detail(Scope::of(project.id(), session.id())),
                             errors: self
                                 .editor
                                 .servers_over(session.root())
@@ -426,6 +436,25 @@ impl App {
             .map_or(theme.colors.text_subtle, |talk| {
                 standing_color(theme, talk.standing())
             })
+    }
+
+    /// Sessions across every project, with the same health as sidebar rows.
+    pub(super) fn session_rows(&self) -> Vec<Row> {
+        self.open
+            .iter()
+            .flat_map(|project| {
+                self.sessions.of(project.id()).map(|session| {
+                    let scope = Scope::of(project.id(), session.id());
+                    Row {
+                        section: None,
+                        label: session.name().to_owned(),
+                        detail: format!("{} · {}", project.name(), self.checks.detail(scope)),
+                        choice: Choice::Session(session.id(), self.checks.health(scope)),
+                        enabled: true,
+                    }
+                })
+            })
+            .collect()
     }
 
     /// Says what could not be brought into a worktree that was cut anyway.

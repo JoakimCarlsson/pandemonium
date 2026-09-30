@@ -78,6 +78,20 @@ pub struct Tasks {
 }
 
 impl Tasks {
+    /// The retained output tail of a task, including its final terminal writes.
+    pub fn tail(&self, run: RunId, lines: usize) -> String {
+        self.runs
+            .get(&run)
+            .map_or_else(String::new, |run| run.shell.borrow().tail(lines))
+    }
+
+    /// Opens a retained task shell through the terminal list.
+    pub fn show(&self, terminals: &mut Terminals, run: RunId) -> Option<Scope> {
+        let held = self.runs.get(&run)?;
+        terminals.activate(held.scope, held.shell_id);
+        Some(held.scope)
+    }
+
     /// Starts `task` in `scope`, stopping an earlier run of its label first.
     pub fn run(
         &mut self,
@@ -228,6 +242,7 @@ impl Tasks {
             if shell.is_running() {
                 continue;
             }
+            shell.pump();
             let outcome = match (shell.exit_signal(), shell.exit_code()) {
                 (Some(signal), _) => Outcome::Killed(signal),
                 (_, Some(0)) => Outcome::Succeeded,

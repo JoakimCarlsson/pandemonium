@@ -1096,6 +1096,7 @@ impl App {
             return;
         };
         if let Some(talk) = self.agents.get_mut(talk) {
+            self.checks.reset(talk.scope());
             talk.send_text(&prompt);
         }
         comments.mark_sent(&sent);

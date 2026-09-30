@@ -1403,7 +1403,11 @@ impl App {
                 self.showing_bases,
             ),
             MenuTarget::Projects => crate::workspace::add_project_items(),
-            MenuTarget::Session(session) => crate::workspace::session_menu_items(session),
+            MenuTarget::Session(session) => {
+                let held = self.sessions.get(session)?;
+                let scope = Scope::of(held.project(), session);
+                crate::workspace::session_menu_items(session, scope, self.checks.detail(scope))
+            }
             MenuTarget::Text(pane) => {
                 let file = self.file_in(self.panes.pane(pane)?.active(self.scope()?)?)?;
                 let document = self.editor.get(file)?;

@@ -15,6 +15,7 @@ mod dialog;
 mod disk;
 mod drag;
 mod excerpts;
+mod health;
 mod input;
 mod language;
 mod listing;
@@ -474,6 +475,8 @@ pub struct App {
     terminals: Terminals,
     /// Task runs and their reported results.
     tasks: crate::tasks::Tasks,
+    /// Worktree checks, diagnostic health and automatic feedback budgets.
+    checks: crate::health::Checks,
     /// Debug scenarios waiting for a task to finish.
     pending_debug: std::collections::BTreeMap<crate::tasks::RunId, (Scope, pm_dap::Scenario)>,
     /// Worktrees whose invalid tasks file has already been reported.
@@ -816,6 +819,7 @@ impl App {
             agents: Talks::default(),
             terminals: Terminals::default(),
             tasks: crate::tasks::Tasks::default(),
+            checks: crate::health::Checks::default(),
             pending_debug: std::collections::BTreeMap::new(),
             task_errors: std::collections::BTreeSet::new(),
             errands: client::Errands::default(),
@@ -1771,6 +1775,17 @@ impl App {
             self.trail.close_project(id);
             self.terminals.close(id);
             self.tasks.forget(id);
+            let scopes = self
+                .checks
+                .worktrees
+                .keys()
+                .copied()
+                .filter(|scope| scope.project() == id)
+                .collect::<Vec<_>>();
+            for scope in scopes {
+                self.checks.forget(scope);
+            }
+            self.advance_checks();
             self.pending_debug
                 .retain(|_, (scope, _)| scope.project() != id);
             self.debuggers.forget(|scope| scope.project() == id);
@@ -2536,6 +2551,7 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
+        self.refresh_health_diagnostics();
         self.see_shown_agents();
         self.follow_agents();
         self.settle_excerpts();
@@ -2761,6 +2777,7 @@ impl ApplicationHandler<Wake> for App {
                     self.call_reader(before);
                     self.follow_agents();
                     self.reread_worked_sessions();
+                    self.hear_health_turns();
                     self.request_redraw();
                 }
                 if self.agents.take_renamed() {

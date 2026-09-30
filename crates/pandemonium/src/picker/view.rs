@@ -252,6 +252,16 @@ fn branch_rows(theme: &Theme, picker: &Picker) -> Div<Message> {
                 .hover_bg(theme.colors.surface_hover)
                 .on_click(Message::ChoosePicker(place))
                 .child(text(row.label.clone()).text_sm().color(color))
+                .when(
+                    matches!(row.choice, crate::picker::Choice::Session(..)),
+                    |line| {
+                        if let crate::picker::Choice::Session(_, health) = row.choice {
+                            line.child(health.badge(theme, &row.detail))
+                        } else {
+                            line
+                        }
+                    },
+                )
                 .when(!row.detail.is_empty(), |line| {
                     line.child(
                         text(row.detail.clone())
@@ -293,6 +303,10 @@ fn row(
         .hover_bg(theme.colors.surface_hover)
         .on_click(Message::ChoosePicker(place))
         .child(text(row.label.clone()).text_sm().color(color))
+        .child(match row.choice {
+            crate::picker::Choice::Session(_, health) => health.badge(theme, &row.detail),
+            _ => h_flex(),
+        })
         .child(h_flex().flex_1())
         .child(
             text(row.detail.clone())

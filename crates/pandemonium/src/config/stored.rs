@@ -119,6 +119,10 @@ pub(super) struct Stored {
     ensure_final_newline_on_save: Option<bool>,
     /// Whether a new session's worktree is trusted without being asked about.
     trust_worktrees: Option<bool>,
+    /// Whether failing checks are sent back to the session agent.
+    health_feedback: Option<bool>,
+    /// Maximum automatic repair prompts.
+    health_retries: Option<usize>,
     /// How missing language servers are installed.
     install_language_servers: Option<InstallLanguageServers>,
     /// The servers to run for a language.
@@ -605,6 +609,8 @@ impl Stored {
                 .terminal_scrollback
                 .unwrap_or(defaults.terminal_scrollback),
             trust_worktrees: self.trust_worktrees.unwrap_or(defaults.trust_worktrees),
+            health_feedback: self.health_feedback.unwrap_or(defaults.health_feedback),
+            health_retries: self.health_retries.unwrap_or(defaults.health_retries),
             install_language_servers: self
                 .install_language_servers
                 .unwrap_or(defaults.install_language_servers),
@@ -692,6 +698,8 @@ impl Stored {
             remove_trailing_whitespace_on_save: Some(preferences.trim_whitespace),
             ensure_final_newline_on_save: Some(preferences.final_newline),
             trust_worktrees: Some(preferences.trust_worktrees),
+            health_feedback: Some(preferences.health_feedback),
+            health_retries: Some(preferences.health_retries),
             install_language_servers: Some(preferences.install_language_servers),
             language_servers: (!language_servers.is_empty()).then(|| {
                 language_servers

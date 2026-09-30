@@ -1282,6 +1282,8 @@ pub struct Talks {
     ended: Vec<TalkId>,
     /// New conversations that became ready since the last check.
     opened: Vec<TalkId>,
+    /// Conversations that ended a complete agent turn.
+    turns: Vec<Scope>,
     /// The file and terminal requests the agents have raised and the window
     /// has not yet taken, with the ticket each is answered under.
     requests: Vec<(TalkId, u64, Request)>,
@@ -1526,6 +1528,11 @@ impl Talks {
         std::mem::take(&mut self.ended)
     }
 
+    /// Worktrees whose agents ended a complete turn since the last collection.
+    pub fn take_turns(&mut self) -> Vec<Scope> {
+        std::mem::take(&mut self.turns)
+    }
+
     /// Newly started conversations ready to receive remembered options.
     pub fn take_opened(&mut self) -> Vec<TalkId> {
         std::mem::take(&mut self.opened)
@@ -1558,6 +1565,9 @@ impl Talks {
                 }
                 if matches!(event, Event::Ended) {
                     self.ended.push(talk.id);
+                }
+                if matches!(event, Event::Stopped(Stop::EndTurn)) {
+                    self.turns.push(talk.scope());
                 }
                 talk.take(event);
                 changed = true;

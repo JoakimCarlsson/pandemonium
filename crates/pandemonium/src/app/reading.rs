@@ -416,6 +416,8 @@ impl App {
         self.sessions.drifted(drifts);
         if std::mem::take(&mut self.readings.drift_again) {
             self.reread_drift_later();
+        } else {
+            self.check_changed_turns();
         }
     }
 

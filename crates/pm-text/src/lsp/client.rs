@@ -758,6 +758,32 @@ impl Client {
         })
     }
 
+    /// Error diagnostics with their paths, including files not open in a pane.
+    pub fn error_diagnostics(&self) -> Vec<(PathBuf, Diagnostic)> {
+        self.state.lock().map_or_else(
+            |_| Vec::new(),
+            |state| {
+                state
+                    .pushed
+                    .iter()
+                    .chain(
+                        state
+                            .pulled
+                            .iter()
+                            .map(|(path, pulled)| (path, &pulled.faults)),
+                    )
+                    .flat_map(|(path, faults)| {
+                        faults
+                            .shown
+                            .iter()
+                            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                            .map(|diagnostic| (path.clone(), diagnostic.clone()))
+                    })
+                    .collect()
+            },
+        )
+    }
+
     /// The work the server says it is doing, oldest first.
     pub fn progress(&self) -> Vec<Progress> {
         self.state
