@@ -460,6 +460,8 @@ pub struct App {
     agent_clicks: Clicks<crate::agent::Spot>,
     /// Whether the drag over an agent's transcript grows by whole words.
     agent_words: bool,
+    /// The transcript anchor and pointer held by the current selection gesture.
+    agent_selection_drag: Option<agent::SelectionDrag>,
     /// The last press on a row of the file tree, for keeping a file open.
     tree_clicks: Clicks<pm_core::EntryId>,
     /// The last press on a tab, for keeping a previewed file open.
@@ -806,6 +808,7 @@ impl App {
             screen_unit: pm_vt::Unit::Cell,
             agent_clicks: Clicks::default(),
             agent_words: false,
+            agent_selection_drag: None,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
             watch_clicks: Clicks::default(),
@@ -2679,6 +2682,9 @@ impl App {
 
         renderer.render(list);
         self.update_pointer_cursor();
+        if self.refresh_agent_selection() {
+            self.request_redraw();
+        }
     }
 }
 
@@ -2690,6 +2696,9 @@ impl ApplicationHandler<Wake> for App {
     /// holding still, a caret blinking and a remote being waited on are the
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.autoscroll_agent_selection() {
+            self.request_redraw();
+        }
         self.offer_missing_servers();
         if self.settle_moving() {
             self.request_redraw();
@@ -2716,6 +2725,7 @@ impl ApplicationHandler<Wake> for App {
             next_annotation,
             self.next_prediction().filter(|_| seen),
             self.next_move(),
+            self.next_agent_selection_scroll().filter(|_| seen),
         ]
         .into_iter()
         .flatten()
@@ -2950,6 +2960,9 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::ThemeChanged(_) => self.request_redraw(),
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
+                if !focused {
+                    self.pointer_cancelled();
+                }
                 self.request_redraw();
             }
             WindowEvent::Occluded(occluded) => {

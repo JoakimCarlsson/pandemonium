@@ -934,6 +934,15 @@ impl App {
         self.request_redraw();
     }
 
+    /// Ends a held gesture when the window loses focus, without activating clicks.
+    pub(super) fn pointer_cancelled(&mut self) {
+        let message = self.ui.as_mut().and_then(pm_ui::Ui::pointer_cancelled);
+        self.handle(message);
+        self.agent_selection_drag = None;
+        self.release_drag();
+        self.update_pointer_cursor();
+    }
+
     /// Presses or releases the primary button, applying what it activated.
     pub(super) fn pointer_button(&mut self, state: ElementState) {
         #[cfg(not(target_os = "macos"))]
@@ -1011,6 +1020,7 @@ impl App {
         self.update_pointer_cursor();
         self.handle(message);
         if state == ElementState::Released {
+            self.agent_selection_drag = None;
             self.release_drag();
         }
     }
