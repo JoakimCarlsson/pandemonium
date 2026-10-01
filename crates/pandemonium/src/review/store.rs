@@ -453,6 +453,15 @@ impl Review {
             .find_map(|repository| repository.status().mark(path))
     }
 
+    /// Whether the repository containing `path` ignores it.
+    pub fn is_ignored(&self, path: &Path) -> bool {
+        self.repositories
+            .iter()
+            .filter(|repository| path.starts_with(repository.root()))
+            .max_by_key(|repository| repository.root().components().count())
+            .is_some_and(|repository| repository.status().is_ignored(path))
+    }
+
     /// The cached commits of the active repository selected by the Source
     /// Control graph filter.
     pub fn history(&self, all: bool) -> &[pm_core::Commit] {
