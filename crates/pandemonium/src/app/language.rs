@@ -1193,7 +1193,7 @@ impl App {
             Answer::Locations(found) if pending.request == Request::References => {
                 self.show_references(found);
             }
-            Answer::Locations(found) => self.go_to_first(&found),
+            Answer::Locations(found) => self.follow_definition(pending, found),
             Answer::Hover(text) => {
                 if let Some(hint) = self.hint.as_mut() {
                     hint.said = Some(text);
@@ -1583,6 +1583,28 @@ impl App {
             return;
         };
         self.jump_to(&place);
+    }
+
+    /// Goes where a definition, declaration or implementation lies.
+    ///
+    /// A name asked about at its own definition has nowhere to go, so what
+    /// is wanted of it is where it is used, as in VS Code. Several places
+    /// are listed to choose from rather than the first being taken.
+    fn follow_definition(&mut self, pending: &Pending, found: Vec<Location>) {
+        let path = self.editor.path(pending.file);
+        let at_definition = found.iter().any(|location| {
+            Some(&location.path) == path.as_ref()
+                && location.range.start <= pending.at
+                && pending.at <= location.range.end
+        });
+        if at_definition {
+            self.ask_about(pending.file, pending.at, Request::References);
+            return;
+        }
+        match found.len() {
+            0 | 1 => self.go_to_first(&found),
+            _ => self.show_references(found),
+        }
     }
 
     /// Opens the picker over everywhere a symbol is used.

@@ -63,7 +63,7 @@ impl Buffer {
             return self.selected_text();
         }
         let line = self.selection().head.line;
-        format!("{}\n", self.line_text(line));
+        format!("{}\n", self.line_text(line))
     }
 
     /// Takes out what copying right now would have taken.
