@@ -32,6 +32,9 @@ pub struct Diagnostic {
     pub message: String,
     /// Which tool said it, when the server names one.
     pub source: Option<String>,
+    /// Whether what it covers is code that does nothing, which is drawn
+    /// faded rather than underlined.
+    pub unnecessary: bool,
 }
 
 impl Diagnostic {

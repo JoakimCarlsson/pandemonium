@@ -875,7 +875,7 @@ impl App {
         };
         let start = completions.start();
         let waiting = completions.is_asked(&item.handle);
-        let callable = matches!(item.kind, "function" | "method" | "constructor");
+        let callable = item.kind.callable();
         let mut show_signature = false;
         self.completions = None;
         self.dismiss_prediction();

@@ -24,11 +24,12 @@ use lsp_types::{
     ImplementationProviderCapability, InitializeParams, InlayHintClientCapabilities,
     InlayHintWorkspaceClientCapabilities, InlineCompletionClientCapabilities, MarkupKind, OneOf,
     PositionEncodingKind, PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities,
-    Registration, RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenType,
-    SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
-    SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
-    SignatureHelpOptions, TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
+    Registration, RenameClientCapabilities, ResourceOperationKind, SaveOptions,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokensClientCapabilities,
+    SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions, SemanticTokensLegend,
+    SemanticTokensServerCapabilities, SemanticTokensWorkspaceClientCapabilities,
+    ServerCapabilities, SignatureHelpClientCapabilities, SignatureHelpOptions,
+    TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
     TextDocumentRegistrationOptions, TextDocumentSaveRegistrationOptions,
     TextDocumentSyncCapability, TextDocumentSyncClientCapabilities, TextDocumentSyncKind,
     TextDocumentSyncSaveOptions, TokenFormat, TypeDefinitionProviderCapability,
@@ -767,6 +768,7 @@ fn text_document() -> TextDocumentClientCapabilities {
                 snippet_support: Some(true),
                 documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
                 insert_replace_support: Some(true),
+                label_details_support: Some(true),
                 resolve_support: Some(CompletionItemCapabilityResolveSupport {
                     properties: RESOLVED_COMPLETION.map(str::to_owned).to_vec(),
                 }),
@@ -844,6 +846,9 @@ fn text_document() -> TextDocumentClientCapabilities {
         }),
         publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
             related_information: Some(false),
+            tag_support: Some(lsp_types::TagSupport {
+                value_set: vec![lsp_types::DiagnosticTag::UNNECESSARY],
+            }),
             ..PublishDiagnosticsClientCapabilities::default()
         }),
         call_hierarchy: Some(CallHierarchyClientCapabilities {
@@ -856,7 +861,7 @@ fn text_document() -> TextDocumentClientCapabilities {
                 full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
             },
             token_types: TOKEN_TYPES.map(SemanticTokenType::new).to_vec(),
-            token_modifiers: Vec::new(),
+            token_modifiers: vec![SemanticTokenModifier::new("mutable")],
             formats: vec![TokenFormat::RELATIVE],
             overlapping_token_support: None,
             multiline_token_support: None,

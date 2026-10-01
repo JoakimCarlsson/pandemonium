@@ -119,6 +119,46 @@ pub enum IconName {
     Stop,
     /// Starting it over.
     Restart,
+    /// what a type can do.
+    Box,
+    /// a function.
+    SquareFunction,
+    /// a field of a record.
+    SquareDot,
+    /// a name that holds a value.
+    Variable,
+    /// a class.
+    Component,
+    /// an interface or a trait.
+    Plug,
+    /// a module or a namespace.
+    Package,
+    /// a property of an object.
+    Wrench,
+    /// an enumeration.
+    List,
+    /// one variant of an enumeration.
+    CircleDot,
+    /// a reserved word.
+    KeyRound,
+    /// text with places to fill in.
+    FileCode,
+    /// a value that does not change.
+    Hash,
+    /// a struct.
+    Blocks,
+    /// an event.
+    Zap,
+    /// an operator.
+    Percent,
+    /// a parameter of a generic type.
+    Type,
+    /// a kind of thing with no icon of its own.
+    Circle,
+    /// a colour.
+    Palette,
+    /// a unit of measure.
+    Ruler,
 }
 
 impl IconName {
@@ -172,6 +212,26 @@ impl IconName {
             Self::DebugStepOut => Svg::new("debug_step_out", include_icon!("debug_step_out")),
             Self::Stop => Svg::new("stop", include_icon!("stop")),
             Self::Restart => Svg::new("rotate_cw", include_icon!("rotate_cw")),
+            Self::SquareFunction => Svg::new("square_function", include_icon!("square_function")),
+            Self::Box => Svg::new("box", include_icon!("box")),
+            Self::SquareDot => Svg::new("square_dot", include_icon!("square_dot")),
+            Self::Variable => Svg::new("variable", include_icon!("variable")),
+            Self::Component => Svg::new("component", include_icon!("component")),
+            Self::Plug => Svg::new("plug", include_icon!("plug")),
+            Self::List => Svg::new("list", include_icon!("list")),
+            Self::CircleDot => Svg::new("circle_dot", include_icon!("circle_dot")),
+            Self::FileCode => Svg::new("file_code", include_icon!("file_code")),
+            Self::Hash => Svg::new("hash", include_icon!("hash")),
+            Self::Blocks => Svg::new("blocks", include_icon!("blocks")),
+            Self::Percent => Svg::new("percent", include_icon!("percent")),
+            Self::Type => Svg::new("type", include_icon!("type")),
+            Self::Palette => Svg::new("palette", include_icon!("palette")),
+            Self::Ruler => Svg::new("ruler", include_icon!("ruler")),
+            Self::Package => Svg::new("package", include_icon!("package")),
+            Self::Wrench => Svg::new("wrench", include_icon!("wrench")),
+            Self::KeyRound => Svg::new("key_round", include_icon!("key_round")),
+            Self::Zap => Svg::new("zap", include_icon!("zap")),
+            Self::Circle => Svg::new("circle", include_icon!("circle")),
         }
     }
 }

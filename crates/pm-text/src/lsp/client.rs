@@ -29,12 +29,12 @@ use lsp_types::request::{
 };
 use lsp_types::{
     ApplyWorkspaceEditResponse, CreateFilesParams, DeleteFilesParams, DiagnosticSeverity,
-    DidChangeConfigurationParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
-    DocumentDiagnosticReportKind, DocumentDiagnosticReportResult, ExecuteCommandParams, FileCreate,
-    FileDelete, FileRename, InitializeResult, InitializedParams, MessageType, PartialResultParams,
-    RenameFilesParams, SemanticToken, SemanticTokensDeltaParams, SemanticTokensEdit,
-    SemanticTokensFullDeltaResult, SemanticTokensResult, ShowDocumentResult,
+    DiagnosticTag, DidChangeConfigurationParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
+    DocumentDiagnosticReport, DocumentDiagnosticReportKind, DocumentDiagnosticReportResult,
+    ExecuteCommandParams, FileCreate, FileDelete, FileRename, InitializeResult, InitializedParams,
+    MessageType, PartialResultParams, RenameFilesParams, SemanticToken, SemanticTokensDeltaParams,
+    SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult, ShowDocumentResult,
     TextDocumentIdentifier, TextDocumentItem, TextDocumentSaveReason, TextDocumentSyncKind,
     WillSaveTextDocumentParams, WorkDoneProgressParams,
 };
@@ -45,7 +45,7 @@ use crate::cursor::Position;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::frame;
 use crate::language::Server;
-use crate::lsp::answer::{self, Answer, Asking, Request};
+use crate::lsp::answer::{self, Answer, Asking, Legend, Request};
 use crate::lsp::capabilities::{self, Capabilities, Document};
 use crate::lsp::database;
 use crate::lsp::encoding::{Encoding, Files};
@@ -56,7 +56,6 @@ use crate::lsp::rpc::{self, Incoming};
 use crate::lsp::uri;
 use crate::lsp::watch::{Watched, Watchers};
 use crate::program::{missing_for, path_beside};
-use crate::syntax::Highlight;
 
 /// What [`Wire::shutdown`] holds while no shutdown has been asked.
 const NO_SHUTDOWN: i64 = 0;
@@ -128,7 +127,7 @@ struct State {
     /// Whether anything has arrived since the editor last looked.
     fresh: bool,
     /// What the server said its semantic token types are, in its own order.
-    legend: Vec<Option<Highlight>>,
+    legend: Legend,
     /// How the server counts a column, as the handshake settled it.
     encoding: Encoding,
     /// The text of each open file, as the server was last told it.
@@ -1421,13 +1420,7 @@ impl Reader {
     ///
     /// Tokens the server gave an id are kept under it, to ask after them by
     /// next time; a reply to what changed is made against the ones kept.
-    fn semantics(
-        &self,
-        id: i64,
-        path: &Path,
-        result: Value,
-        legend: &[Option<Highlight>],
-    ) -> Option<Answer> {
+    fn semantics(&self, id: i64, path: &Path, result: Value, legend: &Legend) -> Option<Answer> {
         let (delta, kept) = self
             .with_state(|state| {
                 (
@@ -1630,5 +1623,9 @@ fn diagnostic(published: &lsp_types::Diagnostic) -> Diagnostic {
         },
         message: published.message.clone(),
         source: published.source.clone(),
+        unnecessary: published
+            .tags
+            .as_ref()
+            .is_some_and(|tags| tags.contains(&DiagnosticTag::UNNECESSARY)),
     }
 }

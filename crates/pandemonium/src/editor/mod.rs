@@ -13,6 +13,7 @@ mod caret;
 mod completions;
 mod crumbs;
 mod display;
+mod fuzzy;
 mod hint;
 mod keys;
 mod layout;

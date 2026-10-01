@@ -1707,12 +1707,11 @@ impl App {
             return;
         };
         let start = completions.start();
-        let Some((client, handle)) = completions.unasked() else {
-            return;
-        };
-        let request = Request::ResolveCompletion(handle);
-        if client.offers(&request, &path) {
-            self.ask_of(client, file, start, request, Purpose::Act);
+        for (client, handle) in completions.unasked() {
+            let request = Request::ResolveCompletion(handle);
+            if client.offers(&request, &path) {
+                self.ask_of(client, file, start, request, Purpose::Act);
+            }
         }
     }
 
@@ -1723,7 +1722,7 @@ impl App {
             return;
         };
         if let Some(completions) = self.completions.as_mut() {
-            completions.fill(handle, item);
+            completions.fill(item.clone());
             return;
         }
         let Some(taken) = self.taken_completion.take_if(|taken| {

@@ -6,13 +6,14 @@
 //! than instead of it. It closes when nothing matches any more, or when the
 //! cursor leaves the word it was offered for.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use pm_gfx::Point;
-use pm_text::{Client, Completion, Handle, Position};
-use pm_ui::{Div, Styled, Theme, h_flex, text, v_flex};
+use pm_gfx::{Point, Rgba};
+use pm_text::{Client, Completion, CompletionKind, Handle, Position};
+use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, text, v_flex};
 
+use super::fuzzy;
 use crate::message::Message;
 
 /// Widest the list is drawn.
@@ -26,6 +27,101 @@ const ROW_HEIGHT: f32 = 24.0;
 
 /// Most rows drawn at once, however many the server offered.
 const VISIBLE: usize = 10;
+
+/// What identifies a completion across the lists a server sends as the
+/// reader types: the same name of the same kind with the same signature is
+/// the same thing, whichever list it arrives in.
+type Key = (CompletionKind, String, String);
+
+/// What a server filled a completion in with, kept for as long as the list
+/// is up so that a list offered anew does not lose it.
+struct Filled {
+    /// The type or signature it said.
+    detail: String,
+    /// What it said at length.
+    documentation: String,
+    /// The edits elsewhere it brings along.
+    extra: Vec<(std::ops::Range<Position>, String)>,
+}
+
+/// The identity of `item` across lists.
+fn key(item: &Completion) -> Key {
+    (item.kind, item.label.clone(), item.signature.clone())
+}
+
+/// Where a kind of completion stands among the others when nothing typed
+/// ranks them apart: names first, then keywords, then what is called, then
+/// the types, then the rest.
+fn rank(kind: CompletionKind) -> u8 {
+    match kind {
+        CompletionKind::Variable
+        | CompletionKind::Constant
+        | CompletionKind::Value
+        | CompletionKind::Field
+        | CompletionKind::Property
+        | CompletionKind::EnumMember => 0,
+        CompletionKind::Keyword | CompletionKind::Snippet => 1,
+        CompletionKind::Function | CompletionKind::Method | CompletionKind::Constructor => 2,
+        CompletionKind::Class
+        | CompletionKind::Struct
+        | CompletionKind::Interface
+        | CompletionKind::Enum
+        | CompletionKind::TypeParameter => 3,
+        _ => 4,
+    }
+}
+
+/// The icon a kind of completion is drawn with.
+fn kind_icon(kind: CompletionKind) -> IconName {
+    match kind {
+        CompletionKind::Function => IconName::SquareFunction,
+        CompletionKind::Method | CompletionKind::Constructor => IconName::Box,
+        CompletionKind::Field => IconName::SquareDot,
+        CompletionKind::Variable => IconName::Variable,
+        CompletionKind::Class => IconName::Component,
+        CompletionKind::Interface => IconName::Plug,
+        CompletionKind::Module | CompletionKind::Folder => IconName::Package,
+        CompletionKind::Property => IconName::Wrench,
+        CompletionKind::Unit => IconName::Ruler,
+        CompletionKind::Value | CompletionKind::Constant => IconName::Hash,
+        CompletionKind::Enum => IconName::List,
+        CompletionKind::EnumMember => IconName::CircleDot,
+        CompletionKind::Keyword => IconName::KeyRound,
+        CompletionKind::Snippet => IconName::FileCode,
+        CompletionKind::Color => IconName::Palette,
+        CompletionKind::File | CompletionKind::Reference => IconName::File,
+        CompletionKind::Struct => IconName::Blocks,
+        CompletionKind::Event => IconName::Zap,
+        CompletionKind::Operator => IconName::Percent,
+        CompletionKind::TypeParameter => IconName::Type,
+        CompletionKind::Other => IconName::Circle,
+    }
+}
+
+/// The colour a kind of completion's icon is drawn in, from the syntax
+/// colours the editor paints the same things with.
+fn kind_color(theme: &Theme, kind: CompletionKind) -> Rgba {
+    let syntax = &theme.syntax;
+    match kind {
+        CompletionKind::Variable => syntax.variable,
+        CompletionKind::Field | CompletionKind::Property => syntax.property,
+        CompletionKind::Method | CompletionKind::Function | CompletionKind::Constructor => {
+            syntax.function
+        }
+        CompletionKind::Class
+        | CompletionKind::Struct
+        | CompletionKind::Interface
+        | CompletionKind::Enum
+        | CompletionKind::TypeParameter => syntax.type_name,
+        CompletionKind::Keyword | CompletionKind::Operator => syntax.keyword,
+        CompletionKind::Constant | CompletionKind::Value | CompletionKind::EnumMember => {
+            syntax.constant
+        }
+        CompletionKind::Snippet | CompletionKind::Color => syntax.string,
+        CompletionKind::Module | CompletionKind::Event => syntax.attribute,
+        _ => theme.colors.text_muted,
+    }
+}
 
 /// What could be written where the cursor is.
 ///
@@ -50,6 +146,8 @@ pub struct Completions {
     incomplete: Vec<Arc<Client>>,
     /// What had been typed when the list was last narrowed.
     typed: String,
+    /// What the servers have filled items in with, by what the items are.
+    filled: HashMap<Key, Filled>,
 }
 
 impl Completions {
@@ -64,6 +162,7 @@ impl Completions {
             asked: HashSet::new(),
             incomplete: Vec::new(),
             typed: String::new(),
+            filled: HashMap::new(),
         }
     }
 
@@ -92,8 +191,13 @@ impl Completions {
             index += 1;
             keep
         });
-        self.items
-            .extend(items.into_iter().map(|item| (client.clone(), item)));
+        for mut item in items {
+            if let Some(filled) = self.filled.get(&key(&item)) {
+                Self::apply(&mut item, filled);
+                self.asked.insert(self.items.len());
+            }
+            self.items.push((client.clone(), item));
+        }
         self.incomplete
             .retain(|offered| !Arc::ptr_eq(offered, client));
         if incomplete {
@@ -135,17 +239,27 @@ impl Completions {
         &self.incomplete
     }
 
-    /// Keeps only what still begins with `typed`, in the order offered.
+    /// Keeps only what `typed` matches, best match first and, among equals,
+    /// by kind and then by what the server ranked them by.
     pub fn narrow(&mut self, typed: &str) {
         self.typed = typed.to_owned();
-        let typed = typed.to_lowercase();
-        self.matched = self
+        let mut scored = self
             .items
             .iter()
             .enumerate()
-            .filter(|(_, (_, item))| item.filter.to_lowercase().starts_with(&typed))
-            .map(|(index, _)| index)
-            .collect();
+            .filter_map(|(index, (_, item))| {
+                fuzzy::score(typed, &item.filter).map(|score| (index, score))
+            })
+            .collect::<Vec<_>>();
+        scored.sort_by(|(a, a_score), (b, b_score)| {
+            let (a, b) = (&self.items[*a].1, &self.items[*b].1);
+            b_score
+                .cmp(a_score)
+                .then_with(|| rank(a.kind).cmp(&rank(b.kind)))
+                .then_with(|| a.sort.cmp(&b.sort))
+                .then_with(|| a.label.cmp(&b.label))
+        });
+        self.matched = scored.into_iter().map(|(index, _)| index).collect();
         self.selected = 0;
     }
 
@@ -174,14 +288,30 @@ impl Completions {
         Some((client, item))
     }
 
-    /// The selected completion's server and record, the first time it is
-    /// asked for, so that the server is asked to fill it in once and only once.
-    pub fn unasked(&mut self) -> Option<(Arc<Client>, Handle)> {
-        let index = self.selected_index()?;
-        self.asked.insert(index).then(|| {
-            let (client, item) = &self.items[index];
-            (client.clone(), item.handle.clone())
-        })
+    /// The servers and records of the rows shown that have not been asked
+    /// about yet, the selected one first, so that each is asked once and only
+    /// once.
+    pub fn unasked(&mut self) -> Vec<(Arc<Client>, Handle)> {
+        let first = self.selected.saturating_sub(VISIBLE - 1);
+        let mut wanted = self
+            .matched
+            .iter()
+            .skip(first)
+            .take(VISIBLE)
+            .copied()
+            .collect::<Vec<_>>();
+        if let Some(selected) = self.selected_index() {
+            wanted.retain(|index| *index != selected);
+            wanted.insert(0, selected);
+        }
+        wanted
+            .into_iter()
+            .filter(|index| self.asked.insert(*index))
+            .map(|index| {
+                let (client, item) = &self.items[index];
+                (client.clone(), item.handle.clone())
+            })
+            .collect()
     }
 
     /// Whether the completion `handle` names has been asked to be filled in.
@@ -192,26 +322,39 @@ impl Completions {
             .is_some_and(|index| self.asked.contains(&index))
     }
 
-    /// Takes in what the server filled the completion `handle` names in with.
+    /// Takes in what the server filled in the completion it resolved with.
     ///
     /// What it inserts stays as it was offered: a server may only add to an
     /// item when it resolves it, and the list was narrowed by what it said.
-    pub fn fill(&mut self, handle: &Handle, filled: Completion) {
-        let Some((_, item)) = self
+    /// What it said is kept by what the item is, so a list offered anew as
+    /// the reader types shows it again without asking.
+    pub fn fill(&mut self, filled: Completion) {
+        let identity = key(&filled);
+        let said = Filled {
+            detail: filled.detail,
+            documentation: filled.documentation,
+            extra: filled.extra,
+        };
+        for (_, item) in self
             .items
             .iter_mut()
-            .find(|(_, item)| item.handle == *handle)
-        else {
-            return;
-        };
+            .filter(|(_, item)| key(item) == identity)
+        {
+            Self::apply(item, &said);
+        }
+        self.filled.insert(identity, said);
+    }
+
+    /// Puts what a server filled in into `item`, keeping what it left empty.
+    fn apply(item: &mut Completion, filled: &Filled) {
         if !filled.detail.is_empty() {
-            item.detail = filled.detail;
+            item.detail = filled.detail.clone();
         }
         if !filled.documentation.is_empty() {
-            item.documentation = filled.documentation;
+            item.documentation = filled.documentation.clone();
         }
         if !filled.extra.is_empty() {
-            item.extra = filled.extra;
+            item.extra = filled.extra.clone();
         }
     }
 
@@ -254,7 +397,9 @@ pub fn completion_list(theme: &Theme, completions: &Completions) -> Div<Message>
         )
 }
 
-/// Builds one row of the list, lit while it is the selected one.
+/// Builds one row of the list, lit while it is the selected one: the icon of
+/// its kind, its name, the signature straight after it and its type at the
+/// far end.
 fn row(theme: &Theme, place: usize, item: &Completion, selected: bool) -> Div<Message> {
     h_flex()
         .w_full()
@@ -266,18 +411,27 @@ fn row(theme: &Theme, place: usize, item: &Completion, selected: bool) -> Div<Me
         .when(selected, |line| line.bg(theme.colors.surface_selected))
         .hover_bg(theme.colors.surface_hover)
         .on_click(Message::ChooseCompletion(place))
-        .child(text(item.label.clone()).text_sm().font_mono())
         .child(
-            text(item.kind.to_owned())
-                .text_xs()
-                .font_light()
-                .color(theme.colors.accent),
+            icon(kind_icon(item.kind))
+                .size(IconSize::Small)
+                .color(kind_color(theme, item.kind)),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .overflow_hidden()
+                .child(text(item.label.clone()).text_sm().font_mono())
+                .child(
+                    text(item.signature.clone())
+                        .text_xs()
+                        .font_mono()
+                        .color(theme.colors.text_muted),
+                ),
         )
         .child(h_flex().flex_1())
         .child(
             text(item.detail.clone())
                 .text_xs()
-                .font_light()
-                .color(theme.colors.text_subtle),
+                .color(theme.colors.text_muted),
         )
 }

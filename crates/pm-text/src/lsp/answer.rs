@@ -513,12 +513,7 @@ impl Request {
     /// `legend` is what the server said its token types are, in the order it
     /// numbers them; only a reply about semantics is read through it. A reply
     /// that is not the shape its method's result is comes to nothing.
-    pub(super) fn read(
-        &self,
-        path: &Path,
-        result: Value,
-        legend: &[Option<Highlight>],
-    ) -> Option<Answer> {
+    pub(super) fn read(&self, path: &Path, result: Value, legend: &Legend) -> Option<Answer> {
         Some(match self {
             Self::Definition => Answer::Locations(gone_to(rpc::result::<GotoDefinition>(result)?)),
             Self::TypeDefinition => {
@@ -763,7 +758,7 @@ pub enum Answer {
     /// What the server would write into the lines it was asked about.
     Hints(Vec<crate::hint::Hint>),
     /// What the server makes of every name in the file, as spans to colour.
-    Semantics(Vec<(Range<Position>, Highlight)>),
+    Semantics(Vec<Semantic>),
     /// Every place in the file the symbol asked about is read or written.
     Occurrences(Vec<Range<Position>>),
     /// The notes above the file's declarations, or one of them resolved.
@@ -832,7 +827,7 @@ impl Answer {
                 }
             }
             Self::Semantics(spans) => {
-                for (span, _) in spans {
+                for (span, ..) in spans {
                     *span = files.decode_span(path, span.clone());
                 }
             }
@@ -961,8 +956,14 @@ pub struct Completion {
     /// The places in that to fill in afterwards, in order, each as the
     /// spans of it the place covers, in characters; empty for plain text.
     pub stops: Vec<Vec<Range<usize>>>,
-    /// What kind of thing it is, as one word.
-    pub kind: &'static str,
+    /// What kind of thing it is.
+    pub kind: CompletionKind,
+    /// What follows the label without a gap: a signature or a type
+    /// annotation, when the server sends it apart from the detail.
+    pub signature: String,
+    /// What the server ranks it by among the others, which is the label
+    /// unless the server said otherwise.
+    pub sort: String,
     /// The span it replaces, when the server named one.
     pub range: Option<Range<Position>>,
     /// Changes elsewhere in the file that choosing it brings along: the
@@ -970,6 +971,101 @@ pub struct Completion {
     pub extra: Vec<(Range<Position>, String)>,
     /// The server's own record of it, to have it filled in by.
     pub handle: Handle,
+}
+
+/// What kind of thing a completion offers to write.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CompletionKind {
+    /// A method of a type.
+    Method,
+    /// A free function.
+    Function,
+    /// A constructor of a type.
+    Constructor,
+    /// A field of a record.
+    Field,
+    /// A local or a static variable.
+    Variable,
+    /// A class.
+    Class,
+    /// An interface or a trait.
+    Interface,
+    /// A module or a namespace.
+    Module,
+    /// A property of an object.
+    Property,
+    /// A unit of measure.
+    Unit,
+    /// A literal value.
+    Value,
+    /// An enumeration.
+    Enum,
+    /// A reserved word.
+    Keyword,
+    /// A snippet of text with places to fill in.
+    Snippet,
+    /// A colour.
+    Color,
+    /// A file.
+    File,
+    /// A reference to something elsewhere.
+    Reference,
+    /// A directory.
+    Folder,
+    /// One variant of an enumeration.
+    EnumMember,
+    /// A constant.
+    Constant,
+    /// A struct.
+    Struct,
+    /// An event.
+    Event,
+    /// An operator.
+    Operator,
+    /// A parameter of a generic type.
+    TypeParameter,
+    /// Something the server did not say.
+    Other,
+}
+
+impl CompletionKind {
+    /// Whether what it names is called, and so is followed by parentheses.
+    pub fn callable(self) -> bool {
+        matches!(self, Self::Function | Self::Method | Self::Constructor)
+    }
+}
+
+impl From<CompletionItemKind> for CompletionKind {
+    /// The kind a server named, in the editor's own terms.
+    fn from(kind: CompletionItemKind) -> Self {
+        match kind {
+            CompletionItemKind::METHOD => Self::Method,
+            CompletionItemKind::FUNCTION => Self::Function,
+            CompletionItemKind::CONSTRUCTOR => Self::Constructor,
+            CompletionItemKind::FIELD => Self::Field,
+            CompletionItemKind::VARIABLE => Self::Variable,
+            CompletionItemKind::CLASS => Self::Class,
+            CompletionItemKind::INTERFACE => Self::Interface,
+            CompletionItemKind::MODULE => Self::Module,
+            CompletionItemKind::PROPERTY => Self::Property,
+            CompletionItemKind::UNIT => Self::Unit,
+            CompletionItemKind::VALUE => Self::Value,
+            CompletionItemKind::ENUM => Self::Enum,
+            CompletionItemKind::KEYWORD => Self::Keyword,
+            CompletionItemKind::SNIPPET => Self::Snippet,
+            CompletionItemKind::COLOR => Self::Color,
+            CompletionItemKind::FILE => Self::File,
+            CompletionItemKind::REFERENCE => Self::Reference,
+            CompletionItemKind::FOLDER => Self::Folder,
+            CompletionItemKind::ENUM_MEMBER => Self::EnumMember,
+            CompletionItemKind::CONSTANT => Self::Constant,
+            CompletionItemKind::STRUCT => Self::Struct,
+            CompletionItemKind::EVENT => Self::Event,
+            CompletionItemKind::OPERATOR => Self::Operator,
+            CompletionItemKind::TYPE_PARAMETER => Self::TypeParameter,
+            _ => Self::Other,
+        }
+    }
 }
 
 /// One fix or refactor the server offers.
@@ -1255,9 +1351,14 @@ fn completion(item: CompletionItem) -> Option<Completion> {
             stops: Vec::new(),
         },
     };
+    let labelled = item.label_details.clone().unwrap_or_default();
     Some(Completion {
         filter: item.filter_text.clone().unwrap_or_else(|| label.clone()),
-        detail: item.detail.clone().unwrap_or_default(),
+        detail: labelled
+            .description
+            .clone()
+            .or_else(|| item.detail.clone())
+            .unwrap_or_default(),
         documentation: match item.documentation.clone() {
             Some(Documentation::String(text)) => text,
             Some(Documentation::MarkupContent(markup)) => markup.value,
@@ -1265,7 +1366,11 @@ fn completion(item: CompletionItem) -> Option<Completion> {
         }
         .trim()
         .to_owned(),
-        kind: item.kind.map_or("", completion_kind),
+        kind: item
+            .kind
+            .map_or(CompletionKind::Other, CompletionKind::from),
+        signature: labelled.detail.unwrap_or_default(),
+        sort: item.sort_text.clone().unwrap_or_else(|| label.clone()),
         insert: snippet.text,
         stops: snippet.stops,
         range: span,
@@ -1273,29 +1378,6 @@ fn completion(item: CompletionItem) -> Option<Completion> {
         label,
         handle: Handle(Handed::Completion(Box::new(item))),
     })
-}
-
-/// What a completion's kind is called.
-fn completion_kind(kind: CompletionItemKind) -> &'static str {
-    match kind {
-        CompletionItemKind::METHOD => "method",
-        CompletionItemKind::FUNCTION => "function",
-        CompletionItemKind::CONSTRUCTOR => "constructor",
-        CompletionItemKind::FIELD => "field",
-        CompletionItemKind::VARIABLE => "variable",
-        CompletionItemKind::CLASS => "class",
-        CompletionItemKind::INTERFACE => "interface",
-        CompletionItemKind::MODULE => "module",
-        CompletionItemKind::PROPERTY => "property",
-        CompletionItemKind::ENUM => "enum",
-        CompletionItemKind::KEYWORD => "keyword",
-        CompletionItemKind::SNIPPET => "snippet",
-        CompletionItemKind::CONSTANT => "constant",
-        CompletionItemKind::STRUCT => "struct",
-        CompletionItemKind::EVENT => "event",
-        CompletionItemKind::TYPE_PARAMETER => "type",
-        _ => "",
-    }
 }
 
 /// One fix or refactor offered, if it can be taken.
@@ -1569,18 +1651,37 @@ fn symbol_kind(kind: SymbolKind) -> &'static str {
     }
 }
 
-/// The legend a server publishes, as the highlight each of its types means.
-pub(super) fn legend(capabilities: &Capabilities) -> Vec<Option<Highlight>> {
-    capabilities
-        .legend()
-        .map(|legend| {
-            legend
-                .token_types
-                .iter()
-                .map(|kind| Highlight::of_token(kind.as_str()))
-                .collect()
-        })
-        .unwrap_or_default()
+/// One span a server's semantic tokens come to: where it is, how it is
+/// drawn, and whether it names something that can be assigned to again.
+pub type Semantic = (Range<Position>, Highlight, bool);
+
+/// What a server's semantic token legend means to the editor.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Legend {
+    /// The highlight each of the server's types means, in its own order.
+    types: Vec<Option<Highlight>>,
+    /// The bit of a token's modifiers that says it is mutable, if the server
+    /// has such a modifier.
+    mutable: u32,
+}
+
+/// The legend a server publishes, as what each of its types and modifiers means.
+pub(super) fn legend(capabilities: &Capabilities) -> Legend {
+    let Some(legend) = capabilities.legend() else {
+        return Legend::default();
+    };
+    Legend {
+        types: legend
+            .token_types
+            .iter()
+            .map(|kind| Highlight::of_token(kind.as_str()))
+            .collect(),
+        mutable: legend
+            .token_modifiers
+            .iter()
+            .position(|modifier| modifier.as_str() == "mutable")
+            .map_or(0, |bit| 1 << bit),
+    }
 }
 
 /// The spans a server's semantic tokens come to, in the file's own terms.
@@ -1590,10 +1691,7 @@ pub(super) fn legend(capabilities: &Capabilities) -> Vec<Option<Highlight>> {
 /// length, a type and its modifiers. A token whose type the editor draws no
 /// differently is left out here rather than carried to the painter to be
 /// discarded there.
-pub(super) fn semantics(
-    tokens: &[SemanticToken],
-    legend: &[Option<Highlight>],
-) -> Vec<(Range<Position>, Highlight)> {
+pub(super) fn semantics(tokens: &[SemanticToken], legend: &Legend) -> Vec<Semantic> {
     let mut spans = Vec::new();
     let (mut line, mut column) = (0_usize, 0_usize);
     for token in tokens {
@@ -1604,12 +1702,13 @@ pub(super) fn semantics(
         } else {
             token.delta_start as usize
         };
-        let Some(Some(highlight)) = legend.get(token.token_type as usize) else {
+        let Some(Some(highlight)) = legend.types.get(token.token_type as usize) else {
             continue;
         };
         let start = Position::new(line, column);
         let end = Position::new(line, column + token.length as usize);
-        spans.push((start..end, *highlight));
+        let mutable = token.token_modifiers_bitset & legend.mutable != 0;
+        spans.push((start..end, *highlight, mutable));
     }
     spans
 }

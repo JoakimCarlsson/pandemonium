@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use pm_core::{Blame, Change, ProjectId, Scope};
 use pm_gfx::Point;
 use pm_text::{
-    Buffer, Client, Highlight, Hint, Indent, Lens, Position, Prediction, Predictor, Request,
-    Server, Servers, Ticket, server_predictor,
+    Buffer, Client, Hint, Indent, Lens, Position, Prediction, Predictor, Request, Semantic, Server,
+    Servers, Ticket, server_predictor,
 };
 
 /// A stable key for a server while the document holds its client.
@@ -29,7 +29,7 @@ fn server_key(client: &Arc<Client>) -> usize {
 const ANNOTATION_RETRY: Duration = Duration::from_millis(150);
 
 /// One server's semantic spans.
-type SemanticSpans = Vec<(std::ops::Range<Position>, Highlight)>;
+type SemanticSpans = Vec<Semantic>;
 
 /// One server's request progress for one annotation kind.
 #[derive(Default)]
@@ -595,7 +595,7 @@ impl Document {
         &mut self,
         client: &Arc<Client>,
         version: i32,
-        spans: Option<Vec<(std::ops::Range<Position>, Highlight)>>,
+        spans: Option<SemanticSpans>,
     ) -> bool {
         let entry = self.named.entry(server_key(client)).or_default();
         if !entry

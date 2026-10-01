@@ -39,6 +39,9 @@ const BLOCK_ALPHA: f32 = 0.6;
 /// Thickness of the line under a diagnostic.
 const SQUIGGLE_WIDTH: f32 = 1.5;
 
+/// Thickness of the line under a name that can be assigned to again.
+const MUTABLE_UNDERLINE: f32 = 1.0;
+
 /// Thickness of the line under a name the link key has turned into one.
 const LINK_WIDTH: f32 = 1.0;
 
@@ -991,12 +994,30 @@ impl<M> BufferView<M> {
             if x > layout.bounds.right() {
                 break;
             }
-            let color = match painting.highlights.at(line, index) {
+            let mut color = match painting.highlights.at(line, index) {
                 Some(highlight) => tint(highlight, painting.theme),
                 None => painting.theme.colors.text,
             };
+            let at = Position::new(line, index);
+            if painting.diagnostics.iter().any(|diagnostic| {
+                diagnostic.unnecessary
+                    && (diagnostic.range.start..diagnostic.range.end).contains(&at)
+            }) {
+                color = color.alpha(painting.theme.emphasis.dim);
+            }
             let run = glyphs.shape(ch, painting.font, cx);
             cx.text(Point::new(x, top), run, color);
+            if painting.highlights.is_mutable(line, index) {
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(
+                        x,
+                        top + layout.cell.height - MUTABLE_UNDERLINE * 2.0,
+                        layout.cell.width * width as f32,
+                        MUTABLE_UNDERLINE,
+                    ),
+                    color,
+                ));
+            }
         }
 
         if row.is_last() {
@@ -1417,6 +1438,9 @@ impl<M> BufferView<M> {
         painting: &Painting<'_>,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
+        if diagnostic.unnecessary && diagnostic.severity == Severity::Hint {
+            return;
+        }
         let layout = painting.layout;
         let Some(columns) = diagnostic.columns(line, painting.buffer.line_len(line)) else {
             return;

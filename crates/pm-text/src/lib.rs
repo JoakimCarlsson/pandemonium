@@ -34,9 +34,9 @@ pub use language::{
     ExtensionLanguage, Language, NO_OPTIONS, Server, install_languages, load_grammar,
 };
 pub use lsp::{
-    Answer, Asked, Calls, Client, CodeAction, Completion, FileEdit, Handle, Lens, Location,
-    NamedLocation, Progress, Request, Servers, Signature, Symbol, Trigger, Watched,
-    WorkspaceChange, is_tracing, set_trace,
+    Answer, Asked, Calls, Client, CodeAction, Completion, CompletionKind, FileEdit, Handle, Lens,
+    Location, NamedLocation, Progress, Request, Semantic, Servers, Signature, Symbol, Trigger,
+    Watched, WorkspaceChange, is_tracing, set_trace,
 };
 pub use predict::{Prediction, Predictor, ServerPredictor, Ticket, server_predictor};
 pub use syntax::{Highlight, Highlights, SyntaxNode, highlight, is_declaration};

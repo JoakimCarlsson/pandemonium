@@ -7,7 +7,7 @@
 //! file behind it is.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::ops::{ControlFlow, Range};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -202,6 +202,9 @@ pub struct Highlights {
     first: usize,
     /// One row per line covered, one entry per character of it.
     rows: Vec<Vec<Option<Highlight>>>,
+    /// The lines and columns of the characters a server said name something
+    /// that can be assigned to again.
+    mutable: BTreeSet<(usize, usize)>,
 }
 
 impl Highlights {
@@ -210,7 +213,7 @@ impl Highlights {
     /// What a language server says about a span is written over what the
     /// grammar guessed, because the server knows which of two things a name
     /// is and the grammar only knows that it is a name.
-    pub fn repaint(&mut self, span: Range<Position>, highlight: Highlight) {
+    pub fn repaint(&mut self, span: Range<Position>, highlight: Highlight, mutable: bool) {
         for line in span.start.line..=span.end.line {
             let Some(index) = line.checked_sub(self.first) else {
                 continue;
@@ -231,7 +234,17 @@ impl Highlights {
             for slot in row.iter_mut().take(to).skip(from) {
                 *slot = Some(highlight);
             }
+            if mutable {
+                self.mutable
+                    .extend((from..to.min(row.len())).map(|column| (line, column)));
+            }
         }
+    }
+
+    /// Whether the character at `line` and `column` is part of a name a
+    /// server said can be assigned to again.
+    pub fn is_mutable(&self, line: usize, column: usize) -> bool {
+        self.mutable.contains(&(line, column))
     }
 
     /// The highlight of the character at `line` and `column`, if it has one.
@@ -407,6 +420,7 @@ impl Syntax {
             rows: (lines.start..last)
                 .map(|line| vec![None; text.line(line).len_chars()])
                 .collect(),
+            mutable: BTreeSet::new(),
         };
 
         let mut cursor = QueryCursor::new();

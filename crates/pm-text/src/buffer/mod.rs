@@ -27,8 +27,8 @@ use crate::hint::Hint;
 use crate::history::History;
 use crate::indent::Indent;
 use crate::language::Language;
-use crate::lsp::{Lens, Symbol};
-use crate::syntax::{Highlight, Highlights, Syntax};
+use crate::lsp::{Lens, Semantic, Symbol};
+use crate::syntax::{Highlights, Syntax};
 
 use self::memo::Memo;
 
@@ -65,7 +65,7 @@ pub struct Buffer {
     hints: Vec<Hint>,
     /// What a language server makes of every name in the file, in the order
     /// the names appear.
-    semantics: Vec<(Range<Position>, Highlight)>,
+    semantics: Vec<Semantic>,
     /// How many lines past its first the longest of those names runs on.
     semantic_reach: usize,
     /// Where the symbol at the cursor is used, and the version it was found in.
@@ -397,13 +397,13 @@ impl Buffer {
     }
 
     /// Replaces what a language server makes of the names in this file.
-    pub fn set_semantics(&mut self, semantics: Vec<(Range<Position>, Highlight)>) {
+    pub fn set_semantics(&mut self, semantics: Vec<Semantic>) {
         self.semantics = semantics;
-        self.semantics.sort_by_key(|(span, _)| span.start);
+        self.semantics.sort_by_key(|(span, ..)| span.start);
         self.semantic_reach = self
             .semantics
             .iter()
-            .map(|(span, _)| span.end.line.saturating_sub(span.start.line))
+            .map(|(span, ..)| span.end.line.saturating_sub(span.start.line))
             .max()
             .unwrap_or(0);
         self.memo.forget_highlights();
@@ -421,17 +421,17 @@ impl Buffer {
             Some(syntax) => syntax.highlights(&self.text, lines.clone()),
             None => Highlights::default(),
         };
-        let first = self.semantics.partition_point(|(span, _)| {
+        let first = self.semantics.partition_point(|(span, ..)| {
             span.start.line < lines.start.saturating_sub(self.semantic_reach)
         });
         let last = self
             .semantics
-            .partition_point(|(span, _)| span.start.line < lines.end);
-        for (span, highlight) in &self.semantics[first..last.max(first)] {
+            .partition_point(|(span, ..)| span.start.line < lines.end);
+        for (span, highlight, mutable) in &self.semantics[first..last.max(first)] {
             if span.end.line < lines.start || span.start.line >= lines.end {
                 continue;
             }
-            highlights.repaint(span.clone(), *highlight);
+            highlights.repaint(span.clone(), *highlight, *mutable);
         }
         highlights
     }
