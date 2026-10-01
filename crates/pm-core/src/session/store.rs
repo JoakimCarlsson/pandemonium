@@ -188,6 +188,11 @@ impl Sessions {
         self.open.iter().find(|session| session.id == id)
     }
 
+    /// Every held session in the order it was started.
+    pub fn iter(&self) -> impl Iterator<Item = &Session> {
+        self.open.iter()
+    }
+
     /// The sessions of `project`, in the order they were started.
     pub fn of(&self, project: ProjectId) -> impl Iterator<Item = &Session> {
         self.open

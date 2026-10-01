@@ -10,6 +10,7 @@ mod arrival;
 mod clicks;
 mod client;
 mod commands;
+mod control;
 mod debug;
 mod dialog;
 mod disk;
@@ -146,6 +147,8 @@ pub enum Wake {
     Remote,
     /// Files have been carried onto the window from outside it.
     Arrival,
+    /// A command from a local control client is waiting.
+    Control,
 }
 
 /// The remote operation currently running for the active project.
@@ -251,6 +254,8 @@ pub struct App {
     open: Projects,
     /// Shared machine connections for the window.
     hosts: pm_host::Hosts,
+    /// The same-user socket used by remote control clients.
+    control: Option<crate::control::Server>,
     /// The SSH login terminal while a connection is authenticating.
     authentication: Option<remote::Authentication>,
     /// Remote handshakes completed away from the window.
@@ -538,7 +543,7 @@ pub struct App {
 }
 
 /// How many kinds of [`Wake`] there are.
-const WAKES: usize = Wake::Arrival as usize + 1;
+const WAKES: usize = Wake::Control as usize + 1;
 
 /// One flag per kind of [`Wake`], set while one is on its way.
 type Pending = Arc<[AtomicBool; WAKES]>;
@@ -687,6 +692,13 @@ impl App {
         crate::image::wake_with(waker_through(&proxy, &pending, Wake::Picture));
 
         let mut notices = Notices::default();
+        let control = match crate::control::Server::start(proxy.clone()) {
+            Ok(server) => Some(server),
+            Err(error) => {
+                notices.trouble(format!("Phone control unavailable: {error}"), None);
+                None
+            }
+        };
         for error in remote_errors {
             notices.trouble(error, None);
         }
@@ -720,6 +732,7 @@ impl App {
             showing_bases: false,
             open,
             hosts,
+            control,
             authentication: None,
             remote_back: Arc::default(),
             files,
@@ -2909,6 +2922,7 @@ impl ApplicationHandler<Wake> for App {
                 self.request_redraw();
             }
             Wake::Arrival => self.take_arrivals(),
+            Wake::Control => self.take_control(),
         }
     }
 

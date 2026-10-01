@@ -65,16 +65,7 @@ Set `PANDEMONIUM_VERSION` to pin a release. The script checks the download
 against the release's `SHA256SUMS`, puts the binary in `~/.local/bin`, and adds
 a launcher entry on Linux or `Pandemonium.app` in `~/Applications` on macOS.
 
-Each release also has a separate `pandemonium-server` archive for every target.
-Install it on the SSH host with the same version as the editor:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | PANDEMONIUM_COMPONENT=server sh
-```
-
-Set `PANDEMONIUM_VERSION` on the installer command to pin the server alongside
-a pinned editor release. On Windows, set `PANDEMONIUM_COMPONENT=server` before
-running `install.ps1`. The server must be on the remote host's `PATH`.
+For remote projects and phone control, see the [SSH guide](docs/ssh.md).
 
 ## Building
 

@@ -31,7 +31,7 @@ use stored::Stored;
 pub use fonts::FontSlot;
 pub use overrides::ThemeOverrides;
 pub use paths::{
-    keymaps as keymaps_directory, logs, servers, settings as settings_file,
+    home, keymaps as keymaps_directory, logs, servers, settings as settings_file,
     themes as themes_directory, worktrees,
 };
 pub use preferences::{
