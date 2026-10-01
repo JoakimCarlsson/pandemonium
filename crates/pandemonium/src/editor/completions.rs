@@ -94,6 +94,7 @@ fn kind_icon(kind: CompletionKind) -> IconName {
         CompletionKind::Event => IconName::Zap,
         CompletionKind::Operator => IconName::Percent,
         CompletionKind::TypeParameter => IconName::Type,
+        CompletionKind::Text => IconName::Text,
         CompletionKind::Other => IconName::Circle,
     }
 }
@@ -123,6 +124,47 @@ fn kind_color(theme: &Theme, kind: CompletionKind) -> Rgba {
     }
 }
 
+/// Most completions remembered as taken.
+const REMEMBERED: usize = 200;
+
+/// Which completions the reader took, and how long ago, so that the one
+/// taken last is the one offered first the next time it matches as well as
+/// anything.
+#[derive(Clone, Default)]
+pub struct Recent {
+    /// When each was last taken, as a count of completions taken since the
+    /// window opened.
+    taken: HashMap<(CompletionKind, String), u64>,
+    /// How many have been taken.
+    clock: u64,
+}
+
+impl Recent {
+    /// Notes that `item` was taken.
+    pub fn remember(&mut self, item: &Completion) {
+        self.clock += 1;
+        self.taken
+            .insert((item.kind, item.label.clone()), self.clock);
+        if self.taken.len() > REMEMBERED
+            && let Some(oldest) = self
+                .taken
+                .iter()
+                .min_by_key(|(_, when)| **when)
+                .map(|(which, _)| which.clone())
+        {
+            self.taken.remove(&oldest);
+        }
+    }
+
+    /// When `item` was last taken, or zero if it has not been.
+    fn when(&self, item: &Completion) -> u64 {
+        self.taken
+            .get(&(item.kind, item.label.clone()))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
 /// What could be written where the cursor is.
 ///
 /// Every server behind the file is asked, and what each offers joins the
@@ -130,8 +172,9 @@ fn kind_color(theme: &Theme, kind: CompletionKind) -> Rgba {
 /// fixes, and neither's answer replaces the other's. What each item came
 /// from is kept beside it, since only that server can fill it in.
 pub struct Completions {
-    /// Everything the servers offered, with the server that offered each.
-    items: Vec<(Arc<Client>, Completion)>,
+    /// Everything the servers offered, with the server that offered each;
+    /// the words of the file, which no server offered, have none.
+    items: Vec<(Option<Arc<Client>>, Completion)>,
     /// Which of them what has been typed since leaves, best first.
     matched: Vec<usize>,
     /// Which of those is selected.
@@ -148,11 +191,13 @@ pub struct Completions {
     typed: String,
     /// What the servers have filled items in with, by what the items are.
     filled: HashMap<Key, Filled>,
+    /// What the reader has taken before.
+    recent: Recent,
 }
 
 impl Completions {
     /// An empty list for the word beginning at `start`, hung from `at`.
-    pub fn new(start: Position, at: Point) -> Self {
+    pub fn new(start: Position, at: Point, recent: Recent) -> Self {
         Self {
             items: Vec::new(),
             matched: Vec::new(),
@@ -163,7 +208,17 @@ impl Completions {
             incomplete: Vec::new(),
             typed: String::new(),
             filled: HashMap::new(),
+            recent,
         }
+    }
+
+    /// Takes in the words of the file as what could be written, for a file
+    /// no server has anything to say about.
+    pub fn offer_words(&mut self, words: Vec<Completion>) {
+        self.items
+            .extend(words.into_iter().map(|word| (None, word)));
+        let typed = std::mem::take(&mut self.typed);
+        self.narrow(&typed);
     }
 
     /// Takes in what `client` offered, in place of whatever it offered before.
@@ -176,7 +231,11 @@ impl Completions {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, (offered, _))| !Arc::ptr_eq(offered, client))
+            .filter(|(_, (offered, _))| {
+                offered
+                    .as_ref()
+                    .is_some_and(|offered| !Arc::ptr_eq(offered, client))
+            })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         let selected = selected.and_then(|index| kept.iter().position(|kept| *kept == index));
@@ -196,7 +255,7 @@ impl Completions {
                 Self::apply(&mut item, filled);
                 self.asked.insert(self.items.len());
             }
-            self.items.push((client.clone(), item));
+            self.items.push((Some(client.clone()), item));
         }
         self.incomplete
             .retain(|offered| !Arc::ptr_eq(offered, client));
@@ -210,6 +269,11 @@ impl Completions {
         {
             self.selected = place;
         }
+    }
+
+    /// What has been typed of the word being completed.
+    pub fn typed(&self) -> &str {
+        &self.typed
     }
 
     /// Where the word being completed begins.
@@ -241,6 +305,10 @@ impl Completions {
 
     /// Keeps only what `typed` matches, best match first and, among equals,
     /// by kind and then by what the server ranked them by.
+    ///
+    /// The selection goes to the item the server preselected among the best
+    /// matches, or else the one the reader took most recently, or else the
+    /// first.
     pub fn narrow(&mut self, typed: &str) {
         self.typed = typed.to_owned();
         let mut scored = self
@@ -248,7 +316,7 @@ impl Completions {
             .iter()
             .enumerate()
             .filter_map(|(index, (_, item))| {
-                fuzzy::score(typed, &item.filter).map(|score| (index, score))
+                fuzzy::matching(typed, &item.filter).map(|found| (index, found.score))
             })
             .collect::<Vec<_>>();
         scored.sort_by(|(a, a_score), (b, b_score)| {
@@ -259,8 +327,31 @@ impl Completions {
                 .then_with(|| a.sort.cmp(&b.sort))
                 .then_with(|| a.label.cmp(&b.label))
         });
+        let best = scored.first().map(|(_, score)| *score);
+        let tied = scored
+            .iter()
+            .take_while(|(_, score)| Some(*score) == best)
+            .map(|(index, _)| *index)
+            .collect::<Vec<_>>();
         self.matched = scored.into_iter().map(|(index, _)| index).collect();
-        self.selected = 0;
+        let chosen = tied
+            .iter()
+            .find(|index| self.items[**index].1.preselect)
+            .or_else(|| {
+                tied.iter()
+                    .filter(|index| self.recent.when(&self.items[**index].1) > 0)
+                    .max_by_key(|index| self.recent.when(&self.items[**index].1))
+            });
+        self.selected = chosen
+            .and_then(|chosen| self.matched.iter().position(|index| index == chosen))
+            .unwrap_or(0);
+    }
+
+    /// Which row the selected item's commit characters say `typed` takes, if
+    /// they do.
+    pub fn committed_by(&self, typed: char) -> Option<usize> {
+        let (_, item) = self.at_place(self.selected)?;
+        item.commit.contains(&typed).then_some(self.selected)
     }
 
     /// Moves the selection `step` rows along, wrapping around at either end.
@@ -283,9 +374,9 @@ impl Completions {
     }
 
     /// The `place`-th completion shown, and the server that offered it.
-    pub fn at_place(&self, place: usize) -> Option<(&Arc<Client>, &Completion)> {
+    pub fn at_place(&self, place: usize) -> Option<(Option<&Arc<Client>>, &Completion)> {
         let (client, item) = self.items.get(*self.matched.get(place)?)?;
-        Some((client, item))
+        Some((client.as_ref(), item))
     }
 
     /// The servers and records of the rows shown that have not been asked
@@ -306,10 +397,10 @@ impl Completions {
         }
         wanted
             .into_iter()
-            .filter(|index| self.asked.insert(*index))
-            .map(|index| {
+            .filter(|index| self.items[*index].0.is_some() && self.asked.insert(*index))
+            .filter_map(|index| {
                 let (client, item) = &self.items[index];
-                (client.clone(), item.handle.clone())
+                Some((client.clone()?, item.handle.clone()))
             })
             .collect()
     }
@@ -382,6 +473,7 @@ impl Completions {
 /// Builds the list as it hangs under the word being completed.
 pub fn completion_list(theme: &Theme, completions: &Completions) -> Div<Message> {
     let (selected, rows) = completions.shown();
+    let typed = completions.typed();
 
     v_flex()
         .w_px(WIDTH)
@@ -393,14 +485,47 @@ pub fn completion_list(theme: &Theme, completions: &Completions) -> Div<Message>
         .rounded(theme.radius.md)
         .children(
             rows.into_iter()
-                .map(|(place, item)| row(theme, place, item, place == selected)),
+                .map(|(place, item)| row(theme, place, item, typed, place == selected)),
         )
 }
 
+/// The runs of `label` that `typed` matched and the runs between them, in
+/// order, each saying whether it was matched.
+fn runs(typed: &str, label: &str) -> Vec<(String, bool)> {
+    let at = fuzzy::matching(typed, label).map_or_else(Vec::new, |found| found.at);
+    let mut runs: Vec<(String, bool)> = Vec::new();
+    for (index, ch) in label.chars().enumerate() {
+        let matched = at.contains(&index);
+        match runs.last_mut() {
+            Some((run, was)) if *was == matched => run.push(ch),
+            _ => runs.push((ch.to_string(), matched)),
+        }
+    }
+    runs
+}
+
 /// Builds one row of the list, lit while it is the selected one: the icon of
-/// its kind, its name, the signature straight after it and its type at the
-/// far end.
-fn row(theme: &Theme, place: usize, item: &Completion, selected: bool) -> Div<Message> {
+/// its kind, its name with what was typed picked out, the signature straight
+/// after it and its type at the far end.
+fn row(
+    theme: &Theme,
+    place: usize,
+    item: &Completion,
+    typed: &str,
+    selected: bool,
+) -> Div<Message> {
+    let name = runs(typed, &item.label).into_iter().map(|(run, matched)| {
+        let run = text(run).text_sm().font_mono();
+        let run = match matched {
+            true => run.font_semibold().color(theme.colors.accent),
+            false if item.deprecated => run.color(theme.colors.text_muted),
+            false => run,
+        };
+        match item.deprecated {
+            true => run.strikethrough(),
+            false => run,
+        }
+    });
     h_flex()
         .w_full()
         .h_px(ROW_HEIGHT)
@@ -420,7 +545,7 @@ fn row(theme: &Theme, place: usize, item: &Completion, selected: bool) -> Div<Me
             h_flex()
                 .items_center()
                 .overflow_hidden()
-                .child(text(item.label.clone()).text_sm().font_mono())
+                .children(name)
                 .child(
                     text(item.signature.clone())
                         .text_xs()

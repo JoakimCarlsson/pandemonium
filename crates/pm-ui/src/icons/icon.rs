@@ -159,6 +159,8 @@ pub enum IconName {
     Palette,
     /// a unit of measure.
     Ruler,
+    /// Lines of text.
+    Text,
 }
 
 impl IconName {
@@ -226,6 +228,7 @@ impl IconName {
             Self::Percent => Svg::new("percent", include_icon!("percent")),
             Self::Type => Svg::new("type", include_icon!("type")),
             Self::Palette => Svg::new("palette", include_icon!("palette")),
+            Self::Text => Svg::new("text", include_icon!("text")),
             Self::Ruler => Svg::new("ruler", include_icon!("ruler")),
             Self::Package => Svg::new("package", include_icon!("package")),
             Self::Wrench => Svg::new("wrench", include_icon!("wrench")),

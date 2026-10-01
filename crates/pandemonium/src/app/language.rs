@@ -1223,7 +1223,7 @@ impl App {
             Answer::Completions { items, incomplete } => {
                 self.show_completions(pending, items, incomplete);
             }
-            Answer::Resolved(item) => self.take_resolved(pending, item),
+            Answer::Resolved(item) => self.take_resolved(pending, *item),
             Answer::CodeActions(actions) => self.show_code_actions(pending, actions),
             Answer::Edits(files) => {
                 self.apply_edits(files);
@@ -1571,7 +1571,13 @@ impl App {
         items: Vec<pm_text::Completion>,
         incomplete: bool,
     ) {
-        if items.is_empty() || self.active_file_id() != Some(pending.file) {
+        if self.active_file_id() != Some(pending.file) {
+            return;
+        }
+        if items.is_empty() {
+            if self.completions.is_none() {
+                self.offer_words();
+            }
             return;
         }
         let Some(document) = self.editor.get(pending.file) else {
@@ -1594,7 +1600,7 @@ impl App {
             .as_ref()
             .is_none_or(|list| list.start() != word.start)
         {
-            let mut list = Completions::new(word.start, point);
+            let mut list = Completions::new(word.start, point, self.recent_completions.clone());
             list.narrow(&typed);
             self.completions = Some(list);
         }
@@ -1605,6 +1611,60 @@ impl App {
             self.completions = None;
         }
         self.resolve_completion();
+    }
+
+    /// Whether any language server is behind the focused file.
+    pub(super) fn active_file_has_servers(&self) -> bool {
+        self.active_file()
+            .is_some_and(|document| !document.borrow().servers().is_empty())
+    }
+
+    /// Offers the words of the focused file as what could be written where
+    /// the cursor is, for a word of at least two characters begun there.
+    ///
+    /// A server that has nothing to say leaves the reader with what the file
+    /// itself already says, the way an editor without a server would.
+    pub(super) fn offer_words(&mut self) {
+        let Some(document) = self.active_file() else {
+            return;
+        };
+        let document = document.borrow();
+        let buffer = document.buffer();
+        let head = buffer.selection().head;
+        let word = buffer.word_at(head);
+        if head.line != word.start.line || head.column - word.start.column.min(head.column) < 2 {
+            return;
+        }
+        let typed = buffer.text_in(word.start..head);
+        let mut seen = std::collections::HashSet::new();
+        let words = (0..buffer.line_count())
+            .flat_map(|line| {
+                buffer
+                    .line_text(line)
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .filter(|word| word.chars().count() > 1)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|word| *word != typed && seen.insert(word.clone()))
+            .map(|word| pm_text::Completion::word(&word))
+            .collect::<Vec<_>>();
+        let under = document.layout().cell.height;
+        let at = document.point_of(word.start);
+        drop(document);
+        if words.is_empty() {
+            return;
+        }
+        let mut list = Completions::new(
+            word.start,
+            pm_gfx::Point::new(at.x, at.y + under),
+            self.recent_completions.clone(),
+        );
+        list.narrow(&typed);
+        list.offer_words(words);
+        if !list.is_empty() {
+            self.completions = Some(list);
+        }
     }
 
     /// Whether a server behind the focused file completes after `typed`.

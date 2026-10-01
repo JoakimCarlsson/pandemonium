@@ -409,6 +409,8 @@ pub struct App {
     prompt: Option<crate::prompt::Prompt>,
     /// What could be written where the cursor is, while the list is up.
     completions: Option<crate::editor::Completions>,
+    /// Which completions the reader has taken, newest last.
+    recent_completions: crate::editor::Recent,
     /// A completion put in before its server had filled it in, waiting for
     /// the edits that come with it.
     taken_completion: Option<crate::app::language::TakenCompletion>,
@@ -792,6 +794,7 @@ impl App {
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
             completions: None,
+            recent_completions: crate::editor::Recent::default(),
             taken_completion: None,
             hint: None,
             link: None,
@@ -1532,7 +1535,7 @@ impl App {
             return;
         }
         if let Message::ChooseCompletion(place) = message {
-            self.take_completion(place);
+            self.take_completion(place, false);
             self.request_redraw();
             return;
         }

@@ -769,6 +769,12 @@ fn text_document() -> TextDocumentClientCapabilities {
                 documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
                 insert_replace_support: Some(true),
                 label_details_support: Some(true),
+                commit_characters_support: Some(true),
+                deprecated_support: Some(true),
+                preselect_support: Some(true),
+                tag_support: Some(lsp_types::TagSupport {
+                    value_set: vec![lsp_types::CompletionItemTag::DEPRECATED],
+                }),
                 resolve_support: Some(CompletionItemCapabilityResolveSupport {
                     properties: RESOLVED_COMPLETION.map(str::to_owned).to_vec(),
                 }),

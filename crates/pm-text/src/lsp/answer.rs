@@ -23,9 +23,9 @@ use lsp_types::request::{
 use lsp_types::{
     CallHierarchyIncomingCallsParams, CallHierarchyItem, CallHierarchyOutgoingCallsParams,
     CallHierarchyPrepareParams, CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeLens,
-    CodeLensParams, CompletionContext, CompletionItem, CompletionItemKind, CompletionParams,
-    CompletionResponse, CompletionTextEdit, CompletionTriggerKind, DocumentChangeOperation,
-    DocumentChanges, DocumentFormattingParams, DocumentHighlightParams,
+    CodeLensParams, CompletionContext, CompletionItem, CompletionItemKind, CompletionItemTag,
+    CompletionParams, CompletionResponse, CompletionTextEdit, CompletionTriggerKind,
+    DocumentChangeOperation, DocumentChanges, DocumentFormattingParams, DocumentHighlightParams,
     DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbol,
     DocumentSymbolParams, DocumentSymbolResponse, Documentation, FileRename, FoldingRangeParams,
     FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents, HoverParams,
@@ -154,6 +154,8 @@ enum Handed {
     Call(Box<CallHierarchyItem>),
     /// A completion, to be filled in.
     Completion(Box<CompletionItem>),
+    /// A word of the file, which no server made and none can fill in.
+    Word,
 }
 
 /// Where a question is asked, already counted the server's way.
@@ -564,7 +566,7 @@ impl Request {
             }
             Self::ResolveCompletion(_) => {
                 let item = rpc::result::<ResolveCompletionItem>(result)?;
-                Answer::Resolved(completion(item)?)
+                Answer::Resolved(Box::new(completion(item)?))
             }
             Self::Signature => Answer::Signature(
                 rpc::result::<SignatureHelpRequest>(result)?
@@ -732,7 +734,7 @@ pub enum Answer {
     /// Text predicted for insertion at the cursor.
     Inline(Vec<Prediction>),
     /// One of those, filled in with what the server left out of the list.
-    Resolved(Completion),
+    Resolved(Box<Completion>),
     /// The signature of the call the cursor is inside.
     Signature(Signature),
     /// Whether the symbol asked about can be renamed: the span of its name,
@@ -885,6 +887,10 @@ impl Answer {
 /// Counts the places one completion names the editor's way.
 fn decode_completion(item: &mut Completion, path: &Path, files: &mut Files) {
     item.range = item.range.clone().map(|span| files.decode_span(path, span));
+    item.replace = item
+        .replace
+        .clone()
+        .map(|span| files.decode_span(path, span));
     for (span, _) in &mut item.extra {
         *span = files.decode_span(path, span.clone());
     }
@@ -964,8 +970,18 @@ pub struct Completion {
     /// What the server ranks it by among the others, which is the label
     /// unless the server said otherwise.
     pub sort: String,
-    /// The span it replaces, when the server named one.
+    /// The span it replaces when it is inserted before the text that follows
+    /// the cursor, when the server named one.
     pub range: Option<Range<Position>>,
+    /// The span it replaces when it is taken over the rest of the word as
+    /// well, when the server named one apart from the first.
+    pub replace: Option<Range<Position>>,
+    /// Whether the server says the thing is out of date.
+    pub deprecated: bool,
+    /// Whether the server says it is the one most likely wanted.
+    pub preselect: bool,
+    /// The characters that take it when typed while it is selected.
+    pub commit: Vec<char>,
     /// Changes elsewhere in the file that choosing it brings along: the
     /// import a name needs, most often.
     pub extra: Vec<(Range<Position>, String)>,
@@ -1000,6 +1016,8 @@ pub enum CompletionKind {
     Value,
     /// An enumeration.
     Enum,
+    /// Plain text, such as a word of the file.
+    Text,
     /// A reserved word.
     Keyword,
     /// A snippet of text with places to fill in.
@@ -1051,6 +1069,7 @@ impl From<CompletionItemKind> for CompletionKind {
             CompletionItemKind::UNIT => Self::Unit,
             CompletionItemKind::VALUE => Self::Value,
             CompletionItemKind::ENUM => Self::Enum,
+            CompletionItemKind::TEXT => Self::Text,
             CompletionItemKind::KEYWORD => Self::Keyword,
             CompletionItemKind::SNIPPET => Self::Snippet,
             CompletionItemKind::COLOR => Self::Color,
@@ -1064,6 +1083,30 @@ impl From<CompletionItemKind> for CompletionKind {
             CompletionItemKind::OPERATOR => Self::Operator,
             CompletionItemKind::TYPE_PARAMETER => Self::TypeParameter,
             _ => Self::Other,
+        }
+    }
+}
+
+impl Completion {
+    /// A word of the file itself, offered where no server has anything.
+    pub fn word(word: &str) -> Self {
+        Self {
+            label: word.to_owned(),
+            filter: word.to_owned(),
+            detail: String::new(),
+            documentation: String::new(),
+            insert: word.to_owned(),
+            stops: Vec::new(),
+            kind: CompletionKind::Text,
+            signature: String::new(),
+            sort: word.to_owned(),
+            range: None,
+            replace: None,
+            deprecated: false,
+            preselect: false,
+            commit: Vec::new(),
+            extra: Vec::new(),
+            handle: Handle(Handed::Word),
         }
     }
 }
@@ -1334,12 +1377,16 @@ fn completion(item: CompletionItem) -> Option<Completion> {
     if label.is_empty() {
         return None;
     }
-    let (span, text) = match item.text_edit.clone() {
-        Some(CompletionTextEdit::Edit(edit)) => (Some(range(edit.range)), Some(edit.new_text)),
-        Some(CompletionTextEdit::InsertAndReplace(edit)) => {
-            (Some(range(edit.replace)), Some(edit.new_text))
+    let (span, replace, text) = match item.text_edit.clone() {
+        Some(CompletionTextEdit::Edit(edit)) => {
+            (Some(range(edit.range)), None, Some(edit.new_text))
         }
-        None => (None, None),
+        Some(CompletionTextEdit::InsertAndReplace(edit)) => (
+            Some(range(edit.insert)),
+            Some(range(edit.replace)),
+            Some(edit.new_text),
+        ),
+        None => (None, None, None),
     };
     let written = text
         .or_else(|| item.insert_text.clone())
@@ -1374,6 +1421,19 @@ fn completion(item: CompletionItem) -> Option<Completion> {
         insert: snippet.text,
         stops: snippet.stops,
         range: span,
+        replace,
+        deprecated: item.deprecated == Some(true)
+            || item
+                .tags
+                .as_ref()
+                .is_some_and(|tags| tags.contains(&CompletionItemTag::DEPRECATED)),
+        preselect: item.preselect == Some(true),
+        commit: item
+            .commit_characters
+            .iter()
+            .flatten()
+            .filter_map(|typed| typed.chars().next())
+            .collect(),
         extra: text_edits(item.additional_text_edits.clone().unwrap_or_default()),
         label,
         handle: Handle(Handed::Completion(Box::new(item))),
