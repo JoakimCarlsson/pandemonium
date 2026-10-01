@@ -7,7 +7,7 @@
 //! file behind it is.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::ops::{ControlFlow, Range};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -62,6 +62,66 @@ const PARSE_BUDGET: Duration = Duration::from_millis(250);
 /// Enough for every code block a rendered document and a hover show at
 /// once, so a frame drawing them again highlights none of them afresh.
 const REMEMBERED: usize = 64;
+
+/// The kinds of node that are one tag of a markup element: HTML's, with the
+/// closing one a grammar gives up on matching once its name has been
+/// changed, and JSX's.
+const TAGS: [&str; 5] = [
+    "start_tag",
+    "end_tag",
+    "erroneous_end_tag",
+    "jsx_opening_element",
+    "jsx_closing_element",
+];
+
+/// The brackets the grammars have tokens for.
+const BRACKETS: [&str; 6] = ["(", ")", "[", "]", "{", "}"];
+
+/// How many pairs of brackets each bracket token within `bytes` is inside.
+///
+/// A bracket of a string or a comment is part of that node's text and not a
+/// token of its own, so only the brackets that are code are found. A node
+/// that has an opening bracket among its children is a pair, and its
+/// brackets and everything inside are one level in from what holds it.
+fn bracket_depths(tree: &Tree, text: &Rope, bytes: Range<usize>) -> HashMap<(usize, usize), usize> {
+    let mut found = HashMap::new();
+    let mut cursor = tree.walk();
+    let mut stack: Vec<(usize, bool)> = Vec::new();
+    loop {
+        let node = cursor.node();
+        if node.start_byte() < bytes.end && node.end_byte() > bytes.start {
+            if node.child_count() > 0 {
+                let pair = (0..node.child_count()).any(|index| {
+                    node.child(index).is_some_and(|child| {
+                        !child.is_named() && ["(", "[", "{"].contains(&child.kind())
+                    })
+                });
+                let outer = stack
+                    .last()
+                    .map_or(0, |(outer, pair)| outer + usize::from(*pair));
+                stack.push((outer, pair));
+                if cursor.goto_first_child() {
+                    continue;
+                }
+                stack.pop();
+            } else if !node.is_named() && BRACKETS.contains(&node.kind()) {
+                let point = node.start_position();
+                let column = text.line(point.row).byte_to_char(point.column);
+                let depth = stack.last().map_or(0, |(outer, _)| *outer);
+                found.insert((point.row, column), depth);
+            }
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return found;
+            }
+            stack.pop();
+        }
+    }
+}
 
 /// The highlight query of every language compiled so far, by name.
 ///
@@ -202,6 +262,11 @@ pub struct Highlights {
     first: usize,
     /// One row per line covered, one entry per character of it.
     rows: Vec<Vec<Option<Highlight>>>,
+    /// The lines and columns of the characters a server said name something
+    /// that can be assigned to again.
+    mutable: BTreeSet<(usize, usize)>,
+    /// How many pairs of brackets each bracket is inside, by line and column.
+    depths: HashMap<(usize, usize), usize>,
 }
 
 impl Highlights {
@@ -210,7 +275,7 @@ impl Highlights {
     /// What a language server says about a span is written over what the
     /// grammar guessed, because the server knows which of two things a name
     /// is and the grammar only knows that it is a name.
-    pub fn repaint(&mut self, span: Range<Position>, highlight: Highlight) {
+    pub fn repaint(&mut self, span: Range<Position>, highlight: Highlight, mutable: bool) {
         for line in span.start.line..=span.end.line {
             let Some(index) = line.checked_sub(self.first) else {
                 continue;
@@ -231,7 +296,23 @@ impl Highlights {
             for slot in row.iter_mut().take(to).skip(from) {
                 *slot = Some(highlight);
             }
+            if mutable {
+                self.mutable
+                    .extend((from..to.min(row.len())).map(|column| (line, column)));
+            }
         }
+    }
+
+    /// How many pairs of brackets the bracket at `line` and `column` is
+    /// inside, when the character is a bracket the grammar has a token for.
+    pub fn bracket_depth(&self, line: usize, column: usize) -> Option<usize> {
+        self.depths.get(&(line, column)).copied()
+    }
+
+    /// Whether the character at `line` and `column` is part of a name a
+    /// server said can be assigned to again.
+    pub fn is_mutable(&self, line: usize, column: usize) -> bool {
+        self.mutable.contains(&(line, column))
     }
 
     /// The highlight of the character at `line` and `column`, if it has one.
@@ -392,6 +473,79 @@ impl Syntax {
         }
     }
 
+    /// The name of the tag whose name holds `byte`, and the name of the tag
+    /// that closes or opens the same element, as spans of bytes.
+    ///
+    /// Only markup has such pairs: an HTML element's start and end tags and
+    /// a JSX element's opening and closing ones. Anything else, and an
+    /// element missing either of its tags, has none.
+    pub fn tag_names(&self, byte: usize) -> Option<(Range<usize>, Range<usize>)> {
+        let root = self.tree.as_ref()?.root_node();
+        let found = [byte, byte.saturating_sub(1)]
+            .into_iter()
+            .filter_map(|probe| root.descendant_for_byte_range(probe, probe))
+            .find_map(|node| {
+                let mut node = node;
+                loop {
+                    if TAGS.contains(&node.kind()) {
+                        return Some(node);
+                    }
+                    node = node.parent()?;
+                }
+            })?;
+        let element = found.parent()?;
+        let mut cursor = element.walk();
+        let tags = element
+            .children(&mut cursor)
+            .filter(|child| TAGS.contains(&child.kind()))
+            .collect::<Vec<_>>();
+        let [first, second] = tags[..] else {
+            return None;
+        };
+        let name_of = |tag: tree_sitter::Node<'_>| {
+            let name = match tag.kind() {
+                "start_tag" | "end_tag" | "erroneous_end_tag" => tag
+                    .children(&mut tag.walk())
+                    .find(|child| child.kind().ends_with("tag_name")),
+                _ => tag.child_by_field_name("name"),
+            }?;
+            Some(name.byte_range())
+        };
+        let (here, there) = match found.id() == first.id() {
+            true => (name_of(first)?, name_of(second)?),
+            false => (name_of(second)?, name_of(first)?),
+        };
+        (here.start <= byte && byte <= here.end).then_some((here, there))
+    }
+
+    /// The name of the tag that opens at the `>` just before `byte`, as a
+    /// span of bytes, when one does and it is not closed on its own.
+    ///
+    /// A fragment has no name and comes to an empty span at `byte`.
+    pub fn open_tag_name_before(&self, byte: usize) -> Option<Range<usize>> {
+        let root = self.tree.as_ref()?.root_node();
+        let at = byte.checked_sub(1)?;
+        let closer = root.descendant_for_byte_range(at, at)?;
+        let tag = closer.parent()?;
+        if closer.kind() != ">" || tag.end_byte() != byte {
+            return None;
+        }
+        match tag.kind() {
+            "start_tag" => {
+                let mut cursor = tag.walk();
+                let name = tag
+                    .children(&mut cursor)
+                    .find(|child| child.kind() == "tag_name")?;
+                Some(name.byte_range())
+            }
+            "jsx_opening_element" => Some(
+                tag.child_by_field_name("name")
+                    .map_or(byte..byte, |name| name.byte_range()),
+            ),
+            _ => None,
+        }
+    }
+
     /// The highlights of `lines`, as one entry per character.
     pub fn highlights(&mut self, text: &Rope, lines: Range<usize>) -> Highlights {
         let Some(tree) = self.tree.as_ref() else {
@@ -407,6 +561,12 @@ impl Syntax {
             rows: (lines.start..last)
                 .map(|line| vec![None; text.line(line).len_chars()])
                 .collect(),
+            mutable: BTreeSet::new(),
+            depths: bracket_depths(
+                tree,
+                text,
+                text.line_to_byte(lines.start)..line_end_byte(text, last - 1),
+            ),
         };
 
         let mut cursor = QueryCursor::new();

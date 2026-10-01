@@ -32,8 +32,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use answer::{
-    Answer, Calls, CodeAction, Completion, FileEdit, Handle, Lens, Location, NamedLocation,
-    Request, Signature, Symbol, Trigger, WorkspaceChange,
+    Answer, Calls, CodeAction, Completion, CompletionKind, FileEdit, Handle, Lens, Location,
+    NamedLocation, Request, Semantic, Signature, Symbol, Trigger, WorkspaceChange,
 };
 pub use client::{Asked, Client};
 pub use log::{is_tracing, set_trace};

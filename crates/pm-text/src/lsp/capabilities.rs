@@ -12,20 +12,21 @@ use std::path::Path;
 use globset::GlobBuilder;
 use lsp_types::{
     CallHierarchyClientCapabilities, CallHierarchyServerCapability, ClientCapabilities, ClientInfo,
-    CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-    CodeActionProviderCapability, CodeLensClientCapabilities, CodeLensOptions,
-    CodeLensWorkspaceClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, CompletionOptions, DeclarationCapability,
-    DiagnosticClientCapabilities, DiagnosticOptions, DiagnosticServerCapabilities,
-    DiagnosticWorkspaceClientCapabilities, DidChangeWatchedFilesClientCapabilities, DocumentFilter,
-    DocumentFormattingClientCapabilities, DocumentHighlightClientCapabilities, DocumentSelector,
-    DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
-    GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, HoverProviderCapability,
-    ImplementationProviderCapability, InitializeParams, InlayHintClientCapabilities,
-    InlayHintWorkspaceClientCapabilities, InlineCompletionClientCapabilities, MarkupKind, OneOf,
-    PositionEncodingKind, PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities,
-    Registration, RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenType,
-    SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
+    CodeActionClientCapabilities, CodeActionKind, CodeActionKindLiteralSupport,
+    CodeActionLiteralSupport, CodeActionOptions, CodeActionProviderCapability,
+    CodeLensClientCapabilities, CodeLensOptions, CodeLensWorkspaceClientCapabilities,
+    CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
+    CompletionOptions, DeclarationCapability, DiagnosticClientCapabilities, DiagnosticOptions,
+    DiagnosticServerCapabilities, DiagnosticWorkspaceClientCapabilities,
+    DidChangeWatchedFilesClientCapabilities, DocumentFilter, DocumentFormattingClientCapabilities,
+    DocumentHighlightClientCapabilities, DocumentSelector, DocumentSymbolClientCapabilities,
+    DynamicRegistrationClientCapabilities, GeneralClientCapabilities, GotoCapability,
+    HoverClientCapabilities, HoverProviderCapability, ImplementationProviderCapability,
+    InitializeParams, InlayHintClientCapabilities, InlayHintWorkspaceClientCapabilities,
+    InlineCompletionClientCapabilities, MarkupKind, OneOf, PositionEncodingKind,
+    PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities, Registration,
+    RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenModifier,
+    SemanticTokenType, SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
     SignatureHelpOptions, TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
@@ -80,7 +81,7 @@ const TOKEN_TYPES: [&str; 23] = [
 ];
 
 /// The code action kinds the editor offers in its menu.
-const ACTION_KINDS: [&str; 7] = [
+const ACTION_KINDS: [&str; 8] = [
     "quickfix",
     "refactor",
     "refactor.extract",
@@ -88,7 +89,11 @@ const ACTION_KINDS: [&str; 7] = [
     "refactor.rewrite",
     "source",
     "source.organizeImports",
+    "source.fixAll",
 ];
+
+/// The method a registration of code actions names.
+const CODE_ACTION: &str = "textDocument/codeAction";
 
 /// The parts of a completion a server may leave out of the list and send
 /// only when the item is resolved.
@@ -289,6 +294,38 @@ impl Capabilities {
             TextDocumentSyncCapability::Options(options) => Some(options),
             TextDocumentSyncCapability::Kind(_) => None,
         }
+    }
+
+    /// Whether the server says it makes code actions of `kind`, or of a kind
+    /// that contains it.
+    ///
+    /// A server that does not list the kinds it makes is taken to make none
+    /// of the source kinds a save asks for: asking it would be asking for
+    /// whatever it likes to answer with.
+    pub(super) fn offers_action_kind(&self, kind: &str, document: Option<Document>) -> bool {
+        let covers = |kinds: &[CodeActionKind]| {
+            kinds.iter().any(|offered| {
+                kind == offered.as_str()
+                    || kind
+                        .strip_prefix(offered.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+        };
+        let stated = match self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.code_action_provider.as_ref())
+        {
+            Some(CodeActionProviderCapability::Options(options)) => {
+                options.code_action_kinds.as_deref().is_some_and(covers)
+            }
+            _ => false,
+        };
+        stated
+            || self.registrations(CODE_ACTION, document).any(|options| {
+                serde_json::from_value::<CodeActionOptions>(options.clone())
+                    .is_ok_and(|options| options.code_action_kinds.as_deref().is_some_and(covers))
+            })
     }
 
     /// Whether the server fills in completions it sent short, when asked.
@@ -767,6 +804,13 @@ fn text_document() -> TextDocumentClientCapabilities {
                 snippet_support: Some(true),
                 documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
                 insert_replace_support: Some(true),
+                label_details_support: Some(true),
+                commit_characters_support: Some(true),
+                deprecated_support: Some(true),
+                preselect_support: Some(true),
+                tag_support: Some(lsp_types::TagSupport {
+                    value_set: vec![lsp_types::CompletionItemTag::DEPRECATED],
+                }),
                 resolve_support: Some(CompletionItemCapabilityResolveSupport {
                     properties: RESOLVED_COMPLETION.map(str::to_owned).to_vec(),
                 }),
@@ -844,6 +888,9 @@ fn text_document() -> TextDocumentClientCapabilities {
         }),
         publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
             related_information: Some(false),
+            tag_support: Some(lsp_types::TagSupport {
+                value_set: vec![lsp_types::DiagnosticTag::UNNECESSARY],
+            }),
             ..PublishDiagnosticsClientCapabilities::default()
         }),
         call_hierarchy: Some(CallHierarchyClientCapabilities {
@@ -856,7 +903,7 @@ fn text_document() -> TextDocumentClientCapabilities {
                 full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
             },
             token_types: TOKEN_TYPES.map(SemanticTokenType::new).to_vec(),
-            token_modifiers: Vec::new(),
+            token_modifiers: vec![SemanticTokenModifier::new("mutable")],
             formats: vec![TokenFormat::RELATIVE],
             overlapping_token_support: None,
             multiline_token_support: None,

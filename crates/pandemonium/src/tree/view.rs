@@ -329,7 +329,7 @@ fn name_color(theme: &Theme, status: Option<FileStatus>, ignored: bool, cut: boo
     match (cut, status, ignored) {
         (true, _, _) => theme.colors.text_subtle,
         (false, Some(status), _) => status_color(theme, status),
-        (false, None, true) => theme.colors.text_muted,
+        (false, None, true) => theme.colors.text_subtle,
         (false, None, false) => theme.colors.text,
     }
 }

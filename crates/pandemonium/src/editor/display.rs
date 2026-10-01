@@ -53,6 +53,8 @@ pub struct Display {
     pub occurrences: bool,
     /// Whether a line is drawn at every step of indentation.
     pub indent_guides: bool,
+    /// Whether brackets are coloured by how many pairs they are inside.
+    pub bracket_colors: bool,
     /// Whether the lines the top of the pane is inside stay pinned above it.
     pub sticky_scroll: bool,
     /// Whether the scrollbars are drawn.
@@ -80,6 +82,7 @@ impl Default for Display {
             current_line: true,
             occurrences: true,
             indent_guides: true,
+            bracket_colors: true,
             sticky_scroll: true,
             scrollbars: true,
             minimap: false,

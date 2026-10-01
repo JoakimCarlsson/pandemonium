@@ -11,7 +11,6 @@ use pm_ui::{
 
 use crate::agent::{Standing, Tally, standing_color};
 use crate::editor::{FileId, OpenFile};
-use crate::health::Health;
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::notice::{Shown, Tone};
@@ -39,7 +38,7 @@ const BAR_INSET: f32 = 4.0;
 /// How far a session row sits in from the project row above it.
 const SESSION_INDENT: f32 = 12.0;
 
-/// Maximum branch reading width, keeping project health visible.
+/// Maximum branch reading width.
 const PROJECT_READING_WIDTH: f32 = 96.0;
 
 /// Width of the bar marking the row the window is pointed at.
@@ -207,10 +206,6 @@ pub struct SidebarProject {
     pub project: ProjectId,
     /// Whether the window is pointed at the project's own checkout.
     pub at_checkout: bool,
-    /// The checkout health shared with session presentations.
-    pub health: Health,
-    /// Check failures, diagnostics and feedback limit for its badge.
-    pub health_detail: String,
     /// Sessions belonging to that project.
     pub sessions: Vec<SidebarSession>,
 }
@@ -227,12 +222,6 @@ pub struct SidebarSession {
     pub removed: usize,
     /// Colour representing the state reported by the agent.
     pub status_color: Rgba,
-    /// Computed worktree health, independent of the agent standing.
-    pub health: Health,
-    /// Check failures, diagnostics and feedback limit for its badge.
-    pub health_detail: String,
-    /// How many errors the language servers over its worktree report.
-    pub errors: usize,
     /// How many review comments on its worktree are waiting to be sent.
     pub pending: usize,
     /// Whether this session is selected.
@@ -1383,7 +1372,6 @@ fn project_row(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div<
                 .tooltip(said.clone())
                 .child(reading(theme, said))
         }))
-        .child(entry.health.badge(theme, &entry.health_detail))
 }
 
 /// What a project's row states beside its name: the branch it has out, or
@@ -1420,14 +1408,6 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
             )
         })
         .child(drift(theme, session.added, session.removed))
-        .child(session.health.badge(
-            theme,
-            &if session.errors == 0 {
-                format!("{} · no errors", session.health_detail)
-            } else {
-                session.health_detail.clone()
-            },
-        ))
 }
 
 /// Builds the box a project or session row is laid out in.

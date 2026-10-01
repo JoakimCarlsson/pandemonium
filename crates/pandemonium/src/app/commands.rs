@@ -862,27 +862,36 @@ impl App {
         true
     }
 
-    /// Puts the `place`-th completion offered into the buffer.
-    pub(super) fn take_completion(&mut self, place: usize) {
+    /// Puts the `place`-th completion offered into the buffer, over the rest
+    /// of the word the cursor is in when `over` is set and the server named
+    /// a span for it.
+    pub(super) fn take_completion(&mut self, place: usize, over: bool) {
         let Some(completions) = self.completions.as_ref() else {
             return;
         };
         let Some((client, item)) = completions
             .at_place(place)
-            .map(|(client, item)| (client.clone(), item.clone()))
+            .map(|(client, item)| (client.cloned(), item.clone()))
         else {
             return;
         };
         let start = completions.start();
         let waiting = completions.is_asked(&item.handle);
-        let callable = matches!(item.kind, "function" | "method" | "constructor");
+        let callable = item.kind.callable();
         let mut show_signature = false;
         self.completions = None;
+        self.recent_completions.remember(&item);
         self.dismiss_prediction();
         self.edit_active(|buffer| {
             buffer.grouped(|buffer| {
                 let head = buffer.selection().head;
-                let base = buffer.complete(start..head, &item.insert, item.extra.clone());
+                let end = item.replace.as_ref().filter(|_| over).map_or(head, |span| {
+                    match span.end.line == head.line {
+                        true => span.end.max(head),
+                        false => head,
+                    }
+                });
+                let base = buffer.complete(start..end, &item.insert, item.extra.clone());
                 if !item.stops.is_empty() {
                     buffer.begin_snippet(base, item.stops.clone());
                 }
@@ -910,7 +919,9 @@ impl App {
                 }
             });
         });
-        self.await_taken_completion(client, item, start, waiting);
+        if let Some(client) = client {
+            self.await_taken_completion(client, item, start, waiting);
+        }
         if show_signature {
             self.ask(pm_text::Request::Signature);
         }
@@ -940,7 +951,11 @@ impl App {
                 typed,
             )));
         } else if typed == '.' || typed.is_alphanumeric() || typed == '_' {
-            self.ask(pm_text::Request::Completions(pm_text::Trigger::Invoked));
+            if self.active_file_has_servers() {
+                self.ask(pm_text::Request::Completions(pm_text::Trigger::Invoked));
+            } else {
+                self.offer_words();
+            }
         }
     }
 

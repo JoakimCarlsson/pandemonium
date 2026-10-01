@@ -85,6 +85,8 @@ pub(super) struct Stored {
     occurrence_highlight: Option<bool>,
     /// Whether a line is drawn at every step of indentation.
     indent_guides: Option<bool>,
+    /// Whether brackets are coloured by how many pairs they are inside.
+    bracket_pair_colorization: Option<bool>,
     /// Whether the lines the view is inside stay pinned above it.
     sticky_scroll: Option<bool>,
     /// Whether the scrollbars are drawn.
@@ -113,6 +115,11 @@ pub(super) struct Stored {
     scroll_sensitivity: Option<f32>,
     /// Whether a file is laid out the way its formatter would when it is saved.
     format_on_save: Option<bool>,
+    /// Whether a file's imports are put in order when it is saved.
+    organize_imports_on_save: Option<bool>,
+    /// Whether the fixes a server can make on their own are made when a file
+    /// is saved.
+    fix_on_save: Option<bool>,
     /// Whether the space at the ends of lines goes when a file is saved.
     remove_trailing_whitespace_on_save: Option<bool>,
     /// Whether a saved file always ends in a line break.
@@ -575,6 +582,9 @@ impl Stored {
                     .occurrence_highlight
                     .unwrap_or(defaults.display.occurrences),
                 indent_guides: self.indent_guides.unwrap_or(defaults.display.indent_guides),
+                bracket_colors: self
+                    .bracket_pair_colorization
+                    .unwrap_or(defaults.display.bracket_colors),
                 sticky_scroll: self.sticky_scroll.unwrap_or(defaults.display.sticky_scroll),
                 scrollbars: self.scrollbars.unwrap_or(defaults.display.scrollbars),
                 minimap: self.minimap.unwrap_or(defaults.display.minimap),
@@ -599,6 +609,10 @@ impl Stored {
                 .scroll_sensitivity
                 .unwrap_or(defaults.scroll_sensitivity),
             format_on_save: self.format_on_save.unwrap_or(defaults.format_on_save),
+            organize_imports_on_save: self
+                .organize_imports_on_save
+                .unwrap_or(defaults.organize_imports_on_save),
+            fix_on_save: self.fix_on_save.unwrap_or(defaults.fix_on_save),
             trim_whitespace: self
                 .remove_trailing_whitespace_on_save
                 .unwrap_or(defaults.trim_whitespace),
@@ -675,6 +689,7 @@ impl Stored {
             current_line_highlight: Some(display.current_line),
             occurrence_highlight: Some(display.occurrences),
             indent_guides: Some(display.indent_guides),
+            bracket_pair_colorization: Some(display.bracket_colors),
             sticky_scroll: Some(display.sticky_scroll),
             scrollbars: Some(display.scrollbars),
             minimap: Some(display.minimap),
@@ -695,6 +710,8 @@ impl Stored {
             cursor_blink: Some(preferences.cursor_blink),
             scroll_sensitivity: Some(preferences.scroll_sensitivity),
             format_on_save: Some(preferences.format_on_save),
+            organize_imports_on_save: Some(preferences.organize_imports_on_save),
+            fix_on_save: Some(preferences.fix_on_save),
             remove_trailing_whitespace_on_save: Some(preferences.trim_whitespace),
             ensure_final_newline_on_save: Some(preferences.final_newline),
             trust_worktrees: Some(preferences.trust_worktrees),

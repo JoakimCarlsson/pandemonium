@@ -551,7 +551,10 @@ impl App {
             if offered
                 && matches!(
                     request,
-                    Request::Format | Request::FormatSelection | Request::WillSave
+                    Request::Format
+                        | Request::FormatSelection
+                        | Request::WillSave
+                        | Request::SourceActions(_)
                 )
             {
                 break;
@@ -585,7 +588,14 @@ impl App {
             let document = document.borrow();
             let buffer = document.buffer();
             let selected = buffer.selection();
-            let selection = if selected.anchor == selected.head {
+            let whole = Position::default()
+                ..Position::new(
+                    buffer.line_count().saturating_sub(1),
+                    buffer.line_len(buffer.line_count().saturating_sub(1)),
+                );
+            let selection = if matches!(request, Request::SourceActions(_)) {
+                whole
+            } else if selected.anchor == selected.head {
                 Position::new(at.line, 0)..Position::new(at.line, buffer.line_len(at.line))
             } else if selected.anchor < selected.head {
                 selected.anchor..selected.head
@@ -1136,7 +1146,7 @@ impl App {
             && (matches!(answer, Answer::Edits(_) | Answer::Changes(_))
                 || matches!(pending.request, Request::CodeActions | Request::Signature))
         {
-            if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
+            if self.saving && Self::is_save_step(&pending.request) {
                 self.finish_save();
             }
             return;
@@ -1183,7 +1193,7 @@ impl App {
             Answer::Locations(found) if pending.request == Request::References => {
                 self.show_references(found);
             }
-            Answer::Locations(found) => self.go_to_first(&found),
+            Answer::Locations(found) => self.follow_definition(pending, found),
             Answer::Hover(text) => {
                 if let Some(hint) = self.hint.as_mut() {
                     hint.said = Some(text);
@@ -1223,7 +1233,7 @@ impl App {
             Answer::Completions { items, incomplete } => {
                 self.show_completions(pending, items, incomplete);
             }
-            Answer::Resolved(item) => self.take_resolved(pending, item),
+            Answer::Resolved(item) => self.take_resolved(pending, *item),
             Answer::CodeActions(actions) => self.show_code_actions(pending, actions),
             Answer::Edits(files) => {
                 self.apply_edits(files);
@@ -1336,7 +1346,7 @@ impl App {
     /// written, then the writing. Each server is asked after the previous
     /// answer has been applied to the document.
     fn save_once_formatted(&mut self, pending: &Pending) {
-        if !matches!(pending.request, Request::Format | Request::WillSave) {
+        if !Self::is_save_step(&pending.request) {
             return;
         }
         if self.ask_next_edit_server(pending) {
@@ -1346,9 +1356,17 @@ impl App {
             return;
         }
         match pending.request {
-            Request::Format => self.ask_before_save(pending.file),
-            _ => self.finish_save(),
+            Request::WillSave => self.finish_save(),
+            _ => self.next_save_step(pending.file),
         }
+    }
+
+    /// Whether `request` is one of the questions a save asks the servers.
+    fn is_save_step(request: &Request) -> bool {
+        matches!(
+            request,
+            Request::Format | Request::WillSave | Request::SourceActions(_)
+        )
     }
 
     /// Asks the next capable server about the document left by the last one.
@@ -1384,15 +1402,44 @@ impl App {
 
     /// Starts a save the servers behind the focused file take part in.
     ///
-    /// A save with no server to wait on is written at once.
+    /// A save with no server to wait on is written at once. Otherwise the
+    /// servers are asked, in order, to organize the imports and make their
+    /// own fixes when those are wanted, then to lay the file out when that
+    /// is, and last what they would change before it is written.
     pub(super) fn begin_save(&mut self, format: bool) {
         let Some(file) = self.active_file_id() else {
             return;
         };
         self.saving = true;
-        if format {
-            self.ask(Request::Format);
-            if self.awaits(file, &Request::Format) {
+        self.save_steps = [
+            (
+                self.preferences.organize_imports_on_save,
+                Request::SourceActions("source.organizeImports".to_owned()),
+            ),
+            (
+                self.preferences.fix_on_save,
+                Request::SourceActions("source.fixAll".to_owned()),
+            ),
+            (format, Request::Format),
+        ]
+        .into_iter()
+        .filter_map(|(wanted, request)| wanted.then_some(request))
+        .collect();
+        self.next_save_step(file);
+    }
+
+    /// Asks the next question a save has for the servers, skipping the ones
+    /// no server answers, and goes on to what they would change before the
+    /// file is written when there are none left.
+    fn next_save_step(&mut self, file: FileId) {
+        let at = self
+            .editor
+            .get(file)
+            .map(|document| document.borrow().buffer().selection().head)
+            .unwrap_or_default();
+        while let Some(request) = self.save_steps.pop_front() {
+            self.ask_about(file, at, request.clone());
+            if self.awaits(file, &request) {
                 return;
             }
         }
@@ -1538,6 +1585,28 @@ impl App {
         self.jump_to(&place);
     }
 
+    /// Goes where a definition, declaration or implementation lies.
+    ///
+    /// A name asked about at its own definition has nowhere to go, so what
+    /// is wanted of it is where it is used, as in VS Code. Several places
+    /// are listed to choose from rather than the first being taken.
+    fn follow_definition(&mut self, pending: &Pending, found: Vec<Location>) {
+        let path = self.editor.path(pending.file);
+        let at_definition = found.iter().any(|location| {
+            Some(&location.path) == path.as_ref()
+                && location.range.start <= pending.at
+                && pending.at <= location.range.end
+        });
+        if at_definition {
+            self.ask_about(pending.file, pending.at, Request::References);
+            return;
+        }
+        match found.len() {
+            0 | 1 => self.go_to_first(&found),
+            _ => self.show_references(found),
+        }
+    }
+
     /// Opens the picker over everywhere a symbol is used.
     fn show_references(&mut self, found: Vec<Location>) {
         let rows = found
@@ -1571,7 +1640,13 @@ impl App {
         items: Vec<pm_text::Completion>,
         incomplete: bool,
     ) {
-        if items.is_empty() || self.active_file_id() != Some(pending.file) {
+        if self.active_file_id() != Some(pending.file) {
+            return;
+        }
+        if items.is_empty() {
+            if self.completions.is_none() {
+                self.offer_words();
+            }
             return;
         }
         let Some(document) = self.editor.get(pending.file) else {
@@ -1594,7 +1669,7 @@ impl App {
             .as_ref()
             .is_none_or(|list| list.start() != word.start)
         {
-            let mut list = Completions::new(word.start, point);
+            let mut list = Completions::new(word.start, point, self.recent_completions.clone());
             list.narrow(&typed);
             self.completions = Some(list);
         }
@@ -1605,6 +1680,60 @@ impl App {
             self.completions = None;
         }
         self.resolve_completion();
+    }
+
+    /// Whether any language server is behind the focused file.
+    pub(super) fn active_file_has_servers(&self) -> bool {
+        self.active_file()
+            .is_some_and(|document| !document.borrow().servers().is_empty())
+    }
+
+    /// Offers the words of the focused file as what could be written where
+    /// the cursor is, for a word of at least two characters begun there.
+    ///
+    /// A server that has nothing to say leaves the reader with what the file
+    /// itself already says, the way an editor without a server would.
+    pub(super) fn offer_words(&mut self) {
+        let Some(document) = self.active_file() else {
+            return;
+        };
+        let document = document.borrow();
+        let buffer = document.buffer();
+        let head = buffer.selection().head;
+        let word = buffer.word_at(head);
+        if head.line != word.start.line || head.column - word.start.column.min(head.column) < 2 {
+            return;
+        }
+        let typed = buffer.text_in(word.start..head);
+        let mut seen = std::collections::HashSet::new();
+        let words = (0..buffer.line_count())
+            .flat_map(|line| {
+                buffer
+                    .line_text(line)
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .filter(|word| word.chars().count() > 1)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|word| *word != typed && seen.insert(word.clone()))
+            .map(|word| pm_text::Completion::word(&word))
+            .collect::<Vec<_>>();
+        let under = document.layout().cell.height;
+        let at = document.point_of(word.start);
+        drop(document);
+        if words.is_empty() {
+            return;
+        }
+        let mut list = Completions::new(
+            word.start,
+            pm_gfx::Point::new(at.x, at.y + under),
+            self.recent_completions.clone(),
+        );
+        list.narrow(&typed);
+        list.offer_words(words);
+        if !list.is_empty() {
+            self.completions = Some(list);
+        }
     }
 
     /// Whether a server behind the focused file completes after `typed`.
@@ -1707,12 +1836,11 @@ impl App {
             return;
         };
         let start = completions.start();
-        let Some((client, handle)) = completions.unasked() else {
-            return;
-        };
-        let request = Request::ResolveCompletion(handle);
-        if client.offers(&request, &path) {
-            self.ask_of(client, file, start, request, Purpose::Act);
+        for (client, handle) in completions.unasked() {
+            let request = Request::ResolveCompletion(handle);
+            if client.offers(&request, &path) {
+                self.ask_of(client, file, start, request, Purpose::Act);
+            }
         }
     }
 
@@ -1723,7 +1851,7 @@ impl App {
             return;
         };
         if let Some(completions) = self.completions.as_mut() {
-            completions.fill(handle, item);
+            completions.fill(item.clone());
             return;
         }
         let Some(taken) = self.taken_completion.take_if(|taken| {

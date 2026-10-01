@@ -15,7 +15,37 @@ use crate::cursor::{Position, Selection};
 use crate::history::Change;
 
 /// The brackets and quotes typing one of puts the other in.
-const PAIRS: [(char, char); 5] = [('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')];
+const PAIRS: [(char, char); 6] = [
+    ('(', ')'),
+    ('[', ']'),
+    ('{', '}'),
+    ('"', '"'),
+    ('\'', '\''),
+    ('`', '`'),
+];
+
+/// The characters a pair is still put in front of: anything else after the
+/// cursor means the reader is typing into the middle of something, and a
+/// closing character of its own would be in the way.
+const CLOSES_BEFORE: &str = ";:.,=}])>";
+
+/// What a line break does about the comment the line it leaves is in.
+enum Lead {
+    /// Starts the next line with this, the marker and the indentation before it.
+    Continue(String),
+    /// Takes this span, an empty comment line's marker, away instead.
+    End(Range<Position>),
+}
+
+/// The HTML elements that never have a closing tag.
+const VOID_ELEMENTS: [&str; 14] = [
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
+];
+
+/// The languages whose single quote is a lifetime or a label as often as it
+/// is the start of a string, so typing one is not typing a pair.
+const LIFETIMES: [&str; 2] = ["Rust", "OCaml"];
 
 impl Buffer {
     /// The text the selection covers.
@@ -78,6 +108,9 @@ impl Buffer {
     /// already is steps over it instead of doubling it. Both are what makes
     /// automatic pairs help rather than fight.
     pub fn insert_typed(&mut self, ch: char) {
+        if ch == '>' && self.selection().is_empty() {
+            return self.insert_angle();
+        }
         let closing = PAIRS.iter().find(|(_, close)| *close == ch);
         if closing.is_some()
             && self.selection().is_empty()
@@ -97,11 +130,59 @@ impl Buffer {
         if open == close && self.follows_word() {
             return self.insert(&ch.to_string());
         }
+        if open == '\''
+            && self
+                .language()
+                .is_some_and(|language| LIFETIMES.contains(&language.name()))
+        {
+            return self.insert(&ch.to_string());
+        }
+        if !self.closes_before_next() {
+            return self.insert(&ch.to_string());
+        }
 
         let head = self.selection().head;
         self.grouped(|buffer| {
             buffer.insert(&format!("{open}{close}"));
             buffer.place(Position::new(head.line, head.column + 1), false);
+        });
+    }
+
+    /// Puts a `>` in, and the closing tag after it when it ends a tag that
+    /// opens an element, so that writing markup is writing the opening tags.
+    ///
+    /// Void elements have no closing tag, and a tag that is closed already
+    /// right after the cursor is not closed twice.
+    fn insert_angle(&mut self) {
+        self.grouped(|buffer| {
+            buffer.insert(">");
+            let after = buffer.selection().head;
+            let byte = buffer.text.char_to_byte(buffer.char_of(after));
+            let Some(name) = buffer
+                .syntax
+                .as_ref()
+                .and_then(|syntax| syntax.open_tag_name_before(byte))
+            else {
+                return;
+            };
+            let name = buffer.text.byte_slice(name.start..name.end).to_string();
+            let html = buffer
+                .language()
+                .is_some_and(|language| language.name() == "HTML");
+            if html && VOID_ELEMENTS.contains(&name.to_lowercase().as_str()) {
+                return;
+            }
+            let closing = format!("</{name}>");
+            let rest = buffer
+                .line_chars(after.line)
+                .skip(after.column)
+                .take(closing.chars().count())
+                .collect::<String>();
+            if rest == closing {
+                return;
+            }
+            buffer.insert(&closing);
+            buffer.place(after, false);
         });
     }
 
@@ -120,6 +201,13 @@ impl Buffer {
         });
     }
 
+    /// Whether what follows the cursor is the end of the line, a space or a
+    /// character that closes something, so that a pair may be put in.
+    fn closes_before_next(&self) -> bool {
+        self.char_at(self.selection().head)
+            .is_none_or(|next| next.is_whitespace() || CLOSES_BEFORE.contains(next))
+    }
+
     /// Whether the character before the cursor is part of a word.
     fn follows_word(&self) -> bool {
         let head = self.selection().head;
@@ -136,6 +224,11 @@ impl Buffer {
     /// pressing Enter inside a pair of braces is asking for.
     pub fn insert_newline(&mut self) {
         let head = self.selection().start();
+        match self.comment_lead(head) {
+            Some(Lead::Continue(lead)) => return self.insert(&format!("\n{lead}")),
+            Some(Lead::End(marker)) => return self.replace(marker, ""),
+            None => {}
+        }
         let indent = self
             .line_chars(head.line)
             .take_while(|ch| *ch == ' ' || *ch == '\t')
@@ -161,6 +254,69 @@ impl Buffer {
             buffer.insert(&format!("\n{inner}\n{indent}"));
             buffer.place(Position::new(head.line + 1, inner.chars().count()), false);
         });
+    }
+
+    /// What a line break at `head` carries on from a comment the line is in:
+    /// the marker of the next line of it, or the marker to take away when
+    /// the line is a marker and nothing else.
+    ///
+    /// Documentation comments and the lines of a block comment go on by
+    /// themselves; a plain line comment goes on only when it is being split,
+    /// since a break after the last word of one usually ends it.
+    fn comment_lead(&self, head: Position) -> Option<Lead> {
+        let before = self
+            .line_chars(head.line)
+            .take(head.column)
+            .collect::<String>();
+        let at_end = self.char_at(self.selection().end()).is_none();
+        let indent = before
+            .chars()
+            .take_while(|ch| *ch == ' ' || *ch == '\t')
+            .collect::<String>();
+        let body = &before[indent.len()..];
+        let marker = ["///", "//!", "//"]
+            .into_iter()
+            .find(|marker| body.starts_with(marker) && !body.starts_with("////"));
+        if let Some(marker) = marker {
+            let gap = body[marker.len()..]
+                .chars()
+                .take_while(|ch| *ch == ' ')
+                .collect::<String>();
+            let empty = body[marker.len()..].trim().is_empty();
+            if empty && at_end && marker != "//" {
+                let start = Position::new(head.line, indent.chars().count());
+                return Some(Lead::End(start..head));
+            }
+            if marker == "//" && at_end {
+                return None;
+            }
+            let gap = if gap.is_empty() { " ".to_owned() } else { gap };
+            return Some(Lead::Continue(format!("{indent}{marker}{gap}")));
+        }
+        let opens = body.starts_with("/*") && !body.contains("*/");
+        let inside = (body.starts_with("* ") || body == "*")
+            && !body.contains("*/")
+            && self.opened_block_comment_above(head.line);
+        match (opens, inside) {
+            (true, _) => Some(Lead::Continue(format!("{indent} * "))),
+            (_, true) => Some(Lead::Continue(format!("{indent}* "))),
+            _ => None,
+        }
+    }
+
+    /// Whether the lines above `line` that start with a star lead back to the
+    /// opening of a block comment that has not been closed.
+    fn opened_block_comment_above(&self, line: usize) -> bool {
+        (0..line).rev().take(200).find_map(|above| {
+            let text = self.line_text(above);
+            let text = text.trim();
+            match () {
+                () if text.contains("*/") => Some(false),
+                () if text.starts_with("/*") => Some(true),
+                () if text.starts_with('*') => None,
+                () => Some(false),
+            }
+        }) == Some(true)
     }
 
     /// Puts one step of indentation in, or indents every line selected.
@@ -763,12 +919,66 @@ impl Buffer {
             syntax.parse(&self.text);
         }
         self.version += 1;
+        self.shift_annotations(start, end, head);
 
         Some(Change {
             at: start,
             before: removed,
             after: text.to_owned(),
         })
+    }
+}
+
+/// Where `position` is once the text between `start` and `end` has been
+/// replaced by text that ends at `after`.
+///
+/// What is before the change stays; what is after it moves with it, and
+/// what was inside what was replaced lands where the new text ends. A
+/// place at the very start of an insertion goes after it, as the end of a
+/// name does when the name is typed on to.
+fn shifted(position: Position, start: Position, end: Position, after: Position) -> Position {
+    if position < start || (position == start && end > start) {
+        return position;
+    }
+    if position < end {
+        return after;
+    }
+    match position.line == end.line {
+        true => Position::new(after.line, after.column + position.column - end.column),
+        false => Position::new(
+            (position.line + after.line).saturating_sub(end.line),
+            position.column,
+        ),
+    }
+}
+
+impl Buffer {
+    /// Moves what a server wrote about the text, which is its hints, its
+    /// lenses, its semantic spans and its diagnostics, along with a change
+    /// to the text.
+    ///
+    /// They are answers about the text as it was and are asked for again a
+    /// moment after the last change; until then they are moved with the text
+    /// rather than taken away, so that typing does not make them blink.
+    fn shift_annotations(&mut self, start: Position, end: Position, after: Position) {
+        for hint in &mut self.hints {
+            hint.position = shifted(hint.position, start, end, after);
+        }
+        for lens in &mut self.lenses {
+            lens.position = shifted(lens.position, start, end, after);
+        }
+        for diagnostic in &mut self.diagnostics {
+            diagnostic.range.start = shifted(diagnostic.range.start, start, end, after);
+            diagnostic.range.end = shifted(diagnostic.range.end, start, end, after);
+        }
+        if let Some(twin) = self.twin.as_mut() {
+            twin.start = shifted(twin.start, start, end, after);
+            twin.end = shifted(twin.end, start, end, after);
+        }
+        for (span, ..) in &mut self.semantics {
+            span.start = shifted(span.start, start, end, after);
+            span.end = shifted(span.end, start, end, after);
+        }
     }
 }
 

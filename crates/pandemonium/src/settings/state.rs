@@ -164,6 +164,7 @@ impl SettingsSection {
                 Preference::CurrentLine,
                 Preference::Occurrences,
                 Preference::IndentGuides,
+                Preference::BracketColors,
                 Preference::WrapGuide,
             ],
             Self::Display => &[
@@ -179,6 +180,8 @@ impl SettingsSection {
             ],
             Self::Saving => &[
                 Preference::FormatOnSave,
+                Preference::OrganizeImportsOnSave,
+                Preference::FixOnSave,
                 Preference::TrimWhitespace,
                 Preference::FinalNewline,
                 Preference::InstallLanguageServers,

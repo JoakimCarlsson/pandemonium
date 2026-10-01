@@ -22,6 +22,8 @@ pub struct Text {
     style: Style,
     /// The characters washed in the selection colour behind the glyphs.
     selected: Option<Range<usize>>,
+    /// Whether a line is drawn through the glyphs.
+    struck: bool,
     /// Where the run writes down its carets as it paints, and under what key.
     placed: Option<(Placements, usize)>,
     /// The run measurement shaped, and the style it was shaped in, for
@@ -37,6 +39,7 @@ pub fn text(content: impl Into<String>) -> Text {
         color: None,
         style: Style::default(),
         selected: None,
+        struck: false,
         placed: None,
         shaped: None,
     }
@@ -118,6 +121,12 @@ impl Text {
     /// Returns this run slanted.
     pub fn italic(mut self) -> Self {
         self.font = self.font.italic();
+        self
+    }
+
+    /// Returns this run with a line through it.
+    pub fn strikethrough(mut self) -> Self {
+        self.struck = true;
         self
     }
 
@@ -207,7 +216,18 @@ impl<M> Element<M> for Text {
                 });
             }
         }
-        cx.text(origin, run, color);
+        cx.text(origin, run.clone(), color);
+        if self.struck {
+            cx.quad(Quad::filled(
+                Rect::from_xywh(
+                    origin.x,
+                    (origin.y + run.height * 0.55).round(),
+                    run.width,
+                    1.0,
+                ),
+                color,
+            ));
+        }
     }
 }
 

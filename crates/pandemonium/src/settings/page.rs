@@ -431,6 +431,11 @@ fn section_rows(
                 "Wash every other place the word at the cursor appears",
             ),
             toggle(
+                Preference::BracketColors,
+                "Bracket Pair Colors",
+                "Colour brackets by how many pairs they are inside",
+            ),
+            toggle(
                 Preference::IndentGuides,
                 "Indent Guides",
                 "Draw a line at every step of indentation",
@@ -504,6 +509,16 @@ fn section_rows(
                 Preference::FormatOnSave,
                 "Format on Save",
                 "Lay a file out the way its formatter would every time it is written",
+            ),
+            toggle(
+                Preference::OrganizeImportsOnSave,
+                "Organize Imports on Save",
+                "Have the language server put a file's imports in order every time it is written",
+            ),
+            toggle(
+                Preference::FixOnSave,
+                "Fix on Save",
+                "Have the language server make the fixes it can make on its own every time a file is written",
             ),
             toggle(
                 Preference::TrimWhitespace,

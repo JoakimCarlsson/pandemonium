@@ -330,8 +330,13 @@ impl App {
             Key::Named(NamedKey::ArrowDown) => 1,
             Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
                 let place = self.completions.as_ref().map_or(0, Completions::selected);
-                self.take_completion(place);
+                let over = matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Enter))
+                    && self.modifiers.shift_key();
+                self.take_completion(place, over);
                 return true;
+            }
+            Key::Character(typed) if !self.modifiers.control_key() && !self.modifiers.alt_key() => {
+                return self.commit_completion(typed);
             }
             _ => return false,
         };
@@ -340,6 +345,31 @@ impl App {
         }
         self.resolve_completion();
         true
+    }
+
+    /// Takes the selected completion when `typed` is one of its commit
+    /// characters, saying whether the keypress was used up by it.
+    ///
+    /// The character goes on into the buffer after the completion, except an
+    /// opening parenthesis after a call, which the completion has written.
+    fn commit_completion(&mut self, typed: &str) -> bool {
+        let Some(typed) = typed.chars().next() else {
+            return false;
+        };
+        let Some(place) = self
+            .completions
+            .as_ref()
+            .and_then(|completions| completions.committed_by(typed))
+        else {
+            return false;
+        };
+        let called = self
+            .completions
+            .as_ref()
+            .and_then(|completions| completions.at_place(place))
+            .is_some_and(|(_, item)| item.kind.callable());
+        self.take_completion(place, false);
+        called && typed == '('
     }
 
     /// Sends a keypress to the snippet being filled in, if the focused file
