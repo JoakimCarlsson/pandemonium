@@ -476,6 +476,25 @@ const SQL: Language = Language {
     line_comment: Some("--"),
 };
 
+/// What taplo is configured with: the schemas of the TOML files a checkout is
+/// likely to hold, by name, and no catalog.
+///
+/// taplo 0.10.0 cannot decode SchemaStore's catalog, and its own catalog
+/// points at schemas that are gone, so the catalogs it fetches by default
+/// log a failure at every start and load none. The schemas are the ones
+/// SchemaStore publishes for those files, and taplo asks for them under the
+/// `evenBetterToml` section.
+const TOML_OPTIONS: &str = r#"{"evenBetterToml":{"schema":{"enabled":true,"catalogs":[],"associations":{
+"(^|/)Cargo\\.toml$":"https://www.schemastore.org/cargo.json",
+"(^|/)\\.cargo/config(\\.toml)?$":"https://www.schemastore.org/cargo-config.json",
+"(^|/)\\.?rustfmt\\.toml$":"https://www.schemastore.org/rustfmt.json",
+"(^|/)rust-toolchain\\.toml$":"https://www.schemastore.org/rust-toolchain.json",
+"(^|/)pyproject\\.toml$":"https://raw.githubusercontent.com/SchemaStore/schemastore/master/src/schemas/json/pyproject.json",
+"(^|/)\\.?ruff\\.toml$":"https://www.schemastore.org/ruff.json",
+"(^|/)uv\\.toml$":"https://raw.githubusercontent.com/SchemaStore/schemastore/master/src/schemas/json/uv.json",
+"(^|/)\\.?taplo\\.toml$":"https://www.schemastore.org/taplo.json"
+}}}}"#;
+
 /// TOML: the grammar, its highlights and taplo.
 const TOML: Language = Language {
     name: "TOML",
@@ -487,7 +506,7 @@ const TOML: Language = Language {
     servers: &[Server {
         command: "taplo",
         arguments: &["lsp", "stdio"],
-        options: NO_OPTIONS,
+        options: TOML_OPTIONS,
         install: install::recipe("taplo"),
     }],
     line_comment: Some("#"),

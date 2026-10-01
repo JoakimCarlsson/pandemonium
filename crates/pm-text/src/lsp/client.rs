@@ -47,6 +47,7 @@ use crate::frame;
 use crate::language::Server;
 use crate::lsp::answer::{self, Answer, Asking, Request};
 use crate::lsp::capabilities::{self, Capabilities, Document};
+use crate::lsp::database;
 use crate::lsp::encoding::{Encoding, Files};
 use crate::lsp::log::Log;
 use crate::lsp::outbox::{Outbox, Outgoing};
@@ -54,8 +55,11 @@ use crate::lsp::progress::{Progress, Works};
 use crate::lsp::rpc::{self, Incoming};
 use crate::lsp::uri;
 use crate::lsp::watch::{Watched, Watchers};
-use crate::program::path_beside;
+use crate::program::{missing_for, path_beside};
 use crate::syntax::Highlight;
+
+/// What [`Wire::shutdown`] holds while no shutdown has been asked.
+const NO_SHUTDOWN: i64 = 0;
 
 /// The request identifier the handshake is sent under.
 const INITIALIZE: i64 = 1;
@@ -144,6 +148,9 @@ struct State {
     tokens: HashMap<PathBuf, (String, Vec<SemanticToken>)>,
     /// The semantic token questions asked as what changed since the last.
     deltas: HashSet<i64>,
+    /// The capabilities the server advertised or registered and then
+    /// answered as an unknown method, which are not asked of it again.
+    unsupported: HashSet<&'static str>,
 }
 
 impl State {
@@ -174,6 +181,9 @@ struct Wire {
     outbox: Outbox,
     /// The identifier the next question will be asked under.
     next: Arc<AtomicI64>,
+    /// The identifier the shutdown was asked under, or [`NO_SHUTDOWN`] while
+    /// none has been.
+    shutdown: Arc<AtomicI64>,
 }
 
 impl Wire {
@@ -215,8 +225,30 @@ impl Client {
         logs: Option<&Path>,
     ) -> std::io::Result<Self> {
         let log = Log::open(logs, root, server.command);
+        let database = match server.command {
+            "clangd" => database::beside_build(root),
+            _ => None,
+        };
+        if server.command == "clangd" {
+            match &database {
+                Some(directory) => log.write(&format!(
+                    "no compilation database at the root; using {}",
+                    directory.display()
+                )),
+                None => {
+                    if let Some(explanation) = database::missing(root) {
+                        log.write(&explanation);
+                    }
+                }
+            }
+        }
         let spawned = Command::new(program)
             .args(server.arguments)
+            .args(
+                database
+                    .iter()
+                    .map(|directory| format!("--compile-commands-dir={}", directory.display())),
+            )
             .env("PATH", path_beside(program))
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -236,7 +268,12 @@ impl Client {
 
         let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"), log.clone());
         let stdout = process.stdout.take().expect("stdout was piped");
+        let troubles = missing_for(server.command);
+        for trouble in &troubles {
+            log.write(trouble);
+        }
         let state = Arc::new(Mutex::new(State {
+            troubles,
             options: serde_json::from_str(server.options).unwrap_or(Value::Null),
             options_section: server.command.to_owned(),
             ..State::default()
@@ -244,6 +281,7 @@ impl Client {
         let wire = Wire {
             outbox,
             next: Arc::new(AtomicI64::new(FIRST_REQUEST)),
+            shutdown: Arc::new(AtomicI64::new(NO_SHUTDOWN)),
         };
 
         wire.outbox
@@ -406,7 +444,9 @@ impl Client {
     /// server that turns out not to answer refuses it then.
     pub fn offers(&self, request: &Request, path: &Path) -> bool {
         self.state.lock().ok().is_none_or(|state| {
-            !state.dead && request.is_offered(&state.capabilities, Some(state.document(path)))
+            !state.dead
+                && !state.unsupported.contains(request.capability())
+                && request.is_offered(&state.capabilities, Some(state.document(path)))
         })
     }
 
@@ -838,15 +878,11 @@ impl Client {
         else {
             return;
         };
+        let id = self.wire.id();
+        self.wire.shutdown.store(id, Ordering::Relaxed);
         self.wire
             .outbox
-            .send(Outgoing::Message(rpc::request::<Shutdown>(
-                self.wire.id(),
-                (),
-            )));
-        self.wire
-            .outbox
-            .send(Outgoing::Message(rpc::notification::<Exit>(())));
+            .send(Outgoing::Message(rpc::request::<Shutdown>(id, ())));
         std::thread::spawn(move || reap(process));
     }
 }
@@ -874,6 +910,20 @@ fn reap(mut process: Child) {
     }
     let _ = process.kill();
     let _ = process.wait();
+}
+
+/// The id of the question `outgoing` asks, when it asks one the server has
+/// now said it does not answer.
+///
+/// A question asked before the handshake was answered was taken to be
+/// answerable, and is held back until the server has said whether it is.
+fn unoffered(state: &State, outgoing: &Outgoing) -> Option<i64> {
+    let Outgoing::Message(message) = outgoing else {
+        return None;
+    };
+    let id = message["id"].as_i64()?;
+    let (request, path) = state.asked.get(&id)?;
+    (!request.is_offered(&state.capabilities, Some(state.document(path)))).then_some(id)
 }
 
 /// The notification calling off the question asked under `id`.
@@ -938,18 +988,21 @@ fn pull(state: &mut State, wire: &Wire, path: &Path) {
         wire.outbox.send(Outgoing::Message(cancel(id)));
     }
     let id = wire.id();
-    let message = rpc::request::<DocumentDiagnosticRequest>(
-        id,
-        DocumentDiagnosticParams {
-            text_document: TextDocumentIdentifier::new(uri::typed(path)),
-            identifier: options.identifier,
-            previous_result_id: state
-                .pulled
-                .get(path)
-                .and_then(|pulled| pulled.result_id.clone()),
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-        },
+    let message = rpc::without_null(
+        rpc::request::<DocumentDiagnosticRequest>(
+            id,
+            DocumentDiagnosticParams {
+                text_document: TextDocumentIdentifier::new(uri::typed(path)),
+                identifier: options.identifier,
+                previous_result_id: state
+                    .pulled
+                    .get(path)
+                    .and_then(|pulled| pulled.result_id.clone()),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            },
+        ),
+        &["identifier", "previousResultId"],
     );
     state.pulling.insert(id, path.to_path_buf());
     wire.outbox.send(Outgoing::Message(message));
@@ -1022,6 +1075,9 @@ impl Reader {
     fn dispatch(&self, message: Incoming) {
         match message {
             Incoming::Response { id, outcome } if id == INITIALIZE => self.ready(outcome),
+            Incoming::Response { id, .. } if id == self.wire.shutdown.load(Ordering::Relaxed) => {
+                self.send(rpc::notification::<Exit>(()));
+            }
             Incoming::Response { id, outcome } => self.answered(id, outcome),
             Incoming::Request { id, method, params } => self.asked(id, &method, params),
             Incoming::Notification { method, params } => self.told(&method, params),
@@ -1185,6 +1241,11 @@ impl Reader {
         self.with_state(|state| {
             state.watchers.register(&registrations);
             state.capabilities.register(registrations);
+            for method in &methods {
+                state
+                    .unsupported
+                    .retain(|unsupported| unsupported != method);
+            }
             state.legend = answer::legend(&state.capabilities);
             for method in &methods {
                 let request = match method.as_str() {
@@ -1289,6 +1350,12 @@ impl Reader {
             )));
         let queued = std::mem::take(&mut state.queued);
         for outgoing in queued {
+            if let Some(id) = unoffered(&state, &outgoing) {
+                state.asked.remove(&id);
+                state.answers.insert(id, Answer::Refused);
+                state.fresh = true;
+                continue;
+            }
             let silent = match &outgoing {
                 Outgoing::Change { uri, .. } => uri::path_of(uri).is_some_and(|path| {
                     state.capabilities.sync(state.document(&path)) == TextDocumentSyncKind::NONE
@@ -1415,6 +1482,9 @@ impl Reader {
                 let (request, path) = state.asked.remove(&id)?;
                 if state.deltas.remove(&id) {
                     state.tokens.remove(&path);
+                }
+                if failure.code == rpc::METHOD_NOT_FOUND {
+                    state.unsupported.insert(request.capability());
                 }
                 state.answers.insert(id, Answer::Refused);
                 state.fresh = true;

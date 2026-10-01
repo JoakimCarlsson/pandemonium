@@ -98,22 +98,51 @@ impl Failure {
 }
 
 /// The request `R` asked under `id` with `params`.
+///
+/// A method that takes no params is sent without the member: a server that
+/// expects none rejects a `null` as it would any other value.
 pub(super) fn request<R: Request>(id: i64, params: R::Params) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": R::METHOD,
-        "params": params,
-    })
+    with_params(
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": R::METHOD,
+        }),
+        serde_json::to_value(params).unwrap_or_default(),
+    )
 }
 
-/// The notification `N` said with `params`.
+/// The notification `N` said with `params`, without the member when there
+/// are none.
 pub(super) fn notification<N: Notification>(params: N::Params) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "method": N::METHOD,
-        "params": params,
-    })
+    with_params(
+        json!({
+            "jsonrpc": "2.0",
+            "method": N::METHOD,
+        }),
+        serde_json::to_value(params).unwrap_or_default(),
+    )
+}
+
+/// `message` with `params` as its `params` member, unless they are `null`.
+fn with_params(mut message: Value, params: Value) -> Value {
+    if !params.is_null() {
+        message["params"] = params;
+    }
+    message
+}
+
+/// `message` with the members of its params named in `fields` taken out
+/// where they are `null`.
+///
+/// A typed optional that is absent serializes as `null`, which a server that
+/// reads the field as a string or an object rejects. Only the fields named
+/// are touched: elsewhere `null` is a value the protocol gives meaning.
+pub(super) fn without_null(mut message: Value, fields: &[&str]) -> Value {
+    if let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) {
+        params.retain(|name, value| !(value.is_null() && fields.contains(&name.as_str())));
+    }
+    message
 }
 
 /// The answer to the server's request `id`, carrying `result`.
