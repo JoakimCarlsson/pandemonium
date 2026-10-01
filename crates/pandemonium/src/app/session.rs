@@ -388,8 +388,6 @@ impl App {
             .map(|project| SidebarProject {
                 project: project.id(),
                 at_checkout: scope == Some(Scope::checkout(project.id())),
-                health: self.checks.health(Scope::checkout(project.id())),
-                health_detail: self.checks.detail(Scope::checkout(project.id())),
                 sessions: self
                     .sessions
                     .of(project.id())
@@ -401,16 +399,6 @@ impl App {
                             added: summary.added,
                             removed: summary.removed,
                             status_color: self.session_color(&theme, session.id()),
-                            health: self.checks.health(Scope::of(project.id(), session.id())),
-                            health_detail: self
-                                .checks
-                                .detail(Scope::of(project.id(), session.id())),
-                            errors: self
-                                .editor
-                                .servers_over(session.root())
-                                .iter()
-                                .map(|server| server.errors())
-                                .sum(),
                             pending: self
                                 .reviews
                                 .get(&Scope::of(project.id(), session.id()))
