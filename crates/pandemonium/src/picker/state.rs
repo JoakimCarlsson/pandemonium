@@ -84,6 +84,8 @@ pub enum Kind {
     SessionRepositories,
     /// The URL of a repository to clone and open.
     CloneUrl,
+    /// An SSH alias and absolute project directory.
+    RemoteProject,
     /// A path to symlink into every new worktree.
     LinkedPath,
     /// A path to copy into every new worktree.
@@ -147,6 +149,7 @@ impl Kind {
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
+            Self::RemoteProject => "host:/absolute/path",
             Self::CloneUrl => "The repository to clone",
             Self::LinkedPath => "Path to link into new worktrees",
             Self::CopiedPath => "Path to copy into new worktrees",
@@ -184,6 +187,7 @@ impl Kind {
                 | Self::NewBranch
                 | Self::StashMessage
                 | Self::NewSession
+                | Self::RemoteProject
                 | Self::CloneUrl
                 | Self::LinkedPath
                 | Self::CopiedPath

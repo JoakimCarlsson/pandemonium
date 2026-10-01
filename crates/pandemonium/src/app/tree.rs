@@ -95,8 +95,9 @@ impl App {
             if let Some(tree) = self.files.get_mut(&scope) {
                 tree.reload();
             }
+            let host = self.root_of(scope).map(|root| root.host);
             if let Some(selection) = self.selections.get_mut(&scope) {
-                selection.retain(|path| std::fs::symlink_metadata(path).is_ok());
+                selection.retain(|path| host.as_ref().is_some_and(|host| host.fs().exists(path)));
             }
         }
         self.reread_changes();
@@ -126,10 +127,10 @@ impl App {
     }
 
     /// The worktree the tree is listing.
-    fn tree_root(&self) -> Option<PathBuf> {
+    fn tree_root(&self) -> Option<pm_host::Location> {
         self.files
             .get(&self.scope()?)
-            .map(|tree| tree.root().to_path_buf())
+            .map(|tree| tree.root().clone())
     }
 
     /// The tree's selection, started empty if it has none yet.
@@ -156,7 +157,7 @@ impl App {
         self.selection()
             .and_then(Selection::cursor)
             .map(Path::to_path_buf)
-            .or_else(|| self.tree_root())
+            .or_else(|| self.tree_root().map(|root| root.path))
             .unwrap_or_default()
     }
 
@@ -164,7 +165,10 @@ impl App {
     /// on when that is a directory, and the one holding it when it is not.
     fn pointed_directory(&self) -> PathBuf {
         let path = self.pointed_path();
-        match path.is_dir() {
+        match self
+            .tree_root()
+            .is_some_and(|root| root.host.fs().is_dir(&path))
+        {
             true => path,
             false => path.parent().map(Path::to_path_buf).unwrap_or(path),
         }
@@ -283,7 +287,10 @@ impl App {
         if !drag.plain {
             return;
         }
-        match drag.pressed.is_dir() {
+        match self
+            .tree_root()
+            .is_some_and(|root| root.host.fs().is_dir(&drag.pressed))
+        {
             true => {
                 if let Some(tree) = self.scope().and_then(|scope| self.files.get_mut(&scope)) {
                     tree.toggle(id);
@@ -310,7 +317,11 @@ impl App {
             return self.move_entries(&drag.paths, &directory, copying);
         }
         if let Some(pane) = drag.pane {
-            for path in drag.paths.iter().filter(|path| path.is_file()) {
+            let root = self.tree_root();
+            for path in drag.paths.iter().filter(|path| {
+                root.as_ref()
+                    .is_some_and(|root| root.host.fs().is_file(path))
+            }) {
                 self.open_tree_file(path, pane, false);
             }
         }
@@ -396,14 +407,17 @@ impl App {
         let Some(scope) = self.scope() else {
             return;
         };
+        let Some(root) = self.tree_root() else {
+            return;
+        };
         let edit = match kind {
             EditKind::Rename => {
                 let Some(cursor) = self.selection().and_then(Selection::cursor) else {
                     return;
                 };
-                Edit::renaming(cursor)
+                Edit::renaming(&root.at(cursor))
             }
-            kind => Edit::creating(kind, &self.pointed_directory()),
+            kind => Edit::creating(kind, &root.at(self.pointed_directory())),
         };
         if let Some(tree) = self.files.get_mut(&scope) {
             tree.reveal(&edit.at().join("_"));
@@ -444,11 +458,14 @@ impl App {
     /// Makes, or moves `at` to, `target` on disk, and brings the tree, the
     /// tabs and the servers along.
     pub(super) fn carry_out_tree_edit(&mut self, kind: EditKind, at: &Path, target: &Path) {
+        let Some(root) = self.tree_root() else {
+            return;
+        };
         let target = target.to_path_buf();
         let done = match kind {
-            EditKind::NewFile => ops::create_file(&target),
-            EditKind::NewFolder => ops::create_dir(&target),
-            EditKind::Rename => ops::rename(at, &target),
+            EditKind::NewFile => ops::create_file(root.at(&target)),
+            EditKind::NewFolder => ops::create_dir(root.at(&target)),
+            EditKind::Rename => ops::rename(root.at(at), &target),
         };
         if done.is_err() {
             return;
@@ -487,6 +504,7 @@ impl App {
 
     /// Asks whether what the tree is acting on should go, and how.
     fn ask_to_remove(&mut self, trashing: bool) {
+        let trashing = trashing && self.tree_root().is_none_or(|root| root.host.is_local());
         let acting = self.tree_acting_on();
         if acting.is_empty() {
             return;
@@ -530,13 +548,16 @@ impl App {
     /// Takes off the disk what the question was asked about, away from the
     /// window, since a folder of build output is a long time deleting.
     fn remove_entries(&mut self, trashing: bool) {
+        let Some(root) = self.tree_root() else {
+            return;
+        };
         let removing = std::mem::take(&mut self.removing);
         self.shift_later(move || {
             let removed = removing
                 .into_iter()
                 .filter(|path| match trashing {
-                    true => ops::trash(path).is_ok(),
-                    false => ops::remove(path).is_ok(),
+                    true => ops::trash(root.at(path)).is_ok(),
+                    false => ops::remove(root.at(path)).is_ok(),
                 })
                 .collect();
             Shifted::Removed(removed)
@@ -604,7 +625,14 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        self.tree_clipboard = Some(Clipboard { paths, cut });
+        let Some(root) = self.tree_root() else {
+            return;
+        };
+        self.tree_clipboard = Some(Clipboard {
+            paths,
+            cut,
+            host: root.host,
+        });
     }
 
     /// Copies or moves what is on the tree's clipboard where the tree points.
@@ -615,6 +643,16 @@ impl App {
         let Some(clipboard) = self.tree_clipboard.clone() else {
             return;
         };
+        if self
+            .tree_root()
+            .is_some_and(|root| root.host != clipboard.host)
+        {
+            self.notices.trouble(
+                "Copying between hosts is not supported yet".to_owned(),
+                None,
+            );
+            return;
+        }
         let directory = self.pointed_directory();
         self.move_entries(&clipboard.paths, &directory, !clipboard.cut);
         if clipboard.cut {
@@ -624,13 +662,16 @@ impl App {
 
     /// Copies what the tree is acting on beside itself.
     fn duplicate_entries(&mut self) {
+        let Some(root) = self.tree_root() else {
+            return;
+        };
         let acting = self.tree_acting_on();
         self.shift_later(move || Shifted::Placed {
             directory: None,
             moved: Vec::new(),
             placed: acting
                 .iter()
-                .filter_map(|path| ops::copy_into(path, path.parent()?).ok())
+                .filter_map(|path| ops::copy_into(root.at(path), path.parent()?).ok())
                 .collect(),
         });
     }
@@ -638,6 +679,9 @@ impl App {
     /// Moves `paths` into `directory`, or copies them there, away from the
     /// window.
     pub(super) fn move_entries(&mut self, paths: &[PathBuf], directory: &Path, copying: bool) {
+        let Some(root) = self.tree_root() else {
+            return;
+        };
         let paths = paths.to_vec();
         let directory = directory.to_path_buf();
         self.shift_later(move || {
@@ -645,8 +689,8 @@ impl App {
             let mut placed = Vec::new();
             for path in paths {
                 let done = match copying {
-                    true => ops::copy_into(&path, &directory),
-                    false => ops::move_into(&path, &directory),
+                    true => ops::copy_into(root.at(&path), &directory),
+                    false => ops::move_into(root.at(&path), &directory),
                 };
                 if let Ok(to) = done {
                     if !copying && to != path {
@@ -696,7 +740,10 @@ impl App {
         let files = self
             .tree_acting_on()
             .into_iter()
-            .filter(|path| path.is_file())
+            .filter(|path| {
+                self.tree_root()
+                    .is_some_and(|root| root.host.fs().is_file(path))
+            })
             .collect::<Vec<_>>();
         let Some(first) = files.first() else {
             return;
@@ -717,7 +764,7 @@ impl App {
     fn item_for(&mut self, path: &Path) -> Option<Item> {
         let (scope, root) = self.worktree_holding(path)?;
         if crate::image::Images::is_picture(path) {
-            return Some(Item::Image(self.images.open(scope, path, false)));
+            return Some(Item::Image(self.images.open(scope, &root.at(path), false)));
         }
         self.editor.open(scope, &root, path, false).map(Item::File)
     }
@@ -753,7 +800,10 @@ impl App {
         else {
             return;
         };
-        match cursor.is_dir() {
+        match self
+            .tree_root()
+            .is_some_and(|root| root.host.fs().is_dir(&cursor))
+        {
             true => {
                 if let Some(tree) = self.scope().and_then(|scope| self.files.get_mut(&scope)) {
                     match tree.is_expanded(&cursor) {
@@ -829,11 +879,11 @@ impl App {
     /// Starts a shell in the directory the tree is pointed at.
     fn open_tree_terminal(&mut self) {
         let directory = self.pointed_directory();
-        let Some((scope, _)) = self.worktree_holding(&directory) else {
+        let Some((scope, root)) = self.worktree_holding(&directory) else {
             return;
         };
         let env = self.worktree_env(scope);
-        self.terminals.start(scope, &directory, &env);
+        self.terminals.start(scope, &root.at(directory), &env);
         self.show_panel(crate::panel::PanelView::Terminal);
         self.terminal_focused = true;
         self.tree_focused = false;
@@ -867,7 +917,7 @@ impl App {
                 tree.collapse_all();
             }
             if let Some(selection) = self.selections.get_mut(&scope) {
-                let root = self.files.get(&scope).map(|tree| tree.root().to_path_buf());
+                let root = self.files.get(&scope).map(|tree| tree.root().clone());
                 selection.retain(|path| {
                     root.as_deref()
                         .is_some_and(|root| path.parent() == Some(root))
@@ -1082,8 +1132,8 @@ impl App {
         if tree.is_expanded(&cursor) {
             return tree.collapse(&cursor);
         }
-        let root = tree.root().to_path_buf();
-        if let Some(parent) = cursor.parent().filter(|parent| *parent != root) {
+        let root = tree.root().clone();
+        if let Some(parent) = cursor.parent().filter(|parent| *parent != root.as_path()) {
             let parent = parent.to_path_buf();
             if let Some(selection) = self.selection_mut() {
                 selection.select(&parent);
@@ -1101,7 +1151,10 @@ impl App {
         else {
             return self.step_tree(0, false);
         };
-        if !cursor.is_dir() {
+        if !self
+            .tree_root()
+            .is_some_and(|root| root.host.fs().is_dir(&cursor))
+        {
             return;
         }
         let Some(tree) = self.scope().and_then(|scope| self.files.get_mut(&scope)) else {
@@ -1203,7 +1256,13 @@ impl App {
     }
 
     /// The worktree the window is holding that `path` lives in.
-    fn worktree_holding(&self, path: &Path) -> Option<(Scope, PathBuf)> {
+    fn worktree_holding(&self, path: &Path) -> Option<(Scope, pm_host::Location)> {
+        if let Some(scope) = self.scope()
+            && let Some(root) = self.root_of(scope)
+            && path.starts_with(&root)
+        {
+            return Some((scope, root));
+        }
         self.worktrees()
             .into_iter()
             .filter(|(_, root)| path.starts_with(root))

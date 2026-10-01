@@ -172,6 +172,9 @@ impl App {
     /// from an installer instead of a package is listed unpickable until it
     /// is installed, with where to get it in its place.
     pub(super) fn agent_rows(&self) -> Vec<Row> {
+        if self.scope().is_some_and(|scope| self.is_remote(scope)) {
+            return self.unsupported_row("Agents");
+        }
         pm_acp::agents()
             .iter()
             .copied()
@@ -500,6 +503,9 @@ impl App {
         root: &std::path::Path,
         agent: Agent,
     ) {
+        if self.refuse_remote(pm_core::Scope::checkout(project), "Agents") {
+            return;
+        }
         let scope = match session {
             Some(session) => pm_core::Scope::of(project, session),
             None => pm_core::Scope::checkout(project),

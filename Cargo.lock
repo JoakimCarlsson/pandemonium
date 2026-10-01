@@ -2253,6 +2253,7 @@ dependencies = [
  "pm-core",
  "pm-dap",
  "pm-gfx",
+ "pm-host",
  "pm-text",
  "pm-ui",
  "pm-vim",
@@ -2359,6 +2360,7 @@ name = "pm-acp"
 version = "0.6.0"
 dependencies = [
  "libc",
+ "pm-host",
  "serde_json",
  "windows-sys 0.61.2",
 ]
@@ -2367,17 +2369,17 @@ dependencies = [
 name = "pm-core"
 version = "0.6.0"
 dependencies = [
- "notify",
+ "pm-host",
  "serde",
  "serde_json",
  "serde_norway",
- "trash",
 ]
 
 [[package]]
 name = "pm-dap"
 version = "0.6.0"
 dependencies = [
+ "pm-host",
  "pm-text",
  "serde_json",
 ]
@@ -2396,12 +2398,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-host"
+version = "0.6.0"
+dependencies = [
+ "notify",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "trash",
+]
+
+[[package]]
+name = "pm-server"
+version = "0.6.0"
+dependencies = [
+ "pm-host",
+]
+
+[[package]]
 name = "pm-text"
 version = "0.6.0"
 dependencies = [
  "flate2",
  "globset",
  "lsp-types",
+ "pm-host",
  "regex",
  "ropey",
  "serde_json",
@@ -2455,7 +2476,7 @@ dependencies = [
 name = "pm-vt"
 version = "0.6.0"
 dependencies = [
- "portable-pty",
+ "pm-host",
  "unicode-width",
  "vte",
 ]

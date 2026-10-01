@@ -75,6 +75,8 @@ impl App {
             Action::ToggleSecondarySidebar => return self.apply(Message::ToggleSecondarySidebar),
             Action::CloseWindow => return self.apply(Message::CloseWindow),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
+            Action::OpenRemoteProject => self.open_picker(Kind::RemoteProject),
+            Action::ReconnectProject => self.reconnect_project(),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::NewSession => return self.apply(Message::NewSession),
             Action::RemoveProject => {
@@ -472,6 +474,7 @@ impl App {
             return;
         };
         self.editor.save(file, &root);
+        self.report_file_errors();
         self.reread_changes();
         self.follow_server_settings();
     }
@@ -489,12 +492,13 @@ impl App {
                 .find(|(held, _)| *held == scope)
                 .map(|(_, root)| root.clone())
         });
+        self.report_file_errors();
         self.reread_changes();
         self.follow_server_settings();
     }
 
     /// The worktree the file `id` names was opened from.
-    pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<std::path::PathBuf> {
+    pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<pm_host::Location> {
         self.root_of(self.editor.scope_of(id)?)
     }
 

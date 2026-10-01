@@ -1,9 +1,9 @@
 //! Installing recipes into a partial directory and publishing completed servers.
 
+use pm_host::Command;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
@@ -82,7 +82,7 @@ fn install_into(directory: &Path, command: &str, recipe: Recipe) -> Result<PathB
             extra,
         } => {
             let npm = tool("npm", command)?;
-            let mut process = Command::new(npm);
+            let mut process = pm_host::Host::local().command(npm);
             process
                 .args(["install", "--prefix"])
                 .arg(directory)
@@ -93,7 +93,8 @@ fn install_into(directory: &Path, command: &str, recipe: Recipe) -> Result<PathB
         }
         Recipe::Go { module, version } => {
             let go = tool("go", command)?;
-            run(Command::new(go)
+            run(pm_host::Host::local()
+                .command(go)
                 .args(["install", &format!("{module}@{version}")])
                 .env("GOBIN", directory))?;
             executable(directory.to_path_buf(), command)
@@ -101,10 +102,15 @@ fn install_into(directory: &Path, command: &str, recipe: Recipe) -> Result<PathB
         Recipe::Pip { package, version } => {
             let python = program::installed("python3").or_else(|| program::installed("python")).ok_or_else(|| format!("Installing {command} needs Python, which was not found. Install Python, or install the server yourself."))?;
             let venv = directory.join("venv");
-            run(Command::new(python).args(["-m", "venv"]).arg(&venv))?;
+            run(pm_host::Host::local()
+                .command(python)
+                .args(["-m", "venv"])
+                .arg(&venv))?;
             let bin = venv.join(if cfg!(windows) { "Scripts" } else { "bin" });
             let pip = executable(bin.clone(), "pip")?;
-            run(Command::new(pip).args(["install", &format!("{package}=={version}")]))?;
+            run(pm_host::Host::local()
+                .command(pip)
+                .args(["install", &format!("{package}=={version}")]))?;
             executable(bin, command)?;
             let wrapper = directory.join(if cfg!(windows) {
                 format!("{command}.cmd")

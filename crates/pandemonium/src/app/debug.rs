@@ -139,6 +139,9 @@ impl App {
     /// left it out would leave the reader wondering where their
     /// configuration went.
     pub(super) fn debug_rows(&self) -> Vec<Row> {
+        if self.scope().is_some_and(|scope| self.is_remote(scope)) {
+            return self.unsupported_row("Debuggers");
+        }
         let Some((scope, root)) = self
             .scope()
             .and_then(|scope| Some((scope, self.root_of(scope)?)))
@@ -177,6 +180,9 @@ impl App {
 
     /// Lists processes the editor can attach to.
     pub(super) fn process_rows(&self) -> Vec<Row> {
+        if self.scope().is_some_and(|scope| self.is_remote(scope)) {
+            return self.unsupported_row("Debuggers");
+        }
         pm_dap::processes()
             .into_iter()
             .map(|process| Row {
@@ -191,6 +197,9 @@ impl App {
 
     /// Lists installed adapters able to attach to the chosen process.
     pub(super) fn attach_adapter_rows(&self) -> Vec<Row> {
+        if self.scope().is_some_and(|scope| self.is_remote(scope)) {
+            return self.unsupported_row("Debuggers");
+        }
         let Some(pid) = self.attach_pid else {
             return Vec::new();
         };
@@ -225,6 +234,9 @@ impl App {
 
     /// Starts debugging `scenario` in `scope`, and shows the debugger.
     pub(super) fn start_debugging(&mut self, scope: Scope, scenario: Scenario) {
+        if self.refuse_remote(scope, "Debuggers") {
+            return;
+        }
         if let Some(label) = &scenario.before {
             let Some(task) = self
                 .available_tasks(scope)
@@ -245,6 +257,9 @@ impl App {
 
     /// Starts the adapter after any task required by the scenario succeeded.
     pub(super) fn start_debug_adapter(&mut self, scope: Scope, scenario: Scenario) {
+        if self.refuse_remote(scope, "Debuggers") {
+            return;
+        }
         let Some(root) = self.root_of(scope) else {
             return;
         };

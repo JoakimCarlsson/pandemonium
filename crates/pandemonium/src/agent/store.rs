@@ -13,7 +13,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -313,7 +312,13 @@ impl Talk {
             });
         let image = mime_type
             .filter(|_| self.conversation.can_image())
-            .and_then(|mime_type| fs::read(&path).ok().map(|bytes| (mime_type, bytes)));
+            .and_then(|mime_type| {
+                pm_host::Host::local()
+                    .fs()
+                    .read(&path)
+                    .ok()
+                    .map(|bytes| (mime_type, bytes))
+            });
         let attachment = match image {
             Some((mime_type, bytes)) => Attachment::Image {
                 data: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -1158,7 +1163,7 @@ impl Drop for Talk {
     /// Removes pasted images kept for an agent without image prompt support.
     fn drop(&mut self) {
         for path in &self.clipboard_files {
-            let _ = fs::remove_file(path);
+            let _ = pm_host::Host::local().fs().remove_file(path);
         }
     }
 }
@@ -1223,12 +1228,12 @@ fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
     folders.push(root.join(".agents/skills"));
     let mut found = BTreeMap::new();
     for folder in folders {
-        let Ok(entries) = fs::read_dir(folder) else {
+        let Ok(entries) = pm_host::Host::local().fs().read_dir(folder) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path().join("SKILL.md");
-            let Ok(contents) = fs::read_to_string(path) else {
+            let Ok(contents) = pm_host::Host::local().fs().read_to_string(path) else {
                 continue;
             };
             let name = contents

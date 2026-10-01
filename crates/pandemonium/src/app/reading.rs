@@ -96,6 +96,12 @@ impl App {
     /// Asks git again what `scope`'s worktree holds, and shows it once git
     /// has answered.
     pub(super) fn reread_review_later(&mut self, scope: Scope) {
+        if self
+            .root_of(scope)
+            .is_some_and(|root| !root.host.connected())
+        {
+            return;
+        }
         if self.readings.reading.contains(&scope) || self.readings.working.contains(&scope) {
             self.readings.again.insert(scope);
             return;
@@ -148,7 +154,7 @@ impl App {
         let Some(text) = review.comments().take_unsaved() else {
             return;
         };
-        let root = review.root().to_path_buf();
+        let root = review.root().clone();
         self.readings.remembering.insert(scope);
         self.spawn_read(move || {
             pm_core::remember_review(&root, &text);

@@ -6,6 +6,8 @@
 //! one seam a file is opened, edited, saved and closed through, so the
 //! language server hears about every change exactly once.
 
+use pm_host::Location;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -1264,7 +1266,7 @@ impl Document {
     ///
     /// Only a file with changes is tidied: saving everything must not
     /// rewrite a file nobody touched because it was untidy when it opened.
-    pub fn save(&mut self, habits: Habits) {
+    pub fn save(&mut self, habits: Habits) -> Result<(), String> {
         self.dismiss_prediction();
         if self.buffer.is_dirty() {
             if habits.trim_whitespace {
@@ -1278,13 +1280,12 @@ impl Document {
         for server in &self.servers {
             server.will_save(self.buffer.path());
         }
-        if self.buffer.save().is_err() {
-            return;
-        }
+        self.buffer.save().map_err(|error| error.to_string())?;
         let contents = self.buffer.contents();
         for server in &self.servers {
             server.did_save(self.buffer.path(), &contents);
         }
+        Ok(())
     }
 
     /// Reads this document from disk again, when it has nothing unsaved.
@@ -1352,7 +1353,7 @@ struct Entry {
     /// The worktree the file was opened from.
     scope: Scope,
     /// The worktree root that owns this file's language servers.
-    root: PathBuf,
+    root: Location,
     /// The document, shared with whichever panes are drawing it.
     document: OpenFile,
 }
@@ -1370,9 +1371,15 @@ pub struct Files {
     habits: Habits,
     /// What the index holds for each of them, read away from the window.
     baselines: Baselines,
+    /// File errors waiting to be shown by the window.
+    troubles: Vec<String>,
 }
 
 impl Files {
+    /// Takes file errors for the window's notices.
+    pub fn take_troubles(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.troubles)
+    }
     /// Hides all inline predictions and cancels their requests.
     pub fn dismiss_predictions(&mut self) {
         for entry in self.open.values() {
@@ -1407,7 +1414,7 @@ impl Files {
     ///
     /// The document keeps what it had until the answer is back; before the
     /// thread reading baselines has been started, it is read here.
-    fn ask_baseline(&self, id: FileId, root: &Path) {
+    fn ask_baseline(&self, id: FileId, root: &Location) {
         let Some(entry) = self.open.get(&id) else {
             return;
         };
@@ -1576,7 +1583,7 @@ impl Files {
     pub fn open(
         &mut self,
         scope: Scope,
-        root: &Path,
+        root: &Location,
         path: &Path,
         preview: bool,
     ) -> Option<FileId> {
@@ -1587,10 +1594,18 @@ impl Files {
             return Some(id);
         }
 
-        let mut buffer = Buffer::open(path).ok()?;
+        let mut buffer = match Buffer::open(root.at(path)) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                self.troubles
+                    .push(format!("Could not open {}: {error}", path.display()));
+                return None;
+            }
+        };
         buffer.set_habit(self.habits.indent);
         let servers = buffer
             .language()
+            .filter(|_| root.host.is_local())
             .map(|language| self.servers.open(root, language))
             .unwrap_or_default();
 
@@ -1600,7 +1615,7 @@ impl Files {
             id,
             Entry {
                 scope,
-                root: root.to_path_buf(),
+                root: root.clone(),
                 document: Rc::new(RefCell::new(Document::new(buffer, preview, servers, None))),
             },
         );
@@ -1691,9 +1706,11 @@ impl Files {
     /// Saving is when the index is read again: what a file is compared
     /// against only changes when git is given something to change it with,
     /// and writing the file is the moment that becomes possible.
-    pub fn save(&mut self, id: FileId, root: &Path) {
+    pub fn save(&mut self, id: FileId, root: &Location) {
         if let Some(entry) = self.open.get(&id) {
-            entry.document.borrow_mut().save(self.habits);
+            if let Err(error) = entry.document.borrow_mut().save(self.habits) {
+                self.troubles.push(error);
+            }
             self.ask_baseline(id, root);
         }
     }
@@ -1703,7 +1720,7 @@ impl Files {
     /// This is a write somebody else asked for: it goes into the open buffer
     /// as one edit the reader can take back, and to disk untidied, because
     /// whoever wrote it reads it again and expects to find what they wrote.
-    pub fn write(&mut self, id: FileId, text: &str, root: &Path) {
+    pub fn write(&mut self, id: FileId, text: &str, root: &Location) {
         let Some(entry) = self.open.get(&id) else {
             return;
         };
@@ -1716,18 +1733,20 @@ impl Files {
                     buffer.commit();
                 });
             }
-            document.save(Habits {
+            if let Err(error) = document.save(Habits {
                 indent: self.habits.indent,
                 trim_whitespace: false,
                 final_newline: false,
-            });
+            }) {
+                self.troubles.push(error);
+            }
         }
         self.ask_baseline(id, root);
     }
 
     /// Writes every open file with changes that are not on disk, each
     /// against its own worktree; a file nobody changed is left as it is.
-    pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<PathBuf>) {
+    pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<Location>) {
         let dirty = self
             .open
             .iter()
@@ -1738,8 +1757,10 @@ impl Files {
             match root(scope) {
                 Some(root) => self.save(id, &root),
                 None => {
-                    if let Some(entry) = self.open.get(&id) {
-                        entry.document.borrow_mut().save(self.habits);
+                    if let Some(entry) = self.open.get(&id)
+                        && let Err(error) = entry.document.borrow_mut().save(self.habits)
+                    {
+                        self.troubles.push(error);
                     }
                 }
             }
@@ -1754,13 +1775,18 @@ impl Files {
     }
 
     /// Reads every clean open document of `scope` from its changed worktree.
-    pub fn reload_project(&mut self, scope: Scope, root: &Path) {
+    pub fn reload_project(&mut self, scope: Scope, root: &Location) {
         self.reread(scope, root, |_| true);
     }
 
     /// Reads the clean open documents of `scope` at `paths` from disk again,
     /// answering whether any of them changed.
-    pub fn reread_paths(&mut self, scope: Scope, root: &Path, paths: &BTreeSet<PathBuf>) -> bool {
+    pub fn reread_paths(
+        &mut self,
+        scope: Scope,
+        root: &Location,
+        paths: &BTreeSet<PathBuf>,
+    ) -> bool {
         self.reread(scope, root, |path| paths.contains(path))
     }
 
@@ -1769,7 +1795,7 @@ impl Files {
     ///
     /// What the index holds for each of them is asked for again too, since
     /// a write under the worktree is as likely to be git's as anyone's.
-    fn reread(&mut self, scope: Scope, root: &Path, wanted: impl Fn(&Path) -> bool) -> bool {
+    fn reread(&mut self, scope: Scope, root: &Location, wanted: impl Fn(&Path) -> bool) -> bool {
         let clean = self
             .open
             .iter()
@@ -1791,7 +1817,7 @@ impl Files {
     }
 
     /// Tells the servers over `root` what changed on disk under it.
-    pub fn watched(&self, root: &Path, changes: &[(PathBuf, pm_text::Watched)]) {
+    pub fn watched(&self, root: &Location, changes: &[(PathBuf, pm_text::Watched)]) {
         self.servers.watched(root, changes);
     }
 
@@ -1814,7 +1840,7 @@ impl Files {
             .values()
             .filter_map(|entry| {
                 Some((
-                    entry.root.clone(),
+                    entry.root.path.clone(),
                     entry.document.borrow().buffer().language()?.name(),
                 ))
             })

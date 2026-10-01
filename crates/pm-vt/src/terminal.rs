@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use portable_pty::CommandBuilder;
+use pm_host::{CommandBuilder, Location};
 use vte::Parser;
 
 use crate::emulator::Emulator;
@@ -42,13 +42,14 @@ impl Terminal {
     /// with — a session's own port, and whatever else is its rather than the
     /// machine's.
     pub fn shell(
-        cwd: impl Into<PathBuf>,
+        cwd: impl Into<Location>,
         cols: usize,
         rows: usize,
         env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
-        let mut command = Pty::shell();
+        let cwd = cwd.into();
+        let mut command = cwd.host.shell();
         for (name, value) in env {
             command.env(name, value);
         }
@@ -62,7 +63,7 @@ impl Terminal {
     /// `&&` in it means what whoever wrote it meant. `env` is added to the
     /// editor's own, as it is for [`Self::shell`].
     pub fn run(
-        cwd: impl Into<PathBuf>,
+        cwd: impl Into<Location>,
         cols: usize,
         rows: usize,
         program: &str,
@@ -70,9 +71,10 @@ impl Terminal {
         env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
+        let cwd = cwd.into();
         let mut command = match args.is_empty() {
             true => {
-                let mut shell = Pty::shell();
+                let mut shell = cwd.host.shell();
                 shell.arg(if cfg!(windows) { "/C" } else { "-c" });
                 shell.arg(program);
                 shell
@@ -92,7 +94,7 @@ impl Terminal {
     /// Starts `command` in `cwd` on a screen of `cols` by `rows`.
     pub fn spawn(
         command: CommandBuilder,
-        cwd: impl Into<PathBuf>,
+        cwd: impl Into<Location>,
         cols: usize,
         rows: usize,
         notify: Notify,
@@ -112,7 +114,7 @@ impl Terminal {
             pty,
             cols,
             rows,
-            cwd,
+            cwd: cwd.path,
             program,
         })
     }

@@ -6,6 +6,8 @@
 //! two subprocesses to say one thing, so the answer is read once into
 //! [`Status`] and looked at from either side.
 
+use pm_host::Location;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -168,9 +170,10 @@ impl Status {
     /// one that says where the head stands as well as what has changed, and
     /// keeps the two sides of the index apart rather than flattening them
     /// into one letter each.
-    pub fn of(root: &Path) -> Self {
+    pub fn of(root: impl Into<Location>) -> Self {
+        let root = root.into();
         let Some(text) = answer(
-            root,
+            &root,
             [
                 "status",
                 "--porcelain=v2",
@@ -183,18 +186,18 @@ impl Status {
         };
 
         let mut status = Self::default();
-        status.head.operation = crate::git::operation(root);
+        status.head.operation = crate::git::operation(&root);
         let mut fields = text.split('\0');
         while let Some(entry) = fields.next() {
             match entry.chars().next() {
                 Some('#') => status.head.read(entry),
-                Some('1') => status.take(read_ordinary(root, entry)),
+                Some('1') => status.take(read_ordinary(&root, entry)),
                 Some('2') => {
                     let from = fields.next().map(|from| root.join(from));
-                    status.take(read_renamed(root, entry, from));
+                    status.take(read_renamed(&root, entry, from));
                 }
-                Some('u') => status.take(read_conflicted(root, entry)),
-                Some('?') => status.take(read_untracked(root, entry)),
+                Some('u') => status.take(read_conflicted(&root, entry)),
+                Some('?') => status.take(read_untracked(&root, entry)),
                 _ => {}
             }
         }

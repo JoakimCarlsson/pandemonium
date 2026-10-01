@@ -1,7 +1,7 @@
 //! Operating system containment for an agent and the processes it starts.
 
+use pm_host::{Child, Command};
 use std::io;
-use std::process::{Child, Command};
 
 #[cfg(unix)]
 use std::sync::{Mutex, OnceLock};
@@ -56,7 +56,6 @@ pub(super) fn finish(worker: std::thread::JoinHandle<()>) {
 pub(super) fn configure(command: &mut Command) {
     #[cfg(unix)]
     {
-        use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
     #[cfg(not(unix))]

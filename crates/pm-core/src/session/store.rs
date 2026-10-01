@@ -110,11 +110,14 @@ impl Sessions {
             for cut in cuts.iter().rev() {
                 git::remove_worktree(&cut.origin, &cut.root).map_err(StartError::Git)?;
             }
-            if root.exists() {
-                std::fs::remove_dir_all(&root).map_err(|error| StartError::Place {
-                    path: root.clone(),
-                    trouble: error.to_string(),
-                })?;
+            if pm_host::Host::local().fs().exists(&root) {
+                pm_host::Host::local()
+                    .fs()
+                    .remove_dir_all(&root)
+                    .map_err(|error| StartError::Place {
+                        path: root.clone(),
+                        trouble: error.to_string(),
+                    })?;
             }
             Ok(())
         }
@@ -140,7 +143,11 @@ impl Sessions {
         projects: &[Project],
         under: &Path,
     ) -> impl FnOnce() -> Vec<Found> + Send + 'static + use<> {
-        let projects = projects.to_vec();
+        let projects = projects
+            .iter()
+            .filter(|project| project.root().host.is_local())
+            .cloned()
+            .collect::<Vec<_>>();
         let under = under.to_path_buf();
         let held = self
             .open
@@ -278,6 +285,9 @@ fn cut(
     wanted: &Bootstrap,
     taken: &[u16],
 ) -> Result<Cutting, StartError> {
+    if !project.root().host.is_local() {
+        return Err(StartError::RemoteUnsupported);
+    }
     if !project.is_repository() {
         return Err(StartError::NotARepository);
     }
@@ -288,7 +298,7 @@ fn cut(
     let planned = project
         .repositories()
         .iter()
-        .filter(|repository| chosen.iter().any(|root| root == repository.root()))
+        .filter(|repository| chosen.iter().any(|root| root == &repository.root().path))
         .map(|repository| {
             let origin = repository.root().to_path_buf();
             let base = git::commit_of(&origin, cut_from).ok_or(StartError::NoCommit)?;
@@ -300,10 +310,13 @@ fn cut(
     }
     let root = placement::place(under, project.name(), name);
 
-    std::fs::create_dir_all(&root).map_err(|error| StartError::Place {
-        path: root.clone(),
-        trouble: error.to_string(),
-    })?;
+    pm_host::Host::local()
+        .fs()
+        .create_dir_all(&root)
+        .map_err(|error| StartError::Place {
+            path: root.clone(),
+            trouble: error.to_string(),
+        })?;
     let mut cuts = Vec::new();
     for (origin, base) in planned {
         let within = origin.strip_prefix(project.root()).unwrap_or(Path::new(""));
@@ -429,7 +442,7 @@ fn tear_down(root: &Path, cuts: &[Cut]) {
     for cut in cuts.iter().rev() {
         let _ = git::remove_worktree(&cut.origin, &cut.root);
     }
-    let _ = std::fs::remove_dir_all(root);
+    let _ = pm_host::Host::local().fs().remove_dir_all(root);
 }
 
 /// What a session directory is called when nothing wrote a name down.
@@ -441,6 +454,8 @@ fn named(root: &Path) -> String {
 /// Why a session could not be started or finished.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StartError {
+    /// Remote session placement is reserved for a later milestone.
+    RemoteUnsupported,
     /// The project is a plain folder, with no repository to cut a worktree of.
     NotARepository,
     /// None of the project's repositories was chosen to be cut.
@@ -462,6 +477,10 @@ impl Display for StartError {
     /// Says why the session could not be started or finished.
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RemoteUnsupported => write!(
+                formatter,
+                "Sessions on remote projects are not supported yet"
+            ),
             Self::NotARepository => write!(formatter, "the project is not a git repository"),
             Self::NothingChosen => write!(formatter, "no repository was chosen"),
             Self::NoCommit => write!(formatter, "the project has no commits yet"),

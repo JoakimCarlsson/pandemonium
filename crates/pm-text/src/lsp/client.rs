@@ -5,11 +5,11 @@
 //! — none of which is an error the editor reports, because a file opens and
 //! edits the same either way. What it says about why goes to its log.
 
+use pm_host::{Child, Stdio};
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -215,7 +215,8 @@ impl Client {
         logs: Option<&Path>,
     ) -> std::io::Result<Self> {
         let log = Log::open(logs, root, server.command);
-        let spawned = Command::new(program)
+        let spawned = pm_host::Host::local()
+            .command(program)
             .args(server.arguments)
             .env("PATH", path_beside(program))
             .current_dir(root)
@@ -976,7 +977,7 @@ struct Reader {
     /// Where what the server says besides its answers is written down.
     log: Log,
     /// The pipe the server writes on.
-    stdout: BufReader<std::process::ChildStdout>,
+    stdout: BufReader<Box<dyn std::io::Read + Send>>,
 }
 
 impl Reader {

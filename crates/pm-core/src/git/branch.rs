@@ -1,6 +1,6 @@
 //! The branches a worktree can move between, and the moves themselves.
 
-use std::path::Path;
+use pm_host::Location;
 
 use crate::git::run::{Said, answer, git};
 
@@ -53,9 +53,10 @@ impl Branch {
 /// A remote's symbolic `HEAD` is left out, and so is a remote-tracking
 /// branch a local branch follows: each names a branch that is listed under
 /// its own name already.
-pub fn branches(root: &Path) -> Vec<Branch> {
+pub fn branches(root: impl Into<Location>) -> Vec<Branch> {
+    let root = root.into();
     let Some(output) = answer(
-        root,
+        &root,
         [
             "for-each-ref",
             "--sort=-committerdate",
@@ -108,45 +109,50 @@ pub fn branches(root: &Path) -> Vec<Branch> {
 }
 
 /// Checks out the local branch called `name` in the worktree at `root`.
-pub fn switch_branch(root: &Path, name: &str) -> Said {
+pub fn switch_branch(root: impl Into<Location>, name: &str) -> Said {
+    let root = root.into();
     if name.trim().is_empty() {
         return Err("a branch needs a name".to_owned());
     }
-    git(root, ["switch", name])
+    git(&root, ["switch", name])
 }
 
 /// Creates and checks out a local branch called `name` at the current commit.
-pub fn create_branch(root: &Path, name: &str) -> Said {
+pub fn create_branch(root: impl Into<Location>, name: &str) -> Said {
+    let root = root.into();
     if name.trim().is_empty() {
         return Err("a branch needs a name".to_owned());
     }
-    git(root, ["switch", "-c", name])
+    git(&root, ["switch", "-c", name])
 }
 
 /// Pushes the checked-out branch, publishing it to a remote when needed.
-pub fn push_branch(root: &Path, has_upstream: bool) -> Said {
+pub fn push_branch(root: impl Into<Location>, has_upstream: bool) -> Said {
+    let root = root.into();
     if has_upstream {
-        return git(root, ["push"]);
+        return git(&root, ["push"]);
     }
 
-    let remotes = answer(root, ["remote"]).unwrap_or_default();
+    let remotes = answer(&root, ["remote"]).unwrap_or_default();
     let remote = remotes
         .lines()
         .find(|remote| *remote == "origin")
         .or_else(|| remotes.lines().next())
         .ok_or_else(|| "this repository has no remote to publish to".to_owned())?;
-    git(root, ["push", "--set-upstream", remote, "HEAD"])
+    git(&root, ["push", "--set-upstream", remote, "HEAD"])
 }
 
 /// Fetches updates from every configured remote, forgetting the
 /// remote-tracking branches whose remote branch is gone.
-pub fn fetch(root: &Path) -> Said {
-    git(root, ["fetch", "--all", "--prune"])
+pub fn fetch(root: impl Into<Location>) -> Said {
+    let root = root.into();
+    git(&root, ["fetch", "--all", "--prune"])
 }
 
 /// Configured remote names of the repository at `root`.
-pub fn remotes(root: &Path) -> Vec<String> {
-    answer(root, ["remote"])
+pub fn remotes(root: impl Into<Location>) -> Vec<String> {
+    let root = root.into();
+    answer(&root, ["remote"])
         .unwrap_or_default()
         .lines()
         .map(str::to_owned)
@@ -155,16 +161,18 @@ pub fn remotes(root: &Path) -> Vec<String> {
 
 /// Fetches updates from one configured `remote`, forgetting the
 /// remote-tracking branches whose remote branch is gone.
-pub fn fetch_from(root: &Path, remote: &str) -> Said {
-    git(root, ["fetch", "--prune", remote])
+pub fn fetch_from(root: impl Into<Location>, remote: &str) -> Said {
+    let root = root.into();
+    git(&root, ["fetch", "--prune", remote])
 }
 
 /// Pulls the checked-out branch, rebasing when `rebase` asks for it, and
 /// forgets the remote-tracking branches whose remote branch is gone.
-pub fn pull(root: &Path, rebase: bool) -> Said {
+pub fn pull(root: impl Into<Location>, rebase: bool) -> Said {
+    let root = root.into();
     match rebase {
-        true => git(root, ["pull", "--prune", "--rebase"]),
-        false => git(root, ["pull", "--prune"]),
+        true => git(&root, ["pull", "--prune", "--rebase"]),
+        false => git(&root, ["pull", "--prune"]),
     }
 }
 
@@ -173,18 +181,21 @@ pub fn pull(root: &Path, rebase: bool) -> Said {
 ///
 /// Pulling first is what lets the push through when both sides have moved;
 /// a pull that stops on a conflict leaves the push unattempted.
-pub fn sync(root: &Path) -> Said {
-    let pulled = pull(root, false)?;
-    let pushed = git(root, ["push"])?;
+pub fn sync(root: impl Into<Location>) -> Said {
+    let root = root.into();
+    let pulled = pull(&root, false)?;
+    let pushed = git(&root, ["push"])?;
     Ok(pulled + &pushed)
 }
 
 /// Force-pushes the checked-out branch without overwriting unseen remote work.
-pub fn force_push(root: &Path) -> Said {
-    git(root, ["push", "--force-with-lease"])
+pub fn force_push(root: impl Into<Location>) -> Said {
+    let root = root.into();
+    git(&root, ["push", "--force-with-lease"])
 }
 
 /// Pushes the checked-out branch to one configured `remote`.
-pub fn push_to(root: &Path, remote: &str) -> Said {
-    git(root, ["push", remote, "HEAD"])
+pub fn push_to(root: impl Into<Location>, remote: &str) -> Said {
+    let root = root.into();
+    git(&root, ["push", remote, "HEAD"])
 }

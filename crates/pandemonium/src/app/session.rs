@@ -58,7 +58,7 @@ impl App {
         self.open.activate(project);
         self.session_bases = Vec::new();
         if let Some([only]) = self.open.get(project).map(pm_core::Project::repositories) {
-            let root = only.root().to_path_buf();
+            let root = only.root().clone();
             self.read_bases_later(project, move || {
                 let branches = pm_core::branches(&root);
                 let (checked_out, rest): (Vec<_>, Vec<_>) = branches
@@ -91,6 +91,16 @@ impl App {
     /// project has checked out. Cutting one from some other branch is the
     /// project's menu, where the branches are listed.
     pub(super) fn name_session_here(&mut self) {
+        if let Some(scope) = self.scope()
+            && self.refuse_remote(scope, "Sessions")
+        {
+            return;
+        }
+        if let Some(scope) = self.scope()
+            && self.refuse_remote(scope, "Sessions")
+        {
+            return;
+        }
         let Some(project) = self.open.active().map(pm_core::Project::id) else {
             return;
         };
@@ -118,6 +128,11 @@ impl App {
     /// Every repository starts ticked: a session that works across all of
     /// them is the one a reader who just presses enter meant.
     pub(super) fn start_session(&mut self, name: &str) {
+        if let Some(scope) = self.scope()
+            && self.refuse_remote(scope, "Sessions")
+        {
+            return;
+        }
         let name = name.trim();
         let Some(project) = self.open.active().filter(|_| !name.is_empty()) else {
             return;
@@ -166,7 +181,7 @@ impl App {
         };
         let repositories = project.repositories().iter().map(|repository| {
             let root = repository.root();
-            let tick = match self.session_picks.contains(root) {
+            let tick = match self.session_picks.contains(&root.path) {
                 true => "✓",
                 false => "  ",
             };
@@ -184,6 +199,11 @@ impl App {
     /// Cuts the session being named, of the repositories ticked for it, and
     /// points the window at it once git has cut it.
     pub(super) fn cut_session(&mut self) {
+        if let Some(scope) = self.scope()
+            && self.refuse_remote(scope, "Sessions")
+        {
+            return;
+        }
         let name = std::mem::take(&mut self.session_name);
         let chosen = std::mem::take(&mut self.session_picks)
             .into_iter()

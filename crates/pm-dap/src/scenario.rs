@@ -7,7 +7,6 @@
 //! script, a Go package — offers to be debugged with nothing written at all.
 
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
@@ -106,7 +105,10 @@ pub fn scenarios(root: &Path, file: Option<&Path>) -> Vec<Scenario> {
 
 /// The file at `relative` under `root`, read as JSON with comments.
 fn read(root: &Path, relative: &str) -> Option<Value> {
-    let written = fs::read_to_string(root.join(relative)).ok()?;
+    let written = pm_host::Host::local()
+        .fs()
+        .read_to_string(root.join(relative))
+        .ok()?;
     serde_json::from_str(&plain_json(&written)).ok()
 }
 

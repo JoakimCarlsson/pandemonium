@@ -14,6 +14,8 @@
 //! its own. What only one repository can do — commit, sync, switch branch —
 //! is done in the active one, which the sidebar's sections choose.
 
+use pm_host::Location;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -154,7 +156,7 @@ pub struct Patch {
 /// What one worktree has changed, as the window last read it.
 pub struct Review {
     /// The worktree this is a review of.
-    root: PathBuf,
+    root: Location,
     /// The repositories the worktree holds, the root's own first.
     repositories: Vec<Repository>,
     /// The repository a commit, a sync or a branch is made in.
@@ -215,9 +217,9 @@ impl Review {
     ///
     /// Nothing is asked of git here: the review starts empty and is filled
     /// by a reading made away from the window, through [`Review::read_later`].
-    pub fn of(root: &Path) -> Self {
+    pub fn of(root: &Location) -> Self {
         Self {
-            root: root.to_path_buf(),
+            root: root.clone(),
             repositories: Vec::new(),
             active: 0,
             changed: Vec::new(),
@@ -366,12 +368,12 @@ impl Review {
     /// Puts the repositories `read` found in place, keeping what the ones
     /// still there were holding and the active one where it was.
     fn find_repositories(&mut self, read: Vec<RepositoryReading>) {
-        let active = self.active_root().map(Path::to_path_buf);
+        let active = self.active_root().cloned();
         let mut held = std::mem::take(&mut self.repositories);
         self.repositories = read
             .into_iter()
             .map(|reading| {
-                let mut repository = match held.iter().position(|kept| kept.root() == reading.root)
+                let mut repository = match held.iter().position(|kept| kept.root() == &reading.root)
                 {
                     Some(at) => held.swap_remove(at),
                     None => Repository::at(&self.root, &reading.root),
@@ -384,7 +386,7 @@ impl Review {
             .and_then(|active| {
                 self.repositories
                     .iter()
-                    .position(|repository| repository.root() == active)
+                    .position(|repository| repository.root() == &active)
             })
             .unwrap_or_default();
     }
@@ -394,7 +396,7 @@ impl Review {
         (self.owners, self.changed) = reading::gather(
             self.repositories
                 .iter()
-                .map(|repository| (repository.root(), repository.changed())),
+                .map(|repository| (repository.root().as_path(), repository.changed())),
         )
         .into_iter()
         .unzip();
@@ -433,7 +435,7 @@ impl Review {
     }
 
     /// Where the repository a commit is made in sits on disk.
-    pub fn active_root(&self) -> Option<&Path> {
+    pub fn active_root(&self) -> Option<&Location> {
         self.active_repository().map(Repository::root)
     }
 
@@ -862,7 +864,7 @@ impl Review {
     }
 
     /// The worktree this is a review of.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &Location {
         &self.root
     }
 
@@ -1012,7 +1014,7 @@ impl Review {
         &self,
         named: Vec<(usize, PathBuf)>,
         doing: &'static str,
-        command: impl Fn(&Path, &[PathBuf]) -> pm_core::Said + Send + 'static,
+        command: impl Fn(&Location, &[PathBuf]) -> pm_core::Said + Send + 'static,
     ) -> Option<Work> {
         let each = self.each_repository(&named);
         if each.is_empty() {
@@ -1031,7 +1033,7 @@ impl Review {
 
     /// The files of `named` gathered under the root of the repository each
     /// is in, leaving out the repositories none of them is in.
-    fn each_repository(&self, named: &[(usize, PathBuf)]) -> Vec<(PathBuf, Vec<PathBuf>)> {
+    fn each_repository(&self, named: &[(usize, PathBuf)]) -> Vec<(Location, Vec<PathBuf>)> {
         self.repositories
             .iter()
             .enumerate()
@@ -1041,7 +1043,7 @@ impl Review {
                     .filter(|(owner, _)| *owner == repository)
                     .map(|(_, path)| path.clone())
                     .collect::<Vec<_>>();
-                (held.root().to_path_buf(), paths)
+                (held.root().clone(), paths)
             })
             .filter(|(_, paths)| !paths.is_empty())
             .collect()
@@ -1055,14 +1057,16 @@ impl Review {
             .into_iter()
             .filter(|(_, path)| !self.has_conflicts(path))
             .collect();
-        self.in_each(named, STAGING, pm_core::stage)
+        self.in_each(named, STAGING, |root, paths| pm_core::stage(root, paths))
     }
 
     /// The work of taking the files `ids` names back out of the index.
     pub fn unstage(&self, ids: &[ChangeId]) -> Option<Work> {
         self.idle()?;
         let named = self.named_where(ids, Changed::is_staged);
-        self.in_each(named, UNSTAGING, pm_core::unstage)
+        self.in_each(named, UNSTAGING, |root, paths| {
+            pm_core::unstage(root, paths)
+        })
     }
 
     /// The work of putting everything that has changed into the index.
@@ -1073,14 +1077,16 @@ impl Review {
             .into_iter()
             .filter(|(_, path)| !self.has_conflicts(path))
             .collect();
-        self.in_each(named, STAGING, pm_core::stage)
+        self.in_each(named, STAGING, |root, paths| pm_core::stage(root, paths))
     }
 
     /// The work of taking everything back out of the index.
     pub fn unstage_all(&self) -> Option<Work> {
         self.idle()?;
         let named = self.owned(Changed::is_staged);
-        self.in_each(named, UNSTAGING, pm_core::unstage)
+        self.in_each(named, UNSTAGING, |root, paths| {
+            pm_core::unstage(root, paths)
+        })
     }
 
     /// The work of putting the files `ids` names back the way the last
@@ -1118,7 +1124,7 @@ impl Review {
                         .collect::<Vec<_>>()
                 };
                 (
-                    self.repositories[repository].root().to_path_buf(),
+                    self.repositories[repository].root().clone(),
                     own(&staged),
                     own(&tracked),
                     own(&created),
@@ -1155,7 +1161,7 @@ impl Review {
         };
         let hunk = side.get(hunk)?;
         let owner = self.owner_of(&path)?;
-        let root = self.repositories[owner].root().to_path_buf();
+        let root = self.repositories[owner].root().clone();
 
         let (from, count, replacement) = match staged {
             true => (hunk.start, hunk.new_count, hunk.side(false)),
@@ -1192,13 +1198,19 @@ impl Review {
         let hunk = side.get(hunk)?;
         let (from, count, replacement) = (hunk.start, hunk.new_count, hunk.side(false));
         let owner = self.owner_of(&path).unwrap_or(self.active);
-        let root = self.repositories.get(owner)?.root().to_path_buf();
+        let root = self.repositories.get(owner)?.root().clone();
 
         Some(Work::new(vec![root.clone()], "Discarding…", move || {
-            let said = std::fs::read_to_string(&path)
+            let said = root
+                .host
+                .fs()
+                .read_to_string(&path)
                 .map_err(|error| error.to_string())
                 .and_then(|held| match rewritten(&held, from, count, &replacement) {
-                    Some(written) => std::fs::write(&path, written)
+                    Some(written) => root
+                        .host
+                        .fs()
+                        .write(&path, written)
                         .map(|()| String::new())
                         .map_err(|error| error.to_string()),
                     None => Ok(String::new()),
@@ -1219,7 +1231,7 @@ impl Review {
                 .active_repository()
                 .is_some_and(|held| held.head().operation.is_none());
         let repository = self.active_repository()?;
-        let root = repository.root().to_path_buf();
+        let root = repository.root().clone();
         let message = repository.said();
         let operation = repository.head().operation.clone().map(|mut operation| {
             match &mut operation {
@@ -1242,7 +1254,7 @@ impl Review {
     /// The work of aborting the active repository's pending operation.
     pub fn abort_operation(&self) -> Option<Work> {
         let operation = self.active_repository()?.head().operation.clone()?;
-        let root = self.active_root()?.to_path_buf();
+        let root = self.active_root()?.clone();
         Some(Work::new(vec![root.clone()], "Aborting…", move || {
             let said = pm_core::abort_operation(&root, &operation);
             vec![(root, said)]
@@ -1252,7 +1264,7 @@ impl Review {
     /// The work of skipping a stopped rebase or cherry-pick commit.
     pub fn skip_operation(&self) -> Option<Work> {
         let operation = self.active_repository()?.head().operation.clone()?;
-        let root = self.active_root()?.to_path_buf();
+        let root = self.active_root()?.clone();
         Some(Work::new(vec![root.clone()], "Skipping…", move || {
             let said = pm_core::skip_operation(&root, &operation);
             vec![(root, said)]
@@ -1262,7 +1274,7 @@ impl Review {
     /// The work of rewriting the latest commit with the message in the box.
     pub fn amend(&self) -> Option<Work> {
         let repository = self.active_repository()?;
-        let root = repository.root().to_path_buf();
+        let root = repository.root().clone();
         let message = repository.said();
         let tracked = self.staged_of(self.active) == 0;
         Some(
@@ -1291,7 +1303,7 @@ impl Review {
 
     /// The work of picking a full commit object into the active branch.
     pub fn cherry_pick(&self, object: String) -> Option<Work> {
-        let root = self.active_root()?.to_path_buf();
+        let root = self.active_root()?.clone();
         Some(Work::new(
             vec![root.clone()],
             "Cherry-picking…",
@@ -1304,7 +1316,7 @@ impl Review {
 
     /// The work of saving tracked and untracked changes.
     pub fn stash_push(&self, message: String) -> Option<Work> {
-        let root = self.active_root()?.to_path_buf();
+        let root = self.active_root()?.clone();
         Some(Work::new(vec![root.clone()], "Stashing…", move || {
             let said = pm_core::stash_push(&root, &message, true);
             vec![(root, said)]
@@ -1313,7 +1325,7 @@ impl Review {
 
     /// The work of applying, popping or dropping one stash.
     pub fn stash_action(&self, index: usize, action: StashAction) -> Option<Work> {
-        let root = self.active_root()?.to_path_buf();
+        let root = self.active_root()?.clone();
         Some(Work::new(
             vec![root.clone()],
             "Applying stash…",
@@ -1350,7 +1362,7 @@ impl Review {
             let Some(repository) = self
                 .repositories
                 .iter_mut()
-                .find(|repository| repository.root() == root)
+                .find(|repository| repository.root() == &root)
             else {
                 continue;
             };
@@ -1414,7 +1426,7 @@ impl Review {
 /// taken out of the index, `tracked` put back from it and `created` taken
 /// off the disk, stopping at the first that git refuses.
 fn discard_in(
-    root: &Path,
+    root: &Location,
     staged: &[PathBuf],
     tracked: &[PathBuf],
     created: &[PathBuf],

@@ -1,5 +1,7 @@
 //! The shells the window has running, listed per worktree.
 
+use pm_host::Location;
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -208,7 +210,12 @@ impl Terminals {
     ///
     /// The commands agents are running are not the reader's shell: a
     /// worktree with only those has its own started beside them.
-    pub fn open(&mut self, scope: Scope, root: &Path, env: &[(String, String)]) -> Option<Shell> {
+    pub fn open(
+        &mut self,
+        scope: Scope,
+        root: &Location,
+        env: &[(String, String)],
+    ) -> Option<Shell> {
         if self.worktrees.get(&scope).is_none_or(|shells| {
             shells
                 .running
@@ -231,7 +238,7 @@ impl Terminals {
     pub fn start(
         &mut self,
         scope: Scope,
-        root: &Path,
+        root: &Location,
         env: &[(String, String)],
     ) -> Option<ShellId> {
         let notify = self.notify.clone()?;
@@ -447,7 +454,7 @@ impl Terminals {
     ///
     /// Shells an agent or a task started are left out: they belong to the
     /// command that made them.
-    pub fn saved(&self, roots: &[(Scope, PathBuf)]) -> Vec<SavedShell> {
+    pub fn saved(&self, roots: &[(Scope, Location)]) -> Vec<SavedShell> {
         roots
             .iter()
             .filter_map(|(scope, root)| Some((self.worktrees.get(scope)?, root)))
@@ -459,7 +466,7 @@ impl Terminals {
                         !shells.errands.contains_key(id) && !shells.tasks.contains_key(id)
                     })
                     .map(|(id, _)| SavedShell {
-                        worktree: root.clone(),
+                        worktree: root.stored(),
                         name: shells.names.get(id).cloned().unwrap_or_default(),
                         active: shells.active == Some(*id),
                     })

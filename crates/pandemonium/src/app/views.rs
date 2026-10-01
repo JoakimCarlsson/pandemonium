@@ -39,7 +39,10 @@ impl App {
                     let Some(scope) = self.editor.scope_of(file) else {
                         return;
                     };
-                    Item::Image(self.images.open(scope, &path, false))
+                    let Some(root) = self.root_of(scope) else {
+                        return;
+                    };
+                    Item::Image(self.images.open(scope, &root.at(&path), false))
                 } else {
                     return;
                 }
@@ -97,7 +100,10 @@ impl App {
         if !Images::is_picture(path) || is_svg(path) {
             return false;
         }
-        let image = self.images.open(scope, path, preview);
+        let Some(root) = self.root_of(scope) else {
+            return false;
+        };
+        let image = self.images.open(scope, &root.at(path), preview);
         self.show_item(pane, scope, Item::Image(image), preview);
         true
     }

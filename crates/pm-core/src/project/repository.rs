@@ -10,6 +10,7 @@
 //! repositories: a folder of services, each its own repository, is one
 //! project holding several of them, not several projects.
 
+use pm_host::Location;
 use std::path::{Path, PathBuf};
 
 /// The directory or file every repository keeps at its root.
@@ -41,15 +42,15 @@ const DEPTH: usize = 2;
 const UNSEARCHED: &[&str] = &["node_modules", "target", "vendor", "venv", "dist", "build"];
 
 /// The working-copy root at or above `path`, if one of them is a repository.
-pub fn root(path: &Path) -> Option<PathBuf> {
+pub fn root(path: &Location) -> Option<Location> {
     path.ancestors()
-        .find(|ancestor| is_root(ancestor))
-        .map(Path::to_path_buf)
+        .find(|ancestor| is_root(&path.at(ancestor)))
+        .map(|root| path.at(root))
 }
 
 /// Whether `root` is itself the root of a repository's working copy.
-fn is_root(root: &Path) -> bool {
-    root.join(GIT).exists()
+fn is_root(root: &Location) -> bool {
+    root.host.fs().exists(root.join(GIT))
 }
 
 /// Every repository at or below `root`, the root's own first.
@@ -57,7 +58,7 @@ fn is_root(root: &Path) -> bool {
 /// The rest come in path order. A repository inside another one is listed as
 /// well, since git treats it as a repository of its own; a hidden directory,
 /// a symlink and a dependency tree are never searched.
-pub fn repositories(root: &Path) -> Vec<PathBuf> {
+pub fn repositories(root: &Location) -> Vec<Location> {
     let mut found = Vec::new();
     search(root, DEPTH, &mut found);
     found
@@ -65,14 +66,14 @@ pub fn repositories(root: &Path) -> Vec<PathBuf> {
 
 /// Adds the repositories at or below `directory`, `depth` levels down, to
 /// `found`.
-fn search(directory: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+fn search(directory: &Location, depth: usize, found: &mut Vec<Location>) {
     if is_root(directory) {
-        found.push(directory.to_path_buf());
+        found.push(directory.clone());
     }
     if depth == 0 {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(directory) else {
+    let Ok(entries) = directory.host.fs().read_dir(directory) else {
         return;
     };
     let mut children = entries
@@ -83,7 +84,7 @@ fn search(directory: &Path, depth: usize, found: &mut Vec<PathBuf>) {
         .collect::<Vec<_>>();
     children.sort();
     for child in children {
-        search(&child, depth - 1, found);
+        search(&directory.at(child), depth - 1, found);
     }
 }
 
@@ -95,11 +96,11 @@ fn searched(path: &Path) -> bool {
 }
 
 /// The branch checked out in the repository at `root`.
-pub fn branch(root: &Path) -> String {
+pub fn branch(root: &Location) -> String {
     let Some(head) = git_directory(root).map(|directory| directory.join(HEAD)) else {
         return UNKNOWN.to_owned();
     };
-    let Ok(content) = std::fs::read_to_string(head) else {
+    let Ok(content) = root.host.fs().read_to_string(head) else {
         return UNKNOWN.to_owned();
     };
     let content = content.trim();
@@ -112,13 +113,13 @@ pub fn branch(root: &Path) -> String {
 }
 
 /// The git directory of the working copy at `root`, following a worktree link.
-fn git_directory(root: &Path) -> Option<PathBuf> {
+fn git_directory(root: &Location) -> Option<PathBuf> {
     let git = root.join(GIT);
-    if git.is_dir() {
+    if root.host.fs().is_dir(&git) {
         return Some(git);
     }
 
-    let content = std::fs::read_to_string(&git).ok()?;
+    let content = root.host.fs().read_to_string(&git).ok()?;
     let linked = content.trim().strip_prefix(GITDIR_PREFIX)?.trim();
     Some(root.join(linked))
 }

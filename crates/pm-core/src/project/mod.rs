@@ -11,7 +11,7 @@ mod store;
 pub use repository::repositories;
 pub use store::{OpenError, Projects};
 
-use std::path::{Path, PathBuf};
+use pm_host::Location;
 
 /// A project's identity for as long as the window holds it open.
 ///
@@ -41,7 +41,7 @@ pub struct Project {
     /// What this project is called for as long as it is open.
     id: ProjectId,
     /// The folder the project is rooted at.
-    root: PathBuf,
+    root: Location,
     /// The last component of the root, shown wherever the project is named.
     name: String,
     /// The repositories at or below the root, the root's own first.
@@ -50,11 +50,15 @@ pub struct Project {
 
 impl Project {
     /// The project rooted at `root`, reading its repositories off disk.
-    fn at(id: ProjectId, root: PathBuf) -> Self {
+    fn at(id: ProjectId, root: Location) -> Self {
         let name = root.file_name().map_or_else(
             || root.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
+        let name = root
+            .host
+            .name()
+            .map_or(name.clone(), |host| format!("{name} ({host})"));
         let repositories = Repository::under(&root);
 
         Self {
@@ -71,7 +75,7 @@ impl Project {
     }
 
     /// The folder the project is rooted at.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &Location {
         &self.root
     }
 
@@ -113,14 +117,14 @@ impl Project {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Repository {
     /// The repository's working-copy root.
-    root: PathBuf,
+    root: Location,
     /// The branch the working copy has checked out.
     branch: String,
 }
 
 impl Repository {
     /// Every repository at or below `root`, the root's own first.
-    fn under(root: &Path) -> Vec<Self> {
+    fn under(root: &Location) -> Vec<Self> {
         repository::repositories(root)
             .into_iter()
             .map(|root| Self {
@@ -131,7 +135,7 @@ impl Repository {
     }
 
     /// The repository's working-copy root.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &Location {
         &self.root
     }
 

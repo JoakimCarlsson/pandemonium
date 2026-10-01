@@ -6,9 +6,11 @@
 //! once, so the fields are carried forward from the last time they were
 //! seen — which is what the `seen` map is for.
 
+use pm_host::Location;
+
+use pm_host::Stdio;
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use crate::git::run::holding;
 
@@ -36,12 +38,15 @@ pub struct Blame {
 /// The lines come back in the order they are in the file, so the nth entry
 /// is what to say about the nth line. A file git will not blame — one that
 /// is not tracked, or a git that is not there — comes back empty.
-pub fn blame(root: &Path, path: &Path) -> Vec<Blame> {
-    let root = holding(root, path);
+pub fn blame(root: impl Into<Location>, path: &Path) -> Vec<Blame> {
+    let root = root.into();
+    let root = holding(&root, path);
     let Ok(relative) = path.strip_prefix(&root) else {
         return Vec::new();
     };
-    let Ok(output) = Command::new("git")
+    let Ok(output) = root
+        .host
+        .command("git")
         .args(["blame", "--porcelain", "--"])
         .arg(relative)
         .current_dir(&root)

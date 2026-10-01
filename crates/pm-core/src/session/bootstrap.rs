@@ -18,9 +18,9 @@
 //! A session is also given a port of its own, so two sessions serving the
 //! same project do not fight over one.
 
+use std::io;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
 /// How many times a port is asked for before the session goes without one.
 const ATTEMPTS: usize = 8;
@@ -121,7 +121,7 @@ pub fn loose(
     wanted: &Bootstrap,
 ) -> Vec<String> {
     let mut trouble = Vec::new();
-    let Ok(entries) = fs::read_dir(origin) else {
+    let Ok(entries) = pm_host::Host::local().fs().read_dir(origin) else {
         return trouble;
     };
     for entry in entries.flatten() {
@@ -135,9 +135,12 @@ pub fn loose(
             .iter()
             .any(|repository| repository.starts_with(&source));
         let brought = match holding {
-            true => fs::create_dir_all(&destination).map(|()| {
-                trouble.extend(loose(&source, &destination, repositories, wanted));
-            }),
+            true => pm_host::Host::local()
+                .fs()
+                .create_dir_all(&destination)
+                .map(|()| {
+                    trouble.extend(loose(&source, &destination, repositories, wanted));
+                }),
             false => copy(&source, &destination),
         };
         if let Err(error) = brought {
@@ -165,11 +168,19 @@ fn copy(source: &Path, destination: &Path) -> io::Result<()> {
     if !skippable(source, destination)? {
         return Ok(());
     }
-    let kind = fs::symlink_metadata(source)?.file_type();
+    let kind = pm_host::Host::local()
+        .fs()
+        .symlink_metadata(source)?
+        .file_type();
     match () {
-        () if kind.is_symlink() => symlink(&fs::read_link(source)?, destination),
+        () if kind.is_symlink() => {
+            symlink(&pm_host::Host::local().fs().read_link(source)?, destination)
+        }
         () if kind.is_dir() => copy_tree(source, destination),
-        () => fs::copy(source, destination).map(|_| ()),
+        () => pm_host::Host::local()
+            .fs()
+            .copy(source, destination)
+            .map(|_| ()),
     }
 }
 
@@ -180,47 +191,44 @@ fn copy(source: &Path, destination: &Path) -> io::Result<()> {
 /// failure. The parent is made either way, because a path may name a file
 /// inside a directory git left out.
 fn skippable(source: &Path, destination: &Path) -> io::Result<bool> {
-    if fs::symlink_metadata(source).is_err() || fs::symlink_metadata(destination).is_ok() {
+    if pm_host::Host::local()
+        .fs()
+        .symlink_metadata(source)
+        .is_err()
+        || pm_host::Host::local()
+            .fs()
+            .symlink_metadata(destination)
+            .is_ok()
+    {
         return Ok(false);
     }
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
+        pm_host::Host::local().fs().create_dir_all(parent)?;
     }
     Ok(true)
 }
 
 /// Copies the directory at `source` to `destination`, recursively.
 fn copy_tree(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
+    pm_host::Host::local().fs().create_dir_all(destination)?;
+    for entry in pm_host::Host::local().fs().read_dir(source)? {
         let entry = entry?;
         let destination = destination.join(entry.file_name());
         match entry.file_type()?.is_dir() {
             true => copy_tree(&entry.path(), &destination)?,
             false => {
-                fs::copy(entry.path(), destination)?;
+                pm_host::Host::local()
+                    .fs()
+                    .copy(entry.path(), destination)?;
             }
         }
     }
     Ok(())
 }
 
-/// Symlinks `source` to `destination` the way the platform does it.
-#[cfg(unix)]
+/// Symlinks a source through the local machine boundary.
 fn symlink(source: &Path, destination: &Path) -> io::Result<()> {
-    std::os::unix::fs::symlink(source, destination)
-}
-
-/// Symlinks `source` to `destination` the way the platform does it.
-///
-/// Windows tells the two apart, so what is being linked decides which call
-/// is made; a link of either kind needs the privilege to make one.
-#[cfg(windows)]
-fn symlink(source: &Path, destination: &Path) -> io::Result<()> {
-    match fs::symlink_metadata(source)?.is_dir() {
-        true => std::os::windows::fs::symlink_dir(source, destination),
-        false => std::os::windows::fs::symlink_file(source, destination),
-    }
+    pm_host::Host::local().fs().symlink(source, destination)
 }
 
 /// A local port nothing is listening on, and that `taken` has not been given.

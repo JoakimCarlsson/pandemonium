@@ -12,11 +12,11 @@
 //! once the adapter says it is ready for them — the breakpoints and the word
 //! that setting up is done. Everything after that is the window asking.
 
+use pm_host::{Child, Stdio};
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader, Read};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -92,7 +92,8 @@ impl Session {
             Connect::Stdio => 0,
         };
 
-        let mut process = Command::new(&program)
+        let mut process = pm_host::Host::local()
+            .command(&program)
             .args(adapter.arguments_for(port))
             .env("PATH", pm_text::program::path_beside(&program))
             .current_dir(root)
@@ -622,7 +623,9 @@ impl Reader {
                 let reason = said.to_owned();
                 #[cfg(target_os = "linux")]
                 let reason = if self.request == Request::Attach
-                    && std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
+                    && pm_host::Host::local()
+                        .fs()
+                        .read_to_string("/proc/sys/kernel/yama/ptrace_scope")
                         .ok()
                         .and_then(|value| value.trim().parse::<u32>().ok())
                         .is_some_and(|scope| scope >= 1)

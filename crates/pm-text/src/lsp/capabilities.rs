@@ -328,7 +328,11 @@ impl Capabilities {
         let registered = self.registrations(method, None).filter_map(|options| {
             serde_json::from_value::<FileOperationRegistrationOptions>(options.clone()).ok()
         });
-        let folder = std::fs::metadata(path).ok().map(|found| found.is_dir());
+        let folder = pm_host::Host::local()
+            .fs()
+            .metadata(path)
+            .ok()
+            .map(|found| found.is_dir());
         stated
             .into_iter()
             .chain(registered)

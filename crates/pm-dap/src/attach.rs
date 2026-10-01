@@ -1,9 +1,8 @@
 //! Processes available for attaching and adapter scenarios for them.
 
 #[cfg(target_os = "linux")]
-use std::fs;
 #[cfg(target_os = "macos")]
-use std::process::Command;
+use pm_host::Command;
 
 use serde_json::{Map, json};
 
@@ -29,7 +28,7 @@ pub fn processes() -> Vec<Process> {
     #[cfg(target_os = "linux")]
     {
         let mut started = std::collections::HashMap::new();
-        if let Ok(entries) = fs::read_dir("/proc") {
+        if let Ok(entries) = pm_host::Host::local().fs().read_dir("/proc") {
             for entry in entries.flatten() {
                 let Some(pid) = entry
                     .file_name()
@@ -42,10 +41,15 @@ pub fn processes() -> Vec<Process> {
                     continue;
                 }
                 let root = entry.path();
-                let Ok(name) = fs::read_to_string(root.join("comm")) else {
+                let Ok(name) = pm_host::Host::local()
+                    .fs()
+                    .read_to_string(root.join("comm"))
+                else {
                     continue;
                 };
-                let command = fs::read(root.join("cmdline"))
+                let command = pm_host::Host::local()
+                    .fs()
+                    .read(root.join("cmdline"))
                     .map(|bytes| {
                         String::from_utf8_lossy(&bytes)
                             .replace('\0', " ")
@@ -53,7 +57,9 @@ pub fn processes() -> Vec<Process> {
                             .to_owned()
                     })
                     .unwrap_or_default();
-                let tick = fs::read_to_string(root.join("stat"))
+                let tick = pm_host::Host::local()
+                    .fs()
+                    .read_to_string(root.join("stat"))
                     .ok()
                     .and_then(|stat| {
                         stat.rsplit_once(')').and_then(|(_, rest)| {
@@ -78,7 +84,8 @@ pub fn processes() -> Vec<Process> {
     }
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("ps")
+        if let Ok(output) = pm_host::Host::local()
+            .command("ps")
             .args(["-axo", "pid=,comm=,args="])
             .output()
         {

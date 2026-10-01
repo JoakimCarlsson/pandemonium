@@ -18,10 +18,10 @@
 //! slow to read its pipe holds up that thread, never a frame, and never the
 //! reader it is waiting to be read by.
 
+use pm_host::{Child, Input as ChildStdin, Stdio};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -777,7 +777,7 @@ struct Reader {
     /// The pipe the agent is answered on.
     replies: Replies,
     /// The pipe the agent writes on.
-    stdout: BufReader<std::process::ChildStdout>,
+    stdout: BufReader<Box<dyn std::io::Read + Send>>,
     /// The identifier the next request sent from here goes under, shared
     /// with the session.
     next: Arc<AtomicI64>,

@@ -6,7 +6,9 @@
 //! history and its own commit to write. What belongs to one repository lives
 //! here; what the review lists across all of them lives in the review.
 
-use std::path::{Path, PathBuf};
+use pm_host::Location;
+
+use std::path::Path;
 use std::time::Instant;
 
 use pm_core::{Changed, Head, Status};
@@ -28,7 +30,7 @@ pub struct History {
 
 impl History {
     /// Reads the history of the repository at `root`.
-    pub(super) fn of(root: &Path) -> Self {
+    pub(super) fn of(root: &Location) -> Self {
         Self {
             auto: pm_core::history(root, HISTORY, false),
             all: pm_core::history(root, HISTORY, true),
@@ -39,7 +41,7 @@ impl History {
 /// One repository of a review, as the window last read it.
 pub struct Repository {
     /// The repository's working-copy root.
-    root: PathBuf,
+    root: Location,
     /// What the repository is called where the review lists it.
     name: String,
     /// What git makes of the repository.
@@ -66,7 +68,7 @@ pub struct Repository {
 impl Repository {
     /// The repository at `root`, named from `within` — the worktree the
     /// review is of — and not read yet.
-    pub(super) fn at(within: &Path, root: &Path) -> Self {
+    pub(super) fn at(within: &Path, root: &Location) -> Self {
         let name = match root.strip_prefix(within) {
             Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
             _ => root.file_name().map_or_else(
@@ -76,7 +78,7 @@ impl Repository {
         };
 
         Self {
-            root: root.to_path_buf(),
+            root: root.clone(),
             name,
             status: Status::default(),
             message: Input::many_lines("COMMIT_EDITMSG").submitting(Submit::Chord),
@@ -102,7 +104,7 @@ impl Repository {
     }
 
     /// The repository's working-copy root.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &Location {
         &self.root
     }
 

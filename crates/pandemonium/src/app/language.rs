@@ -1853,8 +1853,8 @@ impl App {
                     ignore_if_exists,
                 } => {
                     shifted = true;
-                    let made = match std::fs::symlink_metadata(&path).is_ok() {
-                        true if overwrite => std::fs::write(&path, "").is_ok(),
+                    let made = match pm_host::Host::local().fs().symlink_metadata(&path).is_ok() {
+                        true if overwrite => pm_host::Host::local().fs().write(&path, "").is_ok(),
                         true => ignore_if_exists,
                         false => ops::create_file(&path).is_ok(),
                     };
@@ -1871,7 +1871,8 @@ impl App {
                 } => {
                     shifted = true;
                     self.save_under(&from);
-                    let taken = std::fs::symlink_metadata(&to).is_ok() && from != to;
+                    let taken =
+                        pm_host::Host::local().fs().symlink_metadata(&to).is_ok() && from != to;
                     let moved = match taken {
                         true if ignore_if_exists && !overwrite => continue,
                         true if overwrite => {
@@ -1890,7 +1891,7 @@ impl App {
                     ignore_if_not_exists,
                 } => {
                     shifted = true;
-                    applied &= match std::fs::symlink_metadata(&path).is_ok() {
+                    applied &= match pm_host::Host::local().fs().symlink_metadata(&path).is_ok() {
                         true => ops::trash(&path).is_ok(),
                         false => ignore_if_not_exists,
                     };
@@ -2017,6 +2018,9 @@ fn write_through(path: &std::path::Path, edits: Vec<(std::ops::Range<Position>, 
 /// The start of the last line of the log at `path`, where the newest of what
 /// a server said is.
 fn log_end(path: &std::path::Path) -> Position {
-    let lines = std::fs::read_to_string(path).map_or(0, |text| text.lines().count());
+    let lines = pm_host::Host::local()
+        .fs()
+        .read_to_string(path)
+        .map_or(0, |text| text.lines().count());
     Position::new(lines.saturating_sub(1), 0)
 }

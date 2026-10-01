@@ -538,14 +538,21 @@ pub fn project_menu_items(
         })
         .collect::<Vec<_>>();
 
-    let session = match project.repositories().len() > 1 {
-        true => menu_entry("New Session…", Some(Message::NewSession)),
-        false => pm_ui::menu_submenu(
-            "New Session From…",
-            (!from.is_empty()).then_some(Message::ShowSessionBases),
-            showing_bases,
-            from,
-        ),
+    let session = if !project.root().host.is_local() {
+        menu_entry(
+            "New Session — Sessions on remote projects are not supported yet",
+            None,
+        )
+    } else {
+        match project.repositories().len() > 1 {
+            true => menu_entry("New Session…", Some(Message::NewSession)),
+            false => pm_ui::menu_submenu(
+                "New Session From…",
+                (!from.is_empty()).then_some(Message::ShowSessionBases),
+                showing_bases,
+                from,
+            ),
+        }
     };
 
     vec![
@@ -1389,6 +1396,9 @@ fn project_row(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div<
 /// What a project's row states beside its name: the branch it has out, or
 /// how many repositories it holds when it holds several.
 fn project_reading(project: &Project) -> Option<String> {
+    if !project.root().host.connected() {
+        return Some("Disconnected".to_owned());
+    }
     match (project.branch(), project.repositories().len()) {
         (Some(branch), _) => Some(branch.to_owned()),
         (None, 0) => None,

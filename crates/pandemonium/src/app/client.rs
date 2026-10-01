@@ -8,7 +8,6 @@
 //! own, which the reader can open, watch and stop.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 use pm_acp::{Answer, Exit, Request, Run};
@@ -237,7 +236,7 @@ fn gone() -> Answer {
 
 /// The file at `path` as the disk has it.
 fn read_from_disk(path: &Path) -> Answer {
-    match fs::read_to_string(path) {
+    match pm_host::Host::local().fs().read_to_string(path) {
         Ok(text) => Answer::Text(text),
         Err(error) => Answer::Failed(error.to_string()),
     }
@@ -248,8 +247,10 @@ fn read_from_disk(path: &Path) -> Answer {
 fn write_to_disk(path: &Path, text: &str) -> Answer {
     let written = path
         .parent()
-        .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| fs::write(path, text));
+        .map_or(Ok(()), |parent| {
+            pm_host::Host::local().fs().create_dir_all(parent)
+        })
+        .and_then(|()| pm_host::Host::local().fs().write(path, text));
     match written {
         Ok(()) => Answer::Done,
         Err(error) => Answer::Failed(error.to_string()),

@@ -1,0 +1,12 @@
+[package]
+name = "pm-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pandemonium-server"
+path = "src/main.rs"
+
+[dependencies]
+pm-host.workspace = true

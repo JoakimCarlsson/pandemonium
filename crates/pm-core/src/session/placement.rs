@@ -25,13 +25,13 @@ pub fn place(worktrees: &Path, project: &str, name: &str) -> PathBuf {
     let directory = worktrees.join(slug(project));
     let wanted = slug(name);
     let taken = directory.join(&wanted);
-    if !taken.exists() {
+    if !pm_host::Host::local().fs().exists(&taken) {
         return taken;
     }
 
     (2..)
         .map(|nth| directory.join(format!("{wanted}-{nth}")))
-        .find(|path| !path.exists())
+        .find(|path| !pm_host::Host::local().fs().exists(path))
         .unwrap_or(taken)
 }
 

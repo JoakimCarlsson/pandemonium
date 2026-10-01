@@ -54,6 +54,13 @@ impl App {
 
     /// Opens the picker of `kind` over `rows`, with `seeded` already typed.
     pub(super) fn open_picker_with(&mut self, kind: Kind, rows: Vec<Row>, seeded: String) {
+        if kind == Kind::NewSession && self.scope().is_some_and(|scope| self.is_remote(scope)) {
+            return self.open_picker_with(
+                Kind::SessionRepositories,
+                self.unsupported_row("Sessions"),
+                String::new(),
+            );
+        }
         self.begin_opening();
         self.picker = Some(Picker::new(kind, rows, &seeded));
         self.completions = None;
@@ -165,6 +172,7 @@ impl App {
             (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
                 self.toggle_session_repository(root, typed, place);
             }
+            (Kind::RemoteProject, _) => self.open_remote_project(&typed),
             (Kind::CloneUrl, _) => self.clone_project(&typed),
             (Kind::LinkedPath, _) => self.add_worktree_path(WorktreePaths::Linked, &typed),
             (Kind::CopiedPath, _) => self.add_worktree_path(WorktreePaths::Copied, &typed),
@@ -339,6 +347,7 @@ impl App {
             | Kind::NewBranch
             | Kind::StashMessage
             | Kind::NewSession
+            | Kind::RemoteProject
             | Kind::CloneUrl
             | Kind::LinkedPath
             | Kind::CopiedPath
@@ -399,7 +408,7 @@ impl App {
     /// A tab is drawn only in the worktree it was opened from, so the files
     /// listed for the pickers are this worktree's alone: a file of any other
     /// would open where it cannot be seen.
-    pub(super) fn here_on_disk(&self) -> Option<(pm_core::Scope, PathBuf)> {
+    pub(super) fn here_on_disk(&self) -> Option<(pm_core::Scope, pm_host::Location)> {
         let scope = self.scope()?;
         Some((scope, self.root_of(scope)?))
     }

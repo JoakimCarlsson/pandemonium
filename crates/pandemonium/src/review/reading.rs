@@ -6,6 +6,8 @@
 //! and handed to the [`Review`](crate::review::Review) whole once it is done:
 //! the frame never waits on git.
 
+use pm_host::Location;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -19,7 +21,7 @@ use crate::review::store::Patch;
 /// What one repository of a worktree held when it was read.
 pub struct RepositoryReading {
     /// The repository's working-copy root.
-    pub root: PathBuf,
+    pub root: Location,
     /// What git made of it.
     pub status: Status,
     /// The commits leading up to it.
@@ -53,7 +55,12 @@ impl Reading {
     /// `commented` names the files, relative to `root`, that have review
     /// comments on them, whose text is read for the comments to be followed
     /// to. `restoring` asks for the comments the worktree wrote down.
-    pub(super) fn of(root: &Path, reads: u64, commented: Vec<PathBuf>, restoring: bool) -> Self {
+    pub(super) fn of(
+        root: &Location,
+        reads: u64,
+        commented: Vec<PathBuf>,
+        restoring: bool,
+    ) -> Self {
         let repositories = pm_core::repositories(root)
             .into_iter()
             .map(|root| RepositoryReading {
@@ -90,7 +97,7 @@ impl Reading {
             .iter()
             .filter(|(_, changed)| changed.is_conflicted())
             .filter_map(|(_, changed)| {
-                let source = std::fs::read_to_string(&changed.path).ok()?;
+                let source = root.host.fs().read_to_string(&changed.path).ok()?;
                 Some((changed.path.clone(), conflict::conflicts(&source)))
             })
             .collect();
@@ -106,7 +113,7 @@ impl Reading {
             .into_iter()
             .chain(restored)
             .map(|path| {
-                let text = std::fs::read_to_string(root.join(&path)).ok();
+                let text = root.host.fs().read_to_string(root.join(&path)).ok();
                 (path, text)
             })
             .collect();

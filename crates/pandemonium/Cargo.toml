@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pm-host.workspace = true
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 base64 = "0.23.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }

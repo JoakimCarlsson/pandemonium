@@ -6,8 +6,9 @@
 //! them together lives — and the one place a tab is opened or closed, whether
 //! a keybinding, a tab menu or the file tree asked for it.
 
+use pm_host::Location;
+
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use pm_core::{FileStatus, Scope};
 use pm_gfx::Rect;
@@ -56,21 +57,21 @@ impl App {
     }
 
     /// Where the worktree `scope` names sits on disk.
-    pub(super) fn root_of(&self, scope: Scope) -> Option<PathBuf> {
+    pub(super) fn root_of(&self, scope: Scope) -> Option<Location> {
         match scope.session() {
             Some(session) => self
                 .sessions
                 .get(session)
-                .map(|session| session.root().to_path_buf()),
+                .map(|session| Location::local(session.root())),
             None => self
                 .open
                 .get(scope.project())
-                .map(|project| project.root().to_path_buf()),
+                .map(|project| project.root().clone()),
         }
     }
 
     /// Every worktree the window is holding, with where it sits on disk.
-    pub(super) fn worktrees(&self) -> Vec<(Scope, PathBuf)> {
+    pub(super) fn worktrees(&self) -> Vec<(Scope, Location)> {
         self.scopes()
             .into_iter()
             .filter_map(|scope| Some((scope, self.root_of(scope)?)))
@@ -543,8 +544,8 @@ impl App {
                 });
             }
             let scope = self.scope_of(item)?;
-            let project = self.open.get(scope.project())?.root().to_path_buf();
-            let worktree = self.root_of(scope)?;
+            let project = self.open.get(scope.project())?.root().stored();
+            let worktree = self.root_of(scope)?.stored();
             if let Some(talk) = item.session().and_then(|talk| self.agents.get(talk)) {
                 return Some(SavedTab {
                     kind: SavedKind::Agent,
@@ -648,7 +649,7 @@ impl App {
         let projects = self
             .open
             .iter()
-            .map(|project| (project.root().to_path_buf(), project.id()))
+            .map(|project| (project.root().clone(), project.id()))
             .collect::<Vec<_>>();
         let editor = &mut self.editor;
         let images = &mut self.images;
@@ -665,7 +666,7 @@ impl App {
             }
             let (checkout, project) = projects
                 .iter()
-                .find(|(root, _)| *root == tab.project)
+                .find(|(root, _)| root.stored() == tab.project)
                 .cloned()?;
             let held = sessions
                 .of(project)
@@ -677,11 +678,14 @@ impl App {
                 None => Scope::checkout(project),
             };
             let root = match session {
-                Some(_) => tab.worktree.clone(),
+                Some(_) => Location::local(&tab.worktree),
                 None => checkout,
             };
 
             if tab.kind == SavedKind::Agent {
+                if !root.host.is_local() {
+                    return None;
+                }
                 let agent = pm_acp::Agent::named(&tab.agent)?;
                 let talk = match tab.session.is_empty() {
                     true => agents.start(project, session, &root, &env, agent)?,
@@ -717,7 +721,7 @@ impl App {
                 return Some((Some(scope), Item::Search(scope)));
             }
             if tab.kind == SavedKind::Image {
-                let image = images.open(scope, &tab.path, tab.preview);
+                let image = images.open(scope, &root.at(&tab.path), tab.preview);
                 return Some((Some(scope), Item::Image(image)));
             }
             if tab.kind == SavedKind::Rendered {

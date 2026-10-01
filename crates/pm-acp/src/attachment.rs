@@ -113,9 +113,9 @@ impl Attachment {
 
 /// The text of the file at `path`, when it is text and small enough to send.
 fn embedded(path: &Path) -> Option<String> {
-    let size = std::fs::metadata(path).ok()?.len();
+    let size = pm_host::Host::local().fs().metadata(path).ok()?.len();
     (size <= EMBEDDED)
-        .then(|| std::fs::read_to_string(path).ok())
+        .then(|| pm_host::Host::local().fs().read_to_string(path).ok())
         .flatten()
 }
 

@@ -255,7 +255,7 @@ fn file_row(theme: &Theme, listing: &Listing<'_>, row: &Row<'_>) -> Div<Message>
         .is_some_and(|clipboard| clipboard.is_cut(path));
     let dropping = listing
         .dropping
-        .is_some_and(|target| target != listing.tree.root() && path.starts_with(target));
+        .is_some_and(|target| target != listing.tree.root().as_path() && path.starts_with(target));
     let status = listing.review.and_then(|review| review.mark(path));
     let chevron = match (directory, row.expanded) {
         (false, _) => None,

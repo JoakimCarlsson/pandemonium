@@ -1,5 +1,6 @@
 //! The tree itself: what is read, what is expanded, and the lines that makes.
 
+use pm_host::Location;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +10,7 @@ use crate::files::entry::{Entry, EntryId, Row};
 #[derive(Debug)]
 pub struct FileTree {
     /// The worktree this tree lists.
-    root: PathBuf,
+    root: Location,
     /// Every entry read so far, by the directory that holds it.
     children: BTreeMap<PathBuf, Vec<Entry>>,
     /// The directories showing what they hold.
@@ -20,7 +21,7 @@ pub struct FileTree {
 
 impl FileTree {
     /// The tree of the worktree at `root`, with its top level read.
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(root: impl Into<Location>) -> Self {
         let mut tree = Self {
             root: root.into(),
             children: BTreeMap::new(),
@@ -32,7 +33,7 @@ impl FileTree {
     }
 
     /// The worktree this tree lists.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &Location {
         &self.root
     }
 
@@ -56,7 +57,7 @@ impl FileTree {
 
     /// Shows what the directory at `path` holds, reading it if need be.
     pub fn expand(&mut self, path: &Path) {
-        if self.is_expanded(path) || !path.starts_with(&self.root) || path == self.root {
+        if self.is_expanded(path) || !path.starts_with(&self.root) || path == self.root.path {
             return;
         }
         if !self.children.contains_key(path) {
@@ -85,7 +86,7 @@ impl FileTree {
         let Ok(relative) = path.strip_prefix(&self.root) else {
             return;
         };
-        let mut directory = self.root.clone();
+        let mut directory = self.root.path.clone();
         let parts = relative.components().collect::<Vec<_>>();
         for part in parts.iter().take(parts.len().saturating_sub(1)) {
             directory.push(part);
@@ -118,11 +119,12 @@ impl FileTree {
         self.children.clear();
         self.read(&self.root.clone());
         for path in self.expanded.clone() {
-            if path.is_dir() {
+            if self.root.host.fs().is_dir(&path) {
                 self.read(&path);
             }
         }
-        self.expanded.retain(|path| path.is_dir());
+        self.expanded
+            .retain(|path| self.root.host.fs().is_dir(path));
     }
 
     /// Whether a path made or taken away at `path` changes what the tree lists.
@@ -169,7 +171,7 @@ impl FileTree {
     /// A directory that cannot be read lists as empty: a permission the editor
     /// does not have is not a reason to fail the frame it is drawn in.
     fn read(&mut self, directory: &Path) {
-        let Ok(listing) = std::fs::read_dir(directory) else {
+        let Ok(listing) = self.root.host.fs().read_dir(directory) else {
             self.children.insert(directory.to_path_buf(), Vec::new());
             return;
         };

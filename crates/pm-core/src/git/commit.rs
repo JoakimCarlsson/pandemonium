@@ -5,8 +5,9 @@
 //! have meant and a commit that quietly took more than it was shown is the
 //! one mistake here that cannot be undone by hand.
 
+use pm_host::Location;
+
 use std::ffi::OsStr;
-use std::path::Path;
 
 use crate::git::graph::{Lanes, lanes};
 use crate::git::run::{Said, answer, git};
@@ -35,7 +36,8 @@ pub struct Commit {
 ///
 /// An empty message is not sent to git at all: git would open an editor, and
 /// there is no editor to open in a window that is one already.
-pub fn commit(root: &Path, message: &str, tracked: bool) -> Said {
+pub fn commit(root: impl Into<Location>, message: &str, tracked: bool) -> Said {
+    let root = root.into();
     if message.trim().is_empty() {
         return Err("A commit needs a message".to_owned());
     }
@@ -46,11 +48,12 @@ pub fn commit(root: &Path, message: &str, tracked: bool) -> Said {
     arguments.push(OsStr::new("-m"));
     arguments.push(OsStr::new(message));
 
-    git(root, arguments)
+    git(&root, arguments)
 }
 
 /// Rewrites the latest commit with `message` and the staged or tracked changes.
-pub fn amend(root: &Path, message: &str, tracked: bool) -> Said {
+pub fn amend(root: impl Into<Location>, message: &str, tracked: bool) -> Said {
+    let root = root.into();
     if message.trim().is_empty() {
         return Err("A commit needs a message".to_owned());
     }
@@ -59,20 +62,22 @@ pub fn amend(root: &Path, message: &str, tracked: bool) -> Said {
         arguments.push(OsStr::new("--all"));
     }
     arguments.extend([OsStr::new("-m"), OsStr::new(message)]);
-    git(root, arguments)
+    git(&root, arguments)
 }
 
 /// Applies `object` as a new commit in the worktree at `root`.
-pub fn cherry_pick(root: &Path, object: &str) -> Said {
-    git(root, ["cherry-pick", object])
+pub fn cherry_pick(root: impl Into<Location>, object: &str) -> Said {
+    let root = root.into();
+    git(&root, ["cherry-pick", object])
 }
 
 /// What the last commit of the worktree at `root` was called.
 ///
 /// A worktree with nothing committed yet has nothing to say, which is what
 /// a screen offering to write the last message again reads as having none.
-pub fn last_message(root: &Path) -> Option<String> {
-    let said = answer(root, ["log", "-1", "--pretty=%B"])?;
+pub fn last_message(root: impl Into<Location>) -> Option<String> {
+    let root = root.into();
+    let said = answer(&root, ["log", "-1", "--pretty=%B"])?;
     let trimmed = said.trim().to_owned();
     (!trimmed.is_empty()).then_some(trimmed)
 }
@@ -81,7 +86,8 @@ pub fn last_message(root: &Path) -> Option<String> {
 ///
 /// Commits come in date order, which still lists every child before its
 /// parents — the one thing laying out the lanes needs of the order.
-pub fn history(root: &Path, limit: usize, all: bool) -> Vec<Commit> {
+pub fn history(root: impl Into<Location>, limit: usize, all: bool) -> Vec<Commit> {
+    let root = root.into();
     let count = format!("-{}", limit.max(1));
     let mut arguments: Vec<&OsStr> = vec![
         OsStr::new("log"),
@@ -92,7 +98,7 @@ pub fn history(root: &Path, limit: usize, all: bool) -> Vec<Commit> {
     if all {
         arguments.push(OsStr::new("--all"));
     }
-    let listed: Vec<Listed> = answer(root, arguments)
+    let listed: Vec<Listed> = answer(&root, arguments)
         .map(|said| said.lines().filter_map(listed).collect())
         .unwrap_or_default();
     let rows = lanes(

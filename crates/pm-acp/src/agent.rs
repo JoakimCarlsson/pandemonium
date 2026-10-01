@@ -5,9 +5,8 @@
 //! but that difference stops here: above this module an agent is a name, a
 //! command and nothing else.
 
-use std::env;
+use pm_host::Command;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::RwLock;
 
 /// The program that runs a published package without installing it first.
@@ -184,12 +183,13 @@ impl Agent {
     pub fn command(self) -> Command {
         let mut command = match (installed(self.program), self.source) {
             (None, Source::Package(package)) => {
-                let mut command =
-                    Command::new(installed(RUNNER).unwrap_or_else(|| PathBuf::from(RUNNER)));
+                let mut command = pm_host::Host::local()
+                    .command(installed(RUNNER).unwrap_or_else(|| PathBuf::from(RUNNER)));
                 command.arg("--yes").arg(package);
                 command
             }
-            (program, _) => Command::new(program.unwrap_or_else(|| PathBuf::from(self.program))),
+            (program, _) => pm_host::Host::local()
+                .command(program.unwrap_or_else(|| PathBuf::from(self.program))),
         };
         command.args(self.arguments);
         command.envs(self.env.iter().copied());
@@ -197,62 +197,7 @@ impl Agent {
     }
 }
 
-/// The directories a program is looked for in besides the path.
-///
-/// A window started from a desktop session inherits the path that session
-/// was given, which is not the one a shell has: npm, bun and cargo each put
-/// their programs somewhere that only a shell profile ever hears about, and
-/// an agent with an installer of its own may keep a directory of its own. An
-/// agent the reader has installed is the one the editor runs, whether or not
-/// the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 8] = [
-    ".local/bin",
-    ".grok/bin",
-    ".bun/bin",
-    ".deno/bin",
-    ".npm-global/bin",
-    "AppData/Roaming/npm",
-    ".volta/bin",
-    ".cargo/bin",
-];
-
-/// Where `program` is installed, on the path or in the usual places beside it.
+/// Finds the program on the local execution machine.
 fn installed(program: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH").unwrap_or_default();
-    let home = env::home_dir();
-    let names = file_names(program);
-
-    env::split_paths(&path)
-        .chain(
-            TOOL_DIRECTORIES
-                .iter()
-                .filter_map(|directory| Some(home.as_ref()?.join(directory))),
-        )
-        .chain([
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/opt/homebrew/bin"),
-        ])
-        .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
-        .find(|candidate| candidate.is_file())
-}
-
-/// The file names `program` is installed under on this platform.
-#[cfg(not(windows))]
-fn file_names(program: &str) -> Vec<String> {
-    vec![program.to_owned()]
-}
-
-/// The file names `program` is installed under on this platform.
-///
-/// Windows runs a program by its extension, and `PATHEXT` lists the ones it
-/// runs. The bare name is left out: npm installs a shell script beside each
-/// `.cmd`, which Windows cannot start.
-#[cfg(windows)]
-fn file_names(program: &str) -> Vec<String> {
-    env::var("PATHEXT")
-        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned())
-        .split(';')
-        .filter(|extension| !extension.is_empty())
-        .map(|extension| format!("{program}{extension}"))
-        .collect()
+    pm_host::Host::local().which(program)
 }

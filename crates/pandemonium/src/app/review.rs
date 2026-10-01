@@ -6,6 +6,8 @@
 //! here decides what a change is — that is git's — and nothing else in the
 //! window writes to the index.
 
+use pm_host::Location;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -33,11 +35,8 @@ impl App {
 
     /// Where the active repository of `scope`'s review sits: the one a branch
     /// is switched in, and a fetch, a pull or a push is made from.
-    pub(super) fn repository_root(&self, scope: Scope) -> Option<PathBuf> {
-        self.reviews
-            .get(&scope)?
-            .active_root()
-            .map(std::path::Path::to_path_buf)
+    pub(super) fn repository_root(&self, scope: Scope) -> Option<Location> {
+        self.reviews.get(&scope)?.active_root().cloned()
     }
 
     /// The worktree of `project` a branch or remote command is carried out in:
@@ -139,11 +138,7 @@ impl App {
     /// Opens every changed file of `scope`'s review, and asks their servers
     /// what the names in them are.
     fn open_files_reviewed_in(&mut self, scope: Scope) {
-        let Some(root) = self
-            .reviews
-            .get(&scope)
-            .map(|review| review.root().to_path_buf())
-        else {
+        let Some(root) = self.reviews.get(&scope).map(|review| review.root().clone()) else {
             return;
         };
         for path in self.reviewed_paths(scope) {
@@ -577,7 +572,7 @@ impl App {
         let Some(path) = self.changed_path(index) else {
             return;
         };
-        let root = self.review().map(|review| review.root().to_path_buf());
+        let root = self.review().map(|review| review.root().clone());
         let written = match root.filter(|_| relative) {
             Some(root) => path
                 .strip_prefix(&root)
@@ -613,10 +608,7 @@ impl App {
     }
 
     /// Where the `index`-th change is, and the line it first differs at.
-    fn changed_at(
-        &self,
-        index: usize,
-    ) -> Option<(Scope, std::path::PathBuf, std::path::PathBuf, usize)> {
+    fn changed_at(&self, index: usize) -> Option<(Scope, Location, std::path::PathBuf, usize)> {
         let scope = self.scope()?;
         let review = self.reviews.get(&scope)?;
         let changed = review.change(index)?;
@@ -636,7 +628,7 @@ impl App {
             .unwrap_or(1);
         Some((
             scope,
-            review.root().to_path_buf(),
+            review.root().clone(),
             changed.path.clone(),
             first.saturating_sub(1),
         ))
@@ -735,7 +727,10 @@ impl App {
                     .map(|line| buffer.line_text(line))
                     .collect()
             }
-            None => std::fs::read_to_string(path)
+            None => self
+                .root_of(scope)
+                .and_then(|root| root.host.fs().read_to_string(path).ok())
+                .ok_or(())
                 .map(|text| text.lines().map(str::to_owned).collect())
                 .unwrap_or_default(),
         }
@@ -1112,7 +1107,7 @@ impl App {
             return;
         };
         let comments = review.comments().clone();
-        let root = review.root().to_path_buf();
+        let root = review.root().clone();
         for path in comments.paths() {
             let Some(document) = self
                 .editor
