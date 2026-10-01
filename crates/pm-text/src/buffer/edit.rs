@@ -796,12 +796,57 @@ impl Buffer {
             syntax.parse(&self.text);
         }
         self.version += 1;
+        self.shift_annotations(start, end, head);
 
         Some(Change {
             at: start,
             before: removed,
             after: text.to_owned(),
         })
+    }
+}
+
+/// Where `position` is once the text between `start` and `end` has been
+/// replaced by text that ends at `after`.
+///
+/// What is before the change stays; what is after it moves with it, and
+/// what was inside what was replaced lands where the new text ends. A
+/// place at the very start of an insertion goes after it, as the end of a
+/// name does when the name is typed on to.
+fn shifted(position: Position, start: Position, end: Position, after: Position) -> Position {
+    if position < start || (position == start && end > start) {
+        return position;
+    }
+    if position < end {
+        return after;
+    }
+    match position.line == end.line {
+        true => Position::new(after.line, after.column + position.column - end.column),
+        false => Position::new(
+            (position.line + after.line).saturating_sub(end.line),
+            position.column,
+        ),
+    }
+}
+
+impl Buffer {
+    /// Moves what a server wrote about the text, which is its hints, its
+    /// lenses and its semantic spans, along with a change to the text.
+    ///
+    /// They are answers about the text as it was and are asked for again a
+    /// moment after the last change; until then they are moved with the text
+    /// rather than taken away, so that typing does not make them blink.
+    fn shift_annotations(&mut self, start: Position, end: Position, after: Position) {
+        for hint in &mut self.hints {
+            hint.position = shifted(hint.position, start, end, after);
+        }
+        for lens in &mut self.lenses {
+            lens.position = shifted(lens.position, start, end, after);
+        }
+        for (span, ..) in &mut self.semantics {
+            span.start = shifted(span.start, start, end, after);
+            span.end = shifted(span.end, start, end, after);
+        }
     }
 }
 

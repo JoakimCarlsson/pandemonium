@@ -1247,9 +1247,6 @@ impl Document {
 
     /// Brings the search and the servers up to the text as it now stands.
     fn changed(&mut self) {
-        self.buffer.set_hints(Vec::new());
-        self.buffer.set_lenses(Vec::new());
-        self.buffer.set_semantics(Vec::new());
         for (_, hints) in self.hinted.values_mut() {
             hints.clear();
         }
