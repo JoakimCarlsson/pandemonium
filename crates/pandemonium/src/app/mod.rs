@@ -1226,6 +1226,9 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if let Some(control) = &self.control {
+            control.changed();
+        }
         if self.apply_outline(message) {
             self.request_redraw();
             return;
@@ -2807,6 +2810,11 @@ impl ApplicationHandler<Wake> for App {
     /// Applies what the shells have written and draws the result.
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         self.pending[event as usize].store(false, Ordering::Release);
+        if event != Wake::Control
+            && let Some(control) = &self.control
+        {
+            control.changed();
+        }
         match event {
             Wake::Terminal => {
                 let pumped = self.terminals.pump();

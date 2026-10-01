@@ -2,18 +2,72 @@
 
 use std::sync::mpsc;
 
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
 #[cfg(not(unix))]
 use winit::event_loop::EventLoopProxy;
 
 #[cfg(not(unix))]
 use crate::app::Wake;
 
-/// A command waiting for the window and the channel its answer returns on.
+/// The major version of the editor control wire protocol.
+pub const VERSION: u32 = 1;
+
+/// One versioned request from a control client.
+#[derive(Deserialize, Serialize)]
+pub struct WireRequest {
+    /// The wire protocol major version.
+    pub version: u32,
+    /// A client-chosen request identity, echoed in the response.
+    pub id: u64,
+    /// The operation to perform.
+    pub method: String,
+    /// The operation's named arguments.
+    #[serde(default)]
+    pub params: Value,
+}
+
+/// A machine-readable failure returned to a control client.
+#[derive(Serialize)]
+pub struct WireError {
+    /// A stable error category.
+    pub code: &'static str,
+    /// A description suitable for display.
+    pub message: String,
+}
+
+/// One response to one request on the same connection.
+#[derive(Serialize)]
+pub struct WireResponse {
+    /// The wire protocol major version.
+    pub version: u32,
+    /// The request identity, or null when the request could not be decoded.
+    pub id: Option<u64>,
+    /// The operation result when successful.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    /// The failure when the operation did not succeed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<WireError>,
+}
+
+/// Work for the editor event loop from a control request.
+pub enum Operation {
+    /// Run a terminal command through the editor's command seam.
+    Execute(String),
+    /// Read the window's project, session, and agent state.
+    Snapshot,
+    /// Read one agent's conversation as structured blocks.
+    Transcript(usize),
+}
+
+/// A request waiting for the window and the channel its answer returns on.
 pub struct Request {
-    /// One line of terminal command text.
-    pub line: String,
+    /// The operation the window applies or reads.
+    pub operation: Operation,
     /// Where the window sends its answer.
-    pub answer: mpsc::Sender<Result<String, String>>,
+    pub answer: mpsc::Sender<Result<Value, String>>,
 }
 
 #[cfg(unix)]
@@ -23,14 +77,16 @@ mod unix {
     use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
     use std::time::Duration;
 
     use winit::event_loop::EventLoopProxy;
 
+    use serde_json::{Value, json};
+
     use crate::app::Wake;
     use crate::config;
-    use crate::control::Request;
+    use crate::control::{Operation, Request, VERSION, WireError, WireRequest, WireResponse};
 
     /// A private socket and commands waiting for the editor event loop.
     pub struct Server {
@@ -38,6 +94,8 @@ mod unix {
         path: PathBuf,
         /// Commands received by the listener thread.
         pending: Arc<Mutex<Vec<Request>>>,
+        /// The latest window change and clients waiting for one.
+        changes: Arc<(Mutex<u64>, Condvar)>,
     }
 
     impl Server {
@@ -63,14 +121,21 @@ mod unix {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
             let pending = Arc::new(Mutex::new(Vec::new()));
             let queue = pending.clone();
+            let changes = Arc::new((Mutex::new(0), Condvar::new()));
+            let revisions = changes.clone();
             std::thread::spawn(move || {
                 for connection in listener.incoming().flatten() {
                     let queue = queue.clone();
                     let proxy = proxy.clone();
-                    std::thread::spawn(move || serve(connection, queue, proxy));
+                    let revisions = revisions.clone();
+                    std::thread::spawn(move || serve(connection, queue, revisions, proxy));
                 }
             });
-            Ok(Self { path, pending })
+            Ok(Self {
+                path,
+                pending,
+                changes,
+            })
         }
 
         /// Takes commands for the window to run on its own event loop.
@@ -79,6 +144,20 @@ mod unix {
                 .lock()
                 .map(|mut queue| std::mem::take(&mut *queue))
                 .unwrap_or_default()
+        }
+
+        /// Advances the state revision and wakes clients waiting for changes.
+        pub fn changed(&self) {
+            let (revision, changed) = &*self.changes;
+            if let Ok(mut revision) = revision.lock() {
+                *revision = revision.wrapping_add(1);
+                changed.notify_all();
+            }
+        }
+
+        /// Returns the current state revision.
+        pub fn revision(&self) -> u64 {
+            self.changes.0.lock().map_or(0, |revision| *revision)
         }
     }
 
@@ -89,35 +168,190 @@ mod unix {
         }
     }
 
-    /// Receives one bounded command and waits for its result from the window.
+    /// Receives bounded JSON requests and writes one response for each.
     fn serve(
         mut stream: UnixStream,
         pending: Arc<Mutex<Vec<Request>>>,
+        changes: Arc<(Mutex<u64>, Condvar)>,
         proxy: EventLoopProxy<Wake>,
     ) {
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
-        let mut line = String::new();
-        let result = BufReader::new((&stream).take(65_537)).read_line(&mut line);
-        let answer = match result {
-            Ok(size) if size > 0 && size <= 65_536 && line.ends_with('\n') => {
-                let (tx, rx) = mpsc::channel();
-                if let Ok(mut queue) = pending.lock() {
-                    queue.push(Request {
-                        line: line.trim_end_matches(['\r', '\n']).to_owned(),
-                        answer: tx,
-                    });
-                    let _ = proxy.send_event(Wake::Control);
-                    rx.recv_timeout(Duration::from_secs(10))
-                        .unwrap_or_else(|_| Err("editor did not answer".to_owned()))
-                } else {
-                    Err("control queue unavailable".to_owned())
+        let Ok(copy) = stream.try_clone() else { return };
+        let mut reader = BufReader::new(copy);
+        loop {
+            let mut line = String::new();
+            let read = (&mut reader).take(65_537).read_line(&mut line);
+            let malformed =
+                !matches!(&read, Ok(size) if *size > 0 && *size <= 65_536 && line.ends_with('\n'));
+            let response = match read {
+                Ok(0) => break,
+                Ok(size) if size <= 65_536 && line.ends_with('\n') => {
+                    dispatch(&line, &pending, &changes, &proxy)
                 }
+                _ => WireResponse {
+                    version: VERSION,
+                    id: None,
+                    result: None,
+                    error: Some(WireError {
+                        code: "invalid_request",
+                        message: "request must be one JSON line of at most 65536 bytes".to_owned(),
+                    }),
+                },
+            };
+            if serde_json::to_writer(&mut stream, &response).is_err()
+                || stream.write_all(b"\n").is_err()
+                || malformed
+            {
+                break;
             }
-            _ => Err("invalid or oversized command".to_owned()),
+        }
+    }
+
+    /// Validates a wire request and routes it to the editor event loop.
+    fn dispatch(
+        line: &str,
+        pending: &Arc<Mutex<Vec<Request>>>,
+        changes: &Arc<(Mutex<u64>, Condvar)>,
+        proxy: &EventLoopProxy<Wake>,
+    ) -> WireResponse {
+        let decoded = serde_json::from_str::<WireRequest>(line);
+        let request = match decoded {
+            Ok(request) => request,
+            Err(error) => {
+                return WireResponse {
+                    version: VERSION,
+                    id: None,
+                    result: None,
+                    error: Some(WireError {
+                        code: "invalid_request",
+                        message: error.to_string(),
+                    }),
+                };
+            }
         };
-        let _ = serde_json::to_writer(&mut stream, &answer);
-        let _ = stream.write_all(b"\n");
+        let id = Some(request.id);
+        let result = if request.version != VERSION {
+            Err(WireError {
+                code: "unsupported_version",
+                message: format!("protocol version {VERSION} is required"),
+            })
+        } else {
+            route(request, pending, changes, proxy)
+        };
+        match result {
+            Ok(result) => WireResponse {
+                version: VERSION,
+                id,
+                result: Some(result),
+                error: None,
+            },
+            Err(error) => WireResponse {
+                version: VERSION,
+                id,
+                result: None,
+                error: Some(error),
+            },
+        }
+    }
+
+    /// Interprets a supported method and waits for the editor when needed.
+    fn route(
+        request: WireRequest,
+        pending: &Arc<Mutex<Vec<Request>>>,
+        changes: &Arc<(Mutex<u64>, Condvar)>,
+        proxy: &EventLoopProxy<Wake>,
+    ) -> Result<Value, WireError> {
+        if !request.params.is_null() && !request.params.is_object() {
+            return Err(invalid("params must be an object"));
+        }
+        if request.method == "system.hello" {
+            return Ok(json!({
+                "protocol": VERSION,
+                "methods": ["system.hello", "control.execute", "state.snapshot", "state.watch", "agent.transcript"]
+            }));
+        }
+        if request.method == "state.watch" {
+            let after = number(&request.params, "after_revision")?;
+            let timeout = match request.params.get("timeout_ms") {
+                Some(timeout) => timeout
+                    .as_u64()
+                    .ok_or_else(|| invalid("timeout_ms must be an unsigned integer"))?,
+                None => 30_000,
+            }
+            .min(30_000);
+            let (revision, changed) = &**changes;
+            let current = revision.lock().map_err(|_| unavailable())?;
+            if after > *current {
+                return Err(invalid("after_revision is ahead of the editor"));
+            }
+            let (current, _) = changed
+                .wait_timeout_while(current, Duration::from_millis(timeout), |current| {
+                    *current <= after
+                })
+                .map_err(|_| unavailable())?;
+            if *current <= after {
+                return Ok(json!({ "changed": false, "revision": *current }));
+            }
+        }
+        let operation = match request.method.as_str() {
+            "control.execute" => Operation::Execute(string(&request.params, "line")?.to_owned()),
+            "state.snapshot" | "state.watch" => Operation::Snapshot,
+            "agent.transcript" => {
+                let index = usize::try_from(number(&request.params, "agent")?)
+                    .map_err(|_| invalid("agent index is too large"))?;
+                Operation::Transcript(index)
+            }
+            _ => {
+                return Err(WireError {
+                    code: "unknown_method",
+                    message: format!("unknown method: {}", request.method),
+                });
+            }
+        };
+        let (answer, received) = mpsc::channel();
+        pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .push(Request { operation, answer });
+        proxy.send_event(Wake::Control).map_err(|_| unavailable())?;
+        received
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| unavailable())?
+            .map_err(|message| WireError {
+                code: "operation_failed",
+                message,
+            })
+    }
+
+    /// Reads a required unsigned integer parameter.
+    fn number(params: &Value, name: &str) -> Result<u64, WireError> {
+        params
+            .get(name)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| invalid(&format!("{name} must be an unsigned integer")))
+    }
+
+    /// Reads a required string parameter.
+    fn string<'a>(params: &'a Value, name: &str) -> Result<&'a str, WireError> {
+        params
+            .get(name)
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid(&format!("{name} must be a string")))
+    }
+
+    /// Returns an invalid-parameter error.
+    fn invalid(message: &str) -> WireError {
+        WireError {
+            code: "invalid_params",
+            message: message.to_owned(),
+        }
+    }
+
+    /// Returns an editor-unavailable error.
+    fn unavailable() -> WireError {
+        WireError {
+            code: "unavailable",
+            message: "editor did not answer".to_owned(),
+        }
     }
 
     /// Returns the private socket path, creating its owner-only directory.
@@ -144,13 +378,13 @@ mod unix {
         Ok(directory.join("editor.sock"))
     }
 
-    /// Sends a command to the running editor and returns its text or error.
-    fn send(line: &str) -> Result<String, String> {
+    /// Sends one JSON line to the editor and returns its JSON response line.
+    fn send_raw(line: &str) -> Result<String, String> {
         let path = socket_path().map_err(|error| error.to_string())?;
         let mut stream =
             UnixStream::connect(path).map_err(|error| format!("editor unavailable: {error}"))?;
         stream
-            .set_read_timeout(Some(Duration::from_secs(12)))
+            .set_read_timeout(Some(Duration::from_secs(45)))
             .map_err(|error| error.to_string())?;
         stream
             .write_all(format!("{line}\n").as_bytes())
@@ -159,12 +393,58 @@ mod unix {
         BufReader::new(stream)
             .read_line(&mut answer)
             .map_err(|error| error.to_string())?;
-        serde_json::from_str::<Result<String, String>>(&answer)
-            .map_err(|error| error.to_string())?
+        if answer.is_empty() {
+            return Err("editor closed the control connection".to_owned());
+        }
+        Ok(answer)
+    }
+
+    /// Sends a terminal command over versioned JSON and returns its text.
+    fn send(line: &str) -> Result<String, String> {
+        let request = WireRequest {
+            version: VERSION,
+            id: 1,
+            method: "control.execute".to_owned(),
+            params: json!({ "line": line }),
+        };
+        let request = serde_json::to_string(&request).map_err(|error| error.to_string())?;
+        let answer = send_raw(&request)?;
+        let answer = serde_json::from_str::<Value>(&answer).map_err(|error| error.to_string())?;
+        if let Some(error) = answer.get("error") {
+            return Err(error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("control request failed")
+                .to_owned());
+        }
+        answer
+            .get("result")
+            .and_then(|result| result.get("text"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "editor returned an invalid command response".to_owned())
+    }
+
+    /// Relays JSON lines between an SSH session and the private socket.
+    fn proxy_stdio() {
+        for line in io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            match send_raw(&line) {
+                Ok(answer) => print!("{answer}"),
+                Err(error) => {
+                    eprintln!("{error}");
+                    break;
+                }
+            }
+        }
     }
 
     /// Runs one command, or reads commands interactively from the SSH terminal.
     pub fn client(args: Vec<String>) {
+        if args.as_slice() == ["--stdio"] {
+            proxy_stdio();
+            return;
+        }
         if !args.is_empty() {
             match send(&args.join(" ")) {
                 Ok(text) => println!("{text}"),
@@ -209,6 +489,14 @@ impl Server {
     /// No commands can arrive on this platform.
     pub fn take(&self) -> Vec<Request> {
         Vec::new()
+    }
+
+    /// No state watcher is available on this platform.
+    pub fn changed(&self) {}
+
+    /// No state revision is available on this platform.
+    pub fn revision(&self) -> u64 {
+        0
     }
 }
 

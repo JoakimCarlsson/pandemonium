@@ -50,3 +50,6 @@ The editor accepts control commands through a Unix socket in its private
 `~/.pandemonium/control` directory. It does not open a network port. Phone
 control uses the regular `pandemonium` binary on the desktop machine, while
 `pandemonium-server` runs on a separate development host for remote projects.
+
+A native phone client can use the [control protocol](control-protocol.md)
+through `pandemonium control --stdio` over SSH.

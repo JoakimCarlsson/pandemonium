@@ -3,9 +3,11 @@
 use std::path::{Component, Path, PathBuf};
 
 use pm_core::{Project, ProjectId, Scope, Session, SessionId};
+use serde_json::{Value, json};
 
 use crate::agent::{Block, Talk, TalkId};
 use crate::app::App;
+use crate::control::Operation;
 use crate::message::Message;
 
 impl App {
@@ -16,10 +18,100 @@ impl App {
             .as_ref()
             .map_or_else(Vec::new, |server| server.take());
         for request in requests {
-            let result = self.control_command(&request.line);
+            let result = match request.operation {
+                Operation::Execute(line) => {
+                    let result = self.control_command(&line);
+                    if result.is_ok()
+                        && let Some(control) = &self.control
+                    {
+                        control.changed();
+                    }
+                    result.map(|text| json!({ "text": text }))
+                }
+                Operation::Snapshot => Ok(self.control_snapshot()),
+                Operation::Transcript(index) => self.control_transcript_json(index),
+            };
             let _ = request.answer.send(result);
         }
         self.request_redraw();
+    }
+
+    /// Returns the editor state as stable JSON fields for a mobile client.
+    fn control_snapshot(&self) -> Value {
+        let projects = self
+            .open
+            .iter()
+            .enumerate()
+            .map(|(index, project)| {
+                json!({
+                    "index": index,
+                    "name": project.name(),
+                    "root": project.root().display().to_string(),
+                    "active": self.open.active().is_some_and(|active| active.id() == project.id()),
+                })
+            })
+            .collect::<Vec<_>>();
+        let sessions = self
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(index, session)| {
+                json!({
+                    "index": index,
+                    "project": self.control_project_index(session.project()),
+                    "name": session.name(),
+                    "root": session.root().display().to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let agents = self
+            .agents
+            .iter()
+            .enumerate()
+            .map(|(index, talk)| {
+                json!({
+                    "index": index,
+                    "project": self.control_project_index(talk.scope().project()),
+                    "session": talk.scope().session().and_then(|id| self.control_session_index(id)),
+                    "agent": talk.agent().id,
+                    "title": talk.title(),
+                    "standing": format!("{:?}", talk.standing()).to_lowercase(),
+                    "transcript_revision": talk.transcript().revision(),
+                    "requests": talk.asks().iter().enumerate().map(|(ask, request)| json!({
+                        "index": ask,
+                        "title": request.tool.title,
+                        "choices": request.choices.iter().enumerate().map(|(choice, answer)| json!({
+                            "index": choice,
+                            "name": answer.name,
+                        })).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "revision": self.control.as_ref().map_or(0, |server| server.revision()),
+            "projects": projects,
+            "sessions": sessions,
+            "agents": agents,
+        })
+    }
+
+    /// Returns one ACP conversation in machine-readable blocks.
+    fn control_transcript_json(&self, index: usize) -> Result<Value, String> {
+        let talk = self
+            .agents
+            .iter()
+            .nth(index)
+            .ok_or_else(|| "agent unavailable".to_owned())?;
+        let blocks = talk.transcript().blocks().iter().map(|block| match block {
+            Block::Said(voice, text) => json!({ "kind": "said", "voice": format!("{voice:?}").to_lowercase(), "text": text }),
+            Block::Picture(_) => json!({ "kind": "picture" }),
+            Block::Ran(call) => json!({ "kind": "tool", "title": call.title, "name": call.name, "status": format!("{:?}", call.status).to_lowercase() }),
+            Block::Planned(steps) => json!({ "kind": "plan", "steps": steps.len() }),
+            Block::Note(text) => json!({ "kind": "note", "text": text }),
+            Block::Failure(text, compact) => json!({ "kind": "failure", "text": text, "compact": compact }),
+        }).collect::<Vec<_>>();
+        Ok(json!({ "agent": index, "revision": talk.transcript().revision(), "blocks": blocks }))
     }
 
     /// Routes a terminal command through the window's existing state seams.
