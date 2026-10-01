@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 use crate::agent::Agent;
 use crate::attachment::Attachment;
 use crate::limits::Meter;
+use crate::mcp;
 use crate::process::{self, Containment};
 use crate::request::{self, Answer, Request, Shape};
 use crate::transport;
@@ -198,6 +199,8 @@ struct State {
     /// Whether the agent accepts a file's contents in a prompt, rather than
     /// only a link to it.
     embeds: bool,
+    /// The ways other than a started program the agent can reach a tool server.
+    transports: mcp::Transports,
     /// The requests sent and not yet answered, and what each was for.
     sent: HashMap<i64, Sent>,
     /// The ways of logging in the agent offered in its handshake.
@@ -925,12 +928,19 @@ impl Reader {
             state.lists = capabilities["sessionCapabilities"]["list"].is_object();
             state.images = prompts["image"] == json!(true);
             state.embeds = prompts["embeddedContext"] == json!(true);
+            state.transports = mcp::Transports::of(&capabilities["mcpCapabilities"]);
         }
         self.open();
     }
 
     /// Opens the conversation: the one that was left, or a new one.
     fn open(&self) {
+        let servers = mcp::offered(
+            self.state
+                .lock()
+                .map(|state| state.transports)
+                .unwrap_or_default(),
+        );
         let resumed = match self.state.lock() {
             Ok(state) => state.resume.clone().filter(|_| state.loads),
             Err(_) => None,
@@ -942,7 +952,7 @@ impl Reader {
                 &json!({
                     "sessionId": resumed,
                     "cwd": self.root,
-                    "mcpServers": [],
+                    "mcpServers": servers,
                 }),
             ),
             None if self
@@ -957,7 +967,7 @@ impl Reader {
             None => self.ask(
                 Sent::Open,
                 "session/new",
-                &json!({ "cwd": self.root, "mcpServers": [] }),
+                &json!({ "cwd": self.root, "mcpServers": servers }),
             ),
         }
     }

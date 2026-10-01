@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pm_acp::{Agent, Source};
+use pm_acp::{Agent, McpServer, Reach, Source};
 use pm_core::Bootstrap;
 use pm_text::Server;
 use serde::{Deserialize, Serialize};
@@ -165,6 +165,24 @@ pub(super) struct Stored {
         skip_serializing_if = "Option::is_none"
     )]
     agent_servers: Option<BTreeMap<String, StoredAgent>>,
+    /// Tool servers every agent is opened with.
+    ///
+    /// The key is the server's name. One with a `command` is started by the
+    /// agent; one with a `url` is reached over HTTP, or over server-sent
+    /// events when `type` is `sse`.
+    ///
+    /// ```yaml
+    /// mcp_servers:
+    ///   filesystem:
+    ///     command: mcp-server-filesystem
+    ///     args: ["/srv"]
+    ///   docs:
+    ///     url: https://example.com/mcp
+    ///     headers:
+    ///       Authorization: Bearer token
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mcp_servers: Option<BTreeMap<String, StoredMcp>>,
     /// Paths symlinked into a fresh worktree, relative to the repository.
     worktree_link: Option<Vec<PathBuf>>,
     /// Paths copied into it, relative to the repository.
@@ -241,6 +259,29 @@ struct StoredAgent {
     /// The environment the program is started with, over the one it inherits.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     env: BTreeMap<String, String>,
+}
+
+/// One tool server the reader added, as it is written down.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct StoredMcp {
+    /// The program the agent starts, for a server reached over its pipes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    /// The arguments to run the program with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    args: Vec<String>,
+    /// The environment the program is started with.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    env: BTreeMap<String, String>,
+    /// Where a server reached over the network listens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    /// `sse` for a server of server-sent events; anything else is HTTP.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    transport: Option<String>,
+    /// The headers sent with every request to a network server.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    headers: BTreeMap<String, String>,
 }
 
 /// One language server as it is written down.
@@ -343,6 +384,66 @@ impl StoredAgent {
     }
 }
 
+impl StoredMcp {
+    /// The server this stands for, or `None` when it names neither a program nor an address.
+    fn into_server(self, name: String) -> Option<McpServer> {
+        let reach = match (self.command, self.url) {
+            (Some(program), _) if !program.is_empty() => Reach::Command {
+                program,
+                arguments: self.args,
+                env: self.env.into_iter().collect(),
+            },
+            (_, Some(url)) if !url.is_empty() => match self.transport.as_deref() {
+                Some("sse") => Reach::Events {
+                    url,
+                    headers: self.headers.into_iter().collect(),
+                },
+                _ => Reach::Http {
+                    url,
+                    headers: self.headers.into_iter().collect(),
+                },
+            },
+            _ => return None,
+        };
+        Some(McpServer { name, reach })
+    }
+
+    /// How `server` is written down.
+    fn of(server: &McpServer) -> Self {
+        let empty = Self {
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            url: None,
+            transport: None,
+            headers: BTreeMap::new(),
+        };
+        match &server.reach {
+            Reach::Command {
+                program,
+                arguments,
+                env,
+            } => Self {
+                command: Some(program.clone()),
+                args: arguments.clone(),
+                env: env.iter().cloned().collect(),
+                ..empty
+            },
+            Reach::Http { url, headers } => Self {
+                url: Some(url.clone()),
+                headers: headers.iter().cloned().collect(),
+                ..empty
+            },
+            Reach::Events { url, headers } => Self {
+                url: Some(url.clone()),
+                transport: Some("sse".to_owned()),
+                headers: headers.iter().cloned().collect(),
+                ..empty
+            },
+        }
+    }
+}
+
 /// The agents in `deserializer`, less any entry that does not name a program.
 fn read_agents<'de, D>(deserializer: D) -> Result<Option<BTreeMap<String, StoredAgent>>, D::Error>
 where
@@ -440,6 +541,7 @@ impl Stored {
             shells: self.shells.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
             agent_servers: self.agent_servers(),
+            mcp_servers: self.mcp_servers(),
             onboarded: self.finished.unwrap_or_default(),
             preferences: self.into_preferences(),
         }
@@ -462,6 +564,16 @@ impl Stored {
             .unwrap_or_default()
             .into_iter()
             .map(|(id, agent)| agent.into_agent(id))
+            .collect()
+    }
+
+    /// The tool servers this file offers every agent, less any that name no way to reach them.
+    fn mcp_servers(&self) -> Vec<McpServer> {
+        self.mcp_servers
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(name, server)| server.into_server(name))
             .collect()
     }
 
@@ -647,6 +759,7 @@ impl Stored {
             window,
             language_servers,
             agent_servers,
+            mcp_servers,
         } = restored;
         let bootstrap = &preferences.bootstrap;
         let (fonts, display) = (&preferences.fonts, &preferences.display);
@@ -730,6 +843,12 @@ impl Stored {
                 agent_servers
                     .iter()
                     .map(|agent| (agent.id.to_owned(), StoredAgent::of(agent)))
+                    .collect()
+            }),
+            mcp_servers: (!mcp_servers.is_empty()).then(|| {
+                mcp_servers
+                    .iter()
+                    .map(|server| (server.name.clone(), StoredMcp::of(server)))
                     .collect()
             }),
             worktree_link: Some(bootstrap.link.clone()),

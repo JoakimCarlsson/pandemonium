@@ -349,6 +349,8 @@ pub struct App {
     language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
     agent_servers: Vec<pm_acp::Agent>,
+    /// The tool servers every agent is opened with.
+    mcp_servers: Vec<pm_acp::McpServer>,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
@@ -766,6 +768,7 @@ impl App {
             project_search_field: None,
             language_servers: restored.language_servers,
             agent_servers: restored.agent_servers,
+            mcp_servers: restored.mcp_servers,
             panes: PaneTree::default(),
             saved,
             shells,
@@ -2245,6 +2248,7 @@ impl App {
             window: self.window_state,
             language_servers: self.language_servers.clone(),
             agent_servers: self.agent_servers.clone(),
+            mcp_servers: self.mcp_servers.clone(),
         }
     }
 

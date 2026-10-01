@@ -14,6 +14,7 @@
 mod agent;
 mod attachment;
 mod limits;
+mod mcp;
 mod process;
 mod request;
 mod session;
@@ -23,6 +24,7 @@ mod update;
 pub use agent::{AGENTS, Agent, Source, agents, install};
 pub use attachment::Attachment;
 pub use limits::{Limits, Window};
+pub use mcp::{McpServer, Reach, install_mcp};
 pub use request::{Answer, Exit, Request, Run};
 pub use session::{Notify, Session};
 pub use update::{

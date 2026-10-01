@@ -84,6 +84,8 @@ pub struct Restored {
     pub language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
     pub agent_servers: Vec<pm_acp::Agent>,
+    /// The tool servers every agent is opened with.
+    pub mcp_servers: Vec<pm_acp::McpServer>,
 }
 
 /// The servers a reader configured for one language.
@@ -111,6 +113,7 @@ pub fn load() -> Restored {
         .map(Stored::into_restored)
         .unwrap_or_default();
     pm_acp::install(restored.agent_servers.clone());
+    pm_acp::install_mcp(restored.mcp_servers.clone());
     restored
 }
 
