@@ -85,6 +85,8 @@ pub(super) struct Stored {
     occurrence_highlight: Option<bool>,
     /// Whether a line is drawn at every step of indentation.
     indent_guides: Option<bool>,
+    /// Whether brackets are coloured by how many pairs they are inside.
+    bracket_pair_colorization: Option<bool>,
     /// Whether the lines the view is inside stay pinned above it.
     sticky_scroll: Option<bool>,
     /// Whether the scrollbars are drawn.
@@ -580,6 +582,9 @@ impl Stored {
                     .occurrence_highlight
                     .unwrap_or(defaults.display.occurrences),
                 indent_guides: self.indent_guides.unwrap_or(defaults.display.indent_guides),
+                bracket_colors: self
+                    .bracket_pair_colorization
+                    .unwrap_or(defaults.display.bracket_colors),
                 sticky_scroll: self.sticky_scroll.unwrap_or(defaults.display.sticky_scroll),
                 scrollbars: self.scrollbars.unwrap_or(defaults.display.scrollbars),
                 minimap: self.minimap.unwrap_or(defaults.display.minimap),
@@ -684,6 +689,7 @@ impl Stored {
             current_line_highlight: Some(display.current_line),
             occurrence_highlight: Some(display.occurrences),
             indent_guides: Some(display.indent_guides),
+            bracket_pair_colorization: Some(display.bracket_colors),
             sticky_scroll: Some(display.sticky_scroll),
             scrollbars: Some(display.scrollbars),
             minimap: Some(display.minimap),

@@ -74,6 +74,55 @@ const TAGS: [&str; 5] = [
     "jsx_closing_element",
 ];
 
+/// The brackets the grammars have tokens for.
+const BRACKETS: [&str; 6] = ["(", ")", "[", "]", "{", "}"];
+
+/// How many pairs of brackets each bracket token within `bytes` is inside.
+///
+/// A bracket of a string or a comment is part of that node's text and not a
+/// token of its own, so only the brackets that are code are found. A node
+/// that has an opening bracket among its children is a pair, and its
+/// brackets and everything inside are one level in from what holds it.
+fn bracket_depths(tree: &Tree, text: &Rope, bytes: Range<usize>) -> HashMap<(usize, usize), usize> {
+    let mut found = HashMap::new();
+    let mut cursor = tree.walk();
+    let mut stack: Vec<(usize, bool)> = Vec::new();
+    loop {
+        let node = cursor.node();
+        if node.start_byte() < bytes.end && node.end_byte() > bytes.start {
+            if node.child_count() > 0 {
+                let pair = (0..node.child_count()).any(|index| {
+                    node.child(index).is_some_and(|child| {
+                        !child.is_named() && ["(", "[", "{"].contains(&child.kind())
+                    })
+                });
+                let outer = stack
+                    .last()
+                    .map_or(0, |(outer, pair)| outer + usize::from(*pair));
+                stack.push((outer, pair));
+                if cursor.goto_first_child() {
+                    continue;
+                }
+                stack.pop();
+            } else if !node.is_named() && BRACKETS.contains(&node.kind()) {
+                let point = node.start_position();
+                let column = text.line(point.row).byte_to_char(point.column);
+                let depth = stack.last().map_or(0, |(outer, _)| *outer);
+                found.insert((point.row, column), depth);
+            }
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return found;
+            }
+            stack.pop();
+        }
+    }
+}
+
 /// The highlight query of every language compiled so far, by name.
 ///
 /// A query takes longer to compile than most files take to parse, so each
@@ -216,6 +265,8 @@ pub struct Highlights {
     /// The lines and columns of the characters a server said name something
     /// that can be assigned to again.
     mutable: BTreeSet<(usize, usize)>,
+    /// How many pairs of brackets each bracket is inside, by line and column.
+    depths: HashMap<(usize, usize), usize>,
 }
 
 impl Highlights {
@@ -250,6 +301,12 @@ impl Highlights {
                     .extend((from..to.min(row.len())).map(|column| (line, column)));
             }
         }
+    }
+
+    /// How many pairs of brackets the bracket at `line` and `column` is
+    /// inside, when the character is a bracket the grammar has a token for.
+    pub fn bracket_depth(&self, line: usize, column: usize) -> Option<usize> {
+        self.depths.get(&(line, column)).copied()
     }
 
     /// Whether the character at `line` and `column` is part of a name a
@@ -461,6 +518,34 @@ impl Syntax {
         (here.start <= byte && byte <= here.end).then_some((here, there))
     }
 
+    /// The name of the tag that opens at the `>` just before `byte`, as a
+    /// span of bytes, when one does and it is not closed on its own.
+    ///
+    /// A fragment has no name and comes to an empty span at `byte`.
+    pub fn open_tag_name_before(&self, byte: usize) -> Option<Range<usize>> {
+        let root = self.tree.as_ref()?.root_node();
+        let at = byte.checked_sub(1)?;
+        let closer = root.descendant_for_byte_range(at, at)?;
+        let tag = closer.parent()?;
+        if closer.kind() != ">" || tag.end_byte() != byte {
+            return None;
+        }
+        match tag.kind() {
+            "start_tag" => {
+                let mut cursor = tag.walk();
+                let name = tag
+                    .children(&mut cursor)
+                    .find(|child| child.kind() == "tag_name")?;
+                Some(name.byte_range())
+            }
+            "jsx_opening_element" => Some(
+                tag.child_by_field_name("name")
+                    .map_or(byte..byte, |name| name.byte_range()),
+            ),
+            _ => None,
+        }
+    }
+
     /// The highlights of `lines`, as one entry per character.
     pub fn highlights(&mut self, text: &Rope, lines: Range<usize>) -> Highlights {
         let Some(tree) = self.tree.as_ref() else {
@@ -477,6 +562,11 @@ impl Syntax {
                 .map(|line| vec![None; text.line(line).len_chars()])
                 .collect(),
             mutable: BTreeSet::new(),
+            depths: bracket_depths(
+                tree,
+                text,
+                text.line_to_byte(lines.start)..line_end_byte(text, last - 1),
+            ),
         };
 
         let mut cursor = QueryCursor::new();

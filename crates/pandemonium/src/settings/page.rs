@@ -431,6 +431,11 @@ fn section_rows(
                 "Wash every other place the word at the cursor appears",
             ),
             toggle(
+                Preference::BracketColors,
+                "Bracket Pair Colors",
+                "Colour brackets by how many pairs they are inside",
+            ),
+            toggle(
                 Preference::IndentGuides,
                 "Indent Guides",
                 "Draw a line at every step of indentation",

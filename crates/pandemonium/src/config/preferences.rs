@@ -150,6 +150,8 @@ pub enum Preference {
     Occurrences,
     /// Whether a line is drawn at every step of indentation.
     IndentGuides,
+    /// Whether brackets are coloured by how many pairs they are inside.
+    BracketColors,
     /// Whether the lines the view is inside stay pinned above it.
     StickyScroll,
     /// Whether the scrollbars are drawn.
@@ -411,6 +413,7 @@ flags! {
     CurrentLine => display.current_line,
     Occurrences => display.occurrences,
     IndentGuides => display.indent_guides,
+    BracketColors => display.bracket_colors,
     StickyScroll => display.sticky_scroll,
     Scrollbars => display.scrollbars,
     Minimap => display.minimap,
@@ -466,6 +469,7 @@ fields! {
     CurrentLine => display.current_line,
     Occurrences => display.occurrences,
     IndentGuides => display.indent_guides,
+    BracketColors => display.bracket_colors,
     StickyScroll => display.sticky_scroll,
     Scrollbars => display.scrollbars,
     Minimap => display.minimap,

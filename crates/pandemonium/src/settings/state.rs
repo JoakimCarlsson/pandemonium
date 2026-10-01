@@ -164,6 +164,7 @@ impl SettingsSection {
                 Preference::CurrentLine,
                 Preference::Occurrences,
                 Preference::IndentGuides,
+                Preference::BracketColors,
                 Preference::WrapGuide,
             ],
             Self::Display => &[

@@ -69,6 +69,9 @@ pub struct Buffer {
     semantics: Vec<Semantic>,
     /// How many lines past its first the longest of those names runs on.
     semantic_reach: usize,
+    /// Where the other tag of the element the cursor is in the name of is,
+    /// kept in step with the text while its name is being changed.
+    twin: Option<Range<Position>>,
     /// Where the symbol at the cursor is used, and the version it was found in.
     uses: (i32, Vec<Range<Position>>),
     /// The notes a server puts above the file's declarations.
@@ -124,6 +127,7 @@ impl Buffer {
             hints: Vec::new(),
             semantics: Vec::new(),
             semantic_reach: 0,
+            twin: None,
             uses: (-1, Vec::new()),
             lenses: Vec::new(),
             memo: Memo::default(),

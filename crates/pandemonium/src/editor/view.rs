@@ -998,6 +998,11 @@ impl<M> BufferView<M> {
                 Some(highlight) => tint(highlight, painting.theme),
                 None => painting.theme.colors.text,
             };
+            if self.display.bracket_colors
+                && let Some(depth) = painting.highlights.bracket_depth(line, index)
+            {
+                color = bracket_color(painting.theme, depth);
+            }
             let at = Position::new(line, index);
             if painting.diagnostics.iter().any(|diagnostic| {
                 diagnostic.unnecessary
@@ -2036,6 +2041,16 @@ fn conflicts_of(file: &OpenFile, buffer: &Buffer) -> Rc<[Conflict]> {
         }
         conflicts
     })
+}
+
+/// The colour of a bracket inside `depth` pairs, which goes round three
+/// colours of the theme as the pairs nest.
+fn bracket_color(theme: &Theme, depth: usize) -> Rgba {
+    [
+        theme.syntax.type_name,
+        theme.syntax.keyword,
+        theme.syntax.function,
+    ][depth % 3]
 }
 
 /// The colour `highlight` is drawn in.
