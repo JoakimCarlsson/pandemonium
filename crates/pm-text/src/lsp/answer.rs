@@ -173,7 +173,7 @@ pub(super) struct Asking<'a> {
 impl Request {
     /// The method a server registers to answer this, and states it answers
     /// in its answer to the handshake.
-    fn capability(&self) -> &'static str {
+    pub(super) fn capability(&self) -> &'static str {
         match self {
             Self::Definition => "textDocument/definition",
             Self::TypeDefinition => "textDocument/typeDefinition",

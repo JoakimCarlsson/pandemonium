@@ -16,6 +16,7 @@
 mod answer;
 mod capabilities;
 mod client;
+mod database;
 mod encoding;
 mod log;
 mod outbox;
