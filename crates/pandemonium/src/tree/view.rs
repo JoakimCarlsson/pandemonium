@@ -257,6 +257,7 @@ fn file_row(theme: &Theme, listing: &Listing<'_>, row: &Row<'_>) -> Div<Message>
         .dropping
         .is_some_and(|target| target != listing.tree.root() && path.starts_with(target));
     let status = listing.review.and_then(|review| review.mark(path));
+    let ignored = listing.review.is_some_and(|review| review.is_ignored(path));
     let chevron = match (directory, row.expanded) {
         (false, _) => None,
         (true, true) => Some(IconName::ChevronDown),
@@ -307,7 +308,7 @@ fn file_row(theme: &Theme, listing: &Listing<'_>, row: &Row<'_>) -> Div<Message>
         .child(v_flex().w(1))
         .child(
             h_flex().flex_1().overflow_hidden().child(
-                text(entry.name().to_owned()).color(name_color(theme, status, directory, cut)),
+                text(entry.name().to_owned()).color(name_color(theme, status, ignored, cut)),
             ),
         )
         .when_some(status, |line, status| {
@@ -324,16 +325,11 @@ fn file_row(theme: &Theme, listing: &Listing<'_>, row: &Row<'_>) -> Div<Message>
 }
 
 /// The colour a row's name is written in.
-fn name_color(
-    theme: &Theme,
-    status: Option<FileStatus>,
-    directory: bool,
-    cut: bool,
-) -> pm_gfx::Rgba {
-    match (cut, status, directory) {
+fn name_color(theme: &Theme, status: Option<FileStatus>, ignored: bool, cut: bool) -> pm_gfx::Rgba {
+    match (cut, status, ignored) {
         (true, _, _) => theme.colors.text_subtle,
         (false, Some(status), _) => status_color(theme, status),
-        (false, None, true) => theme.colors.text,
-        (false, None, false) => theme.colors.text_muted,
+        (false, None, true) => theme.colors.text_muted,
+        (false, None, false) => theme.colors.text,
     }
 }

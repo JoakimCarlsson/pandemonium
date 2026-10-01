@@ -59,13 +59,12 @@ impl App {
     /// Brings the tree, the documents, the servers and the review of `scope`,
     /// whose worktree sits at `root`, up to what `disk` says happened.
     fn follow_disk(&mut self, scope: Scope, root: &std::path::Path, disk: &Disk) {
-        if let Some(tree) = self.files.get_mut(&scope)
-            && disk.touched.iter().any(|touched| {
-                !touched.ignored
-                    && touched.touch != Touch::Changed
-                    && tree.lists_beside(&touched.path)
-            })
-        {
+        let tree_changed = self.files.get(&scope).is_some_and(|tree| {
+            disk.touched
+                .iter()
+                .any(|touched| touched.touch != Touch::Changed && tree.lists_beside(&touched.path))
+        });
+        if tree_changed && let Some(tree) = self.files.get_mut(&scope) {
             tree.reload();
         }
 
@@ -87,7 +86,12 @@ impl App {
             return;
         }
         self.editor.watched(root, &followed);
-        if disk.touched.iter().any(|touched| !touched.ignored) {
+        if tree_changed
+            || disk.touched.iter().any(|touched| {
+                !touched.ignored
+                    || touched.path.file_name() == Some(std::ffi::OsStr::new(".gitignore"))
+            })
+        {
             self.reread_review_later(scope);
         }
     }
