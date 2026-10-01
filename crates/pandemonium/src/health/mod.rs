@@ -2,6 +2,8 @@
 
 mod store;
 
+use pm_ui::Styled;
+
 pub use store::Checks;
 
 /// What checks and language server errors say about a worktree.
@@ -19,14 +21,17 @@ pub enum Health {
 }
 
 impl Health {
-    /// Draws the same themed badge wherever worktree health is listed.
-    pub fn badge<M: 'static>(self, theme: &pm_ui::Theme, detail: &str) -> pm_ui::Div<M> {
+    /// Draws running and failing badges, reserving their space for quiet states.
+    pub fn badge<M: Clone + 'static>(self, theme: &pm_ui::Theme, detail: &str) -> pm_ui::Div<M> {
         let status = match self {
-            Self::Unknown => None,
+            Self::Unknown | Self::Passing => None,
             Self::Running => Some((pm_ui::IconName::LoadCircle, theme.colors.text_subtle)),
-            Self::Passing => Some((pm_ui::IconName::Check, theme.colors.success)),
             Self::Failing => Some((pm_ui::IconName::Close, theme.colors.danger)),
         };
-        pm_ui::icon_badge(status, detail)
+        pm_ui::icon_badge(status, detail).children(status.is_none().then(|| {
+            pm_ui::h_flex()
+                .w_px(pm_ui::IconSize::Small.pixels())
+                .h_px(pm_ui::IconSize::Small.pixels())
+        }))
     }
 }
