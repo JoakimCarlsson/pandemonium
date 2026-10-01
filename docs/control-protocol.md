@@ -37,7 +37,7 @@ method takes no arguments. The response echoes the `id` and contains exactly
 one of `result` or `error`:
 
 ```json
-{"version":1,"id":1,"result":{"protocol":1,"methods":["system.hello","control.execute","state.snapshot","state.watch","agent.transcript","agent.catalog","agent.start","agent.detail","agent.send","agent.cancel","agent.answer","agent.mode.set","agent.knob.set","agent.history.list","agent.history.load","agent.login","agent.terminal"]}}
+{"version":1,"id":1,"result":{"protocol":1,"methods":["system.hello","control.execute","state.snapshot","state.watch","agent.transcript","agent.catalog","agent.start","agent.detail","agent.send","agent.image.upload","agent.cancel","agent.answer","agent.mode.set","agent.knob.set","agent.history.list","agent.history.load","agent.login","agent.login.read","agent.login.write","agent.terminal"]}}
 ```
 
 ```json
@@ -149,29 +149,55 @@ result fields; failures use the standard error envelope.
 | `agent.catalog` | none | `agents`: offered IDs, names, install and start status |
 | `agent.start` | `project_id`, optional `session_id`, `agent` ID | `id`, `project_id`, `session_id` |
 | `agent.detail` | `id` | readiness, standing, pending permission requests, modes, knobs, login methods, history, usage |
-| `agent.send` | `id`, exact `text`, optional `files` array | `sent`, `id` |
+| `agent.send` | `id`, exact `text`, optional `files` paths and uploaded `images` IDs | `sent`, `id` |
+| `agent.image.upload` | `id`, client-chosen numeric `image`, `mime_type`, optional `name`, base64 chunk `data`, boolean `finish` | `image`, `complete`, decoded `bytes` received |
 | `agent.cancel` | `id` | `cancelled` |
 | `agent.answer` | `id`, numeric `request_id`, string `choice_id` or `null` to refuse | `answered` |
 | `agent.mode.set` | `id`, offered `mode` ID | `selected` |
 | `agent.knob.set` | `id`, offered `knob` ID, `value` (pick ID string or switch boolean) | `set` |
 | `agent.history.list` | `id` | `listing`; watch state, then read `agent.detail` for entries |
 | `agent.history.load` | `id`, offered saved conversation `saved` ID | conversation `id` |
-| `agent.login` | `id`, offered login `method` ID | `started` for direct login methods |
+| `agent.login` | `id`, offered login `method` ID | `started`, `terminal` boolean |
+| `agent.login.read` | `id` | login terminal `text` and `running` boolean |
+| `agent.login.write` | `id`, exact UTF-8 `input` | `written` |
 | `agent.terminal` | `id`, ACP tool `terminal` ID | `tail` text |
 
 `agent.send` preserves text, including line breaks, and leaves any desktop
 prompt draft alone. Its `files` are paths relative to the conversation's
 worktree that already exist on the desktop machine; paths outside that
 worktree are rejected. An empty `text` is allowed when files are present.
+An empty `text` is also allowed when uploaded images are present. Images require
+`can_image: true` in `agent.detail`; the agent receives them as ACP image
+content blocks. Image IDs are scoped to one conversation and consumed by a
+successful `agent.send`.
 After sending, use `state.watch`, then `agent.transcript` when its revision
 changes. `agent.answer` uses the request and choice IDs from `agent.detail`;
 omitting `choice_id` or passing `null` refuses the request.
 
+Upload each image in base64 chunks of at most 60,000 characters. Each chunk is
+encoded separately; repeat `id`, `image`, `mime_type`, and `name` on every
+request. Set `finish: true` on the last chunk. Supported MIME types are
+`image/png`, `image/jpeg`, `image/gif`, and `image/webp`; the bytes must match.
+An image may contain at most 12 MiB of decoded data. At most four pending
+images per conversation and 48 MiB across the editor are retained. For example:
+
+```json
+{"version":1,"id":3,"method":"agent.image.upload","params":{"id":0,"image":1,"mime_type":"image/png","name":"photo.png","data":"<base64 chunk>","finish":true}}
+{"version":1,"id":4,"method":"agent.send","params":{"id":0,"text":"What is in this picture?","images":[1]}}
+```
+
 `agent.detail` reports each knob as either `{"kind":"picked","value":"...",
 "picks":[...]}` or `{"kind":"switched","value":true}`. Mode and knob
 changes follow the desktop's saved agent preferences. Saved conversation
-listing is asynchronous. A login method marked `terminal` in `agent.detail`
-requires the desktop terminal; v1 does not relay terminal login input.
+listing is asynchronous. For a login method marked `terminal` in `agent.detail`,
+call `agent.login`, then `agent.login.read` to display its terminal output and
+`agent.login.write` to send input. Input is written as exact UTF-8 bytes; append
+`\r` to press Enter. Repeat `agent.login.read` after `state.watch` reports a
+change. The read result contains the last 32,000 bytes of terminal screen and
+scrollback text. Once the login process exits, the editor restarts the agent
+after a successful exit or records a failure in its transcript. Terminal login
+may also require opening a URL or confirming a browser flow outside the app.
+The mobile client should avoid keeping login input in its own logs.
 
 ## Current scope
 
@@ -179,4 +205,4 @@ Version 1 provides typed ACP conversation controls, structured state and
 transcripts, a change wait, and the terminal command surface for project and
 worktree actions. It does not expose every desktop pane or editor operation.
 Native clients can build a mobile conversation UI without creating worktree
-sessions. Picture transfer and terminal login input require future methods.
+sessions, including image prompts and interactive terminal login.

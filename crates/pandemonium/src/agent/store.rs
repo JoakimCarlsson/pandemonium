@@ -986,10 +986,15 @@ impl Talk {
 
     /// Sends text and local files without changing the desktop prompt draft.
     pub fn send_text_with_files(&mut self, text: &str, files: Vec<PathBuf>) {
-        if text.trim().is_empty() && files.is_empty() {
+        let attachments = files.into_iter().map(Attachment::File).collect::<Vec<_>>();
+        self.send_text_with_attachments(text, attachments);
+    }
+
+    /// Sends text and prepared attachments without changing the desktop draft.
+    pub fn send_text_with_attachments(&mut self, text: &str, attachments: Vec<Attachment>) {
+        if text.trim().is_empty() && attachments.is_empty() {
             return;
         }
-        let attachments = files.into_iter().map(Attachment::File).collect::<Vec<_>>();
         let labels = attachments
             .iter()
             .map(Attachment::label)

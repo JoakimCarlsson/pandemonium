@@ -502,6 +502,8 @@ pub struct App {
     /// The logins running in terminals, as the conversation each is for and
     /// the worktree and shell it runs as.
     logins: Vec<(crate::agent::TalkId, Scope, crate::terminal::ShellId)>,
+    /// Image chunks uploaded by control clients for pending ACP prompts.
+    control_images: BTreeMap<(crate::agent::TalkId, u64), control_agent::ControlImage>,
     /// What the reader is being told about in the status bar.
     notices: Notices,
     /// Servers already offered or tried this launch.
@@ -867,6 +869,7 @@ impl App {
             task_errors: std::collections::BTreeSet::new(),
             errands: client::Errands::default(),
             logins: Vec::new(),
+            control_images: BTreeMap::new(),
             notices,
             offered_servers: BTreeSet::new(),
             installing_servers: BTreeMap::new(),

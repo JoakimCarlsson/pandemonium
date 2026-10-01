@@ -83,6 +83,16 @@ pub enum AgentOperation {
         id: u64,
         text: String,
         files: Vec<String>,
+        images: Vec<u64>,
+    },
+    /// Upload one base64 image chunk for a later prompt.
+    UploadImage {
+        id: u64,
+        image: u64,
+        mime_type: String,
+        name: Option<String>,
+        data: String,
+        finish: bool,
     },
     /// Cancel the running turn.
     Cancel(u64),
@@ -102,6 +112,10 @@ pub enum AgentOperation {
     LoadHistory { id: u64, saved: String },
     /// Start an offered login method.
     Login { id: u64, method: String },
+    /// Read a running login terminal.
+    LoginRead(u64),
+    /// Write bytes to a running login terminal.
+    LoginWrite { id: u64, input: String },
     /// Read a terminal stream produced by an ACP tool call.
     Terminal { id: u64, terminal: String },
 }
@@ -312,7 +326,7 @@ mod unix {
         if request.method == "system.hello" {
             return Ok(json!({
                 "protocol": VERSION,
-                "methods": ["system.hello", "control.execute", "state.snapshot", "state.watch", "agent.transcript", "agent.catalog", "agent.start", "agent.detail", "agent.send", "agent.cancel", "agent.answer", "agent.mode.set", "agent.knob.set", "agent.history.list", "agent.history.load", "agent.login", "agent.terminal"]
+                "methods": ["system.hello", "control.execute", "state.snapshot", "state.watch", "agent.transcript", "agent.catalog", "agent.start", "agent.detail", "agent.send", "agent.image.upload", "agent.cancel", "agent.answer", "agent.mode.set", "agent.knob.set", "agent.history.list", "agent.history.load", "agent.login", "agent.login.read", "agent.login.write", "agent.terminal"]
             }));
         }
         if request.method == "state.watch" {
@@ -363,6 +377,19 @@ mod unix {
                 id: number(&request.params, "id")?,
                 text: string(&request.params, "text")?.to_owned(),
                 files: strings(&request.params, "files")?,
+                images: numbers(&request.params, "images")?,
+            }),
+            "agent.image.upload" => Operation::Agent(AgentOperation::UploadImage {
+                id: number(&request.params, "id")?,
+                image: number(&request.params, "image")?,
+                mime_type: string(&request.params, "mime_type")?.to_owned(),
+                name: optional_string(&request.params, "name")?,
+                data: string(&request.params, "data")?.to_owned(),
+                finish: request
+                    .params
+                    .get("finish")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| invalid("finish must be a boolean"))?,
             }),
             "agent.cancel" => {
                 Operation::Agent(AgentOperation::Cancel(number(&request.params, "id")?))
@@ -395,6 +422,13 @@ mod unix {
             "agent.login" => Operation::Agent(AgentOperation::Login {
                 id: number(&request.params, "id")?,
                 method: string(&request.params, "method")?.to_owned(),
+            }),
+            "agent.login.read" => {
+                Operation::Agent(AgentOperation::LoginRead(number(&request.params, "id")?))
+            }
+            "agent.login.write" => Operation::Agent(AgentOperation::LoginWrite {
+                id: number(&request.params, "id")?,
+                input: string(&request.params, "input")?.to_owned(),
             }),
             "agent.terminal" => Operation::Agent(AgentOperation::Terminal {
                 id: number(&request.params, "id")?,
@@ -473,6 +507,24 @@ mod unix {
                 })
                 .collect(),
             _ => Err(invalid(&format!("{name} must be an array of strings"))),
+        }
+    }
+
+    /// Reads an optional array of unsigned integers.
+    fn numbers(params: &Value, name: &str) -> Result<Vec<u64>, WireError> {
+        match params.get(name) {
+            None => Ok(Vec::new()),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| {
+                    item.as_u64().ok_or_else(|| {
+                        invalid(&format!("{name} must contain only unsigned integers"))
+                    })
+                })
+                .collect(),
+            _ => Err(invalid(&format!(
+                "{name} must be an array of unsigned integers"
+            ))),
         }
     }
 

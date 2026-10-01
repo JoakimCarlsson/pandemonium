@@ -2,7 +2,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use pm_acp::{Agent, Setting, Way};
+use base64::Engine;
+use pm_acp::{Agent, Attachment, Setting, Way};
 use pm_core::{Project, Session, SessionId};
 use serde_json::{Value, json};
 
@@ -10,6 +11,24 @@ use crate::agent::{Talk, TalkId};
 use crate::app::App;
 use crate::control::AgentOperation;
 use crate::message::Message;
+
+/// An image being transferred through bounded control requests.
+pub(super) struct ControlImage {
+    /// Image MIME type advertised by the client.
+    mime_type: String,
+    /// Optional display name for the attachment.
+    name: Option<String>,
+    /// Decoded image content accumulated from chunks.
+    data: Vec<u8>,
+    /// Whether the last chunk has been received and validated.
+    complete: bool,
+}
+
+/// Maximum decoded bytes kept for one uploaded image.
+const MAX_IMAGE_DATA: usize = 12 * 1024 * 1024;
+
+/// Maximum decoded image bytes retained across all pending uploads.
+const MAX_PENDING_IMAGE_DATA: usize = 48 * 1024 * 1024;
 
 impl App {
     /// Applies a typed ACP request to the running editor.
@@ -32,7 +51,20 @@ impl App {
                 agent,
             } => self.control_start_agent(project, session, &agent),
             AgentOperation::Detail(id) => self.control_agent_detail(id),
-            AgentOperation::Send { id, text, files } => self.control_send_agent(id, &text, &files),
+            AgentOperation::Send {
+                id,
+                text,
+                files,
+                images,
+            } => self.control_send_agent(id, &text, &files, &images),
+            AgentOperation::UploadImage {
+                id,
+                image,
+                mime_type,
+                name,
+                data,
+                finish,
+            } => self.control_upload_image(id, image, &mime_type, name, &data, finish),
             AgentOperation::Cancel(id) => {
                 let id = self.control_talk_id(id)?;
                 let talk = self
@@ -59,6 +91,8 @@ impl App {
                 self.control_load_agent_history(id, &saved)
             }
             AgentOperation::Login { id, method } => self.control_login_agent(id, &method),
+            AgentOperation::LoginRead(id) => self.control_read_login(id),
+            AgentOperation::LoginWrite { id, input } => self.control_write_login(id, &input),
             AgentOperation::Terminal { id, terminal } => {
                 let id = self.control_talk_id(id)?;
                 let talk = self
@@ -217,6 +251,7 @@ impl App {
         id: u64,
         text: &str,
         files: &[String],
+        images: &[u64],
     ) -> Result<Value, String> {
         let id = self.control_talk_id(id)?;
         let talk = self
@@ -226,7 +261,7 @@ impl App {
         if !talk.is_ready() || talk.is_busy() {
             return Err("agent is not ready for a prompt".to_owned());
         }
-        if text.trim().is_empty() && files.is_empty() {
+        if text.trim().is_empty() && files.is_empty() && images.is_empty() {
             return Err("prompt is empty".to_owned());
         }
         let root = talk
@@ -249,17 +284,120 @@ impl App {
             if !path.starts_with(&root) || !path.is_file() {
                 return Err("attached file is outside the worktree or is not a file".to_owned());
             }
-            attachments.push(path);
+            attachments.push(Attachment::File(path));
+        }
+        if !images.is_empty() && !talk.can_image() {
+            return Err("agent does not accept image prompts".to_owned());
+        }
+        for image in images {
+            let uploaded = self
+                .control_images
+                .get(&(id, *image))
+                .ok_or_else(|| "image upload unavailable".to_owned())?;
+            if !uploaded.complete {
+                return Err("image upload is incomplete".to_owned());
+            }
+            attachments.push(Attachment::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(&uploaded.data),
+                mime_type: uploaded.mime_type.clone(),
+                name: uploaded.name.clone(),
+            });
         }
         let scope = talk.scope();
         let talk = self
             .agents
             .get_mut(id)
             .ok_or_else(|| "agent unavailable".to_owned())?;
-        talk.send_text_with_files(text, attachments);
+        talk.send_text_with_attachments(text, attachments);
+        for image in images {
+            self.control_images.remove(&(id, *image));
+        }
         self.checks.reset(scope);
         self.follow_agents();
         Ok(json!({ "sent": true, "id": id.number() }))
+    }
+
+    /// Appends a bounded base64 chunk to a conversation's pending image.
+    fn control_upload_image(
+        &mut self,
+        id: u64,
+        image: u64,
+        mime_type: &str,
+        name: Option<String>,
+        data: &str,
+        finish: bool,
+    ) -> Result<Value, String> {
+        let id = self.control_talk_id(id)?;
+        let talk = self
+            .agents
+            .get(id)
+            .ok_or_else(|| "agent unavailable".to_owned())?;
+        if !talk.can_image() {
+            return Err("agent does not accept image prompts".to_owned());
+        }
+        let format = match mime_type {
+            "image/png" => image::ImageFormat::Png,
+            "image/jpeg" => image::ImageFormat::Jpeg,
+            "image/gif" => image::ImageFormat::Gif,
+            "image/webp" => image::ImageFormat::WebP,
+            _ => return Err("unsupported image MIME type".to_owned()),
+        };
+        if data.len() > 60_000 || !data.len().is_multiple_of(4) {
+            return Err("image chunk must be base64 and fit within 60000 bytes".to_owned());
+        }
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|_| "invalid base64 image chunk".to_owned())?;
+        if decoded.is_empty() {
+            return Err("image chunk is empty".to_owned());
+        }
+        let key = (id, image);
+        if !self.control_images.contains_key(&key)
+            && self
+                .control_images
+                .keys()
+                .filter(|(held, _)| *held == id)
+                .count()
+                >= 4
+        {
+            return Err("too many pending image uploads".to_owned());
+        }
+        if self
+            .control_images
+            .values()
+            .map(|held| held.data.len())
+            .sum::<usize>()
+            .saturating_add(decoded.len())
+            > MAX_PENDING_IMAGE_DATA
+        {
+            return Err("pending image uploads exceed 48 MiB".to_owned());
+        }
+        let uploaded = self
+            .control_images
+            .entry(key)
+            .or_insert_with(|| ControlImage {
+                mime_type: mime_type.to_owned(),
+                name: name.clone(),
+                data: Vec::new(),
+                complete: false,
+            });
+        if uploaded.complete || uploaded.mime_type != mime_type || uploaded.name != name {
+            return Err("image upload metadata changed or upload is complete".to_owned());
+        }
+        if uploaded.data.len().saturating_add(decoded.len()) > MAX_IMAGE_DATA {
+            self.control_images.remove(&key);
+            return Err("image exceeds 12 MiB limit".to_owned());
+        }
+        uploaded.data.extend_from_slice(&decoded);
+        if finish {
+            if image::guess_format(&uploaded.data).map_err(|_| "unrecognized image".to_owned())?
+                != format
+            {
+                return Err("image bytes do not match MIME type".to_owned());
+            }
+            uploaded.complete = true;
+        }
+        Ok(json!({ "image": image, "complete": uploaded.complete, "bytes": uploaded.data.len() }))
     }
 
     /// Answers a permission request by its ticket and offered choice identity.
@@ -376,7 +514,7 @@ impl App {
         Ok(json!({ "id": opened.number() }))
     }
 
-    /// Starts an offered direct login method for an agent.
+    /// Starts an offered login method through the existing desktop seam.
     fn control_login_agent(&mut self, id: u64, method: &str) -> Result<Value, String> {
         let id = self.control_talk_id(id)?;
         let talk = self
@@ -388,16 +526,58 @@ impl App {
             .iter()
             .find(|login| login.id == method)
             .ok_or_else(|| "login method unavailable".to_owned())?;
-        if !matches!(offered.way, Way::Asked) {
-            return Err("terminal login requires the desktop terminal".to_owned());
-        }
+        let terminal = matches!(offered.way, Way::Terminal { .. });
         let place = talk
             .logins()
             .iter()
             .position(|login| login.id == method)
             .ok_or_else(|| "login method unavailable".to_owned())?;
         self.log_in_agent(id, place);
-        Ok(json!({ "started": true }))
+        if terminal && !self.logins.iter().any(|(held, _, _)| *held == id) {
+            return Err("terminal login could not start".to_owned());
+        }
+        Ok(json!({ "started": true, "terminal": terminal }))
+    }
+
+    /// Reads the current screen and scrollback of a conversation's login.
+    fn control_read_login(&self, id: u64) -> Result<Value, String> {
+        let id = self.control_talk_id(id)?;
+        let (_, scope, shell) = self
+            .logins
+            .iter()
+            .find(|(held, _, _)| *held == id)
+            .ok_or_else(|| "login terminal unavailable".to_owned())?;
+        let shell = self
+            .terminals
+            .get(*scope, *shell)
+            .ok_or_else(|| "login terminal unavailable".to_owned())?;
+        let mut shell = shell.borrow_mut();
+        let text = shell.text();
+        let mut start = text.len().saturating_sub(32_000);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        Ok(json!({ "text": &text[start..], "running": shell.is_running() }))
+    }
+
+    /// Writes exact UTF-8 bytes to a conversation's running login terminal.
+    fn control_write_login(&mut self, id: u64, input: &str) -> Result<Value, String> {
+        let id = self.control_talk_id(id)?;
+        let (_, scope, shell) = self
+            .logins
+            .iter()
+            .find(|(held, _, _)| *held == id)
+            .ok_or_else(|| "login terminal unavailable".to_owned())?;
+        let shell = self
+            .terminals
+            .get(*scope, *shell)
+            .ok_or_else(|| "login terminal unavailable".to_owned())?;
+        let mut shell = shell.borrow_mut();
+        if !shell.is_running() {
+            return Err("login terminal has exited".to_owned());
+        }
+        shell.send(input.as_bytes());
+        Ok(json!({ "written": true }))
     }
 
     /// Finds a running conversation by its identity within this window.
