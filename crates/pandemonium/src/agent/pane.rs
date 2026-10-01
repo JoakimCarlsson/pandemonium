@@ -14,9 +14,10 @@
 use std::cell::Ref;
 use std::ops::Range;
 use std::path::Path;
+use std::time::SystemTime;
 
 use pm_acp::{
-    About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
+    About, Ask, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
 };
 use pm_gfx::{Image, Rgba};
 use pm_text::{Highlight, Language};
@@ -1700,6 +1701,9 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
             )
         })
         .child(h_flex().flex_1())
+        .when_some(talk.limits(), |bar, limits| {
+            bar.child(limited(theme, limits))
+        })
         .when_some(talk.usage(), |bar, usage| {
             bar.child(text(used(usage)).text_xs().color(theme.colors.text_subtle))
         })
@@ -1719,6 +1723,78 @@ fn used(usage: &Usage) -> String {
         Some(cost) => format!("{filled} · {:.2} {}", cost.amount, cost.currency),
         None => filled,
     }
+}
+
+/// The share used below which a window reads as plenty left.
+const COMFORTABLE: f64 = 50.0;
+
+/// The share used past which a window turns from warning towards danger.
+const NEARING: f64 = 80.0;
+
+/// Builds what the header says of the plan's rate limits: the plan, then
+/// each window with how much of it is used, coloured by how near the limit
+/// it is, and how long until it starts over.
+fn limited(theme: &Theme, limits: &Limits) -> Div<Message> {
+    let plan = limits
+        .plan
+        .iter()
+        .map(|plan| h_flex().child(text(plan.clone()).text_xs().color(theme.colors.text_muted)));
+    let windows = limits.windows.iter().map(|window| {
+        h_flex()
+            .gap(0.5)
+            .items_center()
+            .child(
+                text(window.label.clone())
+                    .text_xs()
+                    .color(theme.colors.text_muted),
+            )
+            .child(
+                text(format!("{:.0}%", window.used))
+                    .text_xs()
+                    .color(heat(theme, window.used)),
+            )
+            .when_some(window.resets.and_then(until), |row, left| {
+                row.child(
+                    text(format!("resets in {left}"))
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                )
+            })
+    });
+    h_flex()
+        .gap(1.25)
+        .items_center()
+        .children(plan.chain(windows).collect::<Vec<_>>())
+}
+
+/// The colour a window `used` percent through is drawn in: success while
+/// there is plenty left, fading through warning to danger as it fills.
+fn heat(theme: &Theme, used: f64) -> Rgba {
+    let colors = &theme.colors;
+    match used {
+        used if used < COMFORTABLE => colors.success,
+        used if used < NEARING => colors.success.mix(
+            colors.warning,
+            ((used - COMFORTABLE) / (NEARING - COMFORTABLE)) as f32,
+        ),
+        used => colors.warning.mix(
+            colors.danger,
+            (((used - NEARING) / (100.0 - NEARING)) as f32).min(1.0),
+        ),
+    }
+}
+
+/// How long until `moment`, to the largest two units that say it, where it
+/// is still to come.
+fn until(moment: SystemTime) -> Option<String> {
+    let minutes = moment.duration_since(SystemTime::now()).ok()?.as_secs() / 60;
+    Some(
+        match (minutes / (24 * 60), minutes / 60 % 24, minutes % 60) {
+            (0, 0, minutes) => format!("{minutes}m"),
+            (0, hours, minutes) => format!("{hours}h {minutes}m"),
+            (days, hours, _) => format!("{days}d {hours}h"),
+        },
+    )
 }
 
 /// `count` in thousands once it runs to them, as `53k`.

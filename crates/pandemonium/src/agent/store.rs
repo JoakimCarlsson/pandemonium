@@ -28,8 +28,8 @@ use crate::agent::transcript::Transcript;
 use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Method, Mode, Notify,
-    Request, Session, Setting, Stop, Usage, Voice,
+    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Limits, Method, Mode,
+    Notify, Request, Session, Setting, Stop, Usage, Voice,
 };
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_gfx::Point;
@@ -159,6 +159,9 @@ pub struct Talk {
     /// How much of the model's context the conversation fills, where the
     /// agent says.
     usage: Option<Usage>,
+    /// How much of the plan's rate limits is used, where the agent has a
+    /// source for them.
+    limits: Option<Limits>,
     /// How far down the conversation the pane is scrolled, in logical pixels.
     scroll: f32,
     /// Where the conversation was last drawn, which is how much of it a
@@ -704,6 +707,12 @@ impl Talk {
         self.usage.as_ref()
     }
 
+    /// How much of the plan's rate limits is used, where the agent has a
+    /// source for them.
+    pub fn limits(&self) -> Option<&Limits> {
+        self.limits.as_ref()
+    }
+
     /// The modes the agent takes, in the order it offered them.
     ///
     /// An agent says what its modes are when the conversation opens, and an
@@ -1043,6 +1052,7 @@ impl Talk {
             Event::Knobs(_) => {}
             Event::Titled(title) => self.title = Some(title).filter(|title| !title.is_empty()),
             Event::Used(usage) => self.usage = Some(usage),
+            Event::Limited(limits) => self.limits = Some(limits),
             Event::Asked(ask) => self.asks.push(ask),
             Event::Requested(..) => {}
             Event::Stopped(stop) => {
@@ -1398,6 +1408,7 @@ impl Talks {
                 mode: None,
                 title: None,
                 usage: None,
+                limits: None,
                 scroll: 0.0,
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
