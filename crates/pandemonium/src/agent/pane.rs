@@ -14,9 +14,10 @@
 use std::cell::Ref;
 use std::ops::Range;
 use std::path::Path;
+use std::time::SystemTime;
 
 use pm_acp::{
-    About, Ask, Kind, Knob, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
+    About, Ask, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
 };
 use pm_gfx::{Image, Rgba};
 use pm_text::{Highlight, Language};
@@ -1700,6 +1701,13 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
             )
         })
         .child(h_flex().flex_1())
+        .when_some(talk.limits(), |bar, limits| {
+            bar.child(
+                text(limited(limits))
+                    .text_xs()
+                    .color(theme.colors.text_subtle),
+            )
+        })
         .when_some(talk.usage(), |bar, usage| {
             bar.child(text(used(usage)).text_xs().color(theme.colors.text_subtle))
         })
@@ -1719,6 +1727,37 @@ fn used(usage: &Usage) -> String {
         Some(cost) => format!("{filled} · {:.2} {}", cost.amount, cost.currency),
         None => filled,
     }
+}
+
+/// What the header says of the plan's rate limits: the plan, then each
+/// window with how much of it is used and how long until it starts over.
+fn limited(limits: &Limits) -> String {
+    limits
+        .plan
+        .iter()
+        .cloned()
+        .chain(limits.windows.iter().map(|window| {
+            let used = format!("{} {:.0}%", window.label, window.used);
+            match window.resets.and_then(until) {
+                Some(left) => format!("{used} (resets in {left})"),
+                None => used,
+            }
+        }))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// How long until `moment`, to the largest two units that say it, where it
+/// is still to come.
+fn until(moment: SystemTime) -> Option<String> {
+    let minutes = moment.duration_since(SystemTime::now()).ok()?.as_secs() / 60;
+    Some(
+        match (minutes / (24 * 60), minutes / 60 % 24, minutes % 60) {
+            (0, 0, minutes) => format!("{minutes}m"),
+            (0, hours, minutes) => format!("{hours}h {minutes}m"),
+            (days, hours, _) => format!("{days}d {hours}h"),
+        },
+    )
 }
 
 /// `count` in thousands once it runs to them, as `53k`.

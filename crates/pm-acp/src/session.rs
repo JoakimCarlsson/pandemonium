@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 
 use crate::agent::Agent;
 use crate::attachment::Attachment;
+use crate::limits::Meter;
 use crate::process::{self, Containment};
 use crate::request::{self, Answer, Request, Shape};
 use crate::transport;
@@ -85,6 +86,8 @@ enum Sent {
     Mode(Option<String>),
     /// A knob being set, from the knobs as they stood before it.
     Knob(Vec<Knob>),
+    /// The agent's own request for its plan's limits.
+    Limits,
 }
 
 /// A request of the agent's that the window has yet to answer.
@@ -356,6 +359,8 @@ impl Session {
             tools: Tools::new(),
             ticket: 0,
             terminals: 0,
+            meter: Meter::of(agent),
+            measuring: Arc::new(AtomicBool::new(false)),
         };
         std::thread::spawn(move || write(stdin, &pending));
         std::thread::spawn(move || reader.run());
@@ -789,6 +794,11 @@ struct Reader {
     /// How many terminals the agent has started, which is what names the
     /// next one.
     terminals: u64,
+    /// Where this agent's plan limits come from.
+    meter: Meter,
+    /// Whether a read of the limits made beside the agent is still under
+    /// way, so that a turn ending while one is never starts a second.
+    measuring: Arc<AtomicBool>,
 }
 
 impl Reader {
@@ -873,11 +883,19 @@ impl Reader {
             (Sent::Turn, None) => {
                 self.raise(Event::Stopped(Stop::read(&message["result"]["stopReason"])));
                 self.idle();
+                self.measure();
             }
             (Sent::Turn, Some(error)) => {
                 self.raise(Event::Failed(complaint(error)));
                 self.idle();
+                self.measure();
             }
+            (Sent::Limits, None) => {
+                if let Some(limits) = self.meter.answered(&message["result"]) {
+                    self.raise(Event::Limited(limits));
+                }
+            }
+            (Sent::Limits, Some(_)) => {}
             (Sent::Mode(was), Some(error)) => {
                 self.raise(Event::Failed(complaint(error)));
                 if let Some(was) = was {
@@ -1010,6 +1028,35 @@ impl Reader {
         }
         self.wake();
         self.idle();
+        self.measure();
+    }
+
+    /// Finds out how much of the plan's limits is left, from wherever this
+    /// agent's meter reads them.
+    ///
+    /// An agent asked over its pipe is asked like any other request; a read
+    /// made beside the agent goes on a thread of its own, since a disk or a
+    /// network may take its time, and raises what it finds once it has it.
+    /// Neither says anything when it finds nothing.
+    fn measure(&self) {
+        if let Some(method) = self.meter.asks() {
+            self.ask(Sent::Limits, method, &json!({}));
+        }
+        let Some(read) = self.meter.reads() else {
+            return;
+        };
+        if self.measuring.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let state = self.state.clone();
+        let notify = self.notify.clone();
+        let measuring = self.measuring.clone();
+        std::thread::spawn(move || {
+            if let Some(limits) = read() {
+                raise(&state, &notify, Event::Limited(limits));
+            }
+            measuring.store(false, Ordering::Release);
+        });
     }
 
     /// Lets the next prompt that was held back go, if one was.
@@ -1184,17 +1231,23 @@ impl Reader {
 
     /// Adds `event` to what the window has yet to see, and wakes it.
     fn raise(&self, event: Event) {
-        if let Ok(mut state) = self.state.lock() {
-            state.events.push(event);
-            state.fresh = true;
-        }
-        self.wake();
+        raise(&self.state, &self.notify, event);
     }
 
     /// Wakes the window.
     fn wake(&self) {
         (self.notify)();
     }
+}
+
+/// Adds `event` to what the window has yet to see in `state`, and wakes it
+/// through `notify`.
+fn raise(state: &Mutex<State>, notify: &Notify, event: Event) {
+    if let Ok(mut state) = state.lock() {
+        state.events.push(event);
+        state.fresh = true;
+    }
+    notify();
 }
 
 /// Keeps the tail of what the agent writes on its error pipe.

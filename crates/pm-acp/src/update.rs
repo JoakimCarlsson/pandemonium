@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::limits::Limits;
 use crate::request::Request;
 
 /// The tool calls of one session, by the identity the agent gave each.
@@ -47,6 +48,9 @@ pub enum Event {
     /// How much of the model's context the conversation fills, and what it
     /// has cost so far.
     Used(Usage),
+    /// How much of the plan's rate limits has been used, as the agent's own
+    /// source for them now reports it.
+    Limited(Limits),
     /// A tool call the agent will not run until the reader allows it.
     Asked(Ask),
     /// A file or terminal request the window is to carry out and answer,

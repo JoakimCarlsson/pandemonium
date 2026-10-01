@@ -217,7 +217,7 @@ const TOOL_DIRECTORIES: [&str; 8] = [
 ];
 
 /// Where `program` is installed, on the path or in the usual places beside it.
-fn installed(program: &str) -> Option<PathBuf> {
+pub(crate) fn installed(program: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
     let home = env::home_dir();
     let names = file_names(program);
