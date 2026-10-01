@@ -550,6 +550,16 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
+    /// Edit the field in this place of the form the agent put under this ticket.
+    EditAnswer(TalkId, u64, usize),
+    /// Send the form the agent put under this ticket, filled in as it is.
+    SendAnswer(TalkId, u64),
+    /// Refuse, on purpose, the question the agent put under this ticket.
+    DeclineAnswer(TalkId, u64),
+    /// Walk away from the question the agent put under this ticket.
+    CancelAnswer(TalkId, u64),
+    /// Open the page the agent sent the reader to under this ticket.
+    OpenAnswerLink(TalkId, u64),
     /// Log this session's agent in by the way it offered in this place.
     LogInAgent(TalkId, usize),
     /// Pick out this session's transcript from where a press landed to where

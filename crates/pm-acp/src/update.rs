@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::elicitation::Elicitation;
 use crate::limits::Limits;
 use crate::request::Request;
 
@@ -53,6 +54,10 @@ pub enum Event {
     Limited(Limits),
     /// A tool call the agent will not run until the reader allows it.
     Asked(Ask),
+    /// Something the agent needs from the reader before it can go on.
+    Elicited(Elicitation),
+    /// The agent has what a link it sent the reader to was for.
+    Concluded(String),
     /// A file or terminal request the window is to carry out and answer,
     /// under the ticket given.
     Requested(u64, Request),

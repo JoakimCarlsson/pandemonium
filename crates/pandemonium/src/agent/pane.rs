@@ -27,7 +27,7 @@ use pm_ui::{
     v_flex,
 };
 
-use crate::agent::{Block, Spot, Standing, Talk, TalkId};
+use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
 use crate::editor::{code_highlights, tint};
 use crate::image::Decoding;
 use crate::input::input_view;
@@ -213,6 +213,11 @@ pub fn agent_pane(
             talk.asks()
                 .iter()
                 .map(|ask| permission(theme, talk.id(), ask)),
+        )
+        .children(
+            talk.forms()
+                .iter()
+                .map(|form| question(theme, talk.id(), form)),
         )
         .when(!talk.offered().is_empty(), |pane| {
             pane.child(commands(theme, talk))
@@ -1837,6 +1842,81 @@ fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
                     .color(theme.colors.accent),
             )
             .child(h_flex().gap(0.75).children(buttons)),
+    )
+}
+
+/// Builds the card holding something the agent needs from the reader: a form
+/// to fill in, or a page to visit.
+///
+/// Each field is a row that opens its own editor when pressed, so the card
+/// shows the whole form at once and the reader answers it in any order.
+fn question(theme: &Theme, session: TalkId, form: &Form) -> Div<Message> {
+    let ticket = form.id();
+    let fields = form.fields().iter().enumerate().map(|(place, field)| {
+        let mark = if field.required { " *" } else { "" };
+        let label = format!("{}{mark}: {}", field.title, form.shown(place));
+        let row = button(label, Message::EditAnswer(session, ticket, place))
+            .h_px(theme.size.control)
+            .outlined();
+        v_flex()
+            .w_full()
+            .gap(0.25)
+            .when(!field.description.is_empty(), |column| {
+                column.child(
+                    text(field.description.clone())
+                        .text_xs()
+                        .color(theme.colors.text_muted),
+                )
+            })
+            .child(row)
+    });
+    let actions = match form.link() {
+        Some(_) => h_flex().gap(0.75).child(
+            button("Open link", Message::OpenAnswerLink(session, ticket))
+                .h_px(theme.size.control)
+                .filled(),
+        ),
+        None => h_flex().gap(0.75).child(
+            button("Send", Message::SendAnswer(session, ticket))
+                .h_px(theme.size.control)
+                .filled(),
+        ),
+    }
+    .child(
+        button("Decline", Message::DeclineAnswer(session, ticket))
+            .h_px(theme.size.control)
+            .outlined(),
+    )
+    .child(
+        button("Cancel", Message::CancelAnswer(session, ticket))
+            .h_px(theme.size.control)
+            .outlined(),
+    );
+
+    v_flex().w_full().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .p(0.75)
+            .gap(0.75)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.accent)
+            .bg(theme.colors.surface)
+            .child(
+                text(format!("{BULLET}{}", form.message()))
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.accent),
+            )
+            .when_some(form.link(), |card, link| {
+                card.child(
+                    text(link.url.clone())
+                        .text_xs()
+                        .font_mono()
+                        .color(theme.colors.text_muted),
+                )
+            })
+            .children(fields)
+            .child(actions),
     )
 }
 

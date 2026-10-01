@@ -13,6 +13,7 @@
 
 mod agent;
 mod attachment;
+mod elicitation;
 mod limits;
 mod mcp;
 mod process;
@@ -23,6 +24,7 @@ mod update;
 
 pub use agent::{AGENTS, Agent, Source, agents, install};
 pub use attachment::Attachment;
+pub use elicitation::{Alternative, Elicitation, Field, Given, Input, Inquiry, Link, Reply};
 pub use limits::{Limits, Window};
 pub use mcp::{McpServer, Reach, install_mcp};
 pub use request::{Answer, Exit, Request, Run};

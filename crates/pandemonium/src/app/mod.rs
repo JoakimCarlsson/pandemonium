@@ -6,6 +6,7 @@
 //! model, submitted to `pm-gfx` as one draw list.
 
 mod agent;
+mod answer;
 mod arrival;
 mod clicks;
 mod client;
@@ -240,6 +241,8 @@ pub struct App {
     session_name: String,
     /// The repositories ticked for that session.
     session_picks: BTreeSet<PathBuf>,
+    /// The field of an agent's form that the prompt or list on screen is editing.
+    answering: Option<answer::Editing>,
     /// The branches the open project menu offers to cut a session from.
     session_bases: Vec<String>,
     /// Whether that menu is showing them.
@@ -696,6 +699,7 @@ impl App {
             session_base: None,
             session_name: String::new(),
             session_picks: BTreeSet::new(),
+            answering: None,
             session_bases: Vec::new(),
             showing_bases: false,
             open,

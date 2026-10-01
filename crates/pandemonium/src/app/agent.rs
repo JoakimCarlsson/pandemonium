@@ -117,6 +117,17 @@ impl App {
                     talk.answer(ask, place);
                 }
             }
+            Message::EditAnswer(session, ticket, place) => {
+                self.edit_answer(session, ticket, place);
+            }
+            Message::SendAnswer(session, ticket) => self.send_answer(session, ticket),
+            Message::DeclineAnswer(session, ticket) => {
+                self.dismiss_answer(session, ticket, pm_acp::Reply::Decline);
+            }
+            Message::CancelAnswer(session, ticket) => {
+                self.dismiss_answer(session, ticket, pm_acp::Reply::Cancel);
+            }
+            Message::OpenAnswerLink(session, ticket) => self.open_answer_link(session, ticket),
             Message::ToggleAgentDetails(session, block) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.toggle_details(block);

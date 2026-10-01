@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 
 use crate::agent::Agent;
 use crate::attachment::Attachment;
+use crate::elicitation::{self, Reply};
 use crate::limits::Meter;
 use crate::mcp;
 use crate::process::{self, Containment};
@@ -128,7 +129,7 @@ enum Outgoing {
     /// The window's answer to a file or terminal request of the agent's.
     Answer {
         /// The request being answered.
-        owed: Owed,
+        owed: Box<Owed>,
         /// The most output the terminal it names will keep, where it set one.
         limit: Option<usize>,
         /// What the window came back with.
@@ -484,6 +485,11 @@ impl Session {
         self.answer(ask, &json!({ "outcome": { "outcome": "cancelled" } }));
     }
 
+    /// Answers the elicitation `ticket` was raised under with `reply`.
+    pub fn reply(&self, ticket: u64, reply: &Reply) {
+        self.answer(ticket, &reply.wire());
+    }
+
     /// Answers the file or terminal request `ticket` was raised under.
     ///
     /// A request is answered once; an answer to one that is no longer owed
@@ -493,7 +499,7 @@ impl Session {
     pub fn answer_request(&self, ticket: u64, answer: Answer) {
         if let Some((owed, limit)) = self.take_owed(ticket) {
             let _ = self.outbox.send(Outgoing::Answer {
-                owed,
+                owed: Box::new(owed),
                 limit,
                 answer,
             });
@@ -514,7 +520,7 @@ impl Session {
         let outbox = self.outbox.clone();
         std::thread::spawn(move || {
             let _ = outbox.send(Outgoing::Answer {
-                owed,
+                owed: Box::new(owed),
                 limit,
                 answer: answer(),
             });
@@ -828,6 +834,10 @@ impl Reader {
                 }
             }
             (None, Some("session/update")) => self.updated(&message["params"]["update"]),
+            (None, Some("elicitation/complete")) => {
+                let id = message["params"]["elicitationId"].as_str();
+                self.raise(Event::Concluded(id.unwrap_or_default().to_owned()));
+            }
             (None, _) => {}
         }
     }
@@ -1126,6 +1136,7 @@ impl Reader {
     fn serve(&mut self, id: &Value, method: &str, params: &Value) {
         match method {
             "session/request_permission" => self.park(id, params),
+            "elicitation/create" => self.question(id, params),
             "fs/read_text_file" | "fs/write_text_file" => self.owe(id, method, params),
             method if method.starts_with("terminal/") => self.owe(id, method, params),
             _ => self.refuse(id, NO_SUCH_METHOD, method),
@@ -1194,6 +1205,28 @@ impl Reader {
         };
         state.parked.insert(ticket, id.clone());
         state.events.push(Event::Asked(ask));
+        state.fresh = true;
+        drop(state);
+        self.wake();
+    }
+
+    /// Puts an elicitation to the reader and leaves it unanswered.
+    ///
+    /// Like a permission, it is parked until the reader replies: the agent
+    /// asked because it cannot go on without. One that cannot be read is
+    /// refused here and never reaches the window.
+    fn question(&mut self, id: &Value, params: &Value) {
+        let ticket = self.ticket;
+        let elicitation = match elicitation::read(ticket, params) {
+            Ok(elicitation) => elicitation,
+            Err(trouble) => return self.refuse(id, INVALID, &trouble),
+        };
+        self.ticket += 1;
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        state.parked.insert(ticket, id.clone());
+        state.events.push(Event::Elicited(elicitation));
         state.fresh = true;
         drop(state);
         self.wake();
@@ -1313,6 +1346,7 @@ fn handshake() -> Value {
             "fs": { "readTextFile": true, "writeTextFile": true },
             "terminal": true,
             "auth": { "terminal": true },
+            "elicitation": { "form": {}, "url": {} },
         },
     })
 }
