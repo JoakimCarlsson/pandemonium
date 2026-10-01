@@ -2,6 +2,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use pm_acp::Output;
 use pm_core::{Project, ProjectId, Scope, Session, SessionId};
 use serde_json::{Value, json};
 
@@ -30,6 +31,23 @@ impl App {
                 }
                 Operation::Snapshot => Ok(self.control_snapshot()),
                 Operation::Transcript(index) => self.control_transcript_json(index),
+                Operation::TranscriptId(id) => {
+                    let index = self
+                        .agents
+                        .iter()
+                        .position(|talk| talk.id().number() == id)
+                        .ok_or_else(|| "agent unavailable".to_owned());
+                    index.and_then(|index| self.control_transcript_json(index))
+                }
+                Operation::Agent(operation) => {
+                    let result = self.control_agent_operation(operation);
+                    if result.is_ok()
+                        && let Some(control) = &self.control
+                    {
+                        control.changed();
+                    }
+                    result
+                }
             };
             let _ = request.answer.send(result);
         }
@@ -45,6 +63,7 @@ impl App {
             .map(|(index, project)| {
                 json!({
                     "index": index,
+                    "id": project.id().number(),
                     "name": project.name(),
                     "root": project.root().display().to_string(),
                     "active": self.open.active().is_some_and(|active| active.id() == project.id()),
@@ -58,6 +77,8 @@ impl App {
             .map(|(index, session)| {
                 json!({
                     "index": index,
+                    "id": session.id().number(),
+                    "project_id": session.project().number(),
                     "project": self.control_project_index(session.project()),
                     "name": session.name(),
                     "root": session.root().display().to_string(),
@@ -71,6 +92,9 @@ impl App {
             .map(|(index, talk)| {
                 json!({
                     "index": index,
+                    "id": talk.id().number(),
+                    "project_id": talk.scope().project().number(),
+                    "session_id": talk.scope().session().map(pm_core::SessionId::number),
                     "project": self.control_project_index(talk.scope().project()),
                     "session": talk.scope().session().and_then(|id| self.control_session_index(id)),
                     "agent": talk.agent().id,
@@ -79,9 +103,11 @@ impl App {
                     "transcript_revision": talk.transcript().revision(),
                     "requests": talk.asks().iter().enumerate().map(|(ask, request)| json!({
                         "index": ask,
+                        "id": request.id,
                         "title": request.tool.title,
                         "choices": request.choices.iter().enumerate().map(|(choice, answer)| json!({
                             "index": choice,
+                            "id": answer.id,
                             "name": answer.name,
                         })).collect::<Vec<_>>(),
                     })).collect::<Vec<_>>(),
@@ -106,12 +132,35 @@ impl App {
         let blocks = talk.transcript().blocks().iter().map(|block| match block {
             Block::Said(voice, text) => json!({ "kind": "said", "voice": format!("{voice:?}").to_lowercase(), "text": text }),
             Block::Picture(_) => json!({ "kind": "picture" }),
-            Block::Ran(call) => json!({ "kind": "tool", "title": call.title, "name": call.name, "status": format!("{:?}", call.status).to_lowercase() }),
-            Block::Planned(steps) => json!({ "kind": "plan", "steps": steps.len() }),
+            Block::Ran(call) => json!({
+                "kind": "tool", "id": call.id, "title": call.title,
+                "name": call.name, "tool_kind": format!("{:?}", call.kind).to_lowercase(),
+                "status": format!("{:?}", call.status).to_lowercase(),
+                "argument": call.argument, "returned": call.returned,
+                "locations": call.locations.iter().map(|location| json!({
+                    "path": location.path.display().to_string(), "line": location.line,
+                })).collect::<Vec<_>>(),
+                "output": call.output.iter().map(|output| match output {
+                    Output::Said(text) => json!({ "kind": "said", "text": text }),
+                    Output::Changed { path, before, after } => json!({
+                        "kind": "changed", "path": path.display().to_string(),
+                        "before": before, "after": after,
+                    }),
+                    Output::Terminal(id) => json!({ "kind": "terminal", "id": id }),
+                }).collect::<Vec<_>>(),
+            }),
+            Block::Planned(steps) => json!({
+                "kind": "plan",
+                "steps": steps.iter().map(|step| json!({
+                    "text": step.text, "status": format!("{:?}", step.status).to_lowercase(),
+                })).collect::<Vec<_>>(),
+            }),
             Block::Note(text) => json!({ "kind": "note", "text": text }),
             Block::Failure(text, compact) => json!({ "kind": "failure", "text": text, "compact": compact }),
         }).collect::<Vec<_>>();
-        Ok(json!({ "agent": index, "revision": talk.transcript().revision(), "blocks": blocks }))
+        Ok(
+            json!({ "agent": index, "id": talk.id().number(), "revision": talk.transcript().revision(), "blocks": blocks }),
+        )
     }
 
     /// Routes a terminal command through the window's existing state seams.

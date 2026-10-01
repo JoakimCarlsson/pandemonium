@@ -60,6 +60,50 @@ pub enum Operation {
     Snapshot,
     /// Read one agent's conversation as structured blocks.
     Transcript(usize),
+    /// Read one conversation by its stable identity.
+    TranscriptId(u64),
+    /// Carry out a typed ACP operation in the editor window.
+    Agent(AgentOperation),
+}
+
+/// A typed ACP operation issued by a remote client.
+pub enum AgentOperation {
+    /// List agents this editor can start.
+    Catalog,
+    /// Start a conversation in a checkout or a worktree session.
+    Start {
+        project: u64,
+        session: Option<u64>,
+        agent: String,
+    },
+    /// Read one conversation's status and controls.
+    Detail(u64),
+    /// Send exact prompt text with optional worktree files.
+    Send {
+        id: u64,
+        text: String,
+        files: Vec<String>,
+    },
+    /// Cancel the running turn.
+    Cancel(u64),
+    /// Answer or refuse an ACP permission request.
+    Answer {
+        id: u64,
+        request: u64,
+        choice: Option<String>,
+    },
+    /// Put a conversation into an offered mode.
+    SetMode { id: u64, mode: String },
+    /// Set an offered picked or switched knob.
+    SetKnob { id: u64, knob: String, value: Value },
+    /// Read or refresh saved conversations.
+    ListHistory(u64),
+    /// Load a saved conversation into the same worktree.
+    LoadHistory { id: u64, saved: String },
+    /// Start an offered login method.
+    Login { id: u64, method: String },
+    /// Read a terminal stream produced by an ACP tool call.
+    Terminal { id: u64, terminal: String },
 }
 
 /// A request waiting for the window and the channel its answer returns on.
@@ -86,7 +130,9 @@ mod unix {
 
     use crate::app::Wake;
     use crate::config;
-    use crate::control::{Operation, Request, VERSION, WireError, WireRequest, WireResponse};
+    use crate::control::{
+        AgentOperation, Operation, Request, VERSION, WireError, WireRequest, WireResponse,
+    };
 
     /// A private socket and commands waiting for the editor event loop.
     pub struct Server {
@@ -266,7 +312,7 @@ mod unix {
         if request.method == "system.hello" {
             return Ok(json!({
                 "protocol": VERSION,
-                "methods": ["system.hello", "control.execute", "state.snapshot", "state.watch", "agent.transcript"]
+                "methods": ["system.hello", "control.execute", "state.snapshot", "state.watch", "agent.transcript", "agent.catalog", "agent.start", "agent.detail", "agent.send", "agent.cancel", "agent.answer", "agent.mode.set", "agent.knob.set", "agent.history.list", "agent.history.load", "agent.login", "agent.terminal"]
             }));
         }
         if request.method == "state.watch" {
@@ -296,10 +342,64 @@ mod unix {
             "control.execute" => Operation::Execute(string(&request.params, "line")?.to_owned()),
             "state.snapshot" | "state.watch" => Operation::Snapshot,
             "agent.transcript" => {
-                let index = usize::try_from(number(&request.params, "agent")?)
-                    .map_err(|_| invalid("agent index is too large"))?;
-                Operation::Transcript(index)
+                if request.params.get("id").is_some() {
+                    Operation::TranscriptId(number(&request.params, "id")?)
+                } else {
+                    let index = usize::try_from(number(&request.params, "agent")?)
+                        .map_err(|_| invalid("agent index is too large"))?;
+                    Operation::Transcript(index)
+                }
             }
+            "agent.catalog" => Operation::Agent(AgentOperation::Catalog),
+            "agent.start" => Operation::Agent(AgentOperation::Start {
+                project: number(&request.params, "project_id")?,
+                session: optional_number(&request.params, "session_id")?,
+                agent: string(&request.params, "agent")?.to_owned(),
+            }),
+            "agent.detail" => {
+                Operation::Agent(AgentOperation::Detail(number(&request.params, "id")?))
+            }
+            "agent.send" => Operation::Agent(AgentOperation::Send {
+                id: number(&request.params, "id")?,
+                text: string(&request.params, "text")?.to_owned(),
+                files: strings(&request.params, "files")?,
+            }),
+            "agent.cancel" => {
+                Operation::Agent(AgentOperation::Cancel(number(&request.params, "id")?))
+            }
+            "agent.answer" => Operation::Agent(AgentOperation::Answer {
+                id: number(&request.params, "id")?,
+                request: number(&request.params, "request_id")?,
+                choice: optional_string(&request.params, "choice_id")?,
+            }),
+            "agent.mode.set" => Operation::Agent(AgentOperation::SetMode {
+                id: number(&request.params, "id")?,
+                mode: string(&request.params, "mode")?.to_owned(),
+            }),
+            "agent.knob.set" => Operation::Agent(AgentOperation::SetKnob {
+                id: number(&request.params, "id")?,
+                knob: string(&request.params, "knob")?.to_owned(),
+                value: request
+                    .params
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| invalid("value is required"))?,
+            }),
+            "agent.history.list" => {
+                Operation::Agent(AgentOperation::ListHistory(number(&request.params, "id")?))
+            }
+            "agent.history.load" => Operation::Agent(AgentOperation::LoadHistory {
+                id: number(&request.params, "id")?,
+                saved: string(&request.params, "saved")?.to_owned(),
+            }),
+            "agent.login" => Operation::Agent(AgentOperation::Login {
+                id: number(&request.params, "id")?,
+                method: string(&request.params, "method")?.to_owned(),
+            }),
+            "agent.terminal" => Operation::Agent(AgentOperation::Terminal {
+                id: number(&request.params, "id")?,
+                terminal: string(&request.params, "terminal")?.to_owned(),
+            }),
             _ => {
                 return Err(WireError {
                     code: "unknown_method",
@@ -336,6 +436,44 @@ mod unix {
             .get(name)
             .and_then(Value::as_str)
             .ok_or_else(|| invalid(&format!("{name} must be a string")))
+    }
+
+    /// Reads an optional unsigned integer parameter.
+    fn optional_number(params: &Value, name: &str) -> Result<Option<u64>, WireError> {
+        match params.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| invalid(&format!("{name} must be an unsigned integer or null"))),
+        }
+    }
+
+    /// Reads an optional string parameter.
+    fn optional_string(params: &Value, name: &str) -> Result<Option<String>, WireError> {
+        match params.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value
+                .as_str()
+                .map(|value| Some(value.to_owned()))
+                .ok_or_else(|| invalid(&format!("{name} must be a string or null"))),
+        }
+    }
+
+    /// Reads an optional array of strings.
+    fn strings(params: &Value, name: &str) -> Result<Vec<String>, WireError> {
+        match params.get(name) {
+            None => Ok(Vec::new()),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| invalid(&format!("{name} must contain only strings")))
+                })
+                .collect(),
+            _ => Err(invalid(&format!("{name} must be an array of strings"))),
+        }
     }
 
     /// Returns an invalid-parameter error.

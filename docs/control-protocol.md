@@ -37,7 +37,7 @@ method takes no arguments. The response echoes the `id` and contains exactly
 one of `result` or `error`:
 
 ```json
-{"version":1,"id":1,"result":{"protocol":1,"methods":["system.hello","control.execute","state.snapshot","state.watch","agent.transcript"]}}
+{"version":1,"id":1,"result":{"protocol":1,"methods":["system.hello","control.execute","state.snapshot","state.watch","agent.transcript","agent.catalog","agent.start","agent.detail","agent.send","agent.cancel","agent.answer","agent.mode.set","agent.knob.set","agent.history.list","agent.history.load","agent.login","agent.terminal"]}}
 ```
 
 ```json
@@ -74,9 +74,9 @@ and ACP permission answers. Commands use the numbered indices shown by
 `confirm` argument because it removes a worktree.
 
 The command parser splits words on whitespace. Text arguments such as prompts
-are joined with single spaces, so clients needing exact multiline text should
-wait for a future typed action method. `control.execute` returns plain text;
-it is the compatibility surface for the terminal client.
+are joined with single spaces. Native clients should use the typed `agent.*`
+methods for ACP controls, including exact multiline prompts. `control.execute`
+is the compatibility surface for the terminal client.
 
 ### `state.snapshot`
 
@@ -86,20 +86,20 @@ and `agents`:
 ```json
 {
   "revision": 12,
-  "projects": [{"index": 0, "name": "pandemonium", "root": "/home/me/pandemonium", "active": true}],
-  "sessions": [{"index": 0, "project": 0, "name": "review", "root": "/home/me/.pandemonium/worktrees/review"}],
-  "agents": [{"index": 0, "project": 0, "session": 0, "agent": "codex", "title": null, "standing": "working", "transcript_revision": 7, "requests": []}]
+  "projects": [{"index": 0, "id": 0, "name": "pandemonium", "root": "/home/me/pandemonium", "active": true}],
+  "sessions": [{"index": 0, "id": 0, "project": 0, "project_id": 0, "name": "review", "root": "/home/me/.pandemonium/worktrees/review"}],
+  "agents": [{"index": 0, "id": 0, "project": 0, "project_id": 0, "session": null, "session_id": null, "agent": "codex", "title": null, "standing": "working", "transcript_revision": 7, "requests": []}]
 }
 ```
 
 An agent's `session` is `null` when it runs in the project's checkout.
 `standing` is one of `stopped`, `waiting`, `working`, `done`, or `idle`.
-Each pending permission request has an `index`, `title`, and `choices` array;
-each choice has an `index` and `name`. Project, session, agent, request, and
-choice indices are positions in the current snapshot, not persistent IDs.
-Refresh the snapshot before acting on an index because another window action
-may have changed the list. `transcript_revision` changes when an agent's
-conversation changes.
+Each pending permission request has an `index`, numeric `id`, `title`, and
+`choices` array; each choice has an `index`, string `id`, and `name`. Indices
+are positions that can change when the window changes. IDs remain stable for
+the life of this editor process. Refresh the snapshot after reconnecting to a
+restarted editor. Typed ACP methods take IDs; terminal commands still use
+indices. `transcript_revision` changes when an agent's conversation changes.
 
 ### `state.watch`
 
@@ -114,26 +114,69 @@ revision does not necessarily mean every array changed.
 
 ### `agent.transcript`
 
-Parameters: `{"agent":0}`. Returns the current conversation for the agent
-at that snapshot index:
+Parameters: `{"id":0}` for a stable conversation ID, or `{"agent":0}` for
+the old snapshot index. Returns the current conversation:
 
 ```json
-{"agent":0,"revision":7,"blocks":[{"kind":"said","voice":"reader","text":"Review the diff"},{"kind":"said","voice":"agent","text":"I will review it."}]}
+{"agent":0,"id":0,"revision":7,"blocks":[{"kind":"said","voice":"reader","text":"Review the diff"},{"kind":"said","voice":"agent","text":"I will review it."}]}
 ```
 
-Block kinds are `said` (`voice`, `text`), `picture`, `tool` (`title`, `name`,
-`status`), `plan` (`steps`, a count), `note` (`text`), and `failure` (`text`,
-`compact`). A `said` block's `voice` is `reader`, `agent`, or `thought`; a
-tool's `status` is `pending`, `running`, `done`, or `failed`. The returned
-revision matches the agent's
-`transcript_revision` in a snapshot if the conversation has not changed
-between calls. Images and complete tool outputs are not included in v1.
+Block kinds are `said` (`voice`, `text`), `picture`, `tool` (its identity,
+kind, status, argument, return value, locations, and output), `plan` (a list
+of steps), `note` (`text`), and `failure` (`text`, `compact`). Tool output is
+`said`, `changed` (path and before/after text), or `terminal` (an ID to use
+with `agent.terminal`). A `said` block's `voice` is `reader`, `agent`, or
+`thought`; a tool or plan step's `status` is `pending`, `running`, `done`, or
+`failed`. The returned revision matches the agent's `transcript_revision` in
+a snapshot if the conversation has not changed between calls. Picture bytes
+are not included in v1.
+
+## Typed ACP methods
+
+An **agent conversation** can run in a project's checkout without a worktree
+session. `agent.start` creates the conversation and returns its stable `id`.
+Set `session_id` to `null` or omit it to chat in the checkout:
+
+```json
+{"version":1,"id":2,"method":"agent.start","params":{"project_id":0,"session_id":null,"agent":"codex"}}
+```
+
+The other ACP methods use that conversation ID. They return the following
+result fields; failures use the standard error envelope.
+
+| Method | Parameters | Result |
+| --- | --- | --- |
+| `agent.catalog` | none | `agents`: offered IDs, names, install and start status |
+| `agent.start` | `project_id`, optional `session_id`, `agent` ID | `id`, `project_id`, `session_id` |
+| `agent.detail` | `id` | readiness, standing, pending permission requests, modes, knobs, login methods, history, usage |
+| `agent.send` | `id`, exact `text`, optional `files` array | `sent`, `id` |
+| `agent.cancel` | `id` | `cancelled` |
+| `agent.answer` | `id`, numeric `request_id`, string `choice_id` or `null` to refuse | `answered` |
+| `agent.mode.set` | `id`, offered `mode` ID | `selected` |
+| `agent.knob.set` | `id`, offered `knob` ID, `value` (pick ID string or switch boolean) | `set` |
+| `agent.history.list` | `id` | `listing`; watch state, then read `agent.detail` for entries |
+| `agent.history.load` | `id`, offered saved conversation `saved` ID | conversation `id` |
+| `agent.login` | `id`, offered login `method` ID | `started` for direct login methods |
+| `agent.terminal` | `id`, ACP tool `terminal` ID | `tail` text |
+
+`agent.send` preserves text, including line breaks, and leaves any desktop
+prompt draft alone. Its `files` are paths relative to the conversation's
+worktree that already exist on the desktop machine; paths outside that
+worktree are rejected. An empty `text` is allowed when files are present.
+After sending, use `state.watch`, then `agent.transcript` when its revision
+changes. `agent.answer` uses the request and choice IDs from `agent.detail`;
+omitting `choice_id` or passing `null` refuses the request.
+
+`agent.detail` reports each knob as either `{"kind":"picked","value":"...",
+"picks":[...]}` or `{"kind":"switched","value":true}`. Mode and knob
+changes follow the desktop's saved agent preferences. Saved conversation
+listing is asynchronous. A login method marked `terminal` in `agent.detail`
+requires the desktop terminal; v1 does not relay terminal login input.
 
 ## Current scope
 
-Version 1 provides structured state and conversation reads, a change wait,
-and the terminal command surface for actions. It does not expose every desktop
-pane, editor operation, or ACP setting as a typed method. A native phone app
-can build project, session, and conversation screens against this contract;
-additional typed methods can be added within v1 without changing existing
-fields or methods.
+Version 1 provides typed ACP conversation controls, structured state and
+transcripts, a change wait, and the terminal command surface for project and
+worktree actions. It does not expose every desktop pane or editor operation.
+Native clients can build a mobile conversation UI without creating worktree
+sessions. Picture transfer and terminal login input require future methods.

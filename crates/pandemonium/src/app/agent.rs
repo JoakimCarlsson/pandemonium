@@ -398,7 +398,7 @@ impl App {
     }
 
     /// Toggles a reader-selected switch and remembers its new value.
-    fn toggle_agent_knob(&mut self, session: TalkId, knob: &str) {
+    pub(super) fn toggle_agent_knob(&mut self, session: TalkId, knob: &str) {
         let Some(talk) = self.agents.get(session) else {
             return;
         };
@@ -658,7 +658,7 @@ impl App {
     }
 
     /// Logs `session`'s agent in by the way it offered in `place`.
-    fn log_in_agent(&mut self, session: TalkId, place: usize) {
+    pub(super) fn log_in_agent(&mut self, session: TalkId, place: usize) {
         let Some(method) = self
             .agents
             .get(session)

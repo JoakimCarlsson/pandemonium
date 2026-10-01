@@ -23,6 +23,11 @@ use pm_host::Location;
 pub struct ProjectId(u64);
 
 impl ProjectId {
+    /// The project identity within this running editor window.
+    pub fn number(self) -> u64 {
+        self.0
+    }
+
     /// The id following this one, for the store handing them out.
     fn next(self) -> Self {
         Self(self.0 + 1)

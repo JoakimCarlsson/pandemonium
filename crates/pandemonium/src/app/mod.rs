@@ -11,6 +11,7 @@ mod clicks;
 mod client;
 mod commands;
 mod control;
+mod control_agent;
 mod debug;
 mod dialog;
 mod disk;

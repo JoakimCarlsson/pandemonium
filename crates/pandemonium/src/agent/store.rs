@@ -42,6 +42,13 @@ use pm_ui::{Bounds, Placements};
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TalkId(u64);
 
+impl TalkId {
+    /// The conversation identity within this running editor window.
+    pub fn number(self) -> u64 {
+        self.0
+    }
+}
+
 /// A place in the text of the conversation: a row of the pane, and how many
 /// characters into that row.
 ///
@@ -974,12 +981,30 @@ impl Talk {
     /// It is a turn like any other: it is put in the transcript as the
     /// reader's, and the conversation follows what comes back.
     pub fn send_text(&mut self, text: &str) {
-        let text = text.trim();
-        if text.is_empty() {
+        self.send_text_with_files(text.trim(), Vec::new());
+    }
+
+    /// Sends text and local files without changing the desktop prompt draft.
+    pub fn send_text_with_files(&mut self, text: &str, files: Vec<PathBuf>) {
+        if text.trim().is_empty() && files.is_empty() {
             return;
         }
-        self.transcript.say(Voice::Reader, text);
-        self.deliver(text, Vec::new());
+        let attachments = files.into_iter().map(Attachment::File).collect::<Vec<_>>();
+        let labels = attachments
+            .iter()
+            .map(Attachment::label)
+            .map(|label| format!("[{label}]"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let shown = if labels.is_empty() {
+            text.to_owned()
+        } else if text.is_empty() {
+            labels
+        } else {
+            format!("{text}\n{labels}")
+        };
+        self.transcript.say(Voice::Reader, &shown);
+        self.deliver(text, attachments);
     }
 
     /// Hands `text` and its `attachments` to the agent, and has the
