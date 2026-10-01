@@ -4,7 +4,8 @@
 #
 # Environment:
 #   PANDEMONIUM_VERSION       release to install, e.g. 0.2.0   (default: latest)
-#   PANDEMONIUM_INSTALL_DIR   where the editor goes            (default: %LOCALAPPDATA%\Programs\pandemonium)
+#   PANDEMONIUM_COMPONENT     editor or server                 (default: editor)
+#   PANDEMONIUM_INSTALL_DIR   where the binary goes            (default: %LOCALAPPDATA%\Programs\pandemonium)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -12,7 +13,13 @@ $ProgressPreference = 'SilentlyContinue'
 $Repo = 'JoakimCarlsson/pandemonium'
 $Target = 'x86_64-pc-windows-msvc'
 $Version = if ($env:PANDEMONIUM_VERSION) { $env:PANDEMONIUM_VERSION } else { 'latest' }
+$Component = if ($env:PANDEMONIUM_COMPONENT) { $env:PANDEMONIUM_COMPONENT } else { 'editor' }
 $InstallDir = if ($env:PANDEMONIUM_INSTALL_DIR) { $env:PANDEMONIUM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\pandemonium' }
+$Binary = switch ($Component) {
+    'editor' { 'pandemonium' }
+    'server' { 'pandemonium-server' }
+    default { throw 'PANDEMONIUM_COMPONENT must be editor or server' }
+}
 
 <#
 .SYNOPSIS
@@ -66,13 +73,13 @@ if (-not [Environment]::Is64BitOperatingSystem) { throw 'pandemonium needs 64-bi
 if ($Version -eq 'latest') { $Version = Get-LatestVersion }
 $Version = $Version.TrimStart('v')
 
-$name = "pandemonium-$Version-$Target"
+$name = "$Binary-$Version-$Target"
 $base = "https://github.com/$Repo/releases/download/v$Version"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
-    Write-Host "downloading pandemonium $Version for $Target"
+    Write-Host "downloading $Binary $Version for $Target"
     Invoke-WebRequest -Uri "$base/$name.zip" -OutFile "$tmp\$name.zip" -UseBasicParsing
     Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile "$tmp\SHA256SUMS" -UseBasicParsing
     Assert-Checksum "$tmp\$name.zip" "$tmp\SHA256SUMS"
@@ -81,10 +88,10 @@ try {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Copy-Item -Force "$tmp\$name\*" $InstallDir
 
-    $exe = Join-Path $InstallDir 'pandemonium.exe'
+    $exe = Join-Path $InstallDir "$Binary.exe"
     Add-ToUserPath $InstallDir
-    Add-StartMenuShortcut $exe
-    Write-Host "installed pandemonium $Version to $InstallDir"
+    if ($Component -eq 'editor') { Add-StartMenuShortcut $exe }
+    Write-Host "installed $Binary $Version to $InstallDir"
 }
 finally {
     Remove-Item -Recurse -Force $tmp

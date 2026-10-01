@@ -6,6 +6,7 @@
 #
 # Environment:
 #   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: latest)
+#   PANDEMONIUM_COMPONENT editor or server                    (default: editor)
 #   PANDEMONIUM_BIN_DIR   where the binary goes              (default: ~/.local/bin)
 #   PANDEMONIUM_APP_DIR   where the macOS app goes           (default: ~/Applications)
 
@@ -13,6 +14,7 @@ set -eu
 
 REPO="JoakimCarlsson/pandemonium"
 VERSION="${PANDEMONIUM_VERSION:-latest}"
+COMPONENT="${PANDEMONIUM_COMPONENT:-editor}"
 BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
@@ -114,17 +116,24 @@ main() {
     need curl
     need tar
     command -v sha256sum >/dev/null 2>&1 || need shasum
+    case "$COMPONENT" in
+        editor) binary="pandemonium" ;;
+        server) binary="pandemonium-server" ;;
+        *) fail "PANDEMONIUM_COMPONENT must be editor or server" ;;
+    esac
 
     target="$(detect_target)"
     [ "$VERSION" = "latest" ] && VERSION="$(latest_version)"
     VERSION="${VERSION#v}"
 
-    name="pandemonium-$VERSION-$target"
+    name="$binary-$VERSION-$target"
     base="https://github.com/$REPO/releases/download/v$VERSION"
-    tmp="$(mktemp -d)"
+    scratch="${XDG_CACHE_HOME:-$HOME/.cache}/scratch/pandemonium"
+    mkdir -p "$scratch"
+    tmp="$(mktemp -d "$scratch/install.XXXXXXXX")"
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
-    echo "downloading pandemonium $VERSION for $target"
+    echo "downloading $binary $VERSION for $target"
     curl -fsSL "$base/$name.tar.gz" -o "$tmp/$name.tar.gz" \
         || fail "no build of $VERSION for $target at $base/$name.tar.gz"
     curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" \
@@ -133,16 +142,18 @@ main() {
 
     tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
     mkdir -p "$BIN_DIR"
-    install -m 0755 "$tmp/$name/pandemonium" "$BIN_DIR/pandemonium"
-    [ "$(uname -s)" = "Darwin" ] && xattr -d com.apple.quarantine "$BIN_DIR/pandemonium" 2>/dev/null || true
-    [ -d "$tmp/$name/icons" ] && [ "$(uname -s)" = "Linux" ] && install_icons "$tmp/$name/icons" "$tmp/$name/icons/pandemonium.svg"
-    [ -f "$tmp/$name/pandemonium.desktop" ] && install_desktop_entry "$tmp/$name/pandemonium.desktop"
-    [ "$(uname -s)" = "Darwin" ] && install_app_bundle "$base" "$name" "$tmp"
+    install -m 0755 "$tmp/$name/$binary" "$BIN_DIR/$binary"
+    [ "$(uname -s)" = "Darwin" ] && xattr -d com.apple.quarantine "$BIN_DIR/$binary" 2>/dev/null || true
+    if [ "$COMPONENT" = "editor" ]; then
+        [ -d "$tmp/$name/icons" ] && [ "$(uname -s)" = "Linux" ] && install_icons "$tmp/$name/icons" "$tmp/$name/icons/pandemonium.svg"
+        [ -f "$tmp/$name/pandemonium.desktop" ] && install_desktop_entry "$tmp/$name/pandemonium.desktop"
+        [ "$(uname -s)" = "Darwin" ] && install_app_bundle "$base" "$name" "$tmp"
+    fi
 
-    echo "installed $("$BIN_DIR/pandemonium" --version) to $BIN_DIR"
+    echo "installed $("$BIN_DIR/$binary" --version) to $BIN_DIR"
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;
-        *) echo "note: $BIN_DIR is not on your PATH; add it to run 'pandemonium' from a shell" ;;
+        *) echo "note: $BIN_DIR is not on your PATH; add it to run '$binary' from a shell" ;;
     esac
 }
 

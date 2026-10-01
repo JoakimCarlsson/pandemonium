@@ -57,3 +57,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
+      - name: Check release binary versions
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          suffix=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
+          [ "$("target/debug/pandemonium$suffix" --version)" = "pandemonium $version" ]
+          [ "$("target/debug/pandemonium-server$suffix" --version)" = "pandemonium-server $version" ]
