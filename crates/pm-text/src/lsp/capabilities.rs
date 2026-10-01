@@ -12,24 +12,24 @@ use std::path::Path;
 use globset::GlobBuilder;
 use lsp_types::{
     CallHierarchyClientCapabilities, CallHierarchyServerCapability, ClientCapabilities, ClientInfo,
-    CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-    CodeActionProviderCapability, CodeLensClientCapabilities, CodeLensOptions,
-    CodeLensWorkspaceClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, CompletionOptions, DeclarationCapability,
-    DiagnosticClientCapabilities, DiagnosticOptions, DiagnosticServerCapabilities,
-    DiagnosticWorkspaceClientCapabilities, DidChangeWatchedFilesClientCapabilities, DocumentFilter,
-    DocumentFormattingClientCapabilities, DocumentHighlightClientCapabilities, DocumentSelector,
-    DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
-    GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, HoverProviderCapability,
-    ImplementationProviderCapability, InitializeParams, InlayHintClientCapabilities,
-    InlayHintWorkspaceClientCapabilities, InlineCompletionClientCapabilities, MarkupKind, OneOf,
-    PositionEncodingKind, PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities,
-    Registration, RenameClientCapabilities, ResourceOperationKind, SaveOptions,
-    SemanticTokenModifier, SemanticTokenType, SemanticTokensClientCapabilities,
-    SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensServerCapabilities, SemanticTokensWorkspaceClientCapabilities,
-    ServerCapabilities, SignatureHelpClientCapabilities, SignatureHelpOptions,
-    TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
+    CodeActionClientCapabilities, CodeActionKind, CodeActionKindLiteralSupport,
+    CodeActionLiteralSupport, CodeActionOptions, CodeActionProviderCapability,
+    CodeLensClientCapabilities, CodeLensOptions, CodeLensWorkspaceClientCapabilities,
+    CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
+    CompletionOptions, DeclarationCapability, DiagnosticClientCapabilities, DiagnosticOptions,
+    DiagnosticServerCapabilities, DiagnosticWorkspaceClientCapabilities,
+    DidChangeWatchedFilesClientCapabilities, DocumentFilter, DocumentFormattingClientCapabilities,
+    DocumentHighlightClientCapabilities, DocumentSelector, DocumentSymbolClientCapabilities,
+    DynamicRegistrationClientCapabilities, GeneralClientCapabilities, GotoCapability,
+    HoverClientCapabilities, HoverProviderCapability, ImplementationProviderCapability,
+    InitializeParams, InlayHintClientCapabilities, InlayHintWorkspaceClientCapabilities,
+    InlineCompletionClientCapabilities, MarkupKind, OneOf, PositionEncodingKind,
+    PublishDiagnosticsClientCapabilities, ReferenceClientCapabilities, Registration,
+    RenameClientCapabilities, ResourceOperationKind, SaveOptions, SemanticTokenModifier,
+    SemanticTokenType, SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensServerCapabilities,
+    SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
+    SignatureHelpOptions, TextDocumentChangeRegistrationOptions, TextDocumentClientCapabilities,
     TextDocumentRegistrationOptions, TextDocumentSaveRegistrationOptions,
     TextDocumentSyncCapability, TextDocumentSyncClientCapabilities, TextDocumentSyncKind,
     TextDocumentSyncSaveOptions, TokenFormat, TypeDefinitionProviderCapability,
@@ -81,7 +81,7 @@ const TOKEN_TYPES: [&str; 23] = [
 ];
 
 /// The code action kinds the editor offers in its menu.
-const ACTION_KINDS: [&str; 7] = [
+const ACTION_KINDS: [&str; 8] = [
     "quickfix",
     "refactor",
     "refactor.extract",
@@ -89,7 +89,11 @@ const ACTION_KINDS: [&str; 7] = [
     "refactor.rewrite",
     "source",
     "source.organizeImports",
+    "source.fixAll",
 ];
+
+/// The method a registration of code actions names.
+const CODE_ACTION: &str = "textDocument/codeAction";
 
 /// The parts of a completion a server may leave out of the list and send
 /// only when the item is resolved.
@@ -290,6 +294,38 @@ impl Capabilities {
             TextDocumentSyncCapability::Options(options) => Some(options),
             TextDocumentSyncCapability::Kind(_) => None,
         }
+    }
+
+    /// Whether the server says it makes code actions of `kind`, or of a kind
+    /// that contains it.
+    ///
+    /// A server that does not list the kinds it makes is taken to make none
+    /// of the source kinds a save asks for: asking it would be asking for
+    /// whatever it likes to answer with.
+    pub(super) fn offers_action_kind(&self, kind: &str, document: Option<Document>) -> bool {
+        let covers = |kinds: &[CodeActionKind]| {
+            kinds.iter().any(|offered| {
+                kind == offered.as_str()
+                    || kind
+                        .strip_prefix(offered.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+        };
+        let stated = match self
+            .stated
+            .as_ref()
+            .and_then(|stated| stated.code_action_provider.as_ref())
+        {
+            Some(CodeActionProviderCapability::Options(options)) => {
+                options.code_action_kinds.as_deref().is_some_and(covers)
+            }
+            _ => false,
+        };
+        stated
+            || self.registrations(CODE_ACTION, document).any(|options| {
+                serde_json::from_value::<CodeActionOptions>(options.clone())
+                    .is_ok_and(|options| options.code_action_kinds.as_deref().is_some_and(covers))
+            })
     }
 
     /// Whether the server fills in completions it sent short, when asked.

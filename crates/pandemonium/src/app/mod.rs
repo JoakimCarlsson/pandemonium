@@ -428,6 +428,8 @@ pub struct App {
     asked: Vec<language::Pending>,
     /// Whether the servers being waited on were asked by a save.
     saving: bool,
+    /// What a save in progress still has to ask the servers, in order.
+    save_steps: std::collections::VecDeque<pm_text::Request>,
     /// The query the servers were last asked for workspace symbols, and the
     /// rows their answers have come to so far.
     workspace_symbols: (Option<String>, Vec<crate::picker::Row>),
@@ -803,6 +805,7 @@ impl App {
             code_actions: Vec::new(),
             asked: Vec::new(),
             saving: false,
+            save_steps: std::collections::VecDeque::new(),
             workspace_symbols: (None, Vec::new()),
             workspace_files: Vec::new(),
             closing: None,

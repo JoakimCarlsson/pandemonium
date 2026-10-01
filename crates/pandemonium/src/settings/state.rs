@@ -179,6 +179,8 @@ impl SettingsSection {
             ],
             Self::Saving => &[
                 Preference::FormatOnSave,
+                Preference::OrganizeImportsOnSave,
+                Preference::FixOnSave,
                 Preference::TrimWhitespace,
                 Preference::FinalNewline,
                 Preference::InstallLanguageServers,

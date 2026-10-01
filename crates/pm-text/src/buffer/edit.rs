@@ -15,7 +15,23 @@ use crate::cursor::{Position, Selection};
 use crate::history::Change;
 
 /// The brackets and quotes typing one of puts the other in.
-const PAIRS: [(char, char); 5] = [('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')];
+const PAIRS: [(char, char); 6] = [
+    ('(', ')'),
+    ('[', ']'),
+    ('{', '}'),
+    ('"', '"'),
+    ('\'', '\''),
+    ('`', '`'),
+];
+
+/// The characters a pair is still put in front of: anything else after the
+/// cursor means the reader is typing into the middle of something, and a
+/// closing character of its own would be in the way.
+const CLOSES_BEFORE: &str = ";:.,=}])>";
+
+/// The languages whose single quote is a lifetime or a label as often as it
+/// is the start of a string, so typing one is not typing a pair.
+const LIFETIMES: [&str; 2] = ["Rust", "OCaml"];
 
 impl Buffer {
     /// The text the selection covers.
@@ -97,6 +113,16 @@ impl Buffer {
         if open == close && self.follows_word() {
             return self.insert(&ch.to_string());
         }
+        if open == '\''
+            && self
+                .language()
+                .is_some_and(|language| LIFETIMES.contains(&language.name()))
+        {
+            return self.insert(&ch.to_string());
+        }
+        if !self.closes_before_next() {
+            return self.insert(&ch.to_string());
+        }
 
         let head = self.selection().head;
         self.grouped(|buffer| {
@@ -118,6 +144,13 @@ impl Buffer {
             };
             buffer.place(head, true);
         });
+    }
+
+    /// Whether what follows the cursor is the end of the line, a space or a
+    /// character that closes something, so that a pair may be put in.
+    fn closes_before_next(&self) -> bool {
+        self.char_at(self.selection().head)
+            .is_none_or(|next| next.is_whitespace() || CLOSES_BEFORE.contains(next))
     }
 
     /// Whether the character before the cursor is part of a word.

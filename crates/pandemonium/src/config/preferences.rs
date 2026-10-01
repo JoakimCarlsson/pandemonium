@@ -177,6 +177,11 @@ pub enum Preference {
     ScrollSensitivity,
     /// Whether a file is laid out by its formatter when it is saved.
     FormatOnSave,
+    /// Whether a file's imports are put in order when it is saved.
+    OrganizeImportsOnSave,
+    /// Whether the fixes a server can make on their own are made when a file
+    /// is saved.
+    FixOnSave,
     /// Whether the space at the ends of lines goes when a file is saved.
     TrimWhitespace,
     /// Whether a saved file always ends in a line break.
@@ -313,6 +318,11 @@ pub struct Preferences {
     pub scroll_sensitivity: f32,
     /// Whether a file is laid out the way its formatter would when it is saved.
     pub format_on_save: bool,
+    /// Whether a file's imports are put in order when it is saved.
+    pub organize_imports_on_save: bool,
+    /// Whether the fixes a server can make on their own are made when a file
+    /// is saved.
+    pub fix_on_save: bool,
     /// Whether the space at the ends of lines goes when a file is saved.
     pub trim_whitespace: bool,
     /// Whether a saved file always ends in a line break.
@@ -355,6 +365,8 @@ impl Default for Preferences {
             cursor_blink: true,
             scroll_sensitivity: 1.0,
             format_on_save: false,
+            organize_imports_on_save: false,
+            fix_on_save: false,
             trim_whitespace: false,
             final_newline: false,
             terminal_scrollback: pm_vt::SCROLLBACK,
@@ -409,6 +421,8 @@ flags! {
     EditPredictions => edit_predictions.enabled,
     CursorBlink => cursor_blink,
     FormatOnSave => format_on_save,
+    OrganizeImportsOnSave => organize_imports_on_save,
+    FixOnSave => fix_on_save,
     TrimWhitespace => trim_whitespace,
     FinalNewline => final_newline,
     TrustWorktrees => trust_worktrees,
@@ -465,6 +479,8 @@ fields! {
     CursorBlink => cursor_blink,
     ScrollSensitivity => scroll_sensitivity,
     FormatOnSave => format_on_save,
+    OrganizeImportsOnSave => organize_imports_on_save,
+    FixOnSave => fix_on_save,
     TrimWhitespace => trim_whitespace,
     FinalNewline => final_newline,
     TerminalFontSize => fonts.terminal_size,

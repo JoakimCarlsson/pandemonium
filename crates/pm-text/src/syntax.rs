@@ -63,6 +63,17 @@ const PARSE_BUDGET: Duration = Duration::from_millis(250);
 /// once, so a frame drawing them again highlights none of them afresh.
 const REMEMBERED: usize = 64;
 
+/// The kinds of node that are one tag of a markup element: HTML's, with the
+/// closing one a grammar gives up on matching once its name has been
+/// changed, and JSX's.
+const TAGS: [&str; 5] = [
+    "start_tag",
+    "end_tag",
+    "erroneous_end_tag",
+    "jsx_opening_element",
+    "jsx_closing_element",
+];
+
 /// The highlight query of every language compiled so far, by name.
 ///
 /// A query takes longer to compile than most files take to parse, so each
@@ -403,6 +414,51 @@ impl Syntax {
         if let Some(tree) = self.tree.as_mut() {
             tree.edit(edit);
         }
+    }
+
+    /// The name of the tag whose name holds `byte`, and the name of the tag
+    /// that closes or opens the same element, as spans of bytes.
+    ///
+    /// Only markup has such pairs: an HTML element's start and end tags and
+    /// a JSX element's opening and closing ones. Anything else, and an
+    /// element missing either of its tags, has none.
+    pub fn tag_names(&self, byte: usize) -> Option<(Range<usize>, Range<usize>)> {
+        let root = self.tree.as_ref()?.root_node();
+        let found = [byte, byte.saturating_sub(1)]
+            .into_iter()
+            .filter_map(|probe| root.descendant_for_byte_range(probe, probe))
+            .find_map(|node| {
+                let mut node = node;
+                loop {
+                    if TAGS.contains(&node.kind()) {
+                        return Some(node);
+                    }
+                    node = node.parent()?;
+                }
+            })?;
+        let element = found.parent()?;
+        let mut cursor = element.walk();
+        let tags = element
+            .children(&mut cursor)
+            .filter(|child| TAGS.contains(&child.kind()))
+            .collect::<Vec<_>>();
+        let [first, second] = tags[..] else {
+            return None;
+        };
+        let name_of = |tag: tree_sitter::Node<'_>| {
+            let name = match tag.kind() {
+                "start_tag" | "end_tag" | "erroneous_end_tag" => tag
+                    .children(&mut tag.walk())
+                    .find(|child| child.kind().ends_with("tag_name")),
+                _ => tag.child_by_field_name("name"),
+            }?;
+            Some(name.byte_range())
+        };
+        let (here, there) = match found.id() == first.id() {
+            true => (name_of(first)?, name_of(second)?),
+            false => (name_of(second)?, name_of(first)?),
+        };
+        (here.start <= byte && byte <= here.end).then_some((here, there))
     }
 
     /// The highlights of `lines`, as one entry per character.

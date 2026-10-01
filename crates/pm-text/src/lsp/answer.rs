@@ -74,6 +74,9 @@ pub enum Request {
     Signature,
     /// The fixes and refactors the server offers here.
     CodeActions,
+    /// The changes the server would make to the whole file for one kind of
+    /// source action, such as organizing its imports, named by the kind.
+    SourceActions(String),
     /// Rename the symbol here to this everywhere it appears.
     Rename(String),
     /// Lay the whole file out the way the server's formatter would.
@@ -186,7 +189,7 @@ impl Request {
             Self::Completions(_) | Self::ResolveCompletion(_) => "textDocument/completion",
             Self::InlineCompletion => "textDocument/inlineCompletion",
             Self::Signature => "textDocument/signatureHelp",
-            Self::CodeActions => "textDocument/codeAction",
+            Self::CodeActions | Self::SourceActions(_) => "textDocument/codeAction",
             Self::Rename(_) => "textDocument/rename",
             Self::Format => "textDocument/formatting",
             Self::FormatSelection => "textDocument/rangeFormatting",
@@ -240,6 +243,7 @@ impl Request {
             Self::ResolveCompletion(_) => capabilities.resolves_completions(document),
             Self::PrepareRename => capabilities.prepares_renames(document),
             Self::ResolveLens(_) => capabilities.resolves_lenses(document),
+            Self::SourceActions(kind) => capabilities.offers_action_kind(kind, document),
             _ => true,
         }
     }
@@ -348,6 +352,20 @@ impl Request {
                     context: CodeActionContext {
                         diagnostics: asking.diagnostics,
                         only: None,
+                        trigger_kind: None,
+                    },
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                },
+            ),
+            Self::SourceActions(kind) => rpc::request::<CodeActionRequest>(
+                id,
+                CodeActionParams {
+                    text_document: document,
+                    range: wire_range(asking.selection),
+                    context: CodeActionContext {
+                        diagnostics: Vec::new(),
+                        only: Some(vec![lsp_types::CodeActionKind::from(kind.clone())]),
                         trigger_kind: None,
                     },
                     work_done_progress_params: WorkDoneProgressParams::default(),
@@ -628,6 +646,19 @@ impl Request {
                     .filter_map(code_action)
                     .collect(),
             ),
+            Self::SourceActions(_) => Answer::Edits(vec![FileEdit {
+                path: path.to_path_buf(),
+                edits: rpc::result::<CodeActionRequest>(result)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(code_action)
+                    .flat_map(|action| action.edits)
+                    .find_map(|change| match change {
+                        WorkspaceChange::Edit(file) if file.path == path => Some(file.edits),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
+            }]),
             Self::Rename(_) => Answer::Changes(
                 rpc::result::<Rename>(result)?
                     .map(|edit| workspace_edit(&edit))

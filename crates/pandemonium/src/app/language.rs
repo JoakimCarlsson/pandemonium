@@ -551,7 +551,10 @@ impl App {
             if offered
                 && matches!(
                     request,
-                    Request::Format | Request::FormatSelection | Request::WillSave
+                    Request::Format
+                        | Request::FormatSelection
+                        | Request::WillSave
+                        | Request::SourceActions(_)
                 )
             {
                 break;
@@ -585,7 +588,14 @@ impl App {
             let document = document.borrow();
             let buffer = document.buffer();
             let selected = buffer.selection();
-            let selection = if selected.anchor == selected.head {
+            let whole = Position::default()
+                ..Position::new(
+                    buffer.line_count().saturating_sub(1),
+                    buffer.line_len(buffer.line_count().saturating_sub(1)),
+                );
+            let selection = if matches!(request, Request::SourceActions(_)) {
+                whole
+            } else if selected.anchor == selected.head {
                 Position::new(at.line, 0)..Position::new(at.line, buffer.line_len(at.line))
             } else if selected.anchor < selected.head {
                 selected.anchor..selected.head
@@ -1136,7 +1146,7 @@ impl App {
             && (matches!(answer, Answer::Edits(_) | Answer::Changes(_))
                 || matches!(pending.request, Request::CodeActions | Request::Signature))
         {
-            if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
+            if self.saving && Self::is_save_step(&pending.request) {
                 self.finish_save();
             }
             return;
@@ -1336,7 +1346,7 @@ impl App {
     /// written, then the writing. Each server is asked after the previous
     /// answer has been applied to the document.
     fn save_once_formatted(&mut self, pending: &Pending) {
-        if !matches!(pending.request, Request::Format | Request::WillSave) {
+        if !Self::is_save_step(&pending.request) {
             return;
         }
         if self.ask_next_edit_server(pending) {
@@ -1346,9 +1356,17 @@ impl App {
             return;
         }
         match pending.request {
-            Request::Format => self.ask_before_save(pending.file),
-            _ => self.finish_save(),
+            Request::WillSave => self.finish_save(),
+            _ => self.next_save_step(pending.file),
         }
+    }
+
+    /// Whether `request` is one of the questions a save asks the servers.
+    fn is_save_step(request: &Request) -> bool {
+        matches!(
+            request,
+            Request::Format | Request::WillSave | Request::SourceActions(_)
+        )
     }
 
     /// Asks the next capable server about the document left by the last one.
@@ -1384,15 +1402,44 @@ impl App {
 
     /// Starts a save the servers behind the focused file take part in.
     ///
-    /// A save with no server to wait on is written at once.
+    /// A save with no server to wait on is written at once. Otherwise the
+    /// servers are asked, in order, to organize the imports and make their
+    /// own fixes when those are wanted, then to lay the file out when that
+    /// is, and last what they would change before it is written.
     pub(super) fn begin_save(&mut self, format: bool) {
         let Some(file) = self.active_file_id() else {
             return;
         };
         self.saving = true;
-        if format {
-            self.ask(Request::Format);
-            if self.awaits(file, &Request::Format) {
+        self.save_steps = [
+            (
+                self.preferences.organize_imports_on_save,
+                Request::SourceActions("source.organizeImports".to_owned()),
+            ),
+            (
+                self.preferences.fix_on_save,
+                Request::SourceActions("source.fixAll".to_owned()),
+            ),
+            (format, Request::Format),
+        ]
+        .into_iter()
+        .filter_map(|(wanted, request)| wanted.then_some(request))
+        .collect();
+        self.next_save_step(file);
+    }
+
+    /// Asks the next question a save has for the servers, skipping the ones
+    /// no server answers, and goes on to what they would change before the
+    /// file is written when there are none left.
+    fn next_save_step(&mut self, file: FileId) {
+        let at = self
+            .editor
+            .get(file)
+            .map(|document| document.borrow().buffer().selection().head)
+            .unwrap_or_default();
+        while let Some(request) = self.save_steps.pop_front() {
+            self.ask_about(file, at, request.clone());
+            if self.awaits(file, &request) {
                 return;
             }
         }

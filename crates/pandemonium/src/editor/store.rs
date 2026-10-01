@@ -1198,7 +1198,19 @@ impl Document {
         let version = self.buffer.version();
         let at = self.buffer.selection().head;
         let shown = self.prediction.take();
-        let result = edit(&mut self.buffer, &mut self.modal);
+        let linked = self.buffer.in_linked_tag();
+        let result = match linked {
+            true => {
+                let (buffer, modal) = (&mut self.buffer, &mut self.modal);
+                let mut result = None;
+                buffer.grouped(|buffer| {
+                    result = Some(edit(buffer, modal));
+                    buffer.mirror_tag_name();
+                });
+                result.expect("grouped runs its change")
+            }
+            false => edit(&mut self.buffer, &mut self.modal),
+        };
         if version == self.buffer.version() {
             self.prediction = shown.filter(|item| item.range.start == self.buffer.selection().head);
             if at != self.buffer.selection().head {

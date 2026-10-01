@@ -13,6 +13,7 @@ mod folds;
 mod memo;
 mod motion;
 mod snippet;
+mod tags;
 
 use std::io;
 use std::ops::Range;

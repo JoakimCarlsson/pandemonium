@@ -506,6 +506,16 @@ fn section_rows(
                 "Lay a file out the way its formatter would every time it is written",
             ),
             toggle(
+                Preference::OrganizeImportsOnSave,
+                "Organize Imports on Save",
+                "Have the language server put a file's imports in order every time it is written",
+            ),
+            toggle(
+                Preference::FixOnSave,
+                "Fix on Save",
+                "Have the language server make the fixes it can make on its own every time a file is written",
+            ),
+            toggle(
                 Preference::TrimWhitespace,
                 "Remove Trailing Whitespace",
                 "Take the spaces and tabs off the ends of lines when a file is saved",
