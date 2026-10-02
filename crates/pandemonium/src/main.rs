@@ -5,6 +5,7 @@
 mod agent;
 mod app;
 mod arrival;
+mod build_info;
 mod config;
 mod debug;
 mod desktop;
@@ -52,7 +53,7 @@ use app::{App, Wake};
 /// or prints the version and leaves when asked for it with `--version`.
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--version") {
-        println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
+        println!("{}", build_info::description());
         return;
     }
     shell_path::adopt();

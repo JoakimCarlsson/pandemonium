@@ -173,6 +173,22 @@ fn sidebar(theme: &Theme, preferences: &Preferences, settings: &Settings) -> Div
             ),
         )
         .children(entries)
+        .child(v_flex().flex_1())
+        .child(
+            h_flex()
+                .w_full()
+                .py(2)
+                .items_center()
+                .rounded(theme.radius.sm)
+                .hover_bg(theme.colors.surface_hover)
+                .tooltip("Copy version")
+                .on_click(Message::CopyVersion)
+                .child(
+                    text(crate::build_info::description())
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                ),
+        )
 }
 
 /// One page in the sidebar: the chevron that opens its sections out or

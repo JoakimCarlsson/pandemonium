@@ -145,6 +145,7 @@ impl App {
     /// sets, saying whether `message` was one.
     pub(super) fn settings_command(&mut self, message: Message) -> bool {
         match message {
+            Message::CopyVersion => desktop::copy(crate::build_info::description()),
             Message::PickFont(slot) => self.ask_font(slot),
             Message::EditThemeColor(token) => self.ask_theme_color(token),
             Message::SaveTheme => self.ask_theme_name(),
