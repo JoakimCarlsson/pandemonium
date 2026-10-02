@@ -299,7 +299,7 @@ struct StoredMcp {
 /// is what nearly all of them are; one that takes arguments spells them out.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
-pub(super) enum StoredServer {
+pub enum StoredServer {
     /// The command, run with no arguments.
     Command(String),
     /// The command, the arguments to run it with, and what to configure it
@@ -308,7 +308,11 @@ pub(super) enum StoredServer {
         /// The program to run.
         command: String,
         /// The arguments to run it with.
+        #[serde(default)]
         arguments: Vec<String>,
+        /// The pinned installation recipe.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        install: Option<super::recipe::StoredRecipe>,
         /// What the server is configured with as it starts.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         options: Option<serde_norway::Value>,
@@ -494,17 +498,46 @@ fn leaked(value: String) -> &'static str {
 }
 
 impl StoredServer {
+    /// Validates an extension or user supplied server declaration.
+    pub fn validate(&self) -> Result<(), String> {
+        let command = match self {
+            Self::Command(command) => command,
+            Self::Invocation {
+                command,
+                install,
+                options,
+                ..
+            } => {
+                if let Some(recipe) = install {
+                    recipe.validate()?;
+                }
+                if options.as_ref().is_some_and(|value| !value.is_mapping()) {
+                    return Err("Server initialization options must be an object.".into());
+                }
+                command
+            }
+        };
+        if command.trim().is_empty() || command.contains('\0') {
+            return Err("A server needs an executable.".into());
+        }
+        Ok(())
+    }
+
     /// The server this stands for, named for as long as the editor runs.
-    pub(super) fn into_server(self) -> Server {
-        let (command, arguments, options) = match self {
-            Self::Command(command) => (command, Vec::new(), None),
+    pub fn into_server(self) -> Server {
+        let (command, arguments, options, install) = match self {
+            Self::Command(command) => (command, Vec::new(), None, None),
             Self::Invocation {
                 command,
                 arguments,
                 options,
-            } => (command, arguments, options),
+                install,
+            } => (command, arguments, options, install),
         };
-        let install = pm_text::install::recipe(&command);
+        let install = install
+            .filter(|recipe| recipe.validate().is_ok())
+            .map(super::recipe::StoredRecipe::into_recipe)
+            .or_else(|| pm_text::install::recipe(&command));
         Server {
             command: leaked(command),
             arguments: arguments
@@ -520,7 +553,7 @@ impl StoredServer {
     }
 
     /// How `server` is written down.
-    fn of(server: &Server) -> Self {
+    pub fn of(server: &Server) -> Self {
         let options = serde_json::from_str::<serde_norway::Value>(server.options).ok();
         let options = options.filter(|options| !matches!(options, serde_norway::Value::Null));
         if server.arguments.is_empty() && options.is_none() {
@@ -534,6 +567,7 @@ impl StoredServer {
                 .map(|&argument| argument.to_owned())
                 .collect(),
             options,
+            install: server.install.map(super::recipe::StoredRecipe::of),
         }
     }
 }

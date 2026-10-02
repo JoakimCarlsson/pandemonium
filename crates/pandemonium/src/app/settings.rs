@@ -42,6 +42,9 @@ impl App {
             pane.open(scope, Item::Settings);
         }
         self.focus_pane(holding);
+        if !self.languages.requested {
+            self.refresh_language_catalogue();
+        }
         self.store();
     }
 
@@ -57,6 +60,15 @@ impl App {
         Content::Built(settings_pane(
             theme,
             &SettingsPane {
+                languages: crate::settings::languages::LanguagesPage {
+                    state: &self.languages,
+                    servers: &self.language_servers,
+                    focus: match self.writing {
+                        Some(Writing::LanguageField(index)) => Some(index),
+                        _ => None,
+                    },
+                    solid: self.caret_solid(),
+                },
                 settings: &self.settings,
                 preferences: &self.preferences,
                 keymap: self.resolver.keymap(),
@@ -145,6 +157,32 @@ impl App {
     /// sets, saying whether `message` was one.
     pub(super) fn settings_command(&mut self, message: Message) -> bool {
         match message {
+            Message::OpenLanguageSource(index, installed) => {
+                let entries = if installed {
+                    config::extensions::installed()
+                } else {
+                    self.languages.catalogue.clone()
+                };
+                if let Some(entry) = entries.get(index) {
+                    desktop::browse(&entry.source);
+                }
+            }
+            Message::RefreshLanguageCatalogue => self.refresh_language_catalogue(),
+            Message::InstallLanguageExtension(index) => self.install_language_extension(index),
+            Message::ImportLanguageExtension => self.import_language_extension(),
+            Message::RemoveLanguageExtension(index) => self.remove_language_extension(index),
+            Message::AddLanguageServer(index) => self.edit_language_server(index, None),
+            Message::EditLanguageServer(index, at) => self.edit_language_server(index, Some(at)),
+            Message::RemoveLanguageServer(index, at) => self.remove_language_server(index, at),
+            Message::ResetLanguageServers(index) => self.reset_language_servers(index),
+            Message::SaveLanguageServer => self.save_language_server(),
+            Message::CancelLanguageServer => {
+                self.languages.editor = None;
+                self.writing = None;
+            }
+            Message::WriteLanguageField(index, phase, anchor, head) => {
+                self.point_in(Writing::LanguageField(index), phase, anchor, head)
+            }
             Message::PickFont(slot) => self.ask_font(slot),
             Message::EditThemeColor(token) => self.ask_theme_color(token),
             Message::SaveTheme => self.ask_theme_name(),
@@ -162,6 +200,7 @@ impl App {
                     self.notices.trouble(error, None);
                 }
                 self.follow_keymap();
+                self.activate_languages();
             }
             Message::WriteAgentSearch(phase, anchor, head) => {
                 self.point_in(Writing::AgentSearch, phase, anchor, head);

@@ -52,6 +52,30 @@ pub enum Message {
     SaveKeymap,
     /// Read the keymaps in the editor's home in again.
     ReloadKeymaps,
+    /// Open the source of an offered or installed language package.
+    OpenLanguageSource(usize, bool),
+    /// Retrieve the maintained language extension catalogue.
+    RefreshLanguageCatalogue,
+    /// Install or update the catalogue entry at this position.
+    InstallLanguageExtension(usize),
+    /// Import a local extension directory through the platform picker.
+    ImportLanguageExtension,
+    /// Remove an installed language extension.
+    RemoveLanguageExtension(usize),
+    /// Add a server for the language at this position.
+    AddLanguageServer(usize),
+    /// Edit a configured language server.
+    EditLanguageServer(usize, usize),
+    /// Remove a configured language server.
+    RemoveLanguageServer(usize, usize),
+    /// Restore the language's default server declarations.
+    ResetLanguageServers(usize),
+    /// Save the current server form.
+    SaveLanguageServer,
+    /// Discard the current server form.
+    CancelLanguageServer,
+    /// Focus and select within a language search or server form field.
+    WriteLanguageField(usize, ResizePhase, Position, Position),
     /// Read installed extensions again.
     ReloadExtensions,
     /// Turn this preference, which is a switch, on or off.

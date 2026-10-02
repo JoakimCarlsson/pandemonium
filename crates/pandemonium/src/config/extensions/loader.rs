@@ -8,14 +8,18 @@ use std::sync::{LazyLock, Mutex};
 use pm_text::{ExtensionLanguage, Language};
 use serde::Deserialize;
 
-use super::paths;
-use super::stored::StoredServer;
+use super::super::paths;
+
+use super::super::stored::StoredServer;
+use super::Entry;
 
 /// Extension assets and errors from the most recent read.
 #[derive(Default)]
 struct Installed {
     /// Theme files in extension order.
     themes: Vec<String>,
+    /// Successfully loaded extension metadata.
+    entries: Vec<Entry>,
     /// Keymap files in extension order.
     keymaps: Vec<String>,
     /// One trouble message per failed extension.
@@ -32,6 +36,15 @@ struct Manifest {
     name: String,
     /// Its version.
     version: String,
+    /// Publisher displayed before installation.
+    #[serde(default)]
+    publisher: String,
+    /// Source repository.
+    #[serde(default)]
+    source: String,
+    /// What language support the extension adds.
+    #[serde(default)]
+    description: String,
     /// Languages it adds.
     #[serde(default)]
     languages: Vec<ManifestLanguage>,
@@ -52,6 +65,9 @@ struct ManifestLanguage {
     language_id: String,
     /// The WASM grammar.
     grammar: PathBuf,
+    /// WASM export name when different from the LSP identifier.
+    #[serde(default)]
+    grammar_name: Option<String>,
     /// Queries joined in this order.
     #[serde(default)]
     highlights: Vec<PathBuf>,
@@ -78,7 +94,7 @@ struct ManifestLanguage {
 }
 
 /// Reads every extension in sorted id order and installs its languages.
-pub(super) fn reload() {
+pub(crate) fn reload() {
     let mut installed = Installed::default();
     let mut languages = Vec::new();
     let mut claims = HashSet::new();
@@ -94,7 +110,14 @@ pub(super) fn reload() {
         .flatten()
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.is_dir()
+                && !path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .starts_with('.')
+        })
         .collect::<Vec<_>>();
     roots.sort();
     for root in roots {
@@ -156,8 +179,14 @@ fn read(
         let grammar_path = checked(root, &language.grammar)?;
         let bytes = fs::read(&grammar_path)
             .map_err(|error| format!("{}: {error}", grammar_path.display()))?;
-        let grammar = pm_text::load_grammar(&language.language_id, &bytes)
-            .map_err(|error| format!("{}: {error}", grammar_path.display()))?;
+        let grammar = pm_text::load_grammar(
+            language
+                .grammar_name
+                .as_deref()
+                .unwrap_or(&language.language_id),
+            &bytes,
+        )
+        .map_err(|error| format!("{}: {error}", grammar_path.display()))?;
         let mut highlights = Vec::new();
         for path in &language.highlights {
             let path = checked(root, path)?;
@@ -175,6 +204,16 @@ fn read(
                 return Err(format!("file extension .{extension} is already claimed"));
             }
             accepted.push(extension);
+        }
+        for server in &language.servers {
+            server.validate()?;
+        }
+        for name in &language.file_names {
+            let built_in = Language::of(Path::new(name)).is_some_and(|found| !found.is_wasm());
+            let claim = format!("file:{name}");
+            if built_in || claims.contains(&claim) || !pending_claims.insert(claim) {
+                return Err(format!("File name {name} is already claimed."));
+            }
         }
         let candidate = Language::extension(ExtensionLanguage {
             name: language.name,
@@ -214,6 +253,22 @@ fn read(
             fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?,
         );
     }
+    installed.entries.push(Entry {
+        id: root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        name: manifest.name,
+        version: manifest.version,
+        publisher: manifest.publisher,
+        source: manifest.source,
+        description: manifest.description,
+        platforms: Vec::new(),
+        prerequisites: Vec::new(),
+        url: String::new(),
+        sha256: String::new(),
+    });
     languages.extend(added);
     claims.extend(pending_claims);
     installed.themes.extend(theme_texts);
@@ -241,7 +296,7 @@ fn checked(root: &Path, relative: &Path) -> Result<PathBuf, String> {
 }
 
 /// The installed extension theme texts.
-pub(super) fn themes() -> Vec<String> {
+pub(crate) fn themes() -> Vec<String> {
     INSTALLED
         .lock()
         .map(|installed| installed.themes.clone())
@@ -249,7 +304,7 @@ pub(super) fn themes() -> Vec<String> {
 }
 
 /// The installed extension keymap texts.
-pub(super) fn keymaps() -> Vec<String> {
+pub(crate) fn keymaps() -> Vec<String> {
     INSTALLED
         .lock()
         .map(|installed| installed.keymaps.clone())
@@ -257,9 +312,47 @@ pub(super) fn keymaps() -> Vec<String> {
 }
 
 /// Removes the error messages from the most recent read.
-pub(super) fn take_errors() -> Vec<String> {
+pub(crate) fn take_errors() -> Vec<String> {
     INSTALLED
         .lock()
         .map(|mut installed| std::mem::take(&mut installed.errors))
         .unwrap_or_default()
+}
+
+/// Metadata for successfully loaded local extensions.
+pub fn installed() -> Vec<Entry> {
+    INSTALLED
+        .lock()
+        .map(|installed| installed.entries.clone())
+        .unwrap_or_default()
+}
+
+/// Validates a candidate against every other installed extension before replacing it.
+pub(super) fn validate(root: &Path, id: &str) -> Result<Entry, String> {
+    let mut installed = Installed::default();
+    let mut languages = Vec::new();
+    let mut claims = HashSet::new();
+    if let Some(directory) = paths::extensions() {
+        let mut roots = fs::read_dir(directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_dir()
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name != id && !name.to_string_lossy().starts_with('.'))
+            })
+            .collect::<Vec<_>>();
+        roots.sort();
+        for path in roots {
+            read(&path, &mut installed, &mut languages, &mut claims)?;
+        }
+    }
+    read(root, &mut installed, &mut languages, &mut claims)?;
+    installed
+        .entries
+        .pop()
+        .ok_or_else(|| "Extension metadata is missing.".into())
 }

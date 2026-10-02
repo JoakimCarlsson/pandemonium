@@ -128,7 +128,7 @@ impl App {
         if self.installing_servers.contains_key(command) {
             return;
         }
-        let Some(recipe) = pm_text::install::recipe(command) else {
+        let Some(recipe) = self.configured_server_recipe(command) else {
             return;
         };
         let Some(directory) = crate::config::servers() else {
@@ -165,11 +165,11 @@ impl App {
                     let started = self.editor.reopen_command(command);
                     if started
                         && let Some(directory) = crate::config::servers()
-                        && let Some(recipe) = pm_text::install::recipe(command)
+                        && let Some(recipe) = self.configured_server_recipe(command)
                     {
                         pm_text::install::prune_older(&directory, command, recipe.version());
                     }
-                    if let Some(recipe) = pm_text::install::recipe(command) {
+                    if let Some(recipe) = self.configured_server_recipe(command) {
                         self.notices
                             .done(format!("Installed {command} {}", recipe.version()), None);
                     }

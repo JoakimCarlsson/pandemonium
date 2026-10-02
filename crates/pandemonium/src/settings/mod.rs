@@ -14,6 +14,7 @@
 mod agent_list;
 mod agents;
 mod form;
+pub mod languages;
 mod mcp;
 mod page;
 mod parts;

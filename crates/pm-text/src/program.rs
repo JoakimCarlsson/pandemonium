@@ -89,17 +89,34 @@ fn usual_directories() -> Vec<PathBuf> {
 /// Nothing is started to find out: a program that is nowhere is one the
 /// reader does not have, and the editor does not try to run it.
 pub fn installed(command: &str) -> Option<PathBuf> {
+    installed_with_recipe(command, install::recipe(command))
+}
+
+/// Finds a custom executable first, then the configured recipe's managed version.
+pub fn installed_with_recipe(command: &str, recipe: Option<install::Recipe>) -> Option<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
     let names = file_names(command);
-
     env::split_paths(&path)
         .chain(usual_directories())
         .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
         .find(|program| program.is_file())
-        .or_else(|| {
-            let version = install::recipe(command)?.version();
-            managed_in(&servers()?.join(command).join(version))
+        .or_else(|| managed_in(&servers()?.join(command).join(recipe?.version())))
+}
+
+/// Finds the last completed managed version while a newer recipe is unavailable.
+pub fn managed_fallback(command: &str) -> Option<PathBuf> {
+    let mut versions = std::fs::read_dir(servers()?.join(command))
+        .ok()?
+        .flatten()
+        .filter_map(|entry| {
+            Some((
+                entry.metadata().ok()?.modified().ok()?,
+                managed_in(&entry.path())?,
+            ))
         })
+        .collect::<Vec<_>>();
+    versions.sort_by_key(|(written, _)| *written);
+    versions.pop().map(|(_, program)| program)
 }
 
 /// The file names `program` is installed under on this platform.

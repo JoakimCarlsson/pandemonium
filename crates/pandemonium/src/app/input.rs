@@ -506,6 +506,17 @@ impl App {
             return true;
         }
 
+        if let Writing::LanguageField(index @ 1..=3) = writing
+            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
+        {
+            let next = if self.modifiers.shift_key() {
+                (index + 1) % 3 + 1
+            } else {
+                index % 3 + 1
+            };
+            self.write_in(Writing::LanguageField(next));
+            return true;
+        }
         let modifiers = self.modifiers;
         if self
             .with_written(|input| input.submits(&event.logical_key, modifiers))
@@ -575,7 +586,8 @@ impl App {
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
             Writing::Comment(_) => self.apply(Message::SaveComment),
             Writing::McpSearch => self.search_mcp_registry(),
-            Writing::AgentSearch => {}
+            Writing::AgentSearch | Writing::LanguageField(0) => {}
+            Writing::LanguageField(_) => self.save_language_server(),
             Writing::FormField(_) => self.save_server_form(),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {

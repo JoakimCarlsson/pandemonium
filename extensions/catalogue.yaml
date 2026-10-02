@@ -1,0 +1,15 @@
+- name: WGSL
+  version: 0.1.0
+  publisher: Pandemonium
+  source: https://github.com/JoakimCarlsson/pandemonium/tree/main/extensions/wgsl
+  description: WGSL highlighting and wgsl-analyzer diagnostics and navigation.
+  id: wgsl
+  platforms:
+  - linux-x86_64
+  - linux-aarch64
+  - macos-aarch64
+  - windows-x86_64
+  - windows-aarch64
+  prerequisites: []
+  url: https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/extensions/packages/wgsl-0.1.0.zip
+  sha256: 318bec6c60eb5b926a51850e960b20837cb3d0acc7fc34f768dd37d920dcdc5f

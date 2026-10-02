@@ -34,6 +34,8 @@ pub enum Kind {
     Commands,
     /// Every server the editor can install.
     LanguageServers,
+    /// Language packages offered by the maintained catalogue.
+    LanguageExtensions,
     /// Every file of the worktree the window is pointed at.
     Files,
     /// The projects the window holds open.
@@ -132,6 +134,7 @@ impl Kind {
         match self {
             Self::Commands => "Run a command",
             Self::LanguageServers => "Install Language Server…",
+            Self::LanguageExtensions => "Install Language Support…",
             Self::Files => "Search files by name, > for commands, # for symbols",
             Self::Sessions => "Go to a session",
             Self::Projects => "Go to a project",
@@ -250,6 +253,8 @@ pub enum Choice {
     Act(Action),
     /// Install this language server.
     InstallLanguageServer(&'static str),
+    /// Install this language package after reviewing its catalogue metadata.
+    InstallLanguageExtension(usize),
     /// Open this file of this worktree.
     Open(Scope, PathBuf),
     /// Open this file of this worktree and go to this place in it.

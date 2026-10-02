@@ -943,6 +943,11 @@ impl Document {
             return false;
         }
         self.dismiss_prediction();
+        for server in &self.servers {
+            if !servers.iter().any(|new| Arc::ptr_eq(server, new)) {
+                server.did_close(self.buffer.path());
+            }
+        }
         for server in &servers {
             if !self.servers.iter().any(|old| Arc::ptr_eq(old, server))
                 && let Some(language) = self.buffer.language()
@@ -1465,7 +1470,13 @@ impl Files {
                 self.open.values().any(|entry| {
                     let document = entry.document.borrow();
                     document.buffer().language().is_some_and(|language| {
-                        !document.is_served()
+                        (!document.is_served()
+                            || (pm_text::program::installed_with_recipe(
+                                server.command,
+                                server.install,
+                            )
+                            .is_none()
+                                && pm_text::program::managed_fallback(server.command).is_some()))
                             && self
                                 .servers
                                 .installable(language)
@@ -1484,6 +1495,39 @@ impl Files {
     /// What the servers for `language` need that the editor cannot install.
     pub fn server_needs(&self, language: pm_text::Language) -> Option<&'static str> {
         self.servers.needs(language)
+    }
+
+    /// Reidentifies open files and reconciles servers after extension changes.
+    pub fn reload_languages(&mut self) {
+        for entry in self.open.values() {
+            let mut document = entry.document.borrow_mut();
+            let previous = document.buffer.language();
+            let current = pm_text::Language::of(document.buffer.path());
+            if previous.is_some_and(pm_text::Language::is_wasm)
+                || current.is_some_and(pm_text::Language::is_wasm)
+                || previous.map(pm_text::Language::name) != current.map(pm_text::Language::name)
+            {
+                document.set_servers(Vec::new());
+                document.buffer.reload_language();
+            }
+        }
+        self.reconcile_servers();
+    }
+
+    /// Stops obsolete server slots and attaches configured servers to every open file.
+    pub fn reconcile_servers(&mut self) {
+        let documents = self
+            .open
+            .values()
+            .filter_map(|entry| {
+                Some((
+                    entry.root.clone(),
+                    entry.document.borrow().buffer().language()?,
+                ))
+            })
+            .collect::<Vec<_>>();
+        self.servers.reconcile(&documents);
+        self.refresh();
     }
 
     /// Starts installed servers again for every open document of `language`.

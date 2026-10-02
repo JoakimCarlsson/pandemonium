@@ -488,6 +488,15 @@ impl App {
             }
             crate::app::Writing::McpSearch => Some(self.mcp_search.text()),
             crate::app::Writing::AgentSearch => Some(self.agent_search.text()),
+            crate::app::Writing::LanguageField(0) => Some(self.languages.search.text()),
+            crate::app::Writing::LanguageField(index) => Some(
+                self.languages
+                    .editor
+                    .as_ref()?
+                    .fields
+                    .get(index - 1)?
+                    .text(),
+            ),
             crate::app::Writing::FormField(field) => {
                 Some(self.server_form.as_ref()?.input(field)?.text())
             }

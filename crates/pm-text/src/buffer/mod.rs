@@ -149,6 +149,19 @@ impl Buffer {
         )
     }
 
+    /// Reidentifies this open buffer after extension languages change.
+    pub fn reload_language(&mut self) {
+        self.language = Language::of(&self.path);
+        self.syntax = self.language.and_then(Syntax::new);
+        if let Some(syntax) = self.syntax.as_mut() {
+            syntax.parse(&self.text);
+        }
+        self.diagnostics.clear();
+        self.set_semantics(Vec::new());
+        self.set_hints(Vec::new());
+        self.set_lenses(Vec::new());
+    }
+
     /// The language it is written in, when the editor knows the extension.
     pub fn language(&self) -> Option<Language> {
         self.language

@@ -65,6 +65,12 @@ impl App {
             Action::ToggleServerTrace => self.toggle_server_trace(),
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
+            Action::OpenLanguages => {
+                self.open_settings();
+                self.settings.show(crate::settings::SettingsPage::Languages);
+                self.write_in(crate::app::Writing::LanguageField(0));
+            }
+            Action::InstallLanguageExtension => self.open_picker(Kind::LanguageExtensions),
             Action::OpenSettings => return self.apply(Message::OpenSettings),
             Action::OpenKeymap => {
                 self.open_settings();

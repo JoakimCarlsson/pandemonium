@@ -21,6 +21,7 @@ mod form;
 mod health;
 mod input;
 mod language;
+mod languages;
 mod listing;
 mod mcp;
 mod modal;
@@ -112,6 +113,8 @@ pub(super) enum Writing {
     McpSearch,
     /// The box the agents on the settings page are searched with.
     AgentSearch,
+    /// Search or server form field on the Languages page.
+    LanguageField(usize),
     /// One box of the form a tool server is described in.
     FormField(crate::settings::FormField),
 }
@@ -260,6 +263,8 @@ pub struct App {
     mcp_search: crate::input::Input,
     /// The box the agents are searched with.
     agent_search: crate::input::Input,
+    /// Language catalogue, search and current server form.
+    languages: crate::settings::languages::Languages,
     /// What the agent registry last offered.
     agent_registry: agents::SharedAgentRegistry,
     /// The agents being downloaded, with the notice saying so.
@@ -625,6 +630,7 @@ impl App {
         }
         self.editor.set_language_servers(&replace);
         self.editor.add_language_servers(&add);
+        self.editor.reconcile_servers();
     }
 
     /// Reads the language servers the settings file names again when it has
@@ -726,6 +732,7 @@ impl App {
             server_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),
             agent_search: crate::input::Input::one_line("Search agents"),
+            languages: Default::default(),
             agent_registry: agents::SharedAgentRegistry::default(),
             agent_downloads: Vec::new(),
             mcp_registry: mcp::SharedRegistry::default(),
@@ -932,7 +939,7 @@ impl App {
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
             Some(Writing::McpSearch | Writing::AgentSearch) => return Some("search"),
-            Some(Writing::FormField(_)) => return Some("field"),
+            Some(Writing::FormField(_) | Writing::LanguageField(_)) => return Some("field"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -2353,6 +2360,10 @@ impl App {
                 .map(crate::debug::Debugger::console_mut),
             Writing::McpSearch => Some(&mut self.mcp_search),
             Writing::AgentSearch => Some(&mut self.agent_search),
+            Writing::LanguageField(0) => Some(&mut self.languages.search),
+            Writing::LanguageField(index) => {
+                self.languages.editor.as_mut()?.fields.get_mut(index - 1)
+            }
             Writing::FormField(field) => self.server_form.as_mut()?.input_mut(field),
             Writing::Comment(_) => None,
         }
@@ -2838,7 +2849,10 @@ impl ApplicationHandler<Wake> for App {
                     self.store();
                 }
             }
-            Wake::Install => self.finish_server_installs(),
+            Wake::Install => {
+                self.finish_server_installs();
+                self.finish_language_operations();
+            }
             Wake::Language => {
                 self.hear_server_troubles();
                 if self.settle_moving() {

@@ -73,6 +73,8 @@ const LIT_BORDER_ALPHA: f32 = 0.4;
 
 /// What the settings pane is drawn from.
 pub struct SettingsPane<'a> {
+    /// Language catalogue and server configuration.
+    pub languages: crate::settings::languages::LanguagesPage<'a>,
     /// Which page is open, and how far down it.
     pub settings: &'a Settings,
     /// The preferences the pane edits.
@@ -575,6 +577,10 @@ fn section_rows(
                 button("Reload", Message::ReloadExtensions).outlined(),
             ),
         ],
+        SettingsSection::Languages => vec![crate::settings::languages::language_page(
+            theme,
+            &pane.languages,
+        )],
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
         SettingsSection::AgentServers => {
             vec![crate::settings::agent_list::agent_list(theme, &pane.agents)]

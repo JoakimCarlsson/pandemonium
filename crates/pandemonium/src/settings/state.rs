@@ -21,6 +21,8 @@ pub enum SettingsPage {
     Appearance,
     /// How text is edited, drawn and written down.
     Editor,
+    /// Installed languages, extension discovery and server configuration.
+    Languages,
     /// The keymap the editor starts from, modal editing, and every binding.
     Keymap,
     /// How a terminal is drawn and how much it remembers.
@@ -33,9 +35,10 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// Every page, in the order the sidebar lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Appearance,
         Self::Editor,
+        Self::Languages,
         Self::Keymap,
         Self::Terminal,
         Self::Sessions,
@@ -47,6 +50,7 @@ impl SettingsPage {
         match self {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
+            Self::Languages => "Languages",
             Self::Keymap => "Keymap",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
@@ -70,6 +74,7 @@ impl SettingsPage {
                 SettingsSection::Display,
                 SettingsSection::Saving,
             ],
+            Self::Languages => &[SettingsSection::Languages],
             Self::Keymap => &[SettingsSection::Keymap, SettingsSection::Keybindings],
             Self::Terminal => &[SettingsSection::Terminal],
             Self::Sessions => &[SettingsSection::Sessions],
@@ -89,6 +94,8 @@ impl SettingsPage {
 /// child in the sidebar that shows the section alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsSection {
+    /// Language extensions and the servers configured for them.
+    Languages,
     /// The theme mode and family.
     Theme,
     /// Every colour of the theme, repaintable one at a time, and the
@@ -126,6 +133,7 @@ impl SettingsSection {
     /// What the section's heading and its entry in the sidebar call it.
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Languages => "Languages",
             Self::Theme => "Theme",
             Self::ThemeColors => "Theme Colors",
             Self::Fonts => "Fonts",
@@ -213,7 +221,7 @@ impl SettingsSection {
                 Preference::WorktreeCopy,
                 Preference::WorktreePort,
             ],
-            Self::AgentServers | Self::McpServers => &[],
+            Self::AgentServers | Self::McpServers | Self::Languages => &[],
         }
     }
 }
