@@ -14,6 +14,7 @@
 
 mod adapter;
 mod attach;
+mod cargo;
 mod scenario;
 mod session;
 mod state;
