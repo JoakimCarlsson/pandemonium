@@ -33,6 +33,17 @@ const MENU_GAP: f32 = 4.0;
 /// The interval between scroll steps while a selection is held past a pane edge.
 const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
 
+/// How much of a transcript a press picks out, and a drag from it grows by.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Grain {
+    /// A place between two characters.
+    Character,
+    /// The word under the press, from a second press.
+    Word,
+    /// The whole paragraph under the press, from a third.
+    Paragraph,
+}
+
 /// A transcript selection captured against its conversation for one press.
 #[derive(Clone, Copy)]
 pub(super) struct SelectionDrag {
@@ -149,6 +160,13 @@ impl App {
             }
             Message::ShowAgentModes(session) => self.show_agent_modes(session),
             Message::CycleAgentMode(session) => self.cycle_agent_mode(session),
+            Message::ShowAgentTextMenu(session) => {
+                self.open_menu(MenuTarget::AgentText(session));
+            }
+            Message::CopyAgentText(session) => {
+                self.copy_agent_selection(session);
+            }
+            Message::SelectAllAgentText(session) => self.select_all_agent_text(session),
             Message::ReconnectAgent(session) => self.reconnect_agent(session),
             Message::LogOutAgent(session) => self.log_out_agent(session),
             Message::ShowAgentDeletions(session) => self.show_agent_deletions(session),
@@ -878,8 +896,12 @@ impl App {
             let Some(anchor) = talk.spot_at(anchor) else {
                 return;
             };
-            self.agent_words = self.agent_clicks.press(anchor) == 2;
-            if !self.agent_words {
+            self.agent_grain = match self.agent_clicks.press(anchor) {
+                2 => Grain::Word,
+                3 => Grain::Paragraph,
+                _ => Grain::Character,
+            };
+            if self.agent_grain == Grain::Character {
                 talk.clear_selection();
             }
             self.agent_selection_drag = Some(SelectionDrag {
@@ -926,9 +948,10 @@ impl App {
         if drag.anchor != head {
             self.agent_clicks.clear();
         }
-        let (anchor, head) = match self.agent_words {
-            true => crate::agent::words_between(&theme, talk, drag.anchor, head),
-            false => (drag.anchor, head),
+        let (anchor, head) = match self.agent_grain {
+            Grain::Character => (drag.anchor, head),
+            Grain::Word => crate::agent::words_between(&theme, talk, drag.anchor, head),
+            Grain::Paragraph => crate::agent::lines_between(&theme, talk, drag.anchor, head),
         };
         let before = talk.selection();
         talk.select(anchor, head);
@@ -985,10 +1008,16 @@ impl App {
     /// Puts what the reader picked out of the focused agent's transcript on
     /// the clipboard, saying whether there was anything to put there.
     pub(super) fn copy_agent_text(&self) -> bool {
-        let Some(talk) = self
-            .focused_talk()
-            .and_then(|session| self.agents.get(session))
-        else {
+        match self.focused_talk() {
+            Some(session) => self.copy_agent_selection(session),
+            None => false,
+        }
+    }
+
+    /// Puts what the reader picked out of `session`'s transcript on the
+    /// clipboard, saying whether there was anything to put there.
+    pub(super) fn copy_agent_selection(&self, session: TalkId) -> bool {
+        let Some(talk) = self.agents.get(session) else {
             return false;
         };
         let Some(text) = crate::agent::selected_text(&self.theme(), talk) else {
@@ -996,6 +1025,17 @@ impl App {
         };
         desktop::copy(text);
         true
+    }
+
+    /// Picks out the whole of `session`'s transcript.
+    pub(super) fn select_all_agent_text(&mut self, session: TalkId) {
+        let theme = self.theme();
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        if let Some((first, last)) = crate::agent::everything(&theme, talk) {
+            talk.select(first, last);
+        }
     }
 
     /// The session the pointer is over, or the one the focused pane shows.

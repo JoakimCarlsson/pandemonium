@@ -522,6 +522,9 @@ impl App {
         {
             talk.retyped();
         }
+        if writing == Writing::McpSearch {
+            self.search_mcp_registry();
+        }
         true
     }
 
@@ -564,6 +567,7 @@ impl App {
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
             Writing::Comment(_) => self.apply(Message::SaveComment),
+            Writing::McpSearch => self.search_mcp_registry(),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {
                     debugger.evaluate();

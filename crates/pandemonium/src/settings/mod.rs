@@ -11,8 +11,10 @@
 //! The pane is a tab like any other, which belongs to the window rather than
 //! to a worktree: it is drawn whichever project or session is in front.
 
+mod mcp;
 mod page;
 mod state;
 
+pub use mcp::{Catalog, McpPage};
 pub use page::{SettingsPane, settings_pane};
 pub use state::{Settings, SettingsPage, SettingsSection};

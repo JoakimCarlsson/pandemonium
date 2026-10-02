@@ -27,16 +27,19 @@ pub enum SettingsPage {
     Terminal,
     /// How a session's worktree is made and treated.
     Sessions,
+    /// What agents are started with.
+    Agents,
 }
 
 impl SettingsPage {
     /// Every page, in the order the sidebar lists them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Appearance,
         Self::Editor,
         Self::Keymap,
         Self::Terminal,
         Self::Sessions,
+        Self::Agents,
     ];
 
     /// What the sidebar and the page's heading call it.
@@ -47,6 +50,7 @@ impl SettingsPage {
             Self::Keymap => "Keymap",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
+            Self::Agents => "Agents",
         }
     }
 
@@ -69,13 +73,15 @@ impl SettingsPage {
             Self::Keymap => &[SettingsSection::Keymap, SettingsSection::Keybindings],
             Self::Terminal => &[SettingsSection::Terminal],
             Self::Sessions => &[SettingsSection::Sessions],
+            Self::Agents => &[SettingsSection::McpServers],
         }
     }
 
     /// Whether the sidebar lists the page's sections under it: a page of
-    /// one section is that section, and has nothing to list.
+    /// one section is that section, and has nothing to list, unless it is a
+    /// page that more sections are still to join.
     pub const fn has_sections(self) -> bool {
-        self.sections().len() > 1
+        self.sections().len() > 1 || matches!(self, Self::Agents)
     }
 }
 
@@ -110,6 +116,8 @@ pub enum SettingsSection {
     Terminal,
     /// Whether a session's worktree is trusted, and what a new one is given.
     Sessions,
+    /// The tool servers every agent is started with.
+    McpServers,
 }
 
 impl SettingsSection {
@@ -129,6 +137,7 @@ impl SettingsSection {
             Self::Keybindings => "Keybindings",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
+            Self::McpServers => "MCP Servers",
         }
     }
 
@@ -201,6 +210,7 @@ impl SettingsSection {
                 Preference::WorktreeCopy,
                 Preference::WorktreePort,
             ],
+            Self::McpServers => &[],
         }
     }
 }
@@ -254,6 +264,10 @@ pub struct Settings {
     expanded: Vec<SettingsPage>,
     /// The binding being recorded, while one is.
     recording: Option<Recording>,
+    /// Whether the list of installed MCP servers is open.
+    installed_open: bool,
+    /// Whether the list of MCP servers on offer is open.
+    available_open: bool,
 }
 
 /// The chords pressed so far for an action being bound.
@@ -287,6 +301,8 @@ impl Default for Settings {
             scroll: Scrolled::default(),
             expanded: vec![page],
             recording: None,
+            installed_open: true,
+            available_open: true,
         }
     }
 }
@@ -325,6 +341,26 @@ impl Settings {
             }
             None => self.expanded.push(page),
         }
+    }
+
+    /// Whether the list of installed MCP servers is open.
+    pub fn installed_open(&self) -> bool {
+        self.installed_open
+    }
+
+    /// Whether the list of MCP servers on offer is open.
+    pub fn available_open(&self) -> bool {
+        self.available_open
+    }
+
+    /// Opens the list of installed MCP servers, or folds it.
+    pub fn toggle_installed(&mut self) {
+        self.installed_open = !self.installed_open;
+    }
+
+    /// Opens the list of MCP servers on offer, or folds it.
+    pub fn toggle_available(&mut self) {
+        self.available_open = !self.available_open;
     }
 
     /// The binding being recorded, while one is.

@@ -93,6 +93,22 @@ pub enum Message {
     OpenSettings,
     /// Open the repository the editor is published from.
     OpenRepository,
+    /// Start describing a tool server to add to every agent.
+    AddMcpServer,
+    /// Install the registry's server in this place of the list on offer.
+    InstallMcpServer(usize),
+    /// Open or fold the list of installed MCP servers.
+    ToggleMcpInstalled,
+    /// Open or fold the list of MCP servers on offer.
+    ToggleMcpAvailable,
+    /// Open the page that says what MCP servers are.
+    OpenMcpDocs,
+    /// Put the caret of the MCP search box where a press landed, selecting to it.
+    WriteMcpSearch(ResizePhase, Position, Position),
+    /// Describe the tool server in this place of the list again.
+    EditMcpServer(usize),
+    /// Take the tool server in this place of the list away.
+    RemoveMcpServer(usize),
     /// Show this page of the settings pane, from its top.
     ShowSettingsPage(SettingsPage),
     /// Show the page of the settings pane this section is on, scrolled to it.
@@ -583,6 +599,12 @@ pub enum Message {
     ShowAgentModes(TalkId),
     /// Put this session into the mode after the one it is in.
     CycleAgentMode(TalkId),
+    /// Open the menu of what can be done to the text of this session's transcript.
+    ShowAgentTextMenu(TalkId),
+    /// Copy what is picked out of this session's transcript.
+    CopyAgentText(TalkId),
+    /// Pick out the whole of this session's transcript.
+    SelectAllAgentText(TalkId),
     /// Start this session's agent again, carrying on the conversation it was in.
     ReconnectAgent(TalkId),
     /// Log this session's agent out.

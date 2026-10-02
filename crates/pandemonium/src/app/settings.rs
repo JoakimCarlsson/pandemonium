@@ -4,13 +4,14 @@
 
 use pm_ui::Theme;
 
-use crate::app::App;
+use crate::app::{App, Writing};
 use crate::config::{self, FontSlot, WorktreePaths};
+use crate::desktop;
 use crate::editor::Habits;
 use crate::message::Message;
 use crate::panes::{Content, Item};
 use crate::picker::{Choice, Kind, Row};
-use crate::settings::{SettingsPane, settings_pane};
+use crate::settings::{McpPage, SettingsPane, settings_pane};
 use crate::theme::{self, TOKENS};
 
 impl App {
@@ -45,6 +46,7 @@ impl App {
 
     /// What a pane showing the settings draws beneath its bar of tabs.
     pub(super) fn settings_content(&self, theme: &Theme) -> Content {
+        let catalog = self.mcp_catalog();
         Content::Built(settings_pane(
             theme,
             &SettingsPane {
@@ -52,6 +54,15 @@ impl App {
                 preferences: &self.preferences,
                 keymap: self.resolver.keymap(),
                 file: crate::config::settings_file(),
+                mcp: McpPage {
+                    servers: &self.mcp_servers,
+                    catalog: &catalog,
+                    search: &self.mcp_search,
+                    typing: self.writing == Some(Writing::McpSearch),
+                    solid: self.caret_solid(),
+                    installed_open: self.settings.installed_open(),
+                    available_open: self.settings.available_open(),
+                },
             },
         ))
     }
@@ -124,6 +135,16 @@ impl App {
                 }
                 self.follow_keymap();
             }
+            Message::AddMcpServer => self.add_mcp_server(),
+            Message::InstallMcpServer(index) => self.install_mcp_server(index),
+            Message::ToggleMcpInstalled => self.settings.toggle_installed(),
+            Message::ToggleMcpAvailable => self.settings.toggle_available(),
+            Message::OpenMcpDocs => desktop::browse("https://modelcontextprotocol.io"),
+            Message::WriteMcpSearch(phase, anchor, head) => {
+                self.point_in(Writing::McpSearch, phase, anchor, head);
+            }
+            Message::EditMcpServer(index) => self.edit_mcp_server(index),
+            Message::RemoveMcpServer(index) => self.remove_mcp_server(index),
             Message::RecordBinding(action) => self.settings.record(action),
             Message::UnbindAction(action) => {
                 self.preferences.unbind(action);

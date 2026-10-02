@@ -310,6 +310,8 @@ pub enum MenuTarget {
     Breakpoint(PaneId, usize),
     /// The box of text that is being written in.
     Input,
+    /// The transcript of one agent session.
+    AgentText(crate::agent::TalkId),
     /// The fixes a language server offered where the cursor is.
     CodeActions,
     /// One entry of the file tree, and whatever is selected with it.

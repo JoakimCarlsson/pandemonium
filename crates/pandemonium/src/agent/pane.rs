@@ -189,6 +189,7 @@ pub fn agent_pane(
                         .pr(SCROLLBAR_GUTTER / STEP)
                         .py(INSET)
                         .drag_cursor(PointerCursor::Text)
+                        .on_secondary_click(Message::ShowAgentTextMenu(session))
                         .on_drag(move |event| {
                             Message::SelectAgentText(
                                 session,
@@ -1643,6 +1644,61 @@ pub fn words_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (S
         )
     };
     (word(anchor.min(head)).0, word(anchor.max(head)).1)
+}
+
+/// The whole paragraphs the rows from `anchor` to `head` belong to.
+///
+/// A paragraph is a line as it was written, which the pane may have broken
+/// into several rows; a row carried on from the one above belongs to the
+/// paragraph that one starts.
+pub fn lines_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (Spot, Spot) {
+    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
+    let carried = |row: usize| wrapped.row(row).first().is_some_and(|piece| piece.wrapped);
+    let (first, last) = (anchor.min(head), anchor.max(head));
+    if wrapped.len() == 0 {
+        return (first, last);
+    }
+    let mut start = first.row.min(wrapped.len() - 1);
+    while start > 0 && carried(start) {
+        start -= 1;
+    }
+    let mut end = last.row.min(wrapped.len() - 1);
+    while end + 1 < wrapped.len() && carried(end + 1) {
+        end += 1;
+    }
+    let width = wrapped
+        .row(end)
+        .iter()
+        .map(|piece| piece.text.chars().count())
+        .sum();
+    (
+        Spot {
+            row: start,
+            column: 0,
+        },
+        Spot {
+            row: end,
+            column: width,
+        },
+    )
+}
+
+/// The first place in the conversation and the last, which is all of it.
+pub fn everything(theme: &Theme, talk: &Talk) -> Option<(Spot, Spot)> {
+    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
+    let last = wrapped.len().checked_sub(1)?;
+    let width = wrapped
+        .row(last)
+        .iter()
+        .map(|piece| piece.text.chars().count())
+        .sum();
+    Some((
+        Spot { row: 0, column: 0 },
+        Spot {
+            row: last,
+            column: width,
+        },
+    ))
 }
 
 /// The word in `line` that `column` falls on, as the column it starts at

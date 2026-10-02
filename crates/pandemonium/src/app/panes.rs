@@ -486,6 +486,7 @@ impl App {
             crate::app::Writing::Console(scope) => {
                 Some(self.debuggers.get(scope)?.console().text())
             }
+            crate::app::Writing::McpSearch => Some(self.mcp_search.text()),
             crate::app::Writing::Comment(scope) => {
                 Some(self.reviews.get(&scope)?.comments().composing()?.text)
             }
@@ -1465,6 +1466,17 @@ impl App {
                             crate::picker::Kind::BreakpointLog,
                         )),
                     ),
+                ]
+            }
+            MenuTarget::AgentText(session) => {
+                let selected = self
+                    .agents
+                    .get(session)
+                    .is_some_and(|talk| talk.selection().is_some());
+                vec![
+                    pm_ui::menu_entry("Copy", selected.then_some(Message::CopyAgentText(session))),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Select All", Some(Message::SelectAllAgentText(session))),
                 ]
             }
             MenuTarget::Input => {

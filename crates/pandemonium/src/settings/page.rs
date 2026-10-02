@@ -81,13 +81,16 @@ pub struct SettingsPane<'a> {
     pub keymap: &'a Keymap,
     /// The file the preferences are written to, when there is one.
     pub file: Option<PathBuf>,
+    /// What the MCP Servers page is drawn from.
+    pub mcp: crate::settings::mcp::McpPage<'a>,
 }
 
 /// Builds the settings pane in `theme`.
 pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<Message>> {
     let settings = pane.settings;
     let view = settings.view();
-    let alone = view.sections().len() == 1;
+    let alone = view.sections().len() == 1 && !view.page().has_sections();
+    let alone = alone || matches!(view, SettingsView::Section(_));
     let sections = view
         .sections()
         .iter()
@@ -562,6 +565,7 @@ fn section_rows(
             ),
         ],
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
+        SettingsSection::McpServers => vec![crate::settings::mcp::mcp_page(theme, &pane.mcp)],
         SettingsSection::Terminal => vec![
             stepper(
                 Preference::TerminalFontSize,

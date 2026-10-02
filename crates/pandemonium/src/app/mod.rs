@@ -20,6 +20,7 @@ mod health;
 mod input;
 mod language;
 mod listing;
+mod mcp;
 mod modal;
 mod notice;
 mod operations;
@@ -105,6 +106,8 @@ pub(super) enum Writing {
     Console(Scope),
     /// The box a review comment is being written in, in one worktree.
     Comment(Scope),
+    /// The box the MCP servers on the settings page are searched with.
+    McpSearch,
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -144,6 +147,8 @@ pub enum Wake {
     Paste,
     /// Files have been carried onto the window from outside it.
     Arrival,
+    /// The MCP registry has answered a search.
+    Registry,
 }
 
 /// The remote operation currently running for the active project.
@@ -243,6 +248,12 @@ pub struct App {
     session_picks: BTreeSet<PathBuf>,
     /// The field of an agent's form that the prompt or list on screen is editing.
     answering: Option<answer::Editing>,
+    /// The tool server being described in the prompts of the Agents page.
+    mcp_draft: Option<mcp::Draft>,
+    /// The box the MCP servers are searched with.
+    mcp_search: crate::input::Input,
+    /// What the MCP registry last offered.
+    mcp_registry: mcp::SharedRegistry,
     /// The branches the open project menu offers to cut a session from.
     session_bases: Vec<String>,
     /// Whether that menu is showing them.
@@ -469,7 +480,7 @@ pub struct App {
     /// The last press on an agent's transcript, for selecting a word.
     agent_clicks: Clicks<crate::agent::Spot>,
     /// Whether the drag over an agent's transcript grows by whole words.
-    agent_words: bool,
+    agent_grain: agent::Grain,
     /// The transcript anchor and pointer held by the current selection gesture.
     agent_selection_drag: Option<agent::SelectionDrag>,
     /// The last press on a row of the file tree, for keeping a file open.
@@ -538,7 +549,7 @@ pub struct App {
 }
 
 /// How many kinds of [`Wake`] there are.
-const WAKES: usize = Wake::Arrival as usize + 1;
+const WAKES: usize = Wake::Registry as usize + 1;
 
 /// One flag per kind of [`Wake`], set while one is on its way.
 type Pending = Arc<[AtomicBool; WAKES]>;
@@ -700,6 +711,9 @@ impl App {
             session_name: String::new(),
             session_picks: BTreeSet::new(),
             answering: None,
+            mcp_draft: None,
+            mcp_search: crate::input::Input::one_line("Search MCP servers"),
+            mcp_registry: mcp::SharedRegistry::default(),
             session_bases: Vec::new(),
             showing_bases: false,
             open,
@@ -823,7 +837,7 @@ impl App {
             screen_clicks: Clicks::default(),
             screen_unit: pm_vt::Unit::Cell,
             agent_clicks: Clicks::default(),
-            agent_words: false,
+            agent_grain: agent::Grain::Character,
             agent_selection_drag: None,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
@@ -902,6 +916,7 @@ impl App {
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
+            Some(Writing::McpSearch) => return Some("search"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -1832,11 +1847,17 @@ impl App {
         }
         if let Message::ShowSettingsPage(page) = message {
             self.settings.show(page);
+            if page == crate::settings::SettingsPage::Agents {
+                self.load_mcp_registry();
+            }
             self.request_redraw();
             return;
         }
         if let Message::ShowSettingsSection(section) = message {
             self.settings.show_section(section);
+            if section == crate::settings::SettingsSection::McpServers {
+                self.load_mcp_registry();
+            }
             self.request_redraw();
             return;
         }
@@ -2314,6 +2335,7 @@ impl App {
                 .debuggers
                 .get_mut(scope)
                 .map(crate::debug::Debugger::console_mut),
+            Writing::McpSearch => Some(&mut self.mcp_search),
             Writing::Comment(_) => None,
         }
     }
@@ -2879,6 +2901,7 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Arrival => self.take_arrivals(),
+            Wake::Registry => self.request_redraw(),
         }
     }
 
