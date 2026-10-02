@@ -256,6 +256,10 @@ pub struct Panes {
     pub notice: Option<Shown>,
     /// What a language server behind the focused file says it is working on.
     pub activity: Option<String>,
+    /// The focused buffer's configured server with the worst lifecycle state.
+    pub server: Option<pm_text::ServerStatus>,
+    /// The current rotation of the language server spinner.
+    pub server_turn: f32,
     /// The tab menu that is open, and what it holds.
     pub menu: Option<(TabMenu, Vec<MenuItem<Message>>)>,
     /// What is drawn over the panes, each at a point of its own.
@@ -610,6 +614,10 @@ struct Status {
     language: Option<&'static str>,
     /// What a language server behind that file says it is working on.
     activity: Option<String>,
+    /// The server state drawn beside the language name.
+    server: Option<pm_text::ServerStatus>,
+    /// The current rotation of the language server spinner.
+    server_turn: f32,
     /// The mode modal editing has that file in, with the keys typed towards
     /// a command and the register being recorded into.
     modal: Option<String>,
@@ -645,6 +653,8 @@ impl Status {
             tally: panes.tally,
             notice: panes.notice.clone(),
             activity: panes.activity.clone(),
+            server: panes.server.clone(),
+            server_turn: panes.server_turn,
             panel_open: layout.bottom_panel_open,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
@@ -717,6 +727,8 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
         indent,
         language,
         activity,
+        server,
+        server_turn,
         problems,
         modal,
     } = status;
@@ -826,7 +838,10 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
             ))
         })
         .when_some(language, |bar, language| {
-            bar.child(status_item(theme, None, language, None, false))
+            let Some(server) = server else {
+                return bar.child(status_item(theme, None, language, None, false));
+            };
+            bar.child(language_server_item(theme, language, server, server_turn))
         })
         .child(
             status_item(
@@ -980,6 +995,62 @@ fn status_item(
             item.child(icon(glyph).size(IconSize::XSmall).color(color))
         })
         .child(text(label.into()).text_xs().font_light().color(color))
+}
+
+/// Draws the configured server name and state beside the buffer's language.
+fn language_server_item(
+    theme: &Theme,
+    language: &str,
+    server: pm_text::ServerStatus,
+    turn: f32,
+) -> Div<Message> {
+    let (glyph, color, detail) = match &server.state {
+        pm_text::ServerState::Ready => (None, theme.colors.text_muted, "Ready".to_owned()),
+        pm_text::ServerState::Starting => (
+            Some(IconName::LoadCircle),
+            theme.colors.text_muted,
+            "Starting".to_owned(),
+        ),
+        pm_text::ServerState::Indexing => (
+            Some(IconName::LoadCircle),
+            theme.colors.text_muted,
+            "Indexing".to_owned(),
+        ),
+        pm_text::ServerState::Missing => (
+            Some(IconName::Warning),
+            theme.colors.danger,
+            "Missing".to_owned(),
+        ),
+        pm_text::ServerState::Failed { reason } => (
+            Some(IconName::Warning),
+            theme.colors.danger,
+            format!("Failed: {reason}"),
+        ),
+    };
+    let rotation = if matches!(
+        server.state,
+        pm_text::ServerState::Starting | pm_text::ServerState::Indexing
+    ) {
+        turn
+    } else {
+        0.0
+    };
+    status_item(
+        theme,
+        None,
+        format!("{language} · {}", server.command),
+        Some(Message::OpenServerLog),
+        false,
+    )
+    .when_some(glyph, |item, glyph| {
+        item.child(
+            icon(glyph)
+                .size(IconSize::XSmall)
+                .color(color)
+                .rotate(rotation),
+        )
+    })
+    .tooltip(detail)
 }
 
 /// `count` written out with `noun`, pluralized the way English does it.

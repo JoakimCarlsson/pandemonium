@@ -262,7 +262,7 @@ impl Client {
             }
         };
         if let Some(stderr) = process.stderr.take() {
-            log.follow(stderr);
+            log.follow(stderr, notify.clone());
         }
 
         let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"), log.clone());
@@ -847,9 +847,29 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// The lifecycle state derived from initialization and work-done progress.
+    pub fn server_state(&self) -> super::ServerState {
+        self.state
+            .lock()
+            .map_or(super::ServerState::Starting, |state| {
+                if !state.ready || state.dead {
+                    super::ServerState::Starting
+                } else if state.works.running().is_empty() {
+                    super::ServerState::Ready
+                } else {
+                    super::ServerState::Indexing
+                }
+            })
+    }
+
+    /// The last nonempty stderr line recorded for this process.
+    pub fn last_stderr(&self) -> Option<String> {
+        self.log.last_stderr()
+    }
+
     /// Whether this server has stopped answering.
     pub fn is_dead(&self) -> bool {
-        self.state.lock().is_ok_and(|state| state.dead)
+        self.state.lock().is_ok_and(|state| state.dead) && self.log.stderr_finished()
     }
 
     /// Whether a completed handshake ran long enough to break an exit streak.

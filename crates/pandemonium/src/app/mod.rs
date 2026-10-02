@@ -523,6 +523,8 @@ pub struct App {
     notices: Notices,
     /// Servers already offered or tried this launch.
     offered_servers: BTreeSet<&'static str>,
+    /// Persistent log targets carried by server failure notice actions.
+    server_failure_logs: Vec<PathBuf>,
     /// Running installs and their status-bar notices.
     installing_servers: BTreeMap<&'static str, crate::notice::NoticeId>,
     /// Results delivered by installer worker threads.
@@ -868,6 +870,7 @@ impl App {
             logins: Vec::new(),
             notices,
             offered_servers: BTreeSet::new(),
+            server_failure_logs: Vec::new(),
             installing_servers: BTreeMap::new(),
             installed_servers: Arc::new(Mutex::new(Vec::new())),
             debuggers: crate::debug::Debuggers::default(),
@@ -1769,6 +1772,12 @@ impl App {
         if let Message::InstallLanguageServer(command) = message {
             self.start_server_install(command, true);
             return;
+        }
+        if let Message::OpenServerLogAt(path) = message {
+            if let Some(path) = self.server_failure_logs.get(path).cloned() {
+                self.open_server_log_at(&path);
+            }
+            return self.request_redraw();
         }
         if message == Message::OpenServerLog {
             self.open_server_log();
@@ -2684,6 +2693,12 @@ impl App {
             history_graph_open: layout.history_graph_open,
             changes_section_open: layout.changes_section_open,
         };
+        let server = self.active_file_id().and_then(|file| {
+            self.editor
+                .server_states(file)
+                .into_iter()
+                .max_by_key(|status| status.state.severity())
+        });
         let activity = self
             .active_file_id()
             .and_then(|file| self.server_activity(file));
@@ -2733,6 +2748,11 @@ impl App {
                     tally: self.agents.tally(),
                     notice: self.notices.shown(),
                     activity,
+                    server,
+                    server_turn: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0.0, |time| time.subsec_millis() as f32 / 1000.0)
+                        * std::f32::consts::TAU,
                     menu,
                     overlays,
                 },
@@ -2770,6 +2790,7 @@ impl ApplicationHandler<Wake> for App {
             self.request_redraw();
         }
         self.offer_missing_servers();
+        self.hear_server_failures();
         if self.settle_moving() {
             self.request_redraw();
         }

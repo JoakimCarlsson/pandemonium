@@ -68,6 +68,8 @@ pub enum Message {
     InstallLanguageServer(&'static str),
     /// Open the log of a language server behind the focused file.
     OpenServerLog,
+    /// Open the log of a particular server, even after focus changes.
+    OpenServerLogAt(usize),
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.

@@ -45,6 +45,10 @@ pub struct Log {
     path: Option<PathBuf>,
     /// Whether anything was written since this was last asked.
     grew: Arc<AtomicBool>,
+    /// The last nonempty line read from the server's error stream.
+    stderr: Arc<Mutex<Option<String>>>,
+    /// Whether the stderr reader has drained the process's final output.
+    stderr_finished: Arc<AtomicBool>,
 }
 
 impl Log {
@@ -70,6 +74,8 @@ impl Log {
             file: Arc::new(Mutex::new(file)),
             path,
             grew: Arc::new(AtomicBool::new(false)),
+            stderr: Arc::new(Mutex::new(None)),
+            stderr_finished: Arc::new(AtomicBool::new(true)),
         };
         log.write(&format!(
             "── {command} starting over {} at {} ──",
@@ -130,16 +136,38 @@ impl Log {
 
     /// Copies everything `stream` says into the log until it ends, on a
     /// thread of its own.
-    pub(super) fn follow(&self, stream: impl Read + Send + 'static) {
+    pub(super) fn follow(
+        &self,
+        stream: impl Read + Send + 'static,
+        notify: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        self.stderr_finished.store(false, Ordering::Release);
         let log = self.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stream).lines() {
                 let Ok(line) = line else {
                     break;
                 };
+                if !line.trim().is_empty()
+                    && let Ok(mut last) = log.stderr.lock()
+                {
+                    *last = Some(line.clone());
+                }
                 log.write(&line);
             }
+            log.stderr_finished.store(true, Ordering::Release);
+            notify();
         });
+    }
+
+    /// Whether stderr has been drained before a final failure is reported.
+    pub(super) fn stderr_finished(&self) -> bool {
+        self.stderr_finished.load(Ordering::Acquire)
+    }
+
+    /// The most recent nonempty stderr line, even when logging is disabled.
+    pub(super) fn last_stderr(&self) -> Option<String> {
+        self.stderr.lock().ok().and_then(|last| last.clone())
     }
 
     /// Whether anything was written since this was last asked.
@@ -150,7 +178,7 @@ impl Log {
 
 /// The name of the log of `command` over `root`: readable, and apart from the
 /// log of the same server over another checkout of the same name.
-fn name(root: &Path, command: &str) -> String {
+pub(super) fn name(root: &Path, command: &str) -> String {
     let mut hasher = DefaultHasher::new();
     root.hash(&mut hasher);
     let folder = root
