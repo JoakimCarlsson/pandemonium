@@ -90,6 +90,10 @@ enum Sent {
     Knob(Vec<Knob>),
     /// The agent's own request for its plan's limits.
     Limits,
+    /// A logout, after which the conversation is opened again.
+    Logout,
+    /// The saved session of this name being forgotten.
+    Delete(String),
 }
 
 /// A request of the agent's that the window has yet to answer.
@@ -191,6 +195,16 @@ struct State {
     loads: bool,
     /// Whether the agent can list its saved sessions.
     lists: bool,
+    /// Whether the agent can take a conversation up again without replaying it.
+    resumes: bool,
+    /// Whether the agent wants to be told a conversation is finished with.
+    closes: bool,
+    /// Whether the agent can forget a saved session.
+    deletes: bool,
+    /// Whether the agent can be logged out.
+    logouts: bool,
+    /// Whether the conversation to take up again is taken up without a replay.
+    quiet: bool,
     /// Whether a turn is running, and so whether another may be sent.
     busy: bool,
     /// The prompts waiting for the conversation, or for the turn before them.
@@ -262,7 +276,7 @@ impl Session {
         env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, None, false, notify)
+        Self::open(agent, root, env, None, false, false, notify)
     }
 
     /// Starts `agent` in `root` and takes the conversation `id` names up again.
@@ -279,7 +293,24 @@ impl Session {
         id: &str,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, Some(id.to_owned()), true, notify)
+        Self::open(agent, root, env, Some(id.to_owned()), true, false, notify)
+    }
+
+    /// Starts `agent` in `root` and carries on the conversation `id` names,
+    /// for a window that still holds what was said in it.
+    ///
+    /// Nothing is replayed, because the window has the transcript already:
+    /// the agent is asked to resume the conversation, which restores its
+    /// context and says nothing. An agent that cannot do that opens a new
+    /// conversation and says so with [`Event::Fresh`].
+    pub fn reconnect(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        id: &str,
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        Self::open(agent, root, env, Some(id.to_owned()), true, true, notify)
     }
 
     /// Loads `id` exactly, reporting failure when that saved session is gone.
@@ -290,7 +321,7 @@ impl Session {
         id: &str,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, Some(id.to_owned()), false, notify)
+        Self::open(agent, root, env, Some(id.to_owned()), false, false, notify)
     }
 
     /// Starts `agent` in `root`, taking up `resume` where there is one.
@@ -304,6 +335,7 @@ impl Session {
         env: &[(String, String)],
         resume: Option<String>,
         resume_fallback: bool,
+        quiet: bool,
         notify: Notify,
     ) -> std::io::Result<Self> {
         let mut command = agent.command();
@@ -345,6 +377,7 @@ impl Session {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
             state.resume = resume;
             state.resume_fallback = resume_fallback;
+            state.quiet = quiet;
         }
         session.send(json!({
             "jsonrpc": "2.0",
@@ -417,6 +450,66 @@ impl Session {
         );
         drop(state);
         self.send(request);
+    }
+
+    /// Whether this agent can forget a saved session.
+    pub fn can_delete(&self) -> bool {
+        self.state.lock().is_ok_and(|state| state.deletes)
+    }
+
+    /// Asks the agent to forget the saved session `id`, which it says with
+    /// [`Event::Deleted`] once it has.
+    pub fn delete_session(&self, id: &str) {
+        if !self.can_delete() {
+            return;
+        }
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let request = self.request(
+            &mut state,
+            Sent::Delete(id.to_owned()),
+            "session/delete",
+            &json!({ "sessionId": id }),
+        );
+        drop(state);
+        self.send(request);
+    }
+
+    /// Whether this agent can be logged out.
+    pub fn can_logout(&self) -> bool {
+        self.state.lock().is_ok_and(|state| state.logouts)
+    }
+
+    /// Logs the agent out, then opens a conversation again, which asks for a
+    /// login where the agent wants one.
+    pub fn logout(&self) {
+        if !self.can_logout() {
+            return;
+        }
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let request = self.request(&mut state, Sent::Logout, "logout", &json!({}));
+        drop(state);
+        self.send(request);
+    }
+
+    /// Tells the agent the conversation is finished with, if it wants to be told.
+    fn finish(&self) {
+        let Ok(state) = self.state.lock() else {
+            return;
+        };
+        let Some(id) = state.id.clone().filter(|_| state.closes) else {
+            return;
+        };
+        drop(state);
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": self.next.fetch_add(1, Ordering::Relaxed),
+            "method": "session/close",
+            "params": { "sessionId": id },
+        }));
     }
 
     /// Sends `text` as the reader's next turn.
@@ -730,6 +823,7 @@ impl Drop for Session {
     /// a short grace period before killing it and reaping the direct child.
     fn drop(&mut self) {
         self.cancel();
+        self.finish();
         let (closed, closing) = mpsc::channel();
         let _ = self.outbox.send(Outgoing::Close { closed });
         let Some(mut process) = self
@@ -893,6 +987,18 @@ impl Reader {
                 self.raise(Event::Login(logins));
             }
             (Sent::Login, None) => self.open(),
+            (Sent::Logout, None) => {
+                if let Ok(mut state) = self.state.lock() {
+                    state.id = None;
+                    state.busy = false;
+                    state.quiet = false;
+                }
+                self.raise(Event::LoggedOut);
+                self.open();
+            }
+            (Sent::Logout, Some(error)) => self.raise(Event::Failed(complaint(error))),
+            (Sent::Delete(id), None) => self.raise(Event::Deleted(id)),
+            (Sent::Delete(_), Some(error)) => self.raise(Event::Failed(complaint(error))),
             (Sent::Turn, None) => {
                 self.raise(Event::Stopped(Stop::read(&message["result"]["stopReason"])));
                 self.idle();
@@ -935,7 +1041,12 @@ impl Reader {
         if let Ok(mut state) = self.state.lock() {
             state.logins = logins;
             state.loads = capabilities["loadSession"] == json!(true);
-            state.lists = capabilities["sessionCapabilities"]["list"].is_object();
+            let sessions = &capabilities["sessionCapabilities"];
+            state.lists = sessions["list"].is_object();
+            state.resumes = sessions["resume"].is_object();
+            state.closes = sessions["close"].is_object();
+            state.deletes = sessions["delete"].is_object();
+            state.logouts = capabilities["auth"]["logout"].is_object();
             state.images = prompts["image"] == json!(true);
             state.embeds = prompts["embeddedContext"] == json!(true);
             state.transports = mcp::Transports::of(&capabilities["mcpCapabilities"]);
@@ -945,6 +1056,7 @@ impl Reader {
 
     /// Opens the conversation: the one that was left, or a new one.
     fn open(&self) {
+        let quiet = self.state.lock().is_ok_and(|state| state.quiet);
         let servers = mcp::offered(
             self.state
                 .lock()
@@ -952,13 +1064,20 @@ impl Reader {
                 .unwrap_or_default(),
         );
         let resumed = match self.state.lock() {
-            Ok(state) => state.resume.clone().filter(|_| state.loads),
+            Ok(state) => state
+                .resume
+                .clone()
+                .filter(|_| state.loads || (state.quiet && state.resumes)),
             Err(_) => None,
         };
+        let resumes = self.state.lock().is_ok_and(|state| state.resumes);
         match resumed {
             Some(resumed) => self.ask(
                 Sent::Resume,
-                "session/load",
+                match quiet && resumes {
+                    true => "session/resume",
+                    false => "session/load",
+                },
                 &json!({
                     "sessionId": resumed,
                     "cwd": self.root,
@@ -974,11 +1093,16 @@ impl Reader {
                     "this agent cannot load saved sessions".to_owned(),
                 ));
             }
-            None => self.ask(
-                Sent::Open,
-                "session/new",
-                &json!({ "cwd": self.root, "mcpServers": servers }),
-            ),
+            None => {
+                if quiet {
+                    self.raise(Event::Fresh);
+                }
+                self.ask(
+                    Sent::Open,
+                    "session/new",
+                    &json!({ "cwd": self.root, "mcpServers": servers }),
+                )
+            }
         }
     }
 

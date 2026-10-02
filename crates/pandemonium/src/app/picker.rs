@@ -216,6 +216,7 @@ impl App {
                 self.run_task(scope, &task, crate::tasks::Shown::Front);
             }
             Choice::AgentHistory(session, saved) => self.open_agent_history(session, &saved),
+            Choice::AgentDelete(session, saved) => self.delete_agent_history(session, &saved),
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
@@ -288,7 +289,8 @@ impl App {
             Kind::Projects => self.project_rows(),
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
-            Kind::AgentHistory(session) => self.agent_history_rows(session),
+            Kind::AgentHistory(session) => self.agent_history_rows(session, false),
+            Kind::AgentDelete(session) => self.agent_history_rows(session, true),
             Kind::Debug => self.debug_rows(),
             Kind::Processes => self.process_rows(),
             Kind::AttachAdapters => self.attach_adapter_rows(),

@@ -149,6 +149,9 @@ impl App {
             }
             Message::ShowAgentModes(session) => self.show_agent_modes(session),
             Message::CycleAgentMode(session) => self.cycle_agent_mode(session),
+            Message::ReconnectAgent(session) => self.reconnect_agent(session),
+            Message::LogOutAgent(session) => self.log_out_agent(session),
+            Message::ShowAgentDeletions(session) => self.show_agent_deletions(session),
             Message::PressKnob(session, place) => self.press_knob(session, place),
             Message::StartAgentCommand(session) => {
                 if let Some(talk) = self.agents.get_mut(session) {
@@ -205,24 +208,72 @@ impl App {
             return;
         };
         talk.list_history();
-        let rows = self.agent_history_rows(session);
+        let rows = self.agent_history_rows(session, false);
         self.open_picker_with(Kind::AgentHistory(session), rows, String::new());
+    }
+
+    /// Opens a searchable list of this agent's saved sessions, to have one forgotten.
+    pub(super) fn show_agent_deletions(&mut self, session: TalkId) {
+        let Some(talk) = self
+            .agents
+            .get_mut(session)
+            .filter(|talk| talk.can_list() && talk.can_delete())
+        else {
+            self.notices
+                .trouble("This agent cannot forget saved sessions", None);
+            return;
+        };
+        talk.list_history();
+        let rows = self.agent_history_rows(session, true);
+        self.open_picker_with(Kind::AgentDelete(session), rows, String::new());
+    }
+
+    /// Has the agent of `session` forget the saved conversation `saved`.
+    pub(super) fn delete_agent_history(&mut self, session: TalkId, saved: &str) {
+        if let Some(talk) = self.agents.get(session) {
+            talk.delete_saved(saved);
+        }
+    }
+
+    /// Starts the agent of `session` again and carries on its conversation.
+    pub(super) fn reconnect_agent(&mut self, session: TalkId) {
+        let running = self
+            .agents
+            .get(session)
+            .is_some_and(|talk| talk.is_running());
+        if running || !self.agents.reconnect(session) {
+            self.notices
+                .trouble("This agent has no conversation to reconnect to", None);
+        }
+    }
+
+    /// Logs the agent of `session` out, where it can be.
+    pub(super) fn log_out_agent(&mut self, session: TalkId) {
+        match self.agents.get(session) {
+            Some(talk) if talk.can_logout() => talk.logout(),
+            _ => self
+                .notices
+                .trouble("This agent cannot be logged out from here", None),
+        }
     }
 
     /// Refreshes the open history picker as the agent returns its pages.
     pub(super) fn refresh_agent_history(&mut self) {
-        let Some(Kind::AgentHistory(session)) = self.picker.as_ref().map(|picker| picker.kind())
-        else {
-            return;
+        let (session, deleting) = match self.picker.as_ref().map(|picker| picker.kind()) {
+            Some(Kind::AgentHistory(session)) => (session, false),
+            Some(Kind::AgentDelete(session)) => (session, true),
+            _ => return,
         };
-        let rows = self.agent_history_rows(session);
+        let rows = self.agent_history_rows(session, deleting);
         if let Some(picker) = self.picker.as_mut() {
             picker.refill_preserving_selection(rows);
         }
     }
 
     /// Builds history choices from the saved sessions the agent has listed.
-    pub(super) fn agent_history_rows(&self, session: TalkId) -> Vec<Row> {
+    ///
+    /// The rows forget the session they name when `deleting`, and open it otherwise.
+    pub(super) fn agent_history_rows(&self, session: TalkId, deleting: bool) -> Vec<Row> {
         let Some(talk) = self.agents.get(session) else {
             return Vec::new();
         };
@@ -236,7 +287,10 @@ impl App {
                     .updated_at
                     .as_deref()
                     .map_or_else(|| saved.id.clone(), |at| format!("{at} · {}", saved.id)),
-                choice: Choice::AgentHistory(session, saved.id.clone()),
+                choice: match deleting {
+                    true => Choice::AgentDelete(session, saved.id.clone()),
+                    false => Choice::AgentHistory(session, saved.id.clone()),
+                },
                 enabled: true,
             })
             .collect::<Vec<_>>();

@@ -248,6 +248,26 @@ impl Talk {
         self.conversation.list_sessions();
     }
 
+    /// Whether the agent can forget a saved conversation.
+    pub fn can_delete(&self) -> bool {
+        self.conversation.can_delete()
+    }
+
+    /// Asks the agent to forget the saved conversation `id`.
+    pub fn delete_saved(&self, id: &str) {
+        self.conversation.delete_session(id);
+    }
+
+    /// Whether the agent can be logged out.
+    pub fn can_logout(&self) -> bool {
+        self.conversation.can_logout()
+    }
+
+    /// Logs the agent out.
+    pub fn logout(&self) {
+        self.conversation.logout();
+    }
+
     /// The saved conversations this agent has returned so far.
     pub fn history(&self) -> &[History] {
         &self.history
@@ -1115,6 +1135,17 @@ impl Talk {
                         .any(|command| command.name.eq_ignore_ascii_case("compact"));
                 self.transcript.failure(message, compact);
             }
+            Event::Fresh => self
+                .transcript
+                .note("The agent could not carry on the old conversation, so this one is new."),
+            Event::LoggedOut => {
+                self.ready = false;
+                self.remember_on_ready = true;
+                self.busy = false;
+                self.busy_since = None;
+                self.transcript.note("Logged out.");
+            }
+            Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
             Event::Ended => {
                 self.busy = false;
                 self.busy_since = None;
@@ -1480,6 +1511,41 @@ impl Talks {
                 talk.asks.clear();
                 talk.forms.clear();
                 talk.transcript.note("Logged in. Starting the agent again…");
+                true
+            }
+            Err(error) => {
+                talk.transcript
+                    .note(format!("The agent would not start again: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Starts the agent of the conversation `id` names again and carries on
+    /// the conversation it was in, answering whether it started.
+    ///
+    /// The transcript stays as it is: the agent is asked to resume rather
+    /// than to replay. An agent that has not said anything yet has no
+    /// conversation to carry on and is not started again.
+    pub fn reconnect(&mut self, id: TalkId) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        let Some(conversation) = talk.resumable() else {
+            return false;
+        };
+        match Session::reconnect(talk.agent(), talk.root(), &talk.env, &conversation, notify) {
+            Ok(session) => {
+                talk.conversation = session;
+                talk.ready = false;
+                talk.busy = false;
+                talk.busy_since = None;
+                talk.asks.clear();
+                talk.forms.clear();
+                talk.transcript.note("Reconnecting to the agent…");
                 true
             }
             Err(error) => {

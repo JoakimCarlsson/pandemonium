@@ -315,6 +315,12 @@ pub enum Action {
     CycleAgentMode,
     /// Choose which model that agent is to talk to.
     ChangeAgentModel,
+    /// Start the agent in hand again and carry on the conversation it was in.
+    ReconnectAgent,
+    /// Log the agent in hand out.
+    LogOutAgent,
+    /// Choose a saved conversation of the agent in hand to have it forget.
+    DeleteAgentSession,
     /// Put what the list of changes is acting on into the index.
     StageSelectedChanges,
     /// Take what it is acting on back out of the index.
@@ -850,6 +856,13 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::ChangeAgentModel,
         "agent.model",
         "Change Agent Model",
+    ),
+    (Action::ReconnectAgent, "agent.reconnect", "Reconnect Agent"),
+    (Action::LogOutAgent, "agent.logout", "Log Out of Agent"),
+    (
+        Action::DeleteAgentSession,
+        "agent.delete_session",
+        "Delete Saved Agent Session",
     ),
     (Action::StageSelectedChanges, "git.stage", "Stage Changes"),
     (

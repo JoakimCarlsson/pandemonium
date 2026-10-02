@@ -61,6 +61,13 @@ pub enum Event {
     /// A file or terminal request the window is to carry out and answer,
     /// under the ticket given.
     Requested(u64, Request),
+    /// The agent could not take the conversation up again, so the one it
+    /// opened is new.
+    Fresh,
+    /// The agent is logged out, and a conversation is being opened again.
+    LoggedOut,
+    /// The agent has forgotten the saved session of this name.
+    Deleted(String),
     /// The turn is over, for the reason given.
     Stopped(Stop),
     /// The agent failed at something it was asked to do.

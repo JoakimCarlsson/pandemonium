@@ -583,6 +583,12 @@ pub enum Message {
     ShowAgentModes(TalkId),
     /// Put this session into the mode after the one it is in.
     CycleAgentMode(TalkId),
+    /// Start this session's agent again, carrying on the conversation it was in.
+    ReconnectAgent(TalkId),
+    /// Log this session's agent out.
+    LogOutAgent(TalkId),
+    /// List this session's saved conversations to choose one to forget.
+    ShowAgentDeletions(TalkId),
     /// Act on the knob in this place: ask which value, or flip the switch.
     PressKnob(TalkId, usize),
     /// Start naming one of this session's commands, in its prompt.

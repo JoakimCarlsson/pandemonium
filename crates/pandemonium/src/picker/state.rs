@@ -77,6 +77,8 @@ pub enum Kind {
     Agents,
     /// Saved conversations offered by the focused agent.
     AgentHistory(TalkId),
+    /// Saved conversations offered by the focused agent, to have one forgotten.
+    AgentDelete(TalkId),
     /// What to call the session about to be cut.
     NewSession,
     /// Which repositories of the active project the session about to be cut
@@ -161,6 +163,7 @@ impl Kind {
             Self::KeymapName => "What the keymap is called",
             Self::Agents => "Start an agent in this worktree",
             Self::AgentHistory(_) => "Search agent history",
+            Self::AgentDelete(_) => "Choose a saved session to delete",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
             Self::Debug => "Debug this worktree as",
@@ -265,6 +268,8 @@ pub enum Choice {
     Agent(pm_acp::Agent),
     /// Open a saved conversation from the named running agent.
     AgentHistory(TalkId, String),
+    /// Have the named running agent forget a saved conversation.
+    AgentDelete(TalkId, String),
     /// Put this session into the mode this names.
     Mode(TalkId, String),
     /// Set this session's knob to the value this names.
@@ -514,7 +519,7 @@ impl Picker {
     /// How many rows the picker keeps after filtering.
     fn limit(&self) -> usize {
         match self.kind {
-            Kind::AgentHistory(_) => usize::MAX,
+            Kind::AgentHistory(_) | Kind::AgentDelete(_) => usize::MAX,
             _ => SHOWN,
         }
     }
