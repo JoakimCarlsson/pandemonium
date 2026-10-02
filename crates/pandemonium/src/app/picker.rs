@@ -173,6 +173,7 @@ impl App {
             (Kind::PortVariable, _) => self.set_worktree_port(&typed),
             (Kind::ThemeColor(token), _) => self.set_theme_color(token, &typed),
             (Kind::ThemeName, _) => self.save_theme(&typed),
+            (Kind::LanguageFormatter(name), _) => self.set_external_formatter(name, &typed),
             (Kind::KeymapName, _) => self.save_keymap(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
@@ -191,6 +192,7 @@ impl App {
     fn take(&mut self, choice: Choice) {
         match choice {
             Choice::Act(action) => self.act(action),
+            Choice::InstallLanguageExtension(index) => self.install_language_extension(index),
             Choice::InstallLanguageServer(command) => self.start_server_install(command, true),
             Choice::Open(scope, path) => {
                 self.jump_to(&Place {
@@ -220,6 +222,7 @@ impl App {
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
+            Choice::SettingsLanguage(name) => self.select_settings_language(name),
             Choice::Debug(scope, scenario) => self.start_debugging(scope, *scenario),
             Choice::Process(pid) => self.choose_attach_process(pid),
             Choice::SessionRepository(_) => {}
@@ -281,10 +284,39 @@ impl App {
     ///
     /// The lists that take time to gather open empty, or with what has been
     /// gathered so far, and are filled as the rest arrives.
-    fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
+    pub(super) fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
             Kind::Commands => self.command_rows(),
             Kind::LanguageServers => self.language_server_rows(),
+            Kind::LanguageExtensions => {
+                if !self.languages.requested {
+                    self.refresh_language_catalogue();
+                }
+                self.languages
+                    .catalogue
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| Row {
+                        section: None,
+                        label: format!("{} {} · {}", entry.name, entry.version, entry.publisher),
+                        detail: format!(
+                            "{} · {} · Platforms: {} · Requires: {}",
+                            entry.description,
+                            entry.source,
+                            entry.platforms.join(", "),
+                            if entry.prerequisites.is_empty() {
+                                "No external tools".into()
+                            } else {
+                                entry.prerequisites.join(", ")
+                            }
+                        ),
+                        choice: Choice::InstallLanguageExtension(index),
+                        enabled: !self.languages.busy
+                            && (entry.platforms.is_empty()
+                                || entry.platforms.contains(&pm_text::install::platform())),
+                    })
+                    .collect()
+            }
             Kind::Files | Kind::WorkspaceSymbols => self.listed_file_rows(),
             Kind::Projects => self.project_rows(),
             Kind::Problems => self.problem_rows(),
@@ -331,6 +363,7 @@ impl App {
             | Kind::References
             | Kind::Calls
             | Kind::ServerLogs
+            | Kind::SettingsLanguage
             | Kind::Font(_) => Vec::new(),
             Kind::Branches
             | Kind::FetchRemotes
@@ -354,6 +387,7 @@ impl App {
             | Kind::PortVariable
             | Kind::ThemeColor(_)
             | Kind::ThemeName
+            | Kind::LanguageFormatter(_)
             | Kind::KeymapName => Vec::new(),
         }
     }
@@ -382,7 +416,9 @@ impl App {
     fn language_server_rows(&self) -> Vec<Row> {
         let commands = pm_text::Language::all()
             .iter()
-            .flat_map(|language| language.servers())
+            .flat_map(|language| {
+                crate::settings::languages::servers(*language, &self.language_servers)
+            })
             .filter(|server| server.install.is_some())
             .map(|server| server.command)
             .collect::<std::collections::BTreeSet<_>>();
@@ -391,7 +427,12 @@ impl App {
             .map(|command| Row {
                 section: None,
                 label: command.to_owned(),
-                detail: if pm_text::program::installed(command).is_some() {
+                detail: if pm_text::program::installed_with_recipe(
+                    command,
+                    self.configured_server_recipe(command),
+                )
+                .is_some()
+                {
                     "Installed"
                 } else {
                     "Not installed"

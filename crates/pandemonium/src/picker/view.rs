@@ -333,6 +333,9 @@ fn hint(theme: &Theme, kind: Kind) -> Div<Message> {
         Kind::ThemeColor(_) => "Leave it as it is to keep the colour the theme gives it",
         Kind::ThemeName => "Written to the editor's home, and drawn in from now on",
         Kind::KeymapName => "Written to the editor's home, and pressed from now on",
+        Kind::LanguageFormatter(_) => {
+            "Runs in the file's folder; {path} stands for the file's path"
+        }
         _ => "This cannot be undone",
     };
 

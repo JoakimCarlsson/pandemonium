@@ -56,6 +56,19 @@ impl App {
             .pointer
             .and_then(|pointer| self.geometry.pane_at(pointer))
             .unwrap_or_else(|| self.panes.focus());
+        if self
+            .panes
+            .pane(pane)
+            .and_then(|pane| pane.active(self.scope()))
+            == Some(crate::panes::Item::Settings)
+        {
+            return self
+                .settings
+                .scroll()
+                .get()
+                .viewport_height()
+                .max(WHEEL_STEP);
+        }
         self.geometry
             .pane_size(pane)
             .map(|size| size.height)
@@ -150,6 +163,15 @@ impl App {
     /// A binding being recorded in the keymap screen comes before all of them.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
+        if matches!(self.writing, Some(Writing::LanguageServerField(_)))
+            && matches!(
+                event.logical_key,
+                Key::Named(NamedKey::Tab | NamedKey::PageDown | NamedKey::PageUp)
+            )
+            && self.send_to_input(event)
+        {
+            return self.request_redraw();
+        }
         if self.record_key(event) {
             return self.request_redraw();
         }
@@ -506,6 +528,26 @@ impl App {
             return true;
         }
 
+        if matches!(writing, Writing::LanguageServerField(_))
+            && matches!(
+                event.logical_key,
+                Key::Named(NamedKey::PageDown | NamedKey::PageUp)
+            )
+        {
+            self.navigate(event);
+            return true;
+        }
+        if let Writing::LanguageServerField(index) = writing
+            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
+        {
+            let next = if self.modifiers.shift_key() {
+                (index + 2) % 3
+            } else {
+                (index + 1) % 3
+            };
+            self.write_in(Writing::LanguageServerField(next));
+            return true;
+        }
         let modifiers = self.modifiers;
         if self
             .with_written(|input| input.submits(&event.logical_key, modifiers))
@@ -576,6 +618,7 @@ impl App {
             Writing::Comment(_) => self.apply(Message::SaveComment),
             Writing::McpSearch => self.search_mcp_registry(),
             Writing::AgentSearch => {}
+            Writing::LanguageServerField(_) => self.save_language_server(),
             Writing::FormField(_) => self.save_server_form(),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {

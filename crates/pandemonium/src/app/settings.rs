@@ -42,6 +42,9 @@ impl App {
             pane.open(scope, Item::Settings);
         }
         self.focus_pane(holding);
+        if !self.languages.requested {
+            self.refresh_language_catalogue();
+        }
         self.store();
     }
 
@@ -57,6 +60,17 @@ impl App {
         Content::Built(settings_pane(
             theme,
             &SettingsPane {
+                languages: crate::settings::languages::LanguagesPage {
+                    state: &self.languages,
+                    field: match self.writing {
+                        Some(Writing::LanguageServerField(index)) => Some(index),
+                        _ => None,
+                    },
+                    solid: self.caret_solid(),
+                    preferences: &self.preferences,
+                    servers: &self.language_servers,
+                    selected: self.settings_language(),
+                },
                 settings: &self.settings,
                 preferences: &self.preferences,
                 keymap: self.resolver.keymap(),
@@ -145,6 +159,54 @@ impl App {
     /// sets, saying whether `message` was one.
     pub(super) fn settings_command(&mut self, message: Message) -> bool {
         match message {
+            Message::ScrollSettings(event, step) => self.settings.drag_scroll(event, step),
+            Message::ToggleBuiltinLanguages => {
+                self.languages.builtin_open = !self.languages.builtin_open;
+                self.writing = None;
+            }
+            Message::SetLanguageFilter(filter) => {
+                self.languages.filter = filter;
+                self.writing = None;
+            }
+            Message::OpenLanguageSource(index, installed) => {
+                let entries = if installed {
+                    config::extensions::installed()
+                } else {
+                    self.languages.catalogue.clone()
+                };
+                if let Some(entry) = entries.get(index) {
+                    desktop::browse(&entry.source);
+                }
+            }
+            Message::RefreshLanguageCatalogue => self.refresh_language_catalogue(),
+            Message::InstallLanguageExtension(index) => self.install_language_extension(index),
+            Message::ReinstallLanguageExtension(index) => self.reinstall_language_extension(index),
+            Message::ImportLanguageExtension => self.import_language_extension(),
+            Message::RemoveLanguageExtension(index) => self.remove_language_extension(index),
+            Message::PickSettingsLanguage => self.pick_settings_language(),
+            Message::ToggleLanguageSetting(setting) => self.toggle_language_setting(setting),
+            Message::StepLanguageSetting(setting, step) => {
+                self.step_language_setting(setting, step);
+            }
+            Message::ResetLanguageSetting(setting) => self.reset_language_setting(setting),
+            Message::ResetLanguageSettings => self.reset_language_settings(),
+            Message::SetLanguageFormatter(kind) => self.set_language_formatter(kind),
+            Message::AskLanguageFormatter => self.ask_language_formatter(),
+            Message::AddLanguageServer => self.edit_language_server(None),
+            Message::EditLanguageServer(at) => self.edit_language_server(Some(at)),
+            Message::RemoveLanguageServer(at) => self.remove_language_server(at),
+            Message::ResetLanguageServers => self.reset_language_servers(),
+            Message::SaveLanguageServer => self.save_language_server(),
+            Message::CancelLanguageServer => {
+                self.languages.editor = None;
+                self.writing = None;
+            }
+            Message::FocusLanguageServerField(index) => {
+                self.write_in(Writing::LanguageServerField(index));
+            }
+            Message::WriteLanguageServerField(index, phase, anchor, head) => {
+                self.point_in(Writing::LanguageServerField(index), phase, anchor, head);
+            }
             Message::CopyVersion => desktop::copy(crate::build_info::description()),
             Message::PickFont(slot) => self.ask_font(slot),
             Message::EditThemeColor(token) => self.ask_theme_color(token),
@@ -163,6 +225,7 @@ impl App {
                     self.notices.trouble(error, None);
                 }
                 self.follow_keymap();
+                self.activate_languages();
             }
             Message::WriteAgentSearch(phase, anchor, head) => {
                 self.point_in(Writing::AgentSearch, phase, anchor, head);
@@ -211,11 +274,21 @@ impl App {
     /// open files, the shells, and the hints already written into lines.
     pub(super) fn follow_preferences(&mut self) {
         let preferences = &self.preferences;
-        self.editor.set_habits(Habits {
-            indent: preferences.indent(),
-            trim_whitespace: preferences.trim_whitespace,
-            final_newline: preferences.final_newline,
-        });
+        let habits = |name: Option<&str>| {
+            let settings = preferences.language(name);
+            Habits {
+                indent: settings.indent,
+                indent_fixed: settings.indent_fixed,
+                trim_whitespace: settings.trim_whitespace,
+                final_newline: settings.final_newline,
+            }
+        };
+        let by_language = preferences
+            .language_overrides()
+            .keys()
+            .map(|name| (name.clone(), habits(Some(name))))
+            .collect();
+        self.editor.set_habits(habits(None), by_language);
         self.terminals
             .set_scrollback(preferences.terminal_scrollback);
         if !preferences.inlay_hints {

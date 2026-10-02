@@ -5,7 +5,7 @@
 //! more than one section lists them as its children. Choosing a page shows
 //! every section of it; choosing a section shows that section alone.
 
-use pm_ui::{Appearance, Scroll, Scrolled};
+use pm_ui::{Appearance, Axis, ResizeEvent, ResizePhase, Scroll, Scrolled};
 
 use crate::config::Preference;
 use crate::keymap::{Action, Chord, Sequence};
@@ -21,6 +21,8 @@ pub enum SettingsPage {
     Appearance,
     /// How text is edited, drawn and written down.
     Editor,
+    /// Installed languages, extension discovery and server configuration.
+    Languages,
     /// The keymap the editor starts from, modal editing, and every binding.
     Keymap,
     /// How a terminal is drawn and how much it remembers.
@@ -33,9 +35,10 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// Every page, in the order the sidebar lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Appearance,
         Self::Editor,
+        Self::Languages,
         Self::Keymap,
         Self::Terminal,
         Self::Sessions,
@@ -47,6 +50,7 @@ impl SettingsPage {
         match self {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
+            Self::Languages => "Languages",
             Self::Keymap => "Keymap",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
@@ -70,6 +74,10 @@ impl SettingsPage {
                 SettingsSection::Display,
                 SettingsSection::Saving,
             ],
+            Self::Languages => &[
+                SettingsSection::Languages,
+                SettingsSection::LanguageSettings,
+            ],
             Self::Keymap => &[SettingsSection::Keymap, SettingsSection::Keybindings],
             Self::Terminal => &[SettingsSection::Terminal],
             Self::Sessions => &[SettingsSection::Sessions],
@@ -89,6 +97,10 @@ impl SettingsPage {
 /// child in the sidebar that shows the section alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsSection {
+    /// Language extensions to find, install and remove.
+    Languages,
+    /// How files of one language are indented, saved and served.
+    LanguageSettings,
     /// The theme mode and family.
     Theme,
     /// Every colour of the theme, repaintable one at a time, and the
@@ -126,6 +138,8 @@ impl SettingsSection {
     /// What the section's heading and its entry in the sidebar call it.
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Languages => "Extensions",
+            Self::LanguageSettings => "Language Settings",
             Self::Theme => "Theme",
             Self::ThemeColors => "Theme Colors",
             Self::Fonts => "Fonts",
@@ -213,7 +227,7 @@ impl SettingsSection {
                 Preference::WorktreeCopy,
                 Preference::WorktreePort,
             ],
-            Self::AgentServers | Self::McpServers => &[],
+            Self::AgentServers | Self::McpServers | Self::Languages | Self::LanguageSettings => &[],
         }
     }
 }
@@ -263,6 +277,8 @@ pub struct Settings {
     view: SettingsView,
     /// How far down it the pane is scrolled.
     scroll: Scrolled,
+    /// Scroll offset at the start of the current thumb drag.
+    scroll_origin: Option<f32>,
     /// The pages the sidebar has opened out to list their sections.
     expanded: Vec<SettingsPage>,
     /// The binding being recorded, while one is.
@@ -306,6 +322,7 @@ impl Default for Settings {
         Self {
             view: SettingsView::Page(page),
             scroll: Scrolled::default(),
+            scroll_origin: None,
             expanded: vec![page],
             recording: None,
             installed_open: true,
@@ -437,6 +454,21 @@ impl Settings {
     pub fn scroll_by(&mut self, delta: f32) {
         let mut scroll = self.scroll.get();
         scroll.by(delta);
+        self.scroll.set(scroll);
+    }
+
+    /// Moves the viewport with a thumb drag measured from its initial offset.
+    pub fn drag_scroll(&mut self, event: ResizeEvent, step: f32) {
+        let mut scroll = self.scroll.get();
+        let base = match event.phase {
+            ResizePhase::Started => scroll.offset(),
+            _ => self.scroll_origin.unwrap_or(scroll.offset()),
+        };
+        self.scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        scroll.by(scroll.offset() - base - event.delta(Axis::Vertical) * step);
         self.scroll.set(scroll);
     }
 

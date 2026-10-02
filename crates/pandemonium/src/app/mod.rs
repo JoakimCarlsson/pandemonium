@@ -18,9 +18,11 @@ mod disk;
 mod drag;
 mod excerpts;
 mod form;
+mod formatter;
 mod health;
 mod input;
 mod language;
+mod languages;
 mod listing;
 mod mcp;
 mod modal;
@@ -112,6 +114,8 @@ pub(super) enum Writing {
     McpSearch,
     /// The box the agents on the settings page are searched with.
     AgentSearch,
+    /// One box of the form a language server is described in.
+    LanguageServerField(usize),
     /// One box of the form a tool server is described in.
     FormField(crate::settings::FormField),
 }
@@ -260,6 +264,8 @@ pub struct App {
     mcp_search: crate::input::Input,
     /// The box the agents are searched with.
     agent_search: crate::input::Input,
+    /// Language catalogue, search and current server form.
+    languages: crate::settings::languages::Languages,
     /// What the agent registry last offered.
     agent_registry: agents::SharedAgentRegistry,
     /// The agents being downloaded, with the notice saying so.
@@ -456,6 +462,8 @@ pub struct App {
     asked: Vec<language::Pending>,
     /// Whether the servers being waited on were asked by a save.
     saving: bool,
+    /// Whether the save under way lays the file out with its language's own program.
+    formatting: bool,
     /// What a save in progress still has to ask the servers, in order.
     save_steps: std::collections::VecDeque<pm_text::Request>,
     /// The query the servers were last asked for workspace symbols, and the
@@ -627,6 +635,7 @@ impl App {
         }
         self.editor.set_language_servers(&replace);
         self.editor.add_language_servers(&add);
+        self.editor.reconcile_servers();
     }
 
     /// Reads the language servers the settings file names again when it has
@@ -728,6 +737,7 @@ impl App {
             server_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),
             agent_search: crate::input::Input::one_line("Search agents"),
+            languages: Default::default(),
             agent_registry: agents::SharedAgentRegistry::default(),
             agent_downloads: Vec::new(),
             mcp_registry: mcp::SharedRegistry::default(),
@@ -843,6 +853,7 @@ impl App {
             code_actions: Vec::new(),
             asked: Vec::new(),
             saving: false,
+            formatting: false,
             save_steps: std::collections::VecDeque::new(),
             workspace_symbols: (None, Vec::new()),
             workspace_files: Vec::new(),
@@ -934,8 +945,10 @@ impl App {
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
-            Some(Writing::McpSearch | Writing::AgentSearch) => return Some("search"),
-            Some(Writing::FormField(_)) => return Some("field"),
+            Some(Writing::McpSearch | Writing::AgentSearch) => {
+                return Some("search");
+            }
+            Some(Writing::FormField(_) | Writing::LanguageServerField(_)) => return Some("field"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -2362,6 +2375,9 @@ impl App {
                 .map(crate::debug::Debugger::console_mut),
             Writing::McpSearch => Some(&mut self.mcp_search),
             Writing::AgentSearch => Some(&mut self.agent_search),
+            Writing::LanguageServerField(index) => {
+                self.languages.editor.as_mut()?.fields.get_mut(index)
+            }
             Writing::FormField(field) => self.server_form.as_mut()?.input_mut(field),
             Writing::Comment(_) => None,
         }
@@ -2859,7 +2875,10 @@ impl ApplicationHandler<Wake> for App {
                     self.store();
                 }
             }
-            Wake::Install => self.finish_server_installs(),
+            Wake::Install => {
+                self.finish_server_installs();
+                self.finish_language_operations();
+            }
             Wake::Language => {
                 self.hear_server_troubles();
                 if self.settle_moving() {

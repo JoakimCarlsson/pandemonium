@@ -48,6 +48,8 @@ pub struct Buffer {
     /// How the reader indents a file that does not say, which is also how
     /// wide a tab character is drawn.
     habit: Indent,
+    /// How the reader says this file is indented, over what its lines show.
+    forced: Option<Indent>,
     /// What is selected, and where the cursor is.
     selection: Selection,
     /// The other cursors, when the reader has asked for more than one.
@@ -113,6 +115,7 @@ impl Buffer {
         Self {
             indent: Indent::of(&text, Indent::default()),
             habit: Indent::default(),
+            forced: None,
             path,
             text,
             language,
@@ -149,6 +152,19 @@ impl Buffer {
         )
     }
 
+    /// Reidentifies this open buffer after extension languages change.
+    pub fn reload_language(&mut self) {
+        self.language = Language::of(&self.path);
+        self.syntax = self.language.and_then(Syntax::new);
+        if let Some(syntax) = self.syntax.as_mut() {
+            syntax.parse(&self.text);
+        }
+        self.diagnostics.clear();
+        self.set_semantics(Vec::new());
+        self.set_hints(Vec::new());
+        self.set_lenses(Vec::new());
+    }
+
     /// The language it is written in, when the editor knows the extension.
     pub fn language(&self) -> Option<Language> {
         self.language
@@ -156,7 +172,13 @@ impl Buffer {
 
     /// How the file is indented.
     pub fn indent(&self) -> Indent {
-        self.indent
+        self.forced.unwrap_or(self.indent)
+    }
+
+    /// Indents the file the way `indent` says whatever its lines show, or
+    /// goes back to judging by them when there is none.
+    pub fn force_indent(&mut self, indent: Option<Indent>) {
+        self.forced = indent;
     }
 
     /// Indents the way `habit` says wherever the file does not, and draws a
@@ -168,7 +190,7 @@ impl Buffer {
 
     /// How wide a tab character is drawn, in characters.
     pub fn tab_width(&self) -> usize {
-        self.habit.width.max(1)
+        self.forced.unwrap_or(self.habit).width.max(1)
     }
 
     /// Whether the text differs from what is on disk.

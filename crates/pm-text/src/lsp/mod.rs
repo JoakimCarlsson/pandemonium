@@ -54,6 +54,10 @@ struct Running {
     failures: u32,
     /// The earliest time another start may be tried.
     retry_at: Option<Instant>,
+    /// Declaration used to start this slot.
+    server: Option<Server>,
+    /// Executable backing the running client.
+    program: Option<PathBuf>,
     /// A terminal state retained after the client disappears.
     stopped: Option<ServerState>,
     /// Whether this slot's failure still needs to be reported.
@@ -61,7 +65,7 @@ struct Running {
 }
 
 use crate::language::{Language, Server};
-use crate::program::installed;
+use crate::program::installed_with_recipe;
 
 /// The language servers a window is running.
 #[derive(Default)]
@@ -140,22 +144,27 @@ impl Servers {
         let logs = self.logs.clone();
         wanted
             .iter()
-            .filter_map(|server| match installed(server.command) {
-                Some(program) => Some((server, program)),
-                None => {
-                    self.missing.insert(server.command);
-                    let running = self
-                        .running
-                        .entry((root.to_path_buf(), server.command))
-                        .or_default();
-                    if running.stopped != Some(ServerState::Missing) {
-                        let log = log::Log::open(logs.as_deref(), root, server.command);
-                        log.write(&format!("{} was not found", server.command));
-                        running.stopped = Some(ServerState::Missing);
+            .filter_map(
+                |server| match installed_with_recipe(server.command, server.install) {
+                    Some(program) => Some((server, program)),
+                    None => {
+                        self.missing.insert(server.command);
+                        if let Some(program) = crate::program::managed_fallback(server.command) {
+                            return Some((server, program));
+                        }
+                        let running = self
+                            .running
+                            .entry((root.to_path_buf(), server.command))
+                            .or_default();
+                        if running.stopped != Some(ServerState::Missing) {
+                            let log = log::Log::open(logs.as_deref(), root, server.command);
+                            log.write(&format!("{} was not found", server.command));
+                            running.stopped = Some(ServerState::Missing);
+                        }
+                        None
                     }
-                    None
-                }
-            })
+                },
+            )
             .collect::<Vec<_>>()
             .into_iter()
             .filter_map(|(server, program)| {
@@ -164,6 +173,19 @@ impl Servers {
                     .running
                     .entry((root.to_path_buf(), server.command))
                     .or_default();
+                if running.server.is_some_and(|previous| {
+                    previous.arguments != server.arguments
+                        || previous.options != server.options
+                        || running.program.as_ref() != Some(&program)
+                }) {
+                    if let Some(client) = running.client.take() {
+                        client.shutdown();
+                    }
+                    running.failures = 0;
+                    running.retry_at = None;
+                }
+                running.server = Some(*server);
+                running.program = Some(program.clone());
                 if running
                     .client
                     .as_ref()
@@ -319,6 +341,35 @@ impl Servers {
         }
     }
 
+    /// Drops server slots whose documents or configuration changed.
+    pub fn reconcile(&mut self, documents: &[(PathBuf, Language)]) {
+        let wanted = documents
+            .iter()
+            .flat_map(|(root, language)| {
+                self.wanted(*language)
+                    .into_iter()
+                    .map(|server| ((root.clone(), server.command), server))
+            })
+            .collect::<HashMap<_, _>>();
+        self.running.retain(|key, running| {
+            let keep = wanted.get(key).is_some_and(|server| {
+                running.server.is_none_or(|previous| {
+                    previous.arguments == server.arguments && previous.options == server.options
+                })
+            });
+            if !keep && let Some(client) = &running.client {
+                client.shutdown();
+            }
+            keep
+        });
+        self.retain_opened(
+            &documents
+                .iter()
+                .map(|(root, language)| (root.clone(), language.name()))
+                .collect::<Vec<_>>(),
+        );
+    }
+
     /// The first installable configured server for `language`.
     pub fn installable(&self, language: Language) -> Option<Server> {
         self.wanted(language)
@@ -330,10 +381,10 @@ impl Servers {
     /// when none of them is installed or installable.
     pub fn needs(&self, language: Language) -> Option<&'static str> {
         let wanted = self.wanted(language);
-        if wanted
-            .iter()
-            .any(|server| server.install.is_some() || installed(server.command).is_some())
-        {
+        if wanted.iter().any(|server| {
+            server.install.is_some()
+                || installed_with_recipe(server.command, server.install).is_some()
+        }) {
             return None;
         }
         wanted

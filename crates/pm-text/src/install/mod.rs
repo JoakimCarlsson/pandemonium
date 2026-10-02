@@ -1,8 +1,10 @@
 //! Pinned language server recipes and atomic installation into the editor's home.
 
+mod download;
 mod recipes;
 mod worker;
 
+pub use download::{download, download_checked, unpack_zip, verify_checksum};
 pub use recipes::{needs, recipe};
 pub use worker::{install, platform, prune_older};
 

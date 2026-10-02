@@ -130,13 +130,6 @@ fn bracket_depths(tree: &Tree, text: &Rope, bytes: Range<usize>) -> HashMap<(usi
 /// whose query does not compile is remembered as such.
 static QUERIES: LazyLock<Mutex<Queries>> = LazyLock::new(Mutex::default);
 
-/// Remembers a failed extension query by language name.
-pub(crate) fn remember_failed_query(name: &'static str) {
-    if let Ok(mut queries) = QUERIES.lock() {
-        queries.insert(name, None);
-    }
-}
-
 /// Each language's compiled highlight query, or `None` for one that failed.
 type Queries = HashMap<&'static str, Option<Arc<Query>>>;
 

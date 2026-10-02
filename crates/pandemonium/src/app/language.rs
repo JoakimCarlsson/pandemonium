@@ -128,7 +128,7 @@ impl App {
         if self.installing_servers.contains_key(command) {
             return;
         }
-        let Some(recipe) = pm_text::install::recipe(command) else {
+        let Some(recipe) = self.configured_server_recipe(command) else {
             return;
         };
         let Some(directory) = crate::config::servers() else {
@@ -165,11 +165,11 @@ impl App {
                     let started = self.editor.reopen_command(command);
                     if started
                         && let Some(directory) = crate::config::servers()
-                        && let Some(recipe) = pm_text::install::recipe(command)
+                        && let Some(recipe) = self.configured_server_recipe(command)
                     {
                         pm_text::install::prune_older(&directory, command, recipe.version());
                     }
-                    if let Some(recipe) = pm_text::install::recipe(command) {
+                    if let Some(recipe) = self.configured_server_recipe(command) {
                         self.notices
                             .done(format!("Installed {command} {}", recipe.version()), None);
                     }
@@ -1439,13 +1439,17 @@ impl App {
             return;
         };
         self.saving = true;
+        self.formatting = format;
+        let settings = self.active_language_settings();
+        let format =
+            format && settings.formatter == crate::config::languages::Formatter::LanguageServer;
         self.save_steps = [
             (
-                self.preferences.organize_imports_on_save,
+                settings.organize_imports_on_save,
                 Request::SourceActions("source.organizeImports".to_owned()),
             ),
             (
-                self.preferences.fix_on_save,
+                settings.fix_on_save,
                 Request::SourceActions("source.fixAll".to_owned()),
             ),
             (format, Request::Format),
@@ -1490,6 +1494,9 @@ impl App {
     /// Writes the file a save was waiting on the servers for.
     fn finish_save(&mut self) {
         self.saving = false;
+        if self.formatting {
+            self.format_externally();
+        }
         self.save_active();
     }
 

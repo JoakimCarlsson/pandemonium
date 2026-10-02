@@ -73,6 +73,8 @@ const LIT_BORDER_ALPHA: f32 = 0.4;
 
 /// What the settings pane is drawn from.
 pub struct SettingsPane<'a> {
+    /// Language catalogue and server configuration.
+    pub languages: crate::settings::languages::LanguagesPage<'a>,
     /// Which page is open, and how far down it.
     pub settings: &'a Settings,
     /// The preferences the pane edits.
@@ -114,6 +116,21 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
             .collect::<Vec<_>>(),
     };
 
+    let content = scroll_area(
+        settings.scroll(),
+        v_flex()
+            .w_full()
+            .max_w_px(PAGE_WIDTH)
+            .mx_auto()
+            .px(8)
+            .py(6)
+            .gap(8)
+            .child(heading(theme, view, pane.file.as_ref()))
+            .children(sections),
+    )
+    .with_scrollbar(Message::ScrollSettings)
+    .flex_1()
+    .h_full();
     Box::new(
         h_flex()
             .w_full()
@@ -121,22 +138,7 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
             .items_stretch()
             .child(sidebar(theme, pane.preferences, settings))
             .child(v_flex().w_px(1.0).h_full().bg(theme.colors.border_variant))
-            .child(
-                scroll_area(
-                    settings.scroll(),
-                    v_flex()
-                        .w_full()
-                        .max_w_px(PAGE_WIDTH)
-                        .mx_auto()
-                        .px(8)
-                        .py(6)
-                        .gap(8)
-                        .child(heading(theme, view, pane.file.as_ref()))
-                        .children(sections),
-                )
-                .flex_1()
-                .h_full(),
-            ),
+            .child(content),
     )
 }
 
@@ -591,6 +593,13 @@ fn section_rows(
                 button("Reload", Message::ReloadExtensions).outlined(),
             ),
         ],
+        SettingsSection::Languages => vec![crate::settings::languages::language_page(
+            theme,
+            &pane.languages,
+        )],
+        SettingsSection::LanguageSettings => {
+            crate::settings::language_settings::language_settings_rows(theme, &pane.languages)
+        }
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
         SettingsSection::AgentServers => {
             vec![crate::settings::agent_list::agent_list(theme, &pane.agents)]
@@ -1043,7 +1052,7 @@ fn font_row(
 }
 
 /// A row that does something once rather than setting a preference.
-fn action(
+pub(super) fn action(
     theme: &Theme,
     title: &str,
     description: &str,

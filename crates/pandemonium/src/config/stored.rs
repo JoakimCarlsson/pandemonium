@@ -17,6 +17,7 @@ use super::ServerList;
 
 use crate::config::fonts::Fonts;
 use crate::config::keymap::StoredChanges;
+use crate::config::languages::{Formatter, LanguageOverrides};
 use crate::config::theme::StoredOverrides;
 use crate::config::{
     AgentOptions, EditPredictions, InstallLanguageServers, Preferences, Restored, ThemeMode,
@@ -146,6 +147,20 @@ pub(super) struct Stored {
     ///       - mypy
     /// ```
     language_servers: Option<BTreeMap<String, StoredLanguageServers>>,
+    /// What each language changes about how a file is written, over the
+    /// settings every language shares.
+    ///
+    /// ```yaml
+    /// languages:
+    ///   Go:
+    ///     tab_size: 8
+    ///     hard_tabs: true
+    ///   Markdown:
+    ///     formatter:
+    ///       external:
+    ///         command: prettier --parser markdown
+    /// ```
+    languages: Option<BTreeMap<String, StoredLanguageSettings>>,
     /// Agents the reader added, beside the ones the editor ships.
     ///
     /// The key is the agent's id. An id the editor already ships replaces
@@ -245,6 +260,112 @@ enum StoredLanguageServers {
     },
 }
 
+/// What one language overrides, as it is written down.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct StoredLanguageSettings {
+    /// How wide a step of indentation and a tab are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tab_size: Option<usize>,
+    /// Whether indentation is written as tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hard_tabs: Option<bool>,
+    /// Whether the file is laid out when it is saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    format_on_save: Option<bool>,
+    /// Whether the imports are put in order when it is saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    organize_imports_on_save: Option<bool>,
+    /// Whether the fixes a server can make on its own are made when it is saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fix_on_save: Option<bool>,
+    /// Whether the space at the ends of lines goes when it is saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remove_trailing_whitespace_on_save: Option<bool>,
+    /// Whether it always ends in a line break when it is saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ensure_final_newline_on_save: Option<bool>,
+    /// What lays the file out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    formatter: Option<StoredFormatter>,
+}
+
+/// What lays a file out, as it is written down.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum StoredFormatter {
+    /// `language_server` or `off`.
+    Named(String),
+    /// A program the file is piped through.
+    External {
+        /// The program and its arguments, as one command line.
+        external: StoredExternalFormatter,
+    },
+}
+
+/// The program a file is piped through, as it is written down.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct StoredExternalFormatter {
+    /// The program and its arguments, as one command line.
+    command: String,
+}
+
+impl StoredLanguageSettings {
+    /// What this stands for.
+    fn into_overrides(self) -> LanguageOverrides {
+        LanguageOverrides {
+            tab_size: self.tab_size.filter(|width| *width > 0),
+            hard_tabs: self.hard_tabs,
+            format_on_save: self.format_on_save,
+            organize_imports_on_save: self.organize_imports_on_save,
+            fix_on_save: self.fix_on_save,
+            trim_whitespace: self.remove_trailing_whitespace_on_save,
+            final_newline: self.ensure_final_newline_on_save,
+            formatter: self.formatter.and_then(StoredFormatter::into_formatter),
+        }
+    }
+
+    /// How `overrides` are written down.
+    fn of(overrides: &LanguageOverrides) -> Self {
+        Self {
+            tab_size: overrides.tab_size,
+            hard_tabs: overrides.hard_tabs,
+            format_on_save: overrides.format_on_save,
+            organize_imports_on_save: overrides.organize_imports_on_save,
+            fix_on_save: overrides.fix_on_save,
+            remove_trailing_whitespace_on_save: overrides.trim_whitespace,
+            ensure_final_newline_on_save: overrides.final_newline,
+            formatter: overrides.formatter.as_ref().map(StoredFormatter::of),
+        }
+    }
+}
+
+impl StoredFormatter {
+    /// The formatter this stands for, or `None` for one the editor does not know.
+    fn into_formatter(self) -> Option<Formatter> {
+        match self {
+            Self::Named(name) => match name.as_str() {
+                "language_server" => Some(Formatter::LanguageServer),
+                "off" => Some(Formatter::Off),
+                _ => None,
+            },
+            Self::External { external } => Some(Formatter::External(external.command)),
+        }
+    }
+
+    /// How `formatter` is written down.
+    fn of(formatter: &Formatter) -> Self {
+        match formatter {
+            Formatter::LanguageServer => Self::Named("language_server".to_owned()),
+            Formatter::Off => Self::Named("off".to_owned()),
+            Formatter::External(command) => Self::External {
+                external: StoredExternalFormatter {
+                    command: command.clone(),
+                },
+            },
+        }
+    }
+}
+
 /// One agent the reader added, as it is written down.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StoredAgent {
@@ -299,7 +420,7 @@ struct StoredMcp {
 /// is what nearly all of them are; one that takes arguments spells them out.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
-pub(super) enum StoredServer {
+pub enum StoredServer {
     /// The command, run with no arguments.
     Command(String),
     /// The command, the arguments to run it with, and what to configure it
@@ -308,7 +429,11 @@ pub(super) enum StoredServer {
         /// The program to run.
         command: String,
         /// The arguments to run it with.
+        #[serde(default)]
         arguments: Vec<String>,
+        /// The pinned installation recipe.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        install: Option<super::recipe::StoredRecipe>,
         /// What the server is configured with as it starts.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         options: Option<serde_norway::Value>,
@@ -494,17 +619,46 @@ fn leaked(value: String) -> &'static str {
 }
 
 impl StoredServer {
+    /// Validates an extension or user supplied server declaration.
+    pub fn validate(&self) -> Result<(), String> {
+        let command = match self {
+            Self::Command(command) => command,
+            Self::Invocation {
+                command,
+                install,
+                options,
+                ..
+            } => {
+                if let Some(recipe) = install {
+                    recipe.validate()?;
+                }
+                if options.as_ref().is_some_and(|value| !value.is_mapping()) {
+                    return Err("Server initialization options must be an object.".into());
+                }
+                command
+            }
+        };
+        if command.trim().is_empty() || command.contains('\0') {
+            return Err("A server needs an executable.".into());
+        }
+        Ok(())
+    }
+
     /// The server this stands for, named for as long as the editor runs.
-    pub(super) fn into_server(self) -> Server {
-        let (command, arguments, options) = match self {
-            Self::Command(command) => (command, Vec::new(), None),
+    pub fn into_server(self) -> Server {
+        let (command, arguments, options, install) = match self {
+            Self::Command(command) => (command, Vec::new(), None, None),
             Self::Invocation {
                 command,
                 arguments,
                 options,
-            } => (command, arguments, options),
+                install,
+            } => (command, arguments, options, install),
         };
-        let install = pm_text::install::recipe(&command);
+        let install = install
+            .filter(|recipe| recipe.validate().is_ok())
+            .map(super::recipe::StoredRecipe::into_recipe)
+            .or_else(|| pm_text::install::recipe(&command));
         Server {
             command: leaked(command),
             arguments: arguments
@@ -520,7 +674,7 @@ impl StoredServer {
     }
 
     /// How `server` is written down.
-    fn of(server: &Server) -> Self {
+    pub fn of(server: &Server) -> Self {
         let options = serde_json::from_str::<serde_norway::Value>(server.options).ok();
         let options = options.filter(|options| !matches!(options, serde_norway::Value::Null));
         if server.arguments.is_empty() && options.is_none() {
@@ -534,6 +688,7 @@ impl StoredServer {
                 .map(|&argument| argument.to_owned())
                 .collect(),
             options,
+            install: server.install.map(super::recipe::StoredRecipe::of),
         }
     }
 }
@@ -750,6 +905,15 @@ impl Stored {
                 .install_language_servers
                 .unwrap_or(defaults.install_language_servers),
             bootstrap,
+            languages: self
+                .languages
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(language, settings)| {
+                    (canonical_language(&language), settings.into_overrides())
+                })
+                .filter(|(_, overrides)| !overrides.is_empty())
+                .collect(),
         }
     }
 }
@@ -840,6 +1004,15 @@ impl Stored {
             health_feedback: Some(preferences.health_feedback),
             health_retries: Some(preferences.health_retries),
             install_language_servers: Some(preferences.install_language_servers),
+            languages: (!preferences.languages.is_empty()).then(|| {
+                preferences
+                    .languages
+                    .iter()
+                    .map(|(language, overrides)| {
+                        (language.clone(), StoredLanguageSettings::of(overrides))
+                    })
+                    .collect()
+            }),
             language_servers: (!language_servers.is_empty()).then(|| {
                 language_servers
                     .iter()

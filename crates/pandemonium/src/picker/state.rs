@@ -34,6 +34,12 @@ pub enum Kind {
     Commands,
     /// Every server the editor can install.
     LanguageServers,
+    /// Language packages offered by the maintained catalogue.
+    LanguageExtensions,
+    /// The language the Language Settings section shows.
+    SettingsLanguage,
+    /// The command line a language's files are piped through, by language name.
+    LanguageFormatter(&'static str),
     /// Every file of the worktree the window is pointed at.
     Files,
     /// The projects the window holds open.
@@ -132,6 +138,11 @@ impl Kind {
         match self {
             Self::Commands => "Run a command",
             Self::LanguageServers => "Install Language Server…",
+            Self::LanguageExtensions => "Install Language Support…",
+            Self::SettingsLanguage => "Choose a language",
+            Self::LanguageFormatter(_) => {
+                "Command that reads the file on stdin, e.g. prettier --stdin-filepath {path}"
+            }
             Self::Files => "Search files by name, > for commands, # for symbols",
             Self::Sessions => "Go to a session",
             Self::Projects => "Go to a project",
@@ -199,6 +210,7 @@ impl Kind {
                 | Self::PortVariable
                 | Self::ThemeColor(_)
                 | Self::ThemeName
+                | Self::LanguageFormatter(_)
                 | Self::KeymapName
                 | Self::AnswerText
         )
@@ -250,6 +262,10 @@ pub enum Choice {
     Act(Action),
     /// Install this language server.
     InstallLanguageServer(&'static str),
+    /// Show the settings of this language.
+    SettingsLanguage(&'static str),
+    /// Install this language package after reviewing its catalogue metadata.
+    InstallLanguageExtension(usize),
     /// Open this file of this worktree.
     Open(Scope, PathBuf),
     /// Open this file of this worktree and go to this place in it.

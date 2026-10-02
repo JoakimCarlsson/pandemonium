@@ -355,6 +355,10 @@ pub enum Action {
     CollapseFiles,
     /// Open the settings screen.
     OpenSettings,
+    /// Open language discovery and server configuration.
+    OpenLanguages,
+    /// Choose language support from the extension catalogue.
+    InstallLanguageExtension,
     /// Open the settings screen at its keymap.
     OpenKeymap,
     /// Show the primary sidebar, or hide it.
@@ -909,6 +913,16 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "Collapse Folders in File Tree",
     ),
     (Action::OpenSettings, "window.settings", "Open Settings"),
+    (
+        Action::OpenLanguages,
+        "window.languages",
+        "Manage Languages",
+    ),
+    (
+        Action::InstallLanguageExtension,
+        "language.install_extension",
+        "Install Language Support…",
+    ),
     (Action::OpenKeymap, "window.keymap", "Open Keymap"),
     (
         Action::ToggleSidebar,

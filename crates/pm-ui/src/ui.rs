@@ -268,11 +268,14 @@ impl<M> Ui<M> {
             return None;
         }
 
-        let next = match self.focus {
-            Some(index) => (index as isize + step).rem_euclid(count as isize),
-            None if step >= 0 => 0,
-            None => count as isize - 1,
+        let base = match self.focus {
+            Some(index) => index as isize,
+            None if step >= 0 => -1,
+            None => count as isize,
         };
-        Some(next as usize)
+        (1..=count).find_map(|distance| {
+            let next = (base + step * distance as isize).rem_euclid(count as isize) as usize;
+            matches!(self.regions[next].action, RegionAction::Click(_)).then_some(next)
+        })
     }
 }

@@ -65,6 +65,11 @@ impl App {
             Action::ToggleServerTrace => self.toggle_server_trace(),
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
+            Action::OpenLanguages => {
+                self.open_settings();
+                self.settings.show(crate::settings::SettingsPage::Languages);
+            }
+            Action::InstallLanguageExtension => self.open_picker(Kind::LanguageExtensions),
             Action::OpenSettings => return self.apply(Message::OpenSettings),
             Action::OpenKeymap => {
                 self.open_settings();
@@ -456,8 +461,9 @@ impl App {
             .active_file()
             .is_some_and(|document| document.borrow().is_served());
         if served {
-            return self.begin_save(self.preferences.format_on_save);
+            return self.begin_save(self.active_language_settings().format_on_save);
         }
+        self.format_externally();
         self.save_active();
     }
 
@@ -524,6 +530,14 @@ impl App {
 
     /// Dismisses whatever is open on top, innermost first.
     fn cancel(&mut self) {
+        if matches!(
+            self.writing,
+            Some(crate::app::Writing::LanguageServerField(_))
+        ) {
+            self.writing = None;
+            self.languages.editor = None;
+            return;
+        }
         if self.dismiss_prompt() {
             return;
         }

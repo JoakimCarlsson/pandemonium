@@ -37,7 +37,7 @@ const LINE_HEIGHTS: RangeInclusive<f32> = 1.0..=2.5;
 const SCROLLBACKS: RangeInclusive<f32> = 1_000.0..=100_000.0;
 
 /// How wide a step of indentation can be.
-const TAB_SIZES: RangeInclusive<f32> = 1.0..=16.0;
+pub(super) const TAB_SIZES: RangeInclusive<f32> = 1.0..=16.0;
 
 /// How far the wheel can be made to scroll, against its usual distance.
 const SENSITIVITIES: RangeInclusive<f32> = 0.25..=4.0;
@@ -341,6 +341,8 @@ pub struct Preferences {
     pub install_language_servers: InstallLanguageServers,
     /// What a session's fresh worktree is given, git having left it out.
     pub bootstrap: Bootstrap,
+    /// What each language overrides, by the language's own name.
+    pub languages: BTreeMap<String, crate::config::languages::LanguageOverrides>,
 }
 
 impl Default for Preferences {
@@ -377,6 +379,7 @@ impl Default for Preferences {
             health_retries: 3,
             install_language_servers: InstallLanguageServers::Ask,
             bootstrap: Bootstrap::default(),
+            languages: BTreeMap::new(),
         }
     }
 }
@@ -590,14 +593,6 @@ impl Preferences {
         })
     }
 
-    /// How a file that does not say is indented, and how wide a tab is.
-    pub fn indent(&self) -> Indent {
-        Indent {
-            width: self.tab_size,
-            tabs: self.hard_tabs,
-        }
-    }
-
     /// Adds `typed` to the `list` of paths a new worktree is given.
     ///
     /// The path is the repository's, so it is kept as it was typed, less the
@@ -684,7 +679,7 @@ impl Preferences {
 
 /// `value` moved one `by` in the direction of `step`, on the grid `by`
 /// divides the range into and within the range.
-fn stepped(value: f32, step: Step, by: f32, range: RangeInclusive<f32>) -> f32 {
+pub(super) fn stepped(value: f32, step: Step, by: f32, range: RangeInclusive<f32>) -> f32 {
     let moved = match step {
         Step::Down => value - by,
         Step::Up => value + by,
