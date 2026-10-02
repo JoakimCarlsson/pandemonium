@@ -593,7 +593,14 @@ impl App {
     /// When a spinner next turns, while a remote is being waited on or a
     /// refresh control is turning.
     pub(super) fn next_spin(&self) -> Option<std::time::Instant> {
-        let turning = self.remote_operation.is_some()
+        let turning = self.active_file_id().is_some_and(|file| {
+            self.editor.server_states(file).iter().any(|status| {
+                matches!(
+                    status.state,
+                    pm_text::ServerState::Starting | pm_text::ServerState::Indexing
+                )
+            })
+        }) || self.remote_operation.is_some()
             || self
                 .reviews
                 .values()

@@ -207,6 +207,7 @@ impl App {
             Message::WriteLanguageServerField(index, phase, anchor, head) => {
                 self.point_in(Writing::LanguageServerField(index), phase, anchor, head);
             }
+            Message::CopyVersion => desktop::copy(crate::build_info::description()),
             Message::PickFont(slot) => self.ask_font(slot),
             Message::EditThemeColor(token) => self.ask_theme_color(token),
             Message::SaveTheme => self.ask_theme_name(),

@@ -1465,6 +1465,27 @@ impl Files {
         self.servers.set_added(named_servers(added));
     }
 
+    /// The configured servers for a file, including missing and failed slots.
+    pub fn server_states(&self, file: FileId) -> Vec<pm_text::ServerStatus> {
+        let Some(entry) = self.open.get(&file) else {
+            return Vec::new();
+        };
+        let language = entry.document.borrow().buffer().language();
+        language
+            .map(|language| self.servers.states(&entry.root, language))
+            .unwrap_or_default()
+    }
+
+    /// Takes terminal server failures for notices.
+    pub fn take_server_failures(&mut self) -> Vec<pm_text::ServerStatus> {
+        self.servers.take_failures()
+    }
+
+    /// Logs of all configured server slots over a worktree.
+    pub fn server_logs_over(&self, root: &Path) -> Vec<(&'static str, PathBuf)> {
+        self.servers.logs_over(root)
+    }
+
     /// The first installable absent server for each unserved open language.
     pub fn take_missing_servers(&mut self) -> Vec<Server> {
         let missing = self.servers.take_missing();
