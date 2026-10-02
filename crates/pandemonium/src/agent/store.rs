@@ -248,6 +248,11 @@ impl Talk {
         self.conversation.list_sessions();
     }
 
+    /// The tool servers the agent was opened with, and which it could not be given.
+    pub fn mcp_servers(&self) -> Vec<pm_acp::Offered> {
+        self.conversation.mcp_servers()
+    }
+
     /// Whether the agent can forget a saved conversation.
     pub fn can_delete(&self) -> bool {
         self.conversation.can_delete()

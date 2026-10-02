@@ -2105,6 +2105,21 @@ fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
                 pill(theme, "$", theme.syntax.function).on_click(Message::StartAgentSkill(session)),
             )
         })
+        .child(
+            pill(
+                theme,
+                format!(
+                    "MCP {}",
+                    talk.mcp_servers()
+                        .iter()
+                        .filter(|server| server.given)
+                        .count()
+                ),
+                theme.colors.text_muted,
+            )
+            .on_click(Message::ShowAgentMcp(session))
+            .tooltip("MCP servers this agent was given"),
+        )
         .when(talk.can_list(), |row| {
             row.child(
                 pill(theme, "History", theme.colors.text_muted)

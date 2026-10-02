@@ -20,7 +20,7 @@ use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::comment::{CommentId, Side as CommentSide};
 use crate::review::{ChangeId, ConflictAction, Group, RepositoryAction};
-use crate::settings::{SettingsPage, SettingsSection};
+use crate::settings::{McpField, SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
 
@@ -95,6 +95,28 @@ pub enum Message {
     OpenRepository,
     /// Start describing a tool server to add to every agent.
     AddMcpServer,
+    /// Put the caret of this box of the tool server form where a press landed, selecting to it.
+    WriteMcpField(McpField, ResizePhase, Position, Position),
+    /// Add an empty variable to the tool server form.
+    AddMcpVariable,
+    /// Add the variable the registry lists in this place to the tool server form.
+    SuggestMcpVariable(usize),
+    /// Take this variable out of the tool server form.
+    RemoveMcpVariable(usize),
+    /// Write the tool server form down.
+    SaveMcpForm,
+    /// Let go of the tool server form.
+    CancelMcpForm,
+    /// Switch the tool server in this place of the list on or off.
+    ToggleMcpServer(usize),
+    /// Put the configuration of the tool server in this place on the clipboard.
+    CopyMcpConfiguration(usize),
+    /// Open the page describing the tool server in this place.
+    OpenMcpWebsite(usize),
+    /// Show the file the tool servers are written to.
+    RevealSettingsFile,
+    /// Open the menu of what can be done to the tool server in this place.
+    ShowMcpServerMenu(usize),
     /// Install the registry's server in this place of the list on offer.
     InstallMcpServer(usize),
     /// Open or fold the list of installed MCP servers.
@@ -599,6 +621,10 @@ pub enum Message {
     ShowAgentModes(TalkId),
     /// Put this session into the mode after the one it is in.
     CycleAgentMode(TalkId),
+    /// Open the list of MCP servers this session's agent was given.
+    ShowAgentMcp(TalkId),
+    /// Open the settings page where MCP servers are managed.
+    ManageMcpServers,
     /// Open the menu of what can be done to the text of this session's transcript.
     ShowAgentTextMenu(TalkId),
     /// Copy what is picked out of this session's transcript.

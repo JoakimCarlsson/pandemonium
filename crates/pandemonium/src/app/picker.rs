@@ -160,9 +160,6 @@ impl App {
             (Kind::RenameTerminal(id), _) => self.rename_terminal(id, &typed),
             (Kind::Watch, _) => self.save_watch(typed),
             (Kind::AnswerText, _) => self.type_answer(&typed),
-            (Kind::McpName, _) => self.name_mcp_server(&typed),
-            (Kind::McpTarget, _) => self.locate_mcp_server(&typed),
-            (Kind::McpVariables, _) => self.finish_mcp_server(&typed),
             (Kind::AnswerOptions, Some(Choice::AnswerOption(option))) => self.choose_answer(option),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
@@ -344,9 +341,6 @@ impl App {
             | Kind::Rename
             | Kind::RenameTerminal(_)
             | Kind::AnswerText
-            | Kind::McpName
-            | Kind::McpTarget
-            | Kind::McpVariables
             | Kind::BreakpointCondition
             | Kind::BreakpointHits
             | Kind::BreakpointLog

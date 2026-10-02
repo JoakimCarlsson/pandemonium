@@ -91,17 +91,22 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
     let view = settings.view();
     let alone = view.sections().len() == 1 && !view.page().has_sections();
     let alone = alone || matches!(view, SettingsView::Section(_));
-    let sections = view
-        .sections()
-        .iter()
-        .map(|section| {
-            let rows = section_rows(theme, pane, *section);
-            match alone {
-                true => self::rows(theme, rows),
-                false => self::section(theme, section.label(), rows),
-            }
-        })
-        .collect::<Vec<_>>();
+    let sections = match view {
+        SettingsView::Page(SettingsPage::Agents) => {
+            vec![crate::settings::agents::overview(theme, &pane.mcp)]
+        }
+        _ => view
+            .sections()
+            .iter()
+            .map(|section| {
+                let rows = section_rows(theme, pane, *section);
+                match alone {
+                    true => self::rows(theme, rows),
+                    false => self::section(theme, section.label(), rows),
+                }
+            })
+            .collect::<Vec<_>>(),
+    };
 
     Box::new(
         h_flex()

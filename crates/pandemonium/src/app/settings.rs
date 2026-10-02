@@ -13,6 +13,7 @@ use crate::panes::{Content, Item};
 use crate::picker::{Choice, Kind, Row};
 use crate::settings::{McpPage, SettingsPane, settings_pane};
 use crate::theme::{self, TOKENS};
+use crate::workspace::MenuTarget;
 
 impl App {
     /// Brings the settings pane forward, opening it in the pane with the
@@ -47,6 +48,7 @@ impl App {
     /// What a pane showing the settings draws beneath its bar of tabs.
     pub(super) fn settings_content(&self, theme: &Theme) -> Content {
         let catalog = self.mcp_catalog();
+        let usage = self.mcp_usage();
         Content::Built(settings_pane(
             theme,
             &SettingsPane {
@@ -55,7 +57,13 @@ impl App {
                 keymap: self.resolver.keymap(),
                 file: crate::config::settings_file(),
                 mcp: McpPage {
+                    form: self.mcp_form.as_ref(),
+                    focus: match self.writing {
+                        Some(Writing::McpField(field)) => Some(field),
+                        _ => None,
+                    },
                     servers: &self.mcp_servers,
+                    usage: &usage,
                     catalog: &catalog,
                     search: &self.mcp_search,
                     typing: self.writing == Some(Writing::McpSearch),
@@ -137,6 +145,19 @@ impl App {
             }
             Message::AddMcpServer => self.add_mcp_server(),
             Message::InstallMcpServer(index) => self.install_mcp_server(index),
+            Message::ToggleMcpServer(index) => self.toggle_mcp_server(index),
+            Message::WriteMcpField(field, phase, anchor, head) => {
+                self.point_in(Writing::McpField(field), phase, anchor, head);
+            }
+            Message::AddMcpVariable => self.add_mcp_variable(),
+            Message::SuggestMcpVariable(place) => self.suggest_mcp_variable(place),
+            Message::RemoveMcpVariable(at) => self.remove_mcp_variable(at),
+            Message::SaveMcpForm => self.save_mcp_form(),
+            Message::CancelMcpForm => self.cancel_mcp_form(),
+            Message::CopyMcpConfiguration(index) => self.copy_mcp_configuration(index),
+            Message::OpenMcpWebsite(index) => self.open_mcp_website(index),
+            Message::RevealSettingsFile => self.reveal_settings_file(),
+            Message::ShowMcpServerMenu(index) => self.open_menu(MenuTarget::McpServer(index)),
             Message::ToggleMcpInstalled => self.settings.toggle_installed(),
             Message::ToggleMcpAvailable => self.settings.toggle_available(),
             Message::OpenMcpDocs => desktop::browse("https://modelcontextprotocol.io"),

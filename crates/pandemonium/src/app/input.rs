@@ -499,6 +499,13 @@ impl App {
             return true;
         }
 
+        if let Writing::McpField(field) = writing
+            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
+        {
+            self.step_mcp_field(field, self.modifiers.shift_key());
+            return true;
+        }
+
         let modifiers = self.modifiers;
         if self
             .with_written(|input| input.submits(&event.logical_key, modifiers))
@@ -568,6 +575,7 @@ impl App {
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
             Writing::Comment(_) => self.apply(Message::SaveComment),
             Writing::McpSearch => self.search_mcp_registry(),
+            Writing::McpField(_) => self.save_mcp_form(),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {
                     debugger.evaluate();

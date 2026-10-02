@@ -282,6 +282,15 @@ struct StoredMcp {
     /// The headers sent with every request to a network server.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     headers: BTreeMap<String, String>,
+    /// What the server is for, where its publisher says.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    description: String,
+    /// Where the server's publisher describes it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    website: String,
+    /// Whether agents are given the server; written only when it is switched off.
+    #[serde(default = "enabled_by_default", skip_serializing_if = "is_enabled")]
+    enabled: bool,
 }
 
 /// One language server as it is written down.
@@ -384,6 +393,11 @@ impl StoredAgent {
     }
 }
 
+/// Whether `enabled` is the way a server is written when it says nothing.
+fn is_enabled(enabled: &bool) -> bool {
+    *enabled
+}
+
 impl StoredMcp {
     /// The server this stands for, or `None` when it names neither a program nor an address.
     fn into_server(self, name: String) -> Option<McpServer> {
@@ -405,7 +419,13 @@ impl StoredMcp {
             },
             _ => return None,
         };
-        Some(McpServer { name, reach })
+        Some(McpServer {
+            name,
+            reach,
+            description: self.description,
+            website: self.website,
+            enabled: self.enabled,
+        })
     }
 
     /// How `server` is written down.
@@ -417,6 +437,9 @@ impl StoredMcp {
             url: None,
             transport: None,
             headers: BTreeMap::new(),
+            description: server.description.clone(),
+            website: server.website.clone(),
+            enabled: server.enabled,
         };
         match &server.reach {
             Reach::Command {

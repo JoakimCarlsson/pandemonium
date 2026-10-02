@@ -205,6 +205,8 @@ struct State {
     logouts: bool,
     /// Whether the conversation to take up again is taken up without a replay.
     quiet: bool,
+    /// The tool servers the conversation was opened with, and what became of each.
+    mcp: Vec<mcp::Offered>,
     /// Whether a turn is running, and so whether another may be sent.
     busy: bool,
     /// The prompts waiting for the conversation, or for the turn before them.
@@ -450,6 +452,15 @@ impl Session {
         );
         drop(state);
         self.send(request);
+    }
+
+    /// The tool servers this conversation was opened with, and which of them
+    /// the agent could not be given.
+    pub fn mcp_servers(&self) -> Vec<mcp::Offered> {
+        self.state
+            .lock()
+            .map(|state| state.mcp.clone())
+            .unwrap_or_default()
     }
 
     /// Whether this agent can forget a saved session.
@@ -1057,12 +1068,15 @@ impl Reader {
     /// Opens the conversation: the one that was left, or a new one.
     fn open(&self) {
         let quiet = self.state.lock().is_ok_and(|state| state.quiet);
-        let servers = mcp::offered(
-            self.state
-                .lock()
-                .map(|state| state.transports)
-                .unwrap_or_default(),
-        );
+        let transports = self
+            .state
+            .lock()
+            .map(|state| state.transports)
+            .unwrap_or_default();
+        let (servers, plan) = mcp::offer(transports);
+        if let Ok(mut state) = self.state.lock() {
+            state.mcp = plan;
+        }
         let resumed = match self.state.lock() {
             Ok(state) => state
                 .resume

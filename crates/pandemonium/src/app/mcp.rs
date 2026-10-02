@@ -1,18 +1,17 @@
 //! Adding, editing and removing the tool servers every agent is opened with.
 //!
 //! The Agents page of the settings pane lists them; a server is described in
-//! three prompts that follow one another — its name, where it is, and the
-//! variables it is given — and written to the settings file at the end of
-//! the third. A change applies to agents started after it.
+//! a form that opens out under its row, every part of it in boxes at once,
+//! and written to the settings file when the form is saved. A change applies
+//! to agents started after it.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pm_acp::McpServer;
 
-use crate::app::{App, Wake};
-use crate::picker::Kind;
-use crate::settings::Catalog;
+use crate::app::{App, Wake, Writing};
+use crate::settings::{Catalog, McpField, McpForm};
 
 /// How long the search box rests before the registry is asked, so that
 /// typing a word is one question and not one for each letter.
@@ -32,45 +31,167 @@ pub(super) struct Registry {
 /// The registry, as the window and the thread asking it share it.
 pub(super) type SharedRegistry = Arc<Mutex<Registry>>;
 
-/// A server being described, between one prompt and the next.
-#[derive(Clone, Debug)]
-pub(super) struct Draft {
-    /// The name of the server being edited, when one is.
-    replacing: Option<String>,
-    /// The server as it was, or as the registry lists it, whose way of being
-    /// reached is kept while its address is left as it was.
-    original: Option<McpServer>,
-    /// What the first prompt was answered with.
-    name: String,
-    /// What the second prompt was answered with.
-    target: String,
-}
-
 impl App {
-    /// Starts describing a server that is new.
+    /// Opens a form for a server that is new.
     pub(super) fn add_mcp_server(&mut self) {
-        self.mcp_draft = Some(Draft {
-            replacing: None,
-            original: None,
-            name: String::new(),
-            target: String::new(),
-        });
-        self.open_picker_with(Kind::McpName, Vec::new(), String::new());
+        self.open_mcp_form(McpForm::new(None, None, &[]));
     }
 
-    /// Starts describing the `index`-th server again, from what it is now.
+    /// Opens the `index`-th server out into a form.
     pub(super) fn edit_mcp_server(&mut self, index: usize) {
-        let Some(server) = self.mcp_servers.get(index) else {
+        if let Some(server) = self.mcp_servers.get(index) {
+            let form = McpForm::new(Some(index), Some(server), &[]);
+            self.open_mcp_form(form);
+        }
+    }
+
+    /// Shows `form`, with the keyboard in its first box.
+    fn open_mcp_form(&mut self, form: McpForm) {
+        self.mcp_form = Some(form);
+        self.write_in(Writing::McpField(McpField::Name));
+    }
+
+    /// Lets go of the form without writing anything.
+    pub(super) fn cancel_mcp_form(&mut self) {
+        self.mcp_form = None;
+        if matches!(self.writing, Some(Writing::McpField(_))) {
+            self.writing = None;
+        }
+    }
+
+    /// Adds an empty variable to the form, with the keyboard in its name.
+    pub(super) fn add_mcp_variable(&mut self) {
+        if let Some(form) = self.mcp_form.as_mut() {
+            form.add_variable("");
+            let at = form.variables.len() - 1;
+            self.write_in(Writing::McpField(McpField::VariableName(at)));
+        }
+    }
+
+    /// Adds the `place`-th variable the registry lists for the server being
+    /// edited, with the keyboard in its value.
+    pub(super) fn suggest_mcp_variable(&mut self, place: usize) {
+        let named = self
+            .mcp_form
+            .as_ref()
+            .and_then(|form| form.original.as_ref())
+            .map(|original| original.name.clone());
+        let Some(name) = named.and_then(|named| {
+            self.mcp_catalog()
+                .listings
+                .iter()
+                .find(|listing| listing.server.name == named)
+                .and_then(|listing| listing.inputs.get(place).cloned())
+        }) else {
             return;
         };
-        self.mcp_draft = Some(Draft {
-            replacing: Some(server.name.clone()),
-            original: Some(server.clone()),
-            name: server.name.clone(),
-            target: server.reach.target(),
-        });
-        let name = server.name.clone();
-        self.open_picker_with(Kind::McpName, Vec::new(), name);
+        if let Some(form) = self.mcp_form.as_mut() {
+            form.add_variable(&name);
+            let at = form.variables.len() - 1;
+            self.write_in(Writing::McpField(McpField::VariableValue(at)));
+        }
+    }
+
+    /// Takes the `at`-th variable out of the form.
+    pub(super) fn remove_mcp_variable(&mut self, at: usize) {
+        if let Some(form) = self.mcp_form.as_mut() {
+            form.remove_variable(at);
+        }
+        if matches!(self.writing, Some(Writing::McpField(_))) {
+            self.writing = None;
+        }
+    }
+
+    /// Gives the keyboard to the box after `field`, or the one before it.
+    pub(super) fn step_mcp_field(&mut self, field: McpField, backwards: bool) {
+        let Some(form) = self.mcp_form.as_ref() else {
+            return;
+        };
+        let fields = form.fields();
+        let Some(at) = fields.iter().position(|candidate| *candidate == field) else {
+            return;
+        };
+        let next = match backwards {
+            true => (at + fields.len() - 1) % fields.len(),
+            false => (at + 1) % fields.len(),
+        };
+        self.write_in(Writing::McpField(fields[next]));
+    }
+
+    /// Writes the form's server down, in place of the one it was opened on.
+    pub(super) fn save_mcp_form(&mut self) {
+        let Some(form) = self.mcp_form.as_ref() else {
+            return;
+        };
+        let name = form.name.value();
+        let target = form.target.value();
+        let variables = form.filled();
+        let server = match &form.original {
+            Some(original) if original.reach.target() == target.trim() => McpServer {
+                name: name.trim().to_owned(),
+                reach: original.reach.clone().with_variables(variables),
+                description: original.description.clone(),
+                website: original.website.clone(),
+                enabled: original.enabled,
+            },
+            original => match McpServer::described(&name, &target, variables) {
+                Ok(server) => McpServer {
+                    description: original
+                        .as_ref()
+                        .map(|original| original.description.clone())
+                        .unwrap_or_default(),
+                    website: original
+                        .as_ref()
+                        .map(|original| original.website.clone())
+                        .unwrap_or_default(),
+                    ..server
+                },
+                Err(trouble) => return self.notices.trouble(trouble, None),
+            },
+        };
+        let at = form.index;
+        let named = self
+            .mcp_servers
+            .iter()
+            .position(|existing| existing.name == server.name);
+        match (at, named) {
+            (Some(at), _) => {
+                self.mcp_servers[at] = server;
+                if let Some(other) = named.filter(|other| *other != at) {
+                    self.mcp_servers.remove(other);
+                }
+            }
+            (None, Some(other)) => self.mcp_servers[other] = server,
+            (None, None) => self.mcp_servers.push(server),
+        }
+        self.cancel_mcp_form();
+        self.offer_mcp_servers();
+    }
+
+    /// Switches the `index`-th server on or off.
+    pub(super) fn toggle_mcp_server(&mut self, index: usize) {
+        if let Some(server) = self.mcp_servers.get_mut(index) {
+            server.enabled = !server.enabled;
+            self.offer_mcp_servers();
+        }
+    }
+
+    /// How many running agents were given each server, in the order the servers are listed.
+    pub(super) fn mcp_usage(&self) -> Vec<usize> {
+        self.mcp_servers
+            .iter()
+            .map(|server| {
+                self.agents
+                    .iter()
+                    .filter(|talk| talk.is_running())
+                    .filter(|talk| {
+                        talk.mcp_servers()
+                            .iter()
+                            .any(|offered| offered.given && offered.name == server.name)
+                    })
+                    .count()
+            })
+            .collect()
     }
 
     /// Takes the `index`-th server away.
@@ -79,80 +200,6 @@ impl App {
             self.mcp_servers.remove(index);
             self.offer_mcp_servers();
         }
-    }
-
-    /// Takes the name typed, and asks where the server is.
-    pub(super) fn name_mcp_server(&mut self, typed: &str) {
-        let Some(draft) = self.mcp_draft.as_mut() else {
-            return;
-        };
-        if typed.trim().is_empty() {
-            self.mcp_draft = None;
-            self.notices.trouble("A server needs a name", None);
-            return;
-        }
-        draft.name = typed.trim().to_owned();
-        let seeded = draft.target.clone();
-        self.open_picker_with(Kind::McpTarget, Vec::new(), seeded);
-    }
-
-    /// Takes the command or address typed, and asks what to give the server.
-    pub(super) fn locate_mcp_server(&mut self, typed: &str) {
-        let Some(draft) = self.mcp_draft.as_mut() else {
-            return;
-        };
-        if typed.trim().is_empty() {
-            self.mcp_draft = None;
-            self.notices
-                .trouble("A server needs a command or an address", None);
-            return;
-        }
-        draft.target = typed.trim().to_owned();
-        let seeded = draft
-            .replacing
-            .as_ref()
-            .and_then(|name| self.mcp_servers.iter().find(|server| server.name == *name))
-            .map(|server| written(server.reach.variables()))
-            .unwrap_or_default();
-        self.open_picker_with(Kind::McpVariables, Vec::new(), seeded);
-    }
-
-    /// Takes the variables typed, and writes the server down.
-    pub(super) fn finish_mcp_server(&mut self, typed: &str) {
-        let Some(draft) = self.mcp_draft.take() else {
-            return;
-        };
-        let variables = read(typed);
-        let server = match draft.original {
-            Some(original) if original.reach.target() == draft.target => McpServer {
-                name: draft.name.clone(),
-                reach: original.reach.with_variables(variables),
-            },
-            _ => match McpServer::described(&draft.name, &draft.target, variables) {
-                Ok(server) => server,
-                Err(trouble) => return self.notices.trouble(trouble, None),
-            },
-        };
-        let replaced = draft.replacing.as_ref().and_then(|name| {
-            self.mcp_servers
-                .iter()
-                .position(|existing| existing.name == *name)
-        });
-        let named = self
-            .mcp_servers
-            .iter()
-            .position(|existing| existing.name == server.name);
-        match (replaced, named) {
-            (Some(at), _) => {
-                self.mcp_servers[at] = server;
-                if let Some(other) = named.filter(|other| *other != at) {
-                    self.mcp_servers.remove(other);
-                }
-            }
-            (None, Some(at)) => self.mcp_servers[at] = server,
-            (None, None) => self.mcp_servers.push(server),
-        }
-        self.offer_mcp_servers();
     }
 
     /// Installs the `index`-th server the registry offers.
@@ -170,18 +217,46 @@ impl App {
         {
             return;
         }
-        if listing.required.is_empty() {
+        if !listing.asks {
             self.mcp_servers.push(listing.server);
             return self.offer_mcp_servers();
         }
-        self.mcp_draft = Some(Draft {
-            replacing: None,
-            name: listing.server.name.clone(),
-            target: listing.server.reach.target(),
-            original: Some(listing.server.clone()),
-        });
-        let seeded = written(listing.server.reach.variables());
-        self.open_picker_with(Kind::McpVariables, Vec::new(), seeded);
+        let mut form = McpForm::new(None, Some(&listing.server), &[]);
+        form.original = Some(listing.server.clone());
+        self.settings.open_installed();
+        self.open_mcp_form(form);
+        self.notices.done(
+            format!(
+                "{} takes {}; fill in what you have and leave the rest empty",
+                listing.title,
+                listing.inputs.join(", ")
+            ),
+            None,
+        );
+    }
+
+    /// Puts the configuration of the `index`-th server on the clipboard, as JSON.
+    pub(super) fn copy_mcp_configuration(&mut self, index: usize) {
+        if let Some(server) = self.mcp_servers.get(index) {
+            crate::desktop::copy(server.configuration());
+            self.notices.done("Copied the configuration", None);
+        }
+    }
+
+    /// Opens the page the publisher of the `index`-th server describes it on.
+    pub(super) fn open_mcp_website(&self, index: usize) {
+        if let Some(server) = self.mcp_servers.get(index)
+            && !server.website.is_empty()
+        {
+            crate::desktop::browse(&server.website);
+        }
+    }
+
+    /// Shows the file the servers are written to, where the file manager keeps it.
+    pub(super) fn reveal_settings_file(&self) {
+        if let Some(file) = crate::config::settings_file() {
+            crate::desktop::reveal(&file);
+        }
     }
 
     /// What the registry last offered.
@@ -247,25 +322,4 @@ impl App {
         pm_acp::install_mcp(self.mcp_servers.clone());
         self.store();
     }
-}
-
-/// `variables` as a reader writes them: `NAME=value`, separated by commas.
-fn written(variables: &[(String, String)]) -> String {
-    variables
-        .iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// The variables a reader wrote, leaving out what is not `NAME=value`.
-fn read(typed: &str) -> Vec<(String, String)> {
-    typed
-        .split(',')
-        .filter_map(|entry| {
-            let (name, value) = entry.split_once('=')?;
-            let name = name.trim();
-            (!name.is_empty()).then(|| (name.to_owned(), value.trim().to_owned()))
-        })
-        .collect()
 }

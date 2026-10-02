@@ -39,6 +39,12 @@ pub struct McpServer {
     pub name: String,
     /// How the agent reaches it.
     pub reach: Reach,
+    /// What the server is for, where its publisher says.
+    pub description: String,
+    /// Where the server's publisher describes it, when they say.
+    pub website: String,
+    /// Whether agents are given it; a server switched off stays listed.
+    pub enabled: bool,
 }
 
 /// The tool servers every conversation is opened with.
@@ -70,21 +76,47 @@ impl Transports {
     }
 }
 
-/// The tool servers a conversation opens with, less those `transports` cannot reach.
-pub(crate) fn offered(transports: Transports) -> Value {
-    let offered = OFFERED.read().map(|servers| servers.clone());
-    let servers = offered.unwrap_or_default();
-    Value::Array(
-        servers
-            .iter()
-            .filter(|server| match server.reach {
-                Reach::Command { .. } => true,
-                Reach::Http { .. } => transports.http,
-                Reach::Events { .. } => transports.events,
-            })
-            .map(McpServer::wire)
-            .collect(),
-    )
+/// A server a conversation was opened with, or could not be.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Offered {
+    /// What the agent calls the server.
+    pub name: String,
+    /// How the agent reaches it.
+    pub kind: &'static str,
+    /// Whether the agent was given it; one it cannot reach is not.
+    pub given: bool,
+}
+
+/// The tool servers a conversation opens with, and what became of each:
+/// those `transports` cannot reach are left out of what the agent is told.
+pub(crate) fn offer(transports: Transports) -> (Value, Vec<Offered>) {
+    let servers = OFFERED
+        .read()
+        .map(|servers| servers.clone())
+        .unwrap_or_default();
+    let reaches = |server: &McpServer| match server.reach {
+        Reach::Command { .. } => true,
+        Reach::Http { .. } => transports.http,
+        Reach::Events { .. } => transports.events,
+    };
+    let servers = servers
+        .into_iter()
+        .filter(|server| server.enabled)
+        .collect::<Vec<_>>();
+    let told = servers
+        .iter()
+        .filter(|server| reaches(server))
+        .map(McpServer::wire)
+        .collect();
+    let plan = servers
+        .iter()
+        .map(|server| Offered {
+            name: server.name.clone(),
+            kind: server.reach.kind(),
+            given: reaches(server),
+        })
+        .collect();
+    (Value::Array(told), plan)
 }
 
 impl McpServer {
@@ -117,10 +149,12 @@ impl McpServer {
     }
 }
 
-/// `pairs` as the protocol's list of name and value objects.
+/// `pairs` as the protocol's list of name and value objects, leaving out
+/// the ones that were never filled in.
 fn pairs(pairs: &[(String, String)]) -> Vec<Value> {
     pairs
         .iter()
+        .filter(|(_, value)| !value.is_empty())
         .map(|(name, value)| json!({ "name": name, "value": value }))
         .collect()
 }
@@ -185,6 +219,34 @@ impl Reach {
 }
 
 impl McpServer {
+    /// The server written the way other editors keep theirs: an `mcpServers`
+    /// object holding it under its name, as JSON.
+    #[must_use]
+    pub fn configuration(&self) -> String {
+        let table = |pairs: &[(String, String)]| {
+            pairs
+                .iter()
+                .filter(|(_, value)| !value.is_empty())
+                .map(|(name, value)| (name.clone(), json!(value)))
+                .collect::<serde_json::Map<_, _>>()
+        };
+        let entry = match &self.reach {
+            Reach::Command {
+                program,
+                arguments,
+                env,
+            } => json!({ "command": program, "args": arguments, "env": table(env) }),
+            Reach::Http { url, headers } => {
+                json!({ "type": "http", "url": url, "headers": table(headers) })
+            }
+            Reach::Events { url, headers } => {
+                json!({ "type": "sse", "url": url, "headers": table(headers) })
+            }
+        };
+        serde_json::to_string_pretty(&json!({ "mcpServers": { self.name.clone(): entry } }))
+            .unwrap_or_default()
+    }
+
     /// The server a reader describes with a `name`, a `target` and some `variables`.
     ///
     /// A target that starts with `http://` or `https://` is a server on the
@@ -229,6 +291,9 @@ impl McpServer {
         Ok(Self {
             name: name.to_owned(),
             reach,
+            description: String::new(),
+            website: String::new(),
+            enabled: true,
         })
     }
 }

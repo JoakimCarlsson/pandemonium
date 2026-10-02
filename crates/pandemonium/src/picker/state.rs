@@ -120,12 +120,6 @@ pub enum Kind {
     Watch,
     /// Tasks offered by the worktree in front.
     Tasks,
-    /// What to call the tool server being added.
-    McpName,
-    /// The command or address of the tool server being added.
-    McpTarget,
-    /// The environment or headers of the tool server being added.
-    McpVariables,
     /// A line of text or a number for a field of a form the agent asked to have filled in.
     AnswerText,
     /// What a field of a form the agent asked to have filled in can be.
@@ -180,9 +174,6 @@ impl Kind {
             Self::BreakpointLog => "Log message, e.g. i is {i}",
             Self::Watch => "Watch expression",
             Self::Tasks => "Run a task in this worktree",
-            Self::McpName => "What the server is called",
-            Self::McpTarget => "Command to run, or the https:// address of the server",
-            Self::McpVariables => "NAME=value, NAME=value (optional, commas between)",
             Self::AnswerText => "Your answer, blank to clear it",
             Self::AnswerOptions => "Choose, Esc when done",
         }
@@ -210,9 +201,6 @@ impl Kind {
                 | Self::ThemeName
                 | Self::KeymapName
                 | Self::AnswerText
-                | Self::McpName
-                | Self::McpTarget
-                | Self::McpVariables
         )
     }
 

@@ -312,6 +312,10 @@ pub enum MenuTarget {
     Input,
     /// The transcript of one agent session.
     AgentText(crate::agent::TalkId),
+    /// The MCP servers one agent session was opened with.
+    AgentMcp(crate::agent::TalkId),
+    /// One of the tool servers every agent is started with, by its place in the list.
+    McpServer(usize),
     /// The fixes a language server offered where the cursor is.
     CodeActions,
     /// One entry of the file tree, and whatever is selected with it.
@@ -423,7 +427,9 @@ pub fn workspace(
                     backdrop(Message::DismissMenu),
                 ))
                 .child(match open.target {
-                    MenuTarget::Agents(_) => overlay_above(open.at, menu(theme, items)),
+                    MenuTarget::Agents(_) | MenuTarget::AgentMcp(_) => {
+                        overlay_above(open.at, menu(theme, items))
+                    }
                     _ => overlay(open.at, menu(theme, items)),
                 })
         })

@@ -27,7 +27,7 @@ pub use agent::{AGENTS, Agent, Source, agents, install};
 pub use attachment::Attachment;
 pub use elicitation::{Alternative, Elicitation, Field, Given, Input, Inquiry, Link, Reply};
 pub use limits::{Limits, Window};
-pub use mcp::{McpServer, Reach, install_mcp};
+pub use mcp::{McpServer, Offered, Reach, install_mcp};
 pub use registry::{Listing, search as search_registry};
 pub use request::{Answer, Exit, Request, Run};
 pub use session::{Notify, Session};

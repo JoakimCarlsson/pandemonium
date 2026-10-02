@@ -108,6 +108,8 @@ pub(super) enum Writing {
     Comment(Scope),
     /// The box the MCP servers on the settings page are searched with.
     McpSearch,
+    /// One box of the form a tool server is described in.
+    McpField(crate::settings::McpField),
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -248,8 +250,8 @@ pub struct App {
     session_picks: BTreeSet<PathBuf>,
     /// The field of an agent's form that the prompt or list on screen is editing.
     answering: Option<answer::Editing>,
-    /// The tool server being described in the prompts of the Agents page.
-    mcp_draft: Option<mcp::Draft>,
+    /// The form the tool server being added or edited is described in.
+    mcp_form: Option<crate::settings::McpForm>,
     /// The box the MCP servers are searched with.
     mcp_search: crate::input::Input,
     /// What the MCP registry last offered.
@@ -711,7 +713,7 @@ impl App {
             session_name: String::new(),
             session_picks: BTreeSet::new(),
             answering: None,
-            mcp_draft: None,
+            mcp_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),
             mcp_registry: mcp::SharedRegistry::default(),
             session_bases: Vec::new(),
@@ -917,6 +919,7 @@ impl App {
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
             Some(Writing::McpSearch) => return Some("search"),
+            Some(Writing::McpField(_)) => return Some("field"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -1847,9 +1850,6 @@ impl App {
         }
         if let Message::ShowSettingsPage(page) = message {
             self.settings.show(page);
-            if page == crate::settings::SettingsPage::Agents {
-                self.load_mcp_registry();
-            }
             self.request_redraw();
             return;
         }
@@ -2336,6 +2336,7 @@ impl App {
                 .get_mut(scope)
                 .map(crate::debug::Debugger::console_mut),
             Writing::McpSearch => Some(&mut self.mcp_search),
+            Writing::McpField(field) => self.mcp_form.as_mut()?.input_mut(field),
             Writing::Comment(_) => None,
         }
     }

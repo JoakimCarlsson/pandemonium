@@ -358,6 +358,11 @@ impl Settings {
         self.installed_open = !self.installed_open;
     }
 
+    /// Opens the list of installed MCP servers, if it was folded away.
+    pub fn open_installed(&mut self) {
+        self.installed_open = true;
+    }
+
     /// Opens the list of MCP servers on offer, or folds it.
     pub fn toggle_available(&mut self) {
         self.available_open = !self.available_open;

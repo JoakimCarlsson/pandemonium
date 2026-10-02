@@ -160,6 +160,13 @@ impl App {
             }
             Message::ShowAgentModes(session) => self.show_agent_modes(session),
             Message::CycleAgentMode(session) => self.cycle_agent_mode(session),
+            Message::ShowAgentMcp(session) => self.open_menu(MenuTarget::AgentMcp(session)),
+            Message::ManageMcpServers => {
+                self.open_settings();
+                self.settings
+                    .show_section(crate::settings::SettingsSection::McpServers);
+                self.load_mcp_registry();
+            }
             Message::ShowAgentTextMenu(session) => {
                 self.open_menu(MenuTarget::AgentText(session));
             }
