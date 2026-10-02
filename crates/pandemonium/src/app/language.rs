@@ -189,26 +189,25 @@ impl App {
     /// several offers them to choose between. The log opens at its end, which
     /// is where a server that has just misbehaved says why.
     pub(super) fn open_server_log(&mut self) {
-        let clients = match self.active_file() {
-            Some(document) => document.borrow().servers(),
+        let logs = match self.active_file_id() {
+            Some(file) => self
+                .editor
+                .server_states(file)
+                .into_iter()
+                .filter_map(|status| Some((status.command, status.log?)))
+                .collect::<Vec<_>>(),
             None => self
                 .scope()
                 .and_then(|scope| self.root_of(scope))
-                .map(|root| self.editor.servers_over(&root))
+                .map(|root| self.editor.server_logs_over(&root))
                 .unwrap_or_default(),
         };
-        let logs = clients
-            .iter()
-            .filter_map(|client| Some((client.name(), client.log_path()?.to_path_buf())))
-            .collect::<Vec<_>>();
         match logs.as_slice() {
             [] => self
                 .notices
-                .trouble("No language server is running for this file.", None),
+                .trouble("No language server log is available for this file.", None),
             [(_, path)] => {
-                if let Some(place) = self.place_of(path, log_end(path)) {
-                    self.jump_to(&place);
-                }
+                self.open_server_log_at(path);
             }
             _ => {
                 let rows = logs
@@ -229,15 +228,44 @@ impl App {
         }
     }
 
+    /// Opens a retained server log at its last line.
+    pub(super) fn open_server_log_at(&mut self, path: &std::path::Path) {
+        if let Some(place) = self.place_of(path, log_end(path)) {
+            self.jump_to(&place);
+        }
+    }
+
     /// Puts up what the servers asked to be shown that went wrong, each
     /// leading to the log of the server that said it.
     pub(super) fn hear_server_troubles(&mut self) {
+        self.hear_server_failures();
         for client in self.editor.clients() {
             for trouble in client.take_troubles() {
                 self.notices.trouble(
                     format!("{}: {trouble}", client.name()),
                     Some(crate::message::Message::OpenServerLog),
                 );
+            }
+        }
+    }
+
+    /// Reports each abandoned server with an action targeting its retained log.
+    pub(super) fn hear_server_failures(&mut self) {
+        for failed in self.editor.take_server_failures() {
+            if let Some(notice) = failed.failure_notice() {
+                let action = failed.log.map(|path| {
+                    let index = self
+                        .server_failure_logs
+                        .iter()
+                        .position(|stored| stored == &path)
+                        .unwrap_or_else(|| {
+                            self.server_failure_logs.push(path);
+                            self.server_failure_logs.len() - 1
+                        });
+                    crate::message::Message::OpenServerLogAt(index)
+                });
+                self.notices.trouble(notice, action);
+                self.request_redraw();
             }
         }
     }

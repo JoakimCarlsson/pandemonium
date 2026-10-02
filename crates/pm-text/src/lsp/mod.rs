@@ -22,6 +22,7 @@ mod log;
 mod outbox;
 mod progress;
 mod rpc;
+mod state;
 mod sync;
 mod uri;
 mod watch;
@@ -38,6 +39,7 @@ pub use answer::{
 pub use client::{Asked, Client};
 pub use log::{is_tracing, set_trace};
 pub use progress::Progress;
+pub use state::{ServerState, ServerStatus};
 pub use watch::Watched;
 
 /// How many consecutive exits are allowed before a server is abandoned.
@@ -52,6 +54,10 @@ struct Running {
     failures: u32,
     /// The earliest time another start may be tried.
     retry_at: Option<Instant>,
+    /// A terminal state retained after the client disappears.
+    stopped: Option<ServerState>,
+    /// Whether this slot's failure still needs to be reported.
+    unreported: bool,
 }
 
 use crate::language::{Language, Server};
@@ -138,9 +144,20 @@ impl Servers {
                 Some(program) => Some((server, program)),
                 None => {
                     self.missing.insert(server.command);
+                    let running = self
+                        .running
+                        .entry((root.to_path_buf(), server.command))
+                        .or_default();
+                    if running.stopped != Some(ServerState::Missing) {
+                        let log = log::Log::open(logs.as_deref(), root, server.command);
+                        log.write(&format!("{} was not found", server.command));
+                        running.stopped = Some(ServerState::Missing);
+                    }
                     None
                 }
             })
+            .collect::<Vec<_>>()
+            .into_iter()
             .filter_map(|(server, program)| {
                 let notify = notify.clone();
                 let running = self
@@ -159,6 +176,11 @@ impl Servers {
                     {
                         running.failures = 0;
                     }
+                    let reason = running
+                        .client
+                        .as_ref()
+                        .and_then(|client| client.last_stderr())
+                        .unwrap_or_else(|| "the server stopped talking".to_owned());
                     running.client = None;
                     running.failures += 1;
                     if running.failures < RESTART_LIMIT {
@@ -168,6 +190,9 @@ impl Servers {
                             std::thread::sleep(delay);
                             notify();
                         });
+                    } else {
+                        running.stopped = Some(ServerState::Failed { reason });
+                        running.unreported = true;
                     }
                     return None;
                 }
@@ -177,15 +202,78 @@ impl Servers {
                     return None;
                 }
                 if running.client.is_none() {
-                    running.client =
-                        Client::start(root, &program, *server, notify, logs.as_deref())
-                            .ok()
-                            .map(Arc::new);
-                    if running.client.is_none() {
-                        running.failures = RESTART_LIMIT;
+                    running.stopped = None;
+                    match Client::start(root, &program, *server, notify, logs.as_deref()) {
+                        Ok(client) => running.client = Some(Arc::new(client)),
+                        Err(error) => {
+                            running.failures = RESTART_LIMIT;
+                            running.stopped = Some(ServerState::Failed {
+                                reason: error.to_string(),
+                            });
+                            running.unreported = true;
+                        }
                     }
                 }
                 running.client.clone()
+            })
+            .collect()
+    }
+
+    /// The configured servers' states for a language over a worktree.
+    pub fn states(&self, root: &Path, language: Language) -> Vec<ServerStatus> {
+        self.wanted(language)
+            .into_iter()
+            .map(|server| {
+                let running = self.running.get(&(root.to_path_buf(), server.command));
+                let state = running
+                    .and_then(|running| running.stopped.clone())
+                    .or_else(|| {
+                        running.and_then(|running| {
+                            running.client.as_ref().map(|client| client.server_state())
+                        })
+                    })
+                    .unwrap_or(ServerState::Starting);
+                ServerStatus {
+                    command: server.command,
+                    state,
+                    log: self.log_path(root, server.command),
+                }
+            })
+            .collect()
+    }
+
+    /// Persistent logs for every server slot over a worktree.
+    pub fn logs_over(&self, root: &Path) -> Vec<(&'static str, PathBuf)> {
+        self.running
+            .keys()
+            .filter(|(started, _)| started == root)
+            .filter_map(|(_, command)| Some((*command, self.log_path(root, command)?)))
+            .collect()
+    }
+
+    /// The log location independent of whether a client is running.
+    fn log_path(&self, root: &Path, command: &str) -> Option<PathBuf> {
+        self.logs
+            .as_ref()
+            .map(|directory| directory.join(log::name(root, command)))
+    }
+
+    /// Takes each terminal failure once per server slot.
+    pub fn take_failures(&mut self) -> Vec<ServerStatus> {
+        let logs = self.logs.clone();
+        self.running
+            .iter_mut()
+            .filter_map(|((root, command), running)| {
+                if !std::mem::take(&mut running.unreported) {
+                    return None;
+                }
+                Some(ServerStatus {
+                    command,
+                    state: running.stopped.clone()?,
+                    log: logs
+                        .as_ref()
+                        .map(|directory| directory.join(log::name(root, command))),
+                })
             })
             .collect()
     }
