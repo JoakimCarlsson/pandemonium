@@ -487,8 +487,9 @@ impl App {
                 Some(self.debuggers.get(scope)?.console().text())
             }
             crate::app::Writing::McpSearch => Some(self.mcp_search.text()),
-            crate::app::Writing::McpField(field) => {
-                Some(self.mcp_form.as_ref()?.input(field)?.text())
+            crate::app::Writing::AgentSearch => Some(self.agent_search.text()),
+            crate::app::Writing::FormField(field) => {
+                Some(self.server_form.as_ref()?.input(field)?.text())
             }
             crate::app::Writing::Comment(scope) => {
                 Some(self.reviews.get(&scope)?.comments().composing()?.text)
@@ -1471,6 +1472,11 @@ impl App {
                     ),
                 ]
             }
+            MenuTarget::AgentServer(index) => vec![
+                pm_ui::menu_entry("Edit…", Some(Message::EditAgentServer(index))),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Remove", Some(Message::RemoveAgentServer(index))),
+            ],
             MenuTarget::McpServer(index) => {
                 let server = self.mcp_servers.get(index)?;
                 let toggle = match server.enabled {

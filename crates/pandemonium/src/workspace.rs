@@ -314,6 +314,8 @@ pub enum MenuTarget {
     AgentText(crate::agent::TalkId),
     /// The MCP servers one agent session was opened with.
     AgentMcp(crate::agent::TalkId),
+    /// One of the agents the reader added, by its place in the list.
+    AgentServer(usize),
     /// One of the tool servers every agent is started with, by its place in the list.
     McpServer(usize),
     /// The fixes a language server offered where the cursor is.

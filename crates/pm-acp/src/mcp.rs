@@ -167,11 +167,9 @@ impl Reach {
         match self {
             Self::Command {
                 program, arguments, ..
-            } => std::iter::once(program)
-                .chain(arguments)
-                .map(|word| quoted(word))
-                .collect::<Vec<_>>()
-                .join(" "),
+            } => command_line(
+                std::iter::once(program.as_str()).chain(arguments.iter().map(String::as_str)),
+            ),
             Self::Http { url, .. } | Self::Events { url, .. } => url.clone(),
         }
     }
@@ -278,7 +276,7 @@ impl McpServer {
                 },
             }
         } else {
-            let mut words = words(target).into_iter();
+            let mut words = command_words(target).into_iter();
             let program = words
                 .next()
                 .ok_or_else(|| "A server needs a command or an address".to_owned())?;
@@ -299,7 +297,8 @@ impl McpServer {
 }
 
 /// `line` split into words at spaces, keeping what is in double quotes whole.
-fn words(line: &str) -> Vec<String> {
+#[must_use]
+pub fn command_words(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut started = false;
@@ -328,7 +327,13 @@ fn words(line: &str) -> Vec<String> {
     words
 }
 
-/// `word` as [`words`] reads it back: in quotes when it holds a space or is empty.
+/// `words` written as one command line, [`command_words`] reading it back.
+#[must_use]
+pub fn command_line<'a>(words: impl IntoIterator<Item = &'a str>) -> String {
+    words.into_iter().map(quoted).collect::<Vec<_>>().join(" ")
+}
+
+/// `word` as [`command_words`] reads it back: in quotes when it holds a space or is empty.
 fn quoted(word: &str) -> String {
     match word.is_empty() || word.contains(char::is_whitespace) {
         true => format!("\"{word}\""),

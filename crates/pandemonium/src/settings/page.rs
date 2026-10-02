@@ -83,6 +83,8 @@ pub struct SettingsPane<'a> {
     pub file: Option<PathBuf>,
     /// What the MCP Servers page is drawn from.
     pub mcp: crate::settings::mcp::McpPage<'a>,
+    /// What the Agent Servers page is drawn from.
+    pub agents: crate::settings::agent_list::AgentList<'a>,
 }
 
 /// Builds the settings pane in `theme`.
@@ -93,7 +95,11 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
     let alone = alone || matches!(view, SettingsView::Section(_));
     let sections = match view {
         SettingsView::Page(SettingsPage::Agents) => {
-            vec![crate::settings::agents::overview(theme, &pane.mcp)]
+            vec![crate::settings::agents::overview(
+                theme,
+                &pane.mcp,
+                &pane.agents,
+            )]
         }
         _ => view
             .sections()
@@ -570,6 +576,9 @@ fn section_rows(
             ),
         ],
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
+        SettingsSection::AgentServers => {
+            vec![crate::settings::agent_list::agent_list(theme, &pane.agents)]
+        }
         SettingsSection::McpServers => vec![crate::settings::mcp::mcp_page(theme, &pane.mcp)],
         SettingsSection::Terminal => vec![
             stepper(

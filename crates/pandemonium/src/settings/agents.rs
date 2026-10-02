@@ -8,11 +8,12 @@
 use pm_ui::{Div, Styled, Theme, h_flex, text, v_flex};
 
 use crate::message::Message;
+use crate::settings::agent_list::AgentList;
 use crate::settings::mcp::McpPage;
 use crate::settings::state::SettingsSection;
 
 /// Builds the overview of the Agents page.
-pub fn overview(theme: &Theme, mcp: &McpPage<'_>) -> Div<Message> {
+pub fn overview(theme: &Theme, mcp: &McpPage<'_>, agents: &AgentList<'_>) -> Div<Message> {
     let servers = mcp.servers.len();
     v_flex()
         .w_full()
@@ -26,6 +27,12 @@ pub fn overview(theme: &Theme, mcp: &McpPage<'_>) -> Div<Message> {
                 .w_full()
                 .gap(2)
                 .child(text("Explore").text_lg().font_semibold())
+                .child(card(
+                    theme,
+                    SettingsSection::AgentServers,
+                    "The agents the editor can start, and the ones you add. Run any agent that speaks the Agent Client Protocol.",
+                    &format!("{} available", agents.agents.len()),
+                ))
                 .child(card(
                     theme,
                     SettingsSection::McpServers,

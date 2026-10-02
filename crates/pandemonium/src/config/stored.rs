@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pm_acp::{Agent, McpServer, Reach, Source};
+use pm_acp::{Agent, McpServer, Reach};
 use pm_core::Bootstrap;
 use pm_text::Server;
 use serde::{Deserialize, Serialize};
@@ -364,14 +364,13 @@ impl StoredAgent {
             .name
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| id.clone());
-        Agent {
-            id: leaked(id),
-            name: leaked(name),
-            program: leaked(self.command),
-            arguments: leaked_slice(self.args),
-            env: leaked_env(self.env),
-            source: Source::Command,
-        }
+        Agent::custom(
+            id,
+            name,
+            self.command,
+            self.args,
+            self.env.into_iter().collect(),
+        )
     }
 
     /// How `agent` is written down.
@@ -492,19 +491,6 @@ where
 /// `value` kept for as long as the editor runs.
 fn leaked(value: String) -> &'static str {
     value.leak()
-}
-
-/// `values` kept for as long as the editor runs.
-fn leaked_slice(values: Vec<String>) -> &'static [&'static str] {
-    values.into_iter().map(leaked).collect::<Vec<_>>().leak()
-}
-
-/// `env` kept for as long as the editor runs.
-fn leaked_env(env: BTreeMap<String, String>) -> &'static [(&'static str, &'static str)] {
-    env.into_iter()
-        .map(|(name, value)| (leaked(name), leaked(value)))
-        .collect::<Vec<_>>()
-        .leak()
 }
 
 impl StoredServer {

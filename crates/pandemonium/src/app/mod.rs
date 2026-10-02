@@ -6,6 +6,7 @@
 //! model, submitted to `pm-gfx` as one draw list.
 
 mod agent;
+mod agents;
 mod answer;
 mod arrival;
 mod clicks;
@@ -16,6 +17,7 @@ mod dialog;
 mod disk;
 mod drag;
 mod excerpts;
+mod form;
 mod health;
 mod input;
 mod language;
@@ -108,8 +110,10 @@ pub(super) enum Writing {
     Comment(Scope),
     /// The box the MCP servers on the settings page are searched with.
     McpSearch,
+    /// The box the agents on the settings page are searched with.
+    AgentSearch,
     /// One box of the form a tool server is described in.
-    McpField(crate::settings::McpField),
+    FormField(crate::settings::FormField),
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -251,9 +255,15 @@ pub struct App {
     /// The field of an agent's form that the prompt or list on screen is editing.
     answering: Option<answer::Editing>,
     /// The form the tool server being added or edited is described in.
-    mcp_form: Option<crate::settings::McpForm>,
+    server_form: Option<crate::settings::ServerForm>,
     /// The box the MCP servers are searched with.
     mcp_search: crate::input::Input,
+    /// The box the agents are searched with.
+    agent_search: crate::input::Input,
+    /// What the agent registry last offered.
+    agent_registry: agents::SharedAgentRegistry,
+    /// The agents being downloaded, with the notice saying so.
+    agent_downloads: Vec<(String, crate::notice::NoticeId)>,
     /// What the MCP registry last offered.
     mcp_registry: mcp::SharedRegistry,
     /// The branches the open project menu offers to cut a session from.
@@ -713,8 +723,11 @@ impl App {
             session_name: String::new(),
             session_picks: BTreeSet::new(),
             answering: None,
-            mcp_form: None,
+            server_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),
+            agent_search: crate::input::Input::one_line("Search agents"),
+            agent_registry: agents::SharedAgentRegistry::default(),
+            agent_downloads: Vec::new(),
             mcp_registry: mcp::SharedRegistry::default(),
             session_bases: Vec::new(),
             showing_bases: false,
@@ -918,8 +931,8 @@ impl App {
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
-            Some(Writing::McpSearch) => return Some("search"),
-            Some(Writing::McpField(_)) => return Some("field"),
+            Some(Writing::McpSearch | Writing::AgentSearch) => return Some("search"),
+            Some(Writing::FormField(_)) => return Some("field"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -1858,6 +1871,9 @@ impl App {
             if section == crate::settings::SettingsSection::McpServers {
                 self.load_mcp_registry();
             }
+            if section == crate::settings::SettingsSection::AgentServers {
+                self.load_agent_registry();
+            }
             self.request_redraw();
             return;
         }
@@ -2336,7 +2352,8 @@ impl App {
                 .get_mut(scope)
                 .map(crate::debug::Debugger::console_mut),
             Writing::McpSearch => Some(&mut self.mcp_search),
-            Writing::McpField(field) => self.mcp_form.as_mut()?.input_mut(field),
+            Writing::AgentSearch => Some(&mut self.agent_search),
+            Writing::FormField(field) => self.server_form.as_mut()?.input_mut(field),
             Writing::Comment(_) => None,
         }
     }
@@ -2902,7 +2919,10 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Arrival => self.take_arrivals(),
-            Wake::Registry => self.request_redraw(),
+            Wake::Registry => {
+                self.take_agent_downloads();
+                self.request_redraw();
+            }
         }
     }
 

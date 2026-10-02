@@ -73,7 +73,7 @@ impl SettingsPage {
             Self::Keymap => &[SettingsSection::Keymap, SettingsSection::Keybindings],
             Self::Terminal => &[SettingsSection::Terminal],
             Self::Sessions => &[SettingsSection::Sessions],
-            Self::Agents => &[SettingsSection::McpServers],
+            Self::Agents => &[SettingsSection::AgentServers, SettingsSection::McpServers],
         }
     }
 
@@ -116,6 +116,8 @@ pub enum SettingsSection {
     Terminal,
     /// Whether a session's worktree is trusted, and what a new one is given.
     Sessions,
+    /// The agents the editor can start, and the ones the reader added.
+    AgentServers,
     /// The tool servers every agent is started with.
     McpServers,
 }
@@ -137,6 +139,7 @@ impl SettingsSection {
             Self::Keybindings => "Keybindings",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
+            Self::AgentServers => "Agent Servers",
             Self::McpServers => "MCP Servers",
         }
     }
@@ -210,7 +213,7 @@ impl SettingsSection {
                 Preference::WorktreeCopy,
                 Preference::WorktreePort,
             ],
-            Self::McpServers => &[],
+            Self::AgentServers | Self::McpServers => &[],
         }
     }
 }
@@ -268,6 +271,10 @@ pub struct Settings {
     installed_open: bool,
     /// Whether the list of MCP servers on offer is open.
     available_open: bool,
+    /// Whether the list of installed agents is open.
+    agents_installed_open: bool,
+    /// Whether the list of agents on offer is open.
+    agents_available_open: bool,
 }
 
 /// The chords pressed so far for an action being bound.
@@ -303,6 +310,8 @@ impl Default for Settings {
             recording: None,
             installed_open: true,
             available_open: true,
+            agents_installed_open: true,
+            agents_available_open: true,
         }
     }
 }
@@ -351,6 +360,26 @@ impl Settings {
     /// Whether the list of MCP servers on offer is open.
     pub fn available_open(&self) -> bool {
         self.available_open
+    }
+
+    /// Whether the list of installed agents is open.
+    pub fn agents_installed_open(&self) -> bool {
+        self.agents_installed_open
+    }
+
+    /// Whether the list of agents on offer is open.
+    pub fn agents_available_open(&self) -> bool {
+        self.agents_available_open
+    }
+
+    /// Opens the list of installed agents, or folds it.
+    pub fn toggle_agents_installed(&mut self) {
+        self.agents_installed_open = !self.agents_installed_open;
+    }
+
+    /// Opens the list of agents on offer, or folds it.
+    pub fn toggle_agents_available(&mut self) {
+        self.agents_available_open = !self.agents_available_open;
     }
 
     /// Opens the list of installed MCP servers, or folds it.

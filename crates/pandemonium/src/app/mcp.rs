@@ -11,7 +11,7 @@ use std::time::Duration;
 use pm_acp::McpServer;
 
 use crate::app::{App, Wake, Writing};
-use crate::settings::{Catalog, McpField, McpForm};
+use crate::settings::{Catalog, FormField, ServerForm};
 
 /// How long the search box rests before the registry is asked, so that
 /// typing a word is one question and not one for each letter.
@@ -34,93 +34,38 @@ pub(super) type SharedRegistry = Arc<Mutex<Registry>>;
 impl App {
     /// Opens a form for a server that is new.
     pub(super) fn add_mcp_server(&mut self) {
-        self.open_mcp_form(McpForm::new(None, None, &[]));
+        self.open_server_form(ServerForm::for_mcp(None, None));
     }
 
     /// Opens the `index`-th server out into a form.
     pub(super) fn edit_mcp_server(&mut self, index: usize) {
         if let Some(server) = self.mcp_servers.get(index) {
-            let form = McpForm::new(Some(index), Some(server), &[]);
-            self.open_mcp_form(form);
+            let form = ServerForm::for_mcp(Some(index), Some(server));
+            self.open_server_form(form);
         }
     }
 
-    /// Shows `form`, with the keyboard in its first box.
-    fn open_mcp_form(&mut self, form: McpForm) {
-        self.mcp_form = Some(form);
-        self.write_in(Writing::McpField(McpField::Name));
-    }
-
-    /// Lets go of the form without writing anything.
-    pub(super) fn cancel_mcp_form(&mut self) {
-        self.mcp_form = None;
-        if matches!(self.writing, Some(Writing::McpField(_))) {
-            self.writing = None;
-        }
-    }
-
-    /// Adds an empty variable to the form, with the keyboard in its name.
-    pub(super) fn add_mcp_variable(&mut self) {
-        if let Some(form) = self.mcp_form.as_mut() {
-            form.add_variable("");
-            let at = form.variables.len() - 1;
-            self.write_in(Writing::McpField(McpField::VariableName(at)));
-        }
-    }
-
-    /// Adds the `place`-th variable the registry lists for the server being
-    /// edited, with the keyboard in its value.
-    pub(super) fn suggest_mcp_variable(&mut self, place: usize) {
-        let named = self
-            .mcp_form
-            .as_ref()
-            .and_then(|form| form.original.as_ref())
-            .map(|original| original.name.clone());
-        let Some(name) = named.and_then(|named| {
-            self.mcp_catalog()
-                .listings
-                .iter()
-                .find(|listing| listing.server.name == named)
-                .and_then(|listing| listing.inputs.get(place).cloned())
+    /// Adds the `place`-th variable the registry suggests for the server
+    /// being edited, with the keyboard in its value.
+    pub(super) fn suggest_form_variable(&mut self, place: usize) {
+        let catalog = self.mcp_catalog();
+        let Some(name) = self.server_form.as_ref().and_then(|form| {
+            crate::settings::suggestions(form, &catalog)
+                .get(place)
+                .cloned()
         }) else {
             return;
         };
-        if let Some(form) = self.mcp_form.as_mut() {
+        if let Some(form) = self.server_form.as_mut() {
             form.add_variable(&name);
             let at = form.variables.len() - 1;
-            self.write_in(Writing::McpField(McpField::VariableValue(at)));
+            self.write_in(Writing::FormField(FormField::VariableValue(at)));
         }
-    }
-
-    /// Takes the `at`-th variable out of the form.
-    pub(super) fn remove_mcp_variable(&mut self, at: usize) {
-        if let Some(form) = self.mcp_form.as_mut() {
-            form.remove_variable(at);
-        }
-        if matches!(self.writing, Some(Writing::McpField(_))) {
-            self.writing = None;
-        }
-    }
-
-    /// Gives the keyboard to the box after `field`, or the one before it.
-    pub(super) fn step_mcp_field(&mut self, field: McpField, backwards: bool) {
-        let Some(form) = self.mcp_form.as_ref() else {
-            return;
-        };
-        let fields = form.fields();
-        let Some(at) = fields.iter().position(|candidate| *candidate == field) else {
-            return;
-        };
-        let next = match backwards {
-            true => (at + fields.len() - 1) % fields.len(),
-            false => (at + 1) % fields.len(),
-        };
-        self.write_in(Writing::McpField(fields[next]));
     }
 
     /// Writes the form's server down, in place of the one it was opened on.
     pub(super) fn save_mcp_form(&mut self) {
-        let Some(form) = self.mcp_form.as_ref() else {
+        let Some(form) = self.server_form.as_ref() else {
             return;
         };
         let name = form.name.value();
@@ -164,7 +109,7 @@ impl App {
             (None, Some(other)) => self.mcp_servers[other] = server,
             (None, None) => self.mcp_servers.push(server),
         }
-        self.cancel_mcp_form();
+        self.cancel_server_form();
         self.offer_mcp_servers();
     }
 
@@ -221,10 +166,9 @@ impl App {
             self.mcp_servers.push(listing.server);
             return self.offer_mcp_servers();
         }
-        let mut form = McpForm::new(None, Some(&listing.server), &[]);
-        form.original = Some(listing.server.clone());
+        let form = ServerForm::for_mcp(None, Some(&listing.server));
         self.settings.open_installed();
-        self.open_mcp_form(form);
+        self.open_server_form(form);
         self.notices.done(
             format!(
                 "{} takes {}; fill in what you have and leave the rest empty",

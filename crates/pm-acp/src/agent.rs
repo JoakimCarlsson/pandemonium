@@ -30,6 +30,38 @@ pub struct Agent {
     pub source: Source,
 }
 
+impl Agent {
+    /// An agent the reader runs from `program` with `arguments`, in the
+    /// environment `env` adds to, called `name` and known as `id`.
+    ///
+    /// Nothing is fetched for it and nowhere is named to install it from.
+    /// What is given is kept for as long as the editor runs, which is how
+    /// the shipped agents are held too, so a session that still has one is
+    /// never left without it.
+    #[must_use]
+    pub fn custom(
+        id: String,
+        name: String,
+        program: String,
+        arguments: Vec<String>,
+        env: Vec<(String, String)>,
+    ) -> Self {
+        let keep = |value: String| -> &'static str { value.leak() };
+        Self {
+            id: keep(id),
+            name: keep(name),
+            program: keep(program),
+            arguments: arguments.into_iter().map(keep).collect::<Vec<_>>().leak(),
+            env: env
+                .into_iter()
+                .map(|(name, value)| (keep(name), keep(value)))
+                .collect::<Vec<_>>()
+                .leak(),
+            source: Source::Command,
+        }
+    }
+}
+
 /// Where an agent's program comes from when the reader does not have it.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Source {

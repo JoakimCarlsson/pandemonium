@@ -20,7 +20,7 @@ use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::comment::{CommentId, Side as CommentSide};
 use crate::review::{ChangeId, ConflictAction, Group, RepositoryAction};
-use crate::settings::{McpField, SettingsPage, SettingsSection};
+use crate::settings::{FormField, SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
 
@@ -93,20 +93,36 @@ pub enum Message {
     OpenSettings,
     /// Open the repository the editor is published from.
     OpenRepository,
+    /// Put the caret of the agent search box where a press landed, selecting to it.
+    WriteAgentSearch(ResizePhase, Position, Position),
+    /// Install the registry's agent in this place of the list on offer.
+    InstallAgent(usize),
+    /// Open or fold the list of installed agents.
+    ToggleAgentsInstalled,
+    /// Open or fold the list of agents on offer.
+    ToggleAgentsAvailable,
+    /// Start describing an agent to run beside the shipped ones.
+    AddAgentServer,
+    /// Describe the agent the reader added in this place of the list again.
+    EditAgentServer(usize),
+    /// Take the agent the reader added in this place of the list away.
+    RemoveAgentServer(usize),
+    /// Open the menu of what can be done to the agent the reader added in this place.
+    ShowAgentServerMenu(usize),
     /// Start describing a tool server to add to every agent.
     AddMcpServer,
     /// Put the caret of this box of the tool server form where a press landed, selecting to it.
-    WriteMcpField(McpField, ResizePhase, Position, Position),
+    WriteFormField(FormField, ResizePhase, Position, Position),
     /// Add an empty variable to the tool server form.
-    AddMcpVariable,
+    AddFormVariable,
     /// Add the variable the registry lists in this place to the tool server form.
-    SuggestMcpVariable(usize),
+    SuggestFormVariable(usize),
     /// Take this variable out of the tool server form.
-    RemoveMcpVariable(usize),
+    RemoveFormVariable(usize),
     /// Write the tool server form down.
-    SaveMcpForm,
+    SaveServerForm,
     /// Let go of the tool server form.
-    CancelMcpForm,
+    CancelServerForm,
     /// Switch the tool server in this place of the list on or off.
     ToggleMcpServer(usize),
     /// Put the configuration of the tool server in this place on the clipboard.

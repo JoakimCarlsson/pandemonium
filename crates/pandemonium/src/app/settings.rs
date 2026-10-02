@@ -11,7 +11,7 @@ use crate::editor::Habits;
 use crate::message::Message;
 use crate::panes::{Content, Item};
 use crate::picker::{Choice, Kind, Row};
-use crate::settings::{McpPage, SettingsPane, settings_pane};
+use crate::settings::{AgentList, McpPage, SettingsPane, Subject, settings_pane};
 use crate::theme::{self, TOKENS};
 use crate::workspace::MenuTarget;
 
@@ -49,6 +49,11 @@ impl App {
     pub(super) fn settings_content(&self, theme: &Theme) -> Content {
         let catalog = self.mcp_catalog();
         let usage = self.mcp_usage();
+        let agent_catalog = self.agent_catalog();
+        let focus = match self.writing {
+            Some(Writing::FormField(field)) => Some(field),
+            _ => None,
+        };
         Content::Built(settings_pane(
             theme,
             &SettingsPane {
@@ -56,12 +61,27 @@ impl App {
                 preferences: &self.preferences,
                 keymap: self.resolver.keymap(),
                 file: crate::config::settings_file(),
+                agents: AgentList {
+                    agents: pm_acp::agents(),
+                    custom: &self.agent_servers,
+                    catalog: &agent_catalog,
+                    search: &self.agent_search,
+                    typing: self.writing == Some(Writing::AgentSearch),
+                    installed_open: self.settings.agents_installed_open(),
+                    available_open: self.settings.agents_available_open(),
+                    form: self
+                        .server_form
+                        .as_ref()
+                        .filter(|form| form.subject == Subject::Agent),
+                    focus,
+                    solid: self.caret_solid(),
+                },
                 mcp: McpPage {
-                    form: self.mcp_form.as_ref(),
-                    focus: match self.writing {
-                        Some(Writing::McpField(field)) => Some(field),
-                        _ => None,
-                    },
+                    form: self
+                        .server_form
+                        .as_ref()
+                        .filter(|form| form.subject == Subject::McpServer),
+                    focus,
                     servers: &self.mcp_servers,
                     usage: &usage,
                     catalog: &catalog,
@@ -143,17 +163,27 @@ impl App {
                 }
                 self.follow_keymap();
             }
+            Message::WriteAgentSearch(phase, anchor, head) => {
+                self.point_in(Writing::AgentSearch, phase, anchor, head);
+            }
+            Message::InstallAgent(index) => self.install_available_agent(index),
+            Message::ToggleAgentsInstalled => self.settings.toggle_agents_installed(),
+            Message::ToggleAgentsAvailable => self.settings.toggle_agents_available(),
+            Message::AddAgentServer => self.add_agent_server(),
+            Message::EditAgentServer(index) => self.edit_agent_server(index),
+            Message::RemoveAgentServer(index) => self.remove_agent_server(index),
+            Message::ShowAgentServerMenu(index) => self.open_menu(MenuTarget::AgentServer(index)),
             Message::AddMcpServer => self.add_mcp_server(),
             Message::InstallMcpServer(index) => self.install_mcp_server(index),
             Message::ToggleMcpServer(index) => self.toggle_mcp_server(index),
-            Message::WriteMcpField(field, phase, anchor, head) => {
-                self.point_in(Writing::McpField(field), phase, anchor, head);
+            Message::WriteFormField(field, phase, anchor, head) => {
+                self.point_in(Writing::FormField(field), phase, anchor, head);
             }
-            Message::AddMcpVariable => self.add_mcp_variable(),
-            Message::SuggestMcpVariable(place) => self.suggest_mcp_variable(place),
-            Message::RemoveMcpVariable(at) => self.remove_mcp_variable(at),
-            Message::SaveMcpForm => self.save_mcp_form(),
-            Message::CancelMcpForm => self.cancel_mcp_form(),
+            Message::AddFormVariable => self.add_form_variable(),
+            Message::SuggestFormVariable(place) => self.suggest_form_variable(place),
+            Message::RemoveFormVariable(at) => self.remove_form_variable(at),
+            Message::SaveServerForm => self.save_server_form(),
+            Message::CancelServerForm => self.cancel_server_form(),
             Message::CopyMcpConfiguration(index) => self.copy_mcp_configuration(index),
             Message::OpenMcpWebsite(index) => self.open_mcp_website(index),
             Message::RevealSettingsFile => self.reveal_settings_file(),
