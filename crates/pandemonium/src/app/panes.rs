@@ -486,6 +486,11 @@ impl App {
             crate::app::Writing::Console(scope) => {
                 Some(self.debuggers.get(scope)?.console().text())
             }
+            crate::app::Writing::McpSearch => Some(self.mcp_search.text()),
+            crate::app::Writing::AgentSearch => Some(self.agent_search.text()),
+            crate::app::Writing::FormField(field) => {
+                Some(self.server_form.as_ref()?.input(field)?.text())
+            }
             crate::app::Writing::Comment(scope) => {
                 Some(self.reviews.get(&scope)?.comments().composing()?.text)
             }
@@ -1465,6 +1470,68 @@ impl App {
                             crate::picker::Kind::BreakpointLog,
                         )),
                     ),
+                ]
+            }
+            MenuTarget::AgentServer(index) => vec![
+                pm_ui::menu_entry("Edit…", Some(Message::EditAgentServer(index))),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Remove", Some(Message::RemoveAgentServer(index))),
+            ],
+            MenuTarget::McpServer(index) => {
+                let server = self.mcp_servers.get(index)?;
+                let toggle = match server.enabled {
+                    true => "Disable",
+                    false => "Enable",
+                };
+                let website =
+                    (!server.website.is_empty()).then_some(Message::OpenMcpWebsite(index));
+                vec![
+                    pm_ui::menu_entry(toggle, Some(Message::ToggleMcpServer(index))),
+                    pm_ui::menu_entry("Edit…", Some(Message::EditMcpServer(index))),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry(
+                        "Copy Configuration (JSON)",
+                        Some(Message::CopyMcpConfiguration(index)),
+                    ),
+                    pm_ui::menu_entry("Show Settings File", Some(Message::RevealSettingsFile)),
+                    pm_ui::menu_entry("Open Website", website),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Uninstall", Some(Message::RemoveMcpServer(index))),
+                ]
+            }
+            MenuTarget::AgentMcp(session) => {
+                let servers = self
+                    .agents
+                    .get(session)
+                    .map(|talk| talk.mcp_servers())
+                    .unwrap_or_default();
+                let heading = match servers.is_empty() {
+                    true => "No MCP servers are set up",
+                    false => "Given to this agent when it started",
+                };
+                std::iter::once(pm_ui::menu_entry(heading, None))
+                    .chain(servers.iter().map(|server| {
+                        let note = match server.given {
+                            true => "",
+                            false => " · not supported by this agent",
+                        };
+                        pm_ui::menu_entry(format!("{} · {}{note}", server.name, server.kind), None)
+                    }))
+                    .chain([
+                        pm_ui::menu_separator(),
+                        pm_ui::menu_entry("Manage MCP Servers…", Some(Message::ManageMcpServers)),
+                    ])
+                    .collect()
+            }
+            MenuTarget::AgentText(session) => {
+                let selected = self
+                    .agents
+                    .get(session)
+                    .is_some_and(|talk| talk.selection().is_some());
+                vec![
+                    pm_ui::menu_entry("Copy", selected.then_some(Message::CopyAgentText(session))),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Select All", Some(Message::SelectAllAgentText(session))),
                 ]
             }
             MenuTarget::Input => {

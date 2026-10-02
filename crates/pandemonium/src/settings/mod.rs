@@ -11,8 +11,16 @@
 //! The pane is a tab like any other, which belongs to the window rather than
 //! to a worktree: it is drawn whichever project or session is in front.
 
+mod agent_list;
+mod agents;
+mod form;
+mod mcp;
 mod page;
+mod parts;
 mod state;
 
+pub use agent_list::{AgentCatalog, AgentList};
+pub use form::{FormField, ServerForm, Subject};
+pub use mcp::{Catalog, McpPage, suggestions};
 pub use page::{SettingsPane, settings_pane};
 pub use state::{Settings, SettingsPage, SettingsSection};

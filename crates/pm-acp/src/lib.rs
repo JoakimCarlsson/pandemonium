@@ -12,17 +12,27 @@
 //! it, and everything else here is what a session says.
 
 mod agent;
+mod agent_registry;
 mod attachment;
+mod elicitation;
 mod limits;
+mod mcp;
 mod process;
+mod registry;
 mod request;
 mod session;
 mod transport;
 mod update;
 
 pub use agent::{AGENTS, Agent, Source, agents, install};
+pub use agent_registry::{
+    Available, Download, Install, download as download_agent, fetch as fetch_agents,
+};
 pub use attachment::Attachment;
+pub use elicitation::{Alternative, Elicitation, Field, Given, Input, Inquiry, Link, Reply};
 pub use limits::{Limits, Window};
+pub use mcp::{McpServer, Offered, Reach, command_line, command_words, install_mcp};
+pub use registry::{Listing, search as search_registry};
 pub use request::{Answer, Exit, Request, Run};
 pub use session::{Notify, Session};
 pub use update::{

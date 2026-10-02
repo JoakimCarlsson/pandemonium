@@ -77,6 +77,8 @@ pub enum Kind {
     Agents,
     /// Saved conversations offered by the focused agent.
     AgentHistory(TalkId),
+    /// Saved conversations offered by the focused agent, to have one forgotten.
+    AgentDelete(TalkId),
     /// What to call the session about to be cut.
     NewSession,
     /// Which repositories of the active project the session about to be cut
@@ -118,6 +120,10 @@ pub enum Kind {
     Watch,
     /// Tasks offered by the worktree in front.
     Tasks,
+    /// A line of text or a number for a field of a form the agent asked to have filled in.
+    AnswerText,
+    /// What a field of a form the agent asked to have filled in can be.
+    AnswerOptions,
 }
 
 impl Kind {
@@ -157,6 +163,7 @@ impl Kind {
             Self::KeymapName => "What the keymap is called",
             Self::Agents => "Start an agent in this worktree",
             Self::AgentHistory(_) => "Search agent history",
+            Self::AgentDelete(_) => "Choose a saved session to delete",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
             Self::Debug => "Debug this worktree as",
@@ -167,6 +174,8 @@ impl Kind {
             Self::BreakpointLog => "Log message, e.g. i is {i}",
             Self::Watch => "Watch expression",
             Self::Tasks => "Run a task in this worktree",
+            Self::AnswerText => "Your answer, blank to clear it",
+            Self::AnswerOptions => "Choose, Esc when done",
         }
     }
 
@@ -191,6 +200,7 @@ impl Kind {
                 | Self::ThemeColor(_)
                 | Self::ThemeName
                 | Self::KeymapName
+                | Self::AnswerText
         )
     }
 
@@ -258,6 +268,8 @@ pub enum Choice {
     Agent(pm_acp::Agent),
     /// Open a saved conversation from the named running agent.
     AgentHistory(TalkId, String),
+    /// Have the named running agent forget a saved conversation.
+    AgentDelete(TalkId, String),
     /// Put this session into the mode this names.
     Mode(TalkId, String),
     /// Set this session's knob to the value this names.
@@ -274,6 +286,8 @@ pub enum Choice {
     SessionRepository(PathBuf),
     /// Cut the session about to be cut, of the repositories ticked.
     StartSession,
+    /// Choose this alternative of the form field being edited.
+    AnswerOption(usize),
 }
 
 /// One thing the picker is offering.
@@ -505,7 +519,7 @@ impl Picker {
     /// How many rows the picker keeps after filtering.
     fn limit(&self) -> usize {
         match self.kind {
-            Kind::AgentHistory(_) => usize::MAX,
+            Kind::AgentHistory(_) | Kind::AgentDelete(_) => usize::MAX,
             _ => SHOWN,
         }
     }

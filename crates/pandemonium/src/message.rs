@@ -20,7 +20,7 @@ use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::comment::{CommentId, Side as CommentSide};
 use crate::review::{ChangeId, ConflictAction, Group, RepositoryAction};
-use crate::settings::{SettingsPage, SettingsSection};
+use crate::settings::{FormField, SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
 use crate::workspace::SidebarView;
 
@@ -93,6 +93,60 @@ pub enum Message {
     OpenSettings,
     /// Open the repository the editor is published from.
     OpenRepository,
+    /// Put the caret of the agent search box where a press landed, selecting to it.
+    WriteAgentSearch(ResizePhase, Position, Position),
+    /// Install the registry's agent in this place of the list on offer.
+    InstallAgent(usize),
+    /// Open or fold the list of installed agents.
+    ToggleAgentsInstalled,
+    /// Open or fold the list of agents on offer.
+    ToggleAgentsAvailable,
+    /// Start describing an agent to run beside the shipped ones.
+    AddAgentServer,
+    /// Describe the agent the reader added in this place of the list again.
+    EditAgentServer(usize),
+    /// Take the agent the reader added in this place of the list away.
+    RemoveAgentServer(usize),
+    /// Open the menu of what can be done to the agent the reader added in this place.
+    ShowAgentServerMenu(usize),
+    /// Start describing a tool server to add to every agent.
+    AddMcpServer,
+    /// Put the caret of this box of the tool server form where a press landed, selecting to it.
+    WriteFormField(FormField, ResizePhase, Position, Position),
+    /// Add an empty variable to the tool server form.
+    AddFormVariable,
+    /// Add the variable the registry lists in this place to the tool server form.
+    SuggestFormVariable(usize),
+    /// Take this variable out of the tool server form.
+    RemoveFormVariable(usize),
+    /// Write the tool server form down.
+    SaveServerForm,
+    /// Let go of the tool server form.
+    CancelServerForm,
+    /// Switch the tool server in this place of the list on or off.
+    ToggleMcpServer(usize),
+    /// Put the configuration of the tool server in this place on the clipboard.
+    CopyMcpConfiguration(usize),
+    /// Open the page describing the tool server in this place.
+    OpenMcpWebsite(usize),
+    /// Show the file the tool servers are written to.
+    RevealSettingsFile,
+    /// Open the menu of what can be done to the tool server in this place.
+    ShowMcpServerMenu(usize),
+    /// Install the registry's server in this place of the list on offer.
+    InstallMcpServer(usize),
+    /// Open or fold the list of installed MCP servers.
+    ToggleMcpInstalled,
+    /// Open or fold the list of MCP servers on offer.
+    ToggleMcpAvailable,
+    /// Open the page that says what MCP servers are.
+    OpenMcpDocs,
+    /// Put the caret of the MCP search box where a press landed, selecting to it.
+    WriteMcpSearch(ResizePhase, Position, Position),
+    /// Describe the tool server in this place of the list again.
+    EditMcpServer(usize),
+    /// Take the tool server in this place of the list away.
+    RemoveMcpServer(usize),
     /// Show this page of the settings pane, from its top.
     ShowSettingsPage(SettingsPage),
     /// Show the page of the settings pane this section is on, scrolled to it.
@@ -550,6 +604,16 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
+    /// Edit the field in this place of the form the agent put under this ticket.
+    EditAnswer(TalkId, u64, usize),
+    /// Send the form the agent put under this ticket, filled in as it is.
+    SendAnswer(TalkId, u64),
+    /// Refuse, on purpose, the question the agent put under this ticket.
+    DeclineAnswer(TalkId, u64),
+    /// Walk away from the question the agent put under this ticket.
+    CancelAnswer(TalkId, u64),
+    /// Open the page the agent sent the reader to under this ticket.
+    OpenAnswerLink(TalkId, u64),
     /// Log this session's agent in by the way it offered in this place.
     LogInAgent(TalkId, usize),
     /// Pick out this session's transcript from where a press landed to where
@@ -573,6 +637,22 @@ pub enum Message {
     ShowAgentModes(TalkId),
     /// Put this session into the mode after the one it is in.
     CycleAgentMode(TalkId),
+    /// Open the list of MCP servers this session's agent was given.
+    ShowAgentMcp(TalkId),
+    /// Open the settings page where MCP servers are managed.
+    ManageMcpServers,
+    /// Open the menu of what can be done to the text of this session's transcript.
+    ShowAgentTextMenu(TalkId),
+    /// Copy what is picked out of this session's transcript.
+    CopyAgentText(TalkId),
+    /// Pick out the whole of this session's transcript.
+    SelectAllAgentText(TalkId),
+    /// Start this session's agent again, carrying on the conversation it was in.
+    ReconnectAgent(TalkId),
+    /// Log this session's agent out.
+    LogOutAgent(TalkId),
+    /// List this session's saved conversations to choose one to forget.
+    ShowAgentDeletions(TalkId),
     /// Act on the knob in this place: ask which value, or flip the switch.
     PressKnob(TalkId, usize),
     /// Start naming one of this session's commands, in its prompt.

@@ -159,6 +159,8 @@ impl App {
             }
             (Kind::RenameTerminal(id), _) => self.rename_terminal(id, &typed),
             (Kind::Watch, _) => self.save_watch(typed),
+            (Kind::AnswerText, _) => self.type_answer(&typed),
+            (Kind::AnswerOptions, Some(Choice::AnswerOption(option))) => self.choose_answer(option),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
             (Kind::NewSession, _) => self.start_session(&typed),
@@ -214,6 +216,7 @@ impl App {
                 self.run_task(scope, &task, crate::tasks::Shown::Front);
             }
             Choice::AgentHistory(session, saved) => self.open_agent_history(session, &saved),
+            Choice::AgentDelete(session, saved) => self.delete_agent_history(session, &saved),
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
@@ -221,6 +224,7 @@ impl App {
             Choice::Process(pid) => self.choose_attach_process(pid),
             Choice::SessionRepository(_) => {}
             Choice::StartSession => self.cut_session(),
+            Choice::AnswerOption(option) => self.choose_answer(option),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::Stash(index) => {
                 if let Some(action) = self.stash_action.take() {
@@ -285,7 +289,8 @@ impl App {
             Kind::Projects => self.project_rows(),
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
-            Kind::AgentHistory(session) => self.agent_history_rows(session),
+            Kind::AgentHistory(session) => self.agent_history_rows(session, false),
+            Kind::AgentDelete(session) => self.agent_history_rows(session, true),
             Kind::Debug => self.debug_rows(),
             Kind::Processes => self.process_rows(),
             Kind::AttachAdapters => self.attach_adapter_rows(),
@@ -321,9 +326,12 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::Knob | Kind::References | Kind::Calls | Kind::ServerLogs | Kind::Font(_) => {
-                Vec::new()
-            }
+            Kind::AnswerOptions
+            | Kind::Knob
+            | Kind::References
+            | Kind::Calls
+            | Kind::ServerLogs
+            | Kind::Font(_) => Vec::new(),
             Kind::Branches
             | Kind::FetchRemotes
             | Kind::PushRemotes
@@ -332,6 +340,7 @@ impl App {
             | Kind::Line
             | Kind::Rename
             | Kind::RenameTerminal(_)
+            | Kind::AnswerText
             | Kind::BreakpointCondition
             | Kind::BreakpointHits
             | Kind::BreakpointLog

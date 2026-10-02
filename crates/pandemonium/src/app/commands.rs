@@ -190,6 +190,21 @@ impl App {
                     return self.apply(Message::PressKnob(session, place));
                 }
             }
+            Action::ReconnectAgent => {
+                if let Some(session) = self.focused_talk() {
+                    return self.apply(Message::ReconnectAgent(session));
+                }
+            }
+            Action::LogOutAgent => {
+                if let Some(session) = self.focused_talk() {
+                    return self.apply(Message::LogOutAgent(session));
+                }
+            }
+            Action::DeleteAgentSession => {
+                if let Some(session) = self.focused_talk() {
+                    return self.apply(Message::ShowAgentDeletions(session));
+                }
+            }
             Action::StageSelectedChanges => return self.apply(Message::StageSelection),
             Action::UnstageSelectedChanges => return self.apply(Message::UnstageSelection),
             Action::DiscardSelectedChanges => return self.apply(Message::DiscardSelection),

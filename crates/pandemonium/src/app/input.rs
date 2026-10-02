@@ -499,6 +499,13 @@ impl App {
             return true;
         }
 
+        if let Writing::FormField(field) = writing
+            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
+        {
+            self.step_form_field(field, self.modifiers.shift_key());
+            return true;
+        }
+
         let modifiers = self.modifiers;
         if self
             .with_written(|input| input.submits(&event.logical_key, modifiers))
@@ -521,6 +528,9 @@ impl App {
             && let Some(talk) = self.agents.get_mut(session)
         {
             talk.retyped();
+        }
+        if writing == Writing::McpSearch {
+            self.search_mcp_registry();
         }
         true
     }
@@ -564,6 +574,9 @@ impl App {
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
             Writing::Comment(_) => self.apply(Message::SaveComment),
+            Writing::McpSearch => self.search_mcp_registry(),
+            Writing::AgentSearch => {}
+            Writing::FormField(_) => self.save_server_form(),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {
                     debugger.evaluate();

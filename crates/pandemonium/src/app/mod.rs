@@ -6,6 +6,8 @@
 //! model, submitted to `pm-gfx` as one draw list.
 
 mod agent;
+mod agents;
+mod answer;
 mod arrival;
 mod clicks;
 mod client;
@@ -15,10 +17,12 @@ mod dialog;
 mod disk;
 mod drag;
 mod excerpts;
+mod form;
 mod health;
 mod input;
 mod language;
 mod listing;
+mod mcp;
 mod modal;
 mod notice;
 mod operations;
@@ -104,6 +108,12 @@ pub(super) enum Writing {
     Console(Scope),
     /// The box a review comment is being written in, in one worktree.
     Comment(Scope),
+    /// The box the MCP servers on the settings page are searched with.
+    McpSearch,
+    /// The box the agents on the settings page are searched with.
+    AgentSearch,
+    /// One box of the form a tool server is described in.
+    FormField(crate::settings::FormField),
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -143,6 +153,8 @@ pub enum Wake {
     Paste,
     /// Files have been carried onto the window from outside it.
     Arrival,
+    /// The MCP registry has answered a search.
+    Registry,
 }
 
 /// The remote operation currently running for the active project.
@@ -240,6 +252,20 @@ pub struct App {
     session_name: String,
     /// The repositories ticked for that session.
     session_picks: BTreeSet<PathBuf>,
+    /// The field of an agent's form that the prompt or list on screen is editing.
+    answering: Option<answer::Editing>,
+    /// The form the tool server being added or edited is described in.
+    server_form: Option<crate::settings::ServerForm>,
+    /// The box the MCP servers are searched with.
+    mcp_search: crate::input::Input,
+    /// The box the agents are searched with.
+    agent_search: crate::input::Input,
+    /// What the agent registry last offered.
+    agent_registry: agents::SharedAgentRegistry,
+    /// The agents being downloaded, with the notice saying so.
+    agent_downloads: Vec<(String, crate::notice::NoticeId)>,
+    /// What the MCP registry last offered.
+    mcp_registry: mcp::SharedRegistry,
     /// The branches the open project menu offers to cut a session from.
     session_bases: Vec<String>,
     /// Whether that menu is showing them.
@@ -349,6 +375,8 @@ pub struct App {
     language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
     agent_servers: Vec<pm_acp::Agent>,
+    /// The tool servers every agent is opened with.
+    mcp_servers: Vec<pm_acp::McpServer>,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
     /// The panes the last launch left, until the window is ready to open them.
@@ -464,7 +492,7 @@ pub struct App {
     /// The last press on an agent's transcript, for selecting a word.
     agent_clicks: Clicks<crate::agent::Spot>,
     /// Whether the drag over an agent's transcript grows by whole words.
-    agent_words: bool,
+    agent_grain: agent::Grain,
     /// The transcript anchor and pointer held by the current selection gesture.
     agent_selection_drag: Option<agent::SelectionDrag>,
     /// The last press on a row of the file tree, for keeping a file open.
@@ -533,7 +561,7 @@ pub struct App {
 }
 
 /// How many kinds of [`Wake`] there are.
-const WAKES: usize = Wake::Arrival as usize + 1;
+const WAKES: usize = Wake::Registry as usize + 1;
 
 /// One flag per kind of [`Wake`], set while one is on its way.
 type Pending = Arc<[AtomicBool; WAKES]>;
@@ -694,6 +722,13 @@ impl App {
             session_base: None,
             session_name: String::new(),
             session_picks: BTreeSet::new(),
+            answering: None,
+            server_form: None,
+            mcp_search: crate::input::Input::one_line("Search MCP servers"),
+            agent_search: crate::input::Input::one_line("Search agents"),
+            agent_registry: agents::SharedAgentRegistry::default(),
+            agent_downloads: Vec::new(),
+            mcp_registry: mcp::SharedRegistry::default(),
             session_bases: Vec::new(),
             showing_bases: false,
             open,
@@ -766,6 +801,7 @@ impl App {
             project_search_field: None,
             language_servers: restored.language_servers,
             agent_servers: restored.agent_servers,
+            mcp_servers: restored.mcp_servers,
             panes: PaneTree::default(),
             saved,
             shells,
@@ -816,7 +852,7 @@ impl App {
             screen_clicks: Clicks::default(),
             screen_unit: pm_vt::Unit::Cell,
             agent_clicks: Clicks::default(),
-            agent_words: false,
+            agent_grain: agent::Grain::Character,
             agent_selection_drag: None,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
@@ -895,6 +931,8 @@ impl App {
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
+            Some(Writing::McpSearch | Writing::AgentSearch) => return Some("search"),
+            Some(Writing::FormField(_)) => return Some("field"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -1830,6 +1868,12 @@ impl App {
         }
         if let Message::ShowSettingsSection(section) = message {
             self.settings.show_section(section);
+            if section == crate::settings::SettingsSection::McpServers {
+                self.load_mcp_registry();
+            }
+            if section == crate::settings::SettingsSection::AgentServers {
+                self.load_agent_registry();
+            }
             self.request_redraw();
             return;
         }
@@ -2245,6 +2289,7 @@ impl App {
             window: self.window_state,
             language_servers: self.language_servers.clone(),
             agent_servers: self.agent_servers.clone(),
+            mcp_servers: self.mcp_servers.clone(),
         }
     }
 
@@ -2306,6 +2351,9 @@ impl App {
                 .debuggers
                 .get_mut(scope)
                 .map(crate::debug::Debugger::console_mut),
+            Writing::McpSearch => Some(&mut self.mcp_search),
+            Writing::AgentSearch => Some(&mut self.agent_search),
+            Writing::FormField(field) => self.server_form.as_mut()?.input_mut(field),
             Writing::Comment(_) => None,
         }
     }
@@ -2871,6 +2919,10 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Arrival => self.take_arrivals(),
+            Wake::Registry => {
+                self.take_agent_downloads();
+                self.request_redraw();
+            }
         }
     }
 

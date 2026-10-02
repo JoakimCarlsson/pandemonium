@@ -29,8 +29,10 @@ use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Limits, Method, Mode,
-    Notify, Request, Session, Setting, Stop, Usage, Voice,
+    Notify, Reply, Request, Session, Setting, Stop, Usage, Voice,
 };
+
+use crate::agent::form::Form;
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_gfx::Point;
 use pm_ui::{Bounds, Placements};
@@ -122,6 +124,8 @@ pub struct Talk {
     clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
+    /// The questions the agent has put to the reader, oldest first.
+    forms: Vec<Form>,
     /// The commands the agent has said it takes, as it last said them.
     commands: Vec<Command>,
     /// Skills installed for this agent, invoked with a dollar sign.
@@ -242,6 +246,31 @@ impl Talk {
         self.history_error = None;
         self.listing = true;
         self.conversation.list_sessions();
+    }
+
+    /// The tool servers the agent was opened with, and which it could not be given.
+    pub fn mcp_servers(&self) -> Vec<pm_acp::Offered> {
+        self.conversation.mcp_servers()
+    }
+
+    /// Whether the agent can forget a saved conversation.
+    pub fn can_delete(&self) -> bool {
+        self.conversation.can_delete()
+    }
+
+    /// Asks the agent to forget the saved conversation `id`.
+    pub fn delete_saved(&self, id: &str) {
+        self.conversation.delete_session(id);
+    }
+
+    /// Whether the agent can be logged out.
+    pub fn can_logout(&self) -> bool {
+        self.conversation.can_logout()
+    }
+
+    /// Logs the agent out.
+    pub fn logout(&self) {
+        self.conversation.logout();
     }
 
     /// The saved conversations this agent has returned so far.
@@ -785,7 +814,7 @@ impl Talk {
     pub fn standing(&self) -> Standing {
         match (
             self.is_running(),
-            self.asks.is_empty(),
+            self.asks.is_empty() && self.forms.is_empty(),
             self.busy,
             self.unseen,
         ) {
@@ -1018,6 +1047,27 @@ impl Talk {
         }
     }
 
+    /// The questions waiting on the reader.
+    pub fn forms(&self) -> &[Form] {
+        &self.forms
+    }
+
+    /// The form waiting under `ticket`, to be filled in.
+    pub fn form_mut(&mut self, ticket: u64) -> Option<&mut Form> {
+        self.forms.iter_mut().find(|form| form.id() == ticket)
+    }
+
+    /// Answers the question waiting under `ticket` with `reply`, and takes it off the list.
+    ///
+    /// A question is answered once: the agent is waiting on one reply and gets one.
+    pub fn reply(&mut self, ticket: u64, reply: &Reply) {
+        let Some(at) = self.forms.iter().position(|form| form.id() == ticket) else {
+            return;
+        };
+        self.forms.remove(at);
+        self.conversation.reply(ticket, reply);
+    }
+
     /// Takes in one thing the agent said.
     fn take(&mut self, event: Event) {
         match event {
@@ -1054,6 +1104,10 @@ impl Talk {
             Event::Used(usage) => self.usage = Some(usage),
             Event::Limited(limits) => self.limits = Some(limits),
             Event::Asked(ask) => self.asks.push(ask),
+            Event::Elicited(elicitation) => self.forms.push(Form::new(elicitation)),
+            Event::Concluded(id) => self
+                .forms
+                .retain(|form| form.link().is_none_or(|link| link.id != id)),
             Event::Requested(..) => {}
             Event::Stopped(stop) => {
                 self.busy = false;
@@ -1086,6 +1140,17 @@ impl Talk {
                         .any(|command| command.name.eq_ignore_ascii_case("compact"));
                 self.transcript.failure(message, compact);
             }
+            Event::Fresh => self
+                .transcript
+                .note("The agent could not carry on the old conversation, so this one is new."),
+            Event::LoggedOut => {
+                self.ready = false;
+                self.remember_on_ready = true;
+                self.busy = false;
+                self.busy_since = None;
+                self.transcript.note("Logged out.");
+            }
+            Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
             Event::Ended => {
                 self.busy = false;
                 self.busy_since = None;
@@ -1391,6 +1456,7 @@ impl Talks {
                 next_preview: 0,
                 clipboard_files: Vec::new(),
                 asks: Vec::new(),
+                forms: Vec::new(),
                 commands: Vec::new(),
                 skills: installed_skills(root, agent),
                 history: Vec::new(),
@@ -1448,7 +1514,43 @@ impl Talks {
                 talk.busy_since = None;
                 talk.logins.clear();
                 talk.asks.clear();
+                talk.forms.clear();
                 talk.transcript.note("Logged in. Starting the agent again…");
+                true
+            }
+            Err(error) => {
+                talk.transcript
+                    .note(format!("The agent would not start again: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Starts the agent of the conversation `id` names again and carries on
+    /// the conversation it was in, answering whether it started.
+    ///
+    /// The transcript stays as it is: the agent is asked to resume rather
+    /// than to replay. An agent that has not said anything yet has no
+    /// conversation to carry on and is not started again.
+    pub fn reconnect(&mut self, id: TalkId) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        let Some(conversation) = talk.resumable() else {
+            return false;
+        };
+        match Session::reconnect(talk.agent(), talk.root(), &talk.env, &conversation, notify) {
+            Ok(session) => {
+                talk.conversation = session;
+                talk.ready = false;
+                talk.busy = false;
+                talk.busy_since = None;
+                talk.asks.clear();
+                talk.forms.clear();
+                talk.transcript.note("Reconnecting to the agent…");
                 true
             }
             Err(error) => {

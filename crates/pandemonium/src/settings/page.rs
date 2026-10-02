@@ -81,24 +81,38 @@ pub struct SettingsPane<'a> {
     pub keymap: &'a Keymap,
     /// The file the preferences are written to, when there is one.
     pub file: Option<PathBuf>,
+    /// What the MCP Servers page is drawn from.
+    pub mcp: crate::settings::mcp::McpPage<'a>,
+    /// What the Agent Servers page is drawn from.
+    pub agents: crate::settings::agent_list::AgentList<'a>,
 }
 
 /// Builds the settings pane in `theme`.
 pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<Message>> {
     let settings = pane.settings;
     let view = settings.view();
-    let alone = view.sections().len() == 1;
-    let sections = view
-        .sections()
-        .iter()
-        .map(|section| {
-            let rows = section_rows(theme, pane, *section);
-            match alone {
-                true => self::rows(theme, rows),
-                false => self::section(theme, section.label(), rows),
-            }
-        })
-        .collect::<Vec<_>>();
+    let alone = view.sections().len() == 1 && !view.page().has_sections();
+    let alone = alone || matches!(view, SettingsView::Section(_));
+    let sections = match view {
+        SettingsView::Page(SettingsPage::Agents) => {
+            vec![crate::settings::agents::overview(
+                theme,
+                &pane.mcp,
+                &pane.agents,
+            )]
+        }
+        _ => view
+            .sections()
+            .iter()
+            .map(|section| {
+                let rows = section_rows(theme, pane, *section);
+                match alone {
+                    true => self::rows(theme, rows),
+                    false => self::section(theme, section.label(), rows),
+                }
+            })
+            .collect::<Vec<_>>(),
+    };
 
     Box::new(
         h_flex()
@@ -562,6 +576,10 @@ fn section_rows(
             ),
         ],
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
+        SettingsSection::AgentServers => {
+            vec![crate::settings::agent_list::agent_list(theme, &pane.agents)]
+        }
+        SettingsSection::McpServers => vec![crate::settings::mcp::mcp_page(theme, &pane.mcp)],
         SettingsSection::Terminal => vec![
             stepper(
                 Preference::TerminalFontSize,

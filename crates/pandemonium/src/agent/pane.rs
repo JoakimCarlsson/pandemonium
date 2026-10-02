@@ -27,7 +27,7 @@ use pm_ui::{
     v_flex,
 };
 
-use crate::agent::{Block, Spot, Standing, Talk, TalkId};
+use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
 use crate::editor::{code_highlights, tint};
 use crate::image::Decoding;
 use crate::input::input_view;
@@ -189,6 +189,7 @@ pub fn agent_pane(
                         .pr(SCROLLBAR_GUTTER / STEP)
                         .py(INSET)
                         .drag_cursor(PointerCursor::Text)
+                        .on_secondary_click(Message::ShowAgentTextMenu(session))
                         .on_drag(move |event| {
                             Message::SelectAgentText(
                                 session,
@@ -213,6 +214,11 @@ pub fn agent_pane(
             talk.asks()
                 .iter()
                 .map(|ask| permission(theme, talk.id(), ask)),
+        )
+        .children(
+            talk.forms()
+                .iter()
+                .map(|form| question(theme, talk.id(), form)),
         )
         .when(!talk.offered().is_empty(), |pane| {
             pane.child(commands(theme, talk))
@@ -1640,6 +1646,61 @@ pub fn words_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (S
     (word(anchor.min(head)).0, word(anchor.max(head)).1)
 }
 
+/// The whole paragraphs the rows from `anchor` to `head` belong to.
+///
+/// A paragraph is a line as it was written, which the pane may have broken
+/// into several rows; a row carried on from the one above belongs to the
+/// paragraph that one starts.
+pub fn lines_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (Spot, Spot) {
+    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
+    let carried = |row: usize| wrapped.row(row).first().is_some_and(|piece| piece.wrapped);
+    let (first, last) = (anchor.min(head), anchor.max(head));
+    if wrapped.len() == 0 {
+        return (first, last);
+    }
+    let mut start = first.row.min(wrapped.len() - 1);
+    while start > 0 && carried(start) {
+        start -= 1;
+    }
+    let mut end = last.row.min(wrapped.len() - 1);
+    while end + 1 < wrapped.len() && carried(end + 1) {
+        end += 1;
+    }
+    let width = wrapped
+        .row(end)
+        .iter()
+        .map(|piece| piece.text.chars().count())
+        .sum();
+    (
+        Spot {
+            row: start,
+            column: 0,
+        },
+        Spot {
+            row: end,
+            column: width,
+        },
+    )
+}
+
+/// The first place in the conversation and the last, which is all of it.
+pub fn everything(theme: &Theme, talk: &Talk) -> Option<(Spot, Spot)> {
+    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
+    let last = wrapped.len().checked_sub(1)?;
+    let width = wrapped
+        .row(last)
+        .iter()
+        .map(|piece| piece.text.chars().count())
+        .sum();
+    Some((
+        Spot { row: 0, column: 0 },
+        Spot {
+            row: last,
+            column: width,
+        },
+    ))
+}
+
 /// The word in `line` that `column` falls on, as the column it starts at
 /// and the one after it ends; a column past the end falls on the last one.
 fn word_at(line: &[char], column: usize) -> (usize, usize) {
@@ -1840,6 +1901,81 @@ fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
     )
 }
 
+/// Builds the card holding something the agent needs from the reader: a form
+/// to fill in, or a page to visit.
+///
+/// Each field is a row that opens its own editor when pressed, so the card
+/// shows the whole form at once and the reader answers it in any order.
+fn question(theme: &Theme, session: TalkId, form: &Form) -> Div<Message> {
+    let ticket = form.id();
+    let fields = form.fields().iter().enumerate().map(|(place, field)| {
+        let mark = if field.required { " *" } else { "" };
+        let label = format!("{}{mark}: {}", field.title, form.shown(place));
+        let row = button(label, Message::EditAnswer(session, ticket, place))
+            .h_px(theme.size.control)
+            .outlined();
+        v_flex()
+            .w_full()
+            .gap(0.25)
+            .when(!field.description.is_empty(), |column| {
+                column.child(
+                    text(field.description.clone())
+                        .text_xs()
+                        .color(theme.colors.text_muted),
+                )
+            })
+            .child(row)
+    });
+    let actions = match form.link() {
+        Some(_) => h_flex().gap(0.75).child(
+            button("Open link", Message::OpenAnswerLink(session, ticket))
+                .h_px(theme.size.control)
+                .filled(),
+        ),
+        None => h_flex().gap(0.75).child(
+            button("Send", Message::SendAnswer(session, ticket))
+                .h_px(theme.size.control)
+                .filled(),
+        ),
+    }
+    .child(
+        button("Decline", Message::DeclineAnswer(session, ticket))
+            .h_px(theme.size.control)
+            .outlined(),
+    )
+    .child(
+        button("Cancel", Message::CancelAnswer(session, ticket))
+            .h_px(theme.size.control)
+            .outlined(),
+    );
+
+    v_flex().w_full().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .p(0.75)
+            .gap(0.75)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.accent)
+            .bg(theme.colors.surface)
+            .child(
+                text(format!("{BULLET}{}", form.message()))
+                    .text_xs()
+                    .font_mono()
+                    .color(theme.colors.accent),
+            )
+            .when_some(form.link(), |card, link| {
+                card.child(
+                    text(link.url.clone())
+                        .text_xs()
+                        .font_mono()
+                        .color(theme.colors.text_muted),
+                )
+            })
+            .children(fields)
+            .child(actions),
+    )
+}
+
 /// Builds the card asking whether the agent may do what it is asking about.
 fn permission(theme: &Theme, session: TalkId, ask: &Ask) -> Div<Message> {
     let choices = ask
@@ -1969,6 +2105,21 @@ fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
                 pill(theme, "$", theme.syntax.function).on_click(Message::StartAgentSkill(session)),
             )
         })
+        .child(
+            pill(
+                theme,
+                format!(
+                    "MCP {}",
+                    talk.mcp_servers()
+                        .iter()
+                        .filter(|server| server.given)
+                        .count()
+                ),
+                theme.colors.text_muted,
+            )
+            .on_click(Message::ShowAgentMcp(session))
+            .tooltip("MCP servers this agent was given"),
+        )
         .when(talk.can_list(), |row| {
             row.child(
                 pill(theme, "History", theme.colors.text_muted)

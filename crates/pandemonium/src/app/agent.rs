@@ -33,6 +33,17 @@ const MENU_GAP: f32 = 4.0;
 /// The interval between scroll steps while a selection is held past a pane edge.
 const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
 
+/// How much of a transcript a press picks out, and a drag from it grows by.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Grain {
+    /// A place between two characters.
+    Character,
+    /// The word under the press, from a second press.
+    Word,
+    /// The whole paragraph under the press, from a third.
+    Paragraph,
+}
+
 /// A transcript selection captured against its conversation for one press.
 #[derive(Clone, Copy)]
 pub(super) struct SelectionDrag {
@@ -117,6 +128,17 @@ impl App {
                     talk.answer(ask, place);
                 }
             }
+            Message::EditAnswer(session, ticket, place) => {
+                self.edit_answer(session, ticket, place);
+            }
+            Message::SendAnswer(session, ticket) => self.send_answer(session, ticket),
+            Message::DeclineAnswer(session, ticket) => {
+                self.dismiss_answer(session, ticket, pm_acp::Reply::Decline);
+            }
+            Message::CancelAnswer(session, ticket) => {
+                self.dismiss_answer(session, ticket, pm_acp::Reply::Cancel);
+            }
+            Message::OpenAnswerLink(session, ticket) => self.open_answer_link(session, ticket),
             Message::ToggleAgentDetails(session, block) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.toggle_details(block);
@@ -138,6 +160,23 @@ impl App {
             }
             Message::ShowAgentModes(session) => self.show_agent_modes(session),
             Message::CycleAgentMode(session) => self.cycle_agent_mode(session),
+            Message::ShowAgentMcp(session) => self.open_menu(MenuTarget::AgentMcp(session)),
+            Message::ManageMcpServers => {
+                self.open_settings();
+                self.settings
+                    .show_section(crate::settings::SettingsSection::McpServers);
+                self.load_mcp_registry();
+            }
+            Message::ShowAgentTextMenu(session) => {
+                self.open_menu(MenuTarget::AgentText(session));
+            }
+            Message::CopyAgentText(session) => {
+                self.copy_agent_selection(session);
+            }
+            Message::SelectAllAgentText(session) => self.select_all_agent_text(session),
+            Message::ReconnectAgent(session) => self.reconnect_agent(session),
+            Message::LogOutAgent(session) => self.log_out_agent(session),
+            Message::ShowAgentDeletions(session) => self.show_agent_deletions(session),
             Message::PressKnob(session, place) => self.press_knob(session, place),
             Message::StartAgentCommand(session) => {
                 if let Some(talk) = self.agents.get_mut(session) {
@@ -194,24 +233,72 @@ impl App {
             return;
         };
         talk.list_history();
-        let rows = self.agent_history_rows(session);
+        let rows = self.agent_history_rows(session, false);
         self.open_picker_with(Kind::AgentHistory(session), rows, String::new());
+    }
+
+    /// Opens a searchable list of this agent's saved sessions, to have one forgotten.
+    pub(super) fn show_agent_deletions(&mut self, session: TalkId) {
+        let Some(talk) = self
+            .agents
+            .get_mut(session)
+            .filter(|talk| talk.can_list() && talk.can_delete())
+        else {
+            self.notices
+                .trouble("This agent cannot forget saved sessions", None);
+            return;
+        };
+        talk.list_history();
+        let rows = self.agent_history_rows(session, true);
+        self.open_picker_with(Kind::AgentDelete(session), rows, String::new());
+    }
+
+    /// Has the agent of `session` forget the saved conversation `saved`.
+    pub(super) fn delete_agent_history(&mut self, session: TalkId, saved: &str) {
+        if let Some(talk) = self.agents.get(session) {
+            talk.delete_saved(saved);
+        }
+    }
+
+    /// Starts the agent of `session` again and carries on its conversation.
+    pub(super) fn reconnect_agent(&mut self, session: TalkId) {
+        let running = self
+            .agents
+            .get(session)
+            .is_some_and(|talk| talk.is_running());
+        if running || !self.agents.reconnect(session) {
+            self.notices
+                .trouble("This agent has no conversation to reconnect to", None);
+        }
+    }
+
+    /// Logs the agent of `session` out, where it can be.
+    pub(super) fn log_out_agent(&mut self, session: TalkId) {
+        match self.agents.get(session) {
+            Some(talk) if talk.can_logout() => talk.logout(),
+            _ => self
+                .notices
+                .trouble("This agent cannot be logged out from here", None),
+        }
     }
 
     /// Refreshes the open history picker as the agent returns its pages.
     pub(super) fn refresh_agent_history(&mut self) {
-        let Some(Kind::AgentHistory(session)) = self.picker.as_ref().map(|picker| picker.kind())
-        else {
-            return;
+        let (session, deleting) = match self.picker.as_ref().map(|picker| picker.kind()) {
+            Some(Kind::AgentHistory(session)) => (session, false),
+            Some(Kind::AgentDelete(session)) => (session, true),
+            _ => return,
         };
-        let rows = self.agent_history_rows(session);
+        let rows = self.agent_history_rows(session, deleting);
         if let Some(picker) = self.picker.as_mut() {
             picker.refill_preserving_selection(rows);
         }
     }
 
     /// Builds history choices from the saved sessions the agent has listed.
-    pub(super) fn agent_history_rows(&self, session: TalkId) -> Vec<Row> {
+    ///
+    /// The rows forget the session they name when `deleting`, and open it otherwise.
+    pub(super) fn agent_history_rows(&self, session: TalkId, deleting: bool) -> Vec<Row> {
         let Some(talk) = self.agents.get(session) else {
             return Vec::new();
         };
@@ -225,7 +312,10 @@ impl App {
                     .updated_at
                     .as_deref()
                     .map_or_else(|| saved.id.clone(), |at| format!("{at} · {}", saved.id)),
-                choice: Choice::AgentHistory(session, saved.id.clone()),
+                choice: match deleting {
+                    true => Choice::AgentDelete(session, saved.id.clone()),
+                    false => Choice::AgentHistory(session, saved.id.clone()),
+                },
                 enabled: true,
             })
             .collect::<Vec<_>>();
@@ -813,8 +903,12 @@ impl App {
             let Some(anchor) = talk.spot_at(anchor) else {
                 return;
             };
-            self.agent_words = self.agent_clicks.press(anchor) == 2;
-            if !self.agent_words {
+            self.agent_grain = match self.agent_clicks.press(anchor) {
+                2 => Grain::Word,
+                3 => Grain::Paragraph,
+                _ => Grain::Character,
+            };
+            if self.agent_grain == Grain::Character {
                 talk.clear_selection();
             }
             self.agent_selection_drag = Some(SelectionDrag {
@@ -861,9 +955,10 @@ impl App {
         if drag.anchor != head {
             self.agent_clicks.clear();
         }
-        let (anchor, head) = match self.agent_words {
-            true => crate::agent::words_between(&theme, talk, drag.anchor, head),
-            false => (drag.anchor, head),
+        let (anchor, head) = match self.agent_grain {
+            Grain::Character => (drag.anchor, head),
+            Grain::Word => crate::agent::words_between(&theme, talk, drag.anchor, head),
+            Grain::Paragraph => crate::agent::lines_between(&theme, talk, drag.anchor, head),
         };
         let before = talk.selection();
         talk.select(anchor, head);
@@ -920,10 +1015,16 @@ impl App {
     /// Puts what the reader picked out of the focused agent's transcript on
     /// the clipboard, saying whether there was anything to put there.
     pub(super) fn copy_agent_text(&self) -> bool {
-        let Some(talk) = self
-            .focused_talk()
-            .and_then(|session| self.agents.get(session))
-        else {
+        match self.focused_talk() {
+            Some(session) => self.copy_agent_selection(session),
+            None => false,
+        }
+    }
+
+    /// Puts what the reader picked out of `session`'s transcript on the
+    /// clipboard, saying whether there was anything to put there.
+    pub(super) fn copy_agent_selection(&self, session: TalkId) -> bool {
+        let Some(talk) = self.agents.get(session) else {
             return false;
         };
         let Some(text) = crate::agent::selected_text(&self.theme(), talk) else {
@@ -931,6 +1032,17 @@ impl App {
         };
         desktop::copy(text);
         true
+    }
+
+    /// Picks out the whole of `session`'s transcript.
+    pub(super) fn select_all_agent_text(&mut self, session: TalkId) {
+        let theme = self.theme();
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        if let Some((first, last)) = crate::agent::everything(&theme, talk) {
+            talk.select(first, last);
+        }
     }
 
     /// The session the pointer is over, or the one the focused pane shows.
