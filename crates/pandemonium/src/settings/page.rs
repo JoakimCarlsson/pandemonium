@@ -581,6 +581,9 @@ fn section_rows(
             theme,
             &pane.languages,
         )],
+        SettingsSection::LanguageSettings => {
+            crate::settings::language_settings::language_settings_rows(theme, &pane.languages)
+        }
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
         SettingsSection::AgentServers => {
             vec![crate::settings::agent_list::agent_list(theme, &pane.agents)]
@@ -1033,7 +1036,7 @@ fn font_row(
 }
 
 /// A row that does something once rather than setting a preference.
-fn action(
+pub(super) fn action(
     theme: &Theme,
     title: &str,
     description: &str,

@@ -1,8 +1,12 @@
-//! Applies language catalogue operations and server edits through existing seams.
+//! Applies language catalogue operations and per-language settings through existing seams.
+
+use pm_text::Language;
 
 use crate::app::{App, Wake, Writing};
-use crate::config::{self, ServerList, StoredServer};
+use crate::config::languages::{Formatter, FormatterKind, LanguageSetting};
+use crate::config::{self, ServerList, Step, StoredServer};
 use crate::input::Input;
+use crate::picker::{Choice, Kind, Row};
 use crate::settings::languages::{ResultMessage, ServerEditor, servers};
 
 impl App {
@@ -32,6 +36,16 @@ impl App {
                 None => Ok(()),
             };
             ResultMessage::Changed(result)
+        });
+    }
+
+    /// Installs the remembered import at this position again from its folder.
+    pub(super) fn reinstall_language_extension(&mut self, index: usize) {
+        let Some(imported) = config::extensions::imported().get(index).cloned() else {
+            return;
+        };
+        self.language_operation(move || {
+            ResultMessage::Changed(config::extensions::import(&imported.path))
         });
     }
 
@@ -109,9 +123,138 @@ impl App {
         self.request_redraw();
     }
 
-    /// Opens a form for a new or existing server while retaining its installation recipe.
-    pub(super) fn edit_language_server(&mut self, index: usize, at: Option<usize>) {
-        let Some(language) = pm_text::Language::all().get(index).copied() else {
+    /// The language the Language Settings section shows: the one picked, else
+    /// the one the focused file is written in, else the first there is.
+    pub(super) fn settings_language(&self) -> Option<Language> {
+        let all = Language::all();
+        let named = |name: &str| all.iter().copied().find(|language| language.name() == name);
+        self.languages
+            .selected
+            .and_then(named)
+            .or_else(|| {
+                self.active_file()
+                    .and_then(|file| file.borrow().buffer().language())
+            })
+            .or_else(|| all.first().copied())
+    }
+
+    /// Asks which language the Language Settings section shows.
+    pub(super) fn pick_settings_language(&mut self) {
+        let current = self.settings_language().map(Language::name);
+        let mut languages = Language::all();
+        languages.sort_by_key(|language| language.name().to_lowercase());
+        let rows = languages
+            .into_iter()
+            .map(|language| Row {
+                section: None,
+                detail: match (
+                    self.preferences.customized(language.name()),
+                    Some(language.name()) == current,
+                ) {
+                    (true, _) => "Customized".to_owned(),
+                    (false, true) => "Current".to_owned(),
+                    (false, false) => String::new(),
+                },
+                label: language.name().to_owned(),
+                choice: Choice::SettingsLanguage(language.name()),
+                enabled: true,
+            })
+            .collect();
+        self.open_picker_with(Kind::SettingsLanguage, rows, String::new());
+    }
+
+    /// Shows the settings of the language called `name`.
+    pub(super) fn select_settings_language(&mut self, name: &'static str) {
+        self.languages.selected = Some(name);
+        self.languages.editor = None;
+        self.writing = None;
+    }
+
+    /// Flips, steps or puts back a setting of the language being set, and writes it down.
+    pub(super) fn change_language_setting(
+        &mut self,
+        change: impl FnOnce(&mut config::Preferences, &str),
+    ) {
+        let Some(language) = self.settings_language() else {
+            return;
+        };
+        change(&mut self.preferences, language.name());
+        self.follow_preferences();
+        self.store();
+    }
+
+    /// Flips `setting` of the language being set.
+    pub(super) fn toggle_language_setting(&mut self, setting: LanguageSetting) {
+        self.change_language_setting(|preferences, name| {
+            preferences.toggle_language(name, setting)
+        });
+    }
+
+    /// Moves `setting` of the language being set one `step`.
+    pub(super) fn step_language_setting(&mut self, setting: LanguageSetting, step: Step) {
+        self.change_language_setting(|preferences, name| {
+            preferences.step_language(name, setting, step);
+        });
+    }
+
+    /// Puts `setting` of the language being set back to the shared preference.
+    pub(super) fn reset_language_setting(&mut self, setting: LanguageSetting) {
+        self.change_language_setting(|preferences, name| {
+            preferences.reset_language(name, setting);
+        });
+    }
+
+    /// Puts every setting of the language being set back.
+    pub(super) fn reset_language_settings(&mut self) {
+        self.change_language_setting(|preferences, name| {
+            preferences.reset_language_settings(name);
+        });
+    }
+
+    /// Lays the language being set out with `kind`, asking for the command of an external one.
+    pub(super) fn set_language_formatter(&mut self, kind: FormatterKind) {
+        let formatter = match kind {
+            FormatterKind::LanguageServer => Formatter::LanguageServer,
+            FormatterKind::Off => Formatter::Off,
+            FormatterKind::External => return self.ask_language_formatter(),
+        };
+        self.change_language_setting(|preferences, name| {
+            preferences.set_formatter(name, formatter);
+        });
+    }
+
+    /// Asks for the command line the language being set is piped through.
+    pub(super) fn ask_language_formatter(&mut self) {
+        let Some(language) = self.settings_language() else {
+            return;
+        };
+        let current = match self.preferences.language(Some(language.name())).formatter {
+            Formatter::External(command) => command,
+            _ => String::new(),
+        };
+        self.open_picker_with(
+            Kind::LanguageFormatter(language.name()),
+            Vec::new(),
+            current,
+        );
+    }
+
+    /// Pipes the files of the language called `name` through `command`.
+    pub(super) fn set_external_formatter(&mut self, name: &str, command: &str) {
+        let command = command.trim();
+        if command.is_empty() {
+            return;
+        }
+        self.preferences
+            .set_formatter(name, Formatter::External(command.to_owned()));
+        self.follow_preferences();
+        self.store();
+    }
+
+    /// Opens a form for a new or existing server of the language being set,
+    /// keeping its installation recipe.
+    pub(super) fn edit_language_server(&mut self, at: Option<usize>) {
+        let Some(language) = self.settings_language() else {
             return;
         };
         let original = at.and_then(|at| servers(language, &self.language_servers).get(at).copied());
@@ -126,18 +269,17 @@ impl App {
             |server| serde_json::to_string(server.arguments).unwrap_or_default(),
         ));
         fields[2].set(original.map_or("{}", |server| server.options));
-        self.languages.expanded = Some(language.name().into());
-        self.languages.installed_open = true;
+        self.languages.error = None;
         self.languages.editor = Some(ServerEditor {
-            language: language.name().into(),
+            language: language.name(),
             index: at,
             fields,
             original,
         });
-        self.write_in(Writing::LanguageField(1));
+        self.write_in(Writing::LanguageServerField(0));
     }
 
-    /// Validates and persists a server form without discarding invalid user input.
+    /// Validates and persists the server form without discarding invalid user input.
     pub(super) fn save_language_server(&mut self) {
         if let Err(error) = self.save_language_server_form() {
             self.languages.error = Some(error);
@@ -149,7 +291,9 @@ impl App {
         let Some(editor) = self.languages.editor.as_ref() else {
             return Ok(());
         };
-        let language = pm_text::Language::called(&editor.language)
+        let language = Language::all()
+            .into_iter()
+            .find(|language| language.name() == editor.language)
             .ok_or("This language is no longer installed.")?;
         let command = editor.fields[0].value().trim().to_owned();
         let arguments: Vec<String> = serde_json::from_str(&editor.fields[1].value())
@@ -189,9 +333,9 @@ impl App {
         Ok(())
     }
 
-    /// Removes one effective server entry while retaining all others.
-    pub(super) fn remove_language_server(&mut self, index: usize, at: usize) {
-        let Some(language) = pm_text::Language::all().get(index).copied() else {
+    /// Removes one effective server entry of the language being set while retaining all others.
+    pub(super) fn remove_language_server(&mut self, at: usize) {
+        let Some(language) = self.settings_language() else {
             return;
         };
         let mut list = servers(language, &self.language_servers);
@@ -205,9 +349,9 @@ impl App {
         self.store();
     }
 
-    /// Restores a language's declared server list and reconciles its open files.
-    pub(super) fn reset_language_servers(&mut self, index: usize) {
-        let Some(language) = pm_text::Language::all().get(index).copied() else {
+    /// Restores the declared server list of the language being set and reconciles its open files.
+    pub(super) fn reset_language_servers(&mut self) {
+        let Some(language) = self.settings_language() else {
             return;
         };
         self.language_servers.remove(language.name());

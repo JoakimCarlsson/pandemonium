@@ -13,13 +13,13 @@
 pub mod extensions;
 mod fonts;
 mod keymap;
+pub mod languages;
 mod overrides;
 mod paths;
 mod preferences;
 pub mod recipe;
 mod stored;
 
-pub use stored::StoredServer;
 mod theme;
 
 use std::collections::BTreeMap;
@@ -41,6 +41,7 @@ pub use preferences::{
     AgentOptions, EditPredictions, InstallLanguageServers, KnobValue, Preference, Preferences,
     Step, ThemeMode, VimBinding, WorktreePaths,
 };
+pub use stored::StoredServer;
 
 /// The window's own size and state, as a launch leaves it.
 #[derive(Clone, Copy, Debug)]

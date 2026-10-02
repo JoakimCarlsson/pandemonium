@@ -74,7 +74,10 @@ impl SettingsPage {
                 SettingsSection::Display,
                 SettingsSection::Saving,
             ],
-            Self::Languages => &[SettingsSection::Languages],
+            Self::Languages => &[
+                SettingsSection::Languages,
+                SettingsSection::LanguageSettings,
+            ],
             Self::Keymap => &[SettingsSection::Keymap, SettingsSection::Keybindings],
             Self::Terminal => &[SettingsSection::Terminal],
             Self::Sessions => &[SettingsSection::Sessions],
@@ -94,8 +97,10 @@ impl SettingsPage {
 /// child in the sidebar that shows the section alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsSection {
-    /// Language extensions and the servers configured for them.
+    /// Language extensions to find, install and remove.
     Languages,
+    /// How files of one language are indented, saved and served.
+    LanguageSettings,
     /// The theme mode and family.
     Theme,
     /// Every colour of the theme, repaintable one at a time, and the
@@ -133,7 +138,8 @@ impl SettingsSection {
     /// What the section's heading and its entry in the sidebar call it.
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Languages => "Languages",
+            Self::Languages => "Extensions",
+            Self::LanguageSettings => "Language Settings",
             Self::Theme => "Theme",
             Self::ThemeColors => "Theme Colors",
             Self::Fonts => "Fonts",
@@ -221,7 +227,7 @@ impl SettingsSection {
                 Preference::WorktreeCopy,
                 Preference::WorktreePort,
             ],
-            Self::AgentServers | Self::McpServers | Self::Languages => &[],
+            Self::AgentServers | Self::McpServers | Self::Languages | Self::LanguageSettings => &[],
         }
     }
 }
@@ -464,12 +470,6 @@ impl Settings {
         };
         scroll.by(scroll.offset() - base - event.delta(Axis::Vertical) * step);
         self.scroll.set(scroll);
-    }
-
-    /// Resets the current page to its top after its contents change.
-    pub fn reset_scroll(&mut self) {
-        self.scroll.set(Scroll::default());
-        self.scroll_origin = None;
     }
 
     /// Shows `view` from its top, and opens its page out in the sidebar.

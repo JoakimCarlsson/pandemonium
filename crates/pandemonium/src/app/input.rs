@@ -163,7 +163,7 @@ impl App {
     /// A binding being recorded in the keymap screen comes before all of them.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
-        if matches!(self.writing, Some(Writing::LanguageField(_)))
+        if matches!(self.writing, Some(Writing::LanguageServerField(_)))
             && matches!(
                 event.logical_key,
                 Key::Named(NamedKey::Tab | NamedKey::PageDown | NamedKey::PageUp)
@@ -528,7 +528,7 @@ impl App {
             return true;
         }
 
-        if matches!(writing, Writing::LanguageField(_))
+        if matches!(writing, Writing::LanguageServerField(_))
             && matches!(
                 event.logical_key,
                 Key::Named(NamedKey::PageDown | NamedKey::PageUp)
@@ -537,22 +537,15 @@ impl App {
             self.navigate(event);
             return true;
         }
-        if writing == Writing::LanguageField(0)
-            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
-        {
-            self.writing = None;
-            self.navigate(event);
-            return true;
-        }
-        if let Writing::LanguageField(index @ 1..=3) = writing
+        if let Writing::LanguageServerField(index) = writing
             && matches!(event.logical_key, Key::Named(NamedKey::Tab))
         {
             let next = if self.modifiers.shift_key() {
-                (index + 1) % 3 + 1
+                (index + 2) % 3
             } else {
-                index % 3 + 1
+                (index + 1) % 3
             };
-            self.write_in(Writing::LanguageField(next));
+            self.write_in(Writing::LanguageServerField(next));
             return true;
         }
         let modifiers = self.modifiers;
@@ -577,9 +570,6 @@ impl App {
             && let Some(talk) = self.agents.get_mut(session)
         {
             talk.retyped();
-        }
-        if writing == Writing::LanguageField(0) {
-            self.settings.reset_scroll();
         }
         if writing == Writing::McpSearch {
             self.search_mcp_registry();
@@ -627,8 +617,8 @@ impl App {
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
             Writing::Comment(_) => self.apply(Message::SaveComment),
             Writing::McpSearch => self.search_mcp_registry(),
-            Writing::AgentSearch | Writing::LanguageField(0) => {}
-            Writing::LanguageField(_) => self.save_language_server(),
+            Writing::AgentSearch => {}
+            Writing::LanguageServerField(_) => self.save_language_server(),
             Writing::FormField(_) => self.save_server_form(),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {

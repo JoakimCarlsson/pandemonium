@@ -68,7 +68,6 @@ impl App {
             Action::OpenLanguages => {
                 self.open_settings();
                 self.settings.show(crate::settings::SettingsPage::Languages);
-                self.write_in(crate::app::Writing::LanguageField(0));
             }
             Action::InstallLanguageExtension => self.open_picker(Kind::LanguageExtensions),
             Action::OpenSettings => return self.apply(Message::OpenSettings),
@@ -462,8 +461,9 @@ impl App {
             .active_file()
             .is_some_and(|document| document.borrow().is_served());
         if served {
-            return self.begin_save(self.preferences.format_on_save);
+            return self.begin_save(self.active_language_settings().format_on_save);
         }
+        self.format_externally();
         self.save_active();
     }
 
@@ -530,7 +530,10 @@ impl App {
 
     /// Dismisses whatever is open on top, innermost first.
     fn cancel(&mut self) {
-        if matches!(self.writing, Some(crate::app::Writing::LanguageField(_))) {
+        if matches!(
+            self.writing,
+            Some(crate::app::Writing::LanguageServerField(_))
+        ) {
             self.writing = None;
             self.languages.editor = None;
             return;

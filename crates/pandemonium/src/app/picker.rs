@@ -173,6 +173,7 @@ impl App {
             (Kind::PortVariable, _) => self.set_worktree_port(&typed),
             (Kind::ThemeColor(token), _) => self.set_theme_color(token, &typed),
             (Kind::ThemeName, _) => self.save_theme(&typed),
+            (Kind::LanguageFormatter(name), _) => self.set_external_formatter(name, &typed),
             (Kind::KeymapName, _) => self.save_keymap(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
@@ -221,6 +222,7 @@ impl App {
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
+            Choice::SettingsLanguage(name) => self.select_settings_language(name),
             Choice::Debug(scope, scenario) => self.start_debugging(scope, *scenario),
             Choice::Process(pid) => self.choose_attach_process(pid),
             Choice::SessionRepository(_) => {}
@@ -361,6 +363,7 @@ impl App {
             | Kind::References
             | Kind::Calls
             | Kind::ServerLogs
+            | Kind::SettingsLanguage
             | Kind::Font(_) => Vec::new(),
             Kind::Branches
             | Kind::FetchRemotes
@@ -384,6 +387,7 @@ impl App {
             | Kind::PortVariable
             | Kind::ThemeColor(_)
             | Kind::ThemeName
+            | Kind::LanguageFormatter(_)
             | Kind::KeymapName => Vec::new(),
         }
     }

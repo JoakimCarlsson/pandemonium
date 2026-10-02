@@ -1411,13 +1411,17 @@ impl App {
             return;
         };
         self.saving = true;
+        self.formatting = format;
+        let settings = self.active_language_settings();
+        let format =
+            format && settings.formatter == crate::config::languages::Formatter::LanguageServer;
         self.save_steps = [
             (
-                self.preferences.organize_imports_on_save,
+                settings.organize_imports_on_save,
                 Request::SourceActions("source.organizeImports".to_owned()),
             ),
             (
-                self.preferences.fix_on_save,
+                settings.fix_on_save,
                 Request::SourceActions("source.fixAll".to_owned()),
             ),
             (format, Request::Format),
@@ -1462,6 +1466,9 @@ impl App {
     /// Writes the file a save was waiting on the servers for.
     fn finish_save(&mut self) {
         self.saving = false;
+        if self.formatting {
+            self.format_externally();
+        }
         self.save_active();
     }
 

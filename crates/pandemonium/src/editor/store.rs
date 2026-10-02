@@ -125,6 +125,8 @@ pub struct FileEntry {
 pub struct Habits {
     /// How a file that does not say is indented, and how wide a tab is.
     pub indent: Indent,
+    /// Whether `indent` is what the reader says the file is indented by, over what its lines show.
+    pub indent_fixed: bool,
     /// Whether the space at the ends of lines goes when a file is saved.
     pub trim_whitespace: bool,
     /// Whether a saved file always ends in a line break.
@@ -1382,6 +1384,8 @@ pub struct Files {
     servers: Servers,
     /// How the reader writes the files.
     habits: Habits,
+    /// How the reader writes the files of a language that differs, by the language's name.
+    by_language: BTreeMap<String, Habits>,
     /// What the index holds for each of them, read away from the window.
     baselines: Baselines,
 }
@@ -1572,18 +1576,26 @@ impl Files {
     }
 
     /// Writes files the way `habits` say from now on, the open ones
-    /// included.
-    pub fn set_habits(&mut self, habits: Habits) {
-        if habits.indent != self.habits.indent {
-            for entry in self.open.values() {
-                entry
-                    .document
-                    .borrow_mut()
-                    .buffer_mut()
-                    .set_habit(habits.indent);
-            }
-        }
+    /// included, except the files of a language in `by_language`, which are
+    /// written the way it says.
+    pub fn set_habits(&mut self, habits: Habits, by_language: BTreeMap<String, Habits>) {
         self.habits = habits;
+        self.by_language = by_language;
+        for entry in self.open.values() {
+            let mut document = entry.document.borrow_mut();
+            let habits = self.habits_of(document.buffer().language());
+            let buffer = document.buffer_mut();
+            buffer.set_habit(habits.indent);
+            buffer.force_indent(habits.indent_fixed.then_some(habits.indent));
+        }
+    }
+
+    /// How files in `language` are written.
+    fn habits_of(&self, language: Option<pm_text::Language>) -> Habits {
+        language
+            .and_then(|language| self.by_language.get(language.name()))
+            .copied()
+            .unwrap_or(self.habits)
     }
 
     /// Takes every hint out of the open files, and forgets they were asked
@@ -1641,7 +1653,9 @@ impl Files {
         }
 
         let mut buffer = Buffer::open(path).ok()?;
-        buffer.set_habit(self.habits.indent);
+        let habits = self.habits_of(buffer.language());
+        buffer.set_habit(habits.indent);
+        buffer.force_indent(habits.indent_fixed.then_some(habits.indent));
         let servers = buffer
             .language()
             .map(|language| self.servers.open(root, language))
@@ -1746,7 +1760,10 @@ impl Files {
     /// and writing the file is the moment that becomes possible.
     pub fn save(&mut self, id: FileId, root: &Path) {
         if let Some(entry) = self.open.get(&id) {
-            entry.document.borrow_mut().save(self.habits);
+            let mut document = entry.document.borrow_mut();
+            let habits = self.habits_of(document.buffer().language());
+            document.save(habits);
+            drop(document);
             self.ask_baseline(id, root);
         }
     }
@@ -1769,8 +1786,10 @@ impl Files {
                     buffer.commit();
                 });
             }
+            let indent = self.habits_of(document.buffer().language()).indent;
             document.save(Habits {
-                indent: self.habits.indent,
+                indent,
+                indent_fixed: false,
                 trim_whitespace: false,
                 final_newline: false,
             });
@@ -1792,7 +1811,9 @@ impl Files {
                 Some(root) => self.save(id, &root),
                 None => {
                     if let Some(entry) = self.open.get(&id) {
-                        entry.document.borrow_mut().save(self.habits);
+                        let mut document = entry.document.borrow_mut();
+                        let habits = self.habits_of(document.buffer().language());
+                        document.save(habits);
                     }
                 }
             }

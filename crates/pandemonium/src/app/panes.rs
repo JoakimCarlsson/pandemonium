@@ -488,15 +488,9 @@ impl App {
             }
             crate::app::Writing::McpSearch => Some(self.mcp_search.text()),
             crate::app::Writing::AgentSearch => Some(self.agent_search.text()),
-            crate::app::Writing::LanguageField(0) => Some(self.languages.search.text()),
-            crate::app::Writing::LanguageField(index) => Some(
-                self.languages
-                    .editor
-                    .as_ref()?
-                    .fields
-                    .get(index - 1)?
-                    .text(),
-            ),
+            crate::app::Writing::LanguageServerField(index) => {
+                Some(self.languages.editor.as_ref()?.fields.get(index)?.text())
+            }
             crate::app::Writing::FormField(field) => {
                 Some(self.server_form.as_ref()?.input(field)?.text())
             }
@@ -1480,33 +1474,6 @@ impl App {
                         )),
                     ),
                 ]
-            }
-            MenuTarget::Language(index) => {
-                let language = pm_text::Language::all().get(index).copied()?;
-                let mut entries = vec![
-                    pm_ui::menu_entry("Configure…", Some(Message::ToggleLanguageDetails(index))),
-                    pm_ui::menu_entry("Add Server…", Some(Message::AddLanguageServer(index))),
-                    pm_ui::menu_entry(
-                        "Restore Defaults",
-                        Some(Message::ResetLanguageServers(index)),
-                    ),
-                ];
-                if let Some((at, _)) = crate::config::extensions::installed()
-                    .iter()
-                    .enumerate()
-                    .find(|(_, entry)| entry.name == language.name())
-                {
-                    entries.push(pm_ui::menu_separator());
-                    entries.push(pm_ui::menu_entry(
-                        "View Source",
-                        Some(Message::OpenLanguageSource(at, true)),
-                    ));
-                    entries.push(pm_ui::menu_entry(
-                        "Uninstall",
-                        Some(Message::RemoveLanguageExtension(at)),
-                    ));
-                }
-                entries
             }
             MenuTarget::AgentServer(index) => vec![
                 pm_ui::menu_entry("Edit…", Some(Message::EditAgentServer(index))),

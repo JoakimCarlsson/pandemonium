@@ -18,6 +18,7 @@ mod disk;
 mod drag;
 mod excerpts;
 mod form;
+mod formatter;
 mod health;
 mod input;
 mod language;
@@ -113,8 +114,8 @@ pub(super) enum Writing {
     McpSearch,
     /// The box the agents on the settings page are searched with.
     AgentSearch,
-    /// Search or server form field on the Languages page.
-    LanguageField(usize),
+    /// One box of the form a language server is described in.
+    LanguageServerField(usize),
     /// One box of the form a tool server is described in.
     FormField(crate::settings::FormField),
 }
@@ -461,6 +462,8 @@ pub struct App {
     asked: Vec<language::Pending>,
     /// Whether the servers being waited on were asked by a save.
     saving: bool,
+    /// Whether the save under way lays the file out with its language's own program.
+    formatting: bool,
     /// What a save in progress still has to ask the servers, in order.
     save_steps: std::collections::VecDeque<pm_text::Request>,
     /// The query the servers were last asked for workspace symbols, and the
@@ -848,6 +851,7 @@ impl App {
             code_actions: Vec::new(),
             asked: Vec::new(),
             saving: false,
+            formatting: false,
             save_steps: std::collections::VecDeque::new(),
             workspace_symbols: (None, Vec::new()),
             workspace_files: Vec::new(),
@@ -938,8 +942,10 @@ impl App {
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
-            Some(Writing::McpSearch | Writing::AgentSearch) => return Some("search"),
-            Some(Writing::FormField(_) | Writing::LanguageField(_)) => return Some("field"),
+            Some(Writing::McpSearch | Writing::AgentSearch) => {
+                return Some("search");
+            }
+            Some(Writing::FormField(_) | Writing::LanguageServerField(_)) => return Some("field"),
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -2360,9 +2366,8 @@ impl App {
                 .map(crate::debug::Debugger::console_mut),
             Writing::McpSearch => Some(&mut self.mcp_search),
             Writing::AgentSearch => Some(&mut self.agent_search),
-            Writing::LanguageField(0) => Some(&mut self.languages.search),
-            Writing::LanguageField(index) => {
-                self.languages.editor.as_mut()?.fields.get_mut(index - 1)
+            Writing::LanguageServerField(index) => {
+                self.languages.editor.as_mut()?.fields.get_mut(index)
             }
             Writing::FormField(field) => self.server_form.as_mut()?.input_mut(field),
             Writing::Comment(_) => None,

@@ -54,16 +54,36 @@ pub enum Message {
     ReloadKeymaps,
     /// Drag the settings page's visible scroll thumb.
     ScrollSettings(ResizeEvent, f32),
-    /// Expand or fold installed language support.
-    ToggleLanguagesInstalled,
-    /// Expand or fold available catalogue extensions.
-    ToggleLanguagesAvailable,
-    /// Open one language's configuration and management menu.
-    ShowLanguageMenu(usize),
-    /// Expand or collapse one language's server controls.
-    ToggleLanguageDetails(usize),
-    /// Expand or collapse one extension's metadata and management controls.
-    ToggleLanguagePackage(usize, bool),
+    /// Ask which language the Language Settings section shows.
+    PickSettingsLanguage,
+    /// Flip this switch for the language being set.
+    ToggleLanguageSetting(crate::config::languages::LanguageSetting),
+    /// Move this number one step for the language being set.
+    StepLanguageSetting(crate::config::languages::LanguageSetting, Step),
+    /// Put this setting of the language being set back to the shared preference.
+    ResetLanguageSetting(crate::config::languages::LanguageSetting),
+    /// Put every setting of the language being set back.
+    ResetLanguageSettings,
+    /// Lay the language being set out with this kind of formatter.
+    SetLanguageFormatter(crate::config::languages::FormatterKind),
+    /// Ask for the command line the language being set is piped through.
+    AskLanguageFormatter,
+    /// Open a form for a new server of the language being set.
+    AddLanguageServer,
+    /// Open a form for this server of the language being set.
+    EditLanguageServer(usize),
+    /// Remove this server of the language being set.
+    RemoveLanguageServer(usize),
+    /// Put the servers of the language being set back to the ones it names.
+    ResetLanguageServers,
+    /// Save the server form.
+    SaveLanguageServer,
+    /// Close the server form.
+    CancelLanguageServer,
+    /// Give a box of the server form the keyboard.
+    FocusLanguageServerField(usize),
+    /// Edit a box of the server form.
+    WriteLanguageServerField(usize, ResizePhase, Position, Position),
     /// Open the source of an offered or installed language package.
     OpenLanguageSource(usize, bool),
     /// Retrieve the maintained language extension catalogue.
@@ -72,24 +92,14 @@ pub enum Message {
     InstallLanguageExtension(usize),
     /// Import a local extension directory through the platform picker.
     ImportLanguageExtension,
+    /// Install the remembered import at this position again from its folder.
+    ReinstallLanguageExtension(usize),
     /// Remove an installed language extension.
     RemoveLanguageExtension(usize),
-    /// Add a server for the language at this position.
-    AddLanguageServer(usize),
-    /// Edit a configured language server.
-    EditLanguageServer(usize, usize),
-    /// Remove a configured language server.
-    RemoveLanguageServer(usize, usize),
-    /// Restore the language's default server declarations.
-    ResetLanguageServers(usize),
-    /// Save the current server form.
-    SaveLanguageServer,
-    /// Discard the current server form.
-    CancelLanguageServer,
-    /// Give keyboard input to a language search or server field.
-    FocusLanguageField(usize),
-    /// Focus and select within a language search or server form field.
-    WriteLanguageField(usize, ResizePhase, Position, Position),
+    /// Open or fold the group of built-in languages.
+    ToggleBuiltinLanguages,
+    /// Choose which extensions the list shows.
+    SetLanguageFilter(crate::settings::languages::Filter),
     /// Read installed extensions again.
     ReloadExtensions,
     /// Turn this preference, which is a switch, on or off.

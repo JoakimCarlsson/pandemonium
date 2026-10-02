@@ -1,7 +1,7 @@
 //! Catalogue metadata and atomic extension installation.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,10 +41,15 @@ pub struct Entry {
 }
 
 /// Fetches a versioned catalogue from its configured HTTPS source.
+///
+/// A source that answers 404 has published nothing yet, which is an empty catalogue.
 pub fn catalogue() -> Result<Vec<Entry>, String> {
     let url =
         std::env::var("PANDEMONIUM_LANGUAGE_CATALOGUE").unwrap_or_else(|_| CATALOGUE_URL.into());
-    let bytes = pm_text::install::download(&url)?;
+    let bytes = match pm_text::install::download(&url) {
+        Err(error) if error.ends_with("404") => return Ok(Vec::new()),
+        other => other?,
+    };
     let entries: Vec<Entry> =
         serde_norway::from_slice(&bytes).map_err(|error| error.to_string())?;
     let mut ids = std::collections::HashSet::new();
@@ -89,6 +94,48 @@ pub fn install(entry: &Entry) -> Result<(), String> {
     })
 }
 
+/// An extension imported from a folder, remembered so it can be installed
+/// again from there once it has been removed.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Imported {
+    /// What the extension's manifest says about it.
+    pub entry: Entry,
+    /// The folder it was imported from.
+    pub path: PathBuf,
+}
+
+/// The file the imported extensions are remembered in.
+fn imported_file() -> Option<PathBuf> {
+    paths::extensions().map(|root| root.join(".imported.yaml"))
+}
+
+/// The extensions imported from a folder, installed or not.
+pub fn imported() -> Vec<Imported> {
+    imported_file()
+        .and_then(|file| fs::read(file).ok())
+        .and_then(|bytes| serde_norway::from_slice::<Vec<Imported>>(&bytes).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|mut known| {
+            known.entry.id = known.path.file_name()?.to_str()?.to_owned();
+            Some(known)
+        })
+        .collect()
+}
+
+/// Remembers `imported`, replacing what was remembered under the same id.
+fn remember(imported: Imported) {
+    let Some(file) = imported_file() else {
+        return;
+    };
+    let mut known = self::imported();
+    known.retain(|other| other.entry.id != imported.entry.id);
+    known.push(imported);
+    if let Ok(text) = serde_norway::to_string(&known) {
+        let _ = fs::write(file, text);
+    }
+}
+
 /// Imports an existing directory using the same validation and activation as a download.
 pub fn import(source: &Path) -> Result<(), String> {
     let id = source
@@ -96,11 +143,20 @@ pub fn import(source: &Path) -> Result<(), String> {
         .and_then(|name| name.to_str())
         .ok_or("Choose an extension directory.")?;
     identifier(id)?;
+    let mut entry = None;
     transaction(id, |partial| {
         copy_directory(source, partial)?;
-        super::loader::validate(partial, id)?;
+        entry = Some(super::loader::validate(partial, id)?);
         Ok(())
-    })
+    })?;
+    if let Some(mut entry) = entry {
+        entry.id = id.to_owned();
+        remember(Imported {
+            entry,
+            path: source.to_path_buf(),
+        });
+    }
+    Ok(())
 }
 
 /// Removes a user extension while leaving managed server binaries and user preferences intact.

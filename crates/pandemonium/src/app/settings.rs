@@ -62,12 +62,14 @@ impl App {
             &SettingsPane {
                 languages: crate::settings::languages::LanguagesPage {
                     state: &self.languages,
-                    servers: &self.language_servers,
-                    focus: match self.writing {
-                        Some(Writing::LanguageField(index)) => Some(index),
+                    field: match self.writing {
+                        Some(Writing::LanguageServerField(index)) => Some(index),
                         _ => None,
                     },
                     solid: self.caret_solid(),
+                    preferences: &self.preferences,
+                    servers: &self.language_servers,
+                    selected: self.settings_language(),
                 },
                 settings: &self.settings,
                 preferences: &self.preferences,
@@ -158,39 +160,13 @@ impl App {
     pub(super) fn settings_command(&mut self, message: Message) -> bool {
         match message {
             Message::ScrollSettings(event, step) => self.settings.drag_scroll(event, step),
-            Message::ToggleLanguagesInstalled => {
-                self.languages.installed_open = !self.languages.installed_open;
+            Message::ToggleBuiltinLanguages => {
+                self.languages.builtin_open = !self.languages.builtin_open;
                 self.writing = None;
             }
-            Message::ToggleLanguagesAvailable => {
-                self.languages.available_open = !self.languages.available_open;
+            Message::SetLanguageFilter(filter) => {
+                self.languages.filter = filter;
                 self.writing = None;
-            }
-            Message::ShowLanguageMenu(index) => self.open_menu(MenuTarget::Language(index)),
-            Message::ToggleLanguageDetails(index) => {
-                if let Some(language) = pm_text::Language::all().get(index) {
-                    let name = language.name();
-                    self.languages.expanded = match self.languages.expanded.as_deref() {
-                        Some(current) if current == name => None,
-                        _ => Some(name.into()),
-                    };
-                    self.languages.editor = None;
-                    self.writing = None;
-                }
-            }
-            Message::ToggleLanguagePackage(index, installed) => {
-                self.writing = None;
-                let entries = if installed {
-                    config::extensions::installed()
-                } else {
-                    self.languages.catalogue.clone()
-                };
-                if let Some(entry) = entries.get(index) {
-                    self.languages.package = match self.languages.package.as_deref() {
-                        Some(current) if current == entry.id => None,
-                        _ => Some(entry.id.clone()),
-                    };
-                }
             }
             Message::OpenLanguageSource(index, installed) => {
                 let entries = if installed {
@@ -204,20 +180,32 @@ impl App {
             }
             Message::RefreshLanguageCatalogue => self.refresh_language_catalogue(),
             Message::InstallLanguageExtension(index) => self.install_language_extension(index),
+            Message::ReinstallLanguageExtension(index) => self.reinstall_language_extension(index),
             Message::ImportLanguageExtension => self.import_language_extension(),
             Message::RemoveLanguageExtension(index) => self.remove_language_extension(index),
-            Message::AddLanguageServer(index) => self.edit_language_server(index, None),
-            Message::EditLanguageServer(index, at) => self.edit_language_server(index, Some(at)),
-            Message::RemoveLanguageServer(index, at) => self.remove_language_server(index, at),
-            Message::ResetLanguageServers(index) => self.reset_language_servers(index),
+            Message::PickSettingsLanguage => self.pick_settings_language(),
+            Message::ToggleLanguageSetting(setting) => self.toggle_language_setting(setting),
+            Message::StepLanguageSetting(setting, step) => {
+                self.step_language_setting(setting, step);
+            }
+            Message::ResetLanguageSetting(setting) => self.reset_language_setting(setting),
+            Message::ResetLanguageSettings => self.reset_language_settings(),
+            Message::SetLanguageFormatter(kind) => self.set_language_formatter(kind),
+            Message::AskLanguageFormatter => self.ask_language_formatter(),
+            Message::AddLanguageServer => self.edit_language_server(None),
+            Message::EditLanguageServer(at) => self.edit_language_server(Some(at)),
+            Message::RemoveLanguageServer(at) => self.remove_language_server(at),
+            Message::ResetLanguageServers => self.reset_language_servers(),
             Message::SaveLanguageServer => self.save_language_server(),
             Message::CancelLanguageServer => {
                 self.languages.editor = None;
                 self.writing = None;
             }
-            Message::FocusLanguageField(index) => self.write_in(Writing::LanguageField(index)),
-            Message::WriteLanguageField(index, phase, anchor, head) => {
-                self.point_in(Writing::LanguageField(index), phase, anchor, head)
+            Message::FocusLanguageServerField(index) => {
+                self.write_in(Writing::LanguageServerField(index));
+            }
+            Message::WriteLanguageServerField(index, phase, anchor, head) => {
+                self.point_in(Writing::LanguageServerField(index), phase, anchor, head);
             }
             Message::PickFont(slot) => self.ask_font(slot),
             Message::EditThemeColor(token) => self.ask_theme_color(token),
@@ -285,11 +273,21 @@ impl App {
     /// open files, the shells, and the hints already written into lines.
     pub(super) fn follow_preferences(&mut self) {
         let preferences = &self.preferences;
-        self.editor.set_habits(Habits {
-            indent: preferences.indent(),
-            trim_whitespace: preferences.trim_whitespace,
-            final_newline: preferences.final_newline,
-        });
+        let habits = |name: Option<&str>| {
+            let settings = preferences.language(name);
+            Habits {
+                indent: settings.indent,
+                indent_fixed: settings.indent_fixed,
+                trim_whitespace: settings.trim_whitespace,
+                final_newline: settings.final_newline,
+            }
+        };
+        let by_language = preferences
+            .language_overrides()
+            .keys()
+            .map(|name| (name.clone(), habits(Some(name))))
+            .collect();
+        self.editor.set_habits(habits(None), by_language);
         self.terminals
             .set_scrollback(preferences.terminal_scrollback);
         if !preferences.inlay_hints {
