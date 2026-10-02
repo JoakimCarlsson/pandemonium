@@ -530,6 +530,11 @@ impl App {
 
     /// Dismisses whatever is open on top, innermost first.
     fn cancel(&mut self) {
+        if matches!(self.writing, Some(crate::app::Writing::LanguageField(_))) {
+            self.writing = None;
+            self.languages.editor = None;
+            return;
+        }
         if self.dismiss_prompt() {
             return;
         }

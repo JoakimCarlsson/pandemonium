@@ -1,12 +1,12 @@
 # Language support
 
-Open Settings → Languages, or run Manage Languages from the command palette, to search installed languages and the catalogue. Install Language Support… offers catalogue packages in the palette as well. Each package shows its publisher, source, version, supported server platforms and external prerequisites before installation. Install adds its grammar, highlighting and server declarations to already open files. Missing servers follow the existing Ask / Always / Never preference under Editor → Saving. Install Server explicitly installs a server regardless of that automatic policy.
+Open Settings → Languages, or run Manage Languages from the command palette, to search Installed and Available language support. The page uses the same collapsible sections and compact cards as Agents → MCP. The row’s More actions → Configure opens its server controls; Details shows extension metadata and uninstall controls. Install Language Support… offers catalogue packages in the palette as well. Package Details shows the publisher, source, version, supported server platforms and external prerequisites. Install adds its grammar, highlighting and server declarations to already open files. Missing servers follow the existing Ask / Always / Never preference under Editor → Saving. Install Server explicitly installs a server regardless of that automatic policy.
 
 Add Server and Edit accept an executable, a JSON array of arguments and a JSON object of initialization options. Save persists the effective server list in `settings.yaml`. Remove disables that entry; Restore Defaults removes the override. Executables on PATH or in the usual tool directories win over managed server copies. Each worktree runs its own server instance. Removing an extension stops its servers but retains user settings and managed binaries so reinstalling can restore the setup.
 
 ## Extension format
 
-Extensions live under `$PANDEMONIUM_HOME/extensions/<id>` (default `~/.pandemonium/extensions/<id>`). Import Local Extension accepts an existing directory. Its name becomes the id: letters, digits, hyphens and underscores only. Assets and manifests are validated before the installed directory is replaced. Invalid updates preserve the working version. Paths must stay inside the package; symbolic links are not supported.
+Extensions live under `$PANDEMONIUM_HOME/extensions/<id>` (default `~/.pandemonium/extensions/<id>`). Import Extension accepts an existing directory. Its name becomes the id: letters, digits, hyphens and underscores only. Assets and manifests are validated before the installed directory is replaced. Invalid updates preserve the working version. Paths must stay inside the package; symbolic links are not supported.
 
 The complete WGSL example is in [`extensions/wgsl`](../extensions/wgsl/extension.yaml):
 
@@ -56,7 +56,7 @@ Themes and keymaps retain their existing manifest arrays. `indents`, `injections
 
 ## Catalogue and publishing
 
-The maintained index is [`extensions/catalogue.yaml`](../extensions/catalogue.yaml), fetched over HTTPS from this repository's default branch. `PANDEMONIUM_LANGUAGE_CATALOGUE` selects an alternative HTTPS index. Refresh Catalogue retrieves it again. The shipped index and packages provide a fallback when the default index is unreachable, so the first installation does not depend on publishing the current editor build. New catalogue entries and package updates are read at runtime and do not require rebuilding the editor.
+The maintained index is [`extensions/catalogue.yaml`](../extensions/catalogue.yaml), fetched over HTTPS from this repository's default branch. `PANDEMONIUM_LANGUAGE_CATALOGUE` selects an alternative HTTPS index. Refresh retrieves it again. The client contains no bundled catalogue, extension packages or WGSL grammar; browsing and installing catalogue extensions requires a network connection. New catalogue entries and package updates are read at runtime and do not require rebuilding the editor.
 
 The index is a YAML array:
 
@@ -77,7 +77,7 @@ The index is a YAML array:
 2. Import that directory in Settings → Languages and verify highlighting, diagnostics, hover and navigation in an already open file and in a second project/worktree.
 3. Give the package a semver version. ZIP its contents with `extension.yaml` at the archive root. Do not include enclosing directories, links, tool caches or build output. Compute `sha256sum <package>.zip` and set the index checksum to that result. Compute release-asset checksums from the downloaded assets separately.
 4. Publish the versioned ZIP at an HTTPS URL and add its index entry. Package name, version, publisher and source must match the manifest. `platforms` declares server availability; `prerequisites` lists required tools such as Node.js/npm, Go or Python before installation. Grammar-only extensions may leave `platforms` empty.
-5. Submit the package, source and index change for review. For packages maintained here, use a new `extensions/packages/<id>-<version>.zip` for every version and retain old package URLs. Once the index is published, existing editor builds discover the package through Refresh Catalogue.
+5. Submit the package, source and index change for review. For packages maintained here, use a new `extensions/packages/<id>-<version>.zip` for every version and retain old package URLs. Once the index is published, existing editor builds discover the package through Refresh.
 
 The WGSL grammar is built from `tree-sitter-grammars/tree-sitter-wgsl-bevy` tag `v0.1.4`, commit `d9306a798ede627001a8e5752f775858c8edd7e4`. Its MIT license is included. That tag has no highlight query; the packaged query uses the grammar's node names and Pandemonium's existing captures. No native WGSL grammar crate is linked into the editor.
 
@@ -85,4 +85,4 @@ The pinned wgsl-analyzer `2026-09-30` advertises hover but [its implementation r
 
 ## Verification
 
-Run `make lint`, `cargo build -p pandemonium`, then `make run` with a fresh `PANDEMONIUM_HOME` under `~/.cache/scratch/pandemonium/`. Open a shader before installing WGSL from Languages. Confirm highlighting, the WGSL status, install policy, diagnostics after a type mismatch, field hover and definition navigation without reopening the file. Verify a `wgsl` fence, persisted server edits, a second worktree, removal and reinstall. Import an invalid query or a package with an incorrect checksum and confirm the previous installation remains usable. Delete the scratch home after verification.
+Run `make lint`, `cargo build -p pandemonium`, then `make run` with a fresh `PANDEMONIUM_HOME` under `~/.cache/scratch/pandemonium/`. Open a shader before installing WGSL from Languages. Confirm highlighting, the WGSL status, install policy, diagnostics after a type mismatch, definition navigation without reopening the file. Verify a `wgsl` fence, persisted server edits, a second worktree, removal and reinstall. Import an invalid query or a package with an incorrect checksum and confirm the previous installation remains usable. Delete the scratch home after verification.

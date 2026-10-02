@@ -44,3 +44,6 @@ pub use theme_preview::{ThemePreview, theme_preview};
 pub use toggle_grid::toggle_grid;
 pub use toggle_row::toggle_row;
 pub use view_tab::view_tab;
+
+/// Shared scrollbar painting for scrollable containers.
+pub(crate) use scrollbar::{OnScroll, paint_scrollbar};

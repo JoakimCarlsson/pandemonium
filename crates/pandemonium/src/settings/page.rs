@@ -116,6 +116,21 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
             .collect::<Vec<_>>(),
     };
 
+    let content = scroll_area(
+        settings.scroll(),
+        v_flex()
+            .w_full()
+            .max_w_px(PAGE_WIDTH)
+            .mx_auto()
+            .px(8)
+            .py(6)
+            .gap(8)
+            .child(heading(theme, view, pane.file.as_ref()))
+            .children(sections),
+    )
+    .with_scrollbar(Message::ScrollSettings)
+    .flex_1()
+    .h_full();
     Box::new(
         h_flex()
             .w_full()
@@ -123,22 +138,7 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
             .items_stretch()
             .child(sidebar(theme, pane.preferences, settings))
             .child(v_flex().w_px(1.0).h_full().bg(theme.colors.border_variant))
-            .child(
-                scroll_area(
-                    settings.scroll(),
-                    v_flex()
-                        .w_full()
-                        .max_w_px(PAGE_WIDTH)
-                        .mx_auto()
-                        .px(8)
-                        .py(6)
-                        .gap(8)
-                        .child(heading(theme, view, pane.file.as_ref()))
-                        .children(sections),
-                )
-                .flex_1()
-                .h_full(),
-            ),
+            .child(content),
     )
 }
 

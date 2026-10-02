@@ -52,6 +52,18 @@ pub enum Message {
     SaveKeymap,
     /// Read the keymaps in the editor's home in again.
     ReloadKeymaps,
+    /// Drag the settings page's visible scroll thumb.
+    ScrollSettings(ResizeEvent, f32),
+    /// Expand or fold installed language support.
+    ToggleLanguagesInstalled,
+    /// Expand or fold available catalogue extensions.
+    ToggleLanguagesAvailable,
+    /// Open one language's configuration and management menu.
+    ShowLanguageMenu(usize),
+    /// Expand or collapse one language's server controls.
+    ToggleLanguageDetails(usize),
+    /// Expand or collapse one extension's metadata and management controls.
+    ToggleLanguagePackage(usize, bool),
     /// Open the source of an offered or installed language package.
     OpenLanguageSource(usize, bool),
     /// Retrieve the maintained language extension catalogue.
@@ -74,6 +86,8 @@ pub enum Message {
     SaveLanguageServer,
     /// Discard the current server form.
     CancelLanguageServer,
+    /// Give keyboard input to a language search or server field.
+    FocusLanguageField(usize),
     /// Focus and select within a language search or server form field.
     WriteLanguageField(usize, ResizePhase, Position, Position),
     /// Read installed extensions again.

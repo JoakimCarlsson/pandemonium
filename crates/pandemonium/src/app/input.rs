@@ -56,6 +56,19 @@ impl App {
             .pointer
             .and_then(|pointer| self.geometry.pane_at(pointer))
             .unwrap_or_else(|| self.panes.focus());
+        if self
+            .panes
+            .pane(pane)
+            .and_then(|pane| pane.active(self.scope()))
+            == Some(crate::panes::Item::Settings)
+        {
+            return self
+                .settings
+                .scroll()
+                .get()
+                .viewport_height()
+                .max(WHEEL_STEP);
+        }
         self.geometry
             .pane_size(pane)
             .map(|size| size.height)
@@ -150,6 +163,15 @@ impl App {
     /// A binding being recorded in the keymap screen comes before all of them.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
+        if matches!(self.writing, Some(Writing::LanguageField(_)))
+            && matches!(
+                event.logical_key,
+                Key::Named(NamedKey::Tab | NamedKey::PageDown | NamedKey::PageUp)
+            )
+            && self.send_to_input(event)
+        {
+            return self.request_redraw();
+        }
         if self.record_key(event) {
             return self.request_redraw();
         }
@@ -506,6 +528,22 @@ impl App {
             return true;
         }
 
+        if matches!(writing, Writing::LanguageField(_))
+            && matches!(
+                event.logical_key,
+                Key::Named(NamedKey::PageDown | NamedKey::PageUp)
+            )
+        {
+            self.navigate(event);
+            return true;
+        }
+        if writing == Writing::LanguageField(0)
+            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
+        {
+            self.writing = None;
+            self.navigate(event);
+            return true;
+        }
         if let Writing::LanguageField(index @ 1..=3) = writing
             && matches!(event.logical_key, Key::Named(NamedKey::Tab))
         {
@@ -539,6 +577,9 @@ impl App {
             && let Some(talk) = self.agents.get_mut(session)
         {
             talk.retyped();
+        }
+        if writing == Writing::LanguageField(0) {
+            self.settings.reset_scroll();
         }
         if writing == Writing::McpSearch {
             self.search_mcp_registry();

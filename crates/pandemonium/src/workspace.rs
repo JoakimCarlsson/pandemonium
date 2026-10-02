@@ -318,6 +318,8 @@ pub enum MenuTarget {
     AgentServer(usize),
     /// One of the tool servers every agent is started with, by its place in the list.
     McpServer(usize),
+    /// One installed language in the Languages settings list.
+    Language(usize),
     /// The fixes a language server offered where the cursor is.
     CodeActions,
     /// One entry of the file tree, and whatever is selected with it.

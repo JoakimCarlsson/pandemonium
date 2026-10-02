@@ -157,6 +157,41 @@ impl App {
     /// sets, saying whether `message` was one.
     pub(super) fn settings_command(&mut self, message: Message) -> bool {
         match message {
+            Message::ScrollSettings(event, step) => self.settings.drag_scroll(event, step),
+            Message::ToggleLanguagesInstalled => {
+                self.languages.installed_open = !self.languages.installed_open;
+                self.writing = None;
+            }
+            Message::ToggleLanguagesAvailable => {
+                self.languages.available_open = !self.languages.available_open;
+                self.writing = None;
+            }
+            Message::ShowLanguageMenu(index) => self.open_menu(MenuTarget::Language(index)),
+            Message::ToggleLanguageDetails(index) => {
+                if let Some(language) = pm_text::Language::all().get(index) {
+                    let name = language.name();
+                    self.languages.expanded = match self.languages.expanded.as_deref() {
+                        Some(current) if current == name => None,
+                        _ => Some(name.into()),
+                    };
+                    self.languages.editor = None;
+                    self.writing = None;
+                }
+            }
+            Message::ToggleLanguagePackage(index, installed) => {
+                self.writing = None;
+                let entries = if installed {
+                    config::extensions::installed()
+                } else {
+                    self.languages.catalogue.clone()
+                };
+                if let Some(entry) = entries.get(index) {
+                    self.languages.package = match self.languages.package.as_deref() {
+                        Some(current) if current == entry.id => None,
+                        _ => Some(entry.id.clone()),
+                    };
+                }
+            }
             Message::OpenLanguageSource(index, installed) => {
                 let entries = if installed {
                     config::extensions::installed()
@@ -180,6 +215,7 @@ impl App {
                 self.languages.editor = None;
                 self.writing = None;
             }
+            Message::FocusLanguageField(index) => self.write_in(Writing::LanguageField(index)),
             Message::WriteLanguageField(index, phase, anchor, head) => {
                 self.point_in(Writing::LanguageField(index), phase, anchor, head)
             }

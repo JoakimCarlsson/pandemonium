@@ -7,11 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use super::super::paths;
 
-include!(concat!(env!("OUT_DIR"), "/extension_packages.rs"));
-
-/// The shipped catalogue used when the maintained index is temporarily unreachable.
-const BUNDLED_CATALOGUE: &str = include_str!("../../../../../extensions/catalogue.yaml");
-
 /// The maintained index; its entries pin packages independently of editor builds.
 const CATALOGUE_URL: &str =
     "https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/extensions/catalogue.yaml";
@@ -49,13 +44,7 @@ pub struct Entry {
 pub fn catalogue() -> Result<Vec<Entry>, String> {
     let url =
         std::env::var("PANDEMONIUM_LANGUAGE_CATALOGUE").unwrap_or_else(|_| CATALOGUE_URL.into());
-    let bytes = match pm_text::install::download(&url) {
-        Ok(bytes) => bytes,
-        Err(_) if std::env::var_os("PANDEMONIUM_LANGUAGE_CATALOGUE").is_none() => {
-            BUNDLED_CATALOGUE.as_bytes().to_vec()
-        }
-        Err(error) => return Err(error),
-    };
+    let bytes = pm_text::install::download(&url)?;
     let entries: Vec<Entry> =
         serde_norway::from_slice(&bytes).map_err(|error| error.to_string())?;
     let mut ids = std::collections::HashSet::new();
@@ -86,25 +75,7 @@ pub fn install(entry: &Entry) -> Result<(), String> {
         ));
     }
     transaction(&entry.id, |partial| {
-        let bundled: Vec<Entry> =
-            serde_norway::from_str(BUNDLED_CATALOGUE).map_err(|error| error.to_string())?;
-        let package = bundled
-            .iter()
-            .find(|known| known.url == entry.url && known.sha256 == entry.sha256)
-            .and_then(|_| entry.url.rsplit('/').next())
-            .and_then(|name| {
-                PACKAGES
-                    .iter()
-                    .find(|(file, _)| *file == name)
-                    .map(|(_, bytes)| *bytes)
-            });
-        let bytes = match package {
-            Some(bytes) => {
-                pm_text::install::verify_checksum(bytes, &entry.sha256)?;
-                bytes.to_vec()
-            }
-            None => pm_text::install::download_checked(&entry.url, &entry.sha256)?,
-        };
+        let bytes = pm_text::install::download_checked(&entry.url, &entry.sha256)?;
         pm_text::install::unpack_zip(&bytes, partial)?;
         let metadata = super::loader::validate(partial, &entry.id)?;
         if metadata.version != entry.version

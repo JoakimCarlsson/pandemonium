@@ -5,7 +5,7 @@
 //! more than one section lists them as its children. Choosing a page shows
 //! every section of it; choosing a section shows that section alone.
 
-use pm_ui::{Appearance, Scroll, Scrolled};
+use pm_ui::{Appearance, Axis, ResizeEvent, ResizePhase, Scroll, Scrolled};
 
 use crate::config::Preference;
 use crate::keymap::{Action, Chord, Sequence};
@@ -271,6 +271,8 @@ pub struct Settings {
     view: SettingsView,
     /// How far down it the pane is scrolled.
     scroll: Scrolled,
+    /// Scroll offset at the start of the current thumb drag.
+    scroll_origin: Option<f32>,
     /// The pages the sidebar has opened out to list their sections.
     expanded: Vec<SettingsPage>,
     /// The binding being recorded, while one is.
@@ -314,6 +316,7 @@ impl Default for Settings {
         Self {
             view: SettingsView::Page(page),
             scroll: Scrolled::default(),
+            scroll_origin: None,
             expanded: vec![page],
             recording: None,
             installed_open: true,
@@ -446,6 +449,27 @@ impl Settings {
         let mut scroll = self.scroll.get();
         scroll.by(delta);
         self.scroll.set(scroll);
+    }
+
+    /// Moves the viewport with a thumb drag measured from its initial offset.
+    pub fn drag_scroll(&mut self, event: ResizeEvent, step: f32) {
+        let mut scroll = self.scroll.get();
+        let base = match event.phase {
+            ResizePhase::Started => scroll.offset(),
+            _ => self.scroll_origin.unwrap_or(scroll.offset()),
+        };
+        self.scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        scroll.by(scroll.offset() - base - event.delta(Axis::Vertical) * step);
+        self.scroll.set(scroll);
+    }
+
+    /// Resets the current page to its top after its contents change.
+    pub fn reset_scroll(&mut self) {
+        self.scroll.set(Scroll::default());
+        self.scroll_origin = None;
     }
 
     /// Shows `view` from its top, and opens its page out in the sidebar.

@@ -16,7 +16,10 @@ use std::rc::Rc;
 use pm_gfx::{Point, Rect, Size};
 
 use crate::element::{Element, IntoElement, LayoutContext, PaintContext};
+use crate::resize::ResizeEvent;
 use crate::style::{Style, Styled};
+use crate::widgets::{OnScroll, paint_scrollbar};
+use std::sync::Arc;
 
 /// The scroll offset of one area, and the extents it is clamped against.
 #[derive(Clone, Copy, Debug, Default)]
@@ -69,6 +72,16 @@ impl Scroll {
         self.clamp();
     }
 
+    /// How far down the content the viewport begins.
+    pub fn offset(&self) -> f32 {
+        self.offset
+    }
+
+    /// Height of the visible content area from the last frame.
+    pub fn viewport_height(&self) -> f32 {
+        self.viewport.height
+    }
+
     /// The space to lay the content out in: as tall as the offset reaches.
     pub fn content_space(&self) -> Size {
         Size::new(self.viewport.width, self.viewport.height + self.offset)
@@ -101,6 +114,8 @@ pub struct ScrollArea<M> {
     style: Style,
     /// What is scrolled.
     child: Box<dyn Element<M>>,
+    /// Optional visible thumb and its drag handler.
+    on_scroll: Option<OnScroll<M>>,
 }
 
 /// `child`, scrolled by `scroll` inside whatever room the area is given.
@@ -109,6 +124,15 @@ pub fn scroll_area<M>(scroll: Scrolled, child: impl IntoElement<M>) -> ScrollAre
         scroll,
         style: Style::default(),
         child: child.into_element(),
+        on_scroll: None,
+    }
+}
+
+impl<M> ScrollArea<M> {
+    /// Shows a scrollbar when content overflows, reporting thumb drags to the caller.
+    pub fn with_scrollbar(mut self, on_scroll: impl Fn(ResizeEvent, f32) -> M + 'static) -> Self {
+        self.on_scroll = Some(Arc::new(on_scroll));
+        self
     }
 }
 
@@ -119,7 +143,7 @@ impl<M> Styled for ScrollArea<M> {
     }
 }
 
-impl<M> Element<M> for ScrollArea<M> {
+impl<M: 'static> Element<M> for ScrollArea<M> {
     /// How the area is sized in its parent.
     fn layout_style(&self) -> Style {
         self.style
@@ -150,5 +174,14 @@ impl<M> Element<M> for ScrollArea<M> {
         );
         cx.pop_clip();
         cx.clip_regions(first, bounds);
+        if let Some(on_scroll) = &self.on_scroll {
+            paint_scrollbar(
+                bounds,
+                content.height,
+                scroll.offset(),
+                on_scroll.clone(),
+                cx,
+            );
+        }
     }
 }

@@ -126,6 +126,8 @@ impl App {
             |server| serde_json::to_string(server.arguments).unwrap_or_default(),
         ));
         fields[2].set(original.map_or("{}", |server| server.options));
+        self.languages.expanded = Some(language.name().into());
+        self.languages.installed_open = true;
         self.languages.editor = Some(ServerEditor {
             language: language.name().into(),
             index: at,

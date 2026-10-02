@@ -1481,6 +1481,33 @@ impl App {
                     ),
                 ]
             }
+            MenuTarget::Language(index) => {
+                let language = pm_text::Language::all().get(index).copied()?;
+                let mut entries = vec![
+                    pm_ui::menu_entry("Configure…", Some(Message::ToggleLanguageDetails(index))),
+                    pm_ui::menu_entry("Add Server…", Some(Message::AddLanguageServer(index))),
+                    pm_ui::menu_entry(
+                        "Restore Defaults",
+                        Some(Message::ResetLanguageServers(index)),
+                    ),
+                ];
+                if let Some((at, _)) = crate::config::extensions::installed()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, entry)| entry.name == language.name())
+                {
+                    entries.push(pm_ui::menu_separator());
+                    entries.push(pm_ui::menu_entry(
+                        "View Source",
+                        Some(Message::OpenLanguageSource(at, true)),
+                    ));
+                    entries.push(pm_ui::menu_entry(
+                        "Uninstall",
+                        Some(Message::RemoveLanguageExtension(at)),
+                    ));
+                }
+                entries
+            }
             MenuTarget::AgentServer(index) => vec![
                 pm_ui::menu_entry("Edit…", Some(Message::EditAgentServer(index))),
                 pm_ui::menu_separator(),
