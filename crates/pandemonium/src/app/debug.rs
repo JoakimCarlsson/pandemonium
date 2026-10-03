@@ -279,7 +279,6 @@ impl App {
     /// Scrolls the debugger's list under the pointer by `delta` logical
     /// pixels, answering whether there was one.
     pub(super) fn scroll_debugger(&mut self, delta: f32) -> bool {
-        let line = self.theme().text.code.line_height;
         let (Some(pointer), Some(scope)) = (self.pointer, self.scope()) else {
             return false;
         };
@@ -287,7 +286,7 @@ impl App {
             && self
                 .debuggers
                 .get_mut(scope)
-                .is_some_and(|debugger| debugger.scroll(pointer, delta, line))
+                .is_some_and(|debugger| debugger.scroll(pointer, delta))
     }
 
     /// The breakpoints of `file`, as its gutter marks them.

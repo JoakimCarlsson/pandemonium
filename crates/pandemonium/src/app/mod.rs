@@ -1235,6 +1235,20 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if message == Message::CopyText {
+            self.copy_reading_text();
+            self.dismiss_menu();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::SelectAllText {
+            if let Some(ui) = self.ui.as_mut() {
+                ui.select_all_text();
+            }
+            self.dismiss_menu();
+            self.request_redraw();
+            return;
+        }
         if self.apply_outline(message) {
             self.request_redraw();
             return;
@@ -2788,7 +2802,12 @@ impl App {
 
         renderer.render(list);
         self.update_pointer_cursor();
-        if self.refresh_agent_selection() {
+        if self
+            .ui
+            .as_mut()
+            .is_some_and(pm_ui::Ui::refresh_text_selection)
+            | self.refresh_agent_selection()
+        {
             self.request_redraw();
         }
     }
@@ -2802,7 +2821,14 @@ impl ApplicationHandler<Wake> for App {
     /// holding still, a caret blinking and a remote being waited on are the
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.autoscroll_agent_selection() {
+        if (self.window_focused
+            && !self.window_occluded
+            && self
+                .ui
+                .as_mut()
+                .is_some_and(pm_ui::Ui::autoscroll_text_selection))
+            | self.autoscroll_agent_selection()
+        {
             self.request_redraw();
         }
         self.offer_missing_servers();
@@ -2833,6 +2859,10 @@ impl ApplicationHandler<Wake> for App {
             self.next_prediction().filter(|_| seen),
             self.next_move(),
             self.next_agent_selection_scroll().filter(|_| seen),
+            self.ui
+                .as_ref()
+                .and_then(pm_ui::Ui::next_text_selection_scroll)
+                .filter(|_| seen && self.window_focused),
         ]
         .into_iter()
         .flatten()

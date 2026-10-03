@@ -16,7 +16,8 @@ use std::ops::Range;
 use pm_gfx::{Point, Rgba};
 use pm_text::{Highlight, Language, Position};
 use pm_ui::{
-    Bounds, Div, Measured, Scrolled, Styled, Theme, h_flex, measured, scroll_area, text, v_flex,
+    Bounds, Font, Measured, Scrolled, Styled, TextSize, Theme, measured, paragraph, scroll_area,
+    v_flex,
 };
 
 use crate::editor::FileId;
@@ -121,21 +122,36 @@ pub fn hint(theme: &Theme, shown: &Shown) -> Measured<Message> {
         .map(|signature| signature_lines(theme, signature, shown.language))
         .unwrap_or_default();
     said.extend(lines(theme, &shown.text(), shown.language));
-    let rows = said
-        .into_iter()
-        .flat_map(|line| wrap(line, columns.max(1)))
-        .map(row)
-        .collect::<Vec<_>>();
-    let overflows = rows.len() > LINES;
-    let body = v_flex().items_stretch().children(rows);
-    let body = match overflows {
-        true => v_flex().child(
-            scroll_area(shown.scroll.clone(), body)
-                .w_full()
-                .h_px(LINES as f32 * theme.text.sm.line_height),
-        ),
-        false => body,
-    };
+    let height = said
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|(run, _)| run.chars().count())
+                .sum::<usize>()
+                .max(1)
+                .div_ceil(columns.max(1))
+        })
+        .sum::<usize>()
+        .clamp(1, LINES) as f32
+        * theme.text.sm.line_height;
+    let rows = said.into_iter().map(|line| {
+        let line = if line.is_empty() {
+            vec![(String::from(" "), Rgba::TRANSPARENT)]
+        } else {
+            line
+        };
+        line.into_iter().fold(
+            paragraph().break_long_words().copy_separator("\n"),
+            |row, (run, color)| row.span(run, Font::new(TextSize::Sm).mono(), color),
+        )
+    });
+    let body = scroll_area(
+        shown.scroll.clone(),
+        v_flex().items_stretch().children(rows),
+    )
+    .selectable()
+    .w_full()
+    .h_px(height);
 
     measured(
         shown.bounds.clone(),
@@ -150,18 +166,6 @@ pub fn hint(theme: &Theme, shown: &Shown) -> Measured<Message> {
             .rounded(theme.radius.md)
             .on_click(Message::DismissPopup)
             .child(body),
-    )
-}
-
-/// One line of the panel, its runs set side by side.
-fn row(line: Line) -> Div<Message> {
-    let runs = match line.is_empty() {
-        true => vec![(String::from(" "), Rgba::TRANSPARENT)],
-        false => line,
-    };
-    h_flex().children(
-        runs.into_iter()
-            .map(|(run, color)| text(run).text_sm().font_mono().color(color)),
     )
 }
 
@@ -318,64 +322,6 @@ fn plain(line: &str) -> String {
         }
     }
     out
-}
-
-/// `line` broken into lines of at most `columns` characters.
-///
-/// A line breaks at the last space that fits, or where it runs out of room
-/// when a word is longer than the panel is wide, and what it carries onto
-/// the next line is indented as far as the line itself was, so wrapped code
-/// still reads as the block it is in.
-fn wrap(line: Line, columns: usize) -> Vec<Line> {
-    let chars = line
-        .iter()
-        .flat_map(|(run, color)| run.chars().map(move |ch| (ch, *color)))
-        .collect::<Vec<_>>();
-    if chars.len() <= columns {
-        return vec![line];
-    }
-    let indent = chars
-        .iter()
-        .take_while(|(ch, _)| *ch == ' ')
-        .count()
-        .min(columns / 2);
-
-    let mut out = Vec::new();
-    let mut rest = chars.as_slice();
-    let mut first = true;
-    while !rest.is_empty() {
-        let room = if first { columns } else { columns - indent };
-        if rest.len() <= room {
-            out.push(runs_of(rest, if first { 0 } else { indent }));
-            break;
-        }
-        let cut = rest[..=room]
-            .iter()
-            .rposition(|(ch, _)| *ch == ' ')
-            .filter(|at| *at > 0 && (!first || *at > indent))
-            .unwrap_or(room);
-        out.push(runs_of(&rest[..cut], if first { 0 } else { indent }));
-        rest = &rest[cut..];
-        let spaces = rest.iter().take_while(|(ch, _)| *ch == ' ').count();
-        rest = &rest[spaces..];
-        first = false;
-    }
-    out
-}
-
-/// `chars` gathered back into runs of one colour, after `indent` spaces.
-fn runs_of(chars: &[(char, Rgba)], indent: usize) -> Line {
-    let mut runs: Line = Vec::new();
-    if indent > 0 {
-        runs.push((" ".repeat(indent), Rgba::TRANSPARENT));
-    }
-    for (ch, color) in chars {
-        match runs.last_mut() {
-            Some((run, last)) if last == color => run.push(*ch),
-            _ => runs.push((ch.to_string(), *color)),
-        }
-    }
-    runs
 }
 
 /// `lines` with no two blank lines together, and none at either end.

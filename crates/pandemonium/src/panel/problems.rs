@@ -60,6 +60,7 @@ pub(super) fn problems_view(
     v_flex().w_full().flex_1().overflow_hidden().child(measured(
         area,
         scroll_area(scroll, v_flex().w_full().py(0.5).children(rows))
+            .selectable()
             .w_full()
             .flex_1(),
     ))

@@ -72,6 +72,7 @@ pub fn debug_view(
                         .child(measured(
                             debugger.stack_area(),
                             scroll_area(debugger.stack_scroll(), stack(theme, session))
+                                .selectable()
                                 .w_full()
                                 .flex_1(),
                         )),
@@ -86,6 +87,7 @@ pub fn debug_view(
                         .child(measured(
                             debugger.variables_area(),
                             scroll_area(debugger.variables_scroll(), variables(theme, debugger))
+                                .selectable()
                                 .w_full()
                                 .flex_1(),
                         )),
@@ -465,13 +467,7 @@ fn tree_row(theme: &Theme, depth: usize, open: Option<bool>) -> Div<Message> {
 
 /// Builds the console: its last lines, and the box an expression is typed in.
 fn console(theme: &Theme, debugger: &Debugger, typing: bool, solid: bool) -> Div<Message> {
-    let line_height = theme.text.code.line_height.max(1.0);
-    let room = (debugger.console_area().get().size.height / line_height)
-        .floor()
-        .max(1.0) as usize;
     let lines = debugger.session().lines();
-    let end = lines.len().saturating_sub(debugger.console_back());
-    let start = end.saturating_sub(room);
 
     v_flex()
         .flex_1()
@@ -480,17 +476,17 @@ fn console(theme: &Theme, debugger: &Debugger, typing: bool, solid: bool) -> Div
         .child(heading(theme, "CONSOLE"))
         .child(measured(
             debugger.console_area(),
-            v_flex()
-                .w_full()
-                .flex_1()
-                .px(1.5)
-                .py(0.5)
-                .overflow_hidden()
-                .children(
-                    lines[start..end]
-                        .iter()
-                        .map(|line| console_line(theme, line)),
-                ),
+            scroll_area(
+                debugger.console_scroll(),
+                v_flex()
+                    .w_full()
+                    .px(1.5)
+                    .py(0.5)
+                    .children(lines.iter().map(|line| console_line(theme, line))),
+            )
+            .selectable()
+            .w_full()
+            .flex_1(),
         ))
         .child(v_flex().w_full().px(1.25).pb(1).child(input_view(
             theme,

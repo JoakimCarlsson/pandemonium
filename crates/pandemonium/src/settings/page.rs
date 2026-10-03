@@ -128,6 +128,7 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
             .child(heading(theme, view, pane.file.as_ref()))
             .children(sections),
     )
+    .selectable()
     .with_scrollbar(Message::ScrollSettings)
     .flex_1()
     .h_full();
@@ -932,6 +933,7 @@ fn path_list(theme: &Theme, preferences: &Preferences, list: WorktreePaths) -> D
                 .rounded(theme.radius.md)
                 .hover_bg(theme.colors.surface_hover)
                 .active_bg(theme.colors.surface_active)
+                .selection_disabled()
                 .on_click(Message::AddWorktreePath(list))
                 .child(
                     icon(IconName::Plus)

@@ -3,7 +3,10 @@
 
 use std::path::Path;
 
+use crate::app::places::{Place, linked_file};
+use crate::desktop;
 use pm_core::Scope;
+use pm_text::Position;
 
 use crate::app::App;
 use crate::image::Images;
@@ -14,6 +17,40 @@ use crate::panes::{Item, PaneId, SplitDirection};
 const WHEEL_ZOOM: f32 = 240.0;
 
 impl App {
+    /// Copies the focused reading selection through the shared clipboard seam.
+    pub(super) fn copy_reading_text(&self) -> bool {
+        if let Some(text) = self.ui.as_ref().and_then(pm_ui::Ui::selected_text) {
+            desktop::copy(text);
+            return true;
+        }
+        self.copy_agent_text()
+    }
+
+    /// Follows a rendered link beside its document or in the system browser.
+    fn follow_rendered_link(&mut self, file: crate::editor::FileId, index: usize) {
+        let Some(link) = self.renders.linked(file, index) else {
+            return;
+        };
+        let Some(scope) = self.editor.scope_of(file) else {
+            return;
+        };
+        let path = self
+            .editor
+            .get(file)
+            .map(|document| document.borrow().buffer().path().to_owned());
+        let Some(path) = path else {
+            return;
+        };
+        match linked_file(path.parent().unwrap_or(Path::new("")), &link) {
+            Some((path, line)) => self.jump_to(&Place {
+                scope,
+                path,
+                position: Position::new(line, 0),
+            }),
+            None => desktop::browse(&link),
+        }
+    }
+
     /// Opens the worktree's outline beside the focused pane or brings it forward.
     pub(super) fn open_outline(&mut self) {
         let Some(scope) = self.scope() else {
@@ -147,6 +184,7 @@ impl App {
     /// saying whether it did.
     pub(super) fn diagram_command(&mut self, message: Message) -> bool {
         match message {
+            Message::FollowRenderedLink(file, index) => self.follow_rendered_link(file, index),
             Message::PanDiagram(file, index, event) => self.renders.pan(file, index, event),
             Message::ZoomDiagram(file, index, step) => self.renders.step_zoom(file, index, step),
             _ => return false,

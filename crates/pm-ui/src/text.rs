@@ -216,6 +216,7 @@ impl<M> Element<M> for Text {
                 });
             }
         }
+        cx.selectable_run(&self.content, origin, &run, None);
         cx.text(origin, run.clone(), color);
         if self.struck {
             cx.quad(Quad::filled(
