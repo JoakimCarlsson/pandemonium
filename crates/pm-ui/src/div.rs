@@ -387,7 +387,7 @@ impl<M: Clone> Element<M> for Div<M> {
             (Some(on_drag), _, on_secondary) => {
                 cx.draggable(bounds, self.drag_cursor, on_drag, on_secondary)
             }
-            (None, None, None) => Interaction::default(),
+            (None, None, None) if self.tooltip.is_none() => Interaction::default(),
             (None, on_click, on_secondary) => cx.clickable(bounds, on_click, on_secondary),
         };
 

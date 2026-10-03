@@ -2630,13 +2630,11 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         })
         .child(h_flex().flex_1())
         .when_some(talk.limits(), |bar, limits| {
-            bar.child(limited(theme, limits))
+            bar.child(limit_usage(theme, limits))
         })
-        .when_some(talk.usage(), |bar, usage| {
-            bar.child(text(used(usage)).text_xs().color(theme.colors.text_subtle))
-        })
-        .when(!talk.is_busy(), |bar| {
-            bar.child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
+        .child(context_usage(theme, talk.usage()))
+        .when_some(doing(talk), |bar, status| {
+            bar.child(text(status).text_xs().color(theme.colors.text_subtle))
         })
         .child(
             icon_button(
@@ -2648,18 +2646,67 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         )
 }
 
-/// What the header says of how full the model's context is, and what the
-/// conversation has cost where the agent says.
-fn used(usage: &Usage) -> String {
-    let filled = format!(
-        "{} / {} tokens",
-        thousands(usage.used),
-        thousands(usage.size)
+/// Shows the fullest account limit with its plan and reset times on hover.
+fn limit_usage(theme: &Theme, limits: &Limits) -> Div<Message> {
+    let percentage = limits
+        .windows
+        .iter()
+        .map(|window| window.used)
+        .reduce(f64::max);
+    let label = percentage.map_or_else(
+        || "Limits: pending".to_owned(),
+        |used| format!("Limits: {used:.0}%"),
     );
-    match &usage.cost {
-        Some(cost) if cost.currency == "USD" => format!("{filled} · ${:.2}", cost.amount),
-        Some(cost) => format!("{filled} · {:.2} {}", cost.amount, cost.currency),
-        None => filled,
+    usage_indicator(theme, label, percentage, limit_details(limits))
+}
+
+/// Shows compact context token counts with exact counts and cost on hover.
+fn context_usage(theme: &Theme, usage: Option<&Usage>) -> Div<Message> {
+    let percentage = usage
+        .filter(|usage| usage.size > 0)
+        .map(|usage| usage.used as f64 / usage.size as f64 * 100.0);
+    let mut detail = usage.map_or_else(
+        || "Waiting for the agent to report context usage after a prompt.".to_owned(),
+        |usage| format!("Context: {} / {} tokens", usage.used, usage.size),
+    );
+    if let Some(cost) = usage.and_then(|usage| usage.cost.as_ref()) {
+        detail.push_str(&match cost.currency.as_str() {
+            "USD" => format!("\nCost: ${:.2}", cost.amount),
+            _ => format!("\nCost: {:.2} {}", cost.amount, cost.currency),
+        });
+    }
+    let label = usage.map_or_else(
+        || "Context: pending".to_owned(),
+        |usage| {
+            format!(
+                "Context: {} / {}",
+                thousands(usage.used),
+                thousands(usage.size)
+            )
+        },
+    );
+    usage_indicator(theme, label, percentage, detail)
+}
+
+/// Builds a compact usage label coloured by fullness with a detailed hover tooltip.
+fn usage_indicator(
+    theme: &Theme,
+    label: String,
+    percentage: Option<f64>,
+    detail: String,
+) -> Div<Message> {
+    h_flex().tooltip(detail).child(
+        text(label)
+            .text_xs()
+            .color(percentage.map_or(theme.colors.text_subtle, |used| heat(theme, used))),
+    )
+}
+
+/// Formats token counts in whole thousands once they reach a thousand.
+fn thousands(count: u64) -> String {
+    match count {
+        0..1000 => count.to_string(),
+        _ => format!("{}k", count / 1000),
     }
 }
 
@@ -2669,40 +2716,17 @@ const COMFORTABLE: f64 = 50.0;
 /// The share used past which a window turns from warning towards danger.
 const NEARING: f64 = 80.0;
 
-/// Builds what the header says of the plan's rate limits: the plan, then
-/// each window with how much of it is used, coloured by how near the limit
-/// it is, and how long until it starts over.
-fn limited(theme: &Theme, limits: &Limits) -> Div<Message> {
-    let plan = limits
-        .plan
-        .iter()
-        .map(|plan| h_flex().child(text(plan.clone()).text_xs().color(theme.colors.text_muted)));
+/// Formats the plan and each rate limit's usage and remaining reset time.
+fn limit_details(limits: &Limits) -> String {
+    let plan = limits.plan.iter().map(|plan| format!("Plan: {plan}"));
     let windows = limits.windows.iter().map(|window| {
-        h_flex()
-            .gap(0.5)
-            .items_center()
-            .child(
-                text(window.label.clone())
-                    .text_xs()
-                    .color(theme.colors.text_muted),
-            )
-            .child(
-                text(format!("{:.0}%", window.used))
-                    .text_xs()
-                    .color(heat(theme, window.used)),
-            )
-            .when_some(window.resets.and_then(until), |row, left| {
-                row.child(
-                    text(format!("resets in {left}"))
-                        .text_xs()
-                        .color(theme.colors.text_subtle),
-                )
-            })
+        let used = format!("{}: {:.0}% used", window.label, window.used);
+        match window.resets.and_then(until) {
+            Some(left) => format!("{used} · resets in {left}"),
+            None => used,
+        }
     });
-    h_flex()
-        .gap(1.25)
-        .items_center()
-        .children(plan.chain(windows).collect::<Vec<_>>())
+    plan.chain(windows).collect::<Vec<_>>().join("\n")
 }
 
 /// The colour a window `used` percent through is drawn in: success while
@@ -2733,14 +2757,6 @@ fn until(moment: SystemTime) -> Option<String> {
             (days, hours, _) => format!("{days}d {hours}h"),
         },
     )
-}
-
-/// `count` in thousands once it runs to them, as `53k`.
-fn thousands(count: u64) -> String {
-    match count {
-        0..1000 => count.to_string(),
-        _ => format!("{}k", count / 1000),
-    }
 }
 
 /// What each row of the card in front sends, in the order the rows are drawn.
@@ -3824,13 +3840,13 @@ fn working(talk: &Talk) -> String {
     )
 }
 
-/// What the header says the session is doing.
-fn doing(talk: &Talk) -> String {
+/// Shows startup and stopped states in the header, leaving ready sessions quiet.
+fn doing(talk: &Talk) -> Option<String> {
     match (talk.is_running(), talk.is_ready(), talk.is_busy()) {
-        (false, ..) => "stopped".to_owned(),
-        (_, false, _) => "starting".to_owned(),
-        (_, _, true) => working(talk),
-        _ => "ready".to_owned(),
+        (_, _, true) => None,
+        (false, ..) => Some("stopped".to_owned()),
+        (_, false, _) => Some("starting".to_owned()),
+        _ => None,
     }
 }
 

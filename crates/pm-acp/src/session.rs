@@ -67,6 +67,9 @@ const TROUBLE: usize = 8 * 1024;
 /// How long the agent's process group has to end before it is killed.
 const END_WITHIN: Duration = Duration::from_secs(2);
 
+/// How often account limits are refreshed while a session stays open.
+const LIMIT_REFRESH: Duration = Duration::from_secs(60);
+
 /// How a session wakes the window once it has something to say.
 pub type Notify = Arc<dyn Fn() + Send + Sync>;
 
@@ -266,6 +269,8 @@ pub struct Session {
     /// How the window is woken when the session has something to say of its
     /// own, without having been told it by the agent.
     notify: Notify,
+    /// Keeps periodic limit refreshes alive until this session closes.
+    limit_polling: Option<Sender<()>>,
 }
 
 impl Session {
@@ -366,6 +371,17 @@ impl Session {
         let next = Arc::new(AtomicI64::new(FIRST_REQUEST));
         let (outbox, pending) = mpsc::channel();
 
+        let measurement = Measurement {
+            meter: Meter::of(agent),
+            state: state.clone(),
+            notify: notify.clone(),
+            next: next.clone(),
+            replies: Replies {
+                outbox: outbox.clone(),
+            },
+            measuring: Arc::new(AtomicBool::new(false)),
+            connected: Arc::new(AtomicBool::new(true)),
+        };
         let session = Self {
             agent,
             root: root.to_path_buf(),
@@ -375,6 +391,7 @@ impl Session {
             state: state.clone(),
             next: next.clone(),
             notify: notify.clone(),
+            limit_polling: Some(measurement.poll()),
         };
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
@@ -400,8 +417,7 @@ impl Session {
             subagents: Subagents::default(),
             ticket: 0,
             terminals: 0,
-            meter: Meter::of(agent),
-            measuring: Arc::new(AtomicBool::new(false)),
+            measurement,
         };
         std::thread::spawn(move || write(stdin, &pending));
         std::thread::spawn(move || reader.run());
@@ -835,6 +851,7 @@ impl Drop for Session {
     /// The writer closes stdin after cancellation; a worker gives the group
     /// a short grace period before killing it and reaping the direct child.
     fn drop(&mut self) {
+        self.limit_polling.take();
         self.cancel();
         self.finish();
         let (closed, closing) = mpsc::channel();
@@ -875,6 +892,7 @@ fn write(mut stdin: ChildStdin, pending: &Receiver<Outgoing>) {
 }
 
 /// Where the reader thread hands its own messages to the writer.
+#[derive(Clone)]
 struct Replies {
     /// The same way to the writer thread the session hands its messages to.
     outbox: Sender<Outgoing>,
@@ -884,6 +902,89 @@ impl Replies {
     /// Hands one message to the writer, dropping it if the writer has gone.
     fn send(&self, message: Value) {
         let _ = self.outbox.send(Outgoing::Message(message));
+    }
+}
+
+/// The shared account-limit refresh seam for reader events and periodic polling.
+#[derive(Clone)]
+struct Measurement {
+    /// Where this agent's plan limits come from.
+    meter: Meter,
+    /// The conversation receiving the measurements.
+    state: Arc<Mutex<State>>,
+    /// Wakes the window when new limits arrive.
+    notify: Notify,
+    /// Numbers requests alongside the session and reader.
+    next: Arc<AtomicI64>,
+    /// Sends requests through the agent's writer thread.
+    replies: Replies,
+    /// Prevents overlapping reads from disk or network.
+    measuring: Arc<AtomicBool>,
+    /// Whether the agent's reader is still connected.
+    connected: Arc<AtomicBool>,
+}
+
+impl Measurement {
+    /// Starts periodic refreshes, stopping when the returned sender is dropped.
+    fn poll(&self) -> Sender<()> {
+        let (keep, stopped) = mpsc::channel();
+        if self.meter.asks().is_some() || self.meter.reads().is_some() {
+            let measurement = self.clone();
+            std::thread::spawn(move || {
+                while matches!(
+                    stopped.recv_timeout(LIMIT_REFRESH),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    if !measurement.connected.load(Ordering::Acquire) {
+                        break;
+                    }
+                    measurement.refresh();
+                }
+            });
+        }
+        keep
+    }
+
+    /// Reads account limits off the UI thread or requests them through the agent.
+    fn refresh(&self) {
+        if !self.connected.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.id.is_none() {
+            return;
+        }
+        if let Some(method) = self.meter.asks() {
+            if state.sent.values().any(|sent| matches!(sent, Sent::Limits)) {
+                return;
+            }
+            let id = self.next.fetch_add(1, Ordering::Relaxed);
+            state.sent.insert(id, Sent::Limits);
+            self.replies.send(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": {},
+            }));
+        }
+        drop(state);
+        let Some(read) = self.meter.reads() else {
+            return;
+        };
+        if self.measuring.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let state = self.state.clone();
+        let notify = self.notify.clone();
+        let measuring = self.measuring.clone();
+        std::thread::spawn(move || {
+            if let Some(limits) = read() {
+                raise(&state, &notify, Event::Limited(limits));
+            }
+            measuring.store(false, Ordering::Release);
+        });
     }
 }
 
@@ -912,11 +1013,8 @@ struct Reader {
     /// How many terminals the agent has started, which is what names the
     /// next one.
     terminals: u64,
-    /// Where this agent's plan limits come from.
-    meter: Meter,
-    /// Whether a read of the limits made beside the agent is still under
-    /// way, so that a turn ending while one is never starts a second.
-    measuring: Arc<AtomicBool>,
+    /// Refreshes account limits at session opening, turn completion and every minute.
+    measurement: Measurement,
 }
 
 impl Reader {
@@ -925,6 +1023,7 @@ impl Reader {
         while let Ok(Some(message)) = transport::read(&mut self.stdout) {
             self.dispatch(&message);
         }
+        self.measurement.connected.store(false, Ordering::Release);
         for event in update::halt(&mut self.tools, None, Status::Disconnected) {
             self.raise(event);
         }
@@ -1026,15 +1125,15 @@ impl Reader {
                 }
                 self.raise(Event::Stopped(stop));
                 self.idle();
-                self.measure();
+                self.measurement.refresh();
             }
             (Sent::Turn, Some(error)) => {
                 self.raise(Event::Failed(complaint(error)));
                 self.idle();
-                self.measure();
+                self.measurement.refresh();
             }
             (Sent::Limits, None) => {
-                if let Some(limits) = self.meter.answered(&message["result"]) {
+                if let Some(limits) = self.measurement.meter.answered(&message["result"]) {
                     self.raise(Event::Limited(limits));
                 }
             }
@@ -1199,35 +1298,7 @@ impl Reader {
         }
         self.wake();
         self.idle();
-        self.measure();
-    }
-
-    /// Finds out how much of the plan's limits is left, from wherever this
-    /// agent's meter reads them.
-    ///
-    /// An agent asked over its pipe is asked like any other request; a read
-    /// made beside the agent goes on a thread of its own, since a disk or a
-    /// network may take its time, and raises what it finds once it has it.
-    /// Neither says anything when it finds nothing.
-    fn measure(&self) {
-        if let Some(method) = self.meter.asks() {
-            self.ask(Sent::Limits, method, &json!({}));
-        }
-        let Some(read) = self.meter.reads() else {
-            return;
-        };
-        if self.measuring.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let state = self.state.clone();
-        let notify = self.notify.clone();
-        let measuring = self.measuring.clone();
-        std::thread::spawn(move || {
-            if let Some(limits) = read() {
-                raise(&state, &notify, Event::Limited(limits));
-            }
-            measuring.store(false, Ordering::Release);
-        });
+        self.measurement.refresh();
     }
 
     /// Lets the next prompt that was held back go, if one was.

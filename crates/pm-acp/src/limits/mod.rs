@@ -70,6 +70,7 @@ fn capitalized(word: &str) -> String {
 pub(crate) type Read = fn() -> Option<Limits>;
 
 /// Where one session's limits come from, which is down to the agent.
+#[derive(Clone, Copy)]
 pub(crate) enum Meter {
     /// Nowhere: the agent says nothing of its limits.
     Unmetered,
