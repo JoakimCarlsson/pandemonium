@@ -659,6 +659,10 @@ pub enum Message {
     ConfirmAbortMerge,
     /// Ask which agent to start in the active project's worktree.
     NewAgentSession,
+    /// Starts the chosen agent in the active worktree.
+    StartAgent(pm_acp::Agent),
+    /// Opens settings for the agents offered by the chat launcher.
+    ManageAgentServers,
     /// Put the prompt's cursor where a press landed, selecting to it.
     ///
     /// A press in the prompt is also what gives it the keyboard, so this is

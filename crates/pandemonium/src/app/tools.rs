@@ -55,9 +55,13 @@ impl App {
         })
     }
 
-    /// Brings a tool's existing tab forward, or opens it in the focused pane.
+    /// Brings a tool forward, keeping the chat launcher in the focused conversation's pane.
     pub(super) fn show_tool(&mut self, tool: Tool) {
-        let pane = self.tool_pane(tool).unwrap_or_else(|| self.panes.focus());
+        let pane = if tool == Tool::Chat && matches!(self.active_tab(), Some(Item::Agent(_, _))) {
+            self.panes.focus()
+        } else {
+            self.tool_pane(tool).unwrap_or_else(|| self.panes.focus())
+        };
         self.move_tool(pane, tool);
     }
 
@@ -286,7 +290,13 @@ impl App {
                     .iter()
                     .filter(|talk| Some(talk.scope()) == scope)
                     .collect::<Vec<_>>();
-                crate::agent::chat_pane(theme, context, &talks, self.chat_scroll.clone())
+                crate::agent::chat_pane(
+                    theme,
+                    context,
+                    &self.agent_rows(),
+                    &talks,
+                    self.chat_scroll.clone(),
+                )
             }
             Tool::Terminal => self.panel_content(theme, PanelView::Terminal),
             Tool::Problems => self.panel_content(theme, PanelView::Problems),

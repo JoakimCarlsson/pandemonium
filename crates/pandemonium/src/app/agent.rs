@@ -113,6 +113,17 @@ impl App {
     pub(super) fn agent_command(&mut self, message: Message) -> bool {
         match message {
             Message::NewAgentSession => self.open_picker(Kind::Agents),
+            Message::StartAgent(agent) => {
+                if agent.startable() {
+                    self.start_agent(agent);
+                }
+            }
+            Message::ManageAgentServers => {
+                self.open_settings();
+                self.settings
+                    .show_section(crate::settings::SettingsSection::AgentServers);
+                self.load_agent_registry();
+            }
             Message::WriteAgentPrompt(session, phase, anchor, head) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.clear_selection();

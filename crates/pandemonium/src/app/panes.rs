@@ -179,8 +179,10 @@ impl App {
             .panes
             .pane(pane)
             .and_then(|pane| pane.active(self.scope()))
-            .is_some_and(|active| matches!(active, Item::Tool(_)))
-        {
+            .is_some_and(|active| {
+                matches!(active, Item::Tool(_))
+                    && !(active == Item::Tool(Tool::Chat) && matches!(item, Item::Agent(_, _)))
+            }) {
             self.document_pane()
         } else {
             pane
