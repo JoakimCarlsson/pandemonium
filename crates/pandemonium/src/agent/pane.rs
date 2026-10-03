@@ -23,10 +23,10 @@ use pm_acp::{
 use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Div, Element, Grain, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
-    SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Style, Styled,
-    Theme, button, h_flex, icon, icon_button, measured, picture, rule, scroll_area, scrollbar,
-    space, switch, text, v_flex,
+    Div, Element, Grain, IconName, IconSize, IntoElement, LayoutContext, PaintContext,
+    PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow,
+    Style, Styled, Theme, above, button, h_flex, icon, icon_button, measured, picture, rule,
+    scroll_area, scrollbar, space, switch, text, v_flex,
 };
 
 use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
@@ -272,10 +272,12 @@ pub fn agent_pane(
                 .iter()
                 .map(|form| question(theme, talk.id(), form)),
         )
-        .when(!talk.offered().is_empty(), |pane| {
-            pane.child(commands(theme, talk))
+        .child(match talk.offered().is_empty() {
+            true => composer(theme, talk, typing, solid).into_element(),
+            false => {
+                above(composer(theme, talk, typing, solid), commands(theme, talk)).into_element()
+            }
         })
-        .child(composer(theme, talk, typing, solid))
 }
 
 /// A transcript column with selection gestures and the menu for its reply, if any.

@@ -134,3 +134,57 @@ impl<M> Element<M> for Beside<M> {
         cx.pop_layer();
     }
 }
+
+/// One element painted on top of another, in a layer of its own.
+///
+/// This is the overlay a control along the bottom of a pane opens over the
+/// content above it: a list of completions belongs against the box being
+/// typed in, as wide as it, and must not push what is above out of the way.
+/// The panel takes no room — the screen is laid out as though only the
+/// anchor were there.
+pub struct Above<M> {
+    /// The element the panel is placed on top of.
+    anchor: Box<dyn Element<M>>,
+    /// What is drawn above it.
+    panel: Box<dyn Element<M>>,
+}
+
+/// `panel`, painted as wide as `anchor` with its bottom against the anchor's
+/// top edge.
+pub fn above<M>(anchor: impl IntoElement<M>, panel: impl IntoElement<M>) -> Above<M> {
+    Above {
+        anchor: anchor.into_element(),
+        panel: panel.into_element(),
+    }
+}
+
+impl<M> Element<M> for Above<M> {
+    /// Lays out as the anchor does; the panel is placed, not stacked.
+    fn layout_style(&self) -> Style {
+        self.anchor.layout_style()
+    }
+
+    /// Asks for what the anchor asks for, the panel taking no room.
+    fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
+        self.anchor.measure(available, cx)
+    }
+
+    /// Paints the anchor where it belongs, then the panel on top of it.
+    fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
+        self.anchor.paint(bounds, cx);
+
+        let window = cx.viewport();
+        let size = self.panel.measure(
+            Size::new(bounds.size.width, window.size.height),
+            &mut cx.layout,
+        );
+        let y = (bounds.top() - size.height).max(window.top() + MARGIN);
+
+        cx.push_layer();
+        self.panel.paint(
+            Rect::from_xywh(bounds.left(), y, bounds.size.width, size.height),
+            cx,
+        );
+        cx.pop_layer();
+    }
+}

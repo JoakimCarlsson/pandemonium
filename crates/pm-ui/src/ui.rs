@@ -15,7 +15,7 @@ use crate::resize::{ResizeEvent, ResizePhase};
 use crate::theme::Theme;
 
 /// How long the pointer rests on an element before its tooltip shows.
-const TOOLTIP_DELAY: Duration = Duration::from_millis(150);
+const TOOLTIP_DELAY: Duration = Duration::from_millis(300);
 
 /// A tooltip the pointer is resting on, and since when.
 struct HeldTooltip {
