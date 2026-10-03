@@ -65,9 +65,12 @@ pub fn chat_pane(
                             .color(standing_color(theme, talk.standing())),
                     )
                     .child(
-                        text(talk.agent().name.to_owned())
-                            .text_xs()
-                            .color(theme.colors.text_muted),
+                        text(match talk.profile_name() {
+                            Some(name) => format!("{} · {name}", talk.agent().name),
+                            None => talk.agent().name.to_owned(),
+                        })
+                        .text_xs()
+                        .color(theme.colors.text_muted),
                     ),
             )
     });

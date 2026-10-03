@@ -164,6 +164,7 @@ impl App {
             (Kind::Watch, _) => self.save_watch(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
+            (Kind::NewAccount(scope, agent), _) => self.create_account(scope, agent, &typed),
             (Kind::NewSession, _) => self.start_session(&typed),
             (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
                 self.toggle_session_repository(root, typed, place);
@@ -214,6 +215,18 @@ impl App {
                 self.store();
             }
             Choice::Agent(agent) => self.start_agent(agent),
+            Choice::Account(scope, agent, id) => self.start_account(scope, agent, id.as_deref()),
+            Choice::AccountLogin(scope, agent, id) => {
+                self.authenticate_account(scope, agent, id.as_deref())
+            }
+            Choice::AccountLogins(scope, agent) => {
+                self.open_picker(Kind::AccountLogin(scope, agent))
+            }
+            Choice::NewAccount(scope, agent) => self.open_picker(Kind::NewAccount(scope, agent)),
+            Choice::AccountRemoval(scope, agent) => {
+                self.open_picker(Kind::RemoveAccount(scope, agent))
+            }
+            Choice::RemoveAccount(scope, agent, id) => self.remove_account(scope, agent, &id),
             Choice::Session(session, _) => self.select_session(session),
             Choice::Task(scope, task) => {
                 self.run_task(scope, &task, crate::tasks::Shown::Front);
@@ -321,6 +334,9 @@ impl App {
             Kind::Projects => self.project_rows(),
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
+            Kind::Accounts(scope, agent) => self.account_rows(scope, agent, false),
+            Kind::AccountLogin(scope, agent) => self.account_login_rows(scope, agent),
+            Kind::RemoveAccount(scope, agent) => self.account_rows(scope, agent, true),
             Kind::AgentHistory(session) => self.agent_history_rows(session, false),
             Kind::AgentDelete(session) => self.agent_history_rows(session, true),
             Kind::Debug => self.debug_rows(),
@@ -379,6 +395,7 @@ impl App {
             | Kind::Watch
             | Kind::NewBranch
             | Kind::StashMessage
+            | Kind::NewAccount(..)
             | Kind::NewSession
             | Kind::CloneUrl
             | Kind::LinkedPath

@@ -38,6 +38,8 @@ const LEGACY_PANEL_HEIGHT: f32 = 220.0;
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub(super) struct Stored {
+    /// Named accounts and real-login isolation evidence, without credentials.
+    accounts: super::Accounts,
     /// The last options chosen for each agent CLI.
     #[serde(skip_serializing_if = "Option::is_none")]
     agents: Option<BTreeMap<String, AgentOptions>>,
@@ -734,6 +736,7 @@ impl Stored {
             shells: self.shells.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
             agent_servers: self.agent_servers(),
+            accounts: self.accounts.clone(),
             mcp_servers: self.mcp_servers(),
             onboarded: self.finished.unwrap_or_default(),
             preferences: self.into_preferences(),
@@ -1024,12 +1027,14 @@ impl Stored {
             language_servers,
             agent_servers,
             mcp_servers,
+            accounts,
         } = restored;
         let bootstrap = &preferences.bootstrap;
         let (fonts, display) = (&preferences.fonts, &preferences.display);
         let overrides = StoredOverrides::of(&preferences.theme_overrides);
 
         Self {
+            accounts: accounts.clone(),
             agents: (!preferences.agent_options.is_empty())
                 .then(|| preferences.agent_options.clone()),
             theme_mode: Some(preferences.theme_mode),

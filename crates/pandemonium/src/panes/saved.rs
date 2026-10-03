@@ -139,6 +139,9 @@ pub struct SavedTab {
     pub path: PathBuf,
     /// Which agent was running, for a tab that held a session.
     pub agent: String,
+    /// The separate account selected for this agent, without any credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::config::Profile>,
     /// What that agent called the conversation, so it can be taken up again.
     pub session: String,
     /// The title the agent gave that conversation, drawn until it gives one

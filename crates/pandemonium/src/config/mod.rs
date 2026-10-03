@@ -10,6 +10,8 @@
 //! or outdated file is a first launch, and a write that cannot land leaves the
 //! running editor alone.
 
+mod account_identity;
+mod accounts;
 pub mod extensions;
 mod fonts;
 mod keymap;
@@ -31,6 +33,7 @@ use crate::terminal::SavedShell;
 use crate::workspace::Layout;
 use stored::Stored;
 
+pub use accounts::{Accounts, Profile};
 pub use fonts::FontSlot;
 pub use overrides::ThemeOverrides;
 pub use paths::{
@@ -90,6 +93,8 @@ pub struct Restored {
     pub language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
     pub agent_servers: Vec<pm_acp::Agent>,
+    /// Named agent accounts and recorded platform isolation checks.
+    pub accounts: Accounts,
     /// The tool servers every agent is opened with.
     pub mcp_servers: Vec<pm_acp::McpServer>,
 }

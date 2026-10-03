@@ -83,6 +83,14 @@ pub enum Kind {
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
     Agents,
+    /// Separate accounts for an agent in a fixed worktree.
+    Accounts(Option<Scope>, pm_acp::Agent),
+    /// The label for a new account.
+    NewAccount(Option<Scope>, pm_acp::Agent),
+    /// Accounts whose provider sign-in should run again.
+    AccountLogin(Option<Scope>, pm_acp::Agent),
+    /// Account metadata to remove.
+    RemoveAccount(Option<Scope>, pm_acp::Agent),
     /// Saved conversations offered by the focused agent.
     AgentHistory(TalkId),
     /// Saved conversations offered by the focused agent, to have one forgotten.
@@ -171,6 +179,10 @@ impl Kind {
             Self::ThemeColor(_) => "#rrggbb, or #rrggbbaa",
             Self::ThemeName => "What the theme is called",
             Self::KeymapName => "What the keymap is called",
+            Self::Accounts(..) => "Choose an account or organisation",
+            Self::NewAccount(..) => "Account profile name, such as Work or Personal",
+            Self::AccountLogin(..) => "Sign in to an account or organisation",
+            Self::RemoveAccount(..) => "Remove an account profile",
             Self::Agents => "Start an agent in this worktree",
             Self::AgentHistory(_) => "Search agent history",
             Self::AgentDelete(_) => "Choose a saved session to delete",
@@ -191,7 +203,8 @@ impl Kind {
     pub fn is_prompt(self) -> bool {
         matches!(
             self,
-            Self::Line
+            Self::NewAccount(..)
+                | Self::Line
                 | Self::BreakpointCondition
                 | Self::BreakpointHits
                 | Self::BreakpointLog
@@ -279,6 +292,18 @@ pub enum Choice {
     PushRemote(ProjectId, String),
     /// Start this agent in the active project's worktree.
     Agent(pm_acp::Agent),
+    /// Start an agent with the selected account, or its existing default login.
+    Account(Option<Scope>, pm_acp::Agent, Option<String>),
+    /// Run provider sign-in for a profile or the shared default account.
+    AccountLogin(Option<Scope>, pm_acp::Agent, Option<String>),
+    /// Offer account profiles to sign in to again.
+    AccountLogins(Option<Scope>, pm_acp::Agent),
+    /// Name a new account for this agent.
+    NewAccount(Option<Scope>, pm_acp::Agent),
+    /// List account profiles to remove.
+    AccountRemoval(Option<Scope>, pm_acp::Agent),
+    /// Remove one profile from the offered list.
+    RemoveAccount(Option<Scope>, pm_acp::Agent, String),
     /// Open a saved conversation from the named running agent.
     AgentHistory(TalkId, String),
     /// Have the named running agent forget a saved conversation.

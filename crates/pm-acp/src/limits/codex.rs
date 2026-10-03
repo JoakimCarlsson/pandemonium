@@ -23,7 +23,12 @@ const WEEK: u64 = 7 * DAY;
 
 /// The limits Codex last recorded, where it has recorded any.
 pub(super) fn read() -> Option<Limits> {
-    let day = newest_day(&home()?.join("sessions"))?;
+    read_at(&home()?)
+}
+
+/// The latest account limits recorded under this session's selected Codex home.
+pub(super) fn read_at(home: &Path) -> Option<Limits> {
+    let day = newest_day(&home.join("sessions"))?;
     let mut files = fs::read_dir(day)
         .ok()?
         .filter_map(Result::ok)

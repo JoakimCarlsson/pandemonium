@@ -657,6 +657,10 @@ pub enum Message {
     StartAgent(pm_acp::Agent),
     /// Opens settings for the agents offered by the chat launcher.
     ManageAgentServers,
+    /// Opens account profile management for this agent, independent of a project.
+    ManageAccountProfiles(pm_acp::Agent),
+    /// Chooses an account for a new conversation in this conversation's worktree.
+    ShowAgentAccounts(TalkId),
     /// Put the prompt's cursor where a press landed, selecting to it.
     ///
     /// A press in the prompt is also what gives it the keyboard, so this is
