@@ -13,26 +13,26 @@
 
 use std::cell::Ref;
 use std::path::Path;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use similar::{ChangeTag, TextDiff};
 
 use pm_acp::{
-    About, Ask, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
+    About, Ask, Input, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice,
 };
 use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Axis, Div, Element, Grain, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
-    SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Style, Styled,
-    Theme, button, h_flex, icon, icon_button, measured, picture, rule, sash, scroll_area,
-    scrollbar, space, text, v_flex,
+    Div, Element, Font, Grain, IconName, IconSize, IntoElement, LayoutContext, PaintContext,
+    PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Side,
+    Style, Styled, TextSize, Theme, above, h_flex, icon, icon_button, measured, paragraph, picture,
+    rule, scroll_area, scrollbar, space, switch, text, v_flex,
 };
 
-use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
+use crate::agent::{Block, Form, FormRow, Pending, Spot, Standing, Talk, TalkId};
 use crate::editor::{code_highlights, tint};
 use crate::image::Decoding;
-use crate::input::input_view;
+use crate::input::{bare_input_view, hinted_input_view};
 use crate::markdown::blocks::{self, Block as MarkdownBlock, Emphasis, Run};
 use crate::message::Message;
 
@@ -54,14 +54,32 @@ const SIDE: f32 = 1.75;
 /// text, in steps of the spacing scale.
 const BUBBLE: f32 = 1.25;
 
+/// Widest the prompt card is drawn, however wide the pane.
+const COMPOSER_WIDTH: f32 = 760.0;
+
+/// Fewest rows the prompt box is drawn at, however little it holds.
+const PROMPT_LEAST: usize = 3;
+
+/// Most rows the prompt box grows to before what it holds scrolls.
+const PROMPT_ROWS: usize = 12;
+
 /// How many of the commands a slash narrows to are offered at once.
 const OFFERED: usize = 8;
+
+/// Padding above and below each offered command, in layout steps.
+const COMMAND_PADDING: f32 = 1.5;
 
 /// Estimated average width of a conversation character as a share of its size.
 const ADVANCE: f32 = 0.55;
 
 /// Fewest characters a line is wrapped at, however narrow the pane is.
 const NARROWEST: usize = 24;
+
+/// Side of the mark before each row of a question.
+const MARK: f32 = 16.0;
+
+/// Most lines of an alternative's preview shown.
+const PREVIEW_LINES: usize = 16;
 
 /// Mark before the agent's reply.
 const BULLET: &str = "";
@@ -89,6 +107,15 @@ const WORKING: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
 /// How many characters of a failed call's error its header shows.
 const REASON: usize = 72;
+
+/// How many characters of what a call is doing a heading shows.
+const ACTIVITY: usize = 60;
+
+/// How long a call inside another runs before the heading over it names it.
+///
+/// A subagent runs many calls of a few milliseconds each; naming every one
+/// as it starts would rewrite the heading faster than it can be read.
+const SETTLE: Duration = Duration::from_millis(750);
 
 /// The colour a piece of a row is drawn in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -177,7 +204,7 @@ impl Live {
                 if finished.is_some() {
                     format!("Thought for {seconds}s")
                 } else {
-                    format!("Thinking · {seconds}s")
+                    "Thinking".to_owned()
                 }
             }
         }
@@ -210,13 +237,12 @@ type Row = Vec<Piece>;
 ///
 /// `typing` says the prompt box has the keyboard, so that the caret is drawn
 /// where the reader is actually writing; `solid` is its blink phase.
-/// `prompt_height` is how tall the reader has dragged the prompt box.
 pub fn agent_pane(
     theme: &Theme,
     talk: &Talk,
     typing: bool,
+    answering: Option<(u64, usize)>,
     solid: bool,
-    prompt_height: f32,
     width: f32,
 ) -> Div<Message> {
     talk.drawn_width().set(width);
@@ -260,13 +286,14 @@ pub fn agent_pane(
         .children(
             talk.forms()
                 .iter()
-                .map(|form| question(theme, talk.id(), form)),
+                .map(|form| question(theme, talk, form, answering, solid)),
         )
-        .when(!talk.offered().is_empty(), |pane| {
-            pane.child(commands(theme, talk))
+        .child(match talk.offered().is_empty() {
+            true => composer(theme, talk, typing, solid).into_element(),
+            false => {
+                above(composer(theme, talk, typing, solid), commands(theme, talk)).into_element()
+            }
         })
-        .child(sash(Axis::Vertical, Message::ResizeAgentPrompt))
-        .child(composer(theme, talk, typing, solid, prompt_height))
 }
 
 /// A transcript column with selection gestures and the menu for its reply, if any.
@@ -288,45 +315,62 @@ fn transcript_column(session: TalkId, reply: Option<usize>) -> Div<Message> {
 fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
     let chosen = talk.chosen();
-    let rows = talk
-        .offered()
+    let offered = talk.offered();
+    let row = theme.text.sm.line_height + COMMAND_PADDING * 2.0 * STEP;
+    let shown = offered.len().min(OFFERED) as f32 * row;
+    talk.reveal_chosen(offered.len(), row, shown);
+    let rows = offered
         .into_iter()
         .enumerate()
-        .skip(chosen.saturating_sub(OFFERED - 1))
-        .take(OFFERED)
         .map(|(place, command)| {
             h_flex()
                 .w_full()
+                .h_px(row)
                 .px(1)
-                .py(0.25)
-                .gap(1)
                 .items_center()
+                .rounded(theme.radius.md)
                 .hover_bg(theme.colors.surface_hover)
                 .when(place == chosen, |row| row.bg(theme.colors.surface_selected))
+                .when(!command.description.is_empty(), |row| {
+                    row.tooltip(command.description.clone())
+                })
                 .on_click(Message::TakeAgentCommand(session, place))
                 .child(
                     text(format!("{}{}", command.prefix, command.name))
-                        .text_xs()
-                        .font_mono()
-                        .color(tone(theme, Tone::Tool)),
-                )
-                .child(
-                    text(first_line(&command.description))
-                        .text_xs()
-                        .color(theme.colors.text_subtle),
+                        .text_sm()
+                        .color(theme.colors.text),
                 )
         })
         .collect::<Vec<_>>();
 
-    v_flex().w_full().px(1.25).pt(0.5).child(
+    v_flex().w_full().items_center().px(1.25).pt(0.5).child(
         v_flex()
             .w_full()
-            .py(0.5)
+            .max_w_px(COMPOSER_WIDTH)
+            .p(0.5)
             .rounded(theme.radius.lg)
             .border_1(theme.colors.border)
             .bg(theme.colors.surface)
             .overflow_hidden()
-            .children(rows),
+            .child(
+                h_flex().w_full().px(1).pt(0.25).pb(0.5).child(
+                    text("Slash Commands")
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                ),
+            )
+            .child(measured(
+                talk.command_view(),
+                scroll_area(
+                    talk.command_scroll(),
+                    v_flex().w_full().pr(SCROLLBAR_GUTTER / STEP).children(rows),
+                )
+                .w_full()
+                .h_px(shown)
+                .with_scrollbar(move |event, step| {
+                    Message::ScrollAgentCommands(session, event, step)
+                }),
+            )),
     )
 }
 
@@ -380,6 +424,14 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
             let opens = at == 0 || !wrapped.said[at - 1];
             let closes = wrapped.said.get(last + 1) != Some(&true);
             drawn.push(bubble(theme, message, opens, closes));
+        } else if matches!(wrapped.entries[at], Entry::Working) {
+            drawn.push(
+                v_flex()
+                    .w_full()
+                    .pb(0.75)
+                    .border_side(Side::Bottom, 1.0, theme.colors.border_variant)
+                    .child(self::row(theme, wrapped.row(at), at, talk, None)),
+            );
         } else if let Some(block) = wrapped.reply(talk, at) {
             let mut rows = vec![self::row(theme, wrapped.row(at), at, talk, Some(block))];
             let mut last = at;
@@ -594,7 +646,7 @@ pub struct Wrapped {
     tops: Vec<f32>,
     /// The measures of the theme the heights were taken in.
     measures: Option<Measures>,
-    /// The line saying a turn is running, as it was last said.
+    /// The elapsed-time heading above the current response.
     working: Row,
     /// The row between two parts, which holds nothing.
     gap: Row,
@@ -613,7 +665,7 @@ struct Wrapping {
     shown: u64,
     /// How many characters a line was wrapped at.
     columns: usize,
-    /// Whether a turn was running, which adds a line at the foot.
+    /// Whether a turn was running, which adds a heading above its response.
     busy: bool,
 }
 
@@ -661,7 +713,7 @@ enum Entry {
     Gap,
     /// A row of a part, by the part's place and the row's place in it.
     Part(usize, usize),
-    /// The line saying a turn is running.
+    /// The elapsed-time heading above the current response.
     Working,
 }
 
@@ -712,6 +764,9 @@ impl Wrapped {
             columns,
             busy: talk.is_busy(),
         };
+        if wrapping.busy {
+            self.working = vec![piece(working(talk), Tone::Quiet)];
+        }
         if self.wrapping != Some(wrapping) {
             self.rewrap(talk, columns);
             self.wrapping = self
@@ -723,18 +778,20 @@ impl Wrapped {
             self.measures = None;
         }
         self.refresh_clocks();
-        if wrapping.busy {
-            self.working = vec![piece(working(talk), Tone::Quiet)];
-            if let Some(last) = self.selection_rows.len().checked_sub(1) {
-                self.selection_rows.replace(
-                    last,
-                    SelectionRow {
-                        text: working(talk),
-                        lead: 0,
-                        separator: "\n",
-                    },
-                );
-            }
+        if wrapping.busy
+            && let Some(at) = self
+                .entries
+                .iter()
+                .position(|entry| matches!(entry, Entry::Working))
+        {
+            self.selection_rows.replace(
+                self.selection_starts[at].row,
+                SelectionRow {
+                    text: working(talk),
+                    lead: 0,
+                    separator: "\n",
+                },
+            );
         }
         let measures = measures(theme);
         if self.measures != Some(measures) {
@@ -788,15 +845,30 @@ impl Wrapped {
             self.parts.push(part);
             at = key.end;
         }
+        let turn = blocks
+            .iter()
+            .rposition(|block| matches!(block, Block::Said(Voice::Reader, _)))
+            .map_or(0, |prompt| prompt + 1);
+        let response = turn
+            + blocks[turn..]
+                .iter()
+                .take_while(|block| matches!(block, Block::Picture(_)))
+                .count();
         self.entries.clear();
         for (place, part) in self.parts.iter().enumerate() {
+            if talk.is_busy() && part.key.start == response {
+                if !self.entries.is_empty() {
+                    self.entries.push(Entry::Gap);
+                }
+                self.entries.push(Entry::Working);
+            }
             if !self.entries.is_empty() && part.leads {
                 self.entries.push(Entry::Gap);
             }
             self.entries
                 .extend((0..part.rows.len()).map(|row| Entry::Part(place, row)));
         }
-        if talk.is_busy() {
+        if talk.is_busy() && response == blocks.len() {
             if !self.entries.is_empty() {
                 self.entries.push(Entry::Gap);
             }
@@ -841,6 +913,9 @@ impl Wrapped {
             .map(|at| {
                 let row = self.row(at);
                 let mut height = row_height(theme, row);
+                if matches!(self.entries[at], Entry::Working) {
+                    height += space(0.75) + 1.0;
+                }
                 if self.reply(talk, at).is_some() && self.reply_ends(at) {
                     height += reply_actions_height(theme);
                 }
@@ -1356,7 +1431,15 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
         .rev()
         .find_map(|parent| active_call(talk, parent).map(|call| (*parent, call)))
     {
-        let mut row = called(talk, call);
+        let mut row = if expanded {
+            called(talk, call)
+        } else {
+            vec![
+                piece(String::new(), Tone::DetailGroup(at)),
+                piece(String::new(), Tone::Quiet),
+                piece(format!(" {}", activity(call, talk.root())), Tone::Quiet),
+            ]
+        };
         if call.id != parent.id {
             row[2].text = format!(
                 " {} · {}",
@@ -1413,7 +1496,9 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
             row.push(piece(format!(" · {count} {state}"), tone));
         }
     }
-    row.push(timer(started, finished));
+    if expanded {
+        row.push(timer(started, finished));
+    }
     row
 }
 
@@ -1425,14 +1510,22 @@ fn flatten_calls<'a>(talk: &'a Talk, call: &'a ToolCall, calls: &mut Vec<&'a Too
     }
 }
 
-/// The deepest active descendant, or this call if it is unfinished.
+/// The deepest active descendant that has run for [`SETTLE`], or this call
+/// if it is unfinished.
 fn active_call<'a>(talk: &'a Talk, call: &'a ToolCall) -> Option<&'a ToolCall> {
     talk.transcript()
         .children(&call.id)
         .iter()
         .rev()
+        .filter(|child| settled(child))
         .find_map(|child| active_call(talk, child))
         .or_else(|| call.is_running().then_some(call))
+}
+
+/// Whether `call` has been running long enough to be named in a heading.
+fn settled(call: &ToolCall) -> bool {
+    call.started
+        .is_some_and(|started| started.elapsed() >= SETTLE)
 }
 
 /// One passage, as rows marked with `mark` and wrapped to the width.
@@ -1806,9 +1899,27 @@ fn subject(call: &ToolCall, root: &Path) -> String {
         .unwrap_or_else(|| call.title.clone())
 }
 
-/// The activity named by a call without its status and timer.
+/// The activity named by a call without its status and timer, on one line
+/// cut to fit a heading.
 fn activity(call: &ToolCall, root: &Path) -> String {
-    format!("{} {}", tool_label(call), subject(call, root))
+    shortened(
+        &format!(
+            "{} {}",
+            match call.kind {
+                Kind::Read => "Reading",
+                Kind::Search => "Searching",
+                Kind::Execute => "Running",
+                Kind::Edit => "Editing",
+                Kind::Delete => "Deleting",
+                Kind::Move => "Moving",
+                Kind::Fetch => "Fetching",
+                Kind::Think => "Thinking",
+                _ => tool_label(call),
+            },
+            first_line(&subject(call, root))
+        ),
+        ACTIVITY,
+    )
 }
 
 /// A timed card header including a subagent's count and current activity.
@@ -1893,11 +2004,15 @@ fn reason(call: &ToolCall) -> Option<String> {
             .trim();
         (!line.is_empty() && !line.starts_with("```")).then_some(line)
     })?;
-    Some(if line.chars().count() > REASON {
-        format!("{}…", line.chars().take(REASON - 1).collect::<String>())
-    } else {
-        line.to_owned()
-    })
+    Some(shortened(line, REASON))
+}
+
+/// `line` cut to `most` characters, ending in an ellipsis where it was cut.
+fn shortened(line: &str, most: usize) -> String {
+    match line.chars().count() > most {
+        true => format!("{}…", line.chars().take(most - 1).collect::<String>()),
+        false => line.to_owned(),
+    }
 }
 
 /// Whether `name` reads as the name of a markup tag.
@@ -2515,26 +2630,93 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         })
         .child(h_flex().flex_1())
         .when_some(talk.limits(), |bar, limits| {
-            bar.child(limited(theme, limits))
+            bar.child(limit_usage(theme, limits))
         })
-        .when_some(talk.usage(), |bar, usage| {
-            bar.child(text(used(usage)).text_xs().color(theme.colors.text_subtle))
+        .child(context_usage(theme, talk.usage()))
+        .when_some(doing(talk), |bar, status| {
+            bar.child(text(status).text_xs().color(theme.colors.text_subtle))
         })
-        .child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
+        .when(talk.can_list(), |bar| {
+            bar.child(
+                icon_button(
+                    theme,
+                    IconName::History,
+                    Message::ShowAgentHistory(talk.id()),
+                )
+                .tooltip("History"),
+            )
+        })
+        .child(
+            icon_button(
+                theme,
+                IconName::Plus,
+                Message::ShowTool(crate::panes::Tool::Chat),
+            )
+            .tooltip("Open Chat"),
+        )
 }
 
-/// What the header says of how full the model's context is, and what the
-/// conversation has cost where the agent says.
-fn used(usage: &Usage) -> String {
-    let filled = format!(
-        "{} / {} tokens",
-        thousands(usage.used),
-        thousands(usage.size)
+/// Shows the fullest account limit with its plan and reset times on hover.
+fn limit_usage(theme: &Theme, limits: &Limits) -> Div<Message> {
+    let percentage = limits
+        .windows
+        .iter()
+        .map(|window| window.used)
+        .reduce(f64::max);
+    let label = percentage.map_or_else(
+        || "Limits: pending".to_owned(),
+        |used| format!("Limits: {used:.0}%"),
     );
-    match &usage.cost {
-        Some(cost) if cost.currency == "USD" => format!("{filled} · ${:.2}", cost.amount),
-        Some(cost) => format!("{filled} · {:.2} {}", cost.amount, cost.currency),
-        None => filled,
+    usage_indicator(theme, label, percentage, limit_details(limits))
+}
+
+/// Shows compact context token counts with exact counts and cost on hover.
+fn context_usage(theme: &Theme, usage: Option<&Usage>) -> Div<Message> {
+    let percentage = usage
+        .filter(|usage| usage.size > 0)
+        .map(|usage| usage.used as f64 / usage.size as f64 * 100.0);
+    let mut detail = usage.map_or_else(
+        || "Waiting for the agent to report context usage after a prompt.".to_owned(),
+        |usage| format!("Context: {} / {} tokens", usage.used, usage.size),
+    );
+    if let Some(cost) = usage.and_then(|usage| usage.cost.as_ref()) {
+        detail.push_str(&match cost.currency.as_str() {
+            "USD" => format!("\nCost: ${:.2}", cost.amount),
+            _ => format!("\nCost: {:.2} {}", cost.amount, cost.currency),
+        });
+    }
+    let label = usage.map_or_else(
+        || "Context: pending".to_owned(),
+        |usage| {
+            format!(
+                "Context: {} / {}",
+                thousands(usage.used),
+                thousands(usage.size)
+            )
+        },
+    );
+    usage_indicator(theme, label, percentage, detail)
+}
+
+/// Builds a compact usage label coloured by fullness with a detailed hover tooltip.
+fn usage_indicator(
+    theme: &Theme,
+    label: String,
+    percentage: Option<f64>,
+    detail: String,
+) -> Div<Message> {
+    h_flex().tooltip(detail).child(
+        text(label)
+            .text_xs()
+            .color(percentage.map_or(theme.colors.text_subtle, |used| heat(theme, used))),
+    )
+}
+
+/// Formats token counts in whole thousands once they reach a thousand.
+fn thousands(count: u64) -> String {
+    match count {
+        0..1000 => count.to_string(),
+        _ => format!("{}k", count / 1000),
     }
 }
 
@@ -2544,40 +2726,17 @@ const COMFORTABLE: f64 = 50.0;
 /// The share used past which a window turns from warning towards danger.
 const NEARING: f64 = 80.0;
 
-/// Builds what the header says of the plan's rate limits: the plan, then
-/// each window with how much of it is used, coloured by how near the limit
-/// it is, and how long until it starts over.
-fn limited(theme: &Theme, limits: &Limits) -> Div<Message> {
-    let plan = limits
-        .plan
-        .iter()
-        .map(|plan| h_flex().child(text(plan.clone()).text_xs().color(theme.colors.text_muted)));
+/// Formats the plan and each rate limit's usage and remaining reset time.
+fn limit_details(limits: &Limits) -> String {
+    let plan = limits.plan.iter().map(|plan| format!("Plan: {plan}"));
     let windows = limits.windows.iter().map(|window| {
-        h_flex()
-            .gap(0.5)
-            .items_center()
-            .child(
-                text(window.label.clone())
-                    .text_xs()
-                    .color(theme.colors.text_muted),
-            )
-            .child(
-                text(format!("{:.0}%", window.used))
-                    .text_xs()
-                    .color(heat(theme, window.used)),
-            )
-            .when_some(window.resets.and_then(until), |row, left| {
-                row.child(
-                    text(format!("resets in {left}"))
-                        .text_xs()
-                        .color(theme.colors.text_subtle),
-                )
-            })
+        let used = format!("{}: {:.0}% used", window.label, window.used);
+        match window.resets.and_then(until) {
+            Some(left) => format!("{used} · resets in {left}"),
+            None => used,
+        }
     });
-    h_flex()
-        .gap(1.25)
-        .items_center()
-        .children(plan.chain(windows).collect::<Vec<_>>())
+    plan.chain(windows).collect::<Vec<_>>().join("\n")
 }
 
 /// The colour a window `used` percent through is drawn in: success while
@@ -2610,12 +2769,111 @@ fn until(moment: SystemTime) -> Option<String> {
     )
 }
 
-/// `count` in thousands once it runs to them, as `53k`.
-fn thousands(count: u64) -> String {
-    match count {
-        0..1000 => count.to_string(),
-        _ => format!("{}k", count / 1000),
+/// What each row of the card in front sends, in the order the rows are drawn.
+///
+/// A row is pressed with the pointer or reached with the keyboard, and both
+/// send what this says, so the card and the keys never disagree.
+pub fn pending_messages(talk: &Talk) -> Vec<Message> {
+    let session = talk.id();
+    match talk.pending() {
+        Some(Pending::Ask(id)) => talk
+            .asks()
+            .iter()
+            .find(|ask| ask.id == id)
+            .map_or_else(Vec::new, |ask| ask_messages(session, ask)),
+        Some(Pending::Form(ticket)) => talk
+            .forms()
+            .iter()
+            .find(|form| form.id() == ticket)
+            .map_or_else(Vec::new, |form| {
+                form.rows()
+                    .into_iter()
+                    .map(|row| form_message(session, form, row))
+                    .collect()
+            }),
+        Some(Pending::Login) => login_messages(talk),
+        None => Vec::new(),
     }
+}
+
+/// What each choice of the permission request `ask` sends.
+fn ask_messages(session: TalkId, ask: &Ask) -> Vec<Message> {
+    (0..ask.choices.len())
+        .map(|place| Message::AnswerAgent(session, ask.id, place))
+        .collect()
+}
+
+/// What the row `row` of `form` sends.
+fn form_message(session: TalkId, form: &Form, row: FormRow) -> Message {
+    let ticket = form.id();
+    match row {
+        FormRow::Choice(place, option) => Message::ChooseAnswer(session, ticket, place, option),
+        FormRow::Own(place) => Message::TypeAnswer(session, ticket, place),
+        FormRow::Submit => Message::SendAnswer(session, ticket),
+        FormRow::Link => Message::OpenAnswerLink(session, ticket),
+    }
+}
+
+/// What each way of logging in the agent offers sends.
+fn login_messages(talk: &Talk) -> Vec<Message> {
+    (0..talk.logins().len())
+        .map(|place| Message::LogInAgent(talk.id(), place))
+        .collect()
+}
+
+/// The row of `card` the keyboard is on, when it is the card in front.
+fn lit_row(talk: &Talk, card: Pending) -> Option<usize> {
+    (talk.pending() == Some(card)).then(|| talk.pending_cursor())
+}
+
+/// Builds the card something waiting on the reader is drawn in: `header`
+/// across its top, `body` under it, and `hint` at its foot.
+///
+/// A login, a permission and a question are one card three times, so they
+/// sit between the conversation and the prompt looking like one thing.
+fn pending_card(
+    theme: &Theme,
+    header: Div<Message>,
+    body: Vec<Div<Message>>,
+    hint: Option<&str>,
+) -> Div<Message> {
+    v_flex().w_full().items_center().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .max_w_px(COMPOSER_WIDTH)
+            .px(1)
+            .py(0.75)
+            .gap(1)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.border)
+            .bg(theme.colors.surface)
+            .child(header)
+            .children(body)
+            .when_some(hint, |card, hint| {
+                card.child(text(hint).text_xs().color(theme.colors.text_subtle))
+            }),
+    )
+}
+
+/// The header of a card waiting on the reader: its `tabs`, then `controls`
+/// at the far end.
+fn card_header(tabs: Vec<Div<Message>>, controls: Vec<Div<Message>>) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .items_center()
+        .gap(0.5)
+        .child(h_flex().flex_1().gap(1).children(tabs))
+        .children(controls)
+}
+
+/// What a card waiting on the reader says it is asking, wrapped to the card.
+fn asked(theme: &Theme, asked: &str) -> Div<Message> {
+    v_flex().w_full().child(
+        paragraph()
+            .break_long_words()
+            .span(asked, Font::new(TextSize::Base), theme.colors.text)
+            .w_full(),
+    )
 }
 
 /// Builds the card offering the ways the agent can be logged in.
@@ -2623,112 +2881,45 @@ fn thousands(count: u64) -> String {
 /// The agent opens no conversation until it is logged in, so this sits where
 /// a question from it would: under the conversation, above the prompt.
 fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
-    let session = talk.id();
-    let buttons = talk
+    let lit = lit_row(talk, Pending::Login);
+    let rows = talk
         .logins()
         .iter()
+        .zip(login_messages(talk))
         .enumerate()
-        .map(|(place, method)| {
-            button(method.name.clone(), Message::LogInAgent(session, place))
-                .h_px(theme.size.control)
-                .filled()
+        .map(|(place, (method, message))| {
+            card_row(
+                theme,
+                Line {
+                    mark: None,
+                    title: method.name.clone(),
+                    description: method.description.clone().unwrap_or_default(),
+                    lit: lit == Some(place),
+                    key: place + 1,
+                    message,
+                },
+            )
         })
         .collect::<Vec<_>>();
 
-    v_flex().w_full().px(1.25).pt(0.5).child(
-        v_flex()
-            .w_full()
-            .p(0.75)
-            .gap(0.75)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.accent)
-            .bg(theme.colors.surface)
-            .child(
-                text(format!("{BULLET}Log in to {}", talk.agent().name))
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.accent),
-            )
-            .child(h_flex().gap(0.75).children(buttons)),
-    )
-}
-
-/// Builds the card holding something the agent needs from the reader: a form
-/// to fill in, or a page to visit.
-///
-/// Each field is a row that opens its own editor when pressed, so the card
-/// shows the whole form at once and the reader answers it in any order.
-fn question(theme: &Theme, session: TalkId, form: &Form) -> Div<Message> {
-    let ticket = form.id();
-    let fields = form.fields().iter().enumerate().map(|(place, field)| {
-        let mark = if field.required { " *" } else { "" };
-        let label = format!("{}{mark}: {}", field.title, form.shown(place));
-        let row = button(label, Message::EditAnswer(session, ticket, place))
-            .h_px(theme.size.control)
-            .outlined();
-        v_flex()
-            .w_full()
-            .gap(0.25)
-            .when(!field.description.is_empty(), |column| {
-                column.child(
-                    text(field.description.clone())
-                        .text_xs()
-                        .color(theme.colors.text_muted),
-                )
-            })
-            .child(row)
-    });
-    let actions = match form.link() {
-        Some(_) => h_flex().gap(0.75).child(
-            button("Open link", Message::OpenAnswerLink(session, ticket))
-                .h_px(theme.size.control)
-                .filled(),
+    pending_card(
+        theme,
+        card_header(
+            vec![card_tab(theme, "Log in".to_owned(), true, None)],
+            Vec::new(),
         ),
-        None => h_flex().gap(0.75).child(
-            button("Send", Message::SendAnswer(session, ticket))
-                .h_px(theme.size.control)
-                .filled(),
-        ),
-    }
-    .child(
-        button("Decline", Message::DeclineAnswer(session, ticket))
-            .h_px(theme.size.control)
-            .outlined(),
-    )
-    .child(
-        button("Cancel", Message::CancelAnswer(session, ticket))
-            .h_px(theme.size.control)
-            .outlined(),
-    );
-
-    v_flex().w_full().px(1.25).pt(0.5).child(
-        v_flex()
-            .w_full()
-            .p(0.75)
-            .gap(0.75)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.accent)
-            .bg(theme.colors.surface)
-            .child(
-                text(format!("{BULLET}{}", form.message()))
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.accent),
-            )
-            .when_some(form.link(), |card, link| {
-                card.child(
-                    text(link.url.clone())
-                        .text_xs()
-                        .font_mono()
-                        .color(theme.colors.text_muted),
-                )
-            })
-            .children(fields)
-            .child(actions),
+        vec![
+            asked(theme, &format!("{} needs logging in.", talk.agent().name)),
+            v_flex().w_full().gap(0.25).children(rows),
+        ],
+        None,
     )
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.
+///
+/// The call is shown as the conversation shows it, and each answer the agent
+/// takes is a row under it; the cross and Escape refuse it.
 fn permission(theme: &Theme, talk: &Talk, ask: &Ask, columns: usize) -> Div<Message> {
     let session = talk.id();
     let mut header = called(talk, &ask.tool);
@@ -2748,31 +2939,428 @@ fn permission(theme: &Theme, talk: &Talk, ask: &Ask, columns: usize) -> Div<Mess
                 }))
         })
         .collect::<Vec<_>>();
-    let choices = ask
+    let lit = lit_row(talk, Pending::Ask(ask.id));
+    let rows = ask
         .choices
         .iter()
+        .zip(ask_messages(session, ask))
         .enumerate()
-        .map(|(place, choice)| {
-            let message = Message::AnswerAgent(session, ask.id, place);
-            let button = button(choice.name.clone(), message).h_px(theme.size.control);
-            match choice.kind {
-                Weight::AllowOnce | Weight::AllowAlways => button.filled(),
-                Weight::RejectOnce | Weight::RejectAlways => button.outlined(),
-            }
+        .map(|(place, (choice, message))| {
+            card_row(
+                theme,
+                Line {
+                    mark: None,
+                    title: choice.name.clone(),
+                    description: String::new(),
+                    lit: lit == Some(place),
+                    key: place + 1,
+                    message,
+                },
+            )
         })
         .collect::<Vec<_>>();
 
-    v_flex().w_full().px(1.25).pt(0.5).child(
-        v_flex()
-            .w_full()
-            .p(0.75)
-            .gap(0.75)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.warning)
-            .bg(theme.colors.surface)
-            .children(content)
-            .child(h_flex().gap(0.75).children(choices)),
+    pending_card(
+        theme,
+        card_header(
+            vec![card_tab(theme, "Permission".to_owned(), true, None)],
+            vec![icon_button(
+                theme,
+                IconName::Close,
+                Message::DenyAgent(session, ask.id),
+            )],
+        ),
+        vec![
+            v_flex()
+                .w_full()
+                .p(0.75)
+                .rounded(theme.radius.md)
+                .bg(theme.colors.background)
+                .overflow_hidden()
+                .children(content),
+            v_flex().w_full().gap(0.25).children(rows),
+        ],
+        Some("Esc to deny"),
     )
+}
+
+/// Builds the card holding something the agent needs from the reader: a form
+/// to fill in, or a page to visit.
+///
+/// The form is shown a question at a time, a tab each, with what can be
+/// chosen laid out as rows to press and a row for the reader's own words
+/// where the agent takes them. The card folds down to its tabs, and Escape
+/// walks away from it as the cross does.
+///
+/// `answering` is the ticket and the field of the box that has the keyboard,
+/// if one has, and `solid` whether its caret is in its visible blink phase.
+fn question(
+    theme: &Theme,
+    talk: &Talk,
+    form: &Form,
+    answering: Option<(u64, usize)>,
+    solid: bool,
+) -> Div<Message> {
+    let session = talk.id();
+    let ticket = form.id();
+    let pages = form.pages();
+    let tabs = match form.link() {
+        Some(_) => vec![card_tab(theme, "Sign in".to_owned(), true, None)],
+        None => pages
+            .iter()
+            .enumerate()
+            .map(|(place, page)| {
+                card_tab(
+                    theme,
+                    form.fields()[page.field].title.clone(),
+                    place == form.page(),
+                    Some(Message::ShowAnswerPage(session, ticket, place)),
+                )
+            })
+            .collect(),
+    };
+    let fold = match form.folded() {
+        true => IconName::ChevronUp,
+        false => IconName::ChevronDown,
+    };
+    let header = card_header(
+        tabs,
+        vec![
+            icon_button(theme, fold, Message::FoldAnswer(session, ticket)),
+            icon_button(
+                theme,
+                IconName::Close,
+                Message::CancelAnswer(session, ticket),
+            ),
+        ],
+    );
+    if form.folded() {
+        return pending_card(theme, header, Vec::new(), None);
+    }
+    let question = pages
+        .get(form.page())
+        .map(|page| form.fields()[page.field].description.as_str())
+        .filter(|description| !description.is_empty())
+        .unwrap_or(form.message());
+    let typing = answering
+        .filter(|(asked, _)| *asked == ticket)
+        .map(|(_, place)| place);
+    let lit = lit_row(talk, Pending::Form(ticket));
+    let rows = form
+        .rows()
+        .into_iter()
+        .enumerate()
+        .map(|(place, row)| {
+            let line = Line {
+                mark: None,
+                title: String::new(),
+                description: String::new(),
+                lit: lit == Some(place),
+                key: place + 1,
+                message: form_message(session, form, row),
+            };
+            form_row(theme, session, form, row, line, typing, solid)
+        })
+        .collect::<Vec<_>>();
+
+    pending_card(
+        theme,
+        header,
+        vec![
+            asked(theme, question),
+            v_flex().w_full().gap(0.25).children(rows),
+        ]
+        .into_iter()
+        .chain(form.preview().map(|preview| preview_block(theme, preview)))
+        .collect(),
+        Some("Esc to cancel"),
+    )
+}
+
+/// Builds the row `row` of `form`, filling `line` in with what it shows.
+/// `typing` is the field whose box has the keyboard, if one of this form's has.
+fn form_row(
+    theme: &Theme,
+    session: TalkId,
+    form: &Form,
+    row: FormRow,
+    line: Line,
+    typing: Option<usize>,
+    solid: bool,
+) -> Div<Message> {
+    let round = |place: usize| {
+        !matches!(
+            form.fields().get(place).map(|field| &field.input),
+            Some(Input::Many { .. })
+        )
+    };
+    match row {
+        FormRow::Choice(place, option) => {
+            let chosen = form.chosen(place, option);
+            let (title, description) = match &form.fields()[place].input {
+                Input::One { options, .. } | Input::Many { options, .. } => options
+                    .get(option)
+                    .map(|alternative| (alternative.title.clone(), alternative.description.clone()))
+                    .unwrap_or_default(),
+                _ => (
+                    match option {
+                        0 => "Yes",
+                        _ => "No",
+                    }
+                    .to_owned(),
+                    String::new(),
+                ),
+            };
+            card_row(
+                theme,
+                Line {
+                    mark: Some(Mark {
+                        round: round(place),
+                        chosen,
+                    }),
+                    title,
+                    description,
+                    ..line
+                },
+            )
+        }
+        FormRow::Own(place) => {
+            let written = answer_box(theme, session, form, place, typing == Some(place), solid);
+            let owner = form
+                .pages()
+                .into_iter()
+                .find(|page| page.other == Some(place));
+            match (owner, written) {
+                (Some(owner), written) => {
+                    let picked = form.other_picked(place);
+                    v_flex()
+                        .w_full()
+                        .child(card_row(
+                            theme,
+                            Line {
+                                mark: Some(Mark {
+                                    round: round(owner.field),
+                                    chosen: picked,
+                                }),
+                                title: form.fields()[place].title.clone(),
+                                ..line
+                            },
+                        ))
+                        .when_some(written.filter(|_| picked), |column, written| {
+                            column.child(h_flex().w_full().pl(MARK / STEP + 1.5).child(written))
+                        })
+                }
+                (None, written) => written.unwrap_or_else(v_flex),
+            }
+        }
+        FormRow::Submit => submit_row(theme, "Submit answers", form.answered(), line),
+        FormRow::Link => {
+            let url = form
+                .link()
+                .map_or_else(String::new, |link| link.url.clone());
+            let site = url
+                .split("://")
+                .nth(1)
+                .and_then(|rest| rest.split('/').next())
+                .unwrap_or(&url)
+                .to_owned();
+            card_row(
+                theme,
+                Line {
+                    title: format!("Open {site} in the browser"),
+                    description: url,
+                    ..line
+                },
+            )
+        }
+    }
+}
+
+/// Builds what an alternative would look like, as the agent drew it.
+fn preview_block(theme: &Theme, preview: &str) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .p(0.75)
+        .rounded(theme.radius.md)
+        .border_1(theme.colors.border)
+        .bg(theme.colors.background)
+        .overflow_hidden()
+        .children(preview.lines().take(PREVIEW_LINES).map(|line| {
+            text(line.to_owned())
+                .text_sm()
+                .font_mono()
+                .color(theme.colors.text_muted)
+        }))
+}
+
+/// One tab of a card's header, underlined while it is the one shown.
+fn card_tab(theme: &Theme, title: String, shown: bool, message: Option<Message>) -> Div<Message> {
+    let (color, edge) = match shown {
+        true => (theme.colors.text, theme.colors.accent),
+        false => (theme.colors.text_muted, theme.colors.surface),
+    };
+    h_flex()
+        .px(0.25)
+        .pb(0.25)
+        .border_side(Side::Bottom, 2.0, edge)
+        .when_some(message, Div::on_click)
+        .child(text(title).text_sm().color(color))
+}
+
+/// The box the field at `place` is written in, lit while it has the keyboard.
+fn answer_box(
+    theme: &Theme,
+    session: TalkId,
+    form: &Form,
+    place: usize,
+    typing: bool,
+    solid: bool,
+) -> Option<Div<Message>> {
+    let ticket = form.id();
+    Some(hinted_input_view(
+        theme,
+        form.text_box(place)?,
+        typing,
+        solid,
+        "Type your answer…",
+        move |phase, from, to| Message::WriteAnswer(session, ticket, place, phase, from, to),
+        Message::ShowInputMenu,
+    ))
+}
+
+/// The row a form is sent from, lit once there is an answer to send.
+fn submit_row(theme: &Theme, label: &str, ready: bool, line: Line) -> Div<Message> {
+    let (fill, hover, edge, ink) = match ready {
+        true => (
+            theme.colors.accent,
+            theme.colors.accent_hover,
+            theme.colors.accent,
+            theme.colors.text_on_accent,
+        ),
+        false => (
+            match line.lit {
+                true => theme.colors.surface_hover,
+                false => theme.colors.surface,
+            },
+            theme.colors.surface_hover,
+            theme.colors.border,
+            theme.colors.text_muted,
+        ),
+    };
+    h_flex()
+        .w_full()
+        .h_px(theme.size.control)
+        .px(1)
+        .gap(1)
+        .items_center()
+        .rounded(theme.radius.md)
+        .border_1(match line.lit {
+            true => theme.colors.border_focused,
+            false => edge,
+        })
+        .bg(fill)
+        .hover_bg(hover)
+        .on_click(line.message)
+        .child(key_hint(line.key).text_sm().color(ink))
+        .child(text(label).text_sm().font_semibold().color(ink))
+}
+
+/// The digit that presses the row counted `key` from one, while there is one.
+fn key_hint(key: usize) -> pm_ui::Text {
+    text(match key {
+        1..=9 => key.to_string(),
+        _ => String::new(),
+    })
+}
+
+/// The mark before a row that can be chosen.
+#[derive(Clone, Copy)]
+struct Mark {
+    /// Whether it is round, one of several, rather than square, any of several.
+    round: bool,
+    /// Whether it is chosen.
+    chosen: bool,
+}
+
+/// One row of a card waiting on the reader.
+struct Line {
+    /// The mark before it, where it is a choice.
+    mark: Option<Mark>,
+    /// What it says.
+    title: String,
+    /// What else there is to say about it, under the title.
+    description: String,
+    /// Whether the keyboard is on it.
+    lit: bool,
+    /// Its place in the card, counted from one, which is the digit that presses it.
+    key: usize,
+    /// What pressing it sends.
+    message: Message,
+}
+
+/// Builds `line`: its mark, its title with its description under it, and
+/// the digit that presses it at the far end.
+fn card_row(theme: &Theme, line: Line) -> Div<Message> {
+    let chosen = line.mark.is_some_and(|mark| mark.chosen);
+    h_flex()
+        .w_full()
+        .px(0.5)
+        .py(0.5)
+        .gap(1)
+        .items_center()
+        .rounded(theme.radius.md)
+        .when(line.lit, |row| row.bg(theme.colors.surface_hover))
+        .when(chosen && !line.lit, |row| {
+            row.bg(theme.colors.surface_selected)
+        })
+        .hover_bg(theme.colors.surface_hover)
+        .on_click(line.message)
+        .when_some(line.mark, |row, mark| row.child(choice_mark(theme, mark)))
+        .child(
+            v_flex()
+                .flex_1()
+                .gap(0.25)
+                .child(text(line.title).text_sm().color(theme.colors.text))
+                .when(!line.description.is_empty(), |column| {
+                    column.child(
+                        paragraph()
+                            .break_long_words()
+                            .span(
+                                line.description,
+                                Font::new(TextSize::Xs),
+                                theme.colors.text_muted,
+                            )
+                            .w_full(),
+                    )
+                }),
+        )
+        .child(key_hint(line.key).text_xs().color(theme.colors.text_subtle))
+}
+
+/// Builds `mark`: a ring or a square, filled while it is chosen.
+fn choice_mark(theme: &Theme, mark: Mark) -> Div<Message> {
+    let corner = match mark.round {
+        true => theme.radius.full,
+        false => theme.radius.sm,
+    };
+    let edge = match mark.chosen {
+        true => theme.colors.accent,
+        false => theme.colors.border_selected,
+    };
+    v_flex()
+        .size_px(MARK)
+        .items_center()
+        .justify_center()
+        .rounded(corner)
+        .border_1(edge)
+        .when(mark.chosen, |ring| {
+            ring.child(
+                v_flex()
+                    .size_px(MARK / 2.0)
+                    .rounded(corner)
+                    .bg(theme.colors.accent),
+            )
+        })
 }
 
 /// Builds the box the next prompt is written in, and what it takes.
@@ -2781,33 +3369,52 @@ fn permission(theme: &Theme, talk: &Talk, ask: &Ask, columns: usize) -> Div<Mess
 /// card with the box they are typing it in: which model, how hard it thinks,
 /// what mode it is in and whether it is sent or stopped. They are facts about
 /// the next turn, so they are where the next turn is written and not in a bar
-/// at the top of the pane. The box is `height` logical pixels tall, and the
-/// edge above the card is what drags it taller or shorter.
-fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool, height: f32) -> Div<Message> {
+/// at the top of the pane. The card is drawn in the pane's own colour, at a
+/// readable width, and the box grows with what is written in it until it
+/// has grown to [`PROMPT_ROWS`] and scrolls instead.
+fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Message> {
     let id = talk.id();
+    let rows = talk.prompt().rows().clamp(PROMPT_LEAST, PROMPT_ROWS);
+    let height = rows as f32 * theme.text.code.line_height;
+    let edge = match typing {
+        true => theme.colors.accent,
+        false => theme.colors.border,
+    };
 
-    v_flex().w_full().px(1.25).pt(0.5).pb(1).child(
-        v_flex()
-            .w_full()
-            .gap(0.5)
-            .p(0.75)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.border)
-            .bg(theme.colors.surface)
-            .when(!talk.attachments().is_empty(), |card| {
-                card.child(attachment_list(theme, talk))
-            })
-            .child(input_view(
-                theme,
-                talk.prompt(),
-                typing,
-                solid,
-                height / theme.size.control,
-                move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
-                Message::ShowInputMenu,
-            ))
-            .child(controls(theme, talk)),
-    )
+    v_flex()
+        .w_full()
+        .items_center()
+        .px(1.25)
+        .pt(0.5)
+        .pb(1)
+        .child(
+            v_flex()
+                .w_full()
+                .max_w_px(COMPOSER_WIDTH)
+                .rounded(theme.radius.lg)
+                .border_1(edge)
+                .bg(theme.colors.background)
+                .overflow_hidden()
+                .when(!talk.attachments().is_empty(), |card| {
+                    card.child(attachment_list(theme, talk).px(1.5).pt(1))
+                })
+                .child(
+                    h_flex().w_full().px(1.5).pt(1).pb(0.75).child(
+                        bare_input_view(
+                            talk.prompt(),
+                            typing,
+                            solid,
+                            &format!("Message {}", talk.agent().name),
+                            move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
+                            move |event, step| Message::DragAgentPrompt(id, event, step),
+                            Message::ShowInputMenu,
+                        )
+                        .h_px(height),
+                    ),
+                )
+                .child(rule(theme))
+                .child(controls(theme, talk)),
+        )
 }
 
 /// The files and images waiting to go with the next prompt.
@@ -2850,89 +3457,144 @@ fn attachment_list(theme: &Theme, talk: &Talk) -> Div<Message> {
 }
 
 /// Builds the row of controls under the prompt.
+///
+/// What the turn is sent with leads on the left — attachments, commands and
+/// the model — and how it is sent closes on the right: the mode, then the
+/// button itself. A model's effort reads beside its name, so one pill says
+/// both; the knobs that have no pill of their own are set from the model's
+/// choices instead.
 fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
+    let knobs = talk.knobs();
+    let model = knobs.iter().position(|knob| knob.about == About::Model);
+    let effort = knobs
+        .iter()
+        .find(|knob| knob.about == About::Thinking)
+        .map(set_to);
 
     h_flex()
         .w_full()
+        .px(1)
+        .py(0.75)
         .gap(0.5)
         .items_center()
         .child(
-            pill(theme, "+", theme.colors.text_muted)
-                .on_click(Message::AttachAgentFiles(session))
+            icon_button(theme, IconName::Plus, Message::AttachAgentFiles(session))
                 .tooltip("Attach files"),
         )
         .child(
-            pill(theme, "/", theme.syntax.function).on_click(Message::StartAgentCommand(session)),
+            icon_button(
+                theme,
+                IconName::SquareSlash,
+                Message::StartAgentCommand(session),
+            )
+            .tooltip("Commands"),
         )
         .when(talk.agent().id == "codex", |row| {
-            row.child(
-                pill(theme, "$", theme.syntax.function).on_click(Message::StartAgentSkill(session)),
-            )
+            row.child(pill(theme, "$", None).on_click(Message::StartAgentSkill(session)))
         })
-        .child(
-            pill(
-                theme,
-                format!(
-                    "MCP {}",
-                    talk.mcp_servers()
-                        .iter()
-                        .filter(|server| server.given)
-                        .count()
-                ),
-                theme.colors.text_muted,
-            )
-            .on_click(Message::ShowAgentMcp(session))
-            .tooltip("MCP servers this agent was given"),
-        )
-        .when(talk.can_list(), |row| {
+        .when_some(model, |row, place| {
             row.child(
-                pill(theme, "History", theme.colors.text_muted)
-                    .on_click(Message::ShowAgentHistory(session)),
+                pill(theme, set_to(&knobs[place]), effort.clone())
+                    .on_click(Message::PressKnob(session, place)),
             )
         })
         .children(
-            talk.knobs()
-                .into_iter()
+            knobs
+                .iter()
                 .enumerate()
-                .filter(|(_, knob)| knob.about != About::Mode)
+                .filter(|(_, knob)| model.is_none() && knob.about != About::Mode)
                 .map(|(place, knob)| {
-                    pill(theme, set_to(&knob), theme.colors.text_muted)
-                        .on_click(Message::PressKnob(session, place))
+                    pill(theme, set_to(knob), None).on_click(Message::PressKnob(session, place))
                 }),
         )
         .child(h_flex().flex_1())
-        .when_some(mode_of(talk), |row, mode| {
+        .child(
+            icon_button(theme, IconName::Plug, Message::ShowAgentMcp(session)).tooltip(format!(
+                "MCP servers: {} given",
+                talk.mcp_servers()
+                    .iter()
+                    .filter(|server| server.given)
+                    .count()
+            )),
+        )
+        .when_some(mode_of(talk), |row, (id, name)| {
             row.child(
-                pill(theme, mode, theme.colors.text_muted)
-                    .on_click(Message::ShowAgentModes(session)),
+                h_flex()
+                    .h_px(theme.size.icon_control)
+                    .px(0.75)
+                    .gap(0.5)
+                    .items_center()
+                    .rounded(theme.radius.md)
+                    .hover_bg(theme.colors.surface_hover)
+                    .active_bg(theme.colors.surface_active)
+                    .on_click(Message::ShowAgentModes(session))
+                    .when_some(mode_icon(&id), |button, name| {
+                        button.child(
+                            icon(name)
+                                .size(IconSize::Small)
+                                .color(theme.colors.text_muted),
+                        )
+                    })
+                    .child(text(name).text_xs().color(theme.colors.text_muted)),
             )
         })
         .child(send(theme, talk))
 }
 
-/// What the session's mode is called, whichever way the agent says it.
+/// What the session's mode is, as the id it is known by and the name it reads
+/// as, whichever way the agent says it.
 ///
 /// An agent says its mode as a mode or as a knob that is about the mode; the
-/// pill reads the same either way, and it sits where the mode belongs rather
-/// than among the model and the rest.
-fn mode_of(talk: &Talk) -> Option<String> {
-    match talk.mode_name() {
-        Some(mode) => Some(mode),
-        None => talk.knob_about(About::Mode).map(|knob| set_to(&knob)),
+/// control reads the same either way, and it sits where the mode belongs
+/// rather than among the model and the rest.
+fn mode_of(talk: &Talk) -> Option<(String, String)> {
+    if let (Some(id), Some(name)) = (talk.mode(), talk.mode_name()) {
+        return Some((id.to_owned(), name));
+    }
+    let knob = talk.knob_about(About::Mode)?;
+    let id = match &knob.setting {
+        Setting::Picked { value, .. } => value.clone(),
+        Setting::Switched(_) => knob.id.clone(),
+    };
+    Some((id, set_to(&knob)))
+}
+
+/// The icon that stands beside a mode, by what its id says it does.
+///
+/// Agents name their modes themselves, so this reads the id for the handful
+/// of kinds of mode there are, and a mode it does not recognise goes without.
+pub fn mode_icon(id: &str) -> Option<IconName> {
+    let id = id.to_ascii_lowercase();
+    let says = |words: &[&str]| words.iter().any(|word| id.contains(word));
+    if says(&["plan"]) {
+        Some(IconName::ScrollText)
+    } else if says(&["bypass", "auto", "full", "yolo", "dangerous"]) {
+        Some(IconName::Zap)
+    } else if says(&["accept", "edit", "write"]) {
+        Some(IconName::Code)
+    } else if says(&["default", "manual", "ask", "read"]) {
+        Some(IconName::Hand)
+    } else {
+        None
     }
 }
 
-/// Builds one of the composer's pills: a label that is also a control.
-fn pill(theme: &Theme, label: impl Into<String>, color: Rgba) -> Div<Message> {
+/// Builds one of the composer's pills: a label that is also a control, with
+/// `quiet` after it in the subtler colour.
+fn pill(theme: &Theme, label: impl Into<String>, quiet: Option<String>) -> Div<Message> {
     h_flex()
         .h_px(theme.size.icon_control)
         .px(0.75)
+        .gap(0.5)
         .items_center()
         .rounded(theme.radius.full)
         .bg(theme.colors.surface_hover)
         .hover_bg(theme.colors.surface_active)
-        .child(text(label.into()).text_xs().color(color))
+        .child(text(label.into()).text_xs().color(theme.colors.text_muted))
+        .when_some(quiet, |pill, quiet| {
+            pill.child(text(quiet).text_xs().color(theme.colors.text_subtle))
+        })
 }
 
 /// What a knob's pill says: what it is set to, or what it is and whether.
@@ -2947,12 +3609,89 @@ fn set_to(knob: &Knob) -> String {
     }
 }
 
+/// Builds the rows for the knobs set beside a list of the session's choices.
+///
+/// A model's or a mode's choices are a list, but how hard it thinks and the
+/// switches it offers are set in place underneath, without leaving it: a
+/// scale of dots for a knob of several values, a switch for one of two. The
+/// knob named `shown` is the list itself and is left out, as are the model
+/// and the mode, which have lists of their own.
+pub fn knob_rows(theme: &Theme, talk: &Talk, shown: Option<&str>) -> Vec<Div<Message>> {
+    let session = talk.id();
+    talk.knobs()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, knob)| !matches!(knob.about, About::Model | About::Mode))
+        .filter(|(_, knob)| Some(knob.id.as_str()) != shown)
+        .map(|(place, knob)| {
+            let row = h_flex()
+                .w_full()
+                .gap(0.5)
+                .items_center()
+                .child(text(knob.name.clone()).text_sm().color(theme.colors.text));
+            match &knob.setting {
+                Setting::Picked { value, picks } => {
+                    let at = picks.iter().position(|pick| &pick.id == value);
+                    row.child(
+                        text(format!("({})", set_to(&knob)))
+                            .text_sm()
+                            .color(theme.colors.text_subtle),
+                    )
+                    .child(h_flex().flex_1())
+                    .child(scale(theme, session, place, picks.len(), at))
+                }
+                Setting::Switched(on) => row
+                    .child(h_flex().flex_1())
+                    .child(switch(*on, Message::FlipAgentKnob(session, place))),
+            }
+        })
+        .collect()
+}
+
+/// Builds a scale of `count` dots for the knob in `place`, the one at `at`
+/// lit and larger, each setting the knob to its value when pressed.
+fn scale(
+    theme: &Theme,
+    session: TalkId,
+    place: usize,
+    count: usize,
+    at: Option<usize>,
+) -> Div<Message> {
+    h_flex()
+        .px(0.5)
+        .items_center()
+        .rounded(theme.radius.full)
+        .bg(theme.colors.surface_hover)
+        .children((0..count).map(|pick| {
+            let lit = Some(pick) == at;
+            let (size, color) = match lit {
+                true => (12.0, theme.colors.text),
+                false => (4.0, theme.colors.text_subtle),
+            };
+            v_flex()
+                .size_px(18.0)
+                .items_center()
+                .justify_center()
+                .on_click(Message::SetAgentKnob(session, place, pick))
+                .child(v_flex().size_px(size).rounded(theme.radius.full).bg(color))
+        }))
+}
+
 /// Builds the control that sends the turn, or stops the one that is running.
+///
+/// With nothing written and nothing running there is nothing to send, so it
+/// is drawn faded until there is.
 fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
-    let (name, message) = match talk.is_busy() {
-        true => (IconName::Close, Message::StopAgentTurn(session)),
+    let busy = talk.is_busy();
+    let (name, message) = match busy {
+        true => (IconName::Stop, Message::StopAgentTurn(session)),
         false => (IconName::ArrowUp, Message::SendPrompt(session)),
+    };
+    let idle = !busy && talk.prompt().is_empty() && talk.attachments().is_empty();
+    let fade = |color: Rgba| match idle {
+        true => color.alpha(0.45),
+        false => color,
     };
 
     v_flex()
@@ -2960,14 +3699,14 @@ fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
         .items_center()
         .justify_center()
         .rounded(theme.radius.md)
-        .bg(theme.colors.accent)
-        .hover_bg(theme.colors.accent_hover)
-        .active_bg(theme.colors.accent_active)
+        .bg(fade(theme.colors.accent))
+        .hover_bg(fade(theme.colors.accent_hover))
+        .active_bg(fade(theme.colors.accent_active))
         .on_click(message)
         .child(
             icon(name)
                 .size(IconSize::Small)
-                .color(theme.colors.text_on_accent),
+                .color(fade(theme.colors.text_on_accent)),
         )
 }
 
@@ -3097,57 +3836,21 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
     }
 }
 
-/// The changing activity label for a turn in progress.
+/// The elapsed-time heading above the current turn’s response.
 fn working(talk: &Talk) -> String {
-    let elapsed = talk.working_for().unwrap_or_default();
-    let frame = (elapsed.as_millis() / 250 % WORKING.len() as u128) as usize;
-    let current = talk
-        .transcript()
-        .blocks()
-        .iter()
-        .rev()
-        .find_map(|block| match block {
-            Block::Ran(call) => active_call(talk, call).map(|active| {
-                if active.id == call.id {
-                    activity(active, talk.root())
-                } else {
-                    format!(
-                        "{} · {}",
-                        subject(call, talk.root()),
-                        activity(active, talk.root())
-                    )
-                }
-            }),
-            _ => None,
-        });
-    let mut label = format!("{}  Working · {}s", WORKING[frame], elapsed.as_secs());
-    let blocks = talk.transcript().blocks();
-    let turn = blocks
-        .iter()
-        .rposition(|block| matches!(block, Block::Said(Voice::Reader, _)))
-        .map_or(0, |prompt| prompt + 1);
-    let mut calls = Vec::new();
-    for block in &blocks[turn..] {
-        if let Block::Ran(call) = block {
-            flatten_calls(talk, call, &mut calls);
-        }
-    }
-    if calls.iter().any(|call| call.subagent && call.is_running()) {
-        label.push_str(&format!(" · {}", tally(&calls)));
-    }
-    if let Some(current) = current {
-        label.push_str(&format!(" · {current}"));
-    }
-    label
+    format!(
+        "Working for {}s",
+        talk.working_for().unwrap_or_default().as_secs()
+    )
 }
 
-/// What the header says the session is doing.
-fn doing(talk: &Talk) -> String {
+/// Shows startup and stopped states in the header, leaving ready sessions quiet.
+fn doing(talk: &Talk) -> Option<String> {
     match (talk.is_running(), talk.is_ready(), talk.is_busy()) {
-        (false, ..) => "stopped".to_owned(),
-        (_, false, _) => "starting".to_owned(),
-        (_, _, true) => working(talk),
-        _ => "ready".to_owned(),
+        (_, _, true) => None,
+        (false, ..) => Some("stopped".to_owned()),
+        (_, false, _) => Some("starting".to_owned()),
+        _ => None,
     }
 }
 

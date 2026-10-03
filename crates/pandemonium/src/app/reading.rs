@@ -390,8 +390,8 @@ impl App {
         for trouble in done.troubles() {
             self.notices.trouble(
                 trouble,
-                Some(crate::message::Message::SetSidebarView(
-                    crate::workspace::SidebarView::Changes,
+                Some(crate::message::Message::ShowTool(
+                    crate::panes::Tool::Changes,
                 )),
             );
         }

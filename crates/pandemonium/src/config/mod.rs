@@ -74,6 +74,8 @@ pub struct Restored {
     pub onboarded: bool,
     /// The roots of the projects the window had open.
     pub projects: Vec<PathBuf>,
+    /// Named groups and their remembered project membership.
+    pub project_groups: Vec<crate::project_groups::ProjectGroup>,
     /// The root of the project the window was pointed at.
     pub active: Option<PathBuf>,
     /// Which regions the window showed, and how large they were.
@@ -116,7 +118,7 @@ pub fn load() -> Restored {
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_norway::from_str::<Stored>(&text).ok())
         .map(Stored::into_restored)
-        .unwrap_or_default();
+        .unwrap_or_else(|| Stored::default().into_restored());
     pm_acp::install(restored.agent_servers.clone());
     pm_acp::install_mcp(restored.mcp_servers.clone());
     restored

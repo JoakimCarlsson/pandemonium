@@ -11,10 +11,14 @@ use std::path::PathBuf;
 use pm_ui::Axis;
 use serde::{Deserialize, Serialize};
 
+use crate::panes::Tool;
+
 /// The whole division of the window, and which pane had the keyboard.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Saved {
+    /// Layout schema version, distinguishing pane tools from legacy sidebars.
+    pub version: u32,
     /// Which pane had the keyboard, counted in the order they are drawn.
     pub focus: usize,
     /// The division itself.
@@ -55,6 +59,8 @@ impl Default for SavedNode {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SavedKind {
+    /// A workspace tool whose position belongs to the window.
+    Tool,
     /// A file of the worktree.
     #[default]
     File,
@@ -74,7 +80,7 @@ pub enum SavedKind {
     Change,
     /// An agent session over the worktree.
     Agent,
-    /// The settings pane, which is the window's rather than a worktree's.
+    /// A legacy settings tab, skipped now that preferences open in a modal.
     Settings,
 }
 
@@ -117,6 +123,9 @@ impl From<SavedAxis> for Axis {
 pub struct SavedTab {
     /// Which kind of thing it held.
     pub kind: SavedKind,
+    /// The registered tool held by a tool tab.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<Tool>,
     /// The worktree it was opened from.
     pub project: PathBuf,
     /// The session worktree it was open in, for a tab that held an agent.

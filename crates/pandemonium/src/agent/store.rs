@@ -29,13 +29,13 @@ use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Limits, Method, Mode,
-    Notify, Reply, Request, Session, Setting, Status, Stop, ToolCall, Usage, Voice,
+    Notify, Reply, Request, Session, Setting, Status, Stop, ToolCall, Usage, Voice, Weight,
 };
 
 use crate::agent::form::Form;
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_gfx::Point;
-use pm_ui::{Bounds, Placements, Selection, Spot};
+use pm_ui::{Axis, Bounds, Placements, ResizeEvent, ResizePhase, Scrolled, Selection, Spot};
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -58,6 +58,17 @@ pub enum Standing {
     Done,
     /// It is doing nothing and waiting on nobody.
     Idle,
+}
+
+/// Something the agent is waiting on the reader for, by the ticket it is under.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Pending {
+    /// A permission request.
+    Ask(u64),
+    /// A question.
+    Form(u64),
+    /// A choice of how to log in.
+    Login,
 }
 
 /// How many of the window's conversations stand each way.
@@ -111,6 +122,9 @@ pub struct Talk {
     clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
+    /// The row of the permission request or the login in front that the
+    /// keyboard is on.
+    cursor: usize,
     /// The questions the agent has put to the reader, oldest first.
     forms: Vec<Form>,
     /// The commands the agent has said it takes, as it last said them.
@@ -163,6 +177,14 @@ pub struct Talk {
     /// How wide the pane was when it last wrapped the conversation, which is
     /// what its rows, and so the places in them, were counted against.
     drawn_width: Rc<Cell<f32>>,
+    /// How far the list of offered commands is scrolled.
+    command_scroll: Scrolled,
+    /// Where the list of offered commands was last drawn.
+    command_view: Bounds,
+    /// The list's offset when its scrollbar drag began.
+    command_drag_origin: Option<f32>,
+    /// The selected row and list length the list was last scrolled to show.
+    command_revealed: Cell<Option<(usize, usize)>>,
     /// Where each link the pane last drew leads, in the order it drew them,
     /// which is how a press on one names it.
     drawn_links: Rc<RefCell<Vec<String>>>,
@@ -849,6 +871,57 @@ impl Talk {
         self.drawn_width.clone()
     }
 
+    /// How far the list of offered commands is scrolled, shared with the pane drawing it.
+    pub fn command_scroll(&self) -> Scrolled {
+        self.command_scroll.clone()
+    }
+
+    /// Where the list of offered commands was last drawn, shared with the pane drawing it.
+    pub fn command_view(&self) -> Bounds {
+        self.command_view.clone()
+    }
+
+    /// Scrolls the list of offered commands so the selected row of `rows`
+    /// rows, each `row` pixels tall, is in view through `shown` pixels.
+    ///
+    /// It moves only when the selection or the list has changed since it
+    /// last moved, so a wheel turned over the list is not undone by the
+    /// next frame.
+    pub fn reveal_chosen(&self, rows: usize, row: f32, shown: f32) {
+        let chosen = self.chosen();
+        if self.command_revealed.replace(Some((chosen, rows))) == Some((chosen, rows)) {
+            return;
+        }
+        let mut scroll = self.command_scroll.get();
+        let top = chosen as f32 * row;
+        let wanted = scroll.offset().clamp((top + row - shown).min(top), top);
+        scroll.set_extents(pm_gfx::Size::new(0.0, shown), rows as f32 * row);
+        scroll.by(scroll.offset() - wanted);
+        self.command_scroll.set(scroll);
+    }
+
+    /// Scrolls the list of offered commands by `pixels`, positive being towards the top.
+    pub fn scroll_commands(&self, pixels: f32) {
+        let mut scroll = self.command_scroll.get();
+        scroll.by(pixels);
+        self.command_scroll.set(scroll);
+    }
+
+    /// Scrolls the list of offered commands by a drag on its scrollbar,
+    /// `step` pixels of the list to a pixel of travel.
+    pub fn drag_commands(&mut self, event: ResizeEvent, step: f32) {
+        let offset = self.command_scroll.get().offset();
+        let base = match event.phase {
+            ResizePhase::Started => offset,
+            _ => self.command_drag_origin.unwrap_or(offset),
+        };
+        self.command_drag_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        self.scroll_commands(offset - base - event.delta(Axis::Vertical) * step);
+    }
+
     /// Where the links the pane last drew lead, shared with the pane
     /// drawing them.
     pub fn drawn_links(&self) -> Rc<RefCell<Vec<String>>> {
@@ -1096,10 +1169,67 @@ impl Talk {
             return;
         };
         let waiting = self.asks.remove(at);
+        self.cursor = 0;
         match waiting.choices.get(place) {
             Some(choice) => self.conversation.allow(ask, &choice.id),
             None => self.conversation.refuse(ask),
         }
+    }
+
+    /// What is waiting on the reader in front of everything else: the
+    /// oldest permission request, then the oldest question, then a login.
+    pub fn pending(&self) -> Option<Pending> {
+        if let Some(ask) = self.asks.first() {
+            return Some(Pending::Ask(ask.id));
+        }
+        if let Some(form) = self.forms.first() {
+            return Some(Pending::Form(form.id()));
+        }
+        (!self.logins.is_empty()).then_some(Pending::Login)
+    }
+
+    /// The row of the card in front that the keyboard is on.
+    pub fn pending_cursor(&self) -> usize {
+        match self.pending() {
+            Some(Pending::Form(_)) => self.forms.first().map_or(0, Form::cursor),
+            Some(Pending::Ask(_) | Pending::Login) => self.cursor,
+            None => 0,
+        }
+    }
+
+    /// Moves the keyboard `by` rows through the card in front, round from
+    /// the last to the first.
+    pub fn step_pending(&mut self, by: isize) {
+        let count = match self.pending() {
+            Some(Pending::Form(_)) => {
+                if let Some(form) = self.forms.first_mut() {
+                    form.step(by);
+                }
+                return;
+            }
+            Some(Pending::Ask(_)) => self.asks.first().map_or(0, |ask| ask.choices.len()),
+            Some(Pending::Login) => self.logins.len(),
+            None => return,
+        };
+        self.cursor = (self.cursor as isize + by).rem_euclid(count.max(1) as isize) as usize;
+    }
+
+    /// Refuses the permission request `ask`, this once where the agent offers
+    /// that, and by the protocol's own refusal where it offers no way to.
+    pub fn deny(&mut self, ask: u64) {
+        let Some(waiting) = self.asks.iter().find(|waiting| waiting.id == ask) else {
+            return;
+        };
+        let place = [Weight::RejectOnce, Weight::RejectAlways]
+            .iter()
+            .find_map(|weight| {
+                waiting
+                    .choices
+                    .iter()
+                    .position(|choice| choice.kind == *weight)
+            })
+            .unwrap_or(usize::MAX);
+        self.answer(ask, place);
     }
 
     /// The questions waiting on the reader.
@@ -1148,6 +1278,7 @@ impl Talk {
                 };
                 self.transcript.note(note);
                 self.logins = methods;
+                self.cursor = 0;
             }
             Event::Said(voice, text) => self.transcript.say(voice, &text),
             Event::Ran(call) => {
@@ -1163,7 +1294,12 @@ impl Talk {
             Event::Titled(title) => self.title = Some(title).filter(|title| !title.is_empty()),
             Event::Used(usage) => self.usage = Some(usage),
             Event::Limited(limits) => self.limits = Some(limits),
-            Event::Asked(ask) => self.asks.push(ask),
+            Event::Asked(ask) => {
+                if self.asks.is_empty() {
+                    self.cursor = 0;
+                }
+                self.asks.push(ask);
+            }
             Event::Elicited(elicitation) => self.forms.push(Form::new(elicitation)),
             Event::Concluded(id) => self
                 .forms
@@ -1400,8 +1536,8 @@ enum Opening<'a> {
     New,
     /// Restore a saved pane, falling back to a fresh conversation.
     Restore(&'a str),
-    /// Load a chosen saved conversation exactly.
-    Exact(&'a str),
+    /// Load a chosen saved conversation exactly into an existing chat.
+    Exact(TalkId, &'a str),
 }
 
 /// Every agent session the window is running.
@@ -1458,17 +1594,26 @@ impl Talks {
         self.open(project, session, root, env, agent, Opening::Restore(resume))
     }
 
-    /// Loads a saved conversation without substituting a new one if it fails.
-    pub fn load(
-        &mut self,
-        project: ProjectId,
-        session: Option<SessionId>,
-        root: &Path,
-        env: &[(String, String)],
-        agent: Agent,
-        saved: &str,
-    ) -> Option<TalkId> {
-        self.open(project, session, root, env, agent, Opening::Exact(saved))
+    /// Loads a saved conversation into `id`, keeping its existing chat tab.
+    pub fn load(&mut self, id: TalkId, env: &[(String, String)], saved: &str) -> bool {
+        let Some(talk) = self.talks.get(&id) else {
+            return false;
+        };
+        let (project, session, root, agent) = (
+            talk.project,
+            talk.session,
+            talk.root().to_path_buf(),
+            talk.agent(),
+        );
+        self.open(
+            project,
+            session,
+            &root,
+            env,
+            agent,
+            Opening::Exact(id, saved),
+        )
+        .is_some()
     }
 
     /// Opens an agent conversation with the requested load behavior.
@@ -1484,7 +1629,7 @@ impl Talks {
         let notify = self.notify.clone()?;
         let remember_on_ready = matches!(opening, Opening::New);
         let started = match opening {
-            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify.clone()),
+            Opening::Exact(_, saved) => Session::load(agent, root, env, saved, notify.clone()),
             Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
             Opening::New => Session::start(agent, root, env, notify.clone()),
         };
@@ -1500,8 +1645,14 @@ impl Talks {
             }
         };
 
-        let id = self.next;
-        self.next = TalkId(id.0 + 1);
+        let id = match opening {
+            Opening::Exact(id, _) => id,
+            _ => {
+                let id = self.next;
+                self.next = TalkId(id.0 + 1);
+                id
+            }
+        };
         self.talks.insert(
             id,
             Talk {
@@ -1519,6 +1670,7 @@ impl Talks {
                 next_preview: 0,
                 clipboard_files: Vec::new(),
                 asks: Vec::new(),
+                cursor: 0,
                 forms: Vec::new(),
                 commands: Vec::new(),
                 skills: installed_skills(root, agent),
@@ -1542,6 +1694,10 @@ impl Talks {
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
                 drawn_width: Rc::default(),
+                command_scroll: Scrolled::default(),
+                command_view: Bounds::default(),
+                command_drag_origin: None,
+                command_revealed: Cell::default(),
                 drawn_links: Rc::default(),
                 drawn_cards: RefCell::default(),
                 drawn_text: Rc::default(),
@@ -1683,16 +1839,6 @@ impl Talks {
     /// The conversation `id` names, to act on.
     pub fn get_mut(&mut self, id: TalkId) -> Option<&mut Talk> {
         self.talks.get_mut(&id)
-    }
-
-    /// Finds a conversation already open for this agent, worktree and saved id.
-    pub fn find_saved(&self, scope: Scope, agent: Agent, saved: &str) -> Option<TalkId> {
-        self.talks.values().find_map(|talk| {
-            (talk.scope() == scope
-                && talk.agent() == agent
-                && talk.resumable().as_deref() == Some(saved))
-            .then_some(talk.id())
-        })
     }
 
     /// Ends every session but the ones `held` names.

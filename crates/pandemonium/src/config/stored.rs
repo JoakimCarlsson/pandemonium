@@ -24,9 +24,15 @@ use crate::config::{
     VimBinding, WindowState,
 };
 use crate::editor::{CursorShape, Display};
-use crate::panes::Saved;
+use crate::panes::{Saved, SavedAxis, SavedKind, SavedNode, SavedTab, Tool};
 use crate::terminal::SavedShell;
-use crate::workspace::{Layout, SidebarView};
+use crate::workspace::Layout;
+
+/// Width of a sidebar in layouts saved before tools became pane tabs.
+const LEGACY_SIDEBAR_WIDTH: f32 = 252.0;
+
+/// Height of the bottom panel in layouts saved before tools became pane tabs.
+const LEGACY_PANEL_HEIGHT: f32 = 220.0;
 
 /// The preferences as they are written down.
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -208,6 +214,9 @@ pub(super) struct Stored {
     finished: Option<bool>,
     /// The roots of the projects the window had open.
     projects: Option<Vec<PathBuf>>,
+    /// Named project groups and their membership.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_groups: Option<Vec<crate::project_groups::ProjectGroup>>,
     /// The root of the project the window was pointed at.
     active_project: Option<PathBuf>,
     /// How the window was divided into panes, and what was open in them.
@@ -216,19 +225,32 @@ pub(super) struct Stored {
     #[serde(skip_serializing_if = "Option::is_none")]
     shells: Option<Vec<SavedShell>>,
     /// Whether the primary sidebar was visible.
+    #[serde(skip_serializing_if = "Option::is_none")]
     primary_sidebar_open: Option<bool>,
+    /// The projects edge in layouts saved before tools became pane tabs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    primary_sidebar_side: Option<String>,
     /// Width of the primary sidebar.
+    #[serde(skip_serializing_if = "Option::is_none")]
     primary_sidebar_width: Option<f32>,
     /// Whether the bottom panel was visible.
+    #[serde(skip_serializing_if = "Option::is_none")]
     bottom_panel_open: Option<bool>,
     /// Height of the bottom panel.
+    #[serde(skip_serializing_if = "Option::is_none")]
     bottom_panel_height: Option<f32>,
     /// Whether the secondary sidebar was visible.
+    #[serde(skip_serializing_if = "Option::is_none")]
     secondary_sidebar_open: Option<bool>,
+    /// The worktree edge in layouts saved before tools became pane tabs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    secondary_sidebar_side: Option<String>,
     /// Width of the secondary sidebar.
+    #[serde(skip_serializing_if = "Option::is_none")]
     secondary_sidebar_width: Option<f32>,
     /// Which of the worktree's two lists that sidebar was showing.
-    secondary_sidebar_view: Option<StoredSidebarView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    secondary_sidebar_view: Option<Tool>,
     /// Height of the Source Control graph.
     history_graph_height: Option<f32>,
     /// Whether the Source Control graph was visible.
@@ -237,8 +259,6 @@ pub(super) struct Stored {
     changes_section_open: Option<bool>,
     /// Whether the Graph includes every history reference.
     history_all: Option<bool>,
-    /// Height of the box an agent's prompt is written in.
-    prompt_height: Option<f32>,
     /// Logical width of the window when it is not maximized.
     window_width: Option<f32>,
     /// Logical height of the window when it is not maximized.
@@ -698,10 +718,11 @@ impl Stored {
     pub(super) fn into_restored(self) -> Restored {
         Restored {
             projects: self.projects.clone().unwrap_or_default(),
+            project_groups: self.project_groups.clone().unwrap_or_default(),
             active: self.active_project.clone(),
             layout: self.layout(),
             window: self.window(),
-            panes: self.panes.clone().unwrap_or_default(),
+            panes: self.pane_layout(),
             shells: self.shells.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
             agent_servers: self.agent_servers(),
@@ -751,30 +772,88 @@ impl Stored {
         }
     }
 
+    /// Restores pane layouts, migrating fixed sidebars into tool tabs once.
+    fn pane_layout(&self) -> Saved {
+        let mut saved = self.panes.clone().unwrap_or_default();
+        if saved.version >= 1 {
+            return saved;
+        }
+        if self.bottom_panel_open.unwrap_or(false) {
+            let height = self
+                .bottom_panel_height
+                .unwrap_or(LEGACY_PANEL_HEIGHT)
+                .max(120.0);
+            saved.root = SavedNode::Split {
+                axis: SavedAxis::Column,
+                shares: vec![(self.window().height - height).max(320.0), height],
+                children: vec![
+                    saved.root,
+                    tool_pane(
+                        &[Tool::Problems, Tool::Debug, Tool::Terminal],
+                        Tool::Terminal,
+                    ),
+                ],
+            };
+        }
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        let mut before_shares = Vec::new();
+        let mut after_shares = Vec::new();
+        for (tools, front, width, right, visible) in [
+            (
+                &[Tool::Projects][..],
+                Tool::Projects,
+                self.primary_sidebar_width.unwrap_or(LEGACY_SIDEBAR_WIDTH),
+                self.primary_sidebar_side.as_deref() == Some("right"),
+                self.primary_sidebar_open.unwrap_or(true),
+            ),
+            (
+                &[Tool::Files, Tool::Changes][..],
+                self.secondary_sidebar_view.unwrap_or(Tool::Files),
+                self.secondary_sidebar_width.unwrap_or(LEGACY_SIDEBAR_WIDTH),
+                self.secondary_sidebar_side.as_deref() != Some("left"),
+                self.secondary_sidebar_open.unwrap_or(true),
+            ),
+        ] {
+            if !visible {
+                continue;
+            }
+            let node = tool_pane(tools, front);
+            let width = width.max(160.0);
+            if right {
+                after.insert(0, node);
+                after_shares.insert(0, width);
+            } else {
+                before.push(node);
+                before_shares.push(width);
+            }
+        }
+        let taken: f32 = before_shares.iter().chain(&after_shares).sum();
+        let editor_width = (self.window().width - taken).max(320.0);
+        saved.focus += before.len();
+        let mut children = before;
+        children.push(saved.root);
+        children.extend(after);
+        let mut shares = before_shares;
+        shares.push(editor_width);
+        shares.extend(after_shares);
+        saved.root = if children.len() == 1 {
+            children.remove(0)
+        } else {
+            SavedNode::Split {
+                axis: SavedAxis::Row,
+                shares,
+                children,
+            }
+        };
+        saved.version = 1;
+        saved
+    }
+
     /// The regions this file stands for, defaulting anything it leaves out.
     fn layout(&self) -> Layout {
         let defaults = Layout::default();
         Layout {
-            primary_sidebar_open: self
-                .primary_sidebar_open
-                .unwrap_or(defaults.primary_sidebar_open),
-            primary_sidebar_width: self
-                .primary_sidebar_width
-                .unwrap_or(defaults.primary_sidebar_width),
-            bottom_panel_open: self.bottom_panel_open.unwrap_or(defaults.bottom_panel_open),
-            bottom_panel_height: self
-                .bottom_panel_height
-                .unwrap_or(defaults.bottom_panel_height),
-            secondary_sidebar_open: self
-                .secondary_sidebar_open
-                .unwrap_or(defaults.secondary_sidebar_open),
-            secondary_sidebar_width: self
-                .secondary_sidebar_width
-                .unwrap_or(defaults.secondary_sidebar_width),
-            secondary_sidebar_view: self.secondary_sidebar_view.map_or(
-                defaults.secondary_sidebar_view,
-                StoredSidebarView::into_view,
-            ),
             history_graph_height: self
                 .history_graph_height
                 .unwrap_or(defaults.history_graph_height),
@@ -785,7 +864,6 @@ impl Stored {
                 .changes_section_open
                 .unwrap_or(defaults.changes_section_open),
             history_all: self.history_all.unwrap_or(defaults.history_all),
-            prompt_height: self.prompt_height.unwrap_or(defaults.prompt_height),
         }
     }
 
@@ -925,6 +1003,7 @@ impl Stored {
             preferences,
             onboarded,
             projects,
+            project_groups,
             active,
             layout,
             panes,
@@ -1038,21 +1117,23 @@ impl Stored {
             worktree_port: bootstrap.port.clone(),
             finished: Some(*onboarded),
             projects: Some(projects.clone()),
+            project_groups: (!project_groups.is_empty()).then(|| project_groups.clone()),
             active_project: active.clone(),
             panes: Some(panes.clone()),
             shells: Some(shells.clone()),
-            primary_sidebar_open: Some(layout.primary_sidebar_open),
-            primary_sidebar_width: Some(layout.primary_sidebar_width),
-            bottom_panel_open: Some(layout.bottom_panel_open),
-            bottom_panel_height: Some(layout.bottom_panel_height),
-            secondary_sidebar_open: Some(layout.secondary_sidebar_open),
-            secondary_sidebar_width: Some(layout.secondary_sidebar_width),
-            secondary_sidebar_view: Some(StoredSidebarView::of(layout.secondary_sidebar_view)),
+            primary_sidebar_open: None,
+            primary_sidebar_width: None,
+            bottom_panel_open: None,
+            bottom_panel_height: None,
+            secondary_sidebar_open: None,
+            secondary_sidebar_width: None,
+            secondary_sidebar_view: None,
+            primary_sidebar_side: None,
+            secondary_sidebar_side: None,
             history_graph_height: Some(layout.history_graph_height),
             history_graph_open: Some(layout.history_graph_open),
             changes_section_open: Some(layout.changes_section_open),
             history_all: Some(layout.history_all),
-            prompt_height: Some(layout.prompt_height),
             window_width: Some(window.width),
             window_height: Some(window.height),
             window_maximized: Some(window.maximized),
@@ -1064,34 +1145,6 @@ impl Stored {
 fn canonical_language(name: &str) -> String {
     pm_text::Language::called(name)
         .map_or_else(|| name.to_owned(), |language| language.name().to_owned())
-}
-
-/// Which list the sidebar beside the panes was showing, as it is written down.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum StoredSidebarView {
-    /// Every file of the worktree.
-    Files,
-    /// Everything that has changed in it.
-    Changes,
-}
-
-impl StoredSidebarView {
-    /// The written name of the view the sidebar was showing.
-    fn of(view: SidebarView) -> Self {
-        match view {
-            SidebarView::Files => Self::Files,
-            SidebarView::Changes => Self::Changes,
-        }
-    }
-
-    /// The view the written name stands for.
-    fn into_view(self) -> SidebarView {
-        match self {
-            Self::Files => SidebarView::Files,
-            Self::Changes => SidebarView::Changes,
-        }
-    }
 }
 
 /// How much vim's unnamed register shares with the system clipboard, as it
@@ -1193,5 +1246,20 @@ impl StoredCursorShape {
             Self::Block => CursorShape::Block,
             Self::Underline => CursorShape::Underline,
         }
+    }
+}
+
+/// Describes a tab group of workspace tools in a migrated layout.
+fn tool_pane(tools: &[Tool], front: Tool) -> SavedNode {
+    SavedNode::Pane {
+        tabs: tools
+            .iter()
+            .map(|tool| SavedTab {
+                kind: SavedKind::Tool,
+                tool: Some(*tool),
+                front: *tool == front,
+                ..SavedTab::default()
+            })
+            .collect(),
     }
 }

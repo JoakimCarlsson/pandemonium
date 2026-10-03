@@ -57,8 +57,7 @@ impl App {
     /// Scrolls the Source Control list of changes by `delta` logical pixels
     /// when the pointer is over it, answering whether it was.
     pub(super) fn scroll_changes(&mut self, delta: f32) -> bool {
-        let over = self.secondary_sidebar_open
-            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes
+        let over = self.tool_visible(crate::panes::Tool::Changes)
             && self
                 .pointer
                 .is_some_and(|pointer| self.changes_area.get().contains(pointer));
@@ -252,6 +251,9 @@ impl App {
     /// takes the reader to the file in the review, because that is what
     /// clicking a change is for.
     pub(super) fn select_change(&mut self, index: usize, marking: bool, ranging: bool) {
+        if let Some(pane) = self.tool_pane(crate::panes::Tool::Changes) {
+            self.focus_pane(pane);
+        }
         let Some(scope) = self.scope() else {
             return;
         };
@@ -332,6 +334,9 @@ impl App {
     /// way it does in a file manager: the menu is about what was pointed at
     /// unless what was pointed at is already part of a larger answer.
     pub(super) fn aim_at_change(&mut self, index: usize) {
+        if let Some(pane) = self.tool_pane(crate::panes::Tool::Changes) {
+            self.focus_pane(pane);
+        }
         let Some(scope) = self.scope() else {
             return;
         };
@@ -1172,7 +1177,7 @@ impl App {
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
-            | Item::Settings => None,
+            | Item::Tool(_) => None,
         }
     }
 }

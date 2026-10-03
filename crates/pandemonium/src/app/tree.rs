@@ -18,10 +18,10 @@ use crate::app::App;
 use crate::desktop;
 use crate::field::Typed;
 use crate::message::Message;
-use crate::panes::{Item, PaneId, SplitDirection};
+use crate::panes::{Item, PaneId, SplitDirection, Tool};
 use crate::prompt::{Answer, Prompt};
 use crate::tree::{Clipboard, Edit, EditKind, EntryDrag, Selection};
-use crate::workspace::{MenuTarget, SidebarView};
+use crate::workspace::MenuTarget;
 
 /// How many rows a page key moves the tree's keyboard.
 const TREE_PAGE: isize = 10;
@@ -178,6 +178,9 @@ impl App {
 
     /// Gives the keyboard to the tree, taking it from everything else.
     fn focus_tree(&mut self) {
+        if let Some(pane) = self.tool_pane(Tool::Files) {
+            self.focus_pane(pane);
+        }
         self.release_pane_focus();
         self.tree_focused = true;
     }
@@ -342,7 +345,7 @@ impl App {
 
     /// Whether the sidebar beside the panes is showing the tree.
     pub(super) fn tree_showing(&self) -> bool {
-        self.secondary_sidebar_open && self.secondary_sidebar_view == SidebarView::Files
+        self.tool_visible(Tool::Files)
     }
 
     /// Lets go of the selection, for a press on the space below the rows.
@@ -411,8 +414,7 @@ impl App {
                 tree.expand(edit.at());
             }
         }
-        self.secondary_sidebar_open = true;
-        self.secondary_sidebar_view = SidebarView::Files;
+        self.show_tool(Tool::Files);
         let revealed = match kind {
             EditKind::Rename => edit.at().to_path_buf(),
             _ => edit.at().join("_"),
@@ -882,11 +884,10 @@ impl App {
 
     /// Shows the file the focused pane holds in the tree, and gives it the keyboard.
     pub(super) fn reveal_in_tree(&mut self) {
-        self.secondary_sidebar_open = true;
-        self.secondary_sidebar_view = SidebarView::Files;
         let shown = self
             .active_file_id()
             .and_then(|file| self.editor.path(file));
+        self.show_tool(Tool::Files);
         if let Some(path) = shown {
             if let Some(tree) = self.scope().and_then(|scope| self.files.get_mut(&scope)) {
                 tree.reveal(&path);

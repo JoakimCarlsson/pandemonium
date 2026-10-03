@@ -12,11 +12,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use pm_core::Scope;
 use pm_ui::{Axis, ResizePhase};
 
+use crate::panes::Arrangement;
 use crate::panes::item::Item;
 use crate::panes::saved::{Saved, SavedNode, SavedTab};
 
 /// Smallest share of a split one pane can be dragged down to.
-const MIN_SHARE: f32 = 0.05;
+const MIN_SHARE: f32 = 0.0;
 
 /// Which way a pane is divided, and which side the new pane takes.
 ///
@@ -167,7 +168,11 @@ impl Pane {
     /// waiting to be told which one again.
     pub fn active(&self, scope: impl Into<Option<Scope>>) -> Option<Item> {
         let scope = scope.into();
-        let front = self.active.get(&scope).copied();
+        let front = self
+            .active
+            .get(&scope)
+            .or_else(|| self.active.get(&None))
+            .copied();
         front
             .filter(|item| self.shown(scope).any(|tab| tab.item == *item))
             .or_else(|| self.shown(scope).next().map(Tab::item))
@@ -460,7 +465,7 @@ impl Node {
     /// Whether anything under this node has a tab `scope` sees.
     fn shows(&self, scope: Option<Scope>) -> bool {
         match self {
-            Self::Pane(pane) => pane.shown(scope).next().is_some(),
+            Self::Pane(pane) => pane.is_empty() || pane.shown(scope).next().is_some(),
             Self::Split(split) => split.children.iter().any(|child| child.shows(scope)),
         }
     }
@@ -567,19 +572,51 @@ impl PaneTree {
         self.pane(self.focus)
     }
 
+    /// Applies a layout preset while retaining live tabs, their scopes and pinning.
+    ///
+    /// Repeated views of a document become one tab. Any tab the preset leaves
+    /// out is kept in the focused pane, so rearranging never closes its model.
+    pub fn arrange(&mut self, layout: &Arrangement, focus: usize, scope: Option<Scope>) {
+        let mut tabs = BTreeMap::new();
+        self.root.walk(&mut |pane| {
+            for tab in &pane.tabs {
+                tabs.entry(tab.item)
+                    .and_modify(|held: &mut Tab| held.pinned |= tab.pinned)
+                    .or_insert(*tab);
+            }
+        });
+        let mut next_pane = self.next_pane;
+        let mut next_split = self.next_split;
+        self.root = arranged(layout, &mut tabs, &mut next_pane, &mut next_split, scope);
+        self.next_pane = next_pane;
+        self.next_split = next_split;
+        let panes = self.panes();
+        self.focus = panes
+            .get(focus)
+            .or_else(|| panes.first())
+            .copied()
+            .unwrap_or_default();
+        if let Some(pane) = self.pane_mut(self.focus) {
+            for tab in tabs.into_values() {
+                pane.append(tab, scope);
+            }
+        }
+    }
+
     /// The window as it stands, in the shape a launch restores it from.
     ///
     /// A tab `tab` cannot name is left out — it is one the next
     /// launch has no way of opening again — and a pane left empty by that
     /// comes back empty rather than not at all.
-    pub fn save(&self, tab: &dyn Fn(Item) -> Option<SavedTab>) -> Saved {
+    pub fn save(&self, scope: Option<Scope>, tab: &dyn Fn(Item) -> Option<SavedTab>) -> Saved {
         Saved {
+            version: 1,
             focus: self
                 .panes()
                 .iter()
                 .position(|pane| *pane == self.focus)
                 .unwrap_or(0),
-            root: written(&self.root, tab),
+            root: written(&self.root, scope, tab),
         }
     }
 
@@ -598,7 +635,6 @@ impl PaneTree {
             next_pane: panes,
             next_split: splits,
         };
-        tree.close_empty();
         let panes = tree.panes();
         tree.focus = panes
             .get(saved.focus)
@@ -659,6 +695,13 @@ impl PaneTree {
             if !self.close(empty) {
                 return;
             }
+        }
+    }
+
+    /// Closes `id` after its last tab leaves, preserving unrelated empty panes.
+    pub fn close_if_empty(&mut self, id: PaneId) {
+        if self.pane(id).is_some_and(Pane::is_empty) {
+            self.close(id);
         }
     }
 
@@ -884,7 +927,7 @@ impl PaneTree {
 }
 
 /// One node of the tree, in the shape it is written down in.
-fn written(node: &Node, tab: &dyn Fn(Item) -> Option<SavedTab>) -> SavedNode {
+fn written(node: &Node, scope: Option<Scope>, tab: &dyn Fn(Item) -> Option<SavedTab>) -> SavedNode {
     match node {
         Node::Pane(pane) => SavedNode::Pane {
             tabs: pane
@@ -893,7 +936,11 @@ fn written(node: &Node, tab: &dyn Fn(Item) -> Option<SavedTab>) -> SavedNode {
                 .filter_map(|open| {
                     let mut saved = tab(open.item)?;
                     saved.pinned = open.pinned;
-                    saved.front = pane.active.get(&open.scope) == Some(&open.item);
+                    saved.front = if open.item.is_window_wide() {
+                        pane.active(scope) == Some(open.item)
+                    } else {
+                        pane.active.get(&open.scope) == Some(&open.item)
+                    };
                     Some(saved)
                 })
                 .collect(),
@@ -904,7 +951,7 @@ fn written(node: &Node, tab: &dyn Fn(Item) -> Option<SavedTab>) -> SavedNode {
             children: split
                 .children()
                 .iter()
-                .map(|child| written(child, tab))
+                .map(|child| written(child, scope, tab))
                 .collect(),
         },
     }
@@ -961,6 +1008,58 @@ fn read(node: &SavedNode, panes: &mut u64, splits: &mut u64, open: &mut Reopen<'
                 axis: (*axis).into(),
                 children: read,
                 shares,
+                dragging: None,
+            })
+        }
+    }
+}
+
+/// Builds a preset from live tabs, creating only missing window-wide tools.
+fn arranged(
+    layout: &Arrangement,
+    tabs: &mut BTreeMap<Item, Tab>,
+    next_pane: &mut u64,
+    next_split: &mut u64,
+    scope: Option<Scope>,
+) -> Node {
+    match layout {
+        Arrangement::Pane(items) => {
+            let id = PaneId(*next_pane);
+            *next_pane += 1;
+            let mut pane = Pane::new(id);
+            for item in items {
+                let tab = tabs
+                    .remove(item)
+                    .or_else(|| item.is_window_wide().then(|| Tab::new(*item, None)));
+                if let Some(tab) = tab {
+                    pane.append(tab, scope);
+                }
+            }
+            Node::Pane(pane)
+        }
+        Arrangement::Split { axis, children } => {
+            let mut nodes = children
+                .iter()
+                .map(|(_, child)| arranged(child, tabs, next_pane, next_split, scope))
+                .collect::<Vec<_>>();
+            if nodes.len() < 2 {
+                return nodes.pop().unwrap_or_else(|| {
+                    arranged(
+                        &Arrangement::Pane(Vec::new()),
+                        tabs,
+                        next_pane,
+                        next_split,
+                        scope,
+                    )
+                });
+            }
+            let id = SplitId(*next_split);
+            *next_split += 1;
+            Node::Split(Split {
+                id,
+                axis: *axis,
+                children: nodes,
+                shares: children.iter().map(|(share, _)| share.max(0.01)).collect(),
                 dragging: None,
             })
         }

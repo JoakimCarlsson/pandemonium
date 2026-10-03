@@ -9,4 +9,4 @@ mod state;
 mod view;
 
 pub use state::{Choice, Kind, Picker, Row};
-pub use view::{TOP, WIDTH, height, picker, width};
+pub use view::{TOP, WIDTH, agent_choices, agent_height, height, picker, width};

@@ -56,12 +56,7 @@ impl App {
             .pointer
             .and_then(|pointer| self.geometry.pane_at(pointer))
             .unwrap_or_else(|| self.panes.focus());
-        if self
-            .panes
-            .pane(pane)
-            .and_then(|pane| pane.active(self.scope()))
-            == Some(crate::panes::Item::Settings)
-        {
+        if self.settings_open {
             return self
                 .settings
                 .scroll()
@@ -101,7 +96,8 @@ impl App {
         let project_search = matches!(self.active_tab(), Some(crate::panes::Item::Search(_)))
             && self.project_search_field.is_some();
         let field = palette || self.search_focused || project_search || self.tree_edit.is_some();
-        let editing = self.focused_file().is_some()
+        let editing = !self.settings_open
+            && self.focused_file().is_some()
             && self.writing.is_none()
             && !self.search_focused
             && !project_search
@@ -178,13 +174,20 @@ impl App {
         if self.send_to_prompt(event) {
             return self.request_redraw();
         }
-        if self.send_to_notification(event) {
+        if !self.settings_open && self.send_to_notification(event) {
+            return self.request_redraw();
+        }
+        if self.settings_open {
+            self.settings_key_pressed(event);
             return self.request_redraw();
         }
         if self.paste_agent_prompt(event) {
             return self.request_redraw();
         }
         if self.is_copy(event) && self.copy_reading_text() {
+            return self.request_redraw();
+        }
+        if self.send_to_pending(event) {
             return self.request_redraw();
         }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
@@ -238,6 +241,49 @@ impl App {
         }
         if self.send_to_editor(event) {
             return self.request_redraw();
+        }
+        self.navigate(event);
+    }
+
+    /// Routes keyboard input within preferences, keeping workspace commands behind the modal.
+    fn settings_key_pressed(&mut self, event: &KeyEvent) {
+        if self.menu.is_some() && event.logical_key == Key::Named(NamedKey::Escape) {
+            self.menu = None;
+            return;
+        }
+        if self.send_to_picker(event) {
+            return;
+        }
+        if event.logical_key == Key::Named(NamedKey::Escape) {
+            self.close_settings();
+            return;
+        }
+        if let Some(chord) = keymap::chord(event, self.modifiers) {
+            match self.resolver.press(chord, &self.context()) {
+                Resolution::Act(Action::Copy) if self.copy_reading_text() => return,
+                Resolution::Act(
+                    action @ (Action::Copy | Action::Cut | Action::Paste | Action::SelectAll),
+                ) => {
+                    self.act_on_field(action);
+                    return;
+                }
+                Resolution::Act(Action::OpenSettings) | Resolution::Pending => return,
+                _ => {}
+            }
+        }
+        if self.send_to_input(event) {
+            return;
+        }
+        if event.logical_key == Key::Named(NamedKey::Tab) {
+            let window = self
+                .renderer
+                .as_ref()
+                .map_or(pm_gfx::Size::zero(), pm_gfx::Renderer::size);
+            let bounds = self.settings_bounds(window);
+            if let Some(ui) = self.ui.as_mut() {
+                ui.focus_within(bounds, self.modifiers.shift_key());
+            }
+            return;
         }
         self.navigate(event);
     }
@@ -618,6 +664,7 @@ impl App {
         match writing {
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
+            Writing::Answer(session, ticket, _) => self.send_answer(session, ticket),
             Writing::Comment(_) => self.apply(Message::SaveComment),
             Writing::McpSearch => self.search_mcp_registry(),
             Writing::AgentSearch => {}
@@ -968,7 +1015,7 @@ impl App {
     /// list open over the screen takes the window's attention first, and the
     /// buttons do nothing while it is up, as the keys they stand in for do.
     pub(super) fn travelled(&mut self, back: bool) {
-        if !self.onboarded || self.picker.is_some() {
+        if !self.onboarded || self.picker.is_some() || self.settings_open {
             return;
         }
         let action = if back {
@@ -1122,7 +1169,7 @@ impl App {
             return;
         }
 
-        if state == ElementState::Pressed {
+        if state == ElementState::Pressed && !self.settings_open {
             self.pointer_modifiers = self.modifiers;
             if !self
                 .pointer
@@ -1159,13 +1206,18 @@ impl App {
             (None, _) => None,
         };
         if state == ElementState::Released
-            && self.picker.as_ref().is_some_and(|picker| {
-                matches!(
-                    picker.kind(),
-                    crate::picker::Kind::Modes | crate::picker::Kind::Knob
+            && self
+                .picker
+                .as_ref()
+                .is_some_and(|picker| self.is_agent_dropdown(picker))
+            && !matches!(
+                message,
+                Some(
+                    Message::ChoosePicker(_)
+                        | Message::SetAgentKnob(..)
+                        | Message::FlipAgentKnob(..)
                 )
-            })
-            && !matches!(message, Some(Message::ChoosePicker(_)))
+            )
         {
             self.dismiss_picker();
         }
@@ -1175,7 +1227,12 @@ impl App {
             self.agents.clear_selections();
         }
         self.update_pointer_cursor();
+        self.trigger = match state {
+            ElementState::Released => self.ui.as_ref().and_then(pm_ui::Ui::clicked_bounds),
+            ElementState::Pressed => None,
+        };
         self.handle(message);
+        self.trigger = None;
         if state == ElementState::Released {
             self.agent_selection_drag = None;
             self.release_drag();
@@ -1187,6 +1244,9 @@ impl App {
     /// A focused terminal scrolls its own scrollback instead: the page behind
     /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
+        if self.scroll_settings(delta) {
+            return self.request_redraw();
+        }
         let text = self.theme().text;
         if let Some((card, _, _)) = self.notices.shown_installation()
             && self
@@ -1208,8 +1268,7 @@ impl App {
             self.request_redraw();
             return;
         }
-        if self.secondary_sidebar_open
-            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes
+        if self.tool_visible(crate::panes::Tool::Changes)
             && self.history_graph_open
             && self
                 .pointer
@@ -1250,10 +1309,6 @@ impl App {
             return;
         }
         if self.scroll_problems(delta) {
-            self.request_redraw();
-            return;
-        }
-        if self.scroll_settings(delta) {
             self.request_redraw();
             return;
         }
@@ -1322,8 +1377,7 @@ impl App {
     /// Whether a commit message box is on screen: in the sidebar listing the
     /// changes, or in the review pane under the pointer.
     fn commit_showing(&self) -> bool {
-        let listing = self.secondary_sidebar_open
-            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes;
+        let listing = self.tool_visible(crate::panes::Tool::Changes);
         let reviewing = self.scope().is_some_and(|scope| {
             self.pointer
                 .and_then(|at| self.geometry.pane_at(at))

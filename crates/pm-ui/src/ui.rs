@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::SelectionDrag;
 use crate::selection::{SelectionFrame, SelectionRegistry, SelectionSurface};
@@ -13,6 +13,38 @@ use pm_gfx::{DrawList, Point, Rect, Size, TextSystem};
 use crate::element::{Element, Input, LayoutContext, PaintContext, Region, RegionAction};
 use crate::resize::{ResizeEvent, ResizePhase};
 use crate::theme::Theme;
+
+/// How long the pointer rests on an element before its tooltip shows.
+const TOOLTIP_DELAY: Duration = Duration::from_millis(300);
+
+/// A tooltip the pointer is resting on, and since when.
+struct HeldTooltip {
+    /// Where the element asking for it was painted.
+    bounds: Rect,
+    /// What it says.
+    text: String,
+    /// When the pointer came to rest on it.
+    since: Instant,
+    /// Whether a frame has painted it yet.
+    shown: bool,
+}
+
+impl HeldTooltip {
+    /// Keeps the rest time of `held` while `asked` is the same tooltip, or starts it anew.
+    fn hold(held: Option<Self>, asked: Option<(Rect, String)>, now: Instant) -> Option<Self> {
+        asked.map(|(bounds, text)| {
+            let (since, shown) = held
+                .filter(|held| held.bounds == bounds && held.text == text)
+                .map_or((now, false), |held| (held.since, held.shown));
+            Self {
+                bounds,
+                text,
+                since,
+                shown,
+            }
+        })
+    }
+}
 
 /// The cursor shape requested by the element under the pointer.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -83,6 +115,12 @@ pub struct Ui<M> {
     selection_frames: Vec<SelectionFrame>,
     /// The text gesture captured by the held primary button.
     selection_drag: Option<CapturedSelection<M>>,
+    /// Where the region under the held primary button was painted.
+    pressed_bounds: Option<Rect>,
+    /// Where the region whose click the last release completed was painted.
+    clicked_bounds: Option<Rect>,
+    /// The tooltip under the pointer, shown once it has been held long enough.
+    tooltip: Option<HeldTooltip>,
 }
 
 impl<M> Ui<M> {
@@ -97,6 +135,9 @@ impl<M> Ui<M> {
             selections: Rc::new(RefCell::new(SelectionRegistry::default())),
             selection_frames: Vec::new(),
             selection_drag: None,
+            pressed_bounds: None,
+            clicked_bounds: None,
+            tooltip: None,
         }
     }
 
@@ -141,8 +182,11 @@ impl<M> Ui<M> {
         M: Clone,
     {
         self.input.pressed_at = self.input.pointer;
+        self.pressed_bounds = None;
+        self.clicked_bounds = None;
         let pointer = self.input.pointer?;
         let index = self.region_at(pointer);
+        self.pressed_bounds = index.map(|index| self.regions[index].bounds);
         self.focus = None;
         if let Some(surface) = self.selection_surface_at(pointer) {
             let anchor = surface.borrow().spot_at(pointer)?;
@@ -164,16 +208,25 @@ impl<M> Ui<M> {
         let text_parent = index.and_then(|index| {
             matches!(self.regions[index].action, RegionAction::Click(_))
                 .then(|| {
-                    self.regions[..index].iter().rposition(|region| {
-                        region.bounds.contains(pointer)
-                            && matches!(
-                                region.action,
-                                RegionAction::Drag {
-                                    cursor: PointerCursor::Text,
-                                    ..
-                                }
-                            )
-                    })
+                    self.regions[..index]
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .take_while(|(_, region)| {
+                            !region.bounds.contains(pointer)
+                                || !matches!(region.action, RegionAction::Inert)
+                        })
+                        .find_map(|(index, region)| {
+                            (region.bounds.contains(pointer)
+                                && matches!(
+                                    region.action,
+                                    RegionAction::Drag {
+                                        cursor: PointerCursor::Text,
+                                        ..
+                                    }
+                                ))
+                            .then_some(index)
+                        })
                 })
                 .flatten()
         });
@@ -200,6 +253,23 @@ impl<M> Ui<M> {
 
     /// Records a release, returning the message of the region it completed on.
     pub fn pointer_released(&mut self) -> Option<M>
+    where
+        M: Clone,
+    {
+        let released = self.release();
+        self.clicked_bounds = released.as_ref().and(self.pressed_bounds.take());
+        released
+    }
+
+    /// Where the control whose click the last release sent was painted, so
+    /// that what it opens can be placed against it rather than the pointer.
+    pub fn clicked_bounds(&self) -> Option<Rect> {
+        self.clicked_bounds
+    }
+
+    /// Ends the primary press, returning the message of the region it
+    /// completed on.
+    fn release(&mut self) -> Option<M>
     where
         M: Clone,
     {
@@ -270,6 +340,30 @@ impl<M> Ui<M> {
     /// Moves focus among visible click targets matching the caller's message predicate.
     pub fn focus_matching(&mut self, matches: impl Fn(&M) -> bool, backwards: bool) {
         self.clear_text_selection();
+        self.focus = self.find_focus(backwards, |_, region| match &region.action {
+            RegionAction::Click(message) => matches(message),
+            _ => false,
+        });
+    }
+
+    /// Moves focus among unobscured click targets inside a modal's bounds.
+    pub fn focus_within(&mut self, bounds: Rect, backwards: bool) {
+        self.clear_text_selection();
+        self.focus = self.find_focus(backwards, |index, region| {
+            let centre = Point::new(
+                region.bounds.left() + region.bounds.size.width / 2.0,
+                region.bounds.top() + region.bounds.size.height / 2.0,
+            );
+            bounds.contains(centre) && self.region_at(centre) == Some(index)
+        });
+    }
+
+    /// Finds the next visible click target accepted by a focus traversal predicate.
+    fn find_focus(
+        &self,
+        backwards: bool,
+        matches: impl Fn(usize, &Region<M>) -> bool,
+    ) -> Option<usize> {
         let count = self.regions.len();
         let step = if backwards { -1 } else { 1 };
         let base = self
@@ -277,20 +371,15 @@ impl<M> Ui<M> {
             .map_or(if backwards { count as isize } else { -1 }, |index| {
                 index as isize
             });
-        self.focus = (1..=count).find_map(|distance| {
+        (1..=count).find_map(|distance| {
             let index = (base + step * distance as isize).rem_euclid(count as isize) as usize;
             let region = &self.regions[index];
-            match &region.action {
-                RegionAction::Click(message)
-                    if region.bounds.size.width > 0.0
-                        && region.bounds.size.height > 0.0
-                        && matches(message) =>
-                {
-                    Some(index)
-                }
-                _ => None,
-            }
-        });
+            (matches!(region.action, RegionAction::Click(_))
+                && region.bounds.size.width > 0.0
+                && region.bounds.size.height > 0.0
+                && matches(index, region))
+            .then_some(index)
+        })
     }
 
     /// Gives up focus entirely.
@@ -372,7 +461,16 @@ impl<M> Ui<M> {
         let mut cx = PaintContext::new(layout, list, self.input, self.focus, &mut self.regions);
         cx.selections = self.selections.clone();
         root.paint(Rect::new(origin, size), &mut cx);
-        cx.paint_tooltip();
+        let now = Instant::now();
+        self.tooltip = HeldTooltip::hold(self.tooltip.take(), cx.take_tooltip(), now);
+        if let Some(held) = self
+            .tooltip
+            .as_mut()
+            .filter(|held| held.since + TOOLTIP_DELAY <= now)
+        {
+            held.shown = true;
+            cx.paint_tooltip(held.bounds, &held.text);
+        }
         self.selection_frames = std::mem::take(&mut cx.selection_frames);
 
         if self.focus.is_some_and(|index| index >= self.regions.len()) {
@@ -440,6 +538,14 @@ impl<M> Ui<M> {
         let before = state.selection.range();
         state.selection.select(drag.gesture.anchor, head);
         before != state.selection.range()
+    }
+
+    /// Returns when the tooltip under the pointer is due to show, until a frame shows it.
+    pub fn next_tooltip(&self) -> Option<Instant> {
+        self.tooltip
+            .as_ref()
+            .filter(|held| !held.shown)
+            .map(|held| held.since + TOOLTIP_DELAY)
     }
 
     /// Returns the next wakeup for an edge scroll while the pointer is held.

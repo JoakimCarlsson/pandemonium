@@ -20,6 +20,9 @@ use pm_gfx::{
 use crate::style::Style;
 use crate::theme::Theme;
 
+/// How wide a tooltip grows before its text wraps, in logical pixels.
+const TOOLTIP_WIDTH: f32 = 360.0;
+
 /// What the pointer and keyboard are doing, as of the last event.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Input {
@@ -176,17 +179,23 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         self.tooltip = Some((bounds, text));
     }
 
-    /// Paints the tooltip over the completed element tree.
-    pub fn paint_tooltip(&mut self) {
-        let Some((bounds, text)) = self.tooltip.take() else {
-            return;
-        };
+    /// Takes the tooltip the hovered element asked for this frame, if any.
+    pub fn take_tooltip(&mut self) -> Option<(Rect, String)> {
+        self.tooltip.take()
+    }
+
+    /// Paints `text` as a tooltip over `bounds`, above the completed element tree.
+    pub fn paint_tooltip(&mut self, bounds: Rect, text: &str) {
         let theme = *self.layout.theme;
         let font = theme.text.sm;
-        let size = self.measure(&text, font);
+        let lines = self.wrap(text, font, TOOLTIP_WIDTH);
+        let widest = lines
+            .iter()
+            .map(|line| self.measure(line, font).width)
+            .fold(0.0, f32::max);
         let padding = 6.0;
-        let width = size.width + padding * 2.0;
-        let height = size.height + padding;
+        let width = widest + padding * 2.0;
+        let height = lines.len() as f32 * font.line_height + padding;
         let viewport = self.viewport();
         let left = bounds
             .left()
@@ -200,13 +209,42 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
                 .corner_radius(theme.radius.sm)
                 .border(1.0, theme.colors.border),
         );
-        let run = self.shape(&text, font);
-        self.text(
-            Point::new(left + padding, top + padding * 0.5),
-            run,
-            theme.colors.text,
-        );
+        for (row, line) in lines.iter().enumerate() {
+            let run = self.shape(line, font);
+            self.text(
+                Point::new(
+                    left + padding,
+                    top + padding * 0.5 + row as f32 * font.line_height,
+                ),
+                run,
+                theme.colors.text,
+            );
+        }
         self.pop_layer();
+    }
+
+    /// Breaks `text` into lines no wider than `width` in `font`, between words.
+    ///
+    /// A word wider than `width` on its own is given a line of its own rather
+    /// than broken.
+    fn wrap(&mut self, text: &str, font: FontStyle, width: f32) -> Vec<String> {
+        let mut lines = Vec::new();
+        for paragraph in text.lines() {
+            let mut line = String::new();
+            for word in paragraph.split_whitespace() {
+                let longer = match line.is_empty() {
+                    true => word.to_owned(),
+                    false => format!("{line} {word}"),
+                };
+                if !line.is_empty() && self.measure(&longer, font).width > width {
+                    lines.push(std::mem::replace(&mut line, word.to_owned()));
+                } else {
+                    line = longer;
+                }
+            }
+            lines.push(line);
+        }
+        lines
     }
 
     /// Adds a logical row, keeping a paragraph's source positions across wrapping.
@@ -388,16 +426,26 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
             secondary: on_secondary,
         });
 
-        Interaction {
-            hovered: self.input.is_over(bounds),
-            pressed: self.input.is_pressing(bounds),
-            focused: self.focused == Some(index),
-        }
+        self.interaction(bounds, index)
     }
 
     /// The window this frame is being drawn for.
     pub fn viewport(&self) -> Rect {
         self.list.viewport()
+    }
+
+    /// How the pointer and focus stand toward the region at `index`, over the
+    /// part of `bounds` the current clip leaves in sight.
+    ///
+    /// A row scrolled out of a list is still painted, only clipped away, and
+    /// must not count as hovered by a pointer resting on what lies under it.
+    fn interaction(&self, bounds: Rect, index: usize) -> Interaction {
+        let seen = bounds.intersect(self.list.clip());
+        Interaction {
+            hovered: self.input.is_over(seen),
+            pressed: self.input.is_pressing(seen),
+            focused: self.focused == Some(index),
+        }
     }
 
     /// Registers `bounds` as an edge dragged along `axis` by `on_resize`.
@@ -438,11 +486,7 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
             secondary: on_secondary,
         });
 
-        Interaction {
-            hovered: self.input.is_over(bounds),
-            pressed: self.input.is_pressing(bounds),
-            focused: self.focused == Some(index),
-        }
+        self.interaction(bounds, index)
     }
 }
 

@@ -4,9 +4,9 @@ use pm_core::{Project, ProjectId, Projects, Scope, SessionId};
 use pm_gfx::{Point, Rect, Rgba};
 use pm_text::Severity;
 use pm_ui::{
-    Axis, Bounds, Div, Element, IconName, IconSize, LayoutIcon, MenuItem, Styled, Text, Theme,
-    button, h_flex, icon, icon_button, layout_icon_button, measured, menu, menu_entry,
-    menu_separator, overlay, overlay_above, rule, sash, text, v_flex, view_tab,
+    Bounds, Div, Element, IconName, IconSize, MenuItem, Styled, Text, Theme, button, h_flex, icon,
+    icon_button, measured, menu, menu_entry, menu_separator, overlay, overlay_above, rule, text,
+    v_flex,
 };
 
 use crate::agent::{Standing, Tally, standing_color};
@@ -14,9 +14,10 @@ use crate::editor::{FileId, OpenFile};
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::notice::{Shown, Tone};
-use crate::panel::{Panel, PanelView, bottom_panel};
+use crate::panel::PanelView;
 use crate::panes::{Item, PaneId};
-use crate::review::{Review, SourceControlControls, changes_sidebar};
+use crate::project_groups::{self, ProjectGroup, ProjectRow};
+use crate::review::Review;
 use crate::terminal::{ShellEntry, ShellId};
 
 /// How far the tab under the pointer sits from the pointer itself.
@@ -50,35 +51,11 @@ const DOT_SIZE: f32 = 7.0;
 /// How far the halo around a lit dot reaches past it.
 const DOT_HALO: f32 = 3.0;
 
-/// Width the primary sidebar opens at, and the range it resizes within.
-pub const PRIMARY_SIDEBAR_WIDTH: f32 = 252.0;
-
-/// Smallest and largest width the primary sidebar resizes to.
-pub const PRIMARY_SIDEBAR_RANGE: (f32, f32) = (160.0, 480.0);
-
-/// Height the bottom panel opens at.
-pub const BOTTOM_PANEL_HEIGHT: f32 = 220.0;
-
-/// Smallest and largest height the bottom panel resizes to.
-pub const BOTTOM_PANEL_RANGE: (f32, f32) = (120.0, 600.0);
-
-/// Width the secondary sidebar opens at.
-pub const SECONDARY_SIDEBAR_WIDTH: f32 = 252.0;
-
-/// Smallest and largest width the secondary sidebar resizes to.
-pub const SECONDARY_SIDEBAR_RANGE: (f32, f32) = (160.0, 480.0);
-
 /// Height the Source Control graph opens at.
 pub const HISTORY_GRAPH_HEIGHT: f32 = 190.0;
 
 /// Smallest and largest height the Source Control graph resizes to.
-pub const HISTORY_GRAPH_RANGE: (f32, f32) = (80.0, 520.0);
-
-/// Height an agent's prompt box opens at: three lines of text.
-pub const PROMPT_HEIGHT: f32 = 84.0;
-
-/// Smallest and largest height an agent's prompt box resizes to.
-pub const PROMPT_RANGE: (f32, f32) = (28.0, 560.0);
+pub const HISTORY_GRAPH_RANGE: (f32, f32) = (80.0, f32::MAX);
 
 /// Which workspace regions are visible and how large they are.
 ///
@@ -86,20 +63,6 @@ pub const PROMPT_RANGE: (f32, f32) = (28.0, 560.0);
 /// both what a frame is drawn from and what [`crate::config`] writes down.
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
-    /// Whether the primary sidebar is visible.
-    pub primary_sidebar_open: bool,
-    /// Width of the primary sidebar.
-    pub primary_sidebar_width: f32,
-    /// Whether the bottom panel is visible.
-    pub bottom_panel_open: bool,
-    /// Height of the bottom panel.
-    pub bottom_panel_height: f32,
-    /// Whether the secondary sidebar is visible.
-    pub secondary_sidebar_open: bool,
-    /// Width of the secondary sidebar.
-    pub secondary_sidebar_width: f32,
-    /// Which of the worktree's two lists that sidebar is showing.
-    pub secondary_sidebar_view: SidebarView,
     /// Height of the Source Control graph.
     pub history_graph_height: f32,
     /// Whether the Source Control graph is visible.
@@ -108,83 +71,18 @@ pub struct Layout {
     pub changes_section_open: bool,
     /// Whether the Graph includes every history reference.
     pub history_all: bool,
-    /// Height of the box an agent's prompt is written in.
-    pub prompt_height: f32,
-}
-
-/// What the sidebar beside the panes is listing.
-///
-/// The worktree is one thing looked at two ways: the files it holds, and
-/// what has changed in them. They share a sidebar because they are both the
-/// worktree, and a reader is looking at one or the other.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum SidebarView {
-    /// Every file of the worktree.
-    #[default]
-    Files,
-    /// Everything that has changed in it.
-    Changes,
-}
-
-impl SidebarView {
-    /// Both views, in the order the switch offers them.
-    pub const ALL: [Self; 2] = [Self::Files, Self::Changes];
-
-    /// What the switch calls this view.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Files => "Files",
-            Self::Changes => "Changes",
-        }
-    }
 }
 
 impl Default for Layout {
     /// The regions a first launch opens with.
     fn default() -> Self {
         Self {
-            primary_sidebar_open: true,
-            primary_sidebar_width: PRIMARY_SIDEBAR_WIDTH,
-            bottom_panel_open: false,
-            bottom_panel_height: BOTTOM_PANEL_HEIGHT,
-            secondary_sidebar_open: true,
-            secondary_sidebar_width: SECONDARY_SIDEBAR_WIDTH,
-            secondary_sidebar_view: SidebarView::default(),
             history_graph_height: HISTORY_GRAPH_HEIGHT,
             history_graph_open: true,
             changes_section_open: true,
             history_all: false,
-            prompt_height: PROMPT_HEIGHT,
         }
     }
-}
-
-/// The worktree the sidebar beside the panes lists, either way it lists it.
-pub struct Worktree<'a> {
-    /// The tree itself, when the window has a project open.
-    pub listing: Option<crate::tree::Listing<'a>>,
-    /// What has changed in it, once git has been asked.
-    pub review: Option<&'a Review>,
-    /// Whether the commit message is where keystrokes are going.
-    pub committing: bool,
-    /// Whether the focused input caret is in its visible blink phase.
-    pub caret: bool,
-    /// Where the Source Control commit split button was drawn last frame.
-    pub commit_bounds: Bounds,
-    /// Where the Graph reference filter was drawn last frame.
-    pub history_refs_bounds: Bounds,
-    /// Bounds of the Graph panel from the last frame.
-    pub history_graph_bounds: Bounds,
-    /// Where the Source Control list of changes was drawn last frame.
-    pub changes_area: Bounds,
-    /// Whether the Graph shows every history reference.
-    pub history_all: bool,
-    /// Height of the Source Control graph.
-    pub history_graph_height: f32,
-    /// Whether the Source Control graph is visible.
-    pub history_graph_open: bool,
-    /// Whether the Source Control changes section is expanded.
-    pub changes_section_open: bool,
 }
 
 /// The projects the sidebar lists, and where its rows came out last frame.
@@ -193,8 +91,6 @@ pub struct ProjectList<'a> {
     pub open: &'a Projects,
     /// The sessions hanging under each of them.
     pub sessions: &'a [SidebarProject],
-    /// Where the rows were drawn, for a project carried up or down them.
-    pub bounds: Bounds,
 }
 
 /// The sessions belonging to one open project.
@@ -246,8 +142,10 @@ pub struct Panes {
     pub drop: Option<Rect>,
     /// The tab the pointer is carrying, where it is and what it is called.
     pub carried: Option<(Point, String)>,
-    /// The bottom panel and the views in it.
-    pub panel: Panel,
+    /// Number of shells running in the active worktree.
+    pub shells: usize,
+    /// Whether the terminal tool is visible.
+    pub terminal_visible: bool,
     /// How many agents are running in the active project's worktree.
     pub agents: usize,
     /// How every agent in the window stands, across all its projects.
@@ -298,10 +196,14 @@ pub enum MenuTarget {
     Tab(PaneId, Item),
     /// One of the editor panes itself.
     Pane(PaneId),
+    /// The menu of registered workspace tools.
+    Tools,
     /// The control that adds another project to the window.
     Projects,
     /// One of the projects the window holds open.
     Project(ProjectId),
+    /// A named group of projects.
+    ProjectGroup(usize),
     /// One of the sessions hanging under one of them.
     Session(SessionId),
     /// A shell running in the bottom panel.
@@ -346,27 +248,21 @@ pub enum MenuTarget {
     Agents(Standing),
 }
 
-/// Builds the workspace with its resizable sessions sidebar.
+/// Builds the workspace from its pane tree, overlays and window bars.
 pub fn workspace(
     theme: &Theme,
     projects: ProjectList<'_>,
-    files: Worktree<'_>,
-    layout: Layout,
+    review: Option<&Review>,
     command_center: Bounds,
     panes: Panes,
     update: bool,
 ) -> Div<Message> {
-    let ProjectList {
-        open,
-        sessions,
-        bounds: project_list,
-    } = projects;
-    let status = Status::of(open, sessions, &panes, layout, &files);
+    let ProjectList { open, sessions } = projects;
+    let status = Status::of(open, sessions, &panes, review);
     let Panes {
         editor,
         drop,
         carried,
-        panel,
         menu: open_menu,
         overlays,
         ..
@@ -377,32 +273,11 @@ pub fn workspace(
         .h_full()
         .child(titlebar(
             theme,
-            layout,
             whereabouts(open, sessions),
             command_center,
             update,
         ))
-        .child(
-            h_flex()
-                .w_full()
-                .flex_1()
-                .items_stretch()
-                .when(layout.primary_sidebar_open, |body| {
-                    body.child(projects_sidebar(
-                        theme,
-                        open,
-                        sessions,
-                        project_list,
-                        layout.primary_sidebar_width,
-                    ))
-                    .child(sash(Axis::Horizontal, Message::ResizeSidebar))
-                })
-                .child(main_area(theme, layout, panel, editor))
-                .when(layout.secondary_sidebar_open, |body| {
-                    body.child(sash(Axis::Horizontal, Message::ResizeSecondarySidebar))
-                        .child(worktree_sidebar(theme, &files, layout))
-                }),
-        )
+        .child(v_flex().w_full().flex_1().overflow_hidden().child(editor))
         .child(rule(theme))
         .child(status_bar(theme, status))
         .when_some(drop, |screen, area| {
@@ -496,6 +371,8 @@ pub fn add_project_items() -> Vec<MenuItem<Message>> {
     vec![
         menu_entry("Open Folder…", Some(Message::OpenProject)),
         menu_entry("Clone from a URL…", Some(Message::CloneProject)),
+        menu_separator(),
+        menu_entry("New Group…", Some(Message::NewProjectGroup(None))),
     ]
 }
 
@@ -633,8 +510,7 @@ impl Status {
         open: &Projects,
         sessions: &[SidebarProject],
         panes: &Panes,
-        layout: Layout,
-        files: &Worktree<'_>,
+        review: Option<&Review>,
     ) -> Self {
         let (project, pointed) = pointed_at(open, sessions);
         let showing = panes.showing.as_ref().map(|file| file.borrow());
@@ -643,21 +519,20 @@ impl Status {
         Self {
             project: project.map(|project| project.name().to_owned()),
             branch: pointed.or_else(|| {
-                files
-                    .review
+                review
                     .and_then(crate::review::Review::head)
                     .map(pm_core::Head::name)
             }),
             sessions: project.map_or(0, |project| sessions_of(project, sessions).len()),
-            changes: files.review.map_or(0, |review| review.changed().len()),
-            shells: panes.panel.shells.len(),
+            changes: review.map_or(0, |review| review.changed().len()),
+            shells: panes.shells,
             agents: panes.agents,
             tally: panes.tally,
             notice: panes.notice.clone(),
             activity: panes.activity.clone(),
             server: panes.server.clone(),
             server_turn: panes.server_turn,
-            panel_open: layout.bottom_panel_open,
+            panel_open: panes.terminal_visible,
             cursor: buffer.map(|buffer| {
                 let head = buffer.selection().head;
                 (head.line + 1, head.column + 1)
@@ -776,7 +651,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                     theme,
                     Some(IconName::GitCompare),
                     changes.to_string(),
-                    Some(Message::SetSidebarView(SidebarView::Changes)),
+                    Some(Message::ShowTool(crate::panes::Tool::Changes)),
                     false,
                 )
                 .tooltip(counted(changes, "change")),
@@ -850,16 +725,13 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                 theme,
                 Some(IconName::Sparkle),
                 match agents {
-                    0 => "New agent".to_owned(),
-                    running => running.to_string(),
+                    0 => "Chat".to_owned(),
+                    running => format!("Chat · {running}"),
                 },
-                Some(Message::NewAgentSession),
+                Some(Message::ShowTool(crate::panes::Tool::Chat)),
                 agents > 0,
             )
-            .tooltip(match agents {
-                0 => "New agent".to_owned(),
-                running => counted(running, "agent"),
-            }),
+            .tooltip("Open Chat"),
         )
         .child(
             status_item(
@@ -1069,13 +941,7 @@ pub fn counted(count: usize, noun: &str) -> String {
 /// The bar is three columns of which the outer two share what is left over
 /// equally, so the command center between them sits in the middle of the
 /// window whatever is drawn either side of it.
-fn titlebar(
-    theme: &Theme,
-    layout: Layout,
-    here: String,
-    bounds: Bounds,
-    update: bool,
-) -> Div<Message> {
+fn titlebar(theme: &Theme, here: String, bounds: Bounds, update: bool) -> Div<Message> {
     h_flex()
         .w_full()
         .h_px(theme.size.titlebar)
@@ -1121,21 +987,10 @@ fn titlebar(
                             icon_button(theme, IconName::Settings, Message::OpenSettings)
                                 .tooltip("Open Settings"),
                         )
-                        .child(layout_icon_button(
-                            LayoutIcon::PrimarySidebar,
-                            layout.primary_sidebar_open,
-                            Message::TogglePrimarySidebar,
-                        ))
-                        .child(layout_icon_button(
-                            LayoutIcon::BottomPanel,
-                            layout.bottom_panel_open,
-                            Message::ToggleBottomPanel,
-                        ))
-                        .child(layout_icon_button(
-                            LayoutIcon::SecondarySidebar,
-                            layout.secondary_sidebar_open,
-                            Message::ToggleSecondarySidebar,
-                        )),
+                        .child(
+                            icon_button(theme, IconName::Split, Message::ShowToolsMenu)
+                                .tooltip("Workspace Tools"),
+                        ),
                 )
                 .child(v_flex().w(2.5))
                 .child(window_controls()),
@@ -1189,23 +1044,6 @@ fn whereabouts(open: &Projects, sessions: &[SidebarProject]) -> String {
     }
 }
 
-/// Builds the central pane area and optional bottom panel.
-fn main_area(
-    theme: &Theme,
-    layout: Layout,
-    panel: Panel,
-    editor: Box<dyn Element<Message>>,
-) -> Div<Message> {
-    v_flex()
-        .flex_1()
-        .h_full()
-        .child(v_flex().w_full().flex_1().overflow_hidden().child(editor))
-        .when(layout.bottom_panel_open, |main| {
-            main.child(sash(Axis::Vertical, Message::ResizeBottomPanel))
-                .child(bottom_panel(theme, layout.bottom_panel_height, panel))
-        })
-}
-
 /// Builds native-style controls for undecorated Linux and Windows windows.
 #[cfg(not(target_os = "macos"))]
 fn window_controls() -> Div<Message> {
@@ -1227,64 +1065,6 @@ fn window_controls() -> Div<Message> {
     h_flex()
 }
 
-/// Builds the sidebar beside the panes: the switch, then what it is showing.
-fn worktree_sidebar(theme: &Theme, files: &Worktree<'_>, layout: Layout) -> Div<Message> {
-    let width = layout.secondary_sidebar_width;
-    let view = layout.secondary_sidebar_view;
-
-    v_flex()
-        .w_px(width)
-        .h_full()
-        .overflow_hidden()
-        .bg(theme.colors.surface)
-        .child(view_switch(theme, view))
-        .child(match view {
-            SidebarView::Files => crate::tree::files_sidebar(theme, files.listing.as_ref(), width),
-            SidebarView::Changes => changes_sidebar(
-                theme,
-                files.review,
-                files.committing,
-                width,
-                SourceControlControls {
-                    solid: files.caret,
-                    commit_bounds: files.commit_bounds.clone(),
-                    history_refs_bounds: files.history_refs_bounds.clone(),
-                    history_graph_bounds: files.history_graph_bounds.clone(),
-                    changes_area: files.changes_area.clone(),
-                    history_all: files.history_all,
-                    history_graph_height: files.history_graph_height,
-                    history_graph_open: files.history_graph_open,
-                    changes_section_open: files.changes_section_open,
-                },
-            ),
-        })
-}
-
-/// Builds the switch between the worktree's files and what has changed, as
-/// a bar as tall as the panes' bars of tabs so the two line up.
-fn view_switch(theme: &Theme, view: SidebarView) -> Div<Message> {
-    v_flex()
-        .w_full()
-        .h_px(theme.size.tab_bar)
-        .child(
-            h_flex()
-                .w_full()
-                .flex_1()
-                .items_stretch()
-                .children(SidebarView::ALL.map(|offered| {
-                    view_tab(
-                        theme,
-                        offered.label(),
-                        offered == view,
-                        None,
-                        Message::SetSidebarView(offered),
-                    )
-                    .flex_1()
-                })),
-        )
-        .child(rule(theme))
-}
-
 /// `path` written the way a prompt writes it, against the home directory.
 pub fn shortened(path: &std::path::Path) -> String {
     let path = path.display().to_string();
@@ -1294,7 +1074,7 @@ pub fn shortened(path: &std::path::Path) -> String {
     }
 }
 
-/// Builds the projects sidebar: every open project, its sessions beneath it.
+/// Builds the Projects tool: every open project, its sessions beneath it.
 ///
 /// A project's own row is its checkout — what the repository is called, and
 /// the branch it has out — and every row under it is a session of it, saying
@@ -1302,40 +1082,42 @@ pub fn shortened(path: &std::path::Path) -> String {
 /// window: what is being worked on, and how much of it there is. The rows
 /// leave where they came out in `list`, so a project carried up or down them
 /// can be told where it would land.
-fn projects_sidebar(
+pub fn projects_view(
     theme: &Theme,
     open: &Projects,
     sessions: &[SidebarProject],
+    groups: &[ProjectGroup],
+    focused: bool,
     list: Bounds,
-    width: f32,
 ) -> Div<Message> {
-    let rows = open
-        .iter()
-        .filter_map(|project| {
-            let entry = sessions
-                .iter()
-                .find(|entry| entry.project == project.id())?;
-            Some(project_rows(theme, project, entry))
+    let rows = project_groups::rows(open, groups)
+        .into_iter()
+        .filter_map(|row| match row {
+            ProjectRow::Heading(group) => Some(project_group_heading(theme, groups, group)),
+            ProjectRow::Project(id, _) => {
+                let project = open.get(id)?;
+                let entry = sessions.iter().find(|entry| entry.project == id)?;
+                Some(project_rows(theme, project, entry, focused))
+            }
         })
         .collect::<Vec<_>>();
 
     v_flex()
-        .w_px(width)
-        .h_full()
+        .w_full()
+        .flex_1()
         .overflow_hidden()
-        .bg(theme.colors.surface)
         .child(
             h_flex()
                 .w_full()
-                .px(3)
-                .pt(2)
-                .pb(1.5)
+                .h_px(theme.size.row)
+                .pl(1.5)
+                .pr(1)
                 .items_center()
                 .justify_between()
                 .child(
-                    text("PROJECTS")
-                        .text_xs()
-                        .font_light()
+                    text("Projects")
+                        .text_sm()
+                        .font_mono()
                         .color(theme.colors.text_subtle),
                 )
                 .child(add_project(theme)),
@@ -1414,15 +1196,20 @@ fn sessions_of<'a>(project: &Project, sessions: &'a [SidebarProject]) -> &'a [Si
 }
 
 /// Builds one project: its own row, then a row for each of its sessions.
-fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div<Message> {
+fn project_rows(
+    theme: &Theme,
+    project: &Project,
+    entry: &SidebarProject,
+    focused: bool,
+) -> Div<Message> {
     v_flex()
         .w_full()
-        .child(project_row(theme, project, entry))
+        .child(project_row(theme, project, entry, focused))
         .children(
             entry
                 .sessions
                 .iter()
-                .map(|session| session_row(theme, session)),
+                .map(|session| session_row(theme, session, focused)),
         )
 }
 
@@ -1434,18 +1221,29 @@ fn project_rows(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div
 /// repositories states how many it holds, and a plain folder states nothing
 /// beside its name. The row is carried to reorder the projects, and a press
 /// that goes nowhere activates it.
-fn project_row(theme: &Theme, project: &Project, entry: &SidebarProject) -> Div<Message> {
+fn project_row(
+    theme: &Theme,
+    project: &Project,
+    entry: &SidebarProject,
+    focused: bool,
+) -> Div<Message> {
     let selected = entry.at_checkout;
     let id = project.id();
-    row(theme, selected)
+    row(theme, selected, focused)
         .on_drag(move |event| Message::DragProject(id, event))
         .on_secondary_click(Message::ProjectMenu(project.id()))
-        .child(marker(theme, selected))
-        .child(v_flex().w(2))
+        .pl(1.5)
+        .gap(0.5)
+        .child(
+            icon(IconName::FolderOpen)
+                .size(IconSize::Medium)
+                .color(theme.colors.text_subtle),
+        )
+        .child(v_flex().w(1))
         .child(named(
             text(project.name().to_owned())
                 .text_sm()
-                .font_medium()
+                .font_light()
                 .color(theme.colors.text),
         ))
         .children(project_reading(project).map(|said| {
@@ -1468,8 +1266,8 @@ fn project_reading(project: &Project) -> Option<String> {
 }
 
 /// Builds one session row: its state, what it is called, how far it has gone.
-fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
-    row(theme, session.selected)
+fn session_row(theme: &Theme, session: &SidebarSession, focused: bool) -> Div<Message> {
+    row(theme, session.selected, focused)
         .on_click(Message::SelectSession(session.id))
         .on_secondary_click(Message::SessionMenu(session.id))
         .child(marker(theme, session.selected))
@@ -1494,14 +1292,23 @@ fn session_row(theme: &Theme, session: &SidebarSession) -> Div<Message> {
 }
 
 /// Builds the box a project or session row is laid out in.
-fn row(theme: &Theme, selected: bool) -> Div<Message> {
+fn row(theme: &Theme, selected: bool, focused: bool) -> Div<Message> {
     h_flex()
         .w_full()
         .h_px(theme.size.row)
         .overflow_hidden()
         .pr(3)
         .items_center()
-        .when(selected, |row| row.bg(theme.colors.surface_selected))
+        .when(selected, |row| {
+            row.bg(if focused {
+                theme.colors.surface_selected
+            } else {
+                theme.colors.surface_active
+            })
+        })
+        .when(selected && focused, |row| {
+            row.border_1(theme.colors.border_focused)
+        })
         .hover_bg(theme.colors.surface_hover)
 }
 
@@ -1572,5 +1379,41 @@ fn state_dot(theme: &Theme, color: Rgba) -> Div<Message> {
                 .size_px(DOT_SIZE)
                 .rounded(theme.radius.full)
                 .bg(color),
+        )
+}
+
+/// Builds a foldable group heading with the same folder colours as Files.
+fn project_group_heading(
+    theme: &Theme,
+    groups: &[ProjectGroup],
+    index: Option<usize>,
+) -> Div<Message> {
+    let group = index.and_then(|index| groups.get(index));
+    h_flex()
+        .w_full()
+        .h_px(theme.size.row)
+        .pl(1.5)
+        .pr(1)
+        .gap(0.5)
+        .items_center()
+        .overflow_hidden()
+        .hover_bg(theme.colors.surface_hover)
+        .when_some(index, |row, index| {
+            row.on_click(Message::ToggleProjectGroup(index))
+                .on_secondary_click(Message::ProjectGroupMenu(index))
+        })
+        .child(
+            icon(if group.is_some_and(|group| group.collapsed) {
+                IconName::ChevronRight
+            } else {
+                IconName::ChevronDown
+            })
+            .size(IconSize::Medium)
+            .color(theme.colors.text_subtle),
+        )
+        .child(
+            text(group.map_or("Ungrouped", |group| group.name.as_str()))
+                .text_sm()
+                .color(theme.colors.text_subtle),
         )
 }

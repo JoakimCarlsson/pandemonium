@@ -17,12 +17,11 @@ use crate::keymap::Action;
 use crate::markdown::DiagramZoom;
 use crate::notice::{NoticeId, NotificationAction};
 use crate::panel::PanelView;
-use crate::panes::{Item, PaneId, SplitDirection, SplitId};
+use crate::panes::{Item, PaneId, SplitDirection, SplitId, Tool};
 use crate::review::comment::{CommentId, Side as CommentSide};
 use crate::review::{ChangeId, ConflictAction, Group, RepositoryAction};
 use crate::settings::{FormField, SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
-use crate::workspace::SidebarView;
 
 /// A matching option on a project search pane.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -147,6 +146,8 @@ pub enum Message {
     Finish,
     /// Open the settings pane, or bring it forward where it is open.
     OpenSettings,
+    /// Close the window preferences modal and return to the workspace.
+    CloseSettings,
     /// Copies the running version and source commit to the system clipboard.
     CopyVersion,
     /// Open the repository the editor is published from.
@@ -221,6 +222,18 @@ pub enum Message {
     CloseProject(ProjectId),
     /// Open the menu of things that can be done to this project.
     ProjectMenu(ProjectId),
+    /// Name a new project group, optionally placing a project in it.
+    NewProjectGroup(Option<ProjectId>),
+    /// Name an existing project group.
+    RenameProjectGroup(usize),
+    /// Remove a group while keeping its projects open.
+    RemoveProjectGroup(usize),
+    /// Fold or unfold a project group.
+    ToggleProjectGroup(usize),
+    /// Open the actions for a project group.
+    ProjectGroupMenu(usize),
+    /// Move a project to a group, or leave it ungrouped.
+    AssignProjectGroup(ProjectId, Option<usize>),
     /// Press, drag or let go of this project's row in the projects sidebar.
     DragProject(ProjectId, ResizeEvent),
     /// Cut a session of the active project from the branch it has out.
@@ -241,18 +254,14 @@ pub enum Message {
     FinishSession(SessionId),
     /// Finish this session, having been told to.
     EndSession(SessionId),
-    /// Resize the sessions sidebar.
-    ResizeSidebar(ResizeEvent),
     /// Minimize the application window.
     MinimizeWindow,
     /// Toggle whether the application window is maximized.
     ToggleMaximizedWindow,
     /// Close the application window.
     CloseWindow,
-    /// Toggle the primary sidebar.
-    TogglePrimarySidebar,
-    /// Toggle the bottom panel.
-    ToggleBottomPanel,
+    /// Close a registered tool, or reopen it when it is closed.
+    ToggleTool(Tool),
     /// Bring this view of the bottom panel to the front, opening the panel.
     ShowPanelView(PanelView),
     /// Close the bottom panel when this view is in front of it, and bring
@@ -278,16 +287,8 @@ pub enum Message {
     RenameTerminal(ShellId),
     /// Drag the terminal's scrollbar, so many lines to a pixel of travel.
     ScrollTerminal(ResizeEvent, f32),
-    /// Toggle the secondary sidebar.
-    ToggleSecondarySidebar,
-    /// Resize the bottom panel.
-    ResizeBottomPanel(ResizeEvent),
-    /// Resize the secondary sidebar.
-    ResizeSecondarySidebar(ResizeEvent),
     /// Resize the Source Control graph.
     ResizeHistoryGraph(ResizeEvent),
-    /// Resize the box agents' prompts are written in.
-    ResizeAgentPrompt(ResizeEvent),
     /// Show or hide the Source Control graph.
     ToggleHistoryGraph,
     /// Expand or collapse the Source Control changes section.
@@ -494,8 +495,14 @@ pub enum Message {
     CloseOtherTerminals(ShellId),
     /// End every shell of the project.
     CloseAllTerminals,
-    /// Show this in the sidebar that lists the worktree.
-    SetSidebarView(SidebarView),
+    /// Show a registered workspace tool wherever its tab lives.
+    ShowTool(Tool),
+    /// Move a registered workspace tool into this pane.
+    MoveTool(PaneId, Tool),
+    /// Show the menu of workspace tools.
+    ShowToolsMenu,
+    /// Restore the default pane arrangement without closing live tabs.
+    ResetWindowLayout,
     /// Open the active project's changes for review, in a pane.
     OpenReview,
     /// Open the active worktree's changes as excerpts of their files, to be
@@ -652,6 +659,10 @@ pub enum Message {
     ConfirmAbortMerge,
     /// Ask which agent to start in the active project's worktree.
     NewAgentSession,
+    /// Starts the chosen agent in the active worktree.
+    StartAgent(pm_acp::Agent),
+    /// Opens settings for the agents offered by the chat launcher.
+    ManageAgentServers,
     /// Put the prompt's cursor where a press landed, selecting to it.
     ///
     /// A press in the prompt is also what gives it the keyboard, so this is
@@ -662,12 +673,25 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
-    /// Edit the field in this place of the form the agent put under this ticket.
-    EditAnswer(TalkId, u64, usize),
+    /// Refuse this session's permission request under this ticket.
+    DenyAgent(TalkId, u64),
+    /// Give the keyboard to the box the field in this place of the form the
+    /// agent put under this ticket is written in, picking it where it is the
+    /// reader's own answer to a choice.
+    TypeAnswer(TalkId, u64, usize),
+    /// Put the caret of the box the field in this place of the form the
+    /// agent put under this ticket is written in where a press landed,
+    /// selecting to it.
+    WriteAnswer(TalkId, u64, usize, ResizePhase, Position, Position),
     /// Send the form the agent put under this ticket, filled in as it is.
     SendAnswer(TalkId, u64),
-    /// Refuse, on purpose, the question the agent put under this ticket.
-    DeclineAnswer(TalkId, u64),
+    /// Choose the alternative in the last place, of the field in the place
+    /// before it, of the form the agent put under this ticket.
+    ChooseAnswer(TalkId, u64, usize, usize),
+    /// Show the page in this place of the form the agent put under this ticket.
+    ShowAnswerPage(TalkId, u64, usize),
+    /// Fold the form the agent put under this ticket down to its tabs, or open it again.
+    FoldAnswer(TalkId, u64),
     /// Walk away from the question the agent put under this ticket.
     CancelAnswer(TalkId, u64),
     /// Open the page the agent sent the reader to under this ticket.
@@ -680,6 +704,9 @@ pub enum Message {
     /// Drag this session's scrollbar, so many pixels of the conversation to
     /// a pixel of travel.
     ScrollAgent(TalkId, ResizeEvent, f32),
+    /// Drag the scrollbar of this session's offered commands, so many pixels
+    /// of the list to a pixel of travel.
+    ScrollAgentCommands(TalkId, ResizeEvent, f32),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
     /// Toggles the full output and descendants of one tool call.
@@ -717,6 +744,15 @@ pub enum Message {
     ShowAgentDeletions(TalkId),
     /// Act on the knob in this place: ask which value, or flip the switch.
     PressKnob(TalkId, usize),
+    /// Set the knob in this place to the value in that place, from inside the
+    /// choices it is shown among, which stay open.
+    SetAgentKnob(TalkId, usize, usize),
+    /// Drag the scrollbar of this session's prompt, with the rows one pixel
+    /// of the drag is worth.
+    DragAgentPrompt(TalkId, ResizeEvent, f32),
+    /// Flip the switch in this place, from inside the choices it is shown
+    /// among, which stay open.
+    FlipAgentKnob(TalkId, usize),
     /// Start naming one of this session's commands, in its prompt.
     StartAgentCommand(TalkId),
     /// Start naming a locally installed skill in this session's prompt.

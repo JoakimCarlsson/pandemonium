@@ -93,6 +93,11 @@ impl Input {
         self.value().is_empty()
     }
 
+    /// How many rows its text comes to, as wide as the box was last drawn.
+    pub fn rows(&self) -> usize {
+        self.text.borrow().total_rows()
+    }
+
     /// Empties it.
     pub fn clear(&mut self) {
         self.edit(|buffer| {
@@ -188,8 +193,25 @@ impl Input {
     /// A box stops with its last line at its foot, not at its head the way
     /// a file does: past that there is only the empty box to look at.
     pub fn scroll_by(&self, pixels: f32) {
+        self.text.borrow_mut().scroll_by_pixels(pixels);
+        self.keep_foot();
+    }
+
+    /// How many rows of its text are above the first one the box shows.
+    pub fn rows_above(&self) -> usize {
+        self.text.borrow().rows_above()
+    }
+
+    /// Shows the box from the row `rows` into its text down, no deeper than
+    /// its last line at its foot.
+    pub fn scroll_to_row(&self, rows: usize) {
+        self.text.borrow_mut().scroll_to_wrapped(rows);
+        self.keep_foot();
+    }
+
+    /// Brings a box scrolled past its last line back to that line at its foot.
+    fn keep_foot(&self) {
         let mut text = self.text.borrow_mut();
-        text.scroll_by_pixels(pixels);
         let deepest = text.row_after(text.last_row(), 1 - text.rows().max(1) as isize);
         if text.top() >= deepest {
             text.scroll_to_row(deepest);

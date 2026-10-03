@@ -8,7 +8,6 @@ use crate::app::{App, RemoteOperation};
 use crate::message::Message;
 use crate::panel::PanelView;
 use crate::terminal::Exited;
-use crate::workspace::SidebarView;
 
 impl App {
     /// Carries out the messages a notice sends.
@@ -100,7 +99,7 @@ impl App {
 
     /// Says how a remote operation in `scope` came out.
     pub(super) fn hear_remote(&mut self, scope: Scope, kind: RemoteOperation, said: &Said) {
-        let changes = Some(Message::SetSidebarView(SidebarView::Changes));
+        let changes = Some(Message::ShowTool(crate::panes::Tool::Changes));
         let place = self.worktree_name(scope);
         match said {
             Ok(_) => self

@@ -14,6 +14,9 @@ use crate::keymap::Action;
 impl App {
     /// Gives the keyboard to the bottom panel's shell.
     pub(super) fn focus_terminal(&mut self) {
+        if let Some(pane) = self.tool_pane(crate::panes::Tool::Terminal) {
+            self.focus_pane(pane);
+        }
         self.terminal_focused = true;
         self.editor_focused = false;
     }

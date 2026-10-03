@@ -35,6 +35,7 @@ mod outline;
 mod panel;
 mod panes;
 mod picker;
+mod project_groups;
 mod prompt;
 mod release;
 mod review;

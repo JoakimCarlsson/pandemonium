@@ -1039,7 +1039,7 @@ impl App {
     /// The question is asked again only when the pointer reaches another
     /// name, so sliding along one costs nothing after the first answer.
     pub(super) fn follow_pointer(&mut self, point: pm_gfx::Point) {
-        if !self.modifiers.control_key() {
+        if self.settings_open || !self.modifiers.control_key() {
             return self.drop_link();
         }
         let Some((file, word)) = self.word_under(point) else {

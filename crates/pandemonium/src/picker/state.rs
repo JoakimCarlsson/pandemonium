@@ -77,6 +77,8 @@ pub enum Kind {
     Rename,
     /// What to call the terminal, which is a prompt too.
     RenameTerminal(ShellId),
+    /// Create or rename a project group, optionally grouping one project.
+    ProjectGroup(Option<usize>, Option<pm_core::ProjectId>),
     /// The name of a local branch to create and check out.
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
@@ -126,10 +128,6 @@ pub enum Kind {
     Watch,
     /// Tasks offered by the worktree in front.
     Tasks,
-    /// A line of text or a number for a field of a form the agent asked to have filled in.
-    AnswerText,
-    /// What a field of a form the agent asked to have filled in can be.
-    AnswerOptions,
 }
 
 impl Kind {
@@ -161,6 +159,7 @@ impl Kind {
             Self::Line => "Go to line",
             Self::Rename => "New name",
             Self::RenameTerminal(_) => "What the terminal is called",
+            Self::ProjectGroup(..) => "Group name",
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
@@ -185,8 +184,6 @@ impl Kind {
             Self::BreakpointLog => "Log message, e.g. i is {i}",
             Self::Watch => "Watch expression",
             Self::Tasks => "Run a task in this worktree",
-            Self::AnswerText => "Your answer, blank to clear it",
-            Self::AnswerOptions => "Choose, Esc when done",
         }
     }
 
@@ -201,6 +198,7 @@ impl Kind {
                 | Self::Watch
                 | Self::Rename
                 | Self::RenameTerminal(_)
+                | Self::ProjectGroup(..)
                 | Self::NewBranch
                 | Self::StashMessage
                 | Self::NewSession
@@ -212,7 +210,6 @@ impl Kind {
                 | Self::ThemeName
                 | Self::LanguageFormatter(_)
                 | Self::KeymapName
-                | Self::AnswerText
         )
     }
 
@@ -302,8 +299,6 @@ pub enum Choice {
     SessionRepository(PathBuf),
     /// Cut the session about to be cut, of the repositories ticked.
     StartSession,
-    /// Choose this alternative of the form field being edited.
-    AnswerOption(usize),
 }
 
 /// One thing the picker is offering.

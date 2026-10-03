@@ -1232,3 +1232,35 @@ fn install_language_servers(preferences: &Preferences) -> Div<Message> {
         selected,
     )
 }
+
+/// Builds the large preferences card with a persistent close control.
+pub fn settings_modal(
+    theme: &Theme,
+    content: Box<dyn Element<Message>>,
+    size: pm_gfx::Size,
+) -> Div<Message> {
+    v_flex()
+        .block_pointer()
+        .w_px(size.width)
+        .h_px(size.height)
+        .overflow_hidden()
+        .rounded(theme.radius.lg)
+        .bg(theme.colors.background)
+        .border_1(theme.colors.border_focused)
+        .child(
+            h_flex()
+                .w_full()
+                .h_px(48.0)
+                .px(4)
+                .items_center()
+                .justify_between()
+                .child(text("Settings").text_lg().color(theme.colors.text))
+                .child(
+                    h_flex()
+                        .tooltip("Close Settings (Esc)")
+                        .child(button("×", Message::CloseSettings).ghost()),
+                ),
+        )
+        .child(rule(theme))
+        .child(v_flex().w_full().flex_1().overflow_hidden().child(content))
+}
