@@ -235,6 +235,8 @@ pub struct App {
     vim: pm_vim::Vim,
     /// The modifiers held down right now.
     modifiers: ModifiersState,
+    /// The modifiers held when the primary pointer button was pressed.
+    pointer_modifiers: ModifiersState,
     /// Last pointer position in logical window coordinates.
     pointer: Option<Point>,
     /// Time of the last press on empty title-bar space.
@@ -723,6 +725,7 @@ impl App {
             resolver: Resolver::default(),
             vim: pm_vim::Vim::default(),
             modifiers: ModifiersState::default(),
+            pointer_modifiers: ModifiersState::default(),
             pointer: None,
             last_titlebar_click: None,
             scroll: Scroll::default(),
@@ -2836,6 +2839,7 @@ impl ApplicationHandler<Wake> for App {
         if self.settle_moving() {
             self.request_redraw();
         }
+        let copied_expired = self.agents.expire_copied_replies(Instant::now());
         let expired = self.notices.expire(Instant::now());
         let seen = !self.window_occluded;
         let next_annotation = self.next_annotation().filter(|_| seen);
@@ -2845,7 +2849,12 @@ impl ApplicationHandler<Wake> for App {
             self.ask_prediction();
         }
         let annotation_due = next_annotation.is_some_and(|at| at <= Instant::now());
-        if (self.rested() || self.blinked() || (seen && self.spun()) || expired || annotation_due)
+        if (self.rested()
+            || self.blinked()
+            || (seen && self.spun())
+            || expired
+            || copied_expired
+            || annotation_due)
             && seen
         {
             self.request_redraw();
@@ -2855,6 +2864,7 @@ impl ApplicationHandler<Wake> for App {
             self.next_blink(),
             self.next_spin().filter(|_| seen),
             self.notices.next_expiry(),
+            self.agents.next_copy_expiry().filter(|_| seen),
             next_annotation,
             self.next_prediction().filter(|_| seen),
             self.next_move(),

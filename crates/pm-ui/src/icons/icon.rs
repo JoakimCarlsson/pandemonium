@@ -43,6 +43,8 @@ pub enum IconName {
     ArrowUp,
     /// All of what the control is on.
     Check,
+    /// Copy what the control is on.
+    Copy,
     /// Close what the control is on.
     Close,
     /// Open the remaining actions for the control.
@@ -175,6 +177,7 @@ impl IconName {
             Self::ArrowLeft => Svg::new("arrow_left", include_icon!("arrow_left")),
             Self::ArrowRight => Svg::new("arrow_right", include_icon!("arrow_right")),
             Self::ArrowUp => Svg::new("arrow_up", include_icon!("arrow_up")),
+            Self::Copy => Svg::new("copy", include_icon!("copy")),
             Self::Check => Svg::new("check", include_icon!("check")),
             Self::Close => Svg::new("close", include_icon!("close")),
             Self::More => Svg::new("more", include_icon!("more")),

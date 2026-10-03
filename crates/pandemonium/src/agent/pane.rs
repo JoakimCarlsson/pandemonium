@@ -18,12 +18,13 @@ use std::time::SystemTime;
 use pm_acp::{
     About, Ask, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
 };
-use pm_gfx::{Image, Rgba};
+use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Axis, Div, Grain, IconName, IconSize, PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Selection,
-    SelectionContent, SelectionRow, Styled, Theme, button, h_flex, icon, measured, picture, rule,
-    sash, scroll_area, scrollbar, space, text, v_flex,
+    Axis, Div, Element, Grain, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
+    SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Style, Styled,
+    Theme, button, h_flex, icon, icon_button, measured, picture, rule, sash, scroll_area,
+    scrollbar, space, text, v_flex,
 };
 
 use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
@@ -182,21 +183,10 @@ pub fn agent_pane(
             scrollbar(
                 scroll_area(
                     std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
-                    v_flex()
-                        .w_full()
+                    transcript_column(session, None)
                         .pl(SIDE)
                         .pr(SCROLLBAR_GUTTER / STEP)
                         .py(INSET)
-                        .drag_cursor(PointerCursor::Text)
-                        .on_secondary_click(Message::ShowAgentTextMenu(session))
-                        .on_drag(move |event| {
-                            Message::SelectAgentText(
-                                session,
-                                event.phase,
-                                event.start,
-                                event.current,
-                            )
-                        })
                         .children(drawn),
                 )
                 .w_full()
@@ -224,6 +214,17 @@ pub fn agent_pane(
         })
         .child(sash(Axis::Vertical, Message::ResizeAgentPrompt))
         .child(composer(theme, talk, typing, solid, prompt_height))
+}
+
+/// A transcript column with selection gestures and the menu for its reply, if any.
+fn transcript_column(session: TalkId, reply: Option<usize>) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .drag_cursor(PointerCursor::Text)
+        .on_secondary_click(Message::ShowAgentTextMenu(session, reply))
+        .on_drag(move |event| {
+            Message::SelectAgentText(session, event.phase, event.start, event.current)
+        })
 }
 
 /// Builds the list of commands the slash being typed narrows to.
@@ -316,20 +317,109 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     let mut drawn = Vec::new();
     while let Some(at) = visible.next() {
         if wrapped.said[at] {
-            let mut message = vec![self::row(theme, wrapped.row(at), at, talk)];
+            let mut message = vec![self::row(theme, wrapped.row(at), at, talk, None)];
             let mut last = at;
             while let Some(next) = visible.next_if(|next| wrapped.said[*next]) {
-                message.push(self::row(theme, wrapped.row(next), next, talk));
+                message.push(self::row(theme, wrapped.row(next), next, talk, None));
                 last = next;
             }
             let opens = at == 0 || !wrapped.said[at - 1];
             let closes = wrapped.said.get(last + 1) != Some(&true);
             drawn.push(bubble(theme, message, opens, closes));
+        } else if let Some(block) = wrapped.reply(talk, at) {
+            let mut rows = vec![self::row(theme, wrapped.row(at), at, talk, Some(block))];
+            let mut last = at;
+            while let Some(next) = visible.next_if(|next| wrapped.reply(talk, *next) == Some(block))
+            {
+                rows.push(self::row(theme, wrapped.row(next), next, talk, Some(block)));
+                last = next;
+            }
+            let session = talk.id();
+            let content = transcript_column(session, Some(block)).children(rows);
+            let name = if talk.reply_copied(block) {
+                IconName::Check
+            } else {
+                IconName::Copy
+            };
+            let button = icon_button(theme, name, Message::CopyAgentReply(session, block, None))
+                .bg(theme.colors.background)
+                .tooltip("Copy · Shift: copy formatted")
+                .on_secondary_click(Message::ShowAgentTextMenu(session, Some(block)));
+            let closes = wrapped.reply_ends(last);
+            drawn.push(v_flex().w_full().child(Reply {
+                content,
+                button,
+                closes,
+                actions_height: reply_actions_height(theme),
+            }));
         } else {
-            drawn.push(self::row(theme, wrapped.row(at), at, talk));
+            drawn.push(self::row(theme, wrapped.row(at), at, talk, None));
         }
     }
     (drawn, offset)
+}
+
+/// A reply with a copy control beneath its text while hovered.
+struct Reply {
+    /// The visible rows and their transcript gestures.
+    content: Div<Message>,
+    /// The copy action, including its confirmation icon.
+    button: Div<Message>,
+    /// Whether the reply's last row is among the rows built.
+    closes: bool,
+    /// The reserved height beneath the text for reply actions.
+    actions_height: f32,
+}
+
+impl Element<Message> for Reply {
+    /// Uses the reply's own layout, including its reserved action row.
+    fn layout_style(&self) -> Style {
+        self.content.layout_style()
+    }
+
+    /// Measures the visible text and reserves space for actions at the reply's end.
+    fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
+        let mut size = self.content.measure(available, cx);
+        if self.closes {
+            size.height += self.actions_height;
+        }
+        size
+    }
+
+    /// Paints the reply and its copy control when the pointer is over it.
+    fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, Message>) {
+        let actions_height = if self.closes {
+            self.actions_height
+        } else {
+            0.0
+        };
+        self.content.paint(
+            Rect::from_xywh(
+                bounds.left(),
+                bounds.top(),
+                bounds.size.width,
+                bounds.size.height - actions_height,
+            ),
+            cx,
+        );
+        if self.closes && cx.input().is_over(bounds) {
+            let size = self.button.measure(bounds.size, &mut cx.layout);
+            self.button.paint(
+                Rect::from_xywh(
+                    bounds.left(),
+                    bounds.bottom() - size.height,
+                    size.width,
+                    size.height,
+                ),
+                cx,
+            );
+        }
+    }
+}
+
+/// The height reserved beneath a reply for its hover actions.
+fn reply_actions_height(theme: &Theme) -> f32 {
+    theme.size.icon_control + space(0.5)
 }
 
 /// The part of a bubble holding `rows`, set against the right of the pane.
@@ -450,8 +540,8 @@ struct Wrapping {
 
 /// The measures of a theme the height of a row is taken in: the lines of a
 /// top heading, of the conversation's type, of its smaller type and of code,
-/// the edge of a bubble and the room around a group of details.
-type Measures = [f32; 6];
+/// the edge of a bubble, the room around details and the reply action control.
+type Measures = [f32; 7];
 
 /// One part of the conversation: one block, or a run of tool calls drawn
 /// under one heading, and the rows it comes to.
@@ -511,6 +601,24 @@ impl Wrapped {
         }
     }
 
+    /// The agent reply containing `at`, when this row belongs to one.
+    fn reply(&self, talk: &Talk, at: usize) -> Option<usize> {
+        let Entry::Part(part, _) = self.entries[at] else {
+            return None;
+        };
+        let block = self.parts[part].key.start;
+        matches!(
+            talk.transcript().blocks()[block],
+            Block::Said(Voice::Agent, _)
+        )
+        .then_some(block)
+    }
+
+    /// Whether `at` is the last row of its transcript block.
+    fn reply_ends(&self, at: usize) -> bool {
+        matches!(self.entries[at], Entry::Part(part, row) if row + 1 == self.parts[part].rows.len())
+    }
+
     /// How tall the rows come to together.
     fn height(&self) -> f32 {
         self.tops.last().copied().unwrap_or_default()
@@ -550,7 +658,7 @@ impl Wrapped {
         }
         let measures = measures(theme);
         if self.measures != Some(measures) {
-            self.measure(theme);
+            self.measure(theme, talk);
             self.measures = Some(measures);
         }
     }
@@ -613,13 +721,16 @@ impl Wrapped {
     }
 
     /// Takes the height of every row, and where each begins, in `theme`.
-    fn measure(&mut self, theme: &Theme) {
+    fn measure(&mut self, theme: &Theme, talk: &Talk) {
         let edge = space(BUBBLE);
         self.said = (0..self.len()).map(|at| is_said(self.row(at))).collect();
         self.heights = (0..self.len())
             .map(|at| {
                 let row = self.row(at);
                 let mut height = row_height(theme, row);
+                if self.reply(talk, at).is_some() && self.reply_ends(at) {
+                    height += reply_actions_height(theme);
+                }
                 if self.said[at] {
                     if at == 0 || !self.said[at - 1] {
                         height += edge;
@@ -656,6 +767,7 @@ fn measures(theme: &Theme) -> Measures {
         theme.text.code.line_height,
         space(BUBBLE),
         space(0.75),
+        theme.size.icon_control,
     ]
 }
 
@@ -1510,7 +1622,7 @@ fn step_row(step: &Step) -> Row {
 /// drawn, and the press names it by its place there. Every piece of text
 /// writes down where it begins in the conversation and where its characters
 /// land, so a drag over it can be read back as the text it passed over.
-fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
+fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -> Div<Message> {
     let session = talk.id();
     let mut selection = Selection::default();
     if let Some((anchor, head)) = talk.selection() {
@@ -1585,6 +1697,7 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
                 .rounded(theme.radius.sm)
                 .hover_bg(theme.colors.surface_hover)
                 .on_click(Message::FollowAgentLink(session, place))
+                .on_secondary_click(Message::ShowAgentTextMenu(session, reply))
                 .tooltip(link)
                 .child(styled)
         }))

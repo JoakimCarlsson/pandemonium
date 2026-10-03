@@ -18,7 +18,7 @@ pm-ui.workspace = true
 pm-vim.workspace = true
 pm-vt.workspace = true
 pollster = "1.0.1"
-pulldown-cmark = { version = "0.13.4", default-features = false }
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }

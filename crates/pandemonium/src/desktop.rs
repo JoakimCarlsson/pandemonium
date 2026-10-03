@@ -40,6 +40,24 @@ pub fn copy(text: String) {
     });
 }
 
+/// Puts an HTML fragment and its plain-text alternative on the system clipboard.
+pub fn copy_html(html: String, alt_text: String) {
+    std::thread::spawn(move || {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return;
+        };
+        #[cfg(target_os = "linux")]
+        {
+            use arboard::SetExtLinux;
+            let _ = clipboard.set().wait().html(html, Some(alt_text));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = clipboard.set().html(html, Some(alt_text));
+        }
+    });
+}
+
 /// Shows `path` in the desktop's file manager.
 pub fn reveal(path: &Path) {
     let target = if path.is_dir() {

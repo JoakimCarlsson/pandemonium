@@ -174,6 +174,8 @@ pub struct Talk {
     /// What the reader has picked out of the conversation: where the drag
     /// began, and where it has got to.
     selection: Selection,
+    /// Copied replies and when their confirmation icons expire.
+    copied_replies: BTreeMap<usize, Instant>,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
     /// The tool and thought blocks the reader has opened.
@@ -875,6 +877,19 @@ impl Talk {
         self.selection.range()
     }
 
+    /// Marks `block` as copied for one second.
+    pub fn mark_reply_copied(&mut self, block: usize) {
+        self.copied_replies
+            .insert(block, Instant::now() + Duration::from_secs(1));
+    }
+
+    /// Whether `block` still shows the copy confirmation.
+    pub fn reply_copied(&self, block: usize) -> bool {
+        self.copied_replies
+            .get(&block)
+            .is_some_and(|until| *until > Instant::now())
+    }
+
     /// Picks out the text from `anchor` to `head`.
     pub fn select(&mut self, anchor: Spot, head: Spot) {
         self.selection.select(anchor, head);
@@ -1463,6 +1478,7 @@ impl Talks {
                 drawn_text: Rc::default(),
                 drawn_spots: Rc::default(),
                 selection: Selection::default(),
+                copied_replies: BTreeMap::new(),
                 following: true,
                 expanded_details: BTreeSet::new(),
                 shown_revision: 0,
@@ -1567,6 +1583,25 @@ impl Talks {
     /// Every conversation in the window, across all its projects.
     pub fn iter(&self) -> impl Iterator<Item = &Talk> {
         self.talks.values()
+    }
+
+    /// The next deadline at which a reply's copy confirmation disappears.
+    pub fn next_copy_expiry(&self) -> Option<Instant> {
+        self.talks
+            .values()
+            .flat_map(|talk| talk.copied_replies.values().copied())
+            .min()
+    }
+
+    /// Clears expired copy confirmations and reports whether any changed.
+    pub fn expire_copied_replies(&mut self, now: Instant) -> bool {
+        let mut expired = false;
+        for talk in self.talks.values_mut() {
+            let before = talk.copied_replies.len();
+            talk.copied_replies.retain(|_, until| *until > now);
+            expired |= talk.copied_replies.len() != before;
+        }
+        expired
     }
 
     /// The conversation `id` names.
