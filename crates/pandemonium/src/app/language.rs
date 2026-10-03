@@ -108,12 +108,16 @@ impl App {
                 continue;
             }
             match self.preferences.install_language_servers {
-                crate::config::InstallLanguageServers::Ask => self.notices.trouble(
-                    format!("{} is not installed. Install it?", server.command),
-                    Some(crate::message::Message::InstallLanguageServer(
+                crate::config::InstallLanguageServers::Ask => {
+                    let language = self.server_install_language(server.command);
+                    let name = language.unwrap_or("configured");
+                    self.notices.installation(
                         server.command,
-                    )),
-                ),
+                        language,
+                        crate::notice::InstallationStage::Offer,
+                        format!("The {name} language server {} is not installed. Would you like to install it?", server.command),
+                    );
+                }
                 crate::config::InstallLanguageServers::Always => {
                     self.start_server_install(server.command, false);
                 }
@@ -121,6 +125,20 @@ impl App {
             }
             self.request_redraw();
         }
+    }
+
+    /// Finds an open language requesting this server before consulting the catalogue.
+    fn server_install_language(&self, command: &str) -> Option<&'static str> {
+        let uses = |language: &pm_text::Language| {
+            crate::settings::languages::servers(*language, &self.language_servers)
+                .iter()
+                .any(|server| server.command == command)
+        };
+        self.active_file()
+            .and_then(|file| file.borrow().buffer().language())
+            .filter(uses)
+            .or_else(|| pm_text::Language::all().into_iter().find(uses))
+            .map(pm_text::Language::name)
     }
 
     /// Starts one pinned install away from the window thread.
@@ -132,16 +150,23 @@ impl App {
             return;
         };
         let Some(directory) = crate::config::servers() else {
-            self.notices.trouble(
+            self.notices.installation(
+                command,
+                self.server_install_language(command),
+                crate::notice::InstallationStage::Failed,
                 format!("Installing {command} needs an editor home directory."),
-                None,
             );
             return;
         };
         if manual {
             self.offered_servers.insert(command);
         }
-        let notice = self.notices.progress(format!("Installing {command}…"));
+        let notice = self.notices.installation(
+            command,
+            self.server_install_language(command),
+            crate::notice::InstallationStage::Progress,
+            format!("Installing {command}…"),
+        );
         self.installing_servers.insert(command, notice);
         let results = self.installed_servers.clone();
         let wake = self.waker(crate::app::Wake::Install);
@@ -157,9 +182,7 @@ impl App {
     pub(super) fn finish_server_installs(&mut self) {
         let finished = std::mem::take(&mut *self.installed_servers.lock().unwrap());
         for (command, result) in finished {
-            if let Some(notice) = self.installing_servers.remove(command) {
-                self.notices.dismiss(notice);
-            }
+            self.installing_servers.remove(command);
             match result {
                 Ok(()) => {
                     let started = self.editor.reopen_command(command);
@@ -170,13 +193,22 @@ impl App {
                         pm_text::install::prune_older(&directory, command, recipe.version());
                     }
                     if let Some(recipe) = self.configured_server_recipe(command) {
-                        self.notices
-                            .done(format!("Installed {command} {}", recipe.version()), None);
+                        self.notices.installation(
+                            command,
+                            self.server_install_language(command),
+                            crate::notice::InstallationStage::Done,
+                            format!("Installed {command} {}", recipe.version()),
+                        );
                     }
                 }
-                Err(error) => self
-                    .notices
-                    .trouble(format!("Could not install {command}: {error}"), None),
+                Err(error) => {
+                    self.notices.installation(
+                        command,
+                        self.server_install_language(command),
+                        crate::notice::InstallationStage::Failed,
+                        format!("Could not install {command}: {error}"),
+                    );
+                }
             }
         }
         self.request_redraw();

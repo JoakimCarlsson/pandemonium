@@ -29,6 +29,7 @@ mod keymap;
 mod markdown;
 mod message;
 mod notice;
+mod notification;
 mod onboarding;
 mod outline;
 mod panel;
