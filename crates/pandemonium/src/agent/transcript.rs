@@ -23,7 +23,7 @@ pub enum Block {
     /// An image the reader attached to a prompt.
     Picture(Image),
     /// A tool call, as it now stands.
-    Ran(ToolCall),
+    Ran(Box<ToolCall>),
     /// The plan the agent is working to.
     Planned(Vec<Step>),
     /// Something the editor has to say about the conversation itself.
@@ -144,7 +144,7 @@ impl Transcript {
             .iter()
             .rposition(|block| matches!(block, Block::Ran(ran) if ran.id == call.id))
         {
-            self.replace(at, Block::Ran(call));
+            self.replace(at, Block::Ran(Box::new(call)));
             return;
         }
         if let Some(parent) = self.children.iter().find_map(|(parent, children)| {
@@ -171,7 +171,7 @@ impl Transcript {
             self.children.entry(parent.clone()).or_default().push(call);
             self.stamp_parent(&parent);
         } else {
-            self.push(Block::Ran(call));
+            self.push(Block::Ran(Box::new(call)));
         }
     }
 

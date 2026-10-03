@@ -87,6 +87,9 @@ const CROSSING: &str = "─┼─";
 /// Frames of the activity mark shown during a turn.
 const WORKING: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
+/// How many characters of a failed call's error its header shows.
+const REASON: usize = 72;
+
 /// The colour a piece of a row is drawn in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Tone {
@@ -975,7 +978,7 @@ fn wrap_part(talk: &Talk, key: PartKey) -> Part {
                 let calls = blocks[at..end]
                     .iter()
                     .filter_map(|block| match block {
-                        Block::Ran(call) => Some(call),
+                        Block::Ran(call) => Some(call.as_ref()),
                         _ => None,
                     })
                     .collect::<Vec<_>>();
@@ -1339,7 +1342,7 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
     let calls = blocks
         .iter()
         .filter_map(|block| match block {
-            Block::Ran(call) => Some(call),
+            Block::Ran(call) => Some(call.as_ref()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -1347,10 +1350,7 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
     for call in &calls {
         flatten_calls(talk, call, &mut all);
     }
-    let agents = all
-        .iter()
-        .filter(|call| call.subagent && call.is_running())
-        .count();
+    let agents = all.iter().any(|call| call.subagent && call.is_running());
     if let Some((parent, call)) = calls
         .iter()
         .rev()
@@ -1367,8 +1367,8 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
         row[0].text = format!("{mark} ");
         row[0].tone = Tone::DetailGroup(at);
         row[0].card = None;
-        if agents > 0 {
-            row[2].text = format!(" {agents} subagents running ·{}", row[2].text);
+        if agents {
+            row[2].text = format!(" {} ·{}", tally(&all), row[2].text);
         }
         return row;
     }
@@ -1397,18 +1397,21 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
     if summary.is_empty() {
         summary.push(format!("{} tool calls", all.len()));
     }
-    let failures = all
-        .iter()
-        .filter(|call| call.status == Status::Failed)
-        .count();
     let started = all.iter().filter_map(|call| call.started).min();
     let finished = all.iter().filter_map(|call| call.finished).max();
     let mut row = vec![piece(
         format!("{mark} {}", summary.join(", ")),
         Tone::DetailGroup(at),
     )];
-    if failures > 0 {
-        row.push(piece(format!(" · {failures} failed"), Tone::Failed));
+    for (status, state, tone) in [
+        (Status::Failed, "failed", Tone::Failed),
+        (Status::Cancelled, "cancelled", Tone::Quiet),
+        (Status::Disconnected, "disconnected", Tone::Quiet),
+    ] {
+        let count = all.iter().filter(|call| call.status == status).count();
+        if count > 0 {
+            row.push(piece(format!(" · {count} {state}"), tone));
+        }
     }
     row.push(timer(started, finished));
     row
@@ -1826,13 +1829,15 @@ fn called(talk: &Talk, call: &ToolCall) -> Row {
         match call.status {
             Status::Done => "✓",
             Status::Failed => "✗",
-            _ => "◐",
+            Status::Cancelled => "⊘",
+            Status::Disconnected => "◌",
+            Status::Pending | Status::Running => "◐",
         }
         .to_owned(),
-        if call.status == Status::Failed {
-            Tone::Failed
-        } else {
-            Tone::Tool
+        match call.status {
+            Status::Failed => Tone::Failed,
+            Status::Cancelled | Status::Disconnected => Tone::Quiet,
+            _ => Tone::Tool,
         },
     );
     if call.is_running() {
@@ -1854,12 +1859,75 @@ fn called(talk: &Talk, call: &ToolCall) -> Row {
             label.push_str(&format!(" · {}", activity(current, talk.root())));
         }
     }
-    vec![
+    let mut row = vec![
         toggle,
         status,
         piece(label, Tone::Tool),
         timer(call.started, call.finished),
+    ];
+    match call.status {
+        Status::Failed => {
+            row.extend(reason(call).map(|reason| piece(format!(" · {reason}"), Tone::Failed)))
+        }
+        Status::Cancelled => row.push(piece(" · cancelled".to_owned(), Tone::Quiet)),
+        Status::Disconnected => row.push(piece(" · disconnected".to_owned(), Tone::Quiet)),
+        Status::Pending | Status::Running | Status::Done => {}
+    }
+    row
+}
+
+/// The first telling line of the error a failed call reported, cut to fit a
+/// header, without the fence or the tag the agent wrapped it in.
+fn reason(call: &ToolCall) -> Option<String> {
+    let line = call.error.as_deref()?.lines().find_map(|line| {
+        let line = line.trim();
+        let line = line
+            .strip_prefix('<')
+            .and_then(|rest| rest.split_once('>'))
+            .filter(|(tag, _)| is_tag(tag))
+            .map_or(line, |(_, rest)| rest);
+        let line = line
+            .rsplit_once("</")
+            .filter(|(_, tag)| tag.strip_suffix('>').is_some_and(is_tag))
+            .map_or(line, |(text, _)| text)
+            .trim();
+        (!line.is_empty() && !line.starts_with("```")).then_some(line)
+    })?;
+    Some(if line.chars().count() > REASON {
+        format!("{}…", line.chars().take(REASON - 1).collect::<String>())
+    } else {
+        line.to_owned()
+    })
+}
+
+/// Whether `name` reads as the name of a markup tag.
+fn is_tag(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+/// How the subagents among `calls` stand, as "3 running · 1 failed",
+/// leaving out the ones that finished well.
+fn tally(calls: &[&ToolCall]) -> String {
+    let agents = calls.iter().filter(|call| call.subagent);
+    let count =
+        |status: &dyn Fn(&ToolCall) -> bool| agents.clone().filter(|call| status(call)).count();
+    [
+        (count(&|call| call.is_running()), "running"),
+        (count(&|call| call.status == Status::Failed), "failed"),
+        (count(&|call| call.status == Status::Cancelled), "cancelled"),
+        (
+            count(&|call| call.status == Status::Disconnected),
+            "disconnected",
+        ),
     ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, state)| format!("{count} {state}"))
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 /// An elapsed-time fragment refreshed by the existing spinner tick.
@@ -1888,7 +1956,16 @@ fn result(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<R
     let mut rows = Vec::new();
     for output in &call.output {
         match output {
-            Output::Said(said) => rows.extend(passage_rows(said, RESULT, Tone::Quiet, columns)),
+            Output::Said(said) => rows.extend(passage_rows(
+                said,
+                RESULT,
+                if call.status == Status::Failed && call.error.is_some() {
+                    Tone::Failed
+                } else {
+                    Tone::Quiet
+                },
+                columns,
+            )),
             Output::Terminal(id) => {
                 if let Some(output) = talk.terminal_tail(id) {
                     rows.extend(passage_rows(output, RESULT, Tone::Quiet, columns));
@@ -3044,18 +3121,19 @@ fn working(talk: &Talk) -> String {
             _ => None,
         });
     let mut label = format!("{}  Working · {}s", WORKING[frame], elapsed.as_secs());
+    let blocks = talk.transcript().blocks();
+    let turn = blocks
+        .iter()
+        .rposition(|block| matches!(block, Block::Said(Voice::Reader, _)))
+        .map_or(0, |prompt| prompt + 1);
     let mut calls = Vec::new();
-    for block in talk.transcript().blocks() {
+    for block in &blocks[turn..] {
         if let Block::Ran(call) = block {
             flatten_calls(talk, call, &mut calls);
         }
     }
-    let agents = calls
-        .iter()
-        .filter(|call| call.subagent && call.is_running())
-        .count();
-    if agents > 0 {
-        label.push_str(&format!(" · {agents} subagents running"));
+    if calls.iter().any(|call| call.subagent && call.is_running()) {
+        label.push_str(&format!(" · {}", tally(&calls)));
     }
     if let Some(current) = current {
         label.push_str(&format!(" · {current}"));

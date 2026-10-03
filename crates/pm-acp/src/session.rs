@@ -38,7 +38,7 @@ use crate::process::{self, Containment};
 use crate::request::{self, Answer, Request, Shape};
 use crate::subagent::Subagents;
 use crate::transport;
-use crate::update::{self, Event, Knob, Method, Mode, Setting, Stop, Tools};
+use crate::update::{self, Event, Knob, Method, Mode, Setting, Status, Stop, Tools};
 
 /// The identifier the handshake is sent under.
 const HANDSHAKE: i64 = 1;
@@ -925,6 +925,9 @@ impl Reader {
         while let Ok(Some(message)) = transport::read(&mut self.stdout) {
             self.dispatch(&message);
         }
+        for event in update::halt(&mut self.tools, None, Status::Disconnected) {
+            self.raise(event);
+        }
         self.raise(Event::Ended);
     }
 
@@ -952,7 +955,7 @@ impl Reader {
     }
 
     /// Takes down the reply to one request, and sends what follows from it.
-    fn replied(&self, id: i64, message: &Value) {
+    fn replied(&mut self, id: i64, message: &Value) {
         let Some(sent) = self
             .state
             .lock()
@@ -1015,7 +1018,13 @@ impl Reader {
             (Sent::Delete(id), None) => self.raise(Event::Deleted(id)),
             (Sent::Delete(_), Some(error)) => self.raise(Event::Failed(complaint(error))),
             (Sent::Turn, None) => {
-                self.raise(Event::Stopped(Stop::read(&message["result"]["stopReason"])));
+                let stop = Stop::read(&message["result"]["stopReason"]);
+                if stop == Stop::Cancelled {
+                    for event in update::halt(&mut self.tools, None, Status::Cancelled) {
+                        self.raise(event);
+                    }
+                }
+                self.raise(Event::Stopped(stop));
                 self.idle();
                 self.measure();
             }
@@ -1253,18 +1262,21 @@ impl Reader {
     /// The update is read before the state is taken, which is held only for
     /// as long as it takes to add what it came to.
     fn updated(&mut self, params: &Value) {
-        let Some(event) = self.subagents.event(params, &mut self.tools) else {
+        let events = self.subagents.events(params, &mut self.tools);
+        if events.is_empty() {
             return;
-        };
+        }
         let Ok(mut state) = self.state.lock() else {
             return;
         };
-        match &event {
-            Event::Mode(mode) => state.mode = Some(mode.clone()),
-            Event::Knobs(knobs) => state.knobs = knobs.clone(),
-            _ => {}
+        for event in events {
+            match &event {
+                Event::Mode(mode) => state.mode = Some(mode.clone()),
+                Event::Knobs(knobs) => state.knobs = knobs.clone(),
+                _ => {}
+            }
+            state.events.push(event);
         }
-        state.events.push(event);
         state.fresh = true;
         drop(state);
         self.wake();

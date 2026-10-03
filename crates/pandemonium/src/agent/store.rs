@@ -29,7 +29,7 @@ use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Limits, Method, Mode,
-    Notify, Reply, Request, Session, Setting, Stop, ToolCall, Usage, Voice,
+    Notify, Reply, Request, Session, Setting, Status, Stop, ToolCall, Usage, Voice,
 };
 
 use crate::agent::form::Form;
@@ -184,6 +184,9 @@ pub struct Talk {
     expanded_details: BTreeSet<usize>,
     /// Tool cards whose complete output and children are visible.
     expanded_cards: BTreeSet<String>,
+    /// Tool cards opened once because they failed, so a reader who closes
+    /// one again is not overruled by the next word about it.
+    opened_failures: BTreeSet<String>,
     /// The last lines each terminal the agent started has written, by the
     /// name the agent knows it by, for the tool calls that show one.
     terminals: BTreeMap<String, String>,
@@ -1147,7 +1150,12 @@ impl Talk {
                 self.logins = methods;
             }
             Event::Said(voice, text) => self.transcript.say(voice, &text),
-            Event::Ran(call) => self.transcript.ran(call),
+            Event::Ran(call) => {
+                if call.status == Status::Failed && self.opened_failures.insert(call.id.clone()) {
+                    self.expanded_cards.insert(call.id.clone());
+                }
+                self.transcript.ran(call);
+            }
             Event::Planned(steps) => self.transcript.planned(steps),
             Event::Offers(commands) => self.commands = commands,
             Event::Mode(mode) => self.mode = Some(mode),
@@ -1543,6 +1551,7 @@ impl Talks {
                 following: true,
                 expanded_details: BTreeSet::new(),
                 expanded_cards: BTreeSet::new(),
+                opened_failures: BTreeSet::new(),
                 shown_revision: 0,
                 wrapped: RefCell::default(),
                 terminals: BTreeMap::new(),
