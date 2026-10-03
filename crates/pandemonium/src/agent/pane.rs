@@ -328,9 +328,11 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
             drawn.push(bubble(theme, message, opens, closes));
         } else if let Some(block) = wrapped.reply(talk, at) {
             let mut rows = vec![self::row(theme, wrapped.row(at), at, talk, Some(block))];
+            let mut last = at;
             while let Some(next) = visible.next_if(|next| wrapped.reply(talk, *next) == Some(block))
             {
                 rows.push(self::row(theme, wrapped.row(next), next, talk, Some(block)));
+                last = next;
             }
             let session = talk.id();
             let content = transcript_column(session, Some(block)).children(rows);
@@ -343,11 +345,12 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 .bg(theme.colors.background)
                 .tooltip("Copy · Shift: copy formatted")
                 .on_secondary_click(Message::ShowAgentTextMenu(session, Some(block)));
-            let opens = matches!(wrapped.entries[at], Entry::Part(_, 0));
+            let closes = wrapped.reply_ends(last);
             drawn.push(v_flex().w_full().child(Reply {
                 content,
                 button,
-                opens,
+                closes,
+                actions_height: reply_actions_height(theme),
             }));
         } else {
             drawn.push(self::row(theme, wrapped.row(at), at, talk, None));
@@ -356,45 +359,67 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     (drawn, offset)
 }
 
-/// A reply with a copy control painted over its top-right corner while hovered.
+/// A reply with a copy control beneath its text while hovered.
 struct Reply {
     /// The visible rows and their transcript gestures.
     content: Div<Message>,
     /// The copy action, including its confirmation icon.
     button: Div<Message>,
-    /// Whether the reply's first row is among the rows built.
-    opens: bool,
+    /// Whether the reply's last row is among the rows built.
+    closes: bool,
+    /// The reserved height beneath the text for reply actions.
+    actions_height: f32,
 }
 
 impl Element<Message> for Reply {
-    /// Uses the reply's own layout without adding room for the copy control.
+    /// Uses the reply's own layout, including its reserved action row.
     fn layout_style(&self) -> Style {
         self.content.layout_style()
     }
 
-    /// Measures the reply's visible rows.
+    /// Measures the visible text and reserves space for actions at the reply's end.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
-        self.content.measure(available, cx)
+        let mut size = self.content.measure(available, cx);
+        if self.closes {
+            size.height += self.actions_height;
+        }
+        size
     }
 
     /// Paints the reply and its copy control when the pointer is over it.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, Message>) {
-        self.content.paint(bounds, cx);
-        if self.opens && cx.input().is_over(bounds) {
+        let actions_height = if self.closes {
+            self.actions_height
+        } else {
+            0.0
+        };
+        self.content.paint(
+            Rect::from_xywh(
+                bounds.left(),
+                bounds.top(),
+                bounds.size.width,
+                bounds.size.height - actions_height,
+            ),
+            cx,
+        );
+        if self.closes && cx.input().is_over(bounds) {
             let size = self.button.measure(bounds.size, &mut cx.layout);
-            cx.push_layer();
             self.button.paint(
                 Rect::from_xywh(
-                    bounds.right() - size.width,
-                    bounds.top(),
+                    bounds.left(),
+                    bounds.bottom() - size.height,
                     size.width,
                     size.height,
                 ),
                 cx,
             );
-            cx.pop_layer();
         }
     }
+}
+
+/// The height reserved beneath a reply for its hover actions.
+fn reply_actions_height(theme: &Theme) -> f32 {
+    theme.size.icon_control + space(0.5)
 }
 
 /// The part of a bubble holding `rows`, set against the right of the pane.
@@ -511,8 +536,8 @@ struct Wrapping {
 
 /// The measures of a theme the height of a row is taken in: the lines of a
 /// top heading, of the conversation's type, of its smaller type and of code,
-/// the edge of a bubble and the room around a group of details.
-type Measures = [f32; 6];
+/// the edge of a bubble, the room around details and the reply action control.
+type Measures = [f32; 7];
 
 /// One part of the conversation: one block, or a run of tool calls drawn
 /// under one heading, and the rows it comes to.
@@ -585,6 +610,11 @@ impl Wrapped {
         .then_some(block)
     }
 
+    /// Whether `at` is the last row of its transcript block.
+    fn reply_ends(&self, at: usize) -> bool {
+        matches!(self.entries[at], Entry::Part(part, row) if row + 1 == self.parts[part].rows.len())
+    }
+
     /// How tall the rows come to together.
     fn height(&self) -> f32 {
         self.tops.last().copied().unwrap_or_default()
@@ -613,7 +643,7 @@ impl Wrapped {
         }
         let measures = measures(theme);
         if self.measures != Some(measures) {
-            self.measure(theme);
+            self.measure(theme, talk);
             self.measures = Some(measures);
         }
     }
@@ -650,13 +680,16 @@ impl Wrapped {
     }
 
     /// Takes the height of every row, and where each begins, in `theme`.
-    fn measure(&mut self, theme: &Theme) {
+    fn measure(&mut self, theme: &Theme, talk: &Talk) {
         let edge = space(BUBBLE);
         self.said = (0..self.len()).map(|at| is_said(self.row(at))).collect();
         self.heights = (0..self.len())
             .map(|at| {
                 let row = self.row(at);
                 let mut height = row_height(theme, row);
+                if self.reply(talk, at).is_some() && self.reply_ends(at) {
+                    height += reply_actions_height(theme);
+                }
                 if self.said[at] {
                     if at == 0 || !self.said[at - 1] {
                         height += edge;
@@ -693,6 +726,7 @@ fn measures(theme: &Theme) -> Measures {
         theme.text.code.line_height,
         space(BUBBLE),
         space(0.75),
+        theme.size.icon_control,
     ]
 }
 
