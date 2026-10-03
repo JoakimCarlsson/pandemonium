@@ -6,7 +6,9 @@
 //! box is and what its gestures mean; everything else about it is here.
 
 use pm_text::Position;
-use pm_ui::{Div, MenuItem, ResizePhase, Styled, Theme, h_flex, menu_entry, menu_separator};
+use pm_ui::{
+    Div, MenuItem, ResizeEvent, ResizePhase, Styled, Theme, h_flex, menu_entry, menu_separator,
+};
 
 use crate::keymap::Action;
 
@@ -87,4 +89,29 @@ pub fn text_view<M: Clone + 'static>(
                 .on_select(on_point)
                 .on_menu(on_menu),
         )
+}
+
+/// Builds `input` with no box of its own, for a card that draws the box
+/// around it and the controls beneath it, and that says how tall it is;
+/// `placeholder` stands in the empty box to say what it is for, and
+/// `on_scroll` is sent as its scrollbar is dragged, with the rows one
+/// pixel of the drag is worth.
+pub fn bare_input_view<M: Clone + 'static>(
+    input: &Input,
+    focused: bool,
+    solid: bool,
+    placeholder: &str,
+    on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
+    on_scroll: impl Fn(ResizeEvent, f32) -> M + 'static,
+    on_menu: M,
+) -> Div<M> {
+    h_flex().w_full().overflow_hidden().child(
+        plain_view(input.text(), focused)
+            .caret(focused && solid)
+            .placeholder(placeholder)
+            .rail()
+            .on_select(on_point)
+            .on_scroll(move |_, event, step| on_scroll(event, step))
+            .on_menu(on_menu),
+    )
 }

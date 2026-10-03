@@ -447,6 +447,34 @@ impl Document {
             .unwrap_or(Segment::whole(row.line))
     }
 
+    /// How many rows the whole text comes to, as wide as the pane last drew
+    /// it, or one a line before it has been drawn at all.
+    pub fn total_rows(&self) -> usize {
+        let lines = 0..self.buffer.line_count();
+        match self.layout.bounds.size.width > 0.0 {
+            true => lines
+                .filter(|line| !self.is_folded(*line))
+                .map(|line| self.row_count(line))
+                .sum(),
+            false => lines.count(),
+        }
+    }
+
+    /// Shows the text from the row `rows` into it down, counted in the rows
+    /// it wraps to.
+    pub fn scroll_to_wrapped(&mut self, rows: usize) {
+        self.scroll_to_row(self.row_after(Row::default(), rows as isize));
+    }
+
+    /// How many rows of the text are above the first one the pane shows.
+    pub fn rows_above(&self) -> usize {
+        (0..self.scroll)
+            .filter(|line| !self.is_folded(*line))
+            .map(|line| self.row_count(line))
+            .sum::<usize>()
+            + self.part
+    }
+
     /// How many rows `line` is drawn on.
     fn row_count(&self, line: usize) -> usize {
         match self.wraps {

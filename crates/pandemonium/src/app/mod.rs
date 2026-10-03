@@ -337,8 +337,6 @@ pub struct App {
     bottom_panel: ResizeState,
     /// Current height and drag state of the Source Control graph.
     history_graph: ResizeState,
-    /// Current height and drag state of the box agents' prompts are written in.
-    prompt_box: ResizeState,
     /// Current width and drag state of the secondary sidebar.
     secondary_sidebar: ResizeState,
     /// Whether the primary sidebar is visible.
@@ -553,6 +551,8 @@ pub struct App {
     terminal_scroll_origin: Option<usize>,
     /// How far down the editor was scrolled when a scrollbar drag began.
     editor_scroll_origin: Option<usize>,
+    /// The row an agent's prompt showed first when a drag on its scrollbar began.
+    prompt_scroll_origin: Option<usize>,
     /// How far down the conversation was scrolled when a scrollbar drag began.
     agent_scroll_origin: Option<f32>,
     /// Whether a release newer than this build has been published.
@@ -788,11 +788,6 @@ impl App {
                 workspace::HISTORY_GRAPH_RANGE.0,
                 workspace::HISTORY_GRAPH_RANGE.1,
             ),
-            prompt_box: ResizeState::new(
-                layout.prompt_height,
-                workspace::PROMPT_RANGE.0,
-                workspace::PROMPT_RANGE.1,
-            ),
             secondary_sidebar: ResizeState::new(
                 layout.secondary_sidebar_width,
                 SECONDARY_SIDEBAR_RANGE.0,
@@ -897,6 +892,7 @@ impl App {
             terminal_focused: false,
             terminal_scroll_origin: None,
             editor_scroll_origin: None,
+            prompt_scroll_origin: None,
             agent_scroll_origin: None,
             update_available: false,
             released: Arc::new(Mutex::new(false)),
@@ -1424,14 +1420,6 @@ impl App {
                 .history_graph
                 .resize(event, Axis::Vertical, ResizeEdge::Start);
             self.history_graph_open = !snapped;
-            self.store_settled(event);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ResizeAgentPrompt(event) = message {
-            self.fit_panels();
-            self.prompt_box
-                .resize(event, Axis::Vertical, ResizeEdge::Start);
             self.store_settled(event);
             self.request_redraw();
             return;
@@ -2363,7 +2351,6 @@ impl App {
             history_graph_open: self.history_graph_open,
             changes_section_open: self.changes_section_open,
             history_all: self.history_all,
-            prompt_height: self.prompt_box.extent(),
         }
     }
 
@@ -2394,7 +2381,6 @@ impl App {
         self.secondary_sidebar.fit(reach - primary);
         self.bottom_panel.fit(height - REACHABLE_MARGIN);
         self.history_graph.fit(height - REACHABLE_MARGIN);
-        self.prompt_box.fit(height - REACHABLE_MARGIN);
     }
 
     /// Takes down the window's size, keeping the size it un-maximizes to.
@@ -2581,10 +2567,16 @@ impl App {
                 true => self.agent_picker_at.map(|anchor| (anchor.x, anchor)),
                 false => branch_anchor.map(|anchor| (anchor.x - 24.0, anchor)),
             };
+            let agent = agent_choices.then(|| self.agent_choice_parts(theme, picker));
             let (point, width) = match anchor {
                 Some((left, anchor)) => {
                     let width = crate::picker::width(picker.kind());
-                    let height = crate::picker::height(theme, picker);
+                    let height = match &agent {
+                        Some(parts) => {
+                            crate::picker::agent_height(theme, picker, parts.knobs.len())
+                        }
+                        None => crate::picker::height(theme, picker),
+                    };
                     let point = Point::new(
                         left.clamp(8.0, (window.width - width - 8.0).max(8.0)),
                         (anchor.y - height - 8.0).max(8.0),
@@ -2595,12 +2587,22 @@ impl App {
             };
             overlays.push(workspace::Overlaid {
                 at: point,
-                content: Box::new(crate::picker::picker(
-                    theme,
-                    picker,
-                    width,
-                    self.caret_solid(),
-                )),
+                content: match agent {
+                    Some(parts) => Box::new(crate::picker::agent_choices(
+                        theme,
+                        picker,
+                        width,
+                        &parts.title,
+                        parts.keys,
+                        parts.knobs,
+                    )),
+                    None => Box::new(crate::picker::picker(
+                        theme,
+                        picker,
+                        width,
+                        self.caret_solid(),
+                    )),
+                },
                 backdrop: (!agent_choices).then_some(Message::DismissPopup),
                 above: false,
             });

@@ -165,6 +165,16 @@ pub enum IconName {
     Ruler,
     /// Lines of text.
     Text,
+    /// A command named with a slash.
+    SquareSlash,
+    /// A stop to be asked first.
+    Hand,
+    /// Code, written or edited.
+    Code,
+    /// A plan written out before anything is done.
+    ScrollText,
+    /// What was done before, to go back to.
+    History,
 }
 
 impl IconName {
@@ -241,6 +251,11 @@ impl IconName {
             Self::KeyRound => Svg::new("key_round", include_icon!("key_round")),
             Self::Zap => Svg::new("zap", include_icon!("zap")),
             Self::Circle => Svg::new("circle", include_icon!("circle")),
+            Self::SquareSlash => Svg::new("square_slash", include_icon!("square_slash")),
+            Self::Hand => Svg::new("hand", include_icon!("hand")),
+            Self::Code => Svg::new("code", include_icon!("code")),
+            Self::ScrollText => Svg::new("scroll_text", include_icon!("scroll_text")),
+            Self::History => Svg::new("history", include_icon!("history")),
         }
     }
 }

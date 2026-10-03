@@ -23,16 +23,16 @@ use pm_acp::{
 use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Axis, Div, Element, Grain, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
+    Div, Element, Grain, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
     SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Style, Styled,
-    Theme, button, h_flex, icon, icon_button, measured, picture, rule, sash, scroll_area,
-    scrollbar, space, text, v_flex,
+    Theme, button, h_flex, icon, icon_button, measured, picture, rule, scroll_area, scrollbar,
+    space, switch, text, v_flex,
 };
 
 use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
 use crate::editor::{code_highlights, tint};
 use crate::image::Decoding;
-use crate::input::input_view;
+use crate::input::bare_input_view;
 use crate::markdown::blocks::{self, Block as MarkdownBlock, Emphasis, Run};
 use crate::message::Message;
 
@@ -53,6 +53,15 @@ const SIDE: f32 = 1.75;
 /// How far the edge of a bubble holding what the reader said sits from its
 /// text, in steps of the spacing scale.
 const BUBBLE: f32 = 1.25;
+
+/// Widest the prompt card is drawn, however wide the pane.
+const COMPOSER_WIDTH: f32 = 760.0;
+
+/// Fewest rows the prompt box is drawn at, however little it holds.
+const PROMPT_LEAST: usize = 3;
+
+/// Most rows the prompt box grows to before what it holds scrolls.
+const PROMPT_ROWS: usize = 12;
 
 /// How many of the commands a slash narrows to are offered at once.
 const OFFERED: usize = 8;
@@ -210,13 +219,11 @@ type Row = Vec<Piece>;
 ///
 /// `typing` says the prompt box has the keyboard, so that the caret is drawn
 /// where the reader is actually writing; `solid` is its blink phase.
-/// `prompt_height` is how tall the reader has dragged the prompt box.
 pub fn agent_pane(
     theme: &Theme,
     talk: &Talk,
     typing: bool,
     solid: bool,
-    prompt_height: f32,
     width: f32,
 ) -> Div<Message> {
     talk.drawn_width().set(width);
@@ -265,8 +272,7 @@ pub fn agent_pane(
         .when(!talk.offered().is_empty(), |pane| {
             pane.child(commands(theme, talk))
         })
-        .child(sash(Axis::Vertical, Message::ResizeAgentPrompt))
-        .child(composer(theme, talk, typing, solid, prompt_height))
+        .child(composer(theme, talk, typing, solid))
 }
 
 /// A transcript column with selection gestures and the menu for its reply, if any.
@@ -2781,33 +2787,52 @@ fn permission(theme: &Theme, talk: &Talk, ask: &Ask, columns: usize) -> Div<Mess
 /// card with the box they are typing it in: which model, how hard it thinks,
 /// what mode it is in and whether it is sent or stopped. They are facts about
 /// the next turn, so they are where the next turn is written and not in a bar
-/// at the top of the pane. The box is `height` logical pixels tall, and the
-/// edge above the card is what drags it taller or shorter.
-fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool, height: f32) -> Div<Message> {
+/// at the top of the pane. The card is drawn in the pane's own colour, at a
+/// readable width, and the box grows with what is written in it until it
+/// has grown to [`PROMPT_ROWS`] and scrolls instead.
+fn composer(theme: &Theme, talk: &Talk, typing: bool, solid: bool) -> Div<Message> {
     let id = talk.id();
+    let rows = talk.prompt().rows().clamp(PROMPT_LEAST, PROMPT_ROWS);
+    let height = rows as f32 * theme.text.code.line_height;
+    let edge = match typing {
+        true => theme.colors.accent,
+        false => theme.colors.border,
+    };
 
-    v_flex().w_full().px(1.25).pt(0.5).pb(1).child(
-        v_flex()
-            .w_full()
-            .gap(0.5)
-            .p(0.75)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.border)
-            .bg(theme.colors.surface)
-            .when(!talk.attachments().is_empty(), |card| {
-                card.child(attachment_list(theme, talk))
-            })
-            .child(input_view(
-                theme,
-                talk.prompt(),
-                typing,
-                solid,
-                height / theme.size.control,
-                move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
-                Message::ShowInputMenu,
-            ))
-            .child(controls(theme, talk)),
-    )
+    v_flex()
+        .w_full()
+        .items_center()
+        .px(1.25)
+        .pt(0.5)
+        .pb(1)
+        .child(
+            v_flex()
+                .w_full()
+                .max_w_px(COMPOSER_WIDTH)
+                .rounded(theme.radius.lg)
+                .border_1(edge)
+                .bg(theme.colors.background)
+                .overflow_hidden()
+                .when(!talk.attachments().is_empty(), |card| {
+                    card.child(attachment_list(theme, talk).px(1.5).pt(1))
+                })
+                .child(
+                    h_flex().w_full().px(1.5).pt(1).pb(0.75).child(
+                        bare_input_view(
+                            talk.prompt(),
+                            typing,
+                            solid,
+                            &format!("Message {}", talk.agent().name),
+                            move |phase, from, to| Message::WriteAgentPrompt(id, phase, from, to),
+                            move |event, step| Message::DragAgentPrompt(id, event, step),
+                            Message::ShowInputMenu,
+                        )
+                        .h_px(height),
+                    ),
+                )
+                .child(rule(theme))
+                .child(controls(theme, talk)),
+        )
 }
 
 /// The files and images waiting to go with the next prompt.
@@ -2850,89 +2875,150 @@ fn attachment_list(theme: &Theme, talk: &Talk) -> Div<Message> {
 }
 
 /// Builds the row of controls under the prompt.
+///
+/// What the turn is sent with leads on the left — attachments, commands and
+/// the model — and how it is sent closes on the right: the mode, then the
+/// button itself. A model's effort reads beside its name, so one pill says
+/// both; the knobs that have no pill of their own are set from the model's
+/// choices instead.
 fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
+    let knobs = talk.knobs();
+    let model = knobs.iter().position(|knob| knob.about == About::Model);
+    let effort = knobs
+        .iter()
+        .find(|knob| knob.about == About::Thinking)
+        .map(set_to);
 
     h_flex()
         .w_full()
+        .px(1)
+        .py(0.75)
         .gap(0.5)
         .items_center()
         .child(
-            pill(theme, "+", theme.colors.text_muted)
-                .on_click(Message::AttachAgentFiles(session))
+            icon_button(theme, IconName::Plus, Message::AttachAgentFiles(session))
                 .tooltip("Attach files"),
         )
         .child(
-            pill(theme, "/", theme.syntax.function).on_click(Message::StartAgentCommand(session)),
+            icon_button(
+                theme,
+                IconName::SquareSlash,
+                Message::StartAgentCommand(session),
+            )
+            .tooltip("Commands"),
         )
         .when(talk.agent().id == "codex", |row| {
-            row.child(
-                pill(theme, "$", theme.syntax.function).on_click(Message::StartAgentSkill(session)),
-            )
+            row.child(pill(theme, "$", None).on_click(Message::StartAgentSkill(session)))
         })
-        .child(
-            pill(
-                theme,
-                format!(
-                    "MCP {}",
-                    talk.mcp_servers()
-                        .iter()
-                        .filter(|server| server.given)
-                        .count()
-                ),
-                theme.colors.text_muted,
-            )
-            .on_click(Message::ShowAgentMcp(session))
-            .tooltip("MCP servers this agent was given"),
-        )
-        .when(talk.can_list(), |row| {
+        .when_some(model, |row, place| {
             row.child(
-                pill(theme, "History", theme.colors.text_muted)
-                    .on_click(Message::ShowAgentHistory(session)),
+                pill(theme, set_to(&knobs[place]), effort.clone())
+                    .on_click(Message::PressKnob(session, place)),
             )
         })
         .children(
-            talk.knobs()
-                .into_iter()
+            knobs
+                .iter()
                 .enumerate()
-                .filter(|(_, knob)| knob.about != About::Mode)
+                .filter(|(_, knob)| model.is_none() && knob.about != About::Mode)
                 .map(|(place, knob)| {
-                    pill(theme, set_to(&knob), theme.colors.text_muted)
-                        .on_click(Message::PressKnob(session, place))
+                    pill(theme, set_to(knob), None).on_click(Message::PressKnob(session, place))
                 }),
         )
         .child(h_flex().flex_1())
-        .when_some(mode_of(talk), |row, mode| {
+        .child(
+            icon_button(theme, IconName::Plug, Message::ShowAgentMcp(session)).tooltip(format!(
+                "MCP servers: {} given",
+                talk.mcp_servers()
+                    .iter()
+                    .filter(|server| server.given)
+                    .count()
+            )),
+        )
+        .when(talk.can_list(), |row| {
             row.child(
-                pill(theme, mode, theme.colors.text_muted)
-                    .on_click(Message::ShowAgentModes(session)),
+                icon_button(theme, IconName::History, Message::ShowAgentHistory(session))
+                    .tooltip("History"),
+            )
+        })
+        .when_some(mode_of(talk), |row, (id, name)| {
+            row.child(
+                h_flex()
+                    .h_px(theme.size.icon_control)
+                    .px(0.75)
+                    .gap(0.5)
+                    .items_center()
+                    .rounded(theme.radius.md)
+                    .hover_bg(theme.colors.surface_hover)
+                    .active_bg(theme.colors.surface_active)
+                    .on_click(Message::ShowAgentModes(session))
+                    .when_some(mode_icon(&id), |button, name| {
+                        button.child(
+                            icon(name)
+                                .size(IconSize::Small)
+                                .color(theme.colors.text_muted),
+                        )
+                    })
+                    .child(text(name).text_xs().color(theme.colors.text_muted)),
             )
         })
         .child(send(theme, talk))
 }
 
-/// What the session's mode is called, whichever way the agent says it.
+/// What the session's mode is, as the id it is known by and the name it reads
+/// as, whichever way the agent says it.
 ///
 /// An agent says its mode as a mode or as a knob that is about the mode; the
-/// pill reads the same either way, and it sits where the mode belongs rather
-/// than among the model and the rest.
-fn mode_of(talk: &Talk) -> Option<String> {
-    match talk.mode_name() {
-        Some(mode) => Some(mode),
-        None => talk.knob_about(About::Mode).map(|knob| set_to(&knob)),
+/// control reads the same either way, and it sits where the mode belongs
+/// rather than among the model and the rest.
+fn mode_of(talk: &Talk) -> Option<(String, String)> {
+    if let (Some(id), Some(name)) = (talk.mode(), talk.mode_name()) {
+        return Some((id.to_owned(), name));
+    }
+    let knob = talk.knob_about(About::Mode)?;
+    let id = match &knob.setting {
+        Setting::Picked { value, .. } => value.clone(),
+        Setting::Switched(_) => knob.id.clone(),
+    };
+    Some((id, set_to(&knob)))
+}
+
+/// The icon that stands beside a mode, by what its id says it does.
+///
+/// Agents name their modes themselves, so this reads the id for the handful
+/// of kinds of mode there are, and a mode it does not recognise goes without.
+pub fn mode_icon(id: &str) -> Option<IconName> {
+    let id = id.to_ascii_lowercase();
+    let says = |words: &[&str]| words.iter().any(|word| id.contains(word));
+    if says(&["plan"]) {
+        Some(IconName::ScrollText)
+    } else if says(&["bypass", "auto", "full", "yolo", "dangerous"]) {
+        Some(IconName::Zap)
+    } else if says(&["accept", "edit", "write"]) {
+        Some(IconName::Code)
+    } else if says(&["default", "manual", "ask", "read"]) {
+        Some(IconName::Hand)
+    } else {
+        None
     }
 }
 
-/// Builds one of the composer's pills: a label that is also a control.
-fn pill(theme: &Theme, label: impl Into<String>, color: Rgba) -> Div<Message> {
+/// Builds one of the composer's pills: a label that is also a control, with
+/// `quiet` after it in the subtler colour.
+fn pill(theme: &Theme, label: impl Into<String>, quiet: Option<String>) -> Div<Message> {
     h_flex()
         .h_px(theme.size.icon_control)
         .px(0.75)
+        .gap(0.5)
         .items_center()
         .rounded(theme.radius.full)
         .bg(theme.colors.surface_hover)
         .hover_bg(theme.colors.surface_active)
-        .child(text(label.into()).text_xs().color(color))
+        .child(text(label.into()).text_xs().color(theme.colors.text_muted))
+        .when_some(quiet, |pill, quiet| {
+            pill.child(text(quiet).text_xs().color(theme.colors.text_subtle))
+        })
 }
 
 /// What a knob's pill says: what it is set to, or what it is and whether.
@@ -2947,12 +3033,89 @@ fn set_to(knob: &Knob) -> String {
     }
 }
 
+/// Builds the rows for the knobs set beside a list of the session's choices.
+///
+/// A model's or a mode's choices are a list, but how hard it thinks and the
+/// switches it offers are set in place underneath, without leaving it: a
+/// scale of dots for a knob of several values, a switch for one of two. The
+/// knob named `shown` is the list itself and is left out, as are the model
+/// and the mode, which have lists of their own.
+pub fn knob_rows(theme: &Theme, talk: &Talk, shown: Option<&str>) -> Vec<Div<Message>> {
+    let session = talk.id();
+    talk.knobs()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, knob)| !matches!(knob.about, About::Model | About::Mode))
+        .filter(|(_, knob)| Some(knob.id.as_str()) != shown)
+        .map(|(place, knob)| {
+            let row = h_flex()
+                .w_full()
+                .gap(0.5)
+                .items_center()
+                .child(text(knob.name.clone()).text_sm().color(theme.colors.text));
+            match &knob.setting {
+                Setting::Picked { value, picks } => {
+                    let at = picks.iter().position(|pick| &pick.id == value);
+                    row.child(
+                        text(format!("({})", set_to(&knob)))
+                            .text_sm()
+                            .color(theme.colors.text_subtle),
+                    )
+                    .child(h_flex().flex_1())
+                    .child(scale(theme, session, place, picks.len(), at))
+                }
+                Setting::Switched(on) => row
+                    .child(h_flex().flex_1())
+                    .child(switch(*on, Message::FlipAgentKnob(session, place))),
+            }
+        })
+        .collect()
+}
+
+/// Builds a scale of `count` dots for the knob in `place`, the one at `at`
+/// lit and larger, each setting the knob to its value when pressed.
+fn scale(
+    theme: &Theme,
+    session: TalkId,
+    place: usize,
+    count: usize,
+    at: Option<usize>,
+) -> Div<Message> {
+    h_flex()
+        .px(0.5)
+        .items_center()
+        .rounded(theme.radius.full)
+        .bg(theme.colors.surface_hover)
+        .children((0..count).map(|pick| {
+            let lit = Some(pick) == at;
+            let (size, color) = match lit {
+                true => (12.0, theme.colors.text),
+                false => (4.0, theme.colors.text_subtle),
+            };
+            v_flex()
+                .size_px(18.0)
+                .items_center()
+                .justify_center()
+                .on_click(Message::SetAgentKnob(session, place, pick))
+                .child(v_flex().size_px(size).rounded(theme.radius.full).bg(color))
+        }))
+}
+
 /// Builds the control that sends the turn, or stops the one that is running.
+///
+/// With nothing written and nothing running there is nothing to send, so it
+/// is drawn faded until there is.
 fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
-    let (name, message) = match talk.is_busy() {
-        true => (IconName::Close, Message::StopAgentTurn(session)),
+    let busy = talk.is_busy();
+    let (name, message) = match busy {
+        true => (IconName::Stop, Message::StopAgentTurn(session)),
         false => (IconName::ArrowUp, Message::SendPrompt(session)),
+    };
+    let idle = !busy && talk.prompt().is_empty() && talk.attachments().is_empty();
+    let fade = |color: Rgba| match idle {
+        true => color.alpha(0.45),
+        false => color,
     };
 
     v_flex()
@@ -2960,14 +3123,14 @@ fn send(theme: &Theme, talk: &Talk) -> Div<Message> {
         .items_center()
         .justify_center()
         .rounded(theme.radius.md)
-        .bg(theme.colors.accent)
-        .hover_bg(theme.colors.accent_hover)
-        .active_bg(theme.colors.accent_active)
+        .bg(fade(theme.colors.accent))
+        .hover_bg(fade(theme.colors.accent_hover))
+        .active_bg(fade(theme.colors.accent_active))
         .on_click(message)
         .child(
             icon(name)
                 .size(IconSize::Small)
-                .color(theme.colors.text_on_accent),
+                .color(fade(theme.colors.text_on_accent)),
         )
 }
 

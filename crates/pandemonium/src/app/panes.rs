@@ -1333,7 +1333,6 @@ impl App {
                     talk,
                     self.writing == Some(crate::app::Writing::Prompt(session)),
                     self.caret_solid(),
-                    self.prompt_box.extent(),
                     width,
                 ))),
                 None => Content::Empty,

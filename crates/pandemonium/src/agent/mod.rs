@@ -18,8 +18,8 @@ mod transcript;
 
 pub use form::Form;
 pub use pane::{
-    agent_pane, content_height, everything, lines_between, selected_text, standing_color,
-    words_between,
+    agent_pane, content_height, everything, knob_rows, lines_between, mode_icon, selected_text,
+    standing_color, words_between,
 };
 pub use store::{Pasted, Standing, Talk, TalkId, Talks, Tally};
 pub use transcript::Block;

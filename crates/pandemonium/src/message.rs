@@ -286,8 +286,6 @@ pub enum Message {
     ResizeSecondarySidebar(ResizeEvent),
     /// Resize the Source Control graph.
     ResizeHistoryGraph(ResizeEvent),
-    /// Resize the box agents' prompts are written in.
-    ResizeAgentPrompt(ResizeEvent),
     /// Show or hide the Source Control graph.
     ToggleHistoryGraph,
     /// Expand or collapse the Source Control changes section.
@@ -717,6 +715,15 @@ pub enum Message {
     ShowAgentDeletions(TalkId),
     /// Act on the knob in this place: ask which value, or flip the switch.
     PressKnob(TalkId, usize),
+    /// Set the knob in this place to the value in that place, from inside the
+    /// choices it is shown among, which stay open.
+    SetAgentKnob(TalkId, usize, usize),
+    /// Drag the scrollbar of this session's prompt, with the rows one pixel
+    /// of the drag is worth.
+    DragAgentPrompt(TalkId, ResizeEvent, f32),
+    /// Flip the switch in this place, from inside the choices it is shown
+    /// among, which stay open.
+    FlipAgentKnob(TalkId, usize),
     /// Start naming one of this session's commands, in its prompt.
     StartAgentCommand(TalkId),
     /// Start naming a locally installed skill in this session's prompt.

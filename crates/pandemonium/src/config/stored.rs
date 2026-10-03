@@ -237,8 +237,6 @@ pub(super) struct Stored {
     changes_section_open: Option<bool>,
     /// Whether the Graph includes every history reference.
     history_all: Option<bool>,
-    /// Height of the box an agent's prompt is written in.
-    prompt_height: Option<f32>,
     /// Logical width of the window when it is not maximized.
     window_width: Option<f32>,
     /// Logical height of the window when it is not maximized.
@@ -785,7 +783,6 @@ impl Stored {
                 .changes_section_open
                 .unwrap_or(defaults.changes_section_open),
             history_all: self.history_all.unwrap_or(defaults.history_all),
-            prompt_height: self.prompt_height.unwrap_or(defaults.prompt_height),
         }
     }
 
@@ -1052,7 +1049,6 @@ impl Stored {
             history_graph_open: Some(layout.history_graph_open),
             changes_section_open: Some(layout.changes_section_open),
             history_all: Some(layout.history_all),
-            prompt_height: Some(layout.prompt_height),
             window_width: Some(window.width),
             window_height: Some(window.height),
             window_maximized: Some(window.maximized),

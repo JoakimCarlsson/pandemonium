@@ -1165,7 +1165,14 @@ impl App {
                     crate::picker::Kind::Modes | crate::picker::Kind::Knob
                 )
             })
-            && !matches!(message, Some(Message::ChoosePicker(_)))
+            && !matches!(
+                message,
+                Some(
+                    Message::ChoosePicker(_)
+                        | Message::SetAgentKnob(..)
+                        | Message::FlipAgentKnob(..)
+                )
+            )
         {
             self.dismiss_picker();
         }

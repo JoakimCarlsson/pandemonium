@@ -11,18 +11,19 @@ use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
 use pm_gfx::{Point, Renderer, Size};
 use pm_text::Position;
-use pm_ui::{Axis, MenuItem, ResizeEvent, ResizePhase};
+use pm_ui::{Axis, Div, MenuItem, ResizeEvent, ResizePhase, Theme};
 use winit::window::UserAttentionType;
 
-use crate::agent::{Standing, Talk, TalkId, Tally};
+use crate::agent::{Standing, Talk, TalkId, Tally, knob_rows};
 use crate::app::places::{Place, linked_file};
 use crate::app::{App, Writing};
 use crate::config::{AgentOptions, KnobValue};
 use crate::desktop;
+use crate::keymap::Action;
 use crate::message::Message;
 use crate::panel::PanelView;
 use crate::panes::Item;
-use crate::picker::{Choice, Kind, Row};
+use crate::picker::{Choice, Kind, Picker, Row};
 use crate::terminal::ShellId;
 use crate::workspace::{MenuTarget, TabMenu};
 
@@ -194,6 +195,15 @@ impl App {
             Message::LogOutAgent(session) => self.log_out_agent(session),
             Message::ShowAgentDeletions(session) => self.show_agent_deletions(session),
             Message::PressKnob(session, place) => self.press_knob(session, place),
+            Message::SetAgentKnob(session, place, pick) => self.set_knob_at(session, place, pick),
+            Message::DragAgentPrompt(session, event, step) => {
+                self.drag_prompt_scrollbar(session, event, step)
+            }
+            Message::FlipAgentKnob(session, place) => {
+                if let Some(knob) = self.knob_at(session, place) {
+                    self.toggle_agent_knob(session, &knob.id);
+                }
+            }
             Message::StartAgentCommand(session) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.start_command();
@@ -460,6 +470,35 @@ impl App {
         self.open_agent_choices(Kind::Knob, rows);
     }
 
+    /// What an agent control's open choices are headed with and set beside:
+    /// the title over them, the keys that step through modes, and the knobs
+    /// set in place under them.
+    pub(super) fn agent_choice_parts(&self, theme: &Theme, picker: &Picker) -> AgentChoiceParts {
+        let (session, shown) = match picker.rows().next().map(|row| &row.choice) {
+            Some(Choice::Knob(session, knob, _)) => (Some(*session), Some(knob.as_str())),
+            Some(Choice::Mode(session, _)) => (Some(*session), None),
+            _ => (None, None),
+        };
+        let talk = session.and_then(|session| self.agents.get(session));
+        let knob = shown.and_then(|id| {
+            talk.and_then(|talk| talk.knobs().into_iter().find(|knob| knob.id == id))
+        });
+        let modes = picker.kind() == Kind::Modes
+            || knob.as_ref().is_some_and(|knob| knob.about == About::Mode);
+        let title = match &knob {
+            Some(knob) if knob.about == About::Model => "Select a model".to_owned(),
+            Some(knob) if !modes => knob.name.clone(),
+            _ => "Modes".to_owned(),
+        };
+        AgentChoiceParts {
+            title,
+            keys: modes
+                .then(|| self.keys_for(Action::CycleAgentMode, &self.context()))
+                .flatten(),
+            knobs: talk.map_or_else(Vec::new, |talk| knob_rows(theme, talk, shown)),
+        }
+    }
+
     /// Opens an agent control's choices beside the control that was pressed.
     fn open_agent_choices(&mut self, kind: Kind, rows: Vec<Row>) {
         self.agent_picker_at = self.pointer;
@@ -471,6 +510,39 @@ impl App {
             if let Some(place) = current {
                 picker.select(place);
             }
+        }
+    }
+
+    /// Scrolls `session`'s prompt as its scrollbar is dragged, from the row
+    /// it showed when the drag began.
+    fn drag_prompt_scrollbar(&mut self, session: TalkId, event: ResizeEvent, step: f32) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let prompt = talk.prompt();
+        let base = match event.phase {
+            ResizePhase::Started => prompt.rows_above(),
+            _ => self
+                .prompt_scroll_origin
+                .unwrap_or_else(|| prompt.rows_above()),
+        };
+        self.prompt_scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        let reached = (base as f32 + event.delta(Axis::Vertical) * step).round();
+        prompt.scroll_to_row(reached.max(0.0) as usize);
+    }
+
+    /// Sets the knob in `place` of `session`'s to the value in place `pick`.
+    fn set_knob_at(&mut self, session: TalkId, place: usize, pick: usize) {
+        let Some(knob) = self.knob_at(session, place) else {
+            return;
+        };
+        if let Setting::Picked { picks, .. } = knob.setting
+            && let Some(pick) = picks.get(pick)
+        {
+            self.set_knob(session, &knob.id, &pick.id);
         }
     }
 
@@ -1271,4 +1343,15 @@ fn apply_remembered_knob(talk: &Talk, knob: &Knob, options: &AgentOptions) {
         }
         _ => {}
     }
+}
+
+/// What an agent control's open choices are drawn with beside the rows
+/// themselves.
+pub(super) struct AgentChoiceParts {
+    /// What is written over the choices.
+    pub title: String,
+    /// The keys that step through the choices, when they are modes.
+    pub keys: Option<String>,
+    /// The knobs set in place under the choices.
+    pub knobs: Vec<Div<Message>>,
 }

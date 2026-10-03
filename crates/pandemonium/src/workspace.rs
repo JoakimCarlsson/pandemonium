@@ -74,12 +74,6 @@ pub const HISTORY_GRAPH_HEIGHT: f32 = 190.0;
 /// Smallest and largest height the Source Control graph resizes to.
 pub const HISTORY_GRAPH_RANGE: (f32, f32) = (80.0, f32::MAX);
 
-/// Height an agent's prompt box opens at: three lines of text.
-pub const PROMPT_HEIGHT: f32 = 84.0;
-
-/// Smallest and largest height an agent's prompt box resizes to.
-pub const PROMPT_RANGE: (f32, f32) = (28.0, f32::MAX);
-
 /// Which workspace regions are visible and how large they are.
 ///
 /// This is what the window remembers of itself between launches, so it is
@@ -108,8 +102,6 @@ pub struct Layout {
     pub changes_section_open: bool,
     /// Whether the Graph includes every history reference.
     pub history_all: bool,
-    /// Height of the box an agent's prompt is written in.
-    pub prompt_height: f32,
 }
 
 /// What the sidebar beside the panes is listing.
@@ -154,7 +146,6 @@ impl Default for Layout {
             history_graph_open: true,
             changes_section_open: true,
             history_all: false,
-            prompt_height: PROMPT_HEIGHT,
         }
     }
 }
