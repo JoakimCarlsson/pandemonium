@@ -80,7 +80,7 @@ pub enum SavedKind {
     Change,
     /// An agent session over the worktree.
     Agent,
-    /// The settings pane, which is the window's rather than a worktree's.
+    /// A legacy settings tab, skipped now that preferences open in a modal.
     Settings,
 }
 

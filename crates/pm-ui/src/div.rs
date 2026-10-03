@@ -29,6 +29,8 @@ pub struct Div<M> {
     measured: Option<Measurement>,
     /// Whether children belong to a control rather than selectable prose.
     selection_disabled: bool,
+    /// Whether empty space intercepts pointer presses intended for content underneath.
+    blocks_pointer: bool,
 }
 
 /// What one measurement of a container found: the room its children were
@@ -83,6 +85,7 @@ pub fn div<M>() -> Div<M> {
         tooltip: None,
         measured: None,
         selection_disabled: false,
+        blocks_pointer: false,
     }
 }
 
@@ -117,6 +120,12 @@ impl<M> Div<M> {
     /// Keeps text inside a control out of its surrounding reading selection.
     pub fn selection_disabled(mut self) -> Self {
         self.selection_disabled = true;
+        self
+    }
+
+    /// Blocks pointer presses on empty space while leaving child controls interactive.
+    pub fn block_pointer(mut self) -> Self {
+        self.blocks_pointer = true;
         self
     }
 
@@ -367,6 +376,9 @@ impl<M: Clone> Element<M> for Div<M> {
     /// was measured, and measured again only when the bounds it was given
     /// could change their answer.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
+        if self.blocks_pointer {
+            cx.clickable(bounds, None, None);
+        }
         let interaction = match (
             self.on_drag.clone(),
             self.on_click.clone(),

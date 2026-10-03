@@ -1177,8 +1177,7 @@ impl App {
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
-            | Item::Tool(_)
-            | Item::Settings => None,
+            | Item::Tool(_) => None,
         }
     }
 }

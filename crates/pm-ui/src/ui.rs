@@ -208,16 +208,25 @@ impl<M> Ui<M> {
         let text_parent = index.and_then(|index| {
             matches!(self.regions[index].action, RegionAction::Click(_))
                 .then(|| {
-                    self.regions[..index].iter().rposition(|region| {
-                        region.bounds.contains(pointer)
-                            && matches!(
-                                region.action,
-                                RegionAction::Drag {
-                                    cursor: PointerCursor::Text,
-                                    ..
-                                }
-                            )
-                    })
+                    self.regions[..index]
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .take_while(|(_, region)| {
+                            !region.bounds.contains(pointer)
+                                || !matches!(region.action, RegionAction::Inert)
+                        })
+                        .find_map(|(index, region)| {
+                            (region.bounds.contains(pointer)
+                                && matches!(
+                                    region.action,
+                                    RegionAction::Drag {
+                                        cursor: PointerCursor::Text,
+                                        ..
+                                    }
+                                ))
+                            .then_some(index)
+                        })
                 })
                 .flatten()
         });
@@ -331,6 +340,30 @@ impl<M> Ui<M> {
     /// Moves focus among visible click targets matching the caller's message predicate.
     pub fn focus_matching(&mut self, matches: impl Fn(&M) -> bool, backwards: bool) {
         self.clear_text_selection();
+        self.focus = self.find_focus(backwards, |_, region| match &region.action {
+            RegionAction::Click(message) => matches(message),
+            _ => false,
+        });
+    }
+
+    /// Moves focus among unobscured click targets inside a modal's bounds.
+    pub fn focus_within(&mut self, bounds: Rect, backwards: bool) {
+        self.clear_text_selection();
+        self.focus = self.find_focus(backwards, |index, region| {
+            let centre = Point::new(
+                region.bounds.left() + region.bounds.size.width / 2.0,
+                region.bounds.top() + region.bounds.size.height / 2.0,
+            );
+            bounds.contains(centre) && self.region_at(centre) == Some(index)
+        });
+    }
+
+    /// Finds the next visible click target accepted by a focus traversal predicate.
+    fn find_focus(
+        &self,
+        backwards: bool,
+        matches: impl Fn(usize, &Region<M>) -> bool,
+    ) -> Option<usize> {
         let count = self.regions.len();
         let step = if backwards { -1 } else { 1 };
         let base = self
@@ -338,20 +371,15 @@ impl<M> Ui<M> {
             .map_or(if backwards { count as isize } else { -1 }, |index| {
                 index as isize
             });
-        self.focus = (1..=count).find_map(|distance| {
+        (1..=count).find_map(|distance| {
             let index = (base + step * distance as isize).rem_euclid(count as isize) as usize;
             let region = &self.regions[index];
-            match &region.action {
-                RegionAction::Click(message)
-                    if region.bounds.size.width > 0.0
-                        && region.bounds.size.height > 0.0
-                        && matches(message) =>
-                {
-                    Some(index)
-                }
-                _ => None,
-            }
-        });
+            (matches!(region.action, RegionAction::Click(_))
+                && region.bounds.size.width > 0.0
+                && region.bounds.size.height > 0.0
+                && matches(index, region))
+            .then_some(index)
+        })
     }
 
     /// Gives up focus entirely.

@@ -231,8 +231,7 @@ impl App {
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
-            | Item::Tool(_)
-            | Item::Settings => false,
+            | Item::Tool(_) => false,
         }
     }
 
@@ -334,7 +333,7 @@ impl App {
             | Item::Excerpts(scope)
             | Item::Search(scope)
             | Item::Agent(scope, _) => Some(scope),
-            Item::Settings | Item::Tool(_) => None,
+            Item::Tool(_) => None,
         }
     }
 
@@ -599,12 +598,6 @@ impl App {
                     ..SavedTab::default()
                 });
             }
-            if item == Item::Settings {
-                return Some(SavedTab {
-                    kind: SavedKind::Settings,
-                    ..SavedTab::default()
-                });
-            }
             let scope = self.scope_of(item)?;
             let project = self.open.get(scope.project())?.root().to_path_buf();
             let worktree = self.root_of(scope)?;
@@ -729,7 +722,7 @@ impl App {
                 return tools.insert(tool).then_some((None, Item::Tool(tool)));
             }
             if tab.kind == SavedKind::Settings {
-                return Some((None, Item::Settings));
+                return None;
             }
             let (checkout, project) = projects
                 .iter()
@@ -837,6 +830,9 @@ impl App {
         self.refresh_excerpts();
         self.sweep();
         self.focus_pane(self.panes.focus());
+        if super::settings::settings_was_open(&saved.root) {
+            self.open_settings();
+        }
     }
 
     /// Opens what the reviews in the panes show, then closes every file no
@@ -977,8 +973,7 @@ impl App {
                 | Item::Excerpts(_)
                 | Item::Search(_)
                 | Item::Agent(..)
-                | Item::Tool(_)
-                | Item::Settings => {}
+                | Item::Tool(_) => {}
             }
         }
         self.activate_tab(pane, item);
@@ -1196,14 +1191,6 @@ impl App {
                     pinned: false,
                 })
             }
-            Item::Settings => Some(TabEntry {
-                item,
-                name: "Settings".to_owned(),
-                icon: IconName::Settings,
-                dirty: false,
-                preview: false,
-                pinned: false,
-            }),
             Item::Change(project, change) => {
                 let review = self.reviews.get(&project)?;
                 let path = review.path_of(change)?;
@@ -1478,7 +1465,6 @@ impl App {
                 Content::Built(self.project_search_content(theme, pane, scope))
             }
             Some(Item::Search(_)) => Content::Empty,
-            Some(Item::Settings) => self.settings_content(theme),
             None => Content::Empty,
         }
     }

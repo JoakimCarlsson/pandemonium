@@ -146,6 +146,8 @@ pub enum Message {
     Finish,
     /// Open the settings pane, or bring it forward where it is open.
     OpenSettings,
+    /// Close the window preferences modal and return to the workspace.
+    CloseSettings,
     /// Copies the running version and source commit to the system clipboard.
     CopyVersion,
     /// Open the repository the editor is published from.

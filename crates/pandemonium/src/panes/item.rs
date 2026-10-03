@@ -2,8 +2,8 @@
 //!
 //! Every pane in the window is the same pane: a bar of tabs with one of them
 //! in front. What a tab holds is this — a file, a review of everything a
-//! project has changed, the diff of one of those files, the editor's own
-//! settings — and the tree neither knows nor cares which, because splitting,
+//! project has changed, the diff of one of those files, a workspace tool
+//! — and the tree neither knows nor cares which, because splitting,
 //! tabbing, carrying and closing are the same four things whichever it is.
 
 use pm_core::Scope;
@@ -43,8 +43,6 @@ pub enum Item {
     Search(Scope),
     /// One conversation held in a worktree, with everything said in it.
     Agent(Scope, TalkId),
-    /// The editor's preferences, which belong to the window, not a worktree.
-    Settings,
 }
 
 impl Item {
@@ -107,6 +105,6 @@ impl Item {
     /// Whether this belongs to the window rather than to one worktree, and
     /// so is drawn whichever worktree the window is showing.
     pub fn is_window_wide(self) -> bool {
-        matches!(self, Self::Settings | Self::Tool(_))
+        matches!(self, Self::Tool(_))
     }
 }

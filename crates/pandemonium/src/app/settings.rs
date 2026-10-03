@@ -1,55 +1,102 @@
-//! What the window does with its settings pane: opening it, scrolling it,
+//! What the window does with its preferences modal: opening it, scrolling it,
 //! asking for what a row cannot take by itself, and handing what changed to
 //! the parts of the window that act on it.
 
-use pm_ui::Theme;
+use pm_ui::{Element, Styled, Theme};
 
 use crate::app::{App, Writing};
 use crate::config::{self, FontSlot, WorktreePaths};
 use crate::desktop;
 use crate::editor::Habits;
 use crate::message::Message;
-use crate::panes::{Content, Item};
+use crate::panes::{SavedKind, SavedNode};
 use crate::picker::{Choice, Kind, Row};
 use crate::settings::{AgentList, McpPage, SettingsPane, Subject, settings_pane};
 use crate::theme::{self, TOKENS};
 use crate::workspace::MenuTarget;
 
 impl App {
-    /// Brings the settings pane forward, opening it in the pane with the
-    /// keyboard when no pane has it open.
-    ///
-    /// There is one settings pane for the window, as there is one file of
-    /// preferences: asking for it again finds the tab it already has rather
-    /// than opening a second. Until the first run's setup is finished the
-    /// setup page is the settings, and there is nothing to open.
+    /// Opens the preferences modal above the current workspace.
     pub(super) fn open_settings(&mut self) {
         if !self.onboarded {
             return;
         }
-        let scope = self.scope();
-        let holding = self
-            .panes
-            .panes()
-            .into_iter()
-            .find(|pane| {
-                self.panes
-                    .pane(*pane)
-                    .is_some_and(|pane| pane.items().any(|item| item == Item::Settings))
-            })
-            .unwrap_or_else(|| self.panes.focus());
-        if let Some(pane) = self.panes.pane_mut(holding) {
-            pane.open(scope, Item::Settings);
+        self.dismiss_picker();
+        self.dismiss_popup();
+        self.menu = None;
+        self.search_focused = false;
+        self.tree_edit = None;
+        self.release_pane_focus();
+        self.resolver.reset();
+        self.settings_open = true;
+        if let Some(ui) = self.ui.as_mut() {
+            ui.clear_focus();
+            ui.clear_text_selection();
         }
-        self.focus_pane(holding);
         if !self.languages.requested {
             self.refresh_language_catalogue();
         }
-        self.store();
     }
 
-    /// What a pane showing the settings draws beneath its bar of tabs.
-    pub(super) fn settings_content(&self, theme: &Theme) -> Content {
+    /// Closes preferences and returns keyboard focus to the current workspace pane.
+    pub(super) fn close_settings(&mut self) {
+        self.settings_open = false;
+        self.resolver.reset();
+        self.settings.stop_recording();
+        self.dismiss_picker();
+        self.menu = None;
+        self.writing = None;
+        if let Some(ui) = self.ui.as_mut() {
+            ui.clear_focus();
+            ui.clear_text_selection();
+        }
+        self.focus_pane(self.panes.focus());
+    }
+
+    /// The centred modal bounds, fitted to the available window size.
+    pub(super) fn settings_bounds(&self, window: pm_gfx::Size) -> pm_gfx::Rect {
+        let width = (window.width - 48.0).clamp(1.0, 1200.0);
+        let height = (window.height - 64.0).clamp(1.0, 900.0);
+        pm_gfx::Rect::from_xywh(
+            (window.width - width) / 2.0,
+            (window.height - height) / 2.0,
+            width,
+            height,
+        )
+    }
+
+    /// Draws a dimmed workspace and a large preferences card above it.
+    pub(super) fn settings_overlay(
+        &self,
+        theme: &Theme,
+        window: pm_gfx::Size,
+    ) -> crate::workspace::Overlaid {
+        let bounds = self.settings_bounds(window);
+        crate::workspace::Overlaid {
+            at: pm_gfx::Point::new(0.0, 0.0),
+            content: Box::new(
+                pm_ui::v_flex()
+                    .block_pointer()
+                    .w_px((window.width - 8.0).max(1.0))
+                    .h_px((window.height - 8.0).max(1.0))
+                    .on_click(Message::CloseSettings)
+                    .on_secondary_click(Message::CloseSettings)
+                    .bg(pm_gfx::Rgba::new(0.0, 0.0, 0.0, 0.55))
+                    .items_center()
+                    .justify_center()
+                    .child(crate::settings::settings_modal(
+                        theme,
+                        self.settings_content(theme),
+                        bounds.size,
+                    )),
+            ),
+            backdrop: Some(Message::CloseSettings),
+            above: false,
+        }
+    }
+
+    /// Builds the preferences pages inside the modal.
+    pub(super) fn settings_content(&self, theme: &Theme) -> Box<dyn Element<Message>> {
         let catalog = self.mcp_catalog();
         let usage = self.mcp_usage();
         let agent_catalog = self.agent_catalog();
@@ -57,7 +104,7 @@ impl App {
             Some(Writing::FormField(field)) => Some(field),
             _ => None,
         };
-        Content::Built(settings_pane(
+        settings_pane(
             theme,
             &SettingsPane {
                 languages: crate::settings::languages::LanguagesPage {
@@ -106,7 +153,7 @@ impl App {
                     available_open: self.settings.available_open(),
                 },
             },
-        ))
+        )
     }
 
     /// Asks for a path to add to the `list` a new worktree is given.
@@ -140,19 +187,20 @@ impl App {
     /// Scrolls the settings pane by `delta` logical pixels when the pointer
     /// is over it, saying whether it was.
     pub(super) fn scroll_settings(&mut self, delta: f32) -> bool {
-        let pane = self
+        if !self.settings_open {
+            return false;
+        }
+        let window = self
+            .renderer
+            .as_ref()
+            .map_or(pm_gfx::Size::zero(), pm_gfx::Renderer::size);
+        if self
             .pointer
-            .and_then(|at| self.geometry.pane_at(at))
-            .unwrap_or_else(|| self.panes.focus());
-        let showing = self
-            .panes
-            .pane(pane)
-            .and_then(|pane| pane.active(self.scope()))
-            == Some(Item::Settings);
-        if showing {
+            .is_none_or(|at| self.settings_bounds(window).contains(at))
+        {
             self.settings.scroll_by(delta);
         }
-        showing
+        true
     }
 
     /// Carries out a message of the settings pane that asks rather than
@@ -404,7 +452,7 @@ impl App {
         if self.settings.recording().is_none() {
             return false;
         }
-        if self.active_tab() != Some(Item::Settings) {
+        if !self.settings_open {
             self.settings.stop_recording();
             return false;
         }
@@ -435,5 +483,15 @@ impl App {
         if config::save_theme(&mut self.preferences, typed) {
             self.store();
         }
+    }
+}
+
+/// Whether an older saved layout had preferences in front of any pane.
+pub(super) fn settings_was_open(node: &SavedNode) -> bool {
+    match node {
+        SavedNode::Pane { tabs } => tabs
+            .iter()
+            .any(|tab| tab.kind == SavedKind::Settings && tab.front),
+        SavedNode::Split { children, .. } => children.iter().any(settings_was_open),
     }
 }

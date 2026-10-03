@@ -296,7 +296,7 @@ impl App {
 
     /// Routes clipboard editing to the single-line field that has the
     /// keyboard, saying whether one did.
-    fn act_on_field(&mut self, action: Action) -> bool {
+    pub(super) fn act_on_field(&mut self, action: Action) -> bool {
         match action {
             Action::Cut | Action::Copy | Action::Paste | Action::SelectAll => {}
             _ => return false,

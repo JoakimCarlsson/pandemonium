@@ -308,6 +308,8 @@ pub struct App {
     /// When the settings file was last written, as its language servers were
     /// last read from it.
     settings_seen: Option<std::time::SystemTime>,
+    /// Whether the window preferences modal is open.
+    settings_open: bool,
     /// What was cut or copied out of the file tree.
     tree_clipboard: Option<crate::tree::Clipboard>,
     /// The moves, copies and removals in the tree that have finished and
@@ -755,6 +757,7 @@ impl App {
             moving: None,
             selection_ranges: None,
             settings_seen: None,
+            settings_open: false,
             tree_clipboard: None,
             shifted: Arc::default(),
             entry_drag: None,
@@ -933,13 +936,15 @@ impl App {
             }
             None => {}
         }
+        if self.settings_open {
+            return Some("settings");
+        }
         match (self.editor_focused, self.terminal_focused) {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
             (true, _) if showing(|item| matches!(item, Item::Outline(_))) => Some("outline"),
             (true, _) if showing(|item| matches!(item, Item::Search(_))) => Some("search"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
-            (true, _) if showing(|item| item == Item::Settings) => Some("settings"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
             _ => None,
@@ -948,7 +953,9 @@ impl App {
 
     /// The file keystrokes are going to, if the pane is focused.
     pub(super) fn focused_file(&self) -> Option<editor::OpenFile> {
-        self.editor_focused.then(|| self.active_file()).flatten()
+        (self.editor_focused && !self.settings_open)
+            .then(|| self.active_file())
+            .flatten()
     }
 
     /// Places the cursor where a press landed, or selects to where it reached.
@@ -1858,6 +1865,11 @@ impl App {
             self.request_redraw();
             return;
         }
+        if message == Message::CloseSettings {
+            self.close_settings();
+            self.request_redraw();
+            return;
+        }
         if message == Message::OpenSettings {
             self.open_settings();
             self.request_redraw();
@@ -2462,6 +2474,9 @@ impl App {
         let mut overlays = Vec::new();
 
         let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
+        if self.settings_open {
+            overlays.push(self.settings_overlay(theme, window));
+        }
 
         if let Some((card, position, count)) = self.notices.shown_installation() {
             let width = 460.0_f32.min((window.width - 24.0).max(1.0));
