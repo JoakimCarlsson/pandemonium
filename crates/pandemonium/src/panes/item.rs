@@ -14,6 +14,23 @@ use crate::image::ImageId;
 use crate::panes::Tool;
 use crate::review::ChangeId;
 
+/// What a tab is for, which decides which panes it is at home in.
+///
+/// A pane has no role of its own: it serves the roles of the tabs open in it,
+/// so a pane of files is where the next file goes, and a pane someone has
+/// dragged a file and a conversation into is at home to both.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Role {
+    /// Reading and editing: files, pictures, diffs, reviews and search.
+    Editor,
+    /// Talking to an agent: its conversations and the launcher for them.
+    Agent,
+    /// Shells.
+    Terminal,
+    /// Every other workspace tool, which keeps to the pane it was put in.
+    Tool,
+}
+
 /// One thing a pane can hold in a tab.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Item {
@@ -46,6 +63,16 @@ pub enum Item {
 }
 
 impl Item {
+    /// What this is for.
+    pub fn role(self) -> Role {
+        match self {
+            Self::Tool(Tool::Chat) | Self::Agent(..) => Role::Agent,
+            Self::Tool(Tool::Terminal) => Role::Terminal,
+            Self::Tool(_) => Role::Tool,
+            _ => Role::Editor,
+        }
+    }
+
     /// The file this holds, when what it holds is a file.
     pub fn file(self) -> Option<FileId> {
         match self {

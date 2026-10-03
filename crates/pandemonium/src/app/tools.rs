@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use crate::app::{App, Writing};
 use crate::message::Message;
 use crate::panel::{Panel, PanelView};
-use crate::panes::{Arrangement, Item, PaneId, SplitDirection, Tool};
+use crate::panes::{Arrangement, Item, PaneId, Role, SplitDirection, Tool};
 use crate::review::SourceControlControls;
 use crate::workspace::MenuTarget;
 
@@ -59,7 +59,10 @@ impl App {
         let pane = if tool == Tool::Chat && matches!(self.active_tab(), Some(Item::Agent(_, _))) {
             self.panes.focus()
         } else {
-            self.tool_pane(tool).unwrap_or_else(|| self.panes.focus())
+            match self.tool_pane(tool) {
+                Some(pane) => pane,
+                None => self.pane_for(self.panes.focus(), Item::Tool(tool).role()),
+            }
         };
         self.move_tool(pane, tool);
     }
@@ -102,7 +105,9 @@ impl App {
     fn reset_window_layout(&mut self) {
         let scope = self.scope();
         let active = self
-            .content_pane
+            .recent
+            .get(&Role::Editor)
+            .copied()
             .and_then(|id| self.panes.pane(id)?.active(scope));
         let mut seen = BTreeSet::new();
         let documents = self
@@ -207,38 +212,10 @@ impl App {
             let _ = ui.pointer_cancelled();
             ui.clear_text_selection();
         }
-        self.content_pane = Some(pane);
+        self.recent.insert(Role::Editor, pane);
         self.release_pane_focus();
         self.focus_pane(pane);
         self.store();
-    }
-
-    /// Finds a document pane, making one beside the tools when no document pane remains.
-    pub(super) fn document_pane(&mut self) -> PaneId {
-        let accepts_documents = |id| {
-            self.panes.pane(id).is_some_and(|pane| {
-                pane.is_empty() || pane.items().any(|item| !matches!(item, Item::Tool(_)))
-            })
-        };
-        if let Some(pane) = self.content_pane.filter(|pane| accepts_documents(*pane)) {
-            return pane;
-        }
-        if let Some(pane) = self
-            .panes
-            .panes()
-            .into_iter()
-            .find(|pane| accepts_documents(*pane))
-        {
-            self.content_pane = Some(pane);
-            return pane;
-        }
-        let focused = self.panes.focus();
-        let pane = self
-            .panes
-            .split(focused, SplitDirection::Right)
-            .unwrap_or(focused);
-        self.content_pane = Some(pane);
-        pane
     }
 
     /// Builds a registered tool's content independently of where its pane is placed.

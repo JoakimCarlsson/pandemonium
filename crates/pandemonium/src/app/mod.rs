@@ -34,6 +34,7 @@ mod outline;
 mod panel;
 mod panes;
 mod picker;
+mod placement;
 mod places;
 mod predict;
 mod reading;
@@ -381,8 +382,8 @@ pub struct App {
     mcp_servers: Vec<pm_acp::McpServer>,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
-    /// Last pane used for documents, so tools open files beside their own tab.
-    content_pane: Option<crate::panes::PaneId>,
+    /// The pane last used for each role, so tools open files beside their own tab.
+    recent: placement::Recent,
     /// The panes the last launch left, until the window is ready to open them.
     saved: Saved,
     /// The shells the last launch had running, until they are started again.
@@ -803,7 +804,7 @@ impl App {
             account_logins: BTreeSet::new(),
             mcp_servers: restored.mcp_servers,
             panes: PaneTree::default(),
-            content_pane: None,
+            recent: placement::Recent::new(),
             saved,
             shells,
             geometry: Geometry::default(),

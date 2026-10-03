@@ -13,7 +13,7 @@ use pm_core::Scope;
 use pm_ui::{Axis, ResizePhase};
 
 use crate::panes::Arrangement;
-use crate::panes::item::Item;
+use crate::panes::item::{Item, Role};
 use crate::panes::saved::{Saved, SavedNode, SavedTab};
 
 /// Smallest share of a split one pane can be dragged down to.
@@ -163,6 +163,18 @@ impl Pane {
         front
             .filter(|item| self.shown(scope).any(|tab| tab.item == *item))
             .or_else(|| self.shown(scope).next().map(Tab::item))
+    }
+
+    /// Whether a tab of `role` is open in it, as seen by `scope`.
+    pub fn holds(&self, scope: impl Into<Option<Scope>>, role: Role) -> bool {
+        self.shown(scope.into()).any(|tab| tab.item.role() == role)
+    }
+
+    /// Whether `role` is at home here: it holds a tab of that role, or shows
+    /// nothing yet and so can become a pane for it.
+    pub fn serves(&self, scope: impl Into<Option<Scope>>, role: Role) -> bool {
+        let scope = scope.into();
+        self.shown(scope).next().is_none() || self.holds(scope, role)
     }
 
     /// Whether nothing at all is open in the pane.
