@@ -24,12 +24,12 @@ use base64::Engine;
 use pm_gfx::Image;
 
 use crate::agent::pane::Wrapped;
-use crate::agent::transcript::Transcript;
+use crate::agent::transcript::{Block, Transcript};
 use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Limits, Method, Mode,
-    Notify, Reply, Request, Session, Setting, Stop, Usage, Voice,
+    Notify, Reply, Request, Session, Setting, Status, Stop, ToolCall, Usage, Voice,
 };
 
 use crate::agent::form::Form;
@@ -166,6 +166,8 @@ pub struct Talk {
     /// Where each link the pane last drew leads, in the order it drew them,
     /// which is how a press on one names it.
     drawn_links: Rc<RefCell<Vec<String>>>,
+    /// Tool identities registered by visible card headers.
+    drawn_cards: RefCell<Vec<String>>,
     /// Where each run of text the pane last drew came out, keyed by its
     /// place in `drawn_spots`.
     drawn_text: Placements,
@@ -180,6 +182,11 @@ pub struct Talk {
     following: bool,
     /// The tool and thought blocks the reader has opened.
     expanded_details: BTreeSet<usize>,
+    /// Tool cards whose complete output and children are visible.
+    expanded_cards: BTreeSet<String>,
+    /// Tool cards opened once because they failed, so a reader who closes
+    /// one again is not overruled by the next word about it.
+    opened_failures: BTreeSet<String>,
     /// The last lines each terminal the agent started has written, by the
     /// name the agent knows it by, for the tool calls that show one.
     terminals: BTreeMap<String, String>,
@@ -936,6 +943,59 @@ impl Talk {
         self.shown_revision += 1;
     }
 
+    /// The identities registered by visible tool-card controls.
+    pub fn drawn_cards(&self) -> &RefCell<Vec<String>> {
+        &self.drawn_cards
+    }
+
+    /// Whether a tool card shows its entire output and children.
+    pub fn card_expanded(&self, id: &str) -> bool {
+        self.expanded_cards.contains(id)
+    }
+
+    /// Toggles a single tool card without changing its group.
+    pub fn toggle_card(&mut self, id: &str) {
+        self.selection.clear();
+        if !self.expanded_cards.insert(id.to_owned()) {
+            self.expanded_cards.remove(id);
+        }
+        self.shown_revision += 1;
+    }
+
+    /// Expands every group, thought and card, or collapses all open details.
+    pub fn toggle_all_details(&mut self) {
+        let mut groups = BTreeSet::new();
+        let mut cards = BTreeSet::new();
+        for (at, block) in self.transcript.blocks().iter().enumerate() {
+            match block {
+                Block::Said(Voice::Thought, _) => {
+                    groups.insert(at);
+                }
+                Block::Ran(call) => {
+                    if at == 0 || !matches!(self.transcript.blocks()[at - 1], Block::Ran(_)) {
+                        groups.insert(at);
+                    }
+                    self.collect_cards(call, &mut cards);
+                }
+                _ => {}
+            }
+        }
+        let collapse =
+            groups.is_subset(&self.expanded_details) && cards.is_subset(&self.expanded_cards);
+        self.expanded_details = if collapse { BTreeSet::new() } else { groups };
+        self.expanded_cards = if collapse { BTreeSet::new() } else { cards };
+        self.selection.clear();
+        self.shown_revision += 1;
+    }
+
+    /// Collects the identities of a card and every nested descendant.
+    fn collect_cards(&self, call: &ToolCall, cards: &mut BTreeSet<String>) {
+        cards.insert(call.id.clone());
+        for child in self.transcript.children(&call.id) {
+            self.collect_cards(child, cards);
+        }
+    }
+
     /// Counts the changes to what the pane shows that the transcript does
     /// not hold, so the pane can tell when its wrapped rows still stand.
     pub fn shown_revision(&self) -> u64 {
@@ -1090,7 +1150,12 @@ impl Talk {
                 self.logins = methods;
             }
             Event::Said(voice, text) => self.transcript.say(voice, &text),
-            Event::Ran(call) => self.transcript.ran(call),
+            Event::Ran(call) => {
+                if call.status == Status::Failed && self.opened_failures.insert(call.id.clone()) {
+                    self.expanded_cards.insert(call.id.clone());
+                }
+                self.transcript.ran(call);
+            }
             Event::Planned(steps) => self.transcript.planned(steps),
             Event::Offers(commands) => self.commands = commands,
             Event::Mode(mode) => self.mode = Some(mode),
@@ -1105,6 +1170,7 @@ impl Talk {
                 .retain(|form| form.link().is_none_or(|link| link.id != id)),
             Event::Requested(..) => {}
             Event::Stopped(stop) => {
+                self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
                 self.unseen = stop != Stop::Cancelled;
@@ -1113,6 +1179,7 @@ impl Talk {
                 }
             }
             Event::Failed(trouble) => {
+                self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
                 self.unseen = true;
@@ -1147,6 +1214,7 @@ impl Talk {
             }
             Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
             Event::Ended => {
+                self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
                 self.ready = false;
@@ -1475,12 +1543,15 @@ impl Talks {
                 drawn_height: Rc::default(),
                 drawn_width: Rc::default(),
                 drawn_links: Rc::default(),
+                drawn_cards: RefCell::default(),
                 drawn_text: Rc::default(),
                 drawn_spots: Rc::default(),
                 selection: Selection::default(),
                 copied_replies: BTreeMap::new(),
                 following: true,
                 expanded_details: BTreeSet::new(),
+                expanded_cards: BTreeSet::new(),
+                opened_failures: BTreeSet::new(),
                 shown_revision: 0,
                 wrapped: RefCell::default(),
                 terminals: BTreeMap::new(),

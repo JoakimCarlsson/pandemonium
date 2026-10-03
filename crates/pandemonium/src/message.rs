@@ -682,6 +682,8 @@ pub enum Message {
     ScrollAgent(TalkId, ResizeEvent, f32),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
+    /// Toggles the full output and descendants of one tool call.
+    ToggleAgentCard(TalkId, usize),
     /// Follow the link this session's pane drew in this place: open the
     /// file it names, or the address in the browser.
     FollowAgentLink(TalkId, usize),

@@ -21,6 +21,7 @@ mod process;
 mod registry;
 mod request;
 mod session;
+mod subagent;
 mod transport;
 mod update;
 
