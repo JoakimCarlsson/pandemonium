@@ -103,6 +103,24 @@ impl App {
         .join(" · ")
     }
 
+    /// Copies the current source of one agent reply and marks its confirmation icon.
+    fn copy_agent_reply(&mut self, session: TalkId, block: usize, formatted: bool) {
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        let Some(crate::agent::Block::Said(pm_acp::Voice::Agent, source)) =
+            talk.transcript().blocks().get(block)
+        else {
+            return;
+        };
+        if formatted {
+            desktop::copy_html(crate::markdown::render_html(source), source.clone());
+        } else {
+            desktop::copy(source.clone());
+        }
+        talk.mark_reply_copied(block);
+    }
+
     /// Carries out the commands an agent session answers to.
     ///
     /// The answer says whether the message was one of them, so that the
@@ -167,8 +185,15 @@ impl App {
                     .show_section(crate::settings::SettingsSection::McpServers);
                 self.load_mcp_registry();
             }
-            Message::ShowAgentTextMenu(session) => {
-                self.open_menu(MenuTarget::AgentText(session));
+            Message::ShowAgentTextMenu(session, reply) => {
+                self.open_menu(MenuTarget::AgentText(session, reply));
+            }
+            Message::CopyAgentReply(session, block, formatted) => {
+                self.copy_agent_reply(
+                    session,
+                    block,
+                    formatted.unwrap_or(self.pointer_modifiers.shift_key()),
+                );
             }
             Message::CopyAgentText(session) => {
                 self.copy_agent_selection(session);

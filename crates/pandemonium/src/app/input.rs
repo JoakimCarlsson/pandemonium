@@ -1066,6 +1066,7 @@ impl App {
         }
 
         if state == ElementState::Pressed {
+            self.pointer_modifiers = self.modifiers;
             if !self
                 .pointer
                 .is_some_and(|pointer| self.presses_tree_edit(pointer))

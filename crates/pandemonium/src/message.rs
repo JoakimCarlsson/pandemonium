@@ -694,7 +694,9 @@ pub enum Message {
     /// Open the settings page where MCP servers are managed.
     ManageMcpServers,
     /// Open the menu of what can be done to the text of this session's transcript.
-    ShowAgentTextMenu(TalkId),
+    ShowAgentTextMenu(TalkId, Option<usize>),
+    /// Copy a reply, choosing formatting explicitly or from the modifiers at the press.
+    CopyAgentReply(TalkId, usize, Option<bool>),
     /// Copy what is picked out of this session's transcript.
     CopyAgentText(TalkId),
     /// Pick out the whole of this session's transcript.

@@ -1526,16 +1526,31 @@ impl App {
                     ])
                     .collect()
             }
-            MenuTarget::AgentText(session) => {
+            MenuTarget::AgentText(session, reply) => {
                 let selected = self
                     .agents
                     .get(session)
                     .is_some_and(|talk| talk.selection().is_some());
-                vec![
+                let mut entries = Vec::new();
+                if let Some(block) = reply {
+                    entries.extend([
+                        pm_ui::menu_entry(
+                            "Copy Reply",
+                            Some(Message::CopyAgentReply(session, block, Some(false))),
+                        ),
+                        pm_ui::menu_entry(
+                            "Copy Reply Formatted",
+                            Some(Message::CopyAgentReply(session, block, Some(true))),
+                        ),
+                        pm_ui::menu_separator(),
+                    ]);
+                }
+                entries.extend([
                     pm_ui::menu_entry("Copy", selected.then_some(Message::CopyAgentText(session))),
                     pm_ui::menu_separator(),
                     pm_ui::menu_entry("Select All", Some(Message::SelectAllAgentText(session))),
-                ]
+                ]);
+                entries
             }
             MenuTarget::Input => {
                 let selected = self

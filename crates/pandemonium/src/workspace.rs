@@ -315,7 +315,7 @@ pub enum MenuTarget {
     /// The box of text that is being written in.
     Input,
     /// The transcript of one agent session.
-    AgentText(crate::agent::TalkId),
+    AgentText(crate::agent::TalkId, Option<usize>),
     /// The MCP servers one agent session was opened with.
     AgentMcp(crate::agent::TalkId),
     /// One of the agents the reader added, by its place in the list.

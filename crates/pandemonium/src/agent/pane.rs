@@ -19,12 +19,12 @@ use std::time::SystemTime;
 use pm_acp::{
     About, Ask, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
 };
-use pm_gfx::{Image, Rgba};
+use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Axis, Div, IconName, IconSize, PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Styled, Theme,
-    button, h_flex, icon, measured, picture, rule, sash, scroll_area, scrollbar, space, text,
-    v_flex,
+    Axis, Div, Element, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
+    SCROLLBAR_GUTTER, STEP, Scroll, Style, Styled, Theme, button, h_flex, icon, icon_button,
+    measured, picture, rule, sash, scroll_area, scrollbar, space, text, v_flex,
 };
 
 use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
@@ -183,21 +183,10 @@ pub fn agent_pane(
             scrollbar(
                 scroll_area(
                     std::rc::Rc::new(std::cell::Cell::new(Scroll::at(offset))),
-                    v_flex()
-                        .w_full()
+                    transcript_column(session, None)
                         .pl(SIDE)
                         .pr(SCROLLBAR_GUTTER / STEP)
                         .py(INSET)
-                        .drag_cursor(PointerCursor::Text)
-                        .on_secondary_click(Message::ShowAgentTextMenu(session))
-                        .on_drag(move |event| {
-                            Message::SelectAgentText(
-                                session,
-                                event.phase,
-                                event.start,
-                                event.current,
-                            )
-                        })
                         .children(drawn),
                 )
                 .w_full()
@@ -225,6 +214,17 @@ pub fn agent_pane(
         })
         .child(sash(Axis::Vertical, Message::ResizeAgentPrompt))
         .child(composer(theme, talk, typing, solid, prompt_height))
+}
+
+/// A transcript column with selection gestures and the menu for its reply, if any.
+fn transcript_column(session: TalkId, reply: Option<usize>) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .drag_cursor(PointerCursor::Text)
+        .on_secondary_click(Message::ShowAgentTextMenu(session, reply))
+        .on_drag(move |event| {
+            Message::SelectAgentText(session, event.phase, event.start, event.current)
+        })
 }
 
 /// Builds the list of commands the slash being typed narrows to.
@@ -317,20 +317,84 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     let mut drawn = Vec::new();
     while let Some(at) = visible.next() {
         if wrapped.said[at] {
-            let mut message = vec![self::row(theme, wrapped.row(at), at, talk)];
+            let mut message = vec![self::row(theme, wrapped.row(at), at, talk, None)];
             let mut last = at;
             while let Some(next) = visible.next_if(|next| wrapped.said[*next]) {
-                message.push(self::row(theme, wrapped.row(next), next, talk));
+                message.push(self::row(theme, wrapped.row(next), next, talk, None));
                 last = next;
             }
             let opens = at == 0 || !wrapped.said[at - 1];
             let closes = wrapped.said.get(last + 1) != Some(&true);
             drawn.push(bubble(theme, message, opens, closes));
+        } else if let Some(block) = wrapped.reply(talk, at) {
+            let mut rows = vec![self::row(theme, wrapped.row(at), at, talk, Some(block))];
+            while let Some(next) = visible.next_if(|next| wrapped.reply(talk, *next) == Some(block))
+            {
+                rows.push(self::row(theme, wrapped.row(next), next, talk, Some(block)));
+            }
+            let session = talk.id();
+            let content = transcript_column(session, Some(block)).children(rows);
+            let name = if talk.reply_copied(block) {
+                IconName::Check
+            } else {
+                IconName::Copy
+            };
+            let button = icon_button(theme, name, Message::CopyAgentReply(session, block, None))
+                .bg(theme.colors.background)
+                .tooltip("Copy · Shift: copy formatted")
+                .on_secondary_click(Message::ShowAgentTextMenu(session, Some(block)));
+            let opens = matches!(wrapped.entries[at], Entry::Part(_, 0));
+            drawn.push(v_flex().w_full().child(Reply {
+                content,
+                button,
+                opens,
+            }));
         } else {
-            drawn.push(self::row(theme, wrapped.row(at), at, talk));
+            drawn.push(self::row(theme, wrapped.row(at), at, talk, None));
         }
     }
     (drawn, offset)
+}
+
+/// A reply with a copy control painted over its top-right corner while hovered.
+struct Reply {
+    /// The visible rows and their transcript gestures.
+    content: Div<Message>,
+    /// The copy action, including its confirmation icon.
+    button: Div<Message>,
+    /// Whether the reply's first row is among the rows built.
+    opens: bool,
+}
+
+impl Element<Message> for Reply {
+    /// Uses the reply's own layout without adding room for the copy control.
+    fn layout_style(&self) -> Style {
+        self.content.layout_style()
+    }
+
+    /// Measures the reply's visible rows.
+    fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
+        self.content.measure(available, cx)
+    }
+
+    /// Paints the reply and its copy control when the pointer is over it.
+    fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, Message>) {
+        self.content.paint(bounds, cx);
+        if self.opens && cx.input().is_over(bounds) {
+            let size = self.button.measure(bounds.size, &mut cx.layout);
+            cx.push_layer();
+            self.button.paint(
+                Rect::from_xywh(
+                    bounds.right() - size.width,
+                    bounds.top(),
+                    size.width,
+                    size.height,
+                ),
+                cx,
+            );
+            cx.pop_layer();
+        }
+    }
 }
 
 /// The part of a bubble holding `rows`, set against the right of the pane.
@@ -506,6 +570,19 @@ impl Wrapped {
             Entry::Part(part, row) => &self.parts[part].rows[row],
             Entry::Working => &self.working,
         }
+    }
+
+    /// The agent reply containing `at`, when this row belongs to one.
+    fn reply(&self, talk: &Talk, at: usize) -> Option<usize> {
+        let Entry::Part(part, _) = self.entries[at] else {
+            return None;
+        };
+        let block = self.parts[part].key.start;
+        matches!(
+            talk.transcript().blocks()[block],
+            Block::Said(Voice::Agent, _)
+        )
+        .then_some(block)
     }
 
     /// How tall the rows come to together.
@@ -1470,7 +1547,7 @@ fn step_row(step: &Step) -> Row {
 /// drawn, and the press names it by its place there. Every piece of text
 /// writes down where it begins in the conversation and where its characters
 /// land, so a drag over it can be read back as the text it passed over.
-fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
+fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -> Div<Message> {
     let session = talk.id();
     let selection = talk.selection();
     let height = row_height(theme, row);
@@ -1538,6 +1615,7 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk) -> Div<Message> {
                 .rounded(theme.radius.sm)
                 .hover_bg(theme.colors.surface_hover)
                 .on_click(Message::FollowAgentLink(session, place))
+                .on_secondary_click(Message::ShowAgentTextMenu(session, reply))
                 .tooltip(link)
                 .child(styled)
         }))

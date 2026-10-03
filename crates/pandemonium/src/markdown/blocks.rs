@@ -69,15 +69,20 @@ pub struct Item {
 
 /// The blocks `source` reads as.
 pub fn blocks(source: &str) -> Vec<Block> {
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_GFM;
+    let options = parser_options();
     let mut reader = Reader {
         events: Parser::new_ext(source, options).collect(),
         at: 0,
     };
     reader.blocks_until(None)
+}
+
+/// The extensions shared by document parsing and clipboard HTML rendering.
+pub(super) fn parser_options() -> Options {
+    Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_GFM
 }
 
 /// The events of a document, read one block at a time.
