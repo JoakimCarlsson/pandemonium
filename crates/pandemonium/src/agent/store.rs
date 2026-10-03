@@ -35,7 +35,7 @@ use pm_acp::{
 use crate::agent::form::Form;
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_gfx::Point;
-use pm_ui::{Bounds, Placements, Selection, Spot};
+use pm_ui::{Axis, Bounds, Placements, ResizeEvent, ResizePhase, Scrolled, Selection, Spot};
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -163,6 +163,14 @@ pub struct Talk {
     /// How wide the pane was when it last wrapped the conversation, which is
     /// what its rows, and so the places in them, were counted against.
     drawn_width: Rc<Cell<f32>>,
+    /// How far the list of offered commands is scrolled.
+    command_scroll: Scrolled,
+    /// Where the list of offered commands was last drawn.
+    command_view: Bounds,
+    /// The list's offset when its scrollbar drag began.
+    command_drag_origin: Option<f32>,
+    /// The selected row and list length the list was last scrolled to show.
+    command_revealed: Cell<Option<(usize, usize)>>,
     /// Where each link the pane last drew leads, in the order it drew them,
     /// which is how a press on one names it.
     drawn_links: Rc<RefCell<Vec<String>>>,
@@ -847,6 +855,57 @@ impl Talk {
     /// with the pane drawing it.
     pub fn drawn_width(&self) -> Rc<Cell<f32>> {
         self.drawn_width.clone()
+    }
+
+    /// How far the list of offered commands is scrolled, shared with the pane drawing it.
+    pub fn command_scroll(&self) -> Scrolled {
+        self.command_scroll.clone()
+    }
+
+    /// Where the list of offered commands was last drawn, shared with the pane drawing it.
+    pub fn command_view(&self) -> Bounds {
+        self.command_view.clone()
+    }
+
+    /// Scrolls the list of offered commands so the selected row of `rows`
+    /// rows, each `row` pixels tall, is in view through `shown` pixels.
+    ///
+    /// It moves only when the selection or the list has changed since it
+    /// last moved, so a wheel turned over the list is not undone by the
+    /// next frame.
+    pub fn reveal_chosen(&self, rows: usize, row: f32, shown: f32) {
+        let chosen = self.chosen();
+        if self.command_revealed.replace(Some((chosen, rows))) == Some((chosen, rows)) {
+            return;
+        }
+        let mut scroll = self.command_scroll.get();
+        let top = chosen as f32 * row;
+        let wanted = scroll.offset().clamp((top + row - shown).min(top), top);
+        scroll.set_extents(pm_gfx::Size::new(0.0, shown), rows as f32 * row);
+        scroll.by(scroll.offset() - wanted);
+        self.command_scroll.set(scroll);
+    }
+
+    /// Scrolls the list of offered commands by `pixels`, positive being towards the top.
+    pub fn scroll_commands(&self, pixels: f32) {
+        let mut scroll = self.command_scroll.get();
+        scroll.by(pixels);
+        self.command_scroll.set(scroll);
+    }
+
+    /// Scrolls the list of offered commands by a drag on its scrollbar,
+    /// `step` pixels of the list to a pixel of travel.
+    pub fn drag_commands(&mut self, event: ResizeEvent, step: f32) {
+        let offset = self.command_scroll.get().offset();
+        let base = match event.phase {
+            ResizePhase::Started => offset,
+            _ => self.command_drag_origin.unwrap_or(offset),
+        };
+        self.command_drag_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        self.scroll_commands(offset - base - event.delta(Axis::Vertical) * step);
     }
 
     /// Where the links the pane last drew lead, shared with the pane
@@ -1542,6 +1601,10 @@ impl Talks {
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
                 drawn_width: Rc::default(),
+                command_scroll: Scrolled::default(),
+                command_view: Bounds::default(),
+                command_drag_origin: None,
+                command_revealed: Cell::default(),
                 drawn_links: Rc::default(),
                 drawn_cards: RefCell::default(),
                 drawn_text: Rc::default(),

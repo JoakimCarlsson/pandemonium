@@ -66,6 +66,9 @@ const PROMPT_ROWS: usize = 12;
 /// How many of the commands a slash narrows to are offered at once.
 const OFFERED: usize = 8;
 
+/// Padding above and below each offered command, in layout steps.
+const COMMAND_PADDING: f32 = 1.5;
+
 /// Estimated average width of a conversation character as a share of its size.
 const ADVANCE: f32 = 0.55;
 
@@ -294,17 +297,18 @@ fn transcript_column(session: TalkId, reply: Option<usize>) -> Div<Message> {
 fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
     let session = talk.id();
     let chosen = talk.chosen();
-    let rows = talk
-        .offered()
+    let offered = talk.offered();
+    let row = theme.text.sm.line_height + COMMAND_PADDING * 2.0 * STEP;
+    let shown = offered.len().min(OFFERED) as f32 * row;
+    talk.reveal_chosen(offered.len(), row, shown);
+    let rows = offered
         .into_iter()
         .enumerate()
-        .skip(chosen.saturating_sub(OFFERED - 1))
-        .take(OFFERED)
         .map(|(place, command)| {
             h_flex()
                 .w_full()
+                .h_px(row)
                 .px(1)
-                .py(0.5)
                 .items_center()
                 .rounded(theme.radius.md)
                 .hover_bg(theme.colors.surface_hover)
@@ -321,29 +325,35 @@ fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
         })
         .collect::<Vec<_>>();
 
-    v_flex()
-        .w_full()
-        .items_center()
-        .px(1.25)
-        .pt(0.5)
-        .child(
-            v_flex()
-                .w_full()
-                .max_w_px(COMPOSER_WIDTH)
-                .p(0.5)
-                .rounded(theme.radius.lg)
-                .border_1(theme.colors.border)
-                .bg(theme.colors.surface)
-                .overflow_hidden()
-                .child(
-                    h_flex().w_full().px(1).pt(0.25).pb(0.5).child(
-                        text("Slash Commands")
-                            .text_xs()
-                            .color(theme.colors.text_subtle),
-                    ),
+    v_flex().w_full().items_center().px(1.25).pt(0.5).child(
+        v_flex()
+            .w_full()
+            .max_w_px(COMPOSER_WIDTH)
+            .p(0.5)
+            .rounded(theme.radius.lg)
+            .border_1(theme.colors.border)
+            .bg(theme.colors.surface)
+            .overflow_hidden()
+            .child(
+                h_flex().w_full().px(1).pt(0.25).pb(0.5).child(
+                    text("Slash Commands")
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                ),
+            )
+            .child(measured(
+                talk.command_view(),
+                scroll_area(
+                    talk.command_scroll(),
+                    v_flex().w_full().pr(SCROLLBAR_GUTTER / STEP).children(rows),
                 )
-                .children(rows),
-        )
+                .w_full()
+                .h_px(shown)
+                .with_scrollbar(move |event, step| {
+                    Message::ScrollAgentCommands(session, event, step)
+                }),
+            )),
+    )
 }
 
 /// The first line of `said`, which is as much of it as a row has room for.

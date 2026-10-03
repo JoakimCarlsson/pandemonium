@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::SelectionDrag;
 use crate::selection::{SelectionFrame, SelectionRegistry, SelectionSurface};
@@ -13,6 +13,38 @@ use pm_gfx::{DrawList, Point, Rect, Size, TextSystem};
 use crate::element::{Element, Input, LayoutContext, PaintContext, Region, RegionAction};
 use crate::resize::{ResizeEvent, ResizePhase};
 use crate::theme::Theme;
+
+/// How long the pointer rests on an element before its tooltip shows.
+const TOOLTIP_DELAY: Duration = Duration::from_millis(150);
+
+/// A tooltip the pointer is resting on, and since when.
+struct HeldTooltip {
+    /// Where the element asking for it was painted.
+    bounds: Rect,
+    /// What it says.
+    text: String,
+    /// When the pointer came to rest on it.
+    since: Instant,
+    /// Whether a frame has painted it yet.
+    shown: bool,
+}
+
+impl HeldTooltip {
+    /// Keeps the rest time of `held` while `asked` is the same tooltip, or starts it anew.
+    fn hold(held: Option<Self>, asked: Option<(Rect, String)>, now: Instant) -> Option<Self> {
+        asked.map(|(bounds, text)| {
+            let (since, shown) = held
+                .filter(|held| held.bounds == bounds && held.text == text)
+                .map_or((now, false), |held| (held.since, held.shown));
+            Self {
+                bounds,
+                text,
+                since,
+                shown,
+            }
+        })
+    }
+}
 
 /// The cursor shape requested by the element under the pointer.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -87,6 +119,8 @@ pub struct Ui<M> {
     pressed_bounds: Option<Rect>,
     /// Where the region whose click the last release completed was painted.
     clicked_bounds: Option<Rect>,
+    /// The tooltip under the pointer, shown once it has been held long enough.
+    tooltip: Option<HeldTooltip>,
 }
 
 impl<M> Ui<M> {
@@ -103,6 +137,7 @@ impl<M> Ui<M> {
             selection_drag: None,
             pressed_bounds: None,
             clicked_bounds: None,
+            tooltip: None,
         }
     }
 
@@ -398,7 +433,16 @@ impl<M> Ui<M> {
         let mut cx = PaintContext::new(layout, list, self.input, self.focus, &mut self.regions);
         cx.selections = self.selections.clone();
         root.paint(Rect::new(origin, size), &mut cx);
-        cx.paint_tooltip();
+        let now = Instant::now();
+        self.tooltip = HeldTooltip::hold(self.tooltip.take(), cx.take_tooltip(), now);
+        if let Some(held) = self
+            .tooltip
+            .as_mut()
+            .filter(|held| held.since + TOOLTIP_DELAY <= now)
+        {
+            held.shown = true;
+            cx.paint_tooltip(held.bounds, &held.text);
+        }
         self.selection_frames = std::mem::take(&mut cx.selection_frames);
 
         if self.focus.is_some_and(|index| index >= self.regions.len()) {
@@ -466,6 +510,14 @@ impl<M> Ui<M> {
         let before = state.selection.range();
         state.selection.select(drag.gesture.anchor, head);
         before != state.selection.range()
+    }
+
+    /// Returns when the tooltip under the pointer is due to show, until a frame shows it.
+    pub fn next_tooltip(&self) -> Option<Instant> {
+        self.tooltip
+            .as_ref()
+            .filter(|held| !held.shown)
+            .map(|held| held.since + TOOLTIP_DELAY)
     }
 
     /// Returns the next wakeup for an edge scroll while the pointer is held.

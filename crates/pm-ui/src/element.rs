@@ -176,14 +176,16 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         self.tooltip = Some((bounds, text));
     }
 
-    /// Paints the tooltip over the completed element tree.
-    pub fn paint_tooltip(&mut self) {
-        let Some((bounds, text)) = self.tooltip.take() else {
-            return;
-        };
+    /// Takes the tooltip the hovered element asked for this frame, if any.
+    pub fn take_tooltip(&mut self) -> Option<(Rect, String)> {
+        self.tooltip.take()
+    }
+
+    /// Paints `text` as a tooltip over `bounds`, above the completed element tree.
+    pub fn paint_tooltip(&mut self, bounds: Rect, text: &str) {
         let theme = *self.layout.theme;
         let font = theme.text.sm;
-        let size = self.measure(&text, font);
+        let size = self.measure(text, font);
         let padding = 6.0;
         let width = size.width + padding * 2.0;
         let height = size.height + padding;
@@ -200,7 +202,7 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
                 .corner_radius(theme.radius.sm)
                 .border(1.0, theme.colors.border),
         );
-        let run = self.shape(&text, font);
+        let run = self.shape(text, font);
         self.text(
             Point::new(left + padding, top + padding * 0.5),
             run,

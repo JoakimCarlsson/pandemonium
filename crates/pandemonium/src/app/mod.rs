@@ -2948,7 +2948,12 @@ impl ApplicationHandler<Wake> for App {
             || (seen && self.spun())
             || expired
             || copied_expired
-            || annotation_due)
+            || annotation_due
+            || self
+                .ui
+                .as_ref()
+                .and_then(pm_ui::Ui::next_tooltip)
+                .is_some_and(|due| due <= Instant::now()))
             && seen
         {
             self.request_redraw();
@@ -2963,6 +2968,7 @@ impl ApplicationHandler<Wake> for App {
             self.next_prediction().filter(|_| seen),
             self.next_move(),
             self.next_agent_selection_scroll().filter(|_| seen),
+            self.ui.as_ref().and_then(pm_ui::Ui::next_tooltip),
             self.ui
                 .as_ref()
                 .and_then(pm_ui::Ui::next_text_selection_scroll)

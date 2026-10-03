@@ -678,6 +678,9 @@ pub enum Message {
     /// Drag this session's scrollbar, so many pixels of the conversation to
     /// a pixel of travel.
     ScrollAgent(TalkId, ResizeEvent, f32),
+    /// Drag the scrollbar of this session's offered commands, so many pixels
+    /// of the list to a pixel of travel.
+    ScrollAgentCommands(TalkId, ResizeEvent, f32),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
     /// Toggles the full output and descendants of one tool call.

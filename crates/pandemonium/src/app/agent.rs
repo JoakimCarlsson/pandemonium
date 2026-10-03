@@ -125,6 +125,11 @@ impl App {
             Message::ScrollAgent(session, event, step) => {
                 self.drag_agent_scrollbar(session, event, step);
             }
+            Message::ScrollAgentCommands(session, event, step) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.drag_commands(event, step);
+                }
+            }
             Message::SendPrompt(session) => self.send_prompt(session),
             Message::AnswerAgent(session, ask, place) => {
                 if let Some(talk) = self.agents.get_mut(session) {
@@ -1151,6 +1156,14 @@ impl App {
         let Some(talk) = self.agents.get(session) else {
             return true;
         };
+        if !talk.offered().is_empty()
+            && self
+                .pointer
+                .is_some_and(|pointer| talk.command_view().get().contains(pointer))
+        {
+            talk.scroll_commands(-pixels);
+            return true;
+        }
         let (drawn, view) = (talk.drawn_height().get(), talk.view().get().size);
         let end = match drawn > 0.0 && view.height > 0.0 {
             true => drawn - view.height,
