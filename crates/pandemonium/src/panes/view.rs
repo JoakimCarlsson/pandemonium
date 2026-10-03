@@ -170,7 +170,7 @@ impl Drawing<'_> {
                 });
                 for index in drawn {
                     element =
-                        element.child(node.shares()[index], self.node(&node.children()[index]));
+                        element.child(node.shares(self.scope)[index], self.node(&node.children()[index]));
                 }
                 Box::new(element)
             }

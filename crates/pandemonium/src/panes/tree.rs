@@ -7,7 +7,7 @@
 //! what a tab holds or how a pane is drawn — a pane names what is open in
 //! it, and the stores behind those names say what they are.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use pm_core::Scope;
 use pm_ui::{Axis, ResizePhase};
@@ -364,6 +364,10 @@ pub struct Split {
     children: Vec<Node>,
     /// Each child's share of the split, in the same order.
     shares: Vec<f32>,
+    /// The shares a worktree has dragged its own dividers to, which take the
+    /// place of `shares` there so that a drag in one project leaves the
+    /// others as they were.
+    scoped: HashMap<Option<Scope>, Vec<f32>>,
     /// The share the divider being dragged started the drag at.
     dragging: Option<f32>,
 }
@@ -384,8 +388,13 @@ impl Split {
         &self.children
     }
 
-    /// Each child's share of the split, in the same order.
-    pub fn shares(&self) -> &[f32] {
+    /// Each child's share of the split in `scope`, in the same order.
+    pub fn shares(&self, scope: Option<Scope>) -> &[f32] {
+        self.scoped.get(&scope).unwrap_or(&self.shares)
+    }
+
+    /// The shares written down for the split: the ones no worktree has its own of.
+    pub fn base_shares(&self) -> &[f32] {
         &self.shares
     }
 
@@ -421,22 +430,24 @@ impl Split {
         else {
             return;
         };
+        let mut shares = self.shares(scope).to_vec();
         if phase == ResizePhase::Started {
-            self.dragging = self.shares.get(first).copied();
+            self.dragging = shares.get(first).copied();
         }
         let (Some(start), Some(before), Some(after)) = (
             self.dragging,
-            self.shares.get(first).copied(),
-            self.shares.get(second).copied(),
+            shares.get(first).copied(),
+            shares.get(second).copied(),
         ) else {
             return;
         };
-        let whole: f32 = drawn.iter().map(|child| self.shares[*child]).sum();
+        let whole: f32 = drawn.iter().map(|child| shares[*child]).sum();
         let pair = before + after;
         let min = MIN_SHARE * pair;
         let taken = (start + delta * whole).clamp(min, (pair - min).max(min));
-        self.shares[first] = taken;
-        self.shares[second] = pair - taken;
+        shares[first] = taken;
+        shares[second] = pair - taken;
+        self.scoped.insert(scope, shares);
         if phase == ResizePhase::Ended {
             self.dragging = None;
         }
@@ -730,10 +741,12 @@ impl PaneTree {
             && let Some(Node::Split(split)) = self.at_mut(&parent)
             && split.axis == axis
         {
-            let share = split.shares[index] / 2.0;
             let place = if direction.before() { index } else { index + 1 };
-            split.shares[index] = share;
-            split.shares.insert(place, share);
+            for shares in split.scoped.values_mut().chain([&mut split.shares]) {
+                let share = shares[index] / 2.0;
+                shares[index] = share;
+                shares.insert(place, share);
+            }
             split.children.insert(place, Node::Pane(Pane::new(fresh)));
             self.focus = fresh;
             return Some(fresh);
@@ -749,6 +762,7 @@ impl PaneTree {
                 axis,
                 children: Vec::new(),
                 shares: vec![1.0, 1.0],
+                scoped: HashMap::new(),
                 dragging: None,
             }),
         );
@@ -784,7 +798,9 @@ impl PaneTree {
         };
 
         split.children.remove(index);
-        split.shares.remove(index);
+        for shares in split.scoped.values_mut().chain([&mut split.shares]) {
+            shares.remove(index);
+        }
         let survivor = index.min(split.children.len().saturating_sub(1));
         let focus = split
             .children
@@ -941,7 +957,7 @@ fn written(node: &Node, scope: Option<Scope>, tab: &dyn Fn(Item) -> Option<Saved
         },
         Node::Split(split) => SavedNode::Split {
             axis: split.axis().into(),
-            shares: split.shares().to_vec(),
+            shares: split.base_shares().to_vec(),
             children: split
                 .children()
                 .iter()
@@ -1002,6 +1018,7 @@ fn read(node: &SavedNode, panes: &mut u64, splits: &mut u64, open: &mut Reopen<'
                 axis: (*axis).into(),
                 children: read,
                 shares,
+                scoped: HashMap::new(),
                 dragging: None,
             })
         }
@@ -1054,6 +1071,7 @@ fn arranged(
                 axis: *axis,
                 children: nodes,
                 shares: children.iter().map(|(share, _)| share.max(0.01)).collect(),
+                scoped: HashMap::new(),
                 dragging: None,
             })
         }
