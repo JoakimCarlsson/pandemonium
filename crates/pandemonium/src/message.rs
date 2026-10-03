@@ -15,7 +15,7 @@ use crate::config::{FontSlot, InstallLanguageServers, Preference, Step, ThemeMod
 use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::Action;
 use crate::markdown::DiagramZoom;
-use crate::notice::NoticeId;
+use crate::notice::{NoticeId, NotificationAction};
 use crate::panel::PanelView;
 use crate::panes::{Item, PaneId, SplitDirection, SplitId};
 use crate::review::comment::{CommentId, Side as CommentSide};
@@ -727,6 +727,10 @@ pub enum Message {
     ShowAgent(TalkId),
     /// Go to what this notice is about, and let go of it.
     FollowNotice(NoticeId),
+    /// Activate an explicit installation notification control.
+    ActOnNotification(NoticeId, NotificationAction),
+    /// Scroll a notification message through its shared viewport.
+    ScrollNotification(NoticeId, ResizeEvent, f32),
     /// Let go of this notice without going anywhere.
     DismissNotice(NoticeId),
     /// Open the menu of things that can be done to the box being written in.

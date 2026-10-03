@@ -178,6 +178,9 @@ impl App {
         if self.send_to_prompt(event) {
             return self.request_redraw();
         }
+        if self.send_to_notification(event) {
+            return self.request_redraw();
+        }
         if self.paste_agent_prompt(event) {
             return self.request_redraw();
         }
@@ -858,6 +861,50 @@ impl App {
         self.modifiers.super_key() || (self.is_window_chord() && !selects)
     }
 
+    /// Gives F6, Tab, activation and Escape to explicitly focused notification controls.
+    fn send_to_notification(&mut self, event: &KeyEvent) -> bool {
+        if self.picker.is_some()
+            || self.prompt.is_some()
+            || self.notices.shown_installation().is_none()
+        {
+            return false;
+        }
+        let Some(ui) = self.ui.as_mut() else {
+            return false;
+        };
+        let focused = matches!(ui.activate_focused(), Some(Message::ActOnNotification(..)));
+        let notification = |message: &Message| matches!(message, Message::ActOnNotification(..));
+        match event.logical_key {
+            Key::Named(NamedKey::F6) if focused => ui.clear_focus(),
+            Key::Named(NamedKey::F6) => {
+                ui.clear_focus();
+                ui.focus_matching(notification, false);
+            }
+            Key::Named(NamedKey::Tab) if focused => {
+                ui.focus_matching(notification, self.modifiers.shift_key());
+            }
+            Key::Named(NamedKey::Enter | NamedKey::Space) if focused => {
+                let message = ui.activate_focused();
+                self.handle(message);
+            }
+            Key::Named(NamedKey::Escape) if focused => ui.clear_focus(),
+            Key::Named(NamedKey::PageDown | NamedKey::PageUp) if focused => {
+                if let Some((card, _, _)) = self.notices.shown_installation() {
+                    let mut scroll = card.scroll.get();
+                    let amount = scroll.viewport_height();
+                    scroll.by(if event.logical_key == Key::Named(NamedKey::PageUp) {
+                        amount
+                    } else {
+                        -amount
+                    });
+                    card.scroll.set(scroll);
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Moves focus, activates what has it, or scrolls the page.
     fn navigate(&mut self, event: &KeyEvent) {
         let Some(ui) = self.ui.as_mut() else {
@@ -1083,7 +1130,14 @@ impl App {
             {
                 self.commit_tree_edit();
             }
-            if self.menu.is_none() {
+            let over_notification =
+                self.notices
+                    .shown_installation()
+                    .is_some_and(|(card, _, _)| {
+                        self.pointer
+                            .is_some_and(|pointer| card.bounds.get().contains(pointer))
+                    });
+            if self.menu.is_none() && !over_notification {
                 self.release_pane_focus();
                 if let Some(pane) = self
                     .pointer
@@ -1134,6 +1188,17 @@ impl App {
     /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
         let text = self.theme().text;
+        if let Some((card, _, _)) = self.notices.shown_installation()
+            && self
+                .pointer
+                .is_some_and(|pointer| card.bounds.get().contains(pointer))
+        {
+            let mut scroll = card.scroll.get();
+            scroll.by(delta);
+            card.scroll.set(scroll);
+            self.request_redraw();
+            return;
+        }
         if let Some(hint) = self
             .hint
             .as_ref()

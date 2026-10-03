@@ -116,7 +116,6 @@ impl App {
     pub(super) fn activate_languages(&mut self) {
         self.editor.reload_languages();
         self.apply_language_servers();
-        self.offered_servers.clear();
         self.offer_missing_servers();
         self.follow_keymap();
         self.store();
@@ -327,7 +326,6 @@ impl App {
         self.languages.error = None;
         self.writing = None;
         self.apply_language_servers();
-        self.offered_servers.clear();
         self.offer_missing_servers();
         self.store();
         Ok(())

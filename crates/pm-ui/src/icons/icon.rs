@@ -103,6 +103,8 @@ pub enum IconName {
     Settings,
     /// A terminal.
     Terminal,
+    /// An informational notification.
+    Info,
     /// Something the editor wants looked at.
     Warning,
     /// A program being debugged.
@@ -208,6 +210,7 @@ impl IconName {
             Self::Search => Svg::new("search", include_icon!("search")),
             Self::Settings => Svg::new("settings", include_icon!("settings")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
+            Self::Info => Svg::new("info", include_icon!("info")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),
             Self::Debug => Svg::new("debug", include_icon!("debug")),
             Self::DebugContinue => Svg::new("debug_continue", include_icon!("debug_continue")),

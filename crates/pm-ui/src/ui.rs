@@ -267,6 +267,32 @@ impl<M> Ui<M> {
         self.focus = self.step_focus(-1);
     }
 
+    /// Moves focus among visible click targets matching the caller's message predicate.
+    pub fn focus_matching(&mut self, matches: impl Fn(&M) -> bool, backwards: bool) {
+        self.clear_text_selection();
+        let count = self.regions.len();
+        let step = if backwards { -1 } else { 1 };
+        let base = self
+            .focus
+            .map_or(if backwards { count as isize } else { -1 }, |index| {
+                index as isize
+            });
+        self.focus = (1..=count).find_map(|distance| {
+            let index = (base + step * distance as isize).rem_euclid(count as isize) as usize;
+            let region = &self.regions[index];
+            match &region.action {
+                RegionAction::Click(message)
+                    if region.bounds.size.width > 0.0
+                        && region.bounds.size.height > 0.0
+                        && matches(message) =>
+                {
+                    Some(index)
+                }
+                _ => None,
+            }
+        });
+    }
+
     /// Gives up focus entirely.
     pub fn clear_focus(&mut self) {
         self.focus = None;

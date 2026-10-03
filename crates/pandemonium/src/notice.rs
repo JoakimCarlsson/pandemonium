@@ -1,12 +1,4 @@
-//! What has happened that the reader should hear about, held for the status
-//! bar.
-//!
-//! A notice is news, not a question: an agent that went away on its own, a
-//! shell that exited badly, a remote that answered. Nothing waits on the
-//! reader's reply, so a notice is never a dialog; it sits in the bar, it
-//! takes the reader to what it is about when clicked, and it goes when
-//! dismissed. News that something went well goes by itself after a while;
-//! news that something went wrong stays until it has been read.
+//! Status-bar news and nonmodal language-server installation notifications.
 
 use std::time::{Duration, Instant};
 
@@ -62,6 +54,10 @@ pub struct Notices {
     held: Vec<Notice>,
     /// The id the next notice will be given.
     next: NoticeId,
+    /// Server installation cards in arrival order.
+    cards: Vec<Installation>,
+    /// The card currently shown.
+    selected: usize,
 }
 
 impl Notices {
@@ -131,5 +127,132 @@ impl Notices {
             .filter(|notice| notice.tone == Tone::Done)
             .map(|notice| notice.at + DONE_FOR)
             .min()
+    }
+}
+
+/// An explicit control on an installation notification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NotificationAction {
+    /// Start or retry the installation.
+    Install,
+    /// Open the offered language's settings.
+    LanguageSettings,
+    /// Open the automatic installation preference.
+    Preference,
+    /// Dismiss without installing.
+    Close,
+    /// Show the preceding card.
+    Previous,
+    /// Show the following card.
+    Next,
+}
+
+/// The current stage of a managed server installation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstallationStage {
+    /// Waiting for an explicit install action.
+    Offer,
+    /// Running through the existing installer.
+    Progress,
+    /// Installed and attached to open documents.
+    Done,
+    /// Failed, with an explicit retry action.
+    Failed,
+}
+
+/// One installation shared by every project requesting its command.
+#[derive(Clone)]
+pub struct Installation {
+    /// Identity retained through progress and outcome updates.
+    pub id: NoticeId,
+    /// The executable being installed.
+    pub command: &'static str,
+    /// The language whose settings the offer opens.
+    pub language: Option<&'static str>,
+    /// The current installation stage.
+    pub stage: InstallationStage,
+    /// The wrapped message, including any failure reason.
+    pub text: String,
+    /// The message scroll shared with the notification view.
+    pub scroll: pm_ui::Scrolled,
+    /// The painted card bounds for wheel routing.
+    pub bounds: pm_ui::Bounds,
+    /// Scroll offset captured at the start of a scrollbar drag.
+    pub scroll_origin: Option<f32>,
+}
+
+impl Notices {
+    /// Creates or updates the card for this server, retaining its identity.
+    pub fn installation(
+        &mut self,
+        command: &'static str,
+        language: Option<&'static str>,
+        stage: InstallationStage,
+        text: String,
+    ) -> NoticeId {
+        if let Some(card) = self.cards.iter_mut().find(|card| card.command == command) {
+            card.stage = stage;
+            card.text = text;
+            card.scroll.set(pm_ui::Scroll::default());
+            return card.id;
+        }
+        let id = self.next;
+        self.next = NoticeId(id.0 + 1);
+        self.cards.push(Installation {
+            id,
+            command,
+            language,
+            stage,
+            text,
+            scroll: pm_ui::Scrolled::default(),
+            bounds: pm_ui::Bounds::default(),
+            scroll_origin: None,
+        });
+        id
+    }
+
+    /// Finds the installation addressed by an explicit notification control.
+    pub fn installation_at(&self, id: NoticeId) -> Option<&Installation> {
+        self.cards.iter().find(|card| card.id == id)
+    }
+
+    /// Returns the selected card and its position among all pending cards.
+    pub fn shown_installation(&self) -> Option<(&Installation, usize, usize)> {
+        let selected = self.selected.min(self.cards.len().saturating_sub(1));
+        Some((self.cards.get(selected)?, selected + 1, self.cards.len()))
+    }
+
+    /// Moves between cards without losing or dismissing any of them.
+    pub fn step_installation(&mut self, backwards: bool) {
+        let count = self.cards.len();
+        if count > 0 {
+            let selected = self.selected.min(count - 1);
+            self.selected = (selected + if backwards { count - 1 } else { 1 }) % count;
+        }
+    }
+
+    /// Applies a scrollbar drag to the message viewport identified by `id`.
+    pub fn scroll_installation(&mut self, id: NoticeId, event: pm_ui::ResizeEvent, step: f32) {
+        if let Some(card) = self.cards.iter_mut().find(|card| card.id == id) {
+            let mut scroll = card.scroll.get();
+            let base = match event.phase {
+                pm_ui::ResizePhase::Started => scroll.offset(),
+                _ => card.scroll_origin.unwrap_or(scroll.offset()),
+            };
+            card.scroll_origin = match event.phase {
+                pm_ui::ResizePhase::Ended => None,
+                _ => Some(base),
+            };
+            scroll.by(scroll.offset() - base - event.delta(pm_ui::Axis::Vertical) * step);
+            card.scroll.set(scroll);
+        }
+    }
+
+    /// Dismisses a card without invoking any of its actions.
+    pub fn dismiss_installation(&mut self, id: NoticeId) {
+        if let Some(index) = self.cards.iter().position(|card| card.id == id) {
+            self.cards.remove(index);
+            self.selected = self.selected.min(self.cards.len().saturating_sub(1));
+        }
     }
 }

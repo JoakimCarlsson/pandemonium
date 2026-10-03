@@ -535,7 +535,7 @@ pub struct App {
     offered_servers: BTreeSet<&'static str>,
     /// Persistent log targets carried by server failure notice actions.
     server_failure_logs: Vec<PathBuf>,
-    /// Running installs and their status-bar notices.
+    /// Running installs and their notification identities.
     installing_servers: BTreeMap<&'static str, crate::notice::NoticeId>,
     /// Results delivered by installer worker threads.
     installed_servers: InstalledServers,
@@ -2498,6 +2498,26 @@ impl App {
         let mut overlays = Vec::new();
 
         let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
+
+        if let Some((card, position, count)) = self.notices.shown_installation() {
+            let width = 460.0_f32.min((window.width - 24.0).max(1.0));
+            overlays.push(workspace::Overlaid {
+                at: Point::new(
+                    window.width - width - 12.0,
+                    window.height - theme.size.bar - 12.0,
+                ),
+                content: Box::new(crate::notification::installation(
+                    theme,
+                    card,
+                    position,
+                    count,
+                    width,
+                    (window.height - theme.size.bar - theme.size.titlebar - 24.0).max(1.0),
+                )),
+                backdrop: None,
+                above: true,
+            });
+        }
 
         if let Some(picker) = self.picker.as_ref() {
             let agent_choices = matches!(
