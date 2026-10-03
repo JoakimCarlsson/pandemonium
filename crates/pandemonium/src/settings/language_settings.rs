@@ -81,7 +81,13 @@ pub fn language_settings_rows(theme: &Theme, page: &LanguagesPage<'_>) -> Vec<Di
             LanguageSetting::TabSize,
             "Tab Size",
             "How wide a step of indentation and a tab are, where a file does not say",
-            stepper(theme, settings.indent.width),
+            stepper(theme, LanguageSetting::TabSize, settings.indent.width),
+        ),
+        row(
+            LanguageSetting::LineLength,
+            "Line Length",
+            "The column Markdown formatting and prose wrapping use",
+            stepper(theme, LanguageSetting::LineLength, settings.line_length),
         ),
         toggle(
             LanguageSetting::HardTabs,
@@ -203,14 +209,9 @@ fn text_row(theme: &Theme, title: &str, description: &str) -> Div<Message> {
 }
 
 /// A number with a step down and a step up either side of it.
-fn stepper(theme: &Theme, value: usize) -> Div<Message> {
+fn stepper(theme: &Theme, setting: LanguageSetting, value: usize) -> Div<Message> {
     let step = |icon, tip, step| {
-        icon_button(
-            theme,
-            icon,
-            Message::StepLanguageSetting(LanguageSetting::TabSize, step),
-        )
-        .tooltip(tip)
+        icon_button(theme, icon, Message::StepLanguageSetting(setting, step)).tooltip(tip)
     };
     h_flex()
         .gap(1)

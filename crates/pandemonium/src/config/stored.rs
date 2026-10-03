@@ -80,6 +80,9 @@ pub(super) struct Stored {
     vim_keymap: Option<Vec<StoredVimBinding>>,
     /// How wide a step of indentation is where a file does not say.
     tab_size: Option<usize>,
+    /// The column prose is wrapped to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    line_length: Option<usize>,
     /// Whether a step of indentation is a tab where a file does not say.
     hard_tabs: Option<bool>,
     /// Whether the gutter numbers the lines.
@@ -286,6 +289,9 @@ struct StoredLanguageSettings {
     /// How wide a step of indentation and a tab are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tab_size: Option<usize>,
+    /// The column prose is wrapped to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    line_length: Option<usize>,
     /// Whether indentation is written as tabs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hard_tabs: Option<bool>,
@@ -334,6 +340,7 @@ impl StoredLanguageSettings {
     fn into_overrides(self) -> LanguageOverrides {
         LanguageOverrides {
             tab_size: self.tab_size.filter(|width| *width > 0),
+            line_length: self.line_length.filter(|width| *width > 0),
             hard_tabs: self.hard_tabs,
             format_on_save: self.format_on_save,
             organize_imports_on_save: self.organize_imports_on_save,
@@ -348,6 +355,7 @@ impl StoredLanguageSettings {
     fn of(overrides: &LanguageOverrides) -> Self {
         Self {
             tab_size: overrides.tab_size,
+            line_length: overrides.line_length,
             hard_tabs: overrides.hard_tabs,
             format_on_save: overrides.format_on_save,
             organize_imports_on_save: overrides.organize_imports_on_save,
@@ -923,6 +931,10 @@ impl Stored {
                 bindings.iter().map(StoredVimBinding::to_binding).collect()
             }),
             tab_size: self.tab_size.unwrap_or(defaults.tab_size),
+            line_length: self
+                .line_length
+                .filter(|width| *width > 0)
+                .unwrap_or(defaults.line_length),
             hard_tabs: self.hard_tabs.unwrap_or(defaults.hard_tabs),
             display: Display {
                 line_numbers: self.line_numbers.unwrap_or(defaults.display.line_numbers),
@@ -1048,6 +1060,7 @@ impl Stored {
                     .collect()
             }),
             tab_size: Some(preferences.tab_size),
+            line_length: Some(preferences.line_length),
             hard_tabs: Some(preferences.hard_tabs),
             line_numbers: Some(display.line_numbers),
             relative_line_numbers: Some(display.relative_line_numbers),

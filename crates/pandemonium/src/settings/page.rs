@@ -434,6 +434,11 @@ fn section_rows(
                 "Tab Size",
                 "How wide a step of indentation and a tab are, where a file does not say",
             ),
+            stepper(
+                Preference::LineLength,
+                "Line Length",
+                "The column Markdown formatting and prose wrapping use",
+            ),
             toggle(
                 Preference::HardTabs,
                 "Hard Tabs",

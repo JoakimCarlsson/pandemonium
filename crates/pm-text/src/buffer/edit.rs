@@ -843,12 +843,18 @@ impl Buffer {
         cursor.map_or(0, |at: usize| at - length)
     }
 
-    /// Takes the spaces and tabs off the end of every line, as one step.
+    /// Takes trailing spaces and tabs off as one step, preserving Markdown hard breaks.
     pub fn trim_trailing_whitespace(&mut self) {
+        let markdown = self
+            .language()
+            .is_some_and(|language| language.name() == "Markdown");
         let edits = (0..self.line_count())
             .filter_map(|line| {
                 let len = self.line_len(line);
                 let text = self.line_text(line);
+                if markdown && text.ends_with("  ") {
+                    return None;
+                }
                 let kept = text.trim_end_matches([' ', '\t']).chars().count();
                 (kept < len).then(|| {
                     (

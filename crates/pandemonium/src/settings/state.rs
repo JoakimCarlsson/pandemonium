@@ -184,7 +184,11 @@ impl SettingsSection {
                 Preference::BufferLineHeight,
             ],
             Self::Cursor => &[Preference::CursorShape, Preference::CursorBlink],
-            Self::Indentation => &[Preference::TabSize, Preference::HardTabs],
+            Self::Indentation => &[
+                Preference::TabSize,
+                Preference::LineLength,
+                Preference::HardTabs,
+            ],
             Self::Gutter => &[Preference::LineNumbers, Preference::RelativeLineNumbers],
             Self::Highlighting => &[
                 Preference::CurrentLine,

@@ -1,4 +1,4 @@
-//! Lays a file out with the program a language names, when it names one.
+//! External formatting and the Markdown fallback for files without server formatting.
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -72,30 +72,51 @@ impl App {
         self.preferences.language(language)
     }
 
-    /// Lays the focused file out with the program its language names, when
-    /// it names one and the file is laid out on save.
-    pub(super) fn format_externally(&mut self) {
+    /// Formats locally when an external command is selected or Markdown has no
+    /// server offering document formatting; returns whether the command was handled.
+    pub(super) fn format_locally(&mut self, on_save: bool) -> bool {
         let settings = self.active_language_settings();
-        let Formatter::External(line) = settings.formatter else {
-            return;
-        };
-        if !settings.format_on_save {
-            return;
+        if on_save && !settings.format_on_save {
+            return true;
         }
         let Some(file) = self.active_file() else {
-            return;
+            return true;
         };
-        let (path, text) = {
-            let file = file.borrow();
-            (file.buffer().path().to_path_buf(), file.buffer().contents())
-        };
-        match pipe_through(&line, &path, &text) {
-            Ok(laid_out) if laid_out != text => {
-                file.borrow_mut()
-                    .edit(|buffer| buffer.set_contents(&laid_out));
+        match settings.formatter {
+            Formatter::Off => true,
+            Formatter::LanguageServer => {
+                let reflow = {
+                    let file = file.borrow();
+                    let buffer = file.buffer();
+                    buffer
+                        .language()
+                        .is_some_and(|language| language.name() == "Markdown")
+                        && !file
+                            .servers()
+                            .iter()
+                            .any(|client| client.offers(&pm_text::Request::Format, buffer.path()))
+                };
+                if reflow {
+                    file.borrow_mut()
+                        .edit(|buffer| pm_text::reflow_markdown(buffer, settings.line_length));
+                }
+                reflow
             }
-            Ok(_) => {}
-            Err(error) => self.notices.trouble(error, None),
+            Formatter::External(line) => {
+                let (path, text) = {
+                    let file = file.borrow();
+                    (file.buffer().path().to_path_buf(), file.buffer().contents())
+                };
+                match pipe_through(&line, &path, &text) {
+                    Ok(laid_out) if laid_out != text => {
+                        file.borrow_mut()
+                            .edit(|buffer| buffer.set_contents(&laid_out));
+                    }
+                    Ok(_) => {}
+                    Err(error) => self.notices.trouble(error, None),
+                }
+                true
+            }
         }
     }
 }
