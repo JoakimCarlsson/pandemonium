@@ -83,6 +83,10 @@ pub struct Ui<M> {
     selection_frames: Vec<SelectionFrame>,
     /// The text gesture captured by the held primary button.
     selection_drag: Option<CapturedSelection<M>>,
+    /// Where the region under the held primary button was painted.
+    pressed_bounds: Option<Rect>,
+    /// Where the region whose click the last release completed was painted.
+    clicked_bounds: Option<Rect>,
 }
 
 impl<M> Ui<M> {
@@ -97,6 +101,8 @@ impl<M> Ui<M> {
             selections: Rc::new(RefCell::new(SelectionRegistry::default())),
             selection_frames: Vec::new(),
             selection_drag: None,
+            pressed_bounds: None,
+            clicked_bounds: None,
         }
     }
 
@@ -141,8 +147,11 @@ impl<M> Ui<M> {
         M: Clone,
     {
         self.input.pressed_at = self.input.pointer;
+        self.pressed_bounds = None;
+        self.clicked_bounds = None;
         let pointer = self.input.pointer?;
         let index = self.region_at(pointer);
+        self.pressed_bounds = index.map(|index| self.regions[index].bounds);
         self.focus = None;
         if let Some(surface) = self.selection_surface_at(pointer) {
             let anchor = surface.borrow().spot_at(pointer)?;
@@ -200,6 +209,23 @@ impl<M> Ui<M> {
 
     /// Records a release, returning the message of the region it completed on.
     pub fn pointer_released(&mut self) -> Option<M>
+    where
+        M: Clone,
+    {
+        let released = self.release();
+        self.clicked_bounds = released.as_ref().and(self.pressed_bounds.take());
+        released
+    }
+
+    /// Where the control whose click the last release sent was painted, so
+    /// that what it opens can be placed against it rather than the pointer.
+    pub fn clicked_bounds(&self) -> Option<Rect> {
+        self.clicked_bounds
+    }
+
+    /// Ends the primary press, returning the message of the region it
+    /// completed on.
+    fn release(&mut self) -> Option<M>
     where
         M: Clone,
     {

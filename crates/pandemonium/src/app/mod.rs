@@ -403,10 +403,12 @@ pub struct App {
     trail: Trail,
     /// The list the window is asking the reader to choose from, if it is.
     picker: Option<crate::picker::Picker>,
-    /// Pointer position of the status-bar branch control anchoring its popover.
-    branch_picker_at: Option<Point>,
-    /// Pointer position of the agent control anchoring its choices.
-    agent_picker_at: Option<Point>,
+    /// The status-bar branch control anchoring its popover.
+    branch_picker_at: Option<Rect>,
+    /// The agent control anchoring its choices.
+    agent_picker_at: Option<Rect>,
+    /// The control whose click is being handled, for what it opens to sit against.
+    trigger: Option<Rect>,
     /// Bounds of the Source Control commit split button from the last frame.
     commit_bounds: pm_ui::Bounds,
     /// Bounds of the title bar's command center from the last frame.
@@ -574,6 +576,9 @@ pub struct App {
 
 /// Logical pixels of the window a panel always leaves free, so its sash stays within reach.
 const REACHABLE_MARGIN: f32 = 48.0;
+
+/// How far a dropdown stands off the control that opened it.
+const DROPDOWN_GAP: f32 = 4.0;
 
 /// How many kinds of [`Wake`] there are.
 const WAKES: usize = Wake::Registry as usize + 1;
@@ -827,6 +832,7 @@ impl App {
             picker: None,
             branch_picker_at: None,
             agent_picker_at: None,
+            trigger: None,
             commit_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             command_center_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_refs_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
@@ -1740,7 +1746,7 @@ impl App {
             return;
         }
         if message == Message::ShowStatusBranches {
-            self.branch_picker_at = self.pointer;
+            self.branch_picker_at = self.opener();
             self.open_picker(crate::picker::Kind::Branches);
             self.request_redraw();
             return;
@@ -2140,18 +2146,35 @@ impl App {
         self.work_here(work);
     }
 
-    /// Opens the menu for `target` where the pointer is.
+    /// Opens the menu for `target` against the control that was clicked for
+    /// it, or where the pointer is when it was asked for any other way.
     ///
-    /// The menu is placed rather than anchored: the pointer is the one place
-    /// every tab, however narrow and however far along the bar, agrees on.
+    /// A dropdown always opens in the same place beside its control, wherever
+    /// on the control the click landed; a context menu has no control to sit
+    /// against, so it opens under the pointer.
     fn open_menu(&mut self, target: MenuTarget) {
         if target == MenuTarget::SourceControl {
             self.stash_available = self
                 .review()
                 .is_some_and(|review| !review.stashes().is_empty());
         }
-        self.menu = self.pointer.map(|at| TabMenu { at, target });
+        let above = matches!(target, MenuTarget::Agents(_) | MenuTarget::AgentMcp(_));
+        let at = match (self.trigger, above) {
+            (Some(control), false) => {
+                Some(Point::new(control.left(), control.bottom() + DROPDOWN_GAP))
+            }
+            (Some(control), true) => Some(Point::new(control.left(), control.top() - DROPDOWN_GAP)),
+            (None, _) => self.pointer,
+        };
+        self.menu = at.map(|at| TabMenu { at, target });
         self.request_redraw();
+    }
+
+    /// The control whose click is being handled, or a point at the pointer
+    /// when nothing was clicked.
+    fn opener(&self) -> Option<Rect> {
+        self.trigger
+            .or_else(|| self.pointer.map(|pointer| Rect::new(pointer, Size::zero())))
     }
 
     /// Asks `question`, which nothing else answers until it is answered.
@@ -2564,12 +2587,12 @@ impl App {
                 )
             });
             let anchor = match agent_choices {
-                true => self.agent_picker_at.map(|anchor| (anchor.x, anchor)),
-                false => branch_anchor.map(|anchor| (anchor.x - 24.0, anchor)),
+                true => self.agent_picker_at,
+                false => branch_anchor,
             };
             let agent = agent_choices.then(|| self.agent_choice_parts(theme, picker));
             let (point, width) = match anchor {
-                Some((left, anchor)) => {
+                Some(anchor) => {
                     let width = crate::picker::width(picker.kind());
                     let height = match &agent {
                         Some(parts) => {
@@ -2578,8 +2601,10 @@ impl App {
                         None => crate::picker::height(theme, picker),
                     };
                     let point = Point::new(
-                        left.clamp(8.0, (window.width - width - 8.0).max(8.0)),
-                        (anchor.y - height - 8.0).max(8.0),
+                        anchor
+                            .left()
+                            .clamp(8.0, (window.width - width - 8.0).max(8.0)),
+                        (anchor.top() - height - 8.0).max(8.0),
                     );
                     (point, width)
                 }

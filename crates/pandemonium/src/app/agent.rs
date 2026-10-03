@@ -43,12 +43,13 @@ pub(super) struct SelectionDrag {
 
 impl App {
     /// Opens the menu of the agents standing as `standing` does, rising from
-    /// the top of the status bar above the count that was clicked.
+    /// the top of the status bar above the left edge of the count that was
+    /// clicked.
     pub(super) fn open_agents_menu(&mut self, standing: Standing) {
         let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
         let bar = window.height - self.theme().size.bar;
-        self.menu = self.pointer.map(|pointer| TabMenu {
-            at: Point::new(pointer.x, bar - MENU_GAP),
+        self.menu = self.opener().map(|control| TabMenu {
+            at: Point::new(control.left(), bar - MENU_GAP),
             target: MenuTarget::Agents(standing),
         });
         self.request_redraw();
@@ -501,7 +502,7 @@ impl App {
 
     /// Opens an agent control's choices beside the control that was pressed.
     fn open_agent_choices(&mut self, kind: Kind, rows: Vec<Row>) {
-        self.agent_picker_at = self.pointer;
+        self.agent_picker_at = self.opener();
         self.open_picker_with(kind, rows, String::new());
         if let Some(picker) = self.picker.as_mut() {
             let current = picker

@@ -1182,7 +1182,12 @@ impl App {
             self.agents.clear_selections();
         }
         self.update_pointer_cursor();
+        self.trigger = match state {
+            ElementState::Released => self.ui.as_ref().and_then(pm_ui::Ui::clicked_bounds),
+            ElementState::Pressed => None,
+        };
         self.handle(message);
+        self.trigger = None;
         if state == ElementState::Released {
             self.agent_selection_drag = None;
             self.release_drag();
