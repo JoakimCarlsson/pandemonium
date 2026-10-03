@@ -6,6 +6,9 @@
 //! what this holds. Runs of one voice join into one block, and a tool call
 //! replaces the block it is a later word about.
 
+use std::collections::BTreeMap;
+use std::time::Instant;
+
 use base64::Engine;
 use pm_acp::{Step, ToolCall, Voice};
 use pm_gfx::Image;
@@ -34,6 +37,10 @@ pub enum Block {
 pub struct Transcript {
     /// The blocks, oldest first.
     blocks: Vec<Block>,
+    /// Subagent calls attached to an already known parent.
+    children: BTreeMap<String, Vec<ToolCall>>,
+    /// Start and optional finish of each thought passage.
+    thoughts: BTreeMap<usize, (Instant, Option<Instant>)>,
     /// The revision each block was last changed at, in the same order.
     stamps: Vec<u64>,
     /// How many changes the conversation has taken, which is the revision
@@ -63,6 +70,7 @@ impl Transcript {
 
     /// Adds `block` after the last one.
     fn push(&mut self, block: Block) {
+        self.finish_thought();
         self.blocks.push(block);
         self.stamps.push(0);
         self.stamp(self.blocks.len() - 1);
@@ -79,12 +87,26 @@ impl Transcript {
     /// Two runs of the same voice with nothing between them are one passage:
     /// the agent broke it up to send it, not to have it read that way.
     pub fn say(&mut self, voice: Voice, text: &str) {
+        if voice != Voice::Thought {
+            self.finish_thought();
+        }
+        let streaming = voice != Voice::Thought
+            || self
+                .thoughts
+                .last_key_value()
+                .is_none_or(|(_, (_, finished))| finished.is_none());
         match self.blocks.last_mut() {
-            Some(Block::Said(said, passage)) if *said == voice => {
+            Some(Block::Said(said, passage)) if *said == voice && streaming => {
                 passage.push_str(text);
                 self.stamp(self.blocks.len() - 1);
             }
-            _ => self.push(Block::Said(voice, text.to_owned())),
+            _ => {
+                self.push(Block::Said(voice, text.to_owned()));
+                if voice == Voice::Thought {
+                    self.thoughts
+                        .insert(self.blocks.len() - 1, (Instant::now(), None));
+                }
+            }
         }
     }
 
@@ -116,13 +138,86 @@ impl Transcript {
 
     /// Adds a tool call, or replaces the one it is a later word about.
     pub fn ran(&mut self, call: ToolCall) {
-        match self
+        self.finish_thought();
+        if let Some(at) = self
             .blocks
             .iter()
             .rposition(|block| matches!(block, Block::Ran(ran) if ran.id == call.id))
         {
-            Some(at) => self.replace(at, Block::Ran(call)),
-            None => self.push(Block::Ran(call)),
+            self.replace(at, Block::Ran(call));
+            return;
+        }
+        if let Some(parent) = self.children.iter().find_map(|(parent, children)| {
+            children
+                .iter()
+                .any(|child| child.id == call.id)
+                .then(|| parent.clone())
+        }) {
+            let children = self.children.get_mut(&parent).unwrap();
+            let child = children
+                .iter_mut()
+                .find(|child| child.id == call.id)
+                .unwrap();
+            *child = call;
+            self.stamp_parent(&parent);
+            return;
+        }
+        if let Some(parent) = call
+            .parent
+            .as_ref()
+            .filter(|parent| self.has_call(parent))
+            .cloned()
+        {
+            self.children.entry(parent.clone()).or_default().push(call);
+            self.stamp_parent(&parent);
+        } else {
+            self.push(Block::Ran(call));
+        }
+    }
+
+    /// Calls directly attached to a parent, in arrival order.
+    pub fn children(&self, parent: &str) -> &[ToolCall] {
+        self.children.get(parent).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a parent has already appeared in this transcript.
+    fn has_call(&self, id: &str) -> bool {
+        self.blocks
+            .iter()
+            .any(|block| matches!(block, Block::Ran(call) if call.id == id))
+            || self.children.values().flatten().any(|call| call.id == id)
+    }
+
+    /// Marks the top-level card containing a changed child.
+    fn stamp_parent(&mut self, parent: &str) {
+        if let Some(at) = self
+            .blocks
+            .iter()
+            .position(|block| matches!(block, Block::Ran(call) if call.id == parent))
+        {
+            self.stamp(at);
+        } else if let Some(ancestor) = self.children.iter().find_map(|(ancestor, children)| {
+            children
+                .iter()
+                .any(|child| child.id == parent)
+                .then(|| ancestor.clone())
+        }) {
+            self.stamp_parent(&ancestor);
+        }
+    }
+
+    /// The timing of a thought passage, recorded when its events arrive.
+    pub fn thought(&self, at: usize) -> Option<(Instant, Option<Instant>)> {
+        self.thoughts.get(&at).copied()
+    }
+
+    /// Freezes the latest streaming thought when activity moves on.
+    pub fn finish_thought(&mut self) {
+        if let Some((&at, (_, finished))) = self.thoughts.last_key_value()
+            && finished.is_none()
+        {
+            self.thoughts.get_mut(&at).unwrap().1 = Some(Instant::now());
+            self.stamp(at);
         }
     }
 

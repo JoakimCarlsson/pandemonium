@@ -13,7 +13,9 @@
 
 use std::cell::Ref;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
+
+use similar::{ChangeTag, TextDiff};
 
 use pm_acp::{
     About, Ask, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
@@ -38,7 +40,7 @@ use crate::message::Message;
 const DRAWN: usize = 300;
 
 /// How many lines of one tool call's result are shown before the rest.
-pub const RESULT_LINES: usize = 2;
+const RESULT_LINES: usize = 3;
 
 /// How far the conversation sits from the top and foot of its area, in
 /// steps of the spacing scale.
@@ -96,6 +98,8 @@ enum Tone {
     Heading(usize),
     /// A line of a block of code, each run in what its grammar says it is.
     Code(Option<Highlight>),
+    /// Syntax-coloured diff text, on an added or removed row.
+    Diff(Option<Highlight>, ChangeTag),
     /// A cell of a table, set in fixed pitch so its columns line up.
     Table,
     /// What divides the cells of a table from one another.
@@ -129,6 +133,52 @@ struct Piece {
     /// Whether it only indents a line carried on from the row above, which
     /// is a space between words rather than a line of its own once copied.
     wrapped: bool,
+    /// A tool card whose header toggles its complete output.
+    card: Option<String>,
+    /// The outer tool card containing this row, for its shared background.
+    owner: Option<String>,
+    /// A clock-driven fragment drawn without rewrapping its part.
+    live: Option<Live>,
+}
+
+/// A fragment whose clock changes independently of transcript wrapping.
+#[derive(Clone, Copy)]
+enum Live {
+    /// The activity spinner of an unfinished call.
+    Spinner(Instant),
+    /// Elapsed seconds, frozen at completion when known.
+    Timer(Option<Instant>, Option<Instant>),
+    /// A streaming or completed thought's duration label.
+    Thought(Instant, Option<Instant>),
+}
+
+impl Live {
+    /// The fragment at the current spinner tick.
+    fn text(self) -> String {
+        match self {
+            Self::Spinner(started) => WORKING
+                [(started.elapsed().as_millis() / 250 % WORKING.len() as u128) as usize]
+                .to_owned(),
+            Self::Timer(started, finished) => format!(
+                " · {}s",
+                started.map_or(0, |start| finished
+                    .unwrap_or_else(Instant::now)
+                    .saturating_duration_since(start)
+                    .as_secs())
+            ),
+            Self::Thought(started, finished) => {
+                let seconds = finished
+                    .unwrap_or_else(Instant::now)
+                    .saturating_duration_since(started)
+                    .as_secs();
+                if finished.is_some() {
+                    format!("Thought for {seconds}s")
+                } else {
+                    format!("Thinking · {seconds}s")
+                }
+            }
+        }
+    }
 }
 
 /// A run of a passage, and how it is set.
@@ -202,7 +252,7 @@ pub fn agent_pane(
         .children(
             talk.asks()
                 .iter()
-                .map(|ask| permission(theme, talk.id(), ask)),
+                .map(|ask| permission(theme, talk, ask, columns)),
         )
         .children(
             talk.forms()
@@ -310,6 +360,7 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
         offset + talk.view().get().size.height,
     );
     talk.drawn_links().borrow_mut().clear();
+    talk.drawn_cards().borrow_mut().clear();
     talk.drawn_text().borrow_mut().clear();
     talk.drawn_spots().borrow_mut().clear();
 
@@ -352,6 +403,29 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 closes,
                 actions_height: reply_actions_height(theme),
             }));
+        } else if let Some(owner) = wrapped
+            .row(at)
+            .first()
+            .and_then(|piece| piece.owner.as_deref())
+        {
+            let mut rows = vec![self::row(theme, wrapped.row(at), at, talk, None)];
+            while let Some(next) = visible.next_if(|next| {
+                wrapped
+                    .row(*next)
+                    .first()
+                    .and_then(|piece| piece.owner.as_deref())
+                    == Some(owner)
+            }) {
+                rows.push(self::row(theme, wrapped.row(next), next, talk, None));
+            }
+            drawn.push(
+                v_flex()
+                    .w_full()
+                    .rounded(theme.radius.md)
+                    .bg(theme.colors.surface)
+                    .overflow_hidden()
+                    .children(rows),
+            );
         } else {
             drawn.push(self::row(theme, wrapped.row(at), at, talk, None));
         }
@@ -505,6 +579,8 @@ pub struct Wrapped {
     parts: Vec<Part>,
     /// Every row, in order, by where it is kept.
     entries: Vec<Entry>,
+    /// Rows with clock fragments, refreshed independently of their wraps.
+    clocks: Vec<usize>,
     /// Whether each row is part of something the reader said.
     said: Vec<bool>,
     /// How tall each row is drawn, the edges of a bubble counted into the
@@ -643,6 +719,7 @@ impl Wrapped {
             self.refresh_selection_rows();
             self.measures = None;
         }
+        self.refresh_clocks();
         if wrapping.busy {
             self.working = vec![piece(working(talk), Tone::Quiet)];
             if let Some(last) = self.selection_rows.len().checked_sub(1) {
@@ -660,6 +737,36 @@ impl Wrapped {
         if self.measures != Some(measures) {
             self.measure(theme, talk);
             self.measures = Some(measures);
+        }
+    }
+
+    /// Refreshes only clock fragments and their selectable text, keeping wraps.
+    fn refresh_clocks(&mut self) {
+        for &at in &self.clocks {
+            let Entry::Part(part, row) = self.entries[at] else {
+                continue;
+            };
+            let row = &mut self.parts[part].rows[row];
+            let mut changed = false;
+            for piece in row.iter_mut() {
+                if let Some(live) = piece.live {
+                    let text = live.text();
+                    if piece.text != text {
+                        piece.text = text;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                self.selection_rows.replace(
+                    self.selection_starts[at].row,
+                    SelectionRow {
+                        text: row.iter().map(|piece| piece.text.as_str()).collect(),
+                        lead: 0,
+                        separator: "\n",
+                    },
+                );
+            }
         }
     }
 
@@ -692,6 +799,9 @@ impl Wrapped {
             }
             self.entries.push(Entry::Working);
         }
+        self.clocks = (0..self.entries.len())
+            .filter(|at| self.row(*at).iter().any(|piece| piece.live.is_some()))
+            .collect();
     }
 
     /// Rejoins visual continuations and records stable logical content positions.
@@ -800,9 +910,15 @@ fn part_key(talk: &Talk, at: usize, columns: usize) -> PartKey {
             .max()
             .unwrap_or_default(),
         expanded,
-        shown: match expanded && terminal {
-            true => talk.shown_revision(),
-            false => 0,
+        shown: if expanded
+            || terminal
+            || blocks[at..end]
+                .iter()
+                .any(|block| matches!(block, Block::Ran(call) if call.subagent))
+        {
+            talk.shown_revision()
+        } else {
+            0
         },
         columns,
     }
@@ -834,20 +950,41 @@ fn wrap_part(talk: &Talk, key: PartKey) -> Part {
         Block::Picture(image) => vec![vec![image_piece(image.clone())]],
         Block::Said(Voice::Agent, passage) => markdown_rows(passage, BULLET, Tone::Spoken, columns),
         Block::Said(Voice::Thought, passage) => {
-            let mut rows = vec![vec![piece(
-                format!("{} Thinking", if expanded { "⌄" } else { "›" }),
+            let mut header = piece(
+                format!("{} ", if expanded { "⌄" } else { "›" }),
                 Tone::DetailGroup(at),
-            )]];
-            if expanded {
-                rows.extend(passage_rows(passage, BULLET, Tone::Quiet, columns));
+            );
+            if let Some((started, finished)) = talk.transcript().thought(at) {
+                header.live = None;
+                let mut label = piece(String::new(), Tone::Quiet);
+                let live = Live::Thought(started, finished);
+                label.text = live.text();
+                label.live = finished.is_none().then_some(live);
+                let mut rows = vec![vec![header, label]];
+                if expanded {
+                    rows.extend(passage_rows(passage, BULLET, Tone::Quiet, columns));
+                }
+                rows
+            } else {
+                vec![vec![header, piece("Thinking".to_owned(), Tone::Quiet)]]
             }
-            rows
         }
         Block::Ran(_) => {
-            let mut rows = vec![tool_group_row(&blocks[at..end], at, expanded)];
+            let mut rows = vec![tool_group_row(talk, &blocks[at..end], at, expanded)];
             if expanded {
+                let calls = blocks[at..end]
+                    .iter()
+                    .filter_map(|block| match block {
+                        Block::Ran(call) => Some(call),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                rows.extend(grouped_tool_rows(talk, &calls, columns));
+            } else {
                 for block in &blocks[at..end] {
-                    if let Block::Ran(call) = block {
+                    if let Block::Ran(call) = block
+                        && call.subagent
+                    {
                         rows.extend(tool_rows(talk, call, columns));
                     }
                 }
@@ -1197,48 +1334,102 @@ fn reader_rows(talk: &Talk, block: usize, passage: &str, columns: usize) -> (Vec
 }
 
 /// The collapsed or expanded heading for adjacent tool calls.
-fn tool_group_row(blocks: &[Block], at: usize, expanded: bool) -> Row {
+fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> Row {
     let mark = if expanded { "⌄" } else { "›" };
-    let count = blocks.len();
-    let label = if count == 1 {
-        match &blocks[0] {
-            Block::Ran(call) => call.title.clone(),
-            _ => String::new(),
-        }
-    } else {
-        let reads = blocks.iter().any(|block| {
-            matches!(block, Block::Ran(call) if matches!(call.kind, Kind::Read | Kind::Search))
-        });
-        let runs = blocks
-            .iter()
-            .any(|block| matches!(block, Block::Ran(call) if call.kind == Kind::Execute));
-        let edits = blocks.iter().any(|block| {
-            matches!(block, Block::Ran(call) if matches!(call.kind, Kind::Edit | Kind::Delete | Kind::Move))
-        });
-        let mut activities = Vec::new();
-        if reads {
-            activities.push("Read files");
-        }
-        if runs {
-            activities.push("ran commands");
-        }
-        if edits {
-            activities.push("edited files");
-        }
-        if activities.is_empty() {
-            format!("{count} tool calls")
-        } else {
-            activities.join(", ")
-        }
-    };
-    let failed = blocks
+    let calls = blocks
         .iter()
-        .any(|block| matches!(block, Block::Ran(call) if call.status == Status::Failed));
-    let mut row = vec![piece(format!("{label}  {mark}"), Tone::DetailGroup(at))];
-    if failed {
-        row.push(piece(" · failed".to_owned(), Tone::Failed));
+        .filter_map(|block| match block {
+            Block::Ran(call) => Some(call),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut all = Vec::new();
+    for call in &calls {
+        flatten_calls(talk, call, &mut all);
     }
+    let agents = all
+        .iter()
+        .filter(|call| call.subagent && call.is_running())
+        .count();
+    if let Some((parent, call)) = calls
+        .iter()
+        .rev()
+        .find_map(|parent| active_call(talk, parent).map(|call| (*parent, call)))
+    {
+        let mut row = called(talk, call);
+        if call.id != parent.id {
+            row[2].text = format!(
+                " {} · {}",
+                subject(parent, talk.root()),
+                activity(call, talk.root())
+            );
+        }
+        row[0].text = format!("{mark} ");
+        row[0].tone = Tone::DetailGroup(at);
+        row[0].card = None;
+        if agents > 0 {
+            row[2].text = format!(" {agents} subagents running ·{}", row[2].text);
+        }
+        return row;
+    }
+    let mut summary = Vec::new();
+    for (kind, verb, noun) in [
+        (Kind::Read, "Read", "files"),
+        (Kind::Search, "searched", "patterns"),
+        (Kind::Execute, "ran", "commands"),
+        (Kind::Edit, "edited", "files"),
+        (Kind::Delete, "deleted", "files"),
+        (Kind::Move, "moved", "files"),
+        (Kind::Fetch, "fetched", "URLs"),
+    ] {
+        let count = all
+            .iter()
+            .filter(|call| call.kind == kind && !call.subagent)
+            .count();
+        if count > 0 {
+            summary.push(format!("{verb} {count} {noun}"));
+        }
+    }
+    let agents = all.iter().filter(|call| call.subagent).count();
+    if agents > 0 {
+        summary.push(format!("{agents} subagents"));
+    }
+    if summary.is_empty() {
+        summary.push(format!("{} tool calls", all.len()));
+    }
+    let failures = all
+        .iter()
+        .filter(|call| call.status == Status::Failed)
+        .count();
+    let started = all.iter().filter_map(|call| call.started).min();
+    let finished = all.iter().filter_map(|call| call.finished).max();
+    let mut row = vec![piece(
+        format!("{mark} {}", summary.join(", ")),
+        Tone::DetailGroup(at),
+    )];
+    if failures > 0 {
+        row.push(piece(format!(" · {failures} failed"), Tone::Failed));
+    }
+    row.push(timer(started, finished));
     row
+}
+
+/// Collects a card and all descendants for group counts and elapsed time.
+fn flatten_calls<'a>(talk: &'a Talk, call: &'a ToolCall, calls: &mut Vec<&'a ToolCall>) {
+    calls.push(call);
+    for child in talk.transcript().children(&call.id) {
+        flatten_calls(talk, child, calls);
+    }
+}
+
+/// The deepest active descendant, or this call if it is unfinished.
+fn active_call<'a>(talk: &'a Talk, call: &'a ToolCall) -> Option<&'a ToolCall> {
+    talk.transcript()
+        .children(&call.id)
+        .iter()
+        .rev()
+        .find_map(|child| active_call(talk, child))
+        .or_else(|| call.is_running().then_some(call))
 }
 
 /// One passage, as rows marked with `mark` and wrapped to the width.
@@ -1469,129 +1660,552 @@ fn is_image_data_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_')
 }
 
-/// One tool call, as the line naming it and the lines of what it came to.
-fn tool_rows(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<Row> {
-    let root = talk.root();
-    let tone = match call.status {
-        Status::Failed => Tone::Failed,
-        _ => Tone::Quiet,
-    };
-    let mut rows = vec![called(call, root)];
-    rows.extend(
-        result(talk, call, columns.saturating_sub(RESULT.chars().count()))
-            .into_iter()
-            .enumerate()
-            .map(|(at, line)| match at {
-                0 => vec![piece(RESULT.to_owned(), Tone::Quiet), piece(line, tone)],
-                _ => vec![
-                    piece("    ".to_owned(), Tone::Quiet),
-                    piece(line, Tone::Quiet),
-                ],
-            }),
-    );
+/// Consecutive reads share one heading and retain their individual paths.
+fn grouped_tool_rows(talk: &Talk, calls: &[&ToolCall], columns: usize) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let mut at = 0;
+    while at < calls.len() {
+        if at > 0 {
+            rows.push(Vec::new());
+        }
+        let call = calls[at];
+        let reads = calls[at..]
+            .iter()
+            .take_while(|call| {
+                call.kind == Kind::Read && talk.transcript().children(&call.id).is_empty()
+            })
+            .count();
+        if reads > 1 {
+            let group = &calls[at..at + reads];
+            let active = group
+                .iter()
+                .rev()
+                .find(|call| call.is_running())
+                .copied()
+                .or_else(|| {
+                    group
+                        .iter()
+                        .find(|call| call.status == Status::Failed)
+                        .copied()
+                })
+                .unwrap_or(call);
+            let mut header = called(talk, active);
+            header[2].text = format!(" Read ({reads})");
+            header[3] = timer(
+                group.iter().filter_map(|call| call.started).min(),
+                if group.iter().any(|call| call.is_running()) {
+                    None
+                } else {
+                    group.iter().filter_map(|call| call.finished).max()
+                },
+            );
+            let start = rows.len();
+            rows.push(header);
+            for call in group {
+                let mut path = called(talk, call);
+                path[2].text = format!(" {}", subject(call, talk.root()));
+                rows.push(path);
+                if talk.card_expanded(&call.id) {
+                    rows.extend(result(talk, call, columns, true));
+                }
+            }
+            for row in &mut rows[start..] {
+                if let Some(first) = row.first_mut() {
+                    first.owner = Some(call.id.clone());
+                }
+            }
+            at += reads;
+        } else {
+            rows.extend(tool_rows(talk, call, columns));
+            at += 1;
+        }
+    }
     rows
 }
 
-/// The line naming one tool call: what was called, and on what.
-///
-/// An agent that says which tool it called gets the shape its own CLI uses —
-/// the tool, then the file in brackets — and one that does not is left with
-/// the sentence it wrote instead.
-fn called(call: &ToolCall, root: &Path) -> Row {
-    let mut row = vec![piece("  · ".to_owned(), Tone::Quiet)];
-    let argument = call
-        .locations
-        .first()
-        .map(|location| relative(&location.path, root))
-        .or_else(|| call.argument.as_deref().map(first_line));
-
-    match (call.name.as_deref(), argument) {
-        (Some(name), Some(argument)) => {
-            row.push(piece(name.to_owned(), Tone::Tool));
-            row.push(piece("(".to_owned(), Tone::Quiet));
-            row.push(piece(argument, Tone::Argument));
-            row.push(piece(")".to_owned(), Tone::Quiet));
+/// One live tool card, with its own renderer and nested subagent cards.
+fn tool_rows(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<Row> {
+    let expanded = talk.card_expanded(&call.id);
+    let mut rows = vec![called(talk, call)];
+    rows.extend(tool_body(talk, call, columns, expanded));
+    let children = talk.transcript().children(&call.id);
+    if expanded && !children.is_empty() {
+        let calls = children.iter().collect::<Vec<_>>();
+        let mut nested = grouped_tool_rows(talk, &calls, columns.saturating_sub(4).max(1));
+        for row in &mut nested {
+            if let Some(first) = row.first_mut() {
+                first.text.insert_str(0, "    ");
+            }
         }
-        (Some(name), None) => row.push(piece(name.to_owned(), Tone::Tool)),
-        (None, _) => row.push(piece(call.title.clone(), Tone::Tool)),
+        rows.extend(nested);
     }
-    row
+    for row in &mut rows {
+        if let Some(first) = row.first_mut() {
+            first.owner = Some(call.id.clone());
+        }
+    }
+    rows
 }
 
-/// What a tool call came to, in as many lines as it is worth showing.
-///
-/// A call that has produced nothing yet says where it has got to instead:
-/// the line beneath a call is never blank, because a call with nothing under
-/// it reads as one that did nothing. A terminal the call is running in shows
-/// the last of what it has written, as it writes it.
-fn result(talk: &Talk, call: &ToolCall, columns: usize) -> Vec<String> {
-    let mut shown = ResultLines::default();
+/// Dispatches transcript and permission content through the same renderer.
+fn tool_body(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<Row> {
+    match call.kind {
+        Kind::Edit | Kind::Delete | Kind::Move => edit_rows(talk, call, columns, expanded),
+        Kind::Execute => execute_rows(talk, call, columns, expanded),
+        Kind::Read => read_rows(talk, call, columns, expanded),
+        Kind::Search => search_rows(talk, call, columns, expanded),
+        Kind::Fetch => fetch_rows(talk, call, columns, expanded),
+        _ if call
+            .output
+            .iter()
+            .any(|output| matches!(output, Output::Changed { .. })) =>
+        {
+            edit_rows(talk, call, columns, expanded)
+        }
+        _ => result(talk, call, columns, expanded),
+    }
+}
+
+/// The human label for a protocol kind, falling back to the tool's name.
+fn tool_label(call: &ToolCall) -> &str {
+    if call.subagent {
+        return "Task";
+    }
+    match call.kind {
+        Kind::Read => "Read",
+        Kind::Edit => "Edit",
+        Kind::Delete => "Delete",
+        Kind::Move => "Move",
+        Kind::Search => "Search",
+        Kind::Execute => "Run",
+        Kind::Fetch => "Fetch",
+        Kind::Think => "Think",
+        _ => call
+            .name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .or_else(|| (!call.title.is_empty()).then_some(call.title.as_str()))
+            .unwrap_or("Tool"),
+    }
+}
+
+/// The worktree-relative subject of a call, including a reported line.
+fn subject(call: &ToolCall, root: &Path) -> String {
+    call.locations
+        .first()
+        .map(|location| {
+            let path = relative(&location.path, root);
+            location
+                .line
+                .map_or_else(|| path.clone(), |line| format!("{path}:{line}"))
+        })
+        .or_else(|| call.argument.as_deref().map(first_line))
+        .unwrap_or_else(|| call.title.clone())
+}
+
+/// The activity named by a call without its status and timer.
+fn activity(call: &ToolCall, root: &Path) -> String {
+    format!("{} {}", tool_label(call), subject(call, root))
+}
+
+/// A timed card header including a subagent's count and current activity.
+fn called(talk: &Talk, call: &ToolCall) -> Row {
+    let mut toggle = piece(
+        format!(
+            "  {} ",
+            if talk.card_expanded(&call.id) {
+                "⌄"
+            } else {
+                "›"
+            }
+        ),
+        Tone::Quiet,
+    );
+    toggle.card = Some(call.id.clone());
+    let mut status = piece(
+        match call.status {
+            Status::Done => "✓",
+            Status::Failed => "✗",
+            _ => "◐",
+        }
+        .to_owned(),
+        if call.status == Status::Failed {
+            Tone::Failed
+        } else {
+            Tone::Tool
+        },
+    );
+    if call.is_running() {
+        status.live = call.started.map(Live::Spinner);
+    }
+    let children = talk.transcript().children(&call.id);
+    let mut label = format!(" {} {}", tool_label(call), subject(call, talk.root()));
+    if !children.is_empty() {
+        let mut descendants = Vec::new();
+        for child in children {
+            flatten_calls(talk, child, &mut descendants);
+        }
+        label.push_str(&format!(" · {} calls", descendants.len()));
+        if let Some(current) = children
+            .iter()
+            .rev()
+            .find_map(|child| active_call(talk, child))
+        {
+            label.push_str(&format!(" · {}", activity(current, talk.root())));
+        }
+    }
+    vec![
+        toggle,
+        status,
+        piece(label, Tone::Tool),
+        timer(call.started, call.finished),
+    ]
+}
+
+/// An elapsed-time fragment refreshed by the existing spinner tick.
+fn timer(started: Option<Instant>, finished: Option<Instant>) -> Piece {
+    let live = Live::Timer(started, finished);
+    let mut piece = piece(live.text(), Tone::Quiet);
+    piece.live = started.filter(|_| finished.is_none()).map(|_| live);
+    piece
+}
+
+/// Clips wrapped output at its preview cap and names the omitted lines.
+fn clipped(mut rows: Vec<Row>, expanded: bool, cap: usize) -> Vec<Row> {
+    if !expanded && rows.len() > cap {
+        let hidden = rows.len() - cap;
+        rows.truncate(cap);
+        rows.push(vec![piece(
+            format!("{RESULT}… {hidden} more lines"),
+            Tone::Quiet,
+        )]);
+    }
+    rows
+}
+
+/// The fallback text output, followed by the raw result when needed.
+fn result(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<Row> {
+    let mut rows = Vec::new();
     for output in &call.output {
         match output {
-            Output::Said(said) => shown.wrap(said, columns),
-            Output::Changed { path, after, .. } => shown.take(&format!(
-                "{} · {} lines",
-                name_of(path),
-                after.lines().count()
+            Output::Said(said) => rows.extend(passage_rows(said, RESULT, Tone::Quiet, columns)),
+            Output::Terminal(id) => {
+                if let Some(output) = talk.terminal_tail(id) {
+                    rows.extend(passage_rows(output, RESULT, Tone::Quiet, columns));
+                }
+            }
+            Output::Changed {
+                path,
+                before,
+                after,
+            } => rows.extend(diff_rows(
+                path,
+                talk.root(),
+                before.as_deref().unwrap_or_default(),
+                after,
+                columns,
+                expanded,
             )),
-            Output::Terminal(terminal) => {
-                if let Some(tail) = talk.terminal_tail(terminal) {
-                    shown.wrap(tail, columns);
+        }
+    }
+    if rows.is_empty()
+        && let Some(returned) = &call.returned
+    {
+        rows.extend(passage_rows(
+            returned,
+            RESULT,
+            if call.status == Status::Failed {
+                Tone::Failed
+            } else {
+                Tone::Quiet
+            },
+            columns,
+        ));
+    }
+    clipped(rows, expanded, RESULT_LINES)
+}
+
+/// File changes, each with a path heading and a unified diff.
+fn edit_rows(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<Row> {
+    let mut rows = Vec::new();
+    for output in &call.output {
+        if let Output::Changed {
+            path,
+            before,
+            after,
+        } = output
+        {
+            rows.extend(diff_rows(
+                path,
+                talk.root(),
+                before.as_deref().unwrap_or_default(),
+                after,
+                columns,
+                expanded,
+            ));
+        }
+    }
+    if rows.is_empty() {
+        result(talk, call, columns, expanded)
+    } else {
+        rows
+    }
+}
+
+/// A unified diff with three context lines, line numbers and editor syntax.
+fn diff_rows(
+    path: &Path,
+    root: &Path,
+    before: &str,
+    after: &str,
+    columns: usize,
+    expanded: bool,
+) -> Vec<Row> {
+    let diff = TextDiff::from_lines(before, after);
+    let added = diff
+        .iter_all_changes()
+        .filter(|change| change.tag() == ChangeTag::Insert)
+        .count();
+    let removed = diff
+        .iter_all_changes()
+        .filter(|change| change.tag() == ChangeTag::Delete)
+        .count();
+    let mut rows = vec![vec![piece(
+        format!("{RESULT}{} [+{added} −{removed}]", relative(path, root)),
+        Tone::Tool,
+    )]];
+    let old_lines = before.lines().collect::<Vec<_>>();
+    let new_lines = after.lines().collect::<Vec<_>>();
+    let old = code_highlights(Language::of(path), &old_lines);
+    let new = code_highlights(Language::of(path), &new_lines);
+    let mut body = Vec::new();
+    let mut hidden = 0;
+    for (hunk, ops) in diff.grouped_ops(3).iter().enumerate() {
+        let first = ops.first().unwrap();
+        let last = ops.last().unwrap();
+        let header = format!(
+            "{RESULT}@@ -{},{} +{},{} @@",
+            first.old_range().start + 1,
+            last.old_range().end - first.old_range().start,
+            first.new_range().start + 1,
+            last.new_range().end - first.new_range().start
+        );
+        if expanded || hunk < 8 && body.len() < 40 {
+            body.push(vec![piece(header, Tone::Quiet)]);
+        } else {
+            hidden += 1;
+        }
+        for op in ops {
+            for change in diff.iter_changes(op) {
+                let tag = change.tag();
+                let sign = match tag {
+                    ChangeTag::Insert => "+",
+                    ChangeTag::Delete => "-",
+                    ChangeTag::Equal => " ",
+                };
+                let old_number = change
+                    .old_index()
+                    .map_or(String::new(), |index| (index + 1).to_string());
+                let new_number = change
+                    .new_index()
+                    .map_or(String::new(), |index| (index + 1).to_string());
+                let prefix = format!("{RESULT}{old_number:>4} {new_number:>4} {sign} ");
+                let highlights = match tag {
+                    ChangeTag::Delete => change.old_index().and_then(|index| old.get(index)),
+                    _ => change.new_index().and_then(|index| new.get(index)),
+                };
+                let fallback = vec![(
+                    change.value().trim_end_matches(['\n', '\r']).to_owned(),
+                    None,
+                )];
+                for chunk in chunked(
+                    highlights.cloned().unwrap_or(fallback),
+                    columns.saturating_sub(prefix.chars().count()).max(1),
+                ) {
+                    if !expanded && (hunk >= 8 || body.len() >= 40) {
+                        hidden += 1;
+                        continue;
+                    }
+                    let mut row = vec![piece(prefix.clone(), Tone::Diff(None, tag))];
+                    row.extend(
+                        chunk
+                            .into_iter()
+                            .map(|(text, highlight)| piece(text, Tone::Diff(highlight, tag))),
+                    );
+                    body.push(row);
                 }
             }
         }
     }
-    if !shown.produced
-        && let Some(returned) = &call.returned
+    rows.extend(body);
+    if hidden > 0 {
+        rows.push(vec![piece(
+            format!("{RESULT}… {hidden} more lines"),
+            Tone::Quiet,
+        )]);
+    }
+    rows
+}
+
+/// A command, its live terminal tail and its reported exit status or error.
+fn execute_rows(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<Row> {
+    let mut rows = passage_rows(
+        &format!("$ {}", call.argument.as_deref().unwrap_or(&call.title)),
+        RESULT,
+        Tone::Argument,
+        columns,
+    );
+    let mut output = Vec::new();
+    for part in &call.output {
+        match part {
+            Output::Terminal(id) => {
+                if let Some(text) = talk.terminal_tail(id) {
+                    output.extend(passage_rows(text, RESULT, Tone::Quiet, columns));
+                }
+            }
+            Output::Said(text) => output.extend(passage_rows(text, RESULT, Tone::Quiet, columns)),
+            _ => {}
+        }
+    }
+    let returned = call
+        .returned
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
+    if output.is_empty()
+        && let Some(text) = call.returned.as_deref()
     {
-        shown.wrap(returned, columns);
+        let content = returned
+            .as_ref()
+            .and_then(|value| {
+                ["output", "stdout", "result"]
+                    .iter()
+                    .find_map(|key| value[*key].as_str())
+            })
+            .unwrap_or(text);
+        output.extend(passage_rows(content, RESULT, Tone::Quiet, columns));
     }
-    if !shown.produced {
-        return match call.status {
-            Status::Pending => vec!["waiting".to_owned()],
-            Status::Running => vec!["running".to_owned()],
-            Status::Done => Vec::new(),
-            Status::Failed => vec!["failed".to_owned()],
+    if !expanded && output.len() > RESULT_LINES {
+        let earlier = output.len() - RESULT_LINES;
+        rows.push(vec![piece(
+            format!("{RESULT}… {earlier} earlier lines"),
+            Tone::Quiet,
+        )]);
+        rows.extend(output.into_iter().skip(earlier));
+    } else {
+        rows.extend(output);
+    }
+    if !call.is_running() {
+        let exit = returned.as_ref().and_then(|value| {
+            ["exitCode", "exit_code", "exitStatus", "exit_status"]
+                .iter()
+                .find_map(|key| value.get(*key).filter(|value| !value.is_null()))
+        });
+        let error = returned
+            .as_ref()
+            .and_then(|value| value.get("error"))
+            .filter(|value| !value.is_null());
+        let footer = if call.status == Status::Failed {
+            format!(
+                "Failed: {}",
+                error.map_or_else(
+                    || call.returned.clone().unwrap_or_else(|| call.title.clone()),
+                    |error| error
+                        .as_str()
+                        .map_or_else(|| error.to_string(), str::to_owned)
+                )
+            )
+        } else if let Some(exit) = exit {
+            format!("Exit status: {exit}")
+        } else {
+            "Completed".to_owned()
         };
+        rows.extend(passage_rows(
+            &footer,
+            RESULT,
+            if call.status == Status::Failed {
+                Tone::Failed
+            } else {
+                Tone::Quiet
+            },
+            columns,
+        ));
     }
-
-    let over = shown.counted.saturating_sub(RESULT_LINES);
-    let mut lines = shown.lines;
-    if over > 0 {
-        lines.push(format!("… {over} more lines"));
-    }
-    lines
+    rows
 }
 
-/// The lines of a tool call's result as they are wrapped: the first
-/// [`RESULT_LINES`] with anything in them kept, and the rest only counted.
-#[derive(Default)]
-struct ResultLines {
-    /// The lines kept to be shown.
-    lines: Vec<String>,
-    /// How many lines with anything in them there were, shown or not.
-    counted: usize,
-    /// Whether any line came at all, blank ones included.
-    produced: bool,
+/// A read's path and, when opened, its complete content.
+fn read_rows(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<Row> {
+    let mut rows = passage_rows(&subject(call, talk.root()), RESULT, Tone::Argument, columns);
+    if expanded {
+        rows.extend(result(talk, call, columns, true));
+    }
+    rows
 }
 
-impl ResultLines {
-    /// Takes in the lines `passage` breaks into at `columns` characters.
-    fn wrap(&mut self, passage: &str, columns: usize) {
-        wrap(passage, columns, |line| self.take(line));
+/// A search pattern followed by reported match counts and matched paths.
+fn search_rows(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<Row> {
+    let mut rows = passage_rows(
+        call.argument.as_deref().unwrap_or(&call.title),
+        RESULT,
+        Tone::Argument,
+        columns,
+    );
+    if let Some(value) = call
+        .returned
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+    {
+        let matches = value.get("matches");
+        let count = ["numMatches", "matchCount", "match_count", "count"]
+            .iter()
+            .find_map(|key| value[*key].as_u64())
+            .or_else(|| {
+                matches.and_then(|matches| {
+                    matches
+                        .as_array()
+                        .map(|matches| matches.len() as u64)
+                        .or_else(|| matches.as_u64())
+                })
+            });
+        if let Some(count) = count {
+            rows.push(vec![piece(format!("{RESULT}{count} matches"), Tone::Quiet)]);
+        }
+        let entries = value["files"]
+            .as_array()
+            .or_else(|| matches.and_then(serde_json::Value::as_array));
+        let mut paths = std::collections::BTreeSet::new();
+        for entry in entries.into_iter().flatten() {
+            if let Some(path) = entry
+                .as_str()
+                .or_else(|| entry["path"].as_str())
+                .or_else(|| entry["file"].as_str())
+            {
+                paths.insert(relative(Path::new(path), talk.root()));
+            }
+        }
+        if count.is_some() || !paths.is_empty() {
+            let files = paths
+                .into_iter()
+                .flat_map(|path| passage_rows(&path, RESULT, Tone::Argument, columns))
+                .collect();
+            rows.extend(clipped(files, expanded, RESULT_LINES));
+            return rows;
+        }
     }
+    rows.extend(result(talk, call, columns, expanded));
+    rows
+}
 
-    /// Takes in one line, keeping it while there is room to show it.
-    fn take(&mut self, line: &str) {
-        self.produced = true;
-        if line.trim().is_empty() {
-            return;
-        }
-        self.counted += 1;
-        if self.lines.len() < RESULT_LINES {
-            self.lines.push(line.to_owned());
-        }
-    }
+/// A fetched URL followed by the first result lines or the complete result.
+fn fetch_rows(talk: &Talk, call: &ToolCall, columns: usize, expanded: bool) -> Vec<Row> {
+    let mut rows = passage_rows(
+        call.argument.as_deref().unwrap_or(&call.title),
+        RESULT,
+        Tone::Argument,
+        columns,
+    );
+    rows.extend(result(talk, call, columns, expanded));
+    rows
 }
 
 /// One step of the plan, marked with how far along it is.
@@ -1611,6 +2225,15 @@ fn step_row(step: &Step) -> Row {
             },
         ),
     ]
+}
+
+/// The added or removed background shared by transcript and permission diffs.
+fn diff_background(theme: &Theme, row: &Row) -> Option<Rgba> {
+    row.iter().find_map(|piece| match piece.tone {
+        Tone::Diff(_, ChangeTag::Insert) => Some(theme.colors.success.alpha(0.08)),
+        Tone::Diff(_, ChangeTag::Delete) => Some(theme.colors.danger.alpha(0.08)),
+        _ => None,
+    })
 }
 
 /// Builds one row out of its pieces, the row `at` of the conversation.
@@ -1638,12 +2261,25 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -
         _ => None,
     });
     let detail = action.is_some();
-    let code = row.iter().any(|piece| matches!(piece.tone, Tone::Code(_)));
+    let code = row
+        .iter()
+        .any(|piece| matches!(piece.tone, Tone::Code(_) | Tone::Diff(_, _)));
+    let card = row.first().and_then(|piece| piece.card.clone()).map(|id| {
+        let mut cards = talk.drawn_cards().borrow_mut();
+        let place = cards.len();
+        cards.push(id);
+        place
+    });
     let mut column = 0;
     h_flex()
         .h_px(if detail { height + space(0.75) } else { height })
         .items_center()
         .when(code, |line| line.w_full().px(1).bg(theme.colors.surface))
+        .when_some(diff_background(theme, row), |line, color| line.bg(color))
+        .when_some(card, |line, id| {
+            line.on_click(Message::ToggleAgentCard(session, id))
+                .hover_bg(theme.colors.surface_hover)
+        })
         .when_some(action, |line, block| {
             line.on_click(Message::ToggleAgentDetails(session, block))
                 .hover_bg(theme.colors.surface_hover)
@@ -1661,12 +2297,15 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -
                 row: start.row,
                 column: start.column + column,
             };
-            let length = piece.text.chars().count();
+            let length = piece.live.map_or_else(
+                || piece.text.chars().count(),
+                |live| live.text().chars().count(),
+            );
             column += length;
             let spots = talk.drawn_spots();
             let key = spots.borrow().len();
             spots.borrow_mut().push(start);
-            let styled = text(piece.text.clone())
+            let styled = text(piece.live.map_or_else(|| piece.text.clone(), Live::text))
                 .color(color)
                 .placed(talk.drawn_text(), key);
             let styled = match selection.picked(start, length) {
@@ -1677,9 +2316,11 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -
                 Tone::Said | Tone::Spoken => styled.text_lg(),
                 Tone::Heading(1) => styled.text_xl().font_semibold(),
                 Tone::Heading(_) => styled.text_lg().font_semibold(),
-                Tone::Argument | Tone::Code(_) | Tone::Table | Tone::TableRule => {
-                    styled.text_sm().font_mono()
-                }
+                Tone::Argument
+                | Tone::Code(_)
+                | Tone::Diff(_, _)
+                | Tone::Table
+                | Tone::TableRule => styled.text_sm().font_mono(),
                 _ => styled.text_sm(),
             };
             let styled = emphasised(styled, piece.emphasis);
@@ -2011,7 +2652,25 @@ fn question(theme: &Theme, session: TalkId, form: &Form) -> Div<Message> {
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.
-fn permission(theme: &Theme, session: TalkId, ask: &Ask) -> Div<Message> {
+fn permission(theme: &Theme, talk: &Talk, ask: &Ask, columns: usize) -> Div<Message> {
+    let session = talk.id();
+    let mut header = called(talk, &ask.tool);
+    header.remove(0);
+    let content = std::iter::once(header)
+        .chain(tool_body(talk, &ask.tool, columns, false))
+        .map(|row| {
+            h_flex()
+                .when_some(diff_background(theme, &row), |row, color| {
+                    row.w_full().bg(color)
+                })
+                .children(row.into_iter().map(|piece| {
+                    text(piece.text)
+                        .text_sm()
+                        .font_mono()
+                        .color(tone(theme, piece.tone))
+                }))
+        })
+        .collect::<Vec<_>>();
     let choices = ask
         .choices
         .iter()
@@ -2034,12 +2693,7 @@ fn permission(theme: &Theme, session: TalkId, ask: &Ask) -> Div<Message> {
             .rounded(theme.radius.lg)
             .border_1(theme.colors.warning)
             .bg(theme.colors.surface)
-            .child(
-                text(format!("{BULLET}{}", ask.tool.title))
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.warning),
-            )
+            .children(content)
             .child(h_flex().gap(0.75).children(choices)),
     )
 }
@@ -2307,6 +2961,9 @@ fn piece(text: String, tone: Tone) -> Piece {
         link: None,
         emphasis: Emphasis::default(),
         wrapped: false,
+        card: None,
+        owner: None,
+        live: None,
     }
 }
 
@@ -2334,6 +2991,10 @@ fn tone(theme: &Theme, tone: Tone) -> Rgba {
         Tone::Heading(_) => theme.colors.text,
         Tone::Code(Some(highlight)) => tint(highlight, theme),
         Tone::Code(None) => theme.colors.text,
+        Tone::Diff(Some(highlight), _) => tint(highlight, theme),
+        Tone::Diff(None, ChangeTag::Insert) => theme.colors.success,
+        Tone::Diff(None, ChangeTag::Delete) => theme.colors.danger,
+        Tone::Diff(None, ChangeTag::Equal) => theme.colors.text,
         Tone::Table => theme.colors.text,
         Tone::TableRule => theme.colors.text_subtle,
         Tone::Quiet => theme.colors.text_subtle,
@@ -2363,7 +3024,43 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
 fn working(talk: &Talk) -> String {
     let elapsed = talk.working_for().unwrap_or_default();
     let frame = (elapsed.as_millis() / 250 % WORKING.len() as u128) as usize;
-    format!("{}  Working · {}s", WORKING[frame], elapsed.as_secs())
+    let current = talk
+        .transcript()
+        .blocks()
+        .iter()
+        .rev()
+        .find_map(|block| match block {
+            Block::Ran(call) => active_call(talk, call).map(|active| {
+                if active.id == call.id {
+                    activity(active, talk.root())
+                } else {
+                    format!(
+                        "{} · {}",
+                        subject(call, talk.root()),
+                        activity(active, talk.root())
+                    )
+                }
+            }),
+            _ => None,
+        });
+    let mut label = format!("{}  Working · {}s", WORKING[frame], elapsed.as_secs());
+    let mut calls = Vec::new();
+    for block in talk.transcript().blocks() {
+        if let Block::Ran(call) = block {
+            flatten_calls(talk, call, &mut calls);
+        }
+    }
+    let agents = calls
+        .iter()
+        .filter(|call| call.subagent && call.is_running())
+        .count();
+    if agents > 0 {
+        label.push_str(&format!(" · {agents} subagents running"));
+    }
+    if let Some(current) = current {
+        label.push_str(&format!(" · {current}"));
+    }
+    label
 }
 
 /// What the header says the session is doing.

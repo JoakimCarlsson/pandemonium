@@ -36,6 +36,7 @@ use crate::limits::Meter;
 use crate::mcp;
 use crate::process::{self, Containment};
 use crate::request::{self, Answer, Request, Shape};
+use crate::subagent::Subagents;
 use crate::transport;
 use crate::update::{self, Event, Knob, Method, Mode, Setting, Stop, Tools};
 
@@ -396,6 +397,7 @@ impl Session {
             stdout: BufReader::new(stdout),
             next,
             tools: Tools::new(),
+            subagents: Subagents::default(),
             ticket: 0,
             terminals: 0,
             meter: Meter::of(agent),
@@ -902,6 +904,8 @@ struct Reader {
     next: Arc<AtomicI64>,
     /// The tool calls of this conversation, as they now stand.
     tools: Tools,
+    /// Child session lifetimes and the cards receiving their updates.
+    subagents: Subagents,
     /// The ticket the next request will be put to the reader or the window
     /// as.
     ticket: u64,
@@ -938,7 +942,7 @@ impl Reader {
                     self.replied(id, message);
                 }
             }
-            (None, Some("session/update")) => self.updated(&message["params"]["update"]),
+            (None, Some("session/update")) => self.updated(&message["params"]),
             (None, Some("elicitation/complete")) => {
                 let id = message["params"]["elicitationId"].as_str();
                 self.raise(Event::Concluded(id.unwrap_or_default().to_owned()));
@@ -1248,8 +1252,8 @@ impl Reader {
     ///
     /// The update is read before the state is taken, which is held only for
     /// as long as it takes to add what it came to.
-    fn updated(&mut self, update: &Value) {
-        let Some(event) = update::event(update, &mut self.tools) else {
+    fn updated(&mut self, params: &Value) {
+        let Some(event) = self.subagents.event(params, &mut self.tools) else {
             return;
         };
         let Ok(mut state) = self.state.lock() else {
@@ -1333,7 +1337,11 @@ impl Reader {
     /// leave it parked.
     fn park(&mut self, id: &Value, params: &Value) {
         let ticket = self.ticket;
-        let Some(ask) = update::ask(ticket, params, &mut self.tools) else {
+        let mut params = params.clone();
+        if let Some(session) = params["sessionId"].as_str().map(str::to_owned) {
+            self.subagents.parent(&session, &mut params["toolCall"]);
+        }
+        let Some(ask) = update::ask(ticket, &params, &mut self.tools) else {
             self.answer(id, &json!({ "outcome": { "outcome": "cancelled" } }));
             return;
         };
@@ -1485,6 +1493,7 @@ fn handshake() -> Value {
             "terminal": true,
             "auth": { "terminal": true },
             "elicitation": { "form": {}, "url": {} },
+            "subagents": {},
         },
     })
 }

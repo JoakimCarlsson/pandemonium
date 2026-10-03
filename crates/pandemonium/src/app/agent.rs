@@ -140,6 +140,14 @@ impl App {
                 self.dismiss_answer(session, ticket, pm_acp::Reply::Cancel);
             }
             Message::OpenAnswerLink(session, ticket) => self.open_answer_link(session, ticket),
+            Message::ToggleAgentCard(session, place) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    let id = talk.drawn_cards().borrow().get(place).cloned();
+                    if let Some(id) = id {
+                        talk.toggle_card(&id);
+                    }
+                }
+            }
             Message::ToggleAgentDetails(session, block) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.toggle_details(block);

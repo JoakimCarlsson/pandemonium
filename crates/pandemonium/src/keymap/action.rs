@@ -313,6 +313,8 @@ pub enum Action {
     ChangeAgentMode,
     /// Put it into the mode after the one it is in.
     CycleAgentMode,
+    /// Expands or collapses every detail in the focused agent transcript.
+    ToggleAgentDetails,
     /// Choose which model that agent is to talk to.
     ChangeAgentModel,
     /// Start the agent in hand again and carry on the conversation it was in.
@@ -412,6 +414,11 @@ pub enum Action {
 /// The order is the order a palette lists them in, which is why related
 /// commands sit together rather than alphabetically.
 const CATALOGUE: &[(Action, &str, &str)] = &[
+    (
+        Action::ToggleAgentDetails,
+        "agent::ToggleDetails",
+        "Toggle Agent Details",
+    ),
     (Action::ShowCommands, "palette.commands", "Show Commands"),
     (
         Action::InstallLanguageServer,
