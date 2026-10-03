@@ -2502,11 +2502,7 @@ impl App {
         }
 
         if let Some(picker) = self.picker.as_ref() {
-            let agent_choices = matches!(
-                picker.kind(),
-                crate::picker::Kind::Modes | crate::picker::Kind::Knob
-            ) || (picker.kind() == crate::picker::Kind::Agents
-                && self.agent_picker_at.is_some());
+            let agent_choices = self.is_agent_dropdown(picker);
             let branch_anchor = self.branch_picker_at.filter(|_| {
                 matches!(
                     picker.kind(),
@@ -2527,11 +2523,17 @@ impl App {
                         }
                         None => crate::picker::height(theme, picker),
                     };
+                    let top = match picker.kind() {
+                        crate::picker::Kind::AgentHistory(_) => {
+                            (anchor.bottom() + 8.0).min((window.height - height - 8.0).max(8.0))
+                        }
+                        _ => (anchor.top() - height - 8.0).max(8.0),
+                    };
                     let point = Point::new(
                         anchor
                             .left()
                             .clamp(8.0, (window.width - width - 8.0).max(8.0)),
-                        (anchor.top() - height - 8.0).max(8.0),
+                        top,
                     );
                     (point, width)
                 }

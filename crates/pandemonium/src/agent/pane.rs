@@ -2636,6 +2636,16 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         .when_some(doing(talk), |bar, status| {
             bar.child(text(status).text_xs().color(theme.colors.text_subtle))
         })
+        .when(talk.can_list(), |bar| {
+            bar.child(
+                icon_button(
+                    theme,
+                    IconName::History,
+                    Message::ShowAgentHistory(talk.id()),
+                )
+                .tooltip("History"),
+            )
+        })
         .child(
             icon_button(
                 theme,
@@ -3508,12 +3518,6 @@ fn controls(theme: &Theme, talk: &Talk) -> Div<Message> {
                     .count()
             )),
         )
-        .when(talk.can_list(), |row| {
-            row.child(
-                icon_button(theme, IconName::History, Message::ShowAgentHistory(session))
-                    .tooltip("History"),
-            )
-        })
         .when_some(mode_of(talk), |row, (id, name)| {
             row.child(
                 h_flex()

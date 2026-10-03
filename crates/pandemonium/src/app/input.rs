@@ -1206,13 +1206,10 @@ impl App {
             (None, _) => None,
         };
         if state == ElementState::Released
-            && self.picker.as_ref().is_some_and(|picker| {
-                matches!(
-                    picker.kind(),
-                    crate::picker::Kind::Modes | crate::picker::Kind::Knob
-                ) || (picker.kind() == crate::picker::Kind::Agents
-                    && self.agent_picker_at.is_some())
-            })
+            && self
+                .picker
+                .as_ref()
+                .is_some_and(|picker| self.is_agent_dropdown(picker))
             && !matches!(
                 message,
                 Some(

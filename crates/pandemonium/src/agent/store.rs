@@ -1536,8 +1536,8 @@ enum Opening<'a> {
     New,
     /// Restore a saved pane, falling back to a fresh conversation.
     Restore(&'a str),
-    /// Load a chosen saved conversation exactly.
-    Exact(&'a str),
+    /// Load a chosen saved conversation exactly into an existing chat.
+    Exact(TalkId, &'a str),
 }
 
 /// Every agent session the window is running.
@@ -1594,17 +1594,26 @@ impl Talks {
         self.open(project, session, root, env, agent, Opening::Restore(resume))
     }
 
-    /// Loads a saved conversation without substituting a new one if it fails.
-    pub fn load(
-        &mut self,
-        project: ProjectId,
-        session: Option<SessionId>,
-        root: &Path,
-        env: &[(String, String)],
-        agent: Agent,
-        saved: &str,
-    ) -> Option<TalkId> {
-        self.open(project, session, root, env, agent, Opening::Exact(saved))
+    /// Loads a saved conversation into `id`, keeping its existing chat tab.
+    pub fn load(&mut self, id: TalkId, env: &[(String, String)], saved: &str) -> bool {
+        let Some(talk) = self.talks.get(&id) else {
+            return false;
+        };
+        let (project, session, root, agent) = (
+            talk.project,
+            talk.session,
+            talk.root().to_path_buf(),
+            talk.agent(),
+        );
+        self.open(
+            project,
+            session,
+            &root,
+            env,
+            agent,
+            Opening::Exact(id, saved),
+        )
+        .is_some()
     }
 
     /// Opens an agent conversation with the requested load behavior.
@@ -1620,7 +1629,7 @@ impl Talks {
         let notify = self.notify.clone()?;
         let remember_on_ready = matches!(opening, Opening::New);
         let started = match opening {
-            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify.clone()),
+            Opening::Exact(_, saved) => Session::load(agent, root, env, saved, notify.clone()),
             Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
             Opening::New => Session::start(agent, root, env, notify.clone()),
         };
@@ -1636,8 +1645,14 @@ impl Talks {
             }
         };
 
-        let id = self.next;
-        self.next = TalkId(id.0 + 1);
+        let id = match opening {
+            Opening::Exact(id, _) => id,
+            _ => {
+                let id = self.next;
+                self.next = TalkId(id.0 + 1);
+                id
+            }
+        };
         self.talks.insert(
             id,
             Talk {
@@ -1824,16 +1839,6 @@ impl Talks {
     /// The conversation `id` names, to act on.
     pub fn get_mut(&mut self, id: TalkId) -> Option<&mut Talk> {
         self.talks.get_mut(&id)
-    }
-
-    /// Finds a conversation already open for this agent, worktree and saved id.
-    pub fn find_saved(&self, scope: Scope, agent: Agent, saved: &str) -> Option<TalkId> {
-        self.talks.values().find_map(|talk| {
-            (talk.scope() == scope
-                && talk.agent() == agent
-                && talk.resumable().as_deref() == Some(saved))
-            .then_some(talk.id())
-        })
     }
 
     /// Ends every session but the ones `held` names.

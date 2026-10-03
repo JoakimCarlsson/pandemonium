@@ -288,14 +288,14 @@ impl App {
             .collect()
     }
 
-    /// Opens a searchable list of this agent's saved sessions.
+    /// Opens this agent's saved sessions in a dropdown beside the history control.
     pub(super) fn show_agent_history(&mut self, session: TalkId) {
         let Some(talk) = self.agents.get_mut(session).filter(|talk| talk.can_list()) else {
             return;
         };
         talk.list_history();
         let rows = self.agent_history_rows(session, false);
-        self.open_picker_with(Kind::AgentHistory(session), rows, String::new());
+        self.open_agent_choices(Kind::AgentHistory(session), rows);
     }
 
     /// Opens a searchable list of this agent's saved sessions, to have one forgotten.
@@ -397,40 +397,30 @@ impl App {
         rows
     }
 
-    /// Loads a saved conversation into a tab of the same worktree.
+    /// Loads a saved conversation into the chat tab that opened history.
     pub(super) fn open_agent_history(&mut self, source: TalkId, saved: &str) {
         let Some(talk) = self.agents.get(source) else {
             return;
         };
-        let (scope, agent, root) = (talk.scope(), talk.agent(), talk.root().to_path_buf());
+        if talk.resumable().as_deref() == Some(saved) {
+            self.focus_prompt(source);
+            return;
+        }
+        let scope = talk.scope();
         let title = talk
             .history()
             .iter()
             .find(|listed| listed.id == saved)
             .and_then(|listed| listed.title.clone())
             .unwrap_or_default();
-        if let Some(existing) = self.agents.find_saved(scope, agent, saved) {
-            self.show_item(
-                self.panes.focus(),
-                scope,
-                Item::Agent(scope, existing),
-                false,
-            );
-            self.focus_prompt(existing);
+        let env = self.worktree_env(scope);
+        if !self.agents.load(source, &env, saved) {
             return;
         }
-        let env = self.worktree_env(scope);
-        let Some(opened) =
-            self.agents
-                .load(scope.project(), scope.session(), &root, &env, agent, saved)
-        else {
-            return;
-        };
-        if let Some(talk) = self.agents.get_mut(opened) {
+        if let Some(talk) = self.agents.get_mut(source) {
             talk.entitle(&title);
         }
-        self.show_item(self.panes.focus(), scope, Item::Agent(scope, opened), false);
-        self.focus_prompt(opened);
+        self.focus_prompt(source);
     }
 
     /// Asks which mode to put `session` into.
@@ -521,6 +511,7 @@ impl App {
         let modes = picker.kind() == Kind::Modes
             || knob.as_ref().is_some_and(|knob| knob.about == About::Mode);
         let title = match &knob {
+            _ if matches!(picker.kind(), Kind::AgentHistory(_)) => "History".to_owned(),
             _ if picker.kind() == Kind::Agents => "Select an agent".to_owned(),
             Some(knob) if knob.about == About::Model => "Select a model".to_owned(),
             Some(knob) if !modes => knob.name.clone(),
@@ -533,6 +524,14 @@ impl App {
                 .flatten(),
             knobs: talk.map_or_else(Vec::new, |talk| knob_rows(theme, talk, shown)),
         }
+    }
+
+    /// Whether `picker` uses the dropdown for an agent control's choices.
+    pub(super) fn is_agent_dropdown(&self, picker: &Picker) -> bool {
+        matches!(
+            picker.kind(),
+            Kind::Modes | Kind::Knob | Kind::AgentHistory(_)
+        ) || (picker.kind() == Kind::Agents && self.agent_picker_at.is_some())
     }
 
     /// Opens an agent control's choices beside the control that was pressed.
