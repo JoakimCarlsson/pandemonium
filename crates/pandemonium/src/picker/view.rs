@@ -54,7 +54,7 @@ const HINT_HEIGHT: f32 = 32.0;
 pub fn width(kind: Kind) -> f32 {
     match kind {
         Kind::Branches | Kind::NewBranch => BRANCH_WIDTH,
-        Kind::Modes | Kind::Knob => AGENT_WIDTH,
+        Kind::Agents | Kind::Modes | Kind::Knob => AGENT_WIDTH,
         _ => WIDTH,
     }
 }

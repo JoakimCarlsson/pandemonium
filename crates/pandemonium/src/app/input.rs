@@ -1167,7 +1167,8 @@ impl App {
                 matches!(
                     picker.kind(),
                     crate::picker::Kind::Modes | crate::picker::Kind::Knob
-                )
+                ) || (picker.kind() == crate::picker::Kind::Agents
+                    && self.agent_picker_at.is_some())
             })
             && !matches!(
                 message,

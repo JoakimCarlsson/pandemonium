@@ -2585,7 +2585,8 @@ impl App {
             let agent_choices = matches!(
                 picker.kind(),
                 crate::picker::Kind::Modes | crate::picker::Kind::Knob
-            );
+            ) || (picker.kind() == crate::picker::Kind::Agents
+                && self.agent_picker_at.is_some());
             let branch_anchor = self.branch_picker_at.filter(|_| {
                 matches!(
                     picker.kind(),

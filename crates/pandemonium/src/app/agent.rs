@@ -113,6 +113,10 @@ impl App {
     pub(super) fn agent_command(&mut self, message: Message) -> bool {
         match message {
             Message::NewAgentSession => self.open_picker(Kind::Agents),
+            Message::ShowStatusAgents => {
+                self.open_picker(Kind::Agents);
+                self.agent_picker_at = self.opener();
+            }
             Message::WriteAgentPrompt(session, phase, anchor, head) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.clear_selection();
@@ -510,6 +514,7 @@ impl App {
         let modes = picker.kind() == Kind::Modes
             || knob.as_ref().is_some_and(|knob| knob.about == About::Mode);
         let title = match &knob {
+            _ if picker.kind() == Kind::Agents => "Select an agent".to_owned(),
             Some(knob) if knob.about == About::Model => "Select a model".to_owned(),
             Some(knob) if !modes => knob.name.clone(),
             _ => "Modes".to_owned(),

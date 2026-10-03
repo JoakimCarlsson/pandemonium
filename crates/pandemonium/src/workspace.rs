@@ -844,7 +844,7 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                     0 => "New agent".to_owned(),
                     running => running.to_string(),
                 },
-                Some(Message::NewAgentSession),
+                Some(Message::ShowStatusAgents),
                 agents > 0,
             )
             .tooltip(match agents {
