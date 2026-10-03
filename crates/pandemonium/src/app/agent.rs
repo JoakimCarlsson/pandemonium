@@ -113,10 +113,6 @@ impl App {
     pub(super) fn agent_command(&mut self, message: Message) -> bool {
         match message {
             Message::NewAgentSession => self.open_picker(Kind::Agents),
-            Message::ShowStatusAgents => {
-                self.open_picker(Kind::Agents);
-                self.agent_picker_at = self.opener();
-            }
             Message::WriteAgentPrompt(session, phase, anchor, head) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.clear_selection();

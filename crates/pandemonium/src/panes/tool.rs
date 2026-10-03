@@ -22,6 +22,8 @@ pub enum Tool {
     Changes,
     /// Shells of the active worktree.
     Terminal,
+    /// Conversations and a launcher for the active worktree.
+    Chat,
     /// Diagnostics of open files in the active worktree.
     Problems,
     /// Debugger and console of the active worktree.
@@ -30,11 +32,12 @@ pub enum Tool {
 
 impl Tool {
     /// Registered tools, in the order menus offer them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Projects,
         Self::Files,
         Self::Changes,
         Self::Terminal,
+        Self::Chat,
         Self::Problems,
         Self::Debug,
     ];
@@ -43,7 +46,7 @@ impl Tool {
     pub const fn default_split(self) -> SplitDirection {
         match self {
             Self::Projects => SplitDirection::Left,
-            Self::Files | Self::Changes => SplitDirection::Right,
+            Self::Files | Self::Changes | Self::Chat => SplitDirection::Right,
             Self::Terminal | Self::Problems | Self::Debug => SplitDirection::Down,
         }
     }
@@ -59,6 +62,7 @@ impl Tool {
             Self::Projects => "Projects",
             Self::Files => "Files",
             Self::Changes => "Changes",
+            Self::Chat => "Chat",
             Self::Terminal => PanelView::Terminal.label(),
             Self::Problems => PanelView::Problems.label(),
             Self::Debug => PanelView::Debug.label(),
@@ -71,6 +75,7 @@ impl Tool {
             Self::Projects => IconName::Folder,
             Self::Files => IconName::File,
             Self::Changes => IconName::GitCompare,
+            Self::Chat => IconName::Sparkle,
             Self::Terminal => IconName::Terminal,
             Self::Problems => IconName::Warning,
             Self::Debug => IconName::Debug,

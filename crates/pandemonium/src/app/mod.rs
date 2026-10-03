@@ -340,6 +340,8 @@ pub struct App {
     history_graph: ResizeState,
     /// How far the bottom panel's list of problems is scrolled.
     problems_scroll: pm_ui::Scrolled,
+    /// Scroll position of the chat conversation list.
+    chat_scroll: pm_ui::Scrolled,
     /// Where the bottom panel's list of problems came out last frame.
     problems_area: pm_ui::Bounds,
     /// Whether the Source Control graph is visible.
@@ -776,6 +778,7 @@ impl App {
                 workspace::HISTORY_GRAPH_RANGE.1,
             ),
             problems_scroll: pm_ui::Scrolled::default(),
+            chat_scroll: pm_ui::Scrolled::default(),
             problems_area: pm_ui::Bounds::default(),
             history_graph_open: layout.history_graph_open,
             changes_section_open: layout.changes_section_open,

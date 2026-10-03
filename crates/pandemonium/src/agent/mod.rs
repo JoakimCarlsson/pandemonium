@@ -11,11 +11,13 @@
 //! What the agent says arrives a fragment at a time; [`Transcript`] is where
 //! those fragments become the conversation as it now stands.
 
+mod chat;
 mod form;
 mod pane;
 mod store;
 mod transcript;
 
+pub use chat::chat_pane;
 pub use form::{Form, FormRow};
 pub use pane::{
     agent_pane, content_height, everything, knob_rows, lines_between, mode_icon, pending_messages,

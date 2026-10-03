@@ -659,8 +659,6 @@ pub enum Message {
     ConfirmAbortMerge,
     /// Ask which agent to start in the active project's worktree.
     NewAgentSession,
-    /// Open the agent selector beside the status-bar control.
-    ShowStatusAgents,
     /// Put the prompt's cursor where a press landed, selecting to it.
     ///
     /// A press in the prompt is also what gives it the keyboard, so this is

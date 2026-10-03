@@ -2638,6 +2638,14 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         .when(!talk.is_busy(), |bar| {
             bar.child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
         })
+        .child(
+            icon_button(
+                theme,
+                IconName::Plus,
+                Message::ShowTool(crate::panes::Tool::Chat),
+            )
+            .tooltip("Open Chat"),
+        )
 }
 
 /// What the header says of how full the model's context is, and what the

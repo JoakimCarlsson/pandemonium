@@ -725,16 +725,13 @@ fn status_bar(theme: &Theme, status: Status) -> Div<Message> {
                 theme,
                 Some(IconName::Sparkle),
                 match agents {
-                    0 => "New agent".to_owned(),
-                    running => running.to_string(),
+                    0 => "Chat".to_owned(),
+                    running => format!("Chat · {running}"),
                 },
-                Some(Message::ShowStatusAgents),
+                Some(Message::ShowTool(crate::panes::Tool::Chat)),
                 agents > 0,
             )
-            .tooltip(match agents {
-                0 => "New agent".to_owned(),
-                running => counted(running, "agent"),
-            }),
+            .tooltip("Open Chat"),
         )
         .child(
             status_item(

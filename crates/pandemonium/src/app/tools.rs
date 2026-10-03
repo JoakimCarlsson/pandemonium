@@ -272,6 +272,22 @@ impl App {
                 },
             )
             .w_full(),
+            Tool::Chat => {
+                let scope = self.scope();
+                let context = scope.and_then(|scope| {
+                    let project = self.open.get(scope.project())?;
+                    Some(match scope.session().and_then(|id| self.sessions.get(id)) {
+                        Some(session) => format!("{} · {}", project.name(), session.name()),
+                        None => project.name().to_owned(),
+                    })
+                });
+                let talks = self
+                    .agents
+                    .iter()
+                    .filter(|talk| Some(talk.scope()) == scope)
+                    .collect::<Vec<_>>();
+                crate::agent::chat_pane(theme, context, &talks, self.chat_scroll.clone())
+            }
             Tool::Terminal => self.panel_content(theme, PanelView::Terminal),
             Tool::Problems => self.panel_content(theme, PanelView::Problems),
             Tool::Debug => self.panel_content(theme, PanelView::Debug),
