@@ -27,6 +27,8 @@ pub struct Div<M> {
     tooltip: Option<String>,
     /// What the last measurement found, for painting to reuse.
     measured: Option<Measurement>,
+    /// Whether children belong to a control rather than selectable prose.
+    selection_disabled: bool,
 }
 
 /// What one measurement of a container found: the room its children were
@@ -80,6 +82,7 @@ pub fn div<M>() -> Div<M> {
         drag_cursor: PointerCursor::Pointer,
         tooltip: None,
         measured: None,
+        selection_disabled: false,
     }
 }
 
@@ -108,6 +111,12 @@ impl<M> Div<M> {
     {
         self.children
             .extend(children.into_iter().map(IntoElement::into_element));
+        self
+    }
+
+    /// Keeps text inside a control out of its surrounding reading selection.
+    pub fn selection_disabled(mut self) -> Self {
+        self.selection_disabled = true;
         self
     }
 
@@ -417,6 +426,12 @@ impl<M: Clone> Element<M> for Div<M> {
             _ => 0.0,
         };
 
+        let previous = if self.selection_disabled {
+            cx.selection.take()
+        } else {
+            None
+        };
+        let selection_first = cx.selection_frames.len();
         for (child, size) in self.children.iter_mut().zip(sizes) {
             let room = axis.cross_of(content.size) - axis.cross_of(size);
             let cross = if child.layout_style().center_horizontally {
@@ -441,7 +456,13 @@ impl<M: Clone> Element<M> for Div<M> {
             main += axis.main_of(size) + gap + spread;
         }
 
+        if self.selection_disabled {
+            cx.selection = previous;
+        }
         if self.style.overflow_hidden {
+            for frame in cx.selection_frames.iter_mut().skip(selection_first) {
+                frame.bounds = frame.bounds.intersect(bounds);
+            }
             cx.pop_clip();
         }
     }

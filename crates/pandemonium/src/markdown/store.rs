@@ -63,6 +63,8 @@ pub fn is_markdown(path: &Path) -> bool {
 pub struct Renders {
     /// How far each rendered file is scrolled.
     scrolls: RefCell<BTreeMap<FileId, Scrolled>>,
+    /// Link destinations named by the rendered spans of each document.
+    links: RefCell<BTreeMap<FileId, Vec<String>>>,
     /// The blocks each file last parsed into, and at which version.
     parsed: RefCell<BTreeMap<FileId, Parsed>>,
     /// The pictures the documents name, by where they are, decoded away
@@ -76,6 +78,22 @@ pub struct Renders {
 }
 
 impl Renders {
+    /// Returns a stable message index for a rendered link destination.
+    pub fn link(&self, file: FileId, target: &str) -> usize {
+        let mut links = self.links.borrow_mut();
+        let links = links.entry(file).or_default();
+        if let Some(index) = links.iter().position(|link| link == target) {
+            return index;
+        }
+        links.push(target.to_owned());
+        links.len() - 1
+    }
+
+    /// Reads the destination named by a rendered span's message.
+    pub fn linked(&self, file: FileId, index: usize) -> Option<String> {
+        self.links.borrow().get(&file)?.get(index).cloned()
+    }
+
     /// How far the rendering of `file` is scrolled.
     pub fn scroll(&self, file: FileId) -> Scrolled {
         self.scrolls.borrow_mut().entry(file).or_default().clone()
@@ -185,6 +203,7 @@ impl Renders {
     /// the pictures, which a document shown again reads afresh.
     pub fn retain(&mut self, held: &BTreeSet<FileId>) {
         self.scrolls.get_mut().retain(|file, _| held.contains(file));
+        self.links.get_mut().retain(|file, _| held.contains(file));
         self.parsed.get_mut().retain(|file, _| held.contains(file));
         self.diagrams.retain(|(file, _)| held.contains(file));
         self.zooms

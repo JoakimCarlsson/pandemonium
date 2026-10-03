@@ -1,6 +1,12 @@
 //! The window's UI state: input, focus and the frame the tree is drawn into.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
+
+use crate::SelectionDrag;
+use crate::selection::{SelectionFrame, SelectionRegistry, SelectionSurface};
 
 use pm_gfx::{DrawList, Point, Rect, Size, TextSystem};
 
@@ -34,6 +40,24 @@ struct CapturedDrag<M> {
     cursor: PointerCursor,
     /// The latest position, also used for a release outside the window.
     current: Point,
+    /// The ordinary click deferred for text nested in a clickable row.
+    click: Option<M>,
+    /// Whether the gesture has moved past the click threshold.
+    moved: bool,
+}
+
+/// A text gesture and the ordinary click deferred until its release.
+struct CapturedSelection<M> {
+    /// The reading surface that owns the content boundaries.
+    surface: Rc<RefCell<SelectionSurface>>,
+    /// The anchor, pointer and edge scroll deadline.
+    gesture: SelectionDrag,
+    /// The ordinary message sent by an unmoved press.
+    click: Option<M>,
+    /// Whether the pointer has travelled far enough to select text.
+    moved: bool,
+    /// The window position where the press began.
+    start: Point,
 }
 
 /// Everything that survives between frames: the theme, the pointer and focus.
@@ -53,6 +77,12 @@ pub struct Ui<M> {
     regions: Vec<Region<M>>,
     /// The drag target captured by the current pointer press.
     drag: Option<CapturedDrag<M>>,
+    /// Reading surfaces retained across frames.
+    selections: Rc<RefCell<SelectionRegistry>>,
+    /// Placed text that can start a selection in the latest frame.
+    selection_frames: Vec<SelectionFrame>,
+    /// The text gesture captured by the held primary button.
+    selection_drag: Option<CapturedSelection<M>>,
 }
 
 impl<M> Ui<M> {
@@ -64,6 +94,9 @@ impl<M> Ui<M> {
             focus: None,
             regions: Vec::new(),
             drag: None,
+            selections: Rc::new(RefCell::new(SelectionRegistry::default())),
+            selection_frames: Vec::new(),
+            selection_drag: None,
         }
     }
 
@@ -80,8 +113,18 @@ impl<M> Ui<M> {
     /// Records the pointer at `pointer`.
     pub fn pointer_moved(&mut self, pointer: Point) -> Option<M> {
         self.input.pointer = Some(pointer);
+        if let Some(drag) = self.selection_drag.as_mut() {
+            drag.gesture.pointer = pointer;
+            drag.moved |=
+                (pointer.x - drag.start.x).abs() + (pointer.y - drag.start.y).abs() >= 3.0;
+            self.refresh_text_selection();
+            return None;
+        }
         if let Some(drag) = self.drag.as_mut() {
             drag.current = pointer;
+            drag.moved |= self.input.pressed_at.is_some_and(|start| {
+                (pointer.x - start.x).abs() + (pointer.y - start.y).abs() >= 3.0
+            });
         }
         let start = self.input.pressed_at?;
         self.drag_message(start, pointer, ResizePhase::Moved)
@@ -93,19 +136,65 @@ impl<M> Ui<M> {
     }
 
     /// Records a press and leaves keyboard focus to keyboard navigation.
-    pub fn pointer_pressed(&mut self) -> Option<M> {
+    pub fn pointer_pressed(&mut self) -> Option<M>
+    where
+        M: Clone,
+    {
         self.input.pressed_at = self.input.pointer;
         let pointer = self.input.pointer?;
         let index = self.region_at(pointer);
         self.focus = None;
-        self.drag = index.and_then(|index| match &self.regions[index].action {
-            RegionAction::Drag { handler, cursor } => Some(CapturedDrag {
-                handler: handler.clone(),
-                cursor: *cursor,
-                current: pointer,
-            }),
-            RegionAction::Click(_) | RegionAction::Inert => None,
+        if let Some(surface) = self.selection_surface_at(pointer) {
+            let anchor = surface.borrow().spot_at(pointer)?;
+            let click = index.and_then(|index| match &self.regions[index].action {
+                RegionAction::Click(message) => Some(message.clone()),
+                _ => None,
+            });
+            self.selections.borrow_mut().clear();
+            surface.borrow_mut().focused = true;
+            self.selection_drag = Some(CapturedSelection {
+                surface,
+                gesture: SelectionDrag::new(anchor, pointer),
+                click,
+                moved: false,
+                start: pointer,
+            });
+            return None;
+        }
+        let text_parent = index.and_then(|index| {
+            matches!(self.regions[index].action, RegionAction::Click(_))
+                .then(|| {
+                    self.regions[..index].iter().rposition(|region| {
+                        region.bounds.contains(pointer)
+                            && matches!(
+                                region.action,
+                                RegionAction::Drag {
+                                    cursor: PointerCursor::Text,
+                                    ..
+                                }
+                            )
+                    })
+                })
+                .flatten()
         });
+        let click = text_parent
+            .and(index)
+            .and_then(|index| match &self.regions[index].action {
+                RegionAction::Click(message) => Some(message.clone()),
+                _ => None,
+            });
+        self.drag = text_parent
+            .or(index)
+            .and_then(|index| match &self.regions[index].action {
+                RegionAction::Drag { handler, cursor } => Some(CapturedDrag {
+                    handler: handler.clone(),
+                    cursor: *cursor,
+                    current: pointer,
+                    click,
+                    moved: false,
+                }),
+                RegionAction::Click(_) | RegionAction::Inert => None,
+            });
         self.drag_message(pointer, pointer, ResizePhase::Started)
     }
 
@@ -115,6 +204,23 @@ impl<M> Ui<M> {
         M: Clone,
     {
         let pressed_at = self.input.pressed_at.take()?;
+        if self.selection_drag.is_some() {
+            self.refresh_text_selection();
+            let drag = self.selection_drag.take()?;
+            return (!drag.moved && self.input.pointer.is_some())
+                .then_some(drag.click)
+                .flatten();
+        }
+        if self
+            .drag
+            .as_ref()
+            .is_some_and(|drag| !drag.moved && drag.click.is_some())
+        {
+            return self
+                .drag
+                .take()
+                .and_then(|drag| self.input.pointer.and(drag.click));
+        }
         if self.drag.is_some() {
             return self.end_drag(pressed_at);
         }
@@ -131,6 +237,7 @@ impl<M> Ui<M> {
 
     /// Ends a captured gesture on focus loss without activating a click target.
     pub fn pointer_cancelled(&mut self) -> Option<M> {
+        self.selection_drag = None;
         let start = self.input.pressed_at.take()?;
         self.end_drag(start)
     }
@@ -150,11 +257,13 @@ impl<M> Ui<M> {
 
     /// Moves focus to the next region in tab order, wrapping around.
     pub fn focus_next(&mut self) {
+        self.clear_text_selection();
         self.focus = self.step_focus(1);
     }
 
     /// Moves focus to the previous region in tab order, wrapping around.
     pub fn focus_previous(&mut self) {
+        self.clear_text_selection();
         self.focus = self.step_focus(-1);
     }
 
@@ -177,8 +286,18 @@ impl<M> Ui<M> {
 
     /// Returns the cursor requested by the captured or hovered region.
     pub fn pointer_cursor(&self) -> PointerCursor {
+        if self.selection_drag.is_some() {
+            return PointerCursor::Text;
+        }
         if let Some(drag) = &self.drag {
             return drag.cursor;
+        }
+        if self
+            .input
+            .pointer
+            .is_some_and(|pointer| self.selection_surface_at(pointer).is_some())
+        {
+            return PointerCursor::Text;
         }
         let index = self.input.pointer.and_then(|point| self.region_at(point));
         match index.and_then(|index| self.regions.get(index)) {
@@ -219,19 +338,143 @@ impl<M> Ui<M> {
         mut root: impl Element<M>,
     ) -> Size {
         self.regions.clear();
+        self.selections.borrow_mut().begin_frame();
 
         let mut layout = LayoutContext::new(&self.theme, text);
         let size = root.measure(offer, &mut layout);
 
         let mut cx = PaintContext::new(layout, list, self.input, self.focus, &mut self.regions);
+        cx.selections = self.selections.clone();
         root.paint(Rect::new(origin, size), &mut cx);
         cx.paint_tooltip();
+        self.selection_frames = std::mem::take(&mut cx.selection_frames);
 
         if self.focus.is_some_and(|index| index >= self.regions.len()) {
             self.focus = None;
         }
 
         size
+    }
+
+    /// Returns text picked out of the focused reading surface.
+    pub fn selected_text(&self) -> Option<String> {
+        self.selections.borrow().focused()?.borrow().text()
+    }
+
+    /// Selects all content of the focused reading surface.
+    pub fn select_all_text(&mut self) {
+        if let Some(surface) = self.selections.borrow().focused() {
+            surface.borrow_mut().select_all();
+        }
+    }
+
+    /// Clears reading selections when focus moves to another pane or editor.
+    pub fn clear_text_selection(&mut self) {
+        self.selections.borrow_mut().clear();
+        self.selection_drag = None;
+    }
+
+    /// Whether a held primary button belongs to a text selection.
+    pub fn selecting_text(&self) -> bool {
+        self.selection_drag.is_some()
+    }
+
+    /// Whether the secondary button is over selected text in its focused area.
+    pub fn selected_text_under_pointer(&self) -> bool {
+        let Some(point) = self.input.pointer else {
+            return false;
+        };
+        let Some(surface) = self.selection_surface_at(point) else {
+            return false;
+        };
+        let state = surface.borrow();
+        state.focused
+            && state.selection.range().is_some_and(|(first, last)| {
+                state
+                    .spot_at(point)
+                    .is_some_and(|spot| spot >= first && spot <= last)
+            })
+    }
+
+    /// Updates the head from newly painted placements after scrolling or resizing.
+    pub fn refresh_text_selection(&mut self) -> bool {
+        let Some(drag) = self.selection_drag.as_ref() else {
+            return false;
+        };
+        if !drag.moved {
+            return false;
+        }
+        let mut state = drag.surface.borrow_mut();
+        if !state.visible {
+            return false;
+        }
+        let Some(head) = state.spot_at(drag.gesture.head_point(state.bounds)) else {
+            return false;
+        };
+        let before = state.selection.range();
+        state.selection.select(drag.gesture.anchor, head);
+        before != state.selection.range()
+    }
+
+    /// Returns the next wakeup for an edge scroll while the pointer is held.
+    pub fn next_text_selection_scroll(&self) -> Option<Instant> {
+        self.text_selection_scroll_step()?;
+        Some(self.selection_drag.as_ref()?.gesture.next_scroll)
+    }
+
+    /// Scrolls the captured area toward the pointer at the shared selection interval.
+    pub fn autoscroll_text_selection(&mut self) -> bool {
+        let Some(step) = self.text_selection_scroll_step() else {
+            return false;
+        };
+        let Some(drag) = self.selection_drag.as_mut() else {
+            return false;
+        };
+        if !drag.gesture.scroll_due(Instant::now()) {
+            return false;
+        }
+        let Some(scroll) = drag.surface.borrow().scroll.upgrade() else {
+            return false;
+        };
+        let mut state = scroll.get();
+        let before = state.offset();
+        state.by(-step);
+        scroll.set(state);
+        state.offset() != before
+    }
+
+    /// Finds an unobscured text target without stealing a control's drag.
+    fn selection_surface_at(&self, point: Point) -> Option<Rc<RefCell<SelectionSurface>>> {
+        let region = self.region_at(point);
+        self.selection_frames
+            .iter()
+            .rev()
+            .find(|frame| {
+                frame.bounds.contains(point)
+                    && region.is_none_or(|index| {
+                        index < frame.regions
+                            && !matches!(self.regions[index].action, RegionAction::Drag { .. })
+                    })
+            })
+            .map(|frame| frame.surface.clone())
+    }
+
+    /// Computes the edge scroll step from the captured surface's current extents.
+    fn text_selection_scroll_step(&self) -> Option<f32> {
+        let drag = self.selection_drag.as_ref()?;
+        if !drag.moved || self.input.pointer.is_none() {
+            return None;
+        }
+        let surface = drag.surface.borrow();
+        if !surface.visible {
+            return None;
+        }
+        let scroll = surface.scroll.upgrade()?.get();
+        drag.gesture.scroll_step(
+            surface.bounds,
+            scroll.offset(),
+            scroll.content_height() - scroll.viewport_height(),
+        )
     }
 
     /// The topmost region containing `point`.

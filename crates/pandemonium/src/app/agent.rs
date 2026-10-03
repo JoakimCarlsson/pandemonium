@@ -5,8 +5,7 @@
 //! is running are the window's, and they are here. Every command a session
 //! answers to goes through [`App::agent_command`].
 
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
@@ -15,8 +14,8 @@ use pm_text::Position;
 use pm_ui::{Axis, MenuItem, ResizeEvent, ResizePhase};
 use winit::window::UserAttentionType;
 
-use crate::agent::{Spot, Standing, Talk, TalkId, Tally};
-use crate::app::places::Place;
+use crate::agent::{Standing, Talk, TalkId, Tally};
+use crate::app::places::{Place, linked_file};
 use crate::app::{App, Writing};
 use crate::config::{AgentOptions, KnobValue};
 use crate::desktop;
@@ -30,19 +29,7 @@ use crate::workspace::{MenuTarget, TabMenu};
 /// How far above the status bar its agent menu stops.
 const MENU_GAP: f32 = 4.0;
 
-/// The interval between scroll steps while a selection is held past a pane edge.
-const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
-
-/// How much of a transcript a press picks out, and a drag from it grows by.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Grain {
-    /// A place between two characters.
-    Character,
-    /// The word under the press, from a second press.
-    Word,
-    /// The whole paragraph under the press, from a third.
-    Paragraph,
-}
+pub(super) use pm_ui::Grain;
 
 /// A transcript selection captured against its conversation for one press.
 #[derive(Clone, Copy)]
@@ -50,11 +37,7 @@ pub(super) struct SelectionDrag {
     /// The conversation in which the press began.
     session: TalkId,
     /// The conversation position picked at the press, preserved across scrolling.
-    anchor: Spot,
-    /// The latest pointer position, used against each newly painted frame.
-    pointer: Point,
-    /// When the next automatic scroll step may run.
-    next_scroll: Instant,
+    gesture: pm_ui::SelectionDrag,
 }
 
 impl App {
@@ -896,6 +879,10 @@ impl App {
         head: Point,
     ) {
         if phase == ResizePhase::Started {
+            if let Some(ui) = self.ui.as_mut() {
+                ui.clear_text_selection();
+            }
+            self.agents.clear_selections();
             self.agent_selection_drag = None;
             let Some(talk) = self.agents.get_mut(session) else {
                 return;
@@ -913,14 +900,12 @@ impl App {
             }
             self.agent_selection_drag = Some(SelectionDrag {
                 session,
-                anchor,
-                pointer: head,
-                next_scroll: Instant::now(),
+                gesture: pm_ui::SelectionDrag::new(anchor, head),
             });
         } else if let Some(drag) = self.agent_selection_drag.as_mut()
             && drag.session == session
         {
-            drag.pointer = head;
+            drag.gesture.pointer = head;
         } else {
             return;
         }
@@ -943,22 +928,19 @@ impl App {
             return false;
         };
         let view = talk.view().get();
-        let pointer = Point::new(
-            drag.pointer.x,
-            drag.pointer
-                .y
-                .clamp(view.top(), view.bottom().max(view.top())),
-        );
+        let pointer = drag.gesture.head_point(view);
         let Some(head) = talk.spot_at(pointer) else {
             return false;
         };
-        if drag.anchor != head {
+        if drag.gesture.anchor != head {
             self.agent_clicks.clear();
         }
         let (anchor, head) = match self.agent_grain {
-            Grain::Character => (drag.anchor, head),
-            Grain::Word => crate::agent::words_between(&theme, talk, drag.anchor, head),
-            Grain::Paragraph => crate::agent::lines_between(&theme, talk, drag.anchor, head),
+            Grain::Character => (drag.gesture.anchor, head),
+            Grain::Word => crate::agent::words_between(&theme, talk, drag.gesture.anchor, head),
+            Grain::Paragraph => {
+                crate::agent::lines_between(&theme, talk, drag.gesture.anchor, head)
+            }
         };
         let before = talk.selection();
         talk.select(anchor, head);
@@ -974,20 +956,13 @@ impl App {
         let talk = self.agents.get(drag.session)?;
         let view = talk.view().get();
         let end = (talk.drawn_height().get() - view.size.height).max(0.0);
-        let distance = if drag.pointer.y < view.top() && talk.scroll() > 0.0 {
-            drag.pointer.y - view.top()
-        } else if drag.pointer.y > view.bottom() && talk.scroll() < end {
-            drag.pointer.y - view.bottom()
-        } else {
-            return None;
-        };
-        Some(distance.signum() * (distance.abs() * 0.25).clamp(4.0, 40.0))
+        drag.gesture.scroll_step(view, talk.scroll(), end)
     }
 
     /// When a held selection outside the conversation next needs a scroll step.
     pub(super) fn next_agent_selection_scroll(&self) -> Option<Instant> {
         self.agent_selection_scroll_step()?;
-        Some(self.agent_selection_drag?.next_scroll)
+        Some(self.agent_selection_drag?.gesture.next_scroll)
     }
 
     /// Scrolls toward off-screen text while a selection is held beyond a pane edge.
@@ -999,10 +974,9 @@ impl App {
             return false;
         };
         let now = Instant::now();
-        if now < drag.next_scroll {
+        if !drag.gesture.scroll_due(now) {
             return false;
         }
-        drag.next_scroll = now + SELECTION_SCROLL_INTERVAL;
         let Some(talk) = self.agents.get_mut(drag.session) else {
             return false;
         };
@@ -1218,55 +1192,6 @@ fn detail(description: Option<&str>, current: bool) -> String {
         (description, true) => format!("current · {description}"),
         (description, false) => description.to_owned(),
     }
-}
-
-/// The file in the worktree at `root` that `link` names, and the line in it
-/// counted from nought, where it names a file that is there.
-///
-/// The link is the agent's to write, so a file it names outside the worktree
-/// — by an absolute path, or by climbing out through `..` or a link — is not
-/// opened: the conversation is about the worktree it was started in.
-///
-/// A line is read from the `#L12` an address in a browser would carry, or
-/// from the `:12` or `:12:4` a compiler writes after a path.
-fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
-    let path = match link.split_once("://") {
-        Some(("file", path)) => path,
-        Some(_) => return None,
-        None => link,
-    };
-    let (path, line) = match path.split_once("#L") {
-        Some((path, line)) => (
-            path,
-            line.split('-').next().and_then(|line| line.parse().ok()),
-        ),
-        None => after_colons(path),
-    };
-    let path = root.join(path.replace("%20", " "));
-    let resolved = path.canonicalize().ok()?;
-    let inside = root
-        .canonicalize()
-        .is_ok_and(|root| resolved.starts_with(root));
-    (inside && resolved.is_file()).then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
-}
-
-/// `path` without the `:line` or `:line:column` written after it, and the
-/// line, where one was.
-fn after_colons(path: &str) -> (&str, Option<usize>) {
-    match numbered(path) {
-        Some((rest, last)) => match numbered(rest) {
-            Some((file, line)) => (file, line.parse().ok()),
-            None => (rest, last.parse().ok()),
-        },
-        None => (path, None),
-    }
-}
-
-/// `path` split before the number written after its last colon, where a
-/// number is what follows it.
-fn numbered(path: &str) -> Option<(&str, &str)> {
-    path.rsplit_once(':')
-        .filter(|(_, number)| number.parse::<usize>().is_ok())
 }
 
 /// Sends remembered values that the newly opened conversation still offers.

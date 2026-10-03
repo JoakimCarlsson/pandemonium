@@ -27,6 +27,9 @@ const ZOOM_RANGE: (f32, f32) = (0.5, 3.0);
 impl App {
     /// Carries `action` out.
     pub(super) fn act(&mut self, action: Action) {
+        if action == Action::Copy && self.copy_reading_text() {
+            return self.request_redraw();
+        }
         if self.act_on_terminal(action) {
             return self.request_redraw();
         }

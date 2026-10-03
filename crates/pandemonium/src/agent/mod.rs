@@ -21,5 +21,7 @@ pub use pane::{
     RESULT_LINES, agent_pane, content_height, everything, lines_between, selected_text,
     standing_color, words_between,
 };
-pub use store::{Pasted, Spot, Standing, Talk, TalkId, Talks, Tally};
+pub use store::{Pasted, Standing, Talk, TalkId, Talks, Tally};
 pub use transcript::Block;
+
+pub use pm_ui::Spot;

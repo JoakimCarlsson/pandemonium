@@ -181,7 +181,7 @@ impl App {
         if self.paste_agent_prompt(event) {
             return self.request_redraw();
         }
-        if self.is_copy(event) && self.copy_agent_text() {
+        if self.is_copy(event) && self.copy_reading_text() {
             return self.request_redraw();
         }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
@@ -895,6 +895,14 @@ impl App {
     /// presses that reach here with nothing to open are presses with no menu
     /// over them.
     pub(super) fn secondary_pressed(&mut self) {
+        if self
+            .ui
+            .as_ref()
+            .is_some_and(pm_ui::Ui::selected_text_under_pointer)
+        {
+            self.open_menu(crate::workspace::MenuTarget::ReadingText);
+            return;
+        }
         match self.ui.as_ref().and_then(|ui| ui.secondary_pressed()) {
             Some(message) => self.apply(message),
             None => {
@@ -941,7 +949,9 @@ impl App {
         self.pointer = Some(position);
         if moved {
             self.forget_hint(position);
-            self.resting = Some((std::time::Instant::now(), position));
+            if !self.ui.as_ref().is_some_and(pm_ui::Ui::selecting_text) {
+                self.resting = Some((std::time::Instant::now(), position));
+            }
         }
         self.follow_pointer(position);
         let message = self.ui.as_mut().and_then(|ui| ui.pointer_moved(position));
@@ -1072,17 +1082,18 @@ impl App {
             {
                 self.commit_tree_edit();
             }
-            self.release_pane_focus();
-            if let Some(pane) = self
-                .pointer
-                .and_then(|pointer| self.geometry.pane_at(pointer))
-                && self
-                    .panes
-                    .pane(pane)
-                    .and_then(|pane| pane.active(self.scope()))
-                    .is_some_and(|item| item.session().is_some())
-            {
-                self.focus_pane(pane);
+            if self.menu.is_none() {
+                self.release_pane_focus();
+                if let Some(pane) = self
+                    .pointer
+                    .and_then(|pointer| self.geometry.pane_at(pointer))
+                {
+                    self.focus_pane(pane);
+                }
+                self.agents.clear_selections();
+                if let Some(ui) = self.ui.as_mut() {
+                    ui.clear_text_selection();
+                }
             }
             self.blink.restart();
         }
@@ -1102,6 +1113,11 @@ impl App {
             && !matches!(message, Some(Message::ChoosePicker(_)))
         {
             self.dismiss_picker();
+        }
+        if self.ui.as_ref().is_some_and(pm_ui::Ui::selecting_text) {
+            self.editor_focused = false;
+            self.resting = None;
+            self.agents.clear_selections();
         }
         self.update_pointer_cursor();
         self.handle(message);

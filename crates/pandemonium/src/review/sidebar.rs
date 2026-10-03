@@ -92,6 +92,7 @@ pub fn changes_sidebar(
                 v_flex().w_full().flex_1().overflow_hidden().child(measured(
                     controls.changes_area.clone(),
                     scroll_area(review.list_scroll(), v_flex().w_full().children(sections))
+                        .selectable()
                         .w_full()
                         .flex_1(),
                 )),

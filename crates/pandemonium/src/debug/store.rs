@@ -9,13 +9,14 @@
 //! [`Debugger`] is one of them — the session, the box expressions are typed
 //! into, and which of its variables the reader has opened.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use pm_core::Scope;
 use pm_dap::{Breakpoint, Event, Notify, Scenario, Session, Standing};
 use pm_gfx::Point;
-use pm_ui::{Bounds, Scrolled};
+use pm_ui::{Bounds, Scroll, Scrolled};
 
 use crate::input::Input;
 
@@ -41,8 +42,10 @@ pub struct Debugger {
     variables_area: Bounds,
     /// Where the console's lines came out in the last frame.
     console_area: Bounds,
-    /// How many lines back from its end the console is scrolled.
-    console_back: usize,
+    /// The console’s pixel offset, shared with its selectable scroll area.
+    console_scroll: Scrolled,
+    /// The output count from the previous console paint.
+    console_seen: Cell<usize>,
 }
 
 impl Debugger {
@@ -97,22 +100,24 @@ impl Debugger {
         self.console_area.clone()
     }
 
-    /// How many lines back from its end the console is scrolled.
-    pub fn console_back(&self) -> usize {
-        self.console_back
+    /// Returns the console scroll, following new output while it is at the end.
+    pub fn console_scroll(&self) -> Scrolled {
+        let count = self.session.line_count();
+        if self.console_seen.replace(count) != count {
+            let scroll = self.console_scroll.get();
+            if scroll.offset() >= (scroll.content_height() - scroll.viewport_height()).max(0.0) {
+                self.console_scroll.set(Scroll::at(f32::MAX));
+            }
+        }
+        self.console_scroll.clone()
     }
 
-    /// Scrolls whichever of the pane's lists is under `pointer` by `delta`
-    /// logical pixels, `line` of them to a line of the console, answering
-    /// whether one was.
-    ///
-    /// The console counts back from its end, so it follows what the program
-    /// writes until the reader scrolls up, and follows it again once they
-    /// have scrolled back down.
-    pub fn scroll(&mut self, pointer: Point, delta: f32, line: f32) -> bool {
+    /// Scrolls the list or console beneath the pointer by logical pixels.
+    pub fn scroll(&mut self, pointer: Point, delta: f32) -> bool {
         for (area, scroll) in [
             (&self.stack_area, &self.stack_scroll),
             (&self.variables_area, &self.variables_scroll),
+            (&self.console_area, &self.console_scroll),
         ] {
             if area.get().contains(pointer) {
                 let mut moved = scroll.get();
@@ -121,13 +126,7 @@ impl Debugger {
                 return true;
             }
         }
-        if !self.console_area.get().contains(pointer) {
-            return false;
-        }
-        let lines = (delta / line.max(1.0)).round() as isize;
-        let most = self.session.line_count().saturating_sub(1);
-        self.console_back = self.console_back.saturating_add_signed(lines).min(most);
-        true
+        false
     }
 
     /// Opens the variable behind `reference`, or closes it.
@@ -290,7 +289,8 @@ impl Debuggers {
                 stack_area: Bounds::default(),
                 variables_area: Bounds::default(),
                 console_area: Bounds::default(),
-                console_back: 0,
+                console_scroll: Scrolled::default(),
+                console_seen: Cell::new(0),
             },
         );
         Ok(())
