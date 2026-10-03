@@ -77,6 +77,11 @@ impl Scroll {
         self.offset
     }
 
+    /// Height of the whole content from the last frame.
+    pub fn content_height(&self) -> f32 {
+        self.content_height
+    }
+
     /// Height of the visible content area from the last frame.
     pub fn viewport_height(&self) -> f32 {
         self.viewport.height
@@ -116,6 +121,8 @@ pub struct ScrollArea<M> {
     child: Box<dyn Element<M>>,
     /// Optional visible thumb and its drag handler.
     on_scroll: Option<OnScroll<M>>,
+    /// Whether placed text in this area can be selected.
+    selectable: bool,
 }
 
 /// `child`, scrolled by `scroll` inside whatever room the area is given.
@@ -125,10 +132,17 @@ pub fn scroll_area<M>(scroll: Scrolled, child: impl IntoElement<M>) -> ScrollAre
         style: Style::default(),
         child: child.into_element(),
         on_scroll: None,
+        selectable: false,
     }
 }
 
 impl<M> ScrollArea<M> {
+    /// Enables pointer selection and copying of the area’s placed text.
+    pub fn selectable(mut self) -> Self {
+        self.selectable = true;
+        self
+    }
+
     /// Shows a scrollbar when content overflows, reporting thumb drags to the caller.
     pub fn with_scrollbar(mut self, on_scroll: impl Fn(ResizeEvent, f32) -> M + 'static) -> Self {
         self.on_scroll = Some(Arc::new(on_scroll));
@@ -161,6 +175,21 @@ impl<M: 'static> Element<M> for ScrollArea<M> {
         scroll.set_extents(bounds.size, content.height);
         self.scroll.set(scroll);
 
+        let previous = cx.selection.take();
+        if self.selectable {
+            let surface = cx.selections.borrow_mut().surface(&self.scroll);
+            {
+                let mut state = surface.borrow_mut();
+                state.bounds = bounds;
+                state.visible = true;
+                state.rows.clear();
+                state.placements.clear();
+                state.starts.clear();
+                state.last_bounds = None;
+            }
+            cx.selection = Some(surface);
+            cx.clickable(bounds, None, None);
+        }
         let first = cx.region_count();
         cx.push_clip(bounds);
         self.child.paint(
@@ -172,6 +201,7 @@ impl<M: 'static> Element<M> for ScrollArea<M> {
             ),
             cx,
         );
+        cx.selection = previous;
         cx.pop_clip();
         cx.clip_regions(first, bounds);
         if let Some(on_scroll) = &self.on_scroll {

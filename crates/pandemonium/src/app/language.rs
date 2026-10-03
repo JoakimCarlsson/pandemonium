@@ -1068,6 +1068,9 @@ impl App {
     /// away at the first pixel of that would never be read at all. So does
     /// a panel the pointer has moved onto, so that it can be scrolled.
     pub(super) fn forget_hint(&mut self, point: pm_gfx::Point) {
+        if self.ui.as_ref().is_some_and(pm_ui::Ui::selecting_text) {
+            return;
+        }
         let Some(hint) = self.hint.as_ref() else {
             return;
         };

@@ -12,7 +12,6 @@
 //! the width the last frame came out at is what this one is built against.
 
 use std::cell::Ref;
-use std::ops::Range;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -22,9 +21,10 @@ use pm_acp::{
 use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Axis, Div, Element, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
-    SCROLLBAR_GUTTER, STEP, Scroll, Style, Styled, Theme, button, h_flex, icon, icon_button,
-    measured, picture, rule, sash, scroll_area, scrollbar, space, text, v_flex,
+    Axis, Div, Element, Grain, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
+    SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Style, Styled,
+    Theme, button, h_flex, icon, icon_button, measured, picture, rule, sash, scroll_area,
+    scrollbar, space, text, v_flex,
 };
 
 use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
@@ -519,6 +519,10 @@ pub struct Wrapped {
     working: Row,
     /// The row between two parts, which holds nothing.
     gap: Row,
+    /// The logical content position at each painted row’s start.
+    selection_starts: Vec<Spot>,
+    /// Unwrapped text rows used by the shared selection model.
+    selection_rows: SelectionContent,
 }
 
 /// What the conversation was wrapped against as a whole.
@@ -636,10 +640,21 @@ impl Wrapped {
                 .iter()
                 .all(|part| part.settled)
                 .then_some(wrapping);
+            self.refresh_selection_rows();
             self.measures = None;
         }
         if wrapping.busy {
             self.working = vec![piece(working(talk), Tone::Quiet)];
+            if let Some(last) = self.selection_rows.len().checked_sub(1) {
+                self.selection_rows.replace(
+                    last,
+                    SelectionRow {
+                        text: working(talk),
+                        lead: 0,
+                        separator: "\n",
+                    },
+                );
+            }
         }
         let measures = measures(theme);
         if self.measures != Some(measures) {
@@ -676,6 +691,32 @@ impl Wrapped {
                 self.entries.push(Entry::Gap);
             }
             self.entries.push(Entry::Working);
+        }
+    }
+
+    /// Rejoins visual continuations and records stable logical content positions.
+    fn refresh_selection_rows(&mut self) {
+        self.selection_starts.clear();
+        self.selection_rows.clear();
+        for at in 0..self.len() {
+            let row = self.row(at);
+            let carried = row.first().is_some_and(|piece| piece.wrapped);
+            let lead = if carried {
+                row[0].text.chars().count()
+            } else {
+                0
+            };
+            let content = row
+                .iter()
+                .filter(|piece| piece.image.is_none())
+                .map(|piece| piece.text.as_str())
+                .collect::<String>();
+            let start = self.selection_rows.push(SelectionRow {
+                text: content,
+                lead,
+                separator: if carried { " " } else { "\n" },
+            });
+            self.selection_starts.push(start);
         }
     }
 
@@ -1583,7 +1624,11 @@ fn step_row(step: &Step) -> Row {
 /// land, so a drag over it can be read back as the text it passed over.
 fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -> Div<Message> {
     let session = talk.id();
-    let selection = talk.selection();
+    let mut selection = Selection::default();
+    if let Some((anchor, head)) = talk.selection() {
+        selection.select(anchor, head);
+    }
+    let start = talk.wrapped().borrow().selection_starts[at];
     let height = row_height(theme, row);
     if row.is_empty() {
         return h_flex().h_px(height);
@@ -1612,7 +1657,10 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -
                 (None, true) => theme.colors.text_subtle,
                 (None, false) => tone(theme, piece.tone),
             };
-            let start = Spot { row: at, column };
+            let start = Spot {
+                row: start.row,
+                column: start.column + column,
+            };
             let length = piece.text.chars().count();
             column += length;
             let spots = talk.drawn_spots();
@@ -1621,7 +1669,7 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -
             let styled = text(piece.text.clone())
                 .color(color)
                 .placed(talk.drawn_text(), key);
-            let styled = match selection.and_then(|chosen| picked(chosen, start, length)) {
+            let styled = match selection.picked(start, length) {
                 Some(characters) => styled.selected(characters),
                 None => styled,
             };
@@ -1672,173 +1720,47 @@ fn emphasised(styled: pm_ui::Text, emphasis: Emphasis) -> pm_ui::Text {
     }
 }
 
-/// Which characters of the piece `length` characters long from `start` fall
-/// between the ends of `selection`, when any do.
-fn picked(selection: (Spot, Spot), start: Spot, length: usize) -> Option<Range<usize>> {
-    let (first, last) = selection;
-    if start.row < first.row || start.row > last.row {
-        return None;
-    }
-    let from = match start.row == first.row {
-        true => first.column.saturating_sub(start.column),
-        false => 0,
-    };
-    let to = match start.row == last.row {
-        true => last.column.saturating_sub(start.column).min(length),
-        false => length,
-    };
-    (from < to).then_some(from..to)
-}
-
-/// The text the reader has picked out of `talk`, as the pane last wrapped
-/// it, when they have picked out any.
-///
-/// A row carried on from the one above is joined back to it with the space
-/// it was broken at, so a paragraph copies as the paragraph it was written
-/// as and not as the lines the pane happened to break it into.
+/// Reads the transcript's selected logical content through the shared model.
 pub fn selected_text(theme: &Theme, talk: &Talk) -> Option<String> {
-    let (first, last) = talk.selection()?;
+    let (anchor, head) = talk.selection()?;
+    let mut selection = Selection::default();
+    selection.select(anchor, head);
     let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
-    let mut copied = String::new();
-    for at in first.row..(last.row + 1).min(wrapped.len()) {
-        let row = wrapped.row(at);
-        let wrapped = row.first().is_some_and(|piece| piece.wrapped);
-        let lead = match wrapped {
-            true => row[0].text.chars().count(),
-            false => 0,
-        };
-        let from = match at == first.row {
-            true => first.column.max(lead),
-            false => lead,
-        };
-        let line = row
-            .iter()
-            .map(|piece| piece.text.as_str())
-            .collect::<String>();
-        let to = match at == last.row {
-            true => last.column,
-            false => usize::MAX,
-        };
-        if at > first.row {
-            copied.push(if wrapped { ' ' } else { '\n' });
-        }
-        copied.extend(line.chars().take(to).skip(from));
-    }
-    Some(copied)
+    selection.text(wrapped.selection_rows.len(), |at| {
+        wrapped.selection_rows.row(at)
+    })
 }
 
-/// From the start of the word at the first of `anchor` and `head` to the end
-/// of the word at the last, as the pane last wrapped `talk`.
-///
-/// A word is a run of characters of one kind: letters and digits, spaces,
-/// or anything else, so a press on punctuation picks out the punctuation.
+/// Expands the transcript's boundaries to whole words using the shared model.
 pub fn words_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (Spot, Spot) {
-    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
-    let word = |spot: Spot| {
-        let line = match spot.row < wrapped.len() {
-            true => wrapped
-                .row(spot.row)
-                .iter()
-                .flat_map(|piece| piece.text.chars())
-                .collect::<Vec<_>>(),
-            false => Vec::new(),
-        };
-        let (start, end) = word_at(&line, spot.column);
-        (
-            Spot {
-                row: spot.row,
-                column: start,
-            },
-            Spot {
-                row: spot.row,
-                column: end,
-            },
-        )
-    };
-    (word(anchor.min(head)).0, word(anchor.max(head)).1)
+    selection_between(theme, talk, anchor, head, Grain::Word)
 }
 
-/// The whole paragraphs the rows from `anchor` to `head` belong to.
-///
-/// A paragraph is a line as it was written, which the pane may have broken
-/// into several rows; a row carried on from the one above belongs to the
-/// paragraph that one starts.
+/// Expands the transcript's boundaries to logical paragraphs using the shared model.
 pub fn lines_between(theme: &Theme, talk: &Talk, anchor: Spot, head: Spot) -> (Spot, Spot) {
-    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
-    let carried = |row: usize| wrapped.row(row).first().is_some_and(|piece| piece.wrapped);
-    let (first, last) = (anchor.min(head), anchor.max(head));
-    if wrapped.len() == 0 {
-        return (first, last);
-    }
-    let mut start = first.row.min(wrapped.len() - 1);
-    while start > 0 && carried(start) {
-        start -= 1;
-    }
-    let mut end = last.row.min(wrapped.len() - 1);
-    while end + 1 < wrapped.len() && carried(end + 1) {
-        end += 1;
-    }
-    let width = wrapped
-        .row(end)
-        .iter()
-        .map(|piece| piece.text.chars().count())
-        .sum();
-    (
-        Spot {
-            row: start,
-            column: 0,
-        },
-        Spot {
-            row: end,
-            column: width,
-        },
-    )
+    selection_between(theme, talk, anchor, head, Grain::Paragraph)
 }
 
-/// The first place in the conversation and the last, which is all of it.
+/// Applies a selection grain to the transcript's logical rows.
+fn selection_between(
+    theme: &Theme,
+    talk: &Talk,
+    anchor: Spot,
+    head: Spot,
+    grain: Grain,
+) -> (Spot, Spot) {
+    let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
+    Selection::extend(anchor, head, grain, wrapped.selection_rows.len(), |at| {
+        wrapped.selection_rows.row(at)
+    })
+}
+
+/// Returns the boundaries covering the transcript's complete logical content.
 pub fn everything(theme: &Theme, talk: &Talk) -> Option<(Spot, Spot)> {
     let wrapped = wrapped(theme, talk, columns(theme, talk.drawn_width().get()));
-    let last = wrapped.len().checked_sub(1)?;
-    let width = wrapped
-        .row(last)
-        .iter()
-        .map(|piece| piece.text.chars().count())
-        .sum();
-    Some((
-        Spot { row: 0, column: 0 },
-        Spot {
-            row: last,
-            column: width,
-        },
-    ))
-}
-
-/// The word in `line` that `column` falls on, as the column it starts at
-/// and the one after it ends; a column past the end falls on the last one.
-fn word_at(line: &[char], column: usize) -> (usize, usize) {
-    let at = column.min(line.len().saturating_sub(1));
-    let Some(kind) = line.get(at).copied().map(kind_of) else {
-        return (0, 0);
-    };
-    let start = line[..at]
-        .iter()
-        .rposition(|character| kind_of(*character) != kind)
-        .map_or(0, |before| before + 1);
-    let end = line[at..]
-        .iter()
-        .position(|character| kind_of(*character) != kind)
-        .map_or(line.len(), |after| at + after);
-    (start, end)
-}
-
-/// Which kind of character `character` is, for where a word ends: letters,
-/// digits and underscores are one, space another, and the rest a third.
-fn kind_of(character: char) -> u8 {
-    match character {
-        character if character.is_alphanumeric() || character == '_' => 0,
-        character if character.is_whitespace() => 1,
-        _ => 2,
-    }
+    Selection::everything(wrapped.selection_rows.len(), |at| {
+        wrapped.selection_rows.row(at)
+    })
 }
 
 /// Builds the bar above the conversation: which agent, where, and how it is.

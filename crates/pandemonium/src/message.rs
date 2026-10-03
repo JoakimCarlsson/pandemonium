@@ -38,6 +38,12 @@ pub enum ProjectSearchOption {
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+    /// Copies the focused reading surface’s selected text.
+    CopyText,
+    /// Follows a link in a rendered document.
+    FollowRenderedLink(FileId, usize),
+    /// Selects all placed text in the focused reading surface.
+    SelectAllText,
     /// Draw in this theme mode.
     SetThemeMode(ThemeMode),
     /// Draw in this theme family, by index into `pm_ui::families`.

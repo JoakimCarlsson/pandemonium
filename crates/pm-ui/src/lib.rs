@@ -21,6 +21,7 @@ mod picture;
 mod placed;
 mod resize;
 mod scroll;
+mod selection;
 mod split;
 mod style;
 mod text;
@@ -42,6 +43,9 @@ pub use picture::{Picture, picture};
 pub use placed::{Placed, Placements, nearest};
 pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
 pub use scroll::{Scroll, ScrollArea, Scrolled, scroll_area};
+pub use selection::{
+    Grain, Selection, SelectionContent, SelectionDrag, SelectionRow, Spot, spot_at,
+};
 pub use split::{Split, split};
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Side, Style, Styled, space};
 pub use text::{Text, text};

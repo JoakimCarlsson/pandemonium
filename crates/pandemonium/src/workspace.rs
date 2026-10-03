@@ -316,6 +316,8 @@ pub enum MenuTarget {
     Input,
     /// The transcript of one agent session.
     AgentText(crate::agent::TalkId, Option<usize>),
+    /// Selected text in a scrollable reading surface.
+    ReadingText,
     /// The MCP servers one agent session was opened with.
     AgentMcp(crate::agent::TalkId),
     /// One of the agents the reader added, by its place in the list.

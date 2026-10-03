@@ -35,7 +35,7 @@ use pm_acp::{
 use crate::agent::form::Form;
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_gfx::Point;
-use pm_ui::{Bounds, Placements};
+use pm_ui::{Bounds, Placements, Selection, Spot};
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -44,19 +44,6 @@ use pm_ui::{Bounds, Placements};
 /// knowing which project it belongs to.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TalkId(u64);
-
-/// A place in the text of the conversation: a row of the pane, and how many
-/// characters into that row.
-///
-/// Rows are counted from the top of the whole conversation rather than of
-/// the view, so what is picked out stays put as the pane scrolls.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Spot {
-    /// Which row, from the first.
-    pub row: usize,
-    /// How many characters into it.
-    pub column: usize,
-}
 
 /// How a conversation is doing, as a reader deciding where to look reads it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,7 +173,7 @@ pub struct Talk {
     drawn_spots: Rc<RefCell<Vec<Spot>>>,
     /// What the reader has picked out of the conversation: where the drag
     /// began, and where it has got to.
-    selection: Option<(Spot, Spot)>,
+    selection: Selection,
     /// Copied replies and when their confirmation icons expire.
     copied_replies: BTreeMap<usize, Instant>,
     /// Whether the pane follows the end of the conversation as it grows.
@@ -881,20 +868,13 @@ impl Talk {
     /// The place in the conversation's text nearest `point`, as the pane
     /// last drew it.
     pub fn spot_at(&self, point: Point) -> Option<Spot> {
-        let placements = self.drawn_text.borrow();
-        let placed = pm_ui::nearest(&placements, point)?;
-        let start = *self.drawn_spots.borrow().get(placed.key)?;
-        Some(Spot {
-            row: start.row,
-            column: start.column + placed.caret_at(point.x),
-        })
+        pm_ui::spot_at(&self.drawn_text.borrow(), &self.drawn_spots.borrow(), point)
     }
 
     /// What the reader has picked out of the conversation, first place
     /// first, when it is anything at all.
     pub fn selection(&self) -> Option<(Spot, Spot)> {
-        let (anchor, head) = self.selection?;
-        (anchor != head).then(|| (anchor.min(head), anchor.max(head)))
+        self.selection.range()
     }
 
     /// Marks `block` as copied for one second.
@@ -912,12 +892,12 @@ impl Talk {
 
     /// Picks out the text from `anchor` to `head`.
     pub fn select(&mut self, anchor: Spot, head: Spot) {
-        self.selection = Some((anchor, head));
+        self.selection.select(anchor, head);
     }
 
     /// Lets go of what was picked out of the conversation.
     pub fn clear_selection(&mut self) {
-        self.selection = None;
+        self.selection.clear();
     }
 
     /// Scrolls the pane `pixels` down, or up when negative, no further than
@@ -949,7 +929,7 @@ impl Talk {
 
     /// Opens or closes the details starting at `block`.
     pub fn toggle_details(&mut self, block: usize) {
-        self.selection = None;
+        self.selection.clear();
         if !self.expanded_details.insert(block) {
             self.expanded_details.remove(&block);
         }
@@ -1497,7 +1477,7 @@ impl Talks {
                 drawn_links: Rc::default(),
                 drawn_text: Rc::default(),
                 drawn_spots: Rc::default(),
-                selection: None,
+                selection: Selection::default(),
                 copied_replies: BTreeMap::new(),
                 following: true,
                 expanded_details: BTreeSet::new(),
@@ -1591,6 +1571,13 @@ impl Talks {
             .values()
             .find(|talk| talk.session == Some(session))
             .map(Talk::id)
+    }
+
+    /// Clears transcript selections when another reading surface takes focus.
+    pub fn clear_selections(&mut self) {
+        for talk in self.talks.values_mut() {
+            talk.clear_selection();
+        }
     }
 
     /// Every conversation in the window, across all its projects.

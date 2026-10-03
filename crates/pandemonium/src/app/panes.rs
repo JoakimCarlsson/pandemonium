@@ -123,6 +123,10 @@ impl App {
     /// Gives the keyboard to `pane`, taking it from the terminal.
     pub(super) fn focus_pane(&mut self, pane: PaneId) {
         if pane != self.panes.focus() {
+            if let Some(ui) = self.ui.as_mut() {
+                ui.clear_text_selection();
+            }
+            self.agents.clear_selections();
             self.dismiss_prediction();
         }
         self.panes.set_focus(pane);
@@ -155,6 +159,10 @@ impl App {
 
     /// Shows `item` of `scope` in `pane`, opening a tab for it if need be.
     pub(super) fn show_item(&mut self, pane: PaneId, scope: Scope, item: Item, preview: bool) {
+        if let Some(ui) = self.ui.as_mut() {
+            ui.clear_text_selection();
+        }
+        self.agents.clear_selections();
         if preview {
             self.close_previews(pane, item);
         }
@@ -934,6 +942,10 @@ impl App {
     /// so the place left behind goes on the trail: going back returns to the
     /// tab that was in front, at the line it was left at.
     pub(super) fn activate_tab(&mut self, pane: PaneId, item: Item) {
+        if let Some(ui) = self.ui.as_mut() {
+            ui.clear_text_selection();
+        }
+        self.agents.clear_selections();
         self.dismiss_prediction();
         if self
             .scope()
@@ -1552,6 +1564,11 @@ impl App {
                 ]);
                 entries
             }
+            MenuTarget::ReadingText => vec![
+                pm_ui::menu_entry("Copy", Some(Message::CopyText)),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Select All", Some(Message::SelectAllText)),
+            ],
             MenuTarget::Input => {
                 let selected = self
                     .typed_into()

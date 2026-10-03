@@ -18,7 +18,7 @@ const UNDERLINE: f32 = 1.0;
 
 /// One run of a paragraph: its text, its face and how it is drawn.
 #[derive(Clone, Debug)]
-struct Span {
+struct Span<M> {
     /// The characters of the run.
     content: String,
     /// The step of the scale and the variations it is set in.
@@ -29,6 +29,8 @@ struct Span {
     underline: bool,
     /// What it sits on, when it sits on anything, as inline code does.
     background: Option<Rgba>,
+    /// The ordinary click action of a linked span.
+    on_click: Option<M>,
 }
 
 /// One word or one stretch of space, placed on a line.
@@ -44,6 +46,8 @@ struct Piece {
     width: f32,
     /// Which span it came from, for its colour and its marks.
     span: usize,
+    /// The character boundary in the unwrapped paragraph.
+    column: usize,
 }
 
 /// One line the paragraph broke into.
@@ -56,28 +60,37 @@ struct Line {
 }
 
 /// Runs of text in their own faces, broken into lines at the width offered.
-pub struct Paragraph {
+pub struct Paragraph<M> {
     /// The runs, in reading order.
-    spans: Vec<Span>,
+    spans: Vec<Span<M>>,
     /// How the paragraph is sized and padded.
     style: Style,
     /// The lines the last measurement broke the runs into.
     lines: Vec<Line>,
     /// Whether a word wider than the offered width may break between characters.
     break_long_words: bool,
+    /// An explicit copy boundary before this paragraph.
+    separator: Option<&'static str>,
 }
 
 /// An empty paragraph, to add runs to.
-pub fn paragraph() -> Paragraph {
+pub fn paragraph<M>() -> Paragraph<M> {
     Paragraph {
         spans: Vec::new(),
         style: Style::default(),
         lines: Vec::new(),
         break_long_words: false,
+        separator: None,
     }
 }
 
-impl Paragraph {
+impl<M> Paragraph<M> {
+    /// Sets the boundary used when copying this paragraph after another.
+    pub fn copy_separator(mut self, separator: &'static str) -> Self {
+        self.separator = Some(separator);
+        self
+    }
+
     /// Allows words wider than the paragraph to break between characters.
     pub fn break_long_words(mut self) -> Self {
         self.break_long_words = true;
@@ -92,6 +105,7 @@ impl Paragraph {
             color,
             underline: false,
             background: None,
+            on_click: None,
         });
         self
     }
@@ -121,6 +135,14 @@ impl Paragraph {
         self
     }
 
+    /// Gives the last span a click action, preserved when a text press is released.
+    pub fn on_span_click(mut self, message: M) -> Self {
+        if let Some(span) = self.spans.last_mut() {
+            span.on_click = Some(message);
+        }
+        self
+    }
+
     /// Whether the paragraph holds nothing but space.
     pub fn is_blank(&self) -> bool {
         self.spans.iter().all(|span| span.content.trim().is_empty())
@@ -134,10 +156,13 @@ impl Paragraph {
     fn break_lines(&self, width: f32, cx: &mut LayoutContext<'_>) -> Vec<Line> {
         let mut lines = vec![Line::default()];
         let mut x = 0.0;
+        let mut column = 0;
 
         for (index, span) in self.spans.iter().enumerate() {
             let font = span.font.resolve(&cx.theme.text);
             for token in tokens(&span.content) {
+                let token_start = column;
+                column += token.chars().count();
                 if token == "\n" {
                     lines.push(Line::default());
                     x = 0.0;
@@ -146,7 +171,7 @@ impl Paragraph {
                 let blank = token.trim().is_empty();
                 let size = cx.measure(token, font);
                 if self.break_long_words && !blank && size.width > width {
-                    for character in token.chars() {
+                    for (offset, character) in token.chars().enumerate() {
                         let character = character.to_string();
                         let size = cx.measure(&character, font);
                         if x + size.width > width
@@ -164,6 +189,7 @@ impl Paragraph {
                             x,
                             width: size.width,
                             span: index,
+                            column: token_start + offset,
                         });
                         x += size.width;
                     }
@@ -187,6 +213,7 @@ impl Paragraph {
                     x,
                     width: size.width,
                     span: index,
+                    column: token_start,
                 });
                 x += size.width;
             }
@@ -198,14 +225,14 @@ impl Paragraph {
     }
 }
 
-impl Styled for Paragraph {
+impl<M> Styled for Paragraph<M> {
     /// How the paragraph is sized and padded.
     fn style(&mut self) -> &mut Style {
         &mut self.style
     }
 }
 
-impl<M> Element<M> for Paragraph {
+impl<M: Clone> Element<M> for Paragraph<M> {
     /// How the paragraph is sized and padded.
     fn layout_style(&self) -> Style {
         self.style
@@ -236,6 +263,12 @@ impl<M> Element<M> for Paragraph {
         let left = bounds.left() + self.style.padding.left;
         let mut top = bounds.top() + self.style.padding.top;
 
+        let content = self
+            .spans
+            .iter()
+            .map(|span| span.content.as_str())
+            .collect::<String>();
+        let row = cx.selection_row(content, bounds, self.separator);
         for line in &self.lines {
             for piece in &line.pieces {
                 let span = &self.spans[piece.span];
@@ -259,6 +292,21 @@ impl<M> Element<M> for Paragraph {
                         span.color,
                     ));
                 }
+                if let Some(message) = &span.on_click {
+                    cx.interactive(
+                        Rect::from_xywh(origin.x, origin.y, run.width, run.height),
+                        message.clone(),
+                    );
+                }
+                cx.selectable_run(
+                    &piece.content,
+                    origin,
+                    &run,
+                    row.map(|row| crate::Spot {
+                        row,
+                        column: piece.column,
+                    }),
+                );
                 cx.text(origin, run, span.color);
             }
             top += line.height;
