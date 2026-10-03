@@ -19,8 +19,8 @@ use crate::editor::{Display, FileEntry, FileId, OpenFile};
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::{
-    self, Content, Contents, Item, PaneId, Saved, SavedKind, SavedTab, Shortcut, SplitDirection,
-    TabEntry, Tool,
+    self, Content, Contents, Item, PaneId, Role, Saved, SavedKind, SavedTab, Shortcut,
+    SplitDirection, TabEntry, Tool,
 };
 use crate::workspace::{MenuTarget, TabMenu};
 
@@ -147,9 +147,11 @@ impl App {
             Some(Item::Tool(Tool::Terminal)) => {
                 self.editor_focused = false;
                 self.terminal_focused = true;
+                self.remember_role(pane, Some(Item::Tool(Tool::Terminal)));
             }
+            Some(Item::Tool(Tool::Chat)) => self.remember_role(pane, Some(Item::Tool(Tool::Chat))),
             Some(Item::Tool(_)) => {}
-            _ => self.content_pane = Some(pane),
+            front => self.remember_role(pane, front),
         }
     }
 
@@ -175,18 +177,7 @@ impl App {
 
     /// Shows `item` of `scope` in `pane`, opening a tab for it if need be.
     pub(super) fn show_item(&mut self, pane: PaneId, scope: Scope, item: Item, preview: bool) {
-        let pane = if self
-            .panes
-            .pane(pane)
-            .and_then(|pane| pane.active(self.scope()))
-            .is_some_and(|active| {
-                matches!(active, Item::Tool(_))
-                    && !(active == Item::Tool(Tool::Chat) && matches!(item, Item::Agent(_, _)))
-            }) {
-            self.document_pane()
-        } else {
-            pane
-        };
+        let pane = self.pane_for(pane, item.role());
         if let Some(ui) = self.ui.as_mut() {
             ui.clear_text_selection();
         }
@@ -551,10 +542,11 @@ impl App {
     /// Changes the tabs of `pane` and closes whatever that left with nothing.
     pub(super) fn close_tabs(&mut self, pane: PaneId, close: impl FnOnce(&mut panes::Pane)) {
         let before = self.panes.held();
+        let held_documents = self.holds_documents(pane);
         if let Some(pane) = self.panes.pane_mut(pane) {
             close(pane);
         }
-        self.panes.close_if_empty(pane);
+        self.close_vacated(pane, held_documents);
         self.remember_closed(&before);
         self.sweep();
         self.focus_pane(self.panes.focus());
@@ -810,11 +802,15 @@ impl App {
             }
             Some((Some(scope), Item::File(file)))
         });
-        self.content_pane = self.panes.panes().into_iter().find(|id| {
-            self.panes.pane(*id).is_some_and(|pane| {
-                pane.is_empty() || pane.items().any(|item| !matches!(item, Item::Tool(_)))
-            })
-        });
+        self.recent.clear();
+        if let Some(documents) = self
+            .panes
+            .panes()
+            .into_iter()
+            .find(|id| self.serves(*id, Role::Editor))
+        {
+            self.recent.insert(Role::Editor, documents);
+        }
         for (scope, path) in followed_outlines {
             let Some(file) = self.editor.opened(scope, &path) else {
                 continue;
@@ -1055,6 +1051,7 @@ impl App {
             DropPlace::Into => (target, None),
             DropPlace::Tab(index) => (target, Some(index)),
         };
+        let held_documents = self.holds_documents(drag.from);
         let carried = self
             .panes
             .pane_mut(drag.from)
@@ -1065,7 +1062,7 @@ impl App {
                 None => pane.append(tab, scope),
             }
         }
-        self.panes.close_if_empty(drag.from);
+        self.close_vacated(drag.from, held_documents);
         self.focus_pane(landed);
         self.sweep();
         self.store();
