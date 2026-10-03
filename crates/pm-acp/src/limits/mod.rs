@@ -70,7 +70,7 @@ fn capitalized(word: &str) -> String {
 pub(crate) type Read = fn() -> Option<Limits>;
 
 /// Where one session's limits come from, which is down to the agent.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum Meter {
     /// Nowhere: the agent says nothing of its limits.
     Unmetered,
@@ -84,12 +84,25 @@ pub(crate) enum Meter {
     },
     /// Something beside the agent, read off its pipe.
     Read(Read),
+    /// Codex session records in this conversation's own account directory.
+    Codex(std::path::PathBuf),
 }
 
 impl Meter {
     /// Where `agent`'s limits come from.
-    pub(crate) fn of(agent: Agent) -> Self {
+    pub(crate) fn of(agent: Agent, env: &[(String, String)]) -> Self {
+        let home = |variable: &str| {
+            env.iter()
+                .rev()
+                .find(|(name, _)| name == variable)
+                .map(|(_, value)| std::path::PathBuf::from(value))
+        };
         match agent.id {
+            "claude-code" if home("CLAUDE_CONFIG_DIR").is_some() => Self::Unmetered,
+            "cursor" if home("CURSOR_CONFIG_DIR").is_some() => Self::Unmetered,
+            "codex" if home("CODEX_HOME").is_some() => {
+                Self::Codex(home("CODEX_HOME").unwrap_or_default())
+            }
             "claude-code" => Self::Read(claude::read),
             "codex" => Self::Read(codex::read),
             "grok" => Self::Asked {
@@ -119,9 +132,13 @@ impl Meter {
     }
 
     /// The read made beside the agent, where its limits are read that way.
-    pub(crate) fn reads(&self) -> Option<Read> {
+    pub(crate) fn reads(&self) -> Option<Box<dyn Fn() -> Option<Limits> + Send>> {
         match self {
-            Self::Read(read) => Some(*read),
+            Self::Read(read) => Some(Box::new(*read)),
+            Self::Codex(home) => {
+                let home = home.clone();
+                Some(Box::new(move || codex::read_at(&home)))
+            }
             _ => None,
         }
     }

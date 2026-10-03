@@ -5,6 +5,7 @@
 //! implements none of them — every frame is `pm-ui` elements built from that
 //! model, submitted to `pm-gfx` as one draw list.
 
+mod accounts;
 mod agent;
 mod agents;
 mod answer;
@@ -372,6 +373,10 @@ pub struct App {
     language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
     agent_servers: Vec<pm_acp::Agent>,
+    /// Named accounts, accessed and changed through config.
+    accounts: config::Accounts,
+    /// Account conversations awaiting their first provider login choice.
+    account_logins: BTreeSet<crate::agent::TalkId>,
     /// The tool servers every agent is opened with.
     mcp_servers: Vec<pm_acp::McpServer>,
     /// How the window is divided into panes, and which of them has the keyboard.
@@ -794,6 +799,8 @@ impl App {
             project_search_field: None,
             language_servers: restored.language_servers,
             agent_servers: restored.agent_servers,
+            accounts: restored.accounts,
+            account_logins: BTreeSet::new(),
             mcp_servers: restored.mcp_servers,
             panes: PaneTree::default(),
             content_pane: None,
@@ -2289,6 +2296,7 @@ impl App {
             window: self.window_state,
             language_servers: self.language_servers.clone(),
             agent_servers: self.agent_servers.clone(),
+            accounts: self.accounts.clone(),
             mcp_servers: self.mcp_servers.clone(),
         }
     }
@@ -2869,6 +2877,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Agent => {
                 let before = self.agents.tally();
                 if self.agents.pump() {
+                    self.start_account_logins();
                     self.apply_agent_options();
                     self.serve_agents();
                     self.refresh_agent_history();

@@ -173,6 +173,8 @@ pub enum IconName {
     Code,
     /// A plan written out before anything is done.
     ScrollText,
+    /// An account or profile.
+    CircleUser,
     /// What was done before, to go back to.
     History,
 }
@@ -181,6 +183,7 @@ impl IconName {
     /// The artwork this icon is drawn from.
     pub fn svg(self) -> Svg {
         match self {
+            Self::CircleUser => Svg::new("circle_user", include_icon!("circle_user")),
             Self::LoadCircle => Svg::new("load_circle", include_icon!("load_circle")),
             Self::ChevronRight => Svg::new("chevron_right", include_icon!("chevron_right")),
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),

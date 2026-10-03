@@ -73,6 +73,7 @@ impl App {
         let scope = talk.scope();
         [
             Some(talk.agent().name.to_owned()),
+            talk.profile_name().map(str::to_owned),
             self.open
                 .get(scope.project())
                 .map(|project| project.name().to_owned()),
@@ -117,6 +118,10 @@ impl App {
                 if agent.startable() {
                     self.start_agent(agent);
                 }
+            }
+            Message::ShowAgentAccounts(session) => self.show_agent_accounts(session),
+            Message::ManageAccountProfiles(agent) => {
+                self.open_picker(Kind::Accounts(self.scope(), agent));
             }
             Message::ManageAgentServers => {
                 self.open_settings();
@@ -406,14 +411,13 @@ impl App {
             self.focus_prompt(source);
             return;
         }
-        let scope = talk.scope();
+        let env = talk.env().to_vec();
         let title = talk
             .history()
             .iter()
             .find(|listed| listed.id == saved)
             .and_then(|listed| listed.title.clone())
             .unwrap_or_default();
-        let env = self.worktree_env(scope);
         if !self.agents.load(source, &env, saved) {
             return;
         }
@@ -695,10 +699,11 @@ impl App {
         let Some(project) = self.open.active() else {
             return;
         };
-        let (project, checkout) = (project.id(), project.root().to_path_buf());
-        let session = self.selected_session();
-        let root = self.session_root().unwrap_or(checkout);
-        self.open_agent(project, session, &root, agent);
+        let scope = match self.selected_session() {
+            Some(session) => pm_core::Scope::of(project.id(), session),
+            None => pm_core::Scope::checkout(project.id()),
+        };
+        self.open_picker(Kind::Accounts(Some(scope), agent));
     }
 
     /// Starts `agent` in `root` for `project`, and opens the pane it is read in.
@@ -712,15 +717,36 @@ impl App {
         session: Option<pm_core::SessionId>,
         root: &std::path::Path,
         agent: Agent,
+        profile: Option<&crate::config::Profile>,
+        login: bool,
     ) {
         let scope = match session {
             Some(session) => pm_core::Scope::of(project, session),
             None => pm_core::Scope::checkout(project),
         };
-        let env = self.worktree_env(scope);
-        let Some(talk) = self.agents.start(project, session, root, &env, agent) else {
+        let mut env = self.worktree_env(scope);
+        if let Some(profile) = profile {
+            let Some(environment) = profile.environment(agent) else {
+                return;
+            };
+            env.push(environment);
+        }
+        let started = match login {
+            true => self
+                .agents
+                .authenticate(project, session, root, &env, agent),
+            false => self.agents.start(project, session, root, &env, agent),
+        };
+        let Some(talk) = started else {
+            self.notices.trouble("The agent could not start", None);
             return;
         };
+        if let Some(opened) = self.agents.get_mut(talk) {
+            opened.set_profile(profile.cloned());
+        }
+        if login || profile.is_some() {
+            self.account_logins.insert(talk);
+        }
         self.show_item(self.panes.focus(), scope, Item::Agent(scope, talk), false);
         self.focus_prompt(talk);
     }
@@ -865,7 +891,7 @@ impl App {
     }
 
     /// Logs `session`'s agent in by the way it offered in `place`.
-    fn log_in_agent(&mut self, session: TalkId, place: usize) {
+    pub(super) fn log_in_agent(&mut self, session: TalkId, place: usize) {
         let Some(method) = self
             .agents
             .get(session)
@@ -908,8 +934,23 @@ impl App {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         arguments.extend(args.iter().cloned());
-        let mut environment = talk.env().to_vec();
+        let mut environment = command
+            .get_envs()
+            .filter_map(|(name, value)| {
+                Some((
+                    name.to_string_lossy().into_owned(),
+                    value?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        environment.extend(talk.env().iter().cloned());
         environment.extend(env.iter().cloned());
+        if let Some(profile) = talk.profile() {
+            let Some(selected) = profile.environment(talk.agent()) else {
+                return;
+            };
+            environment.push(selected);
+        }
 
         let started = self
             .terminals

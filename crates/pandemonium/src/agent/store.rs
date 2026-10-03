@@ -96,6 +96,8 @@ pub struct Talk {
     session: Option<SessionId>,
     /// The conversation itself, as the protocol carries it.
     conversation: Session,
+    /// The selected account, retained across login, history and reconnect.
+    profile: Option<crate::config::Profile>,
     /// What the worktree adds to the environment the agent was started in,
     /// kept so that it is started the same way again after a login.
     env: Vec<(String, String)>,
@@ -230,6 +232,28 @@ pub struct Offered {
 }
 
 impl Talk {
+    /// The immutable account metadata retained with this conversation.
+    pub fn profile(&self) -> Option<&crate::config::Profile> {
+        self.profile.as_ref()
+    }
+
+    /// The label of the separate account this conversation runs as.
+    pub fn profile_name(&self) -> Option<&str> {
+        self.profile.as_ref().map(crate::config::Profile::name)
+    }
+
+    /// The provider organisation, workspace or team UUID selected for this session.
+    pub fn organisation(&self) -> Option<&str> {
+        self.profile
+            .as_ref()
+            .and_then(crate::config::Profile::organisation)
+    }
+
+    /// Records the account selected before this conversation was started.
+    pub fn set_profile(&mut self, profile: Option<crate::config::Profile>) {
+        self.profile = profile;
+    }
+
     /// Which session this is.
     pub fn id(&self) -> TalkId {
         self.id
@@ -1268,7 +1292,12 @@ impl Talk {
                 self.history_error = Some(error);
                 self.listing = false;
             }
-            Event::Login(methods) => {
+            Event::Login(mut methods) => {
+                if self.profile.is_some() && self.agent().id == "claude-code" {
+                    methods.retain(|method| {
+                        matches!(method.id.as_str(), "claude-ai-login" | "claude-login")
+                    });
+                }
                 let note = match methods.is_empty() {
                     true => format!(
                         "{} needs logging in, and offers no way the editor can do it.",
@@ -1534,6 +1563,8 @@ fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
 enum Opening<'a> {
     /// Start a new conversation.
     New,
+    /// Offer login before opening a new conversation.
+    Login,
     /// Restore a saved pane, falling back to a fresh conversation.
     Restore(&'a str),
     /// Load a chosen saved conversation exactly into an existing chat.
@@ -1581,6 +1612,18 @@ impl Talks {
         self.open(project, session, root, env, agent, Opening::New)
     }
 
+    /// Starts the provider's login before opening a conversation in this worktree.
+    pub fn authenticate(
+        &mut self,
+        project: ProjectId,
+        session: Option<SessionId>,
+        root: &Path,
+        env: &[(String, String)],
+        agent: Agent,
+    ) -> Option<TalkId> {
+        self.open(project, session, root, env, agent, Opening::Login)
+    }
+
     /// Takes the conversation `resume` names up again, in a session of its own.
     pub fn resume(
         &mut self,
@@ -1605,15 +1648,21 @@ impl Talks {
             talk.root().to_path_buf(),
             talk.agent(),
         );
-        self.open(
-            project,
-            session,
-            &root,
-            env,
-            agent,
-            Opening::Exact(id, saved),
-        )
-        .is_some()
+        let profile = talk.profile.clone();
+        let loaded = self
+            .open(
+                project,
+                session,
+                &root,
+                env,
+                agent,
+                Opening::Exact(id, saved),
+            )
+            .is_some();
+        if loaded && let Some(talk) = self.talks.get_mut(&id) {
+            talk.profile = profile;
+        }
+        loaded
     }
 
     /// Opens an agent conversation with the requested load behavior.
@@ -1627,11 +1676,12 @@ impl Talks {
         opening: Opening<'_>,
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
-        let remember_on_ready = matches!(opening, Opening::New);
+        let remember_on_ready = matches!(opening, Opening::New | Opening::Login);
         let started = match opening {
             Opening::Exact(_, saved) => Session::load(agent, root, env, saved, notify.clone()),
             Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
             Opening::New => Session::start(agent, root, env, notify.clone()),
+            Opening::Login => Session::start_login(agent, root, env, notify.clone()),
         };
         let conversation = match started {
             Ok(conversation) => conversation,
@@ -1660,6 +1710,7 @@ impl Talks {
                 project,
                 session,
                 conversation,
+                profile: None,
                 env: env.to_vec(),
                 logins: Vec::new(),
                 transcript: Transcript::default(),

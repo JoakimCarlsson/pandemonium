@@ -271,6 +271,7 @@ fn agent_row(theme: &Theme, agent: &Agent, custom: Option<usize>) -> Div<Message
                         .color(theme.colors.text_subtle),
                 ),
         )
+        .child(button("Accounts…", Message::ManageAccountProfiles(*agent)).outlined())
         .when_some(custom, |row, place| {
             row.child(
                 icon_button(theme, IconName::More, Message::ShowAgentServerMenu(place))

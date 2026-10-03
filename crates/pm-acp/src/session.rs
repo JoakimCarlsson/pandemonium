@@ -73,6 +73,19 @@ const LIMIT_REFRESH: Duration = Duration::from_secs(60);
 /// How a session wakes the window once it has something to say.
 pub type Notify = Arc<dyn Fn() + Send + Sync>;
 
+/// How a process opens its first conversation after the handshake.
+#[derive(Default)]
+struct Opening {
+    /// The conversation to restore, when supplied.
+    resume: Option<String>,
+    /// Whether a missing saved conversation falls back to a new one.
+    resume_fallback: bool,
+    /// Whether restoration skips replaying the transcript.
+    quiet: bool,
+    /// Whether the client explicitly requests login before opening a conversation.
+    login_first: bool,
+}
+
 /// What one request was sent to find out.
 #[derive(Clone, Debug)]
 enum Sent {
@@ -224,6 +237,8 @@ struct State {
     transports: mcp::Transports,
     /// The requests sent and not yet answered, and what each was for.
     sent: HashMap<i64, Sent>,
+    /// Whether the initial handshake must offer login before opening a conversation.
+    login_first: bool,
     /// The ways of logging in the agent offered in its handshake.
     logins: Vec<Method>,
     /// The modes the session can be put into.
@@ -284,7 +299,26 @@ impl Session {
         env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, None, false, false, notify)
+        Self::open(agent, root, env, Opening::default(), notify)
+    }
+
+    /// Starts the agent and offers its login methods before opening any conversation.
+    pub fn start_login(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        Self::open(
+            agent,
+            root,
+            env,
+            Opening {
+                login_first: true,
+                ..Opening::default()
+            },
+            notify,
+        )
     }
 
     /// Starts `agent` in `root` and takes the conversation `id` names up again.
@@ -301,7 +335,18 @@ impl Session {
         id: &str,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, Some(id.to_owned()), true, false, notify)
+        Self::open(
+            agent,
+            root,
+            env,
+            Opening {
+                resume: Some(id.to_owned()),
+                resume_fallback: true,
+                quiet: false,
+                ..Opening::default()
+            },
+            notify,
+        )
     }
 
     /// Starts `agent` in `root` and carries on the conversation `id` names,
@@ -318,7 +363,18 @@ impl Session {
         id: &str,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, Some(id.to_owned()), true, true, notify)
+        Self::open(
+            agent,
+            root,
+            env,
+            Opening {
+                resume: Some(id.to_owned()),
+                resume_fallback: true,
+                quiet: true,
+                ..Opening::default()
+            },
+            notify,
+        )
     }
 
     /// Loads `id` exactly, reporting failure when that saved session is gone.
@@ -329,10 +385,21 @@ impl Session {
         id: &str,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        Self::open(agent, root, env, Some(id.to_owned()), false, false, notify)
+        Self::open(
+            agent,
+            root,
+            env,
+            Opening {
+                resume: Some(id.to_owned()),
+                resume_fallback: false,
+                quiet: false,
+                ..Opening::default()
+            },
+            notify,
+        )
     }
 
-    /// Starts `agent` in `root`, taking up `resume` where there is one.
+    /// Starts `agent` in `root` with the requested conversation or login behavior.
     ///
     /// The `env` is the worktree's own, so what the agent runs — a dev
     /// server, a test that binds a port — is the session's rather than
@@ -341,9 +408,7 @@ impl Session {
         agent: Agent,
         root: &Path,
         env: &[(String, String)],
-        resume: Option<String>,
-        resume_fallback: bool,
-        quiet: bool,
+        opening: Opening,
         notify: Notify,
     ) -> std::io::Result<Self> {
         let mut command = agent.command();
@@ -372,7 +437,7 @@ impl Session {
         let (outbox, pending) = mpsc::channel();
 
         let measurement = Measurement {
-            meter: Meter::of(agent),
+            meter: Meter::of(agent, env),
             state: state.clone(),
             notify: notify.clone(),
             next: next.clone(),
@@ -395,9 +460,10 @@ impl Session {
         };
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
-            state.resume = resume;
-            state.resume_fallback = resume_fallback;
-            state.quiet = quiet;
+            state.resume = opening.resume;
+            state.resume_fallback = opening.resume_fallback;
+            state.quiet = opening.quiet;
+            state.login_first = opening.login_first;
         }
         session.send(json!({
             "jsonrpc": "2.0",
@@ -1174,7 +1240,13 @@ impl Reader {
             state.embeds = prompts["embeddedContext"] == json!(true);
             state.transports = mcp::Transports::of(&capabilities["mcpCapabilities"]);
         }
-        self.open();
+        let login = self.state.lock().ok().and_then(|mut state| {
+            std::mem::take(&mut state.login_first).then(|| state.logins.clone())
+        });
+        match login {
+            Some(methods) => self.raise(Event::Login(methods)),
+            None => self.open(),
+        }
     }
 
     /// Opens the conversation: the one that was left, or a new one.

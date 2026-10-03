@@ -2615,6 +2615,15 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
                 .text_xs()
                 .color(theme.colors.text_muted),
         )
+        .when_some(talk.organisation(), |bar, id| {
+            bar.child(
+                h_flex().tooltip(id.to_owned()).child(
+                    text("Organisation")
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                ),
+            )
+        })
         .child(
             text(name_of(talk.root()))
                 .text_xs()
@@ -2636,6 +2645,17 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         .when_some(doing(talk), |bar, status| {
             bar.child(text(status).text_xs().color(theme.colors.text_subtle))
         })
+        .child(
+            icon_button(
+                theme,
+                IconName::CircleUser,
+                Message::ShowAgentAccounts(talk.id()),
+            )
+            .tooltip(format!(
+                "Switch account or organisation · {}",
+                talk.profile_name().unwrap_or("Default account")
+            )),
+        )
         .when(talk.can_list(), |bar| {
             bar.child(
                 icon_button(

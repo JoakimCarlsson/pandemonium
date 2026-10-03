@@ -609,6 +609,7 @@ impl App {
                     project,
                     worktree,
                     agent: talk.agent().id.to_owned(),
+                    account: talk.profile().cloned(),
                     session: talk.resumable().unwrap_or_default(),
                     title: talk.title().unwrap_or_default().to_owned(),
                     ..SavedTab::default()
@@ -733,7 +734,7 @@ impl App {
             let held = sessions
                 .of(project)
                 .find(|session| session.root() == tab.worktree);
-            let env = bootstrap.env(held.and_then(pm_core::Session::port));
+            let mut env = bootstrap.env(held.and_then(pm_core::Session::port));
             let session = held.map(pm_core::Session::id);
             let scope = match session {
                 Some(session) => Scope::of(project, session),
@@ -746,12 +747,19 @@ impl App {
 
             if tab.kind == SavedKind::Agent {
                 let agent = pm_acp::Agent::named(&tab.agent)?;
+                if let Some(profile) = &tab.account {
+                    if !crate::config::Accounts::supports(agent) {
+                        return None;
+                    }
+                    env.push(profile.environment(agent)?);
+                }
                 let talk = match tab.session.is_empty() {
                     true => agents.start(project, session, &root, &env, agent)?,
                     false => agents.resume(project, session, &root, &env, agent, &tab.session)?,
                 };
                 if let Some(opened) = agents.get_mut(talk) {
                     opened.entitle(&tab.title);
+                    opened.set_profile(tab.account.clone());
                 }
                 return Some((Some(scope), Item::Agent(scope, talk)));
             }

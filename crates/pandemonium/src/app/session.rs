@@ -371,12 +371,6 @@ impl App {
         self.preferences.bootstrap.env(port)
     }
 
-    /// The worktree an agent started now would work in, if a session's.
-    pub(super) fn session_root(&self) -> Option<std::path::PathBuf> {
-        let session = self.sessions.get(self.selected_session()?)?;
-        Some(session.root().to_path_buf())
-    }
-
     /// Every open project and the sessions hanging under it, for the sidebar.
     pub(super) fn sidebar_projects(&self) -> Vec<SidebarProject> {
         let theme = self.theme();
