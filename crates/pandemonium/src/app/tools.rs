@@ -24,7 +24,6 @@ impl App {
     pub(super) fn tool_command(&mut self, message: Message) -> bool {
         match message {
             Message::ShowTool(tool) => self.show_tool(tool),
-            Message::MoveTool(pane, tool) => self.move_tool(pane, tool),
             Message::ToggleTool(tool) => match self.tool_pane(tool) {
                 Some(pane) => self.close_item(pane, Item::Tool(tool)),
                 None => self.show_tool(tool),
@@ -86,16 +85,15 @@ impl App {
         self.activate_tab(target, item);
     }
 
-    /// Menu entries opening registered tools, or moving them into a particular pane.
-    pub(super) fn tool_menu(&self, target: Option<PaneId>) -> Vec<MenuItem<Message>> {
+    /// Menu entries opening registered workspace tools.
+    pub(super) fn tool_menu(&self) -> Vec<MenuItem<Message>> {
         Tool::ALL
             .into_iter()
             .map(|tool| {
-                let message = match target {
-                    Some(pane) => Message::MoveTool(pane, tool),
-                    None => Message::ShowTool(tool),
-                };
-                menu_entry(format!("Open {}", tool.label()), Some(message))
+                menu_entry(
+                    format!("Open {}", tool.label()),
+                    Some(Message::ShowTool(tool)),
+                )
             })
             .collect()
     }

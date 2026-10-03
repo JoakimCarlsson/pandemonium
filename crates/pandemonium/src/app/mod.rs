@@ -1295,10 +1295,6 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::ShowPaneMenu(pane) = message {
-            self.open_menu(MenuTarget::Pane(pane));
-            return;
-        }
         if let Message::ShowTerminalMenu(id) = message {
             self.open_menu(MenuTarget::Terminal(id));
             return;
@@ -1451,11 +1447,6 @@ impl App {
         }
         if let Message::FocusPane(pane) = message {
             self.focus_pane(pane);
-            self.request_redraw();
-            return;
-        }
-        if let Message::SplitPane(pane, direction) = message {
-            self.split_pane(pane, None, direction);
             self.request_redraw();
             return;
         }

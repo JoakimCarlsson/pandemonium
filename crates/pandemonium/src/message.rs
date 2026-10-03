@@ -309,16 +309,12 @@ pub enum Message {
     DiscardAndClose(PaneId, FileId),
     /// Send later keystrokes to this pane.
     FocusPane(PaneId),
-    /// Divide this pane that way, showing the same file in both halves.
-    SplitPane(PaneId, SplitDirection),
     /// Divide this pane that way, showing this tab's contents in the new half.
     SplitItem(PaneId, Item, SplitDirection),
     /// Open a rendered view or editable source beside this pane's file.
     PreviewFile(PaneId),
     /// Open the outline for the file named by a tab's context menu.
     OpenOutline(PaneId, FileId),
-    /// Open the menu of things that can be done to this pane.
-    ShowPaneMenu(PaneId),
     /// Carry this pane's tab across the window, and let go of it somewhere.
     DragTab(PaneId, Item, ResizeEvent),
     /// Close this pane, giving what it held back to its neighbour.
@@ -497,8 +493,6 @@ pub enum Message {
     CloseAllTerminals,
     /// Show a registered workspace tool wherever its tab lives.
     ShowTool(Tool),
-    /// Move a registered workspace tool into this pane.
-    MoveTool(PaneId, Tool),
     /// Show the menu of workspace tools.
     ShowToolsMenu,
     /// Restore the default pane arrangement without closing live tabs.
