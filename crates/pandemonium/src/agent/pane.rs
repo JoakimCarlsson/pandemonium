@@ -304,36 +304,46 @@ fn commands(theme: &Theme, talk: &Talk) -> Div<Message> {
             h_flex()
                 .w_full()
                 .px(1)
-                .py(0.25)
-                .gap(1)
+                .py(0.5)
                 .items_center()
+                .rounded(theme.radius.md)
                 .hover_bg(theme.colors.surface_hover)
                 .when(place == chosen, |row| row.bg(theme.colors.surface_selected))
+                .when(!command.description.is_empty(), |row| {
+                    row.tooltip(command.description.clone())
+                })
                 .on_click(Message::TakeAgentCommand(session, place))
                 .child(
                     text(format!("{}{}", command.prefix, command.name))
-                        .text_xs()
-                        .font_mono()
-                        .color(tone(theme, Tone::Tool)),
-                )
-                .child(
-                    text(first_line(&command.description))
-                        .text_xs()
-                        .color(theme.colors.text_subtle),
+                        .text_sm()
+                        .color(theme.colors.text),
                 )
         })
         .collect::<Vec<_>>();
 
-    v_flex().w_full().px(1.25).pt(0.5).child(
-        v_flex()
-            .w_full()
-            .py(0.5)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.border)
-            .bg(theme.colors.surface)
-            .overflow_hidden()
-            .children(rows),
-    )
+    v_flex()
+        .w_full()
+        .items_center()
+        .px(1.25)
+        .pt(0.5)
+        .child(
+            v_flex()
+                .w_full()
+                .max_w_px(COMPOSER_WIDTH)
+                .p(0.5)
+                .rounded(theme.radius.lg)
+                .border_1(theme.colors.border)
+                .bg(theme.colors.surface)
+                .overflow_hidden()
+                .child(
+                    h_flex().w_full().px(1).pt(0.25).pb(0.5).child(
+                        text("Slash Commands")
+                            .text_xs()
+                            .color(theme.colors.text_subtle),
+                    ),
+                )
+                .children(rows),
+        )
 }
 
 /// The first line of `said`, which is as much of it as a row has room for.
