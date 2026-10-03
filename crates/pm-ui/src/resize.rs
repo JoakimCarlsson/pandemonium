@@ -89,27 +89,40 @@ impl ResizeState {
         }
     }
 
+    /// Lowers the largest permitted extent to `ceiling`, never below the
+    /// smallest, and pulls the current extent in with it.
+    pub fn fit(&mut self, ceiling: f32) {
+        self.max = ceiling.max(self.min);
+        self.extent = self.extent.min(self.max);
+    }
+
     /// Returns the panel's current extent.
     pub fn extent(self) -> f32 {
         self.extent
     }
 
     /// Applies `event` from the sash on `edge` along `axis`.
-    pub fn resize(&mut self, event: ResizeEvent, axis: Axis, edge: ResizeEdge) {
+    ///
+    /// The extent stops at the minimum, but the return value says whether the
+    /// pointer went on past half of it: the point where the panel is meant to
+    /// snap shut.
+    pub fn resize(&mut self, event: ResizeEvent, axis: Axis, edge: ResizeEdge) -> bool {
         if event.phase == ResizePhase::Started {
             self.drag_extent = Some(self.extent);
         }
         let Some(start_extent) = self.drag_extent else {
-            return;
+            return false;
         };
         let direction = match edge {
             ResizeEdge::Start => -1.0,
             ResizeEdge::End => 1.0,
         };
-        self.extent = (start_extent + event.delta(axis) * direction).clamp(self.min, self.max);
+        let dragged = start_extent + event.delta(axis) * direction;
+        self.extent = dragged.clamp(self.min, self.max);
         if event.phase == ResizePhase::Ended {
             self.drag_extent = None;
         }
+        self.min > 0.0 && dragged < self.min / 2.0
     }
 }
 

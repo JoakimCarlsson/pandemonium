@@ -54,31 +54,31 @@ const DOT_HALO: f32 = 3.0;
 pub const PRIMARY_SIDEBAR_WIDTH: f32 = 252.0;
 
 /// Smallest and largest width the primary sidebar resizes to.
-pub const PRIMARY_SIDEBAR_RANGE: (f32, f32) = (160.0, 480.0);
+pub const PRIMARY_SIDEBAR_RANGE: (f32, f32) = (160.0, f32::MAX);
 
 /// Height the bottom panel opens at.
 pub const BOTTOM_PANEL_HEIGHT: f32 = 220.0;
 
 /// Smallest and largest height the bottom panel resizes to.
-pub const BOTTOM_PANEL_RANGE: (f32, f32) = (120.0, 600.0);
+pub const BOTTOM_PANEL_RANGE: (f32, f32) = (120.0, f32::MAX);
 
 /// Width the secondary sidebar opens at.
 pub const SECONDARY_SIDEBAR_WIDTH: f32 = 252.0;
 
 /// Smallest and largest width the secondary sidebar resizes to.
-pub const SECONDARY_SIDEBAR_RANGE: (f32, f32) = (160.0, 480.0);
+pub const SECONDARY_SIDEBAR_RANGE: (f32, f32) = (160.0, f32::MAX);
 
 /// Height the Source Control graph opens at.
 pub const HISTORY_GRAPH_HEIGHT: f32 = 190.0;
 
 /// Smallest and largest height the Source Control graph resizes to.
-pub const HISTORY_GRAPH_RANGE: (f32, f32) = (80.0, 520.0);
+pub const HISTORY_GRAPH_RANGE: (f32, f32) = (80.0, f32::MAX);
 
 /// Height an agent's prompt box opens at: three lines of text.
 pub const PROMPT_HEIGHT: f32 = 84.0;
 
 /// Smallest and largest height an agent's prompt box resizes to.
-pub const PROMPT_RANGE: (f32, f32) = (28.0, 560.0);
+pub const PROMPT_RANGE: (f32, f32) = (28.0, f32::MAX);
 
 /// Which workspace regions are visible and how large they are.
 ///

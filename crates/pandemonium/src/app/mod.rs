@@ -572,6 +572,9 @@ pub struct App {
     pending: Pending,
 }
 
+/// Logical pixels of the window a panel always leaves free, so its sash stays within reach.
+const REACHABLE_MARGIN: f32 = 48.0;
+
 /// How many kinds of [`Wake`] there are.
 const WAKES: usize = Wake::Registry as usize + 1;
 
@@ -1385,34 +1388,48 @@ impl App {
             return;
         }
         if let Message::ResizeSidebar(event) = message {
-            self.sidebar
+            self.fit_panels();
+            let snapped = self
+                .sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::End);
+            self.primary_sidebar_open = !snapped;
             self.store_settled(event);
             self.request_redraw();
             return;
         }
         if let Message::ResizeBottomPanel(event) = message {
-            self.bottom_panel
+            self.fit_panels();
+            let snapped = self
+                .bottom_panel
                 .resize(event, Axis::Vertical, ResizeEdge::Start);
+            self.bottom_panel_open = !snapped;
+            self.terminal_focused = self.showing_terminals();
             self.store_settled(event);
             self.request_redraw();
             return;
         }
         if let Message::ResizeSecondarySidebar(event) = message {
-            self.secondary_sidebar
+            self.fit_panels();
+            let snapped = self
+                .secondary_sidebar
                 .resize(event, Axis::Horizontal, ResizeEdge::Start);
+            self.secondary_sidebar_open = !snapped;
             self.store_settled(event);
             self.request_redraw();
             return;
         }
         if let Message::ResizeHistoryGraph(event) = message {
-            self.history_graph
+            self.fit_panels();
+            let snapped = self
+                .history_graph
                 .resize(event, Axis::Vertical, ResizeEdge::Start);
+            self.history_graph_open = !snapped;
             self.store_settled(event);
             self.request_redraw();
             return;
         }
         if let Message::ResizeAgentPrompt(event) = message {
+            self.fit_panels();
             self.prompt_box
                 .resize(event, Axis::Vertical, ResizeEdge::Start);
             self.store_settled(event);
@@ -2350,6 +2367,36 @@ impl App {
         }
     }
 
+    /// Keeps every resizable panel small enough that its sash stays inside the window.
+    ///
+    /// A panel may be dragged as large as the window allows, and no larger:
+    /// past that its edge is out of reach and it can no longer be grabbed.
+    fn fit_panels(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let scale = window.scale_factor() as f32;
+        let size = window.inner_size();
+        let width = size.width as f32 / scale;
+        let height = size.height as f32 / scale;
+        let reach = (width - REACHABLE_MARGIN).max(0.0);
+        let primary = if self.primary_sidebar_open {
+            self.sidebar.extent()
+        } else {
+            0.0
+        };
+        let secondary = if self.secondary_sidebar_open {
+            self.secondary_sidebar.extent()
+        } else {
+            0.0
+        };
+        self.sidebar.fit(reach - secondary);
+        self.secondary_sidebar.fit(reach - primary);
+        self.bottom_panel.fit(height - REACHABLE_MARGIN);
+        self.history_graph.fit(height - REACHABLE_MARGIN);
+        self.prompt_box.fit(height - REACHABLE_MARGIN);
+    }
+
     /// Takes down the window's size, keeping the size it un-maximizes to.
     ///
     /// A maximized window's size is the screen's, not the one the next launch
@@ -3121,6 +3168,7 @@ impl ApplicationHandler<Wake> for App {
                     renderer.resize(size.width, size.height, scale);
                 }
                 self.remember_window();
+                self.fit_panels();
                 self.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {

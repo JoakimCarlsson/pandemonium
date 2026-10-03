@@ -16,7 +16,7 @@ use crate::panes::item::Item;
 use crate::panes::saved::{Saved, SavedNode, SavedTab};
 
 /// Smallest share of a split one pane can be dragged down to.
-const MIN_SHARE: f32 = 0.05;
+const MIN_SHARE: f32 = 0.0;
 
 /// Which way a pane is divided, and which side the new pane takes.
 ///
