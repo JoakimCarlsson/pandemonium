@@ -159,8 +159,6 @@ impl App {
             }
             (Kind::RenameTerminal(id), _) => self.rename_terminal(id, &typed),
             (Kind::Watch, _) => self.save_watch(typed),
-            (Kind::AnswerText, _) => self.type_answer(&typed),
-            (Kind::AnswerOptions, Some(Choice::AnswerOption(option))) => self.choose_answer(option),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
             (Kind::NewSession, _) => self.start_session(&typed),
@@ -227,7 +225,6 @@ impl App {
             Choice::Process(pid) => self.choose_attach_process(pid),
             Choice::SessionRepository(_) => {}
             Choice::StartSession => self.cut_session(),
-            Choice::AnswerOption(option) => self.choose_answer(option),
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::Stash(index) => {
                 if let Some(action) = self.stash_action.take() {
@@ -358,8 +355,7 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::AnswerOptions
-            | Kind::Knob
+            Kind::Knob
             | Kind::References
             | Kind::Calls
             | Kind::ServerLogs
@@ -373,7 +369,6 @@ impl App {
             | Kind::Line
             | Kind::Rename
             | Kind::RenameTerminal(_)
-            | Kind::AnswerText
             | Kind::BreakpointCondition
             | Kind::BreakpointHits
             | Kind::BreakpointLog

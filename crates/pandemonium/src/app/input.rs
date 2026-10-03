@@ -187,6 +187,9 @@ impl App {
         if self.is_copy(event) && self.copy_reading_text() {
             return self.request_redraw();
         }
+        if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_agent_question() {
+            return self.request_redraw();
+        }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
             return self.request_redraw();
         }
@@ -618,6 +621,7 @@ impl App {
         match writing {
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
+            Writing::Answer(session, ticket, _) => self.send_answer(session, ticket),
             Writing::Comment(_) => self.apply(Message::SaveComment),
             Writing::McpSearch => self.search_mcp_registry(),
             Writing::AgentSearch => {}

@@ -106,6 +106,9 @@ pub(super) enum Writing {
     Commit,
     /// The prompt of one agent session.
     Prompt(crate::agent::TalkId),
+    /// The box one field of a form an agent session asked to have filled in
+    /// is written in: the session, the form's ticket and the field's place.
+    Answer(crate::agent::TalkId, u64, usize),
     /// The console of the program one worktree is debugging.
     Console(Scope),
     /// The box a review comment is being written in, in one worktree.
@@ -259,7 +262,6 @@ pub struct App {
     /// The repositories ticked for that session.
     session_picks: BTreeSet<PathBuf>,
     /// The field of an agent's form that the prompt or list on screen is editing.
-    answering: Option<answer::Editing>,
     /// The form the tool server being added or edited is described in.
     server_form: Option<crate::settings::ServerForm>,
     /// The box the MCP servers are searched with.
@@ -744,7 +746,6 @@ impl App {
             session_base: None,
             session_name: String::new(),
             session_picks: BTreeSet::new(),
-            answering: None,
             server_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),
             agent_search: crate::input::Input::one_line("Search agents"),
@@ -956,7 +957,9 @@ impl App {
             Some(Writing::McpSearch | Writing::AgentSearch) => {
                 return Some("search");
             }
-            Some(Writing::FormField(_) | Writing::LanguageServerField(_)) => return Some("field"),
+            Some(Writing::FormField(_) | Writing::LanguageServerField(_) | Writing::Answer(..)) => {
+                return Some("field");
+            }
             None => {}
         }
         match (self.editor_focused, self.terminal_focused) {
@@ -2452,6 +2455,9 @@ impl App {
                 self.languages.editor.as_mut()?.fields.get_mut(index)
             }
             Writing::FormField(field) => self.server_form.as_mut()?.input_mut(field),
+            Writing::Answer(session, ticket, place) => {
+                self.answer_form(session, ticket)?.text_box_mut(place)
+            }
             Writing::Comment(_) => None,
         }
     }

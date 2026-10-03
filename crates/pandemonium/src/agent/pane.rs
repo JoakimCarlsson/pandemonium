@@ -18,21 +18,22 @@ use std::time::{Instant, SystemTime};
 use similar::{ChangeTag, TextDiff};
 
 use pm_acp::{
-    About, Ask, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice, Weight,
+    About, Ask, Input, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice,
+    Weight,
 };
 use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
-    Div, Element, Grain, IconName, IconSize, IntoElement, LayoutContext, PaintContext,
-    PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow,
-    Style, Styled, Theme, above, button, h_flex, icon, icon_button, measured, picture, rule,
-    scroll_area, scrollbar, space, switch, text, v_flex,
+    Div, Element, Font, Grain, IconName, IconSize, IntoElement, LayoutContext, PaintContext,
+    PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Side,
+    Style, Styled, TextSize, Theme, above, button, h_flex, icon, icon_button, measured, paragraph,
+    picture, rule, scroll_area, scrollbar, space, switch, text, v_flex,
 };
 
-use crate::agent::{Block, Form, Spot, Standing, Talk, TalkId};
+use crate::agent::{Block, Form, Page, Spot, Standing, Talk, TalkId};
 use crate::editor::{code_highlights, tint};
 use crate::image::Decoding;
-use crate::input::bare_input_view;
+use crate::input::{bare_input_view, hinted_input_view};
 use crate::markdown::blocks::{self, Block as MarkdownBlock, Emphasis, Run};
 use crate::message::Message;
 
@@ -74,6 +75,9 @@ const ADVANCE: f32 = 0.55;
 
 /// Fewest characters a line is wrapped at, however narrow the pane is.
 const NARROWEST: usize = 24;
+
+/// Side of the mark before each row of a question.
+const MARK: f32 = 16.0;
 
 /// Mark before the agent's reply.
 const BULLET: &str = "";
@@ -226,6 +230,7 @@ pub fn agent_pane(
     theme: &Theme,
     talk: &Talk,
     typing: bool,
+    answering: Option<(u64, usize)>,
     solid: bool,
     width: f32,
 ) -> Div<Message> {
@@ -270,7 +275,7 @@ pub fn agent_pane(
         .children(
             talk.forms()
                 .iter()
-                .map(|form| question(theme, talk.id(), form)),
+                .map(|form| question(theme, talk.id(), form, answering, solid)),
         )
         .child(match talk.offered().is_empty() {
             true => composer(theme, talk, typing, solid).into_element(),
@@ -2684,76 +2689,315 @@ fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
 /// Builds the card holding something the agent needs from the reader: a form
 /// to fill in, or a page to visit.
 ///
-/// Each field is a row that opens its own editor when pressed, so the card
-/// shows the whole form at once and the reader answers it in any order.
-fn question(theme: &Theme, session: TalkId, form: &Form) -> Div<Message> {
+/// The form is shown a question at a time, a tab each, with what can be
+/// chosen laid out as rows to press and a row for the reader's own words
+/// where the agent takes them. The card folds down to its tabs, and Escape
+/// walks away from it as the cross does.
+///
+/// `answering` is the ticket and the field of the box that has the keyboard,
+/// if one has, and `solid` whether its caret is in its visible blink phase.
+fn question(
+    theme: &Theme,
+    session: TalkId,
+    form: &Form,
+    answering: Option<(u64, usize)>,
+    solid: bool,
+) -> Div<Message> {
     let ticket = form.id();
-    let fields = form.fields().iter().enumerate().map(|(place, field)| {
-        let mark = if field.required { " *" } else { "" };
-        let label = format!("{}{mark}: {}", field.title, form.shown(place));
-        let row = button(label, Message::EditAnswer(session, ticket, place))
-            .h_px(theme.size.control)
-            .outlined();
-        v_flex()
-            .w_full()
-            .gap(0.25)
-            .when(!field.description.is_empty(), |column| {
-                column.child(
-                    text(field.description.clone())
-                        .text_xs()
-                        .color(theme.colors.text_muted),
+    let pages = form.pages();
+    let tabs = match form.link() {
+        Some(_) => vec![question_tab(theme, "Sign in".to_owned(), true, None)],
+        None => pages
+            .iter()
+            .enumerate()
+            .map(|(place, page)| {
+                question_tab(
+                    theme,
+                    form.fields()[page.field].title.clone(),
+                    place == form.page(),
+                    Some(Message::ShowAnswerPage(session, ticket, place)),
                 )
             })
-            .child(row)
-    });
-    let actions = match form.link() {
-        Some(_) => h_flex().gap(0.75).child(
-            button("Open link", Message::OpenAnswerLink(session, ticket))
-                .h_px(theme.size.control)
-                .filled(),
-        ),
-        None => h_flex().gap(0.75).child(
-            button("Send", Message::SendAnswer(session, ticket))
-                .h_px(theme.size.control)
-                .filled(),
-        ),
-    }
-    .child(
-        button("Decline", Message::DeclineAnswer(session, ticket))
-            .h_px(theme.size.control)
-            .outlined(),
-    )
-    .child(
-        button("Cancel", Message::CancelAnswer(session, ticket))
-            .h_px(theme.size.control)
-            .outlined(),
-    );
+            .collect(),
+    };
+    let fold = match form.folded() {
+        true => IconName::ChevronUp,
+        false => IconName::ChevronDown,
+    };
+    let header = h_flex()
+        .w_full()
+        .items_center()
+        .gap(0.5)
+        .child(h_flex().flex_1().gap(1).children(tabs))
+        .child(icon_button(
+            theme,
+            fold,
+            Message::FoldAnswer(session, ticket),
+        ))
+        .child(icon_button(
+            theme,
+            IconName::Close,
+            Message::CancelAnswer(session, ticket),
+        ));
+    let page = pages.get(form.page()).copied();
+    let asked = page
+        .map(|page| form.fields()[page.field].description.as_str())
+        .filter(|description| !description.is_empty())
+        .unwrap_or(form.message());
+    let rows = match (form.link(), page) {
+        (Some(link), _) => vec![question_row(
+            theme,
+            false,
+            None,
+            link.url.clone(),
+            String::new(),
+            Message::OpenAnswerLink(session, ticket),
+        )],
+        (None, Some(page)) => {
+            let typing = answering
+                .filter(|(ticket, _)| *ticket == form.id())
+                .map(|(_, place)| place);
+            page_rows(theme, session, form, page, typing, solid)
+        }
+        (None, None) => Vec::new(),
+    };
+    let submit = match form.link() {
+        Some(_) => ("Open link", Message::OpenAnswerLink(session, ticket)),
+        None => ("Submit answers", Message::SendAnswer(session, ticket)),
+    };
 
-    v_flex().w_full().px(1.25).pt(0.5).child(
+    v_flex().w_full().items_center().px(1.25).pt(0.5).child(
         v_flex()
             .w_full()
-            .p(0.75)
-            .gap(0.75)
+            .max_w_px(COMPOSER_WIDTH)
+            .px(1)
+            .py(0.75)
+            .gap(1)
             .rounded(theme.radius.lg)
-            .border_1(theme.colors.accent)
+            .border_1(theme.colors.border)
             .bg(theme.colors.surface)
-            .child(
-                text(format!("{BULLET}{}", form.message()))
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.accent),
-            )
-            .when_some(form.link(), |card, link| {
+            .child(header)
+            .when(!form.folded(), |card| {
                 card.child(
-                    text(link.url.clone())
+                    paragraph()
+                        .break_long_words()
+                        .span(asked, Font::new(TextSize::Base), theme.colors.text)
+                        .w_full(),
+                )
+                .child(v_flex().w_full().gap(0.25).children(rows))
+                .child(submit_row(theme, submit.0, submit.1, form.answered()))
+                .child(
+                    text("Esc to cancel")
                         .text_xs()
-                        .font_mono()
-                        .color(theme.colors.text_muted),
+                        .color(theme.colors.text_subtle),
+                )
+            }),
+    )
+}
+
+/// One tab of the form's header, underlined while it is the page shown.
+fn question_tab(
+    theme: &Theme,
+    title: String,
+    shown: bool,
+    message: Option<Message>,
+) -> Div<Message> {
+    let (color, edge) = match shown {
+        true => (theme.colors.text, theme.colors.accent),
+        false => (theme.colors.text_muted, theme.colors.surface),
+    };
+    h_flex()
+        .px(0.25)
+        .pb(0.25)
+        .border_side(Side::Bottom, 2.0, edge)
+        .when_some(message, Div::on_click)
+        .child(text(title).text_sm().color(color))
+}
+
+/// The rows of the page asking `page`: one per thing it can be, then the
+/// reader's own words where the agent takes them. `typing` is the field
+/// whose box has the keyboard, if one of this form's has.
+fn page_rows(
+    theme: &Theme,
+    session: TalkId,
+    form: &Form,
+    page: Page,
+    typing: Option<usize>,
+    solid: bool,
+) -> Vec<Div<Message>> {
+    let ticket = form.id();
+    let field = &form.fields()[page.field];
+    let round = !matches!(field.input, Input::Many { .. });
+    let choice = |option: usize, title: String, description: String| {
+        question_row(
+            theme,
+            form.chosen(page.field, option),
+            Some(round),
+            title,
+            description,
+            Message::ChooseAnswer(session, ticket, page.field, option),
+        )
+    };
+    let mut rows = match &field.input {
+        Input::One { options, .. } | Input::Many { options, .. } => options
+            .iter()
+            .enumerate()
+            .map(|(option, alternative)| {
+                choice(
+                    option,
+                    alternative.title.clone(),
+                    alternative.description.clone(),
                 )
             })
-            .children(fields)
-            .child(actions),
-    )
+            .collect(),
+        Input::Toggle { .. } => vec![
+            choice(0, "Yes".to_owned(), String::new()),
+            choice(1, "No".to_owned(), String::new()),
+        ],
+        Input::Text { .. } | Input::Number { .. } => {
+            answer_box(theme, session, form, page.field, typing, solid)
+                .into_iter()
+                .collect()
+        }
+    };
+    if let Some(other) = page.other {
+        let picked = form.other_picked(other);
+        rows.push(
+            v_flex()
+                .w_full()
+                .child(question_row(
+                    theme,
+                    picked,
+                    Some(round),
+                    form.fields()[other].title.clone(),
+                    String::new(),
+                    Message::PickAnswerOther(session, ticket, other),
+                ))
+                .when_some(
+                    answer_box(theme, session, form, other, typing, solid).filter(|_| picked),
+                    |column, written| {
+                        column.child(h_flex().w_full().pl(MARK / STEP + 1.5).child(written))
+                    },
+                ),
+        );
+    }
+    rows
+}
+
+/// The box the field at `place` is written in, lit while it has the keyboard.
+fn answer_box(
+    theme: &Theme,
+    session: TalkId,
+    form: &Form,
+    place: usize,
+    typing: Option<usize>,
+    solid: bool,
+) -> Option<Div<Message>> {
+    let ticket = form.id();
+    Some(hinted_input_view(
+        theme,
+        form.text_box(place)?,
+        typing == Some(place),
+        solid,
+        "Type your answer…",
+        move |phase, from, to| Message::WriteAnswer(session, ticket, place, phase, from, to),
+        Message::ShowInputMenu,
+    ))
+}
+
+/// The row a form is sent from, lit once there is an answer to send.
+fn submit_row(theme: &Theme, label: &str, message: Message, ready: bool) -> Div<Message> {
+    let (fill, hover, edge, ink) = match ready {
+        true => (
+            theme.colors.accent,
+            theme.colors.accent_hover,
+            theme.colors.accent,
+            theme.colors.text_on_accent,
+        ),
+        false => (
+            theme.colors.surface,
+            theme.colors.surface_hover,
+            theme.colors.border,
+            theme.colors.text_muted,
+        ),
+    };
+    h_flex()
+        .w_full()
+        .h_px(theme.size.control)
+        .px(1)
+        .items_center()
+        .rounded(theme.radius.md)
+        .border_1(edge)
+        .bg(fill)
+        .hover_bg(hover)
+        .on_click(message)
+        .child(text(label).text_sm().font_semibold().color(ink))
+}
+
+/// One row of a question: a mark, round for one of several and square for
+/// any of several, then `title` with `description` under it.
+fn question_row(
+    theme: &Theme,
+    chosen: bool,
+    round: Option<bool>,
+    title: String,
+    description: String,
+    message: Message,
+) -> Div<Message> {
+    let edge = match chosen {
+        true => theme.colors.accent,
+        false => theme.colors.border_selected,
+    };
+    let corner = match round {
+        Some(true) => theme.radius.full,
+        _ => theme.radius.sm,
+    };
+    h_flex()
+        .w_full()
+        .px(0.5)
+        .py(0.5)
+        .gap(1)
+        .items_center()
+        .rounded(theme.radius.md)
+        .when(chosen, |row| row.bg(theme.colors.surface_selected))
+        .hover_bg(theme.colors.surface_hover)
+        .on_click(message)
+        .when(round.is_some(), |row| {
+            row.child(
+                v_flex()
+                    .size_px(MARK)
+                    .items_center()
+                    .justify_center()
+                    .rounded(corner)
+                    .border_1(edge)
+                    .when(chosen, |mark| {
+                        mark.child(
+                            v_flex()
+                                .size_px(MARK / 2.0)
+                                .rounded(corner)
+                                .bg(theme.colors.accent),
+                        )
+                    }),
+            )
+        })
+        .child(
+            v_flex()
+                .flex_1()
+                .gap(0.25)
+                .child(text(title).text_sm().color(theme.colors.text))
+                .when(!description.is_empty(), |column| {
+                    column.child(
+                        paragraph()
+                            .break_long_words()
+                            .span(
+                                description,
+                                Font::new(TextSize::Xs),
+                                theme.colors.text_muted,
+                            )
+                            .w_full(),
+                    )
+                }),
+        )
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.

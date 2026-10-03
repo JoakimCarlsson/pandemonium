@@ -502,6 +502,15 @@ impl App {
             crate::app::Writing::FormField(field) => {
                 Some(self.server_form.as_ref()?.input(field)?.text())
             }
+            crate::app::Writing::Answer(session, ticket, place) => Some(
+                self.agents
+                    .get(session)?
+                    .forms()
+                    .iter()
+                    .find(|form| form.id() == ticket)?
+                    .text_box(place)?
+                    .text(),
+            ),
             crate::app::Writing::Comment(scope) => {
                 Some(self.reviews.get(&scope)?.comments().composing()?.text)
             }
@@ -1332,6 +1341,14 @@ impl App {
                     theme,
                     talk,
                     self.writing == Some(crate::app::Writing::Prompt(session)),
+                    match self.writing {
+                        Some(crate::app::Writing::Answer(answered, ticket, place))
+                            if answered == session =>
+                        {
+                            Some((ticket, place))
+                        }
+                        _ => None,
+                    },
                     self.caret_solid(),
                     width,
                 ))),

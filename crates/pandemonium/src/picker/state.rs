@@ -126,10 +126,6 @@ pub enum Kind {
     Watch,
     /// Tasks offered by the worktree in front.
     Tasks,
-    /// A line of text or a number for a field of a form the agent asked to have filled in.
-    AnswerText,
-    /// What a field of a form the agent asked to have filled in can be.
-    AnswerOptions,
 }
 
 impl Kind {
@@ -185,8 +181,6 @@ impl Kind {
             Self::BreakpointLog => "Log message, e.g. i is {i}",
             Self::Watch => "Watch expression",
             Self::Tasks => "Run a task in this worktree",
-            Self::AnswerText => "Your answer, blank to clear it",
-            Self::AnswerOptions => "Choose, Esc when done",
         }
     }
 
@@ -212,7 +206,6 @@ impl Kind {
                 | Self::ThemeName
                 | Self::LanguageFormatter(_)
                 | Self::KeymapName
-                | Self::AnswerText
         )
     }
 
@@ -302,8 +295,6 @@ pub enum Choice {
     SessionRepository(PathBuf),
     /// Cut the session about to be cut, of the repositories ticked.
     StartSession,
-    /// Choose this alternative of the form field being edited.
-    AnswerOption(usize),
 }
 
 /// One thing the picker is offering.

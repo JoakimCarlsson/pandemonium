@@ -16,7 +16,7 @@ mod pane;
 mod store;
 mod transcript;
 
-pub use form::Form;
+pub use form::{Form, Page};
 pub use pane::{
     agent_pane, content_height, everything, knob_rows, lines_between, mode_icon, selected_text,
     standing_color, words_between,

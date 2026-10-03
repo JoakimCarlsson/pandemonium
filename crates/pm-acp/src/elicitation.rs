@@ -107,6 +107,8 @@ pub struct Alternative {
     pub value: String,
     /// What the reader is shown.
     pub title: String,
+    /// What else there is to say about it.
+    pub description: String,
 }
 
 /// What the reader filled one field in with.
@@ -273,6 +275,10 @@ fn alternatives(property: &Value) -> Vec<Alternative> {
             Some(Alternative {
                 value: value.to_owned(),
                 title: option["title"].as_str().unwrap_or(value).to_owned(),
+                description: option["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
             })
         })
         .collect::<Vec<_>>();
@@ -294,6 +300,7 @@ fn alternatives(property: &Value) -> Vec<Alternative> {
             Some(Alternative {
                 value: value.to_owned(),
                 title: title.to_owned(),
+                description: String::new(),
             })
         })
         .collect()

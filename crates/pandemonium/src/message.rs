@@ -660,12 +660,22 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
-    /// Edit the field in this place of the form the agent put under this ticket.
-    EditAnswer(TalkId, u64, usize),
+    /// Pick the row of the reader's own words, the field in this place of
+    /// the form the agent put under this ticket, and give its box the keyboard.
+    PickAnswerOther(TalkId, u64, usize),
+    /// Put the caret of the box the field in this place of the form the
+    /// agent put under this ticket is written in where a press landed,
+    /// selecting to it.
+    WriteAnswer(TalkId, u64, usize, ResizePhase, Position, Position),
     /// Send the form the agent put under this ticket, filled in as it is.
     SendAnswer(TalkId, u64),
-    /// Refuse, on purpose, the question the agent put under this ticket.
-    DeclineAnswer(TalkId, u64),
+    /// Choose the alternative in the last place, of the field in the place
+    /// before it, of the form the agent put under this ticket.
+    ChooseAnswer(TalkId, u64, usize, usize),
+    /// Show the page in this place of the form the agent put under this ticket.
+    ShowAnswerPage(TalkId, u64, usize),
+    /// Fold the form the agent put under this ticket down to its tabs, or open it again.
+    FoldAnswer(TalkId, u64),
     /// Walk away from the question the agent put under this ticket.
     CancelAnswer(TalkId, u64),
     /// Open the page the agent sent the reader to under this ticket.
