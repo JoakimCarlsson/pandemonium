@@ -16,9 +16,6 @@ use crate::desktop;
 use crate::editor;
 use crate::keymap::Action;
 
-/// The column `gq` wraps at when the reader has set no guide.
-const WRAP_COLUMN: usize = 80;
-
 /// The system clipboard, as modal editing reaches it.
 struct Desktop;
 
@@ -67,7 +64,15 @@ impl App {
             top,
             rows,
             margin: editor::SCROLL_MARGIN,
-            wrap: self.preferences.display.wrap_guide.unwrap_or(WRAP_COLUMN),
+            wrap: self
+                .preferences
+                .language(
+                    file.borrow()
+                        .buffer()
+                        .language()
+                        .map(|language| language.name()),
+                )
+                .line_length,
             folds: &folds,
         };
         let vim = &mut self.vim;

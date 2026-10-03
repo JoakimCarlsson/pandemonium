@@ -194,8 +194,6 @@ pub struct TabMenu {
 pub enum MenuTarget {
     /// One tab of one of the editor panes.
     Tab(PaneId, Item),
-    /// One of the editor panes itself.
-    Pane(PaneId),
     /// The menu of registered workspace tools.
     Tools,
     /// The control that adds another project to the window.

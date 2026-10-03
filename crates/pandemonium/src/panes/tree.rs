@@ -38,19 +38,6 @@ pub enum SplitDirection {
 }
 
 impl SplitDirection {
-    /// Every direction, in the order a menu offers them.
-    pub const ALL: [Self; 4] = [Self::Right, Self::Left, Self::Up, Self::Down];
-
-    /// What the direction is called where it is offered.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Left => "Split Left",
-            Self::Right => "Split Right",
-            Self::Up => "Split Up",
-            Self::Down => "Split Down",
-        }
-    }
-
     /// The axis a split in this direction divides its panes along.
     pub const fn axis(self) -> Axis {
         match self {
@@ -714,11 +701,6 @@ impl PaneTree {
             }
         });
         empty
-    }
-
-    /// Whether the window is divided at all.
-    pub fn is_split(&self) -> bool {
-        matches!(self.root, Node::Split(_))
     }
 
     /// Splits the pane `id` names `direction`-ward, and names the new pane.

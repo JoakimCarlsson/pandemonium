@@ -1491,14 +1491,8 @@ impl App {
                     .collect::<Vec<_>>();
                 panes::tab_menu(pane, &tabs, item)
             }
-            MenuTarget::Pane(pane) => {
-                let mut items = self.tool_menu(Some(pane));
-                items.push(pm_ui::menu_separator());
-                items.extend(panes::pane_menu(pane, self.panes.is_split()));
-                items
-            }
             MenuTarget::Tools => {
-                let mut items = self.tool_menu(None);
+                let mut items = self.tool_menu();
                 items.push(pm_ui::menu_separator());
                 items.push(pm_ui::menu_entry(
                     "Reset Window Layout",

@@ -36,6 +36,9 @@ const LINE_HEIGHTS: RangeInclusive<f32> = 1.0..=2.5;
 /// How many lines of scrollback a terminal can be asked to keep.
 const SCROLLBACKS: RangeInclusive<f32> = 1_000.0..=100_000.0;
 
+/// The range of prose widths, stepped by twenty columns.
+pub(super) const LINE_LENGTHS: RangeInclusive<f32> = 20.0..=240.0;
+
 /// How wide a step of indentation can be.
 pub(super) const TAB_SIZES: RangeInclusive<f32> = 1.0..=16.0;
 
@@ -138,6 +141,8 @@ pub enum Preference {
     VimClipboard,
     /// How wide a step of indentation is where a file does not say.
     TabSize,
+    /// The column prose is wrapped to.
+    LineLength,
     /// Whether a step of indentation is a tab where a file does not say.
     HardTabs,
     /// Whether the gutter numbers the lines.
@@ -302,6 +307,8 @@ pub struct Preferences {
     pub vim_bindings: Vec<VimBinding>,
     /// How wide a step of indentation is where a file does not say.
     pub tab_size: usize,
+    /// The column prose is wrapped to.
+    pub line_length: usize,
     /// Whether a step of indentation is a tab where a file does not say.
     pub hard_tabs: bool,
     /// What a pane of text draws around and over its text.
@@ -360,6 +367,7 @@ impl Default for Preferences {
             vim_clipboard: pm_vim::ClipboardUse::default(),
             vim_bindings: Vec::new(),
             tab_size: Indent::default().width,
+            line_length: 80,
             hard_tabs: false,
             display: Display::default(),
             split_diff: false,
@@ -466,6 +474,7 @@ fields! {
     VimMode => vim_mode,
     VimClipboard => vim_clipboard,
     TabSize => tab_size,
+    LineLength => line_length,
     HardTabs => hard_tabs,
     LineNumbers => display.line_numbers,
     RelativeLineNumbers => display.relative_line_numbers,
@@ -567,6 +576,10 @@ impl Preferences {
             Preference::TabSize => {
                 self.tab_size = stepped(self.tab_size as f32, step, 1.0, TAB_SIZES) as usize;
             }
+            Preference::LineLength => {
+                self.line_length =
+                    stepped(self.line_length as f32, step, 20.0, LINE_LENGTHS) as usize;
+            }
             Preference::ScrollSensitivity => {
                 self.scroll_sensitivity =
                     stepped(self.scroll_sensitivity, step, 0.25, SENSITIVITIES);
@@ -588,6 +601,7 @@ impl Preferences {
             Preference::TerminalScrollback => format!("{}", self.terminal_scrollback),
             Preference::HealthRetries => self.health_retries.to_string(),
             Preference::TabSize => format!("{}", self.tab_size),
+            Preference::LineLength => self.line_length.to_string(),
             Preference::ScrollSensitivity => format!("{:.2}×", self.scroll_sensitivity),
             _ => return None,
         })

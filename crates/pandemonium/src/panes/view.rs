@@ -241,7 +241,7 @@ fn pane_view(
                 tab_bar(
                     theme,
                     tabs,
-                    pane_actions(theme, id, divided, previewable),
+                    pane_controls(theme, id, divided, previewable),
                     focused,
                 ),
             ))
@@ -335,22 +335,19 @@ fn pane_tab(pane: PaneId, held: &TabEntry, active: bool, bounds: Bounds) -> Tab<
 }
 
 /// Builds the pane's own controls, at the end of its bar of tabs.
-fn pane_actions(theme: &Theme, id: PaneId, divided: bool, previewable: bool) -> Div<Message> {
+fn pane_controls(theme: &Theme, id: PaneId, divided: bool, previewable: bool) -> Div<Message> {
     h_flex()
         .h_full()
-        .px(1.5)
+        .when(previewable || divided, |controls| controls.px(1.5))
         .gap(1)
         .items_center()
-        .when(previewable, |actions| {
-            actions.child(
+        .when(previewable, |controls| {
+            controls.child(
                 icon_button(theme, IconName::Eye, Message::PreviewFile(id)).tooltip("Open Preview"),
             )
         })
-        .child(
-            icon_button(theme, IconName::Split, Message::ShowPaneMenu(id)).tooltip("Pane Actions"),
-        )
-        .when(divided, |actions| {
-            actions.child(
+        .when(divided, |controls| {
+            controls.child(
                 icon_button(theme, IconName::Close, Message::ClosePane(id)).tooltip("Close Pane"),
             )
         })
@@ -407,24 +404,6 @@ fn shortcut_row(theme: &Theme, shortcut: &Shortcut) -> Div<Message> {
                 .text_sm()
                 .color(theme.colors.text_muted),
         )
-}
-
-/// The ways one pane can be divided, and what else can be done to it.
-///
-/// The four directions are the whole menu, as they are in Zed: splitting is
-/// the one thing a pane does to itself, and closing is the one thing that
-/// undoes it.
-pub fn pane_menu(id: PaneId, divided: bool) -> Vec<MenuItem<Message>> {
-    let mut items = SplitDirection::ALL
-        .into_iter()
-        .map(|direction| menu_entry(direction.label(), Some(Message::SplitPane(id, direction))))
-        .collect::<Vec<_>>();
-    items.push(menu_separator());
-    items.push(menu_entry(
-        "Close Pane",
-        divided.then_some(Message::ClosePane(id)),
-    ));
-    items
 }
 
 /// What can be done about a file being closed with changes that are not saved.

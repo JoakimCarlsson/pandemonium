@@ -335,7 +335,7 @@ impl Operator {
             Self::Rewrap | Self::RewrapKeep => {
                 let (first, last) = span.line_range();
                 let lines = buffer.line_count();
-                format::rewrap(buffer, first, last, store.wrap);
+                pm_text::rewrap(buffer, first, last, store.wrap);
                 let last = (last + buffer.line_count()).saturating_sub(lines);
                 match self == Self::Rewrap {
                     true => line_start(

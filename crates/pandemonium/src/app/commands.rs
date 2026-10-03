@@ -479,7 +479,7 @@ impl App {
         if served {
             return self.begin_save(self.active_language_settings().format_on_save);
         }
-        self.format_externally();
+        self.format_locally(true);
         self.save_active();
     }
 

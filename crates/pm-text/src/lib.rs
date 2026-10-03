@@ -11,6 +11,7 @@ mod buffer;
 mod cursor;
 mod diagnostic;
 mod find;
+mod format;
 pub mod frame;
 mod grammar;
 mod hint;
@@ -28,6 +29,7 @@ pub use buffer::Buffer;
 pub use cursor::{Motion, Position, Selection};
 pub use diagnostic::{Diagnostic, Severity};
 pub use find::{Finder, Query};
+pub use format::{reflow_markdown, rewrap};
 pub use hint::Hint;
 pub use indent::Indent;
 pub use language::{

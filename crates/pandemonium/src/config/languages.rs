@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use pm_text::Indent;
 
-use crate::config::preferences::{Preferences, Step, TAB_SIZES, stepped};
+use crate::config::preferences::{LINE_LENGTHS, Preferences, Step, TAB_SIZES, stepped};
 
 /// What lays a file out when it is saved.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -64,6 +64,8 @@ impl Formatter {
 pub enum LanguageSetting {
     /// How wide a step of indentation and a tab are.
     TabSize,
+    /// The column prose is wrapped to.
+    LineLength,
     /// Whether indentation is written as tabs.
     HardTabs,
     /// Whether the file is laid out when it is saved.
@@ -85,6 +87,8 @@ pub enum LanguageSetting {
 pub struct LanguageOverrides {
     /// How wide a step of indentation and a tab are.
     pub tab_size: Option<usize>,
+    /// The column prose is wrapped to.
+    pub line_length: Option<usize>,
     /// Whether indentation is written as tabs.
     pub hard_tabs: Option<bool>,
     /// Whether the file is laid out when it is saved.
@@ -106,6 +110,8 @@ pub struct LanguageOverrides {
 pub struct LanguageSettings {
     /// How a file in the language is indented, and how wide a tab is.
     pub indent: Indent,
+    /// The column prose is wrapped to.
+    pub line_length: usize,
     /// Whether the language says how its files are indented, over what their lines show.
     pub indent_fixed: bool,
     /// Whether the file is laid out when it is saved.
@@ -132,6 +138,7 @@ impl LanguageOverrides {
     pub fn sets(&self, setting: LanguageSetting) -> bool {
         match setting {
             LanguageSetting::TabSize => self.tab_size.is_some(),
+            LanguageSetting::LineLength => self.line_length.is_some(),
             LanguageSetting::HardTabs => self.hard_tabs.is_some(),
             LanguageSetting::FormatOnSave => self.format_on_save.is_some(),
             LanguageSetting::OrganizeImportsOnSave => self.organize_imports_on_save.is_some(),
@@ -146,6 +153,7 @@ impl LanguageOverrides {
     pub fn clear(&mut self, setting: LanguageSetting) {
         match setting {
             LanguageSetting::TabSize => self.tab_size = None,
+            LanguageSetting::LineLength => self.line_length = None,
             LanguageSetting::HardTabs => self.hard_tabs = None,
             LanguageSetting::FormatOnSave => self.format_on_save = None,
             LanguageSetting::OrganizeImportsOnSave => self.organize_imports_on_save = None,
@@ -169,6 +177,7 @@ impl Preferences {
                 width: overrides.tab_size.unwrap_or(self.tab_size),
                 tabs: overrides.hard_tabs.unwrap_or(self.hard_tabs),
             },
+            line_length: overrides.line_length.unwrap_or(self.line_length),
             indent_fixed: overrides.tab_size.is_some() || overrides.hard_tabs.is_some(),
             format_on_save: overrides.format_on_save.unwrap_or(self.format_on_save),
             organize_imports_on_save: overrides
@@ -214,19 +223,28 @@ impl Preferences {
             LanguageSetting::FinalNewline => {
                 overrides.final_newline = Some(!current.final_newline);
             }
-            LanguageSetting::TabSize | LanguageSetting::Formatter => {}
+            LanguageSetting::TabSize | LanguageSetting::LineLength | LanguageSetting::Formatter => {
+            }
         }
         self.forget_empty(name);
     }
 
     /// Moves a number setting of the language called `name` one `step`.
     pub fn step_language(&mut self, name: &str, setting: LanguageSetting, step: Step) {
-        if setting != LanguageSetting::TabSize {
-            return;
+        let current = self.language(Some(name));
+        let overrides = self.languages.entry(name.to_owned()).or_default();
+        match setting {
+            LanguageSetting::TabSize => {
+                overrides.tab_size =
+                    Some(stepped(current.indent.width as f32, step, 1.0, TAB_SIZES) as usize);
+            }
+            LanguageSetting::LineLength => {
+                overrides.line_length =
+                    Some(stepped(current.line_length as f32, step, 20.0, LINE_LENGTHS) as usize);
+            }
+            _ => {}
         }
-        let width = self.language(Some(name)).indent.width;
-        let moved = stepped(width as f32, step, 1.0, TAB_SIZES) as usize;
-        self.languages.entry(name.to_owned()).or_default().tab_size = Some(moved);
+        self.forget_empty(name);
     }
 
     /// Lays the language called `name`'s files out with `formatter`.
