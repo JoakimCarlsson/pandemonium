@@ -14,7 +14,7 @@ use std::path::Path;
 use pm_acp::{Answer, Exit, Request, Run};
 use pm_core::Scope;
 
-use crate::agent::{RESULT_LINES, TalkId};
+use crate::agent::TalkId;
 use crate::app::App;
 use crate::terminal::{Shell, ShellId};
 
@@ -106,7 +106,7 @@ impl App {
             let Some(shell) = self.terminals.get(*scope, *id) else {
                 continue;
             };
-            let tail = shell.borrow().tail(RESULT_LINES);
+            let tail = shell.borrow().text();
             if let Some(talk) = self.agents.get_mut(*talk) {
                 changed |= talk.show_terminal(terminal, tail);
             }
@@ -194,6 +194,10 @@ impl App {
             return gone();
         };
         if let Some(shell) = self.terminals.get(scope, id) {
+            let output = shell.borrow().text();
+            if let Some(talk) = self.agents.get_mut(talk) {
+                talk.show_terminal(terminal, output);
+            }
             shell.borrow_mut().kill();
         }
         self.terminals.release(scope, id);

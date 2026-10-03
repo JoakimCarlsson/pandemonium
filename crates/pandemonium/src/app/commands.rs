@@ -186,6 +186,13 @@ impl App {
                     return self.apply(Message::ShowAgentModes(session));
                 }
             }
+            Action::ToggleAgentDetails => {
+                if let Some(session) = self.focused_talk()
+                    && let Some(talk) = self.agents.get_mut(session)
+                {
+                    talk.toggle_all_details();
+                }
+            }
             Action::CycleAgentMode => {
                 if let Some(session) = self.focused_talk() {
                     return self.apply(Message::CycleAgentMode(session));

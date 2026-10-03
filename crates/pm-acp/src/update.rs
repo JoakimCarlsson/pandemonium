@@ -9,8 +9,9 @@
 //! it now stands, not a diff against what it was. [`Tools`] keeps the running
 //! picture and every event carries the whole of it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -18,7 +19,7 @@ use crate::elicitation::Elicitation;
 use crate::limits::Limits;
 use crate::request::Request;
 
-/// The tool calls of one session, by the identity the agent gave each.
+/// The tool calls of one session, keyed by the identity the agent gave each.
 pub type Tools = BTreeMap<String, ToolCall>;
 
 /// Something the agent has said or asked, on its way to the window.
@@ -265,6 +266,32 @@ pub struct ToolCall {
     /// What the tool gave back, where the agent passed that on as it was
     /// rather than as output of its own.
     pub returned: Option<String>,
+    /// When the call first became pending or running.
+    pub started: Option<Instant>,
+    /// When the call first stopped running, however it stopped.
+    pub finished: Option<Instant>,
+    /// What the agent reported when the call failed, as it reported it.
+    pub error: Option<String>,
+    /// The call that launched the subagent making this call.
+    pub parent: Option<String>,
+    /// Whether this card represents a delegated agent's work.
+    pub subagent: bool,
+}
+
+impl ToolCall {
+    /// Whether the call is awaiting completion.
+    pub fn is_running(&self) -> bool {
+        matches!(self.status, Status::Pending | Status::Running)
+    }
+
+    /// The elapsed time, frozen at the first completion update.
+    pub fn elapsed(&self) -> Duration {
+        self.started.map_or(Duration::ZERO, |started| {
+            self.finished
+                .unwrap_or_else(Instant::now)
+                .saturating_duration_since(started)
+        })
+    }
 }
 
 /// What kind of work a tool call does.
@@ -303,6 +330,10 @@ pub enum Status {
     Done,
     /// Finished badly.
     Failed,
+    /// Stopped before it finished, by the reader or on their behalf.
+    Cancelled,
+    /// Cut off with its agent, so how it ended is not known.
+    Disconnected,
 }
 
 /// Something a tool call has produced.
@@ -423,7 +454,17 @@ pub(crate) fn event(update: &Value, tools: &mut Tools) -> Option<Event> {
         "user_message_chunk" => Some(Event::Said(Voice::Reader, text(&update["content"])?)),
         "agent_message_chunk" => Some(Event::Said(Voice::Agent, text(&update["content"])?)),
         "agent_thought_chunk" => Some(Event::Said(Voice::Thought, text(&update["content"])?)),
-        "tool_call" | "tool_call_update" => Some(Event::Ran(merge(update, tools)?)),
+        "tool_call" | "tool_call_update" => {
+            let call = merge(update, tools)?;
+            (!call.title.is_empty()
+                || call.name.as_ref().is_some_and(|name| !name.is_empty())
+                || call.kind != Kind::Other
+                || call.argument.is_some()
+                || !call.locations.is_empty()
+                || !call.output.is_empty()
+                || call.returned.is_some())
+            .then_some(Event::Ran(call))
+        }
         "plan" => Some(Event::Planned(steps(&update["entries"]))),
         "available_commands_update" => Some(Event::Offers(commands(&update["availableCommands"]))),
         "current_mode_update" => Some(Event::Mode(update["currentModeId"].as_str()?.to_owned())),
@@ -620,6 +661,11 @@ fn merge(update: &Value, tools: &mut Tools) -> Option<ToolCall> {
         locations: Vec::new(),
         argument: None,
         returned: None,
+        started: None,
+        finished: None,
+        error: None,
+        parent: None,
+        subagent: false,
     });
 
     if let Some(title) = update["title"].as_str() {
@@ -628,11 +674,24 @@ fn merge(update: &Value, tools: &mut Tools) -> Option<ToolCall> {
     if let Some(name) = update["name"].as_str() {
         call.name = Some(name.to_owned());
     }
+    call.subagent |= matches!(call.name.as_deref(), Some("Task" | "Agent"))
+        || update["rawInput"]["subagent_type"].is_string();
     if let Some(kind) = update["kind"].as_str() {
         call.kind = self::kind(kind);
     }
     if let Some(status) = update["status"].as_str() {
-        call.status = self::status(status);
+        settle(
+            call,
+            match self::status(status) {
+                Status::Failed if cancelled(&update["_meta"]) => Status::Cancelled,
+                status => status,
+            },
+        );
+        if call.status != Status::Failed {
+            call.error = None;
+        } else if let Some(error) = error(update) {
+            call.error = Some(error);
+        }
     }
     if let Some(output) = update["content"].as_array() {
         call.output = output.iter().filter_map(self::output).collect();
@@ -646,11 +705,113 @@ fn merge(update: &Value, tools: &mut Tools) -> Option<ToolCall> {
     if let Some(returned) = returned(&update["rawOutput"]) {
         call.returned = Some(returned);
     }
+    if let Some(parent) = update["_meta"]["claudeCode"]["parentToolUseId"].as_str() {
+        call.parent = Some(parent.to_owned());
+    }
     Some(call.clone())
 }
 
+/// Puts `call` at `status`, starting its clock when it starts and stopping
+/// it the first time it stops.
+fn settle(call: &mut ToolCall, status: Status) {
+    call.status = status;
+    match status {
+        Status::Pending | Status::Running => {
+            call.started.get_or_insert_with(Instant::now);
+        }
+        Status::Done | Status::Failed | Status::Cancelled | Status::Disconnected => {
+            call.finished.get_or_insert_with(Instant::now);
+        }
+    }
+}
+
+/// The reasons Claude's adapter stamps on a failed call that never ran
+/// because the reader stopped or refused it, rather than because it broke.
+const CANCELLED: [&str; 3] = ["interrupted", "cancelled", "user-rejected"];
+
+/// Whether `meta` says a failed call was stopped rather than broken.
+fn cancelled(meta: &Value) -> bool {
+    meta["claudeCode"]["nonExecutionKind"]
+        .as_str()
+        .is_some_and(|kind| CANCELLED.contains(&kind))
+}
+
+/// The error the update failing a call carried: the text it was given as
+/// content, or else what the tool gave back.
+fn error(update: &Value) -> Option<String> {
+    let said = update["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(output)
+        .filter_map(|output| match output {
+            Output::Said(text) => Some(text),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!said.trim().is_empty())
+        .then_some(said)
+        .or_else(|| returned(&update["rawOutput"]))
+}
+
+/// Stops every call still running at `status`, or, given a `root`, that
+/// call and every running call made beneath it, with an event for each.
+///
+/// This is for an ending the agent has confirmed for the calls as a whole: a
+/// turn it says was cancelled, a subagent it says was, or a process that has
+/// gone. A call beneath `root` that has already stopped keeps how it
+/// stopped; `root` itself takes the ending it was given.
+pub(crate) fn halt(tools: &mut Tools, root: Option<&str>, status: Status) -> Vec<Event> {
+    let within = root.map(|root| beneath(tools, root));
+    tools
+        .values_mut()
+        .filter(|call| {
+            within
+                .as_ref()
+                .is_none_or(|within| within.contains(&call.id))
+                && (call.is_running() || root == Some(call.id.as_str()))
+        })
+        .map(|call| {
+            settle(call, status);
+            Event::Ran(call.clone())
+        })
+        .collect()
+}
+
+/// The identities of `root` and of every call made beneath it, at whatever
+/// depth.
+fn beneath(tools: &Tools, root: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::from([root.to_owned()]);
+    loop {
+        let more = tools
+            .values()
+            .filter(|call| {
+                !found.contains(&call.id)
+                    && call
+                        .parent
+                        .as_ref()
+                        .is_some_and(|parent| found.contains(parent))
+            })
+            .map(|call| call.id.clone())
+            .collect::<Vec<_>>();
+        if more.is_empty() {
+            return found;
+        }
+        found.extend(more);
+    }
+}
+
 /// The input fields that name what a tool works on, most telling first.
-const ARGUMENTS: [&str; 5] = ["command", "pattern", "query", "url", "description"];
+const ARGUMENTS: [&str; 7] = [
+    "command",
+    "pattern",
+    "query",
+    "url",
+    "description",
+    "file_path",
+    "path",
+];
 
 /// The one thing `input` gave a tool to work on, where it names one.
 ///
@@ -659,6 +820,9 @@ const ARGUMENTS: [&str; 5] = ["command", "pattern", "query", "url", "description
 /// command given as a list of words is those words, as a shell would read
 /// them back.
 fn argument(input: &Value) -> Option<String> {
+    if let Some(argument) = input.as_str() {
+        return Some(argument.to_owned());
+    }
     ARGUMENTS.iter().find_map(|field| match &input[*field] {
         Value::String(argument) => Some(argument.clone()),
         Value::Array(words) => {
@@ -677,10 +841,28 @@ fn returned(output: &Value) -> Option<String> {
     match output {
         Value::Null => None,
         Value::String(text) => Some(text.clone()),
-        Value::Object(fields) => ["output", "stdout", "result"]
+        Value::Object(fields)
+            if ![
+                "exitCode",
+                "exit_code",
+                "exitStatus",
+                "exit_status",
+                "error",
+                "matches",
+                "files",
+                "numMatches",
+                "matchCount",
+                "match_count",
+                "count",
+            ]
             .iter()
-            .find_map(|field| fields.get(*field)?.as_str().map(str::to_owned))
-            .or_else(|| Some(output.to_string())),
+            .any(|key| fields.contains_key(*key)) =>
+        {
+            ["output", "stdout", "result"]
+                .iter()
+                .find_map(|field| fields.get(*field)?.as_str().map(str::to_owned))
+                .or_else(|| Some(output.to_string()))
+        }
         output => Some(output.to_string()),
     }
 }
