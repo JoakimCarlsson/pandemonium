@@ -11,11 +11,14 @@ use pm_core::Scope;
 use crate::agent::TalkId;
 use crate::editor::FileId;
 use crate::image::ImageId;
+use crate::panes::Tool;
 use crate::review::ChangeId;
 
 /// One thing a pane can hold in a tab.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Item {
+    /// A workspace tool, hosted by the same pane as any document tab.
+    Tool(Tool),
     /// A file, open in the editor.
     File(FileId),
     /// A picture, open to be looked at.
@@ -104,6 +107,6 @@ impl Item {
     /// Whether this belongs to the window rather than to one worktree, and
     /// so is drawn whichever worktree the window is showing.
     pub fn is_window_wide(self) -> bool {
-        matches!(self, Self::Settings)
+        matches!(self, Self::Settings | Self::Tool(_))
     }
 }

@@ -50,6 +50,8 @@ impl App {
             Action::AcceptPredictionWord => self.accept_prediction(true),
             Action::DismissPrediction => self.dismiss_prediction(),
             Action::ShowCommands => self.open_picker(Kind::Commands),
+            Action::ShowTool(tool) => return self.apply(Message::ShowTool(tool)),
+            Action::ResetWindowLayout => return self.apply(Message::ResetWindowLayout),
             Action::InstallLanguageServer => self.open_picker(Kind::LanguageServers),
             Action::RenameTerminal => {
                 if let Some(id) = self
@@ -78,9 +80,15 @@ impl App {
                 self.open_settings();
                 self.settings.show(crate::settings::SettingsPage::Keymap);
             }
-            Action::ToggleSidebar => return self.apply(Message::TogglePrimarySidebar),
-            Action::TogglePanel => return self.apply(Message::ToggleBottomPanel),
-            Action::ToggleSecondarySidebar => return self.apply(Message::ToggleSecondarySidebar),
+            Action::ToggleSidebar => {
+                return self.apply(Message::ToggleTool(crate::panes::Tool::Projects));
+            }
+            Action::TogglePanel => {
+                return self.apply(Message::ToggleTool(crate::panes::Tool::Terminal));
+            }
+            Action::ToggleSecondarySidebar => {
+                return self.apply(Message::ToggleTool(crate::panes::Tool::Files));
+            }
             Action::CloseWindow => return self.apply(Message::CloseWindow),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
             Action::AddProject => return self.apply(Message::OpenProject),
@@ -159,9 +167,7 @@ impl App {
                 self.editor_focused = false;
             }
             Action::ShowChanges => {
-                return self.apply(Message::SetSidebarView(
-                    crate::workspace::SidebarView::Changes,
-                ));
+                return self.apply(Message::ShowTool(crate::panes::Tool::Changes));
             }
             Action::FocusFiles => self.reveal_in_tree(),
             Action::NewFile => return self.apply(Message::NewTreeFile),

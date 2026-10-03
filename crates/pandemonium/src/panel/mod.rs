@@ -1,18 +1,15 @@
-//! The bottom panel: the views that sit under the panes, one in front.
+//! Worktree tools for diagnostics, debugging and shells.
 //!
-//! The panel is a row of views along its top — what the language servers
-//! have found, the program being debugged and the worktree's shells — and
-//! whichever is chosen beneath it. [`PanelView`] names them and
-//! [`bottom_panel`] is the screen; the stores behind each view are where
-//! the things themselves live.
+//! These views supply content to ordinary pane tabs. Their models own the
+//! worktree state; the shared pane tree owns grouping, placement and resizing.
 
 mod problems;
 mod view;
 
 pub use problems::{Problem, ProblemFile};
-pub use view::{Panel, bottom_panel};
+pub use view::{Panel, panel_content};
 
-/// Which of the panel's views is in front.
+/// Which worktree tool view to show.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PanelView {
     /// What the language servers have said about the open files.
@@ -25,10 +22,7 @@ pub enum PanelView {
 }
 
 impl PanelView {
-    /// Every view, in the order the panel's bar offers them.
-    pub const ALL: [Self; 3] = [Self::Problems, Self::Debug, Self::Terminal];
-
-    /// What the bar calls this view.
+    /// What this view is called on its pane tab.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Problems => "Problems",

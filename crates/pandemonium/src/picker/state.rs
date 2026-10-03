@@ -77,6 +77,8 @@ pub enum Kind {
     Rename,
     /// What to call the terminal, which is a prompt too.
     RenameTerminal(ShellId),
+    /// Create or rename a project group, optionally grouping one project.
+    ProjectGroup(Option<usize>, Option<pm_core::ProjectId>),
     /// The name of a local branch to create and check out.
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
@@ -157,6 +159,7 @@ impl Kind {
             Self::Line => "Go to line",
             Self::Rename => "New name",
             Self::RenameTerminal(_) => "What the terminal is called",
+            Self::ProjectGroup(..) => "Group name",
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
@@ -195,6 +198,7 @@ impl Kind {
                 | Self::Watch
                 | Self::Rename
                 | Self::RenameTerminal(_)
+                | Self::ProjectGroup(..)
                 | Self::NewBranch
                 | Self::StashMessage
                 | Self::NewSession

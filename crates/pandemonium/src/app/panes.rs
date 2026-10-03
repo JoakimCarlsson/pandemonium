@@ -20,7 +20,7 @@ use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::{
     self, Content, Contents, Item, PaneId, Saved, SavedKind, SavedTab, Shortcut, SplitDirection,
-    TabEntry,
+    TabEntry, Tool,
 };
 use crate::workspace::{MenuTarget, TabMenu};
 
@@ -135,6 +135,22 @@ impl App {
         self.terminal_focused = false;
         self.changes_focused = false;
         self.tree_focused = false;
+        match self.active_tab() {
+            Some(Item::Tool(Tool::Files)) => {
+                self.editor_focused = false;
+                self.tree_focused = true;
+            }
+            Some(Item::Tool(Tool::Changes)) => {
+                self.editor_focused = false;
+                self.changes_focused = true;
+            }
+            Some(Item::Tool(Tool::Terminal)) => {
+                self.editor_focused = false;
+                self.terminal_focused = true;
+            }
+            Some(Item::Tool(_)) => {}
+            _ => self.content_pane = Some(pane),
+        }
     }
 
     /// Remembers the active file after focus or a tab changes.
@@ -159,6 +175,16 @@ impl App {
 
     /// Shows `item` of `scope` in `pane`, opening a tab for it if need be.
     pub(super) fn show_item(&mut self, pane: PaneId, scope: Scope, item: Item, preview: bool) {
+        let pane = if self
+            .panes
+            .pane(pane)
+            .and_then(|pane| pane.active(self.scope()))
+            .is_some_and(|active| matches!(active, Item::Tool(_)))
+        {
+            self.document_pane()
+        } else {
+            pane
+        };
         if let Some(ui) = self.ui.as_mut() {
             ui.clear_text_selection();
         }
@@ -205,6 +231,7 @@ impl App {
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
+            | Item::Tool(_)
             | Item::Settings => false,
         }
     }
@@ -241,7 +268,8 @@ impl App {
     ///
     /// Without a file of its own the new pane shows what the old one was
     /// showing, which is what splitting a pane is for: the same file, twice,
-    /// at two places in it. A pane showing nothing is not split at all: the
+    /// at two places in it. A tool moves to the new pane instead of opening
+    /// a second instance. A pane showing nothing is not split at all: the
     /// pane it would open could show nothing either, and two empty panes
     /// divide the window for nothing.
     pub(super) fn split_pane(
@@ -260,9 +288,13 @@ impl App {
         if let Some(fresh) = self.panes.pane_mut(fresh) {
             fresh.open(scope, item);
         }
-        self.editor_focused = true;
-        self.terminal_focused = false;
-        self.follow_focused_file();
+        if matches!(item, Item::Tool(_)) {
+            if let Some(source) = self.panes.pane_mut(pane) {
+                source.close(item);
+            }
+            self.panes.close_if_empty(pane);
+        }
+        self.focus_pane(fresh);
         self.store();
     }
 
@@ -277,10 +309,8 @@ impl App {
             return;
         }
         if self.panes.close(pane) {
-            self.editor_focused = true;
-            self.terminal_focused = false;
+            self.focus_pane(self.panes.focus());
             self.sweep();
-            self.follow_focused_file();
             self.store();
         }
     }
@@ -304,7 +334,7 @@ impl App {
             | Item::Excerpts(scope)
             | Item::Search(scope)
             | Item::Agent(scope, _) => Some(scope),
-            Item::Settings => None,
+            Item::Settings | Item::Tool(_) => None,
         }
     }
 
@@ -523,10 +553,11 @@ impl App {
         if let Some(pane) = self.panes.pane_mut(pane) {
             close(pane);
         }
-        self.panes.close_empty();
+        self.panes.close_if_empty(pane);
         self.remember_closed(&before);
         self.sweep();
-        self.follow_focused_file();
+        self.focus_pane(self.panes.focus());
+        self.store();
     }
 
     /// Takes down every file that was held before and is not held now.
@@ -560,7 +591,14 @@ impl App {
     /// A pane names its files by where they live rather than by the id this
     /// run gave them, which is the only thing the next launch can act on.
     pub(super) fn saved_panes(&self) -> Saved {
-        self.panes.save(&|item| {
+        self.panes.save(self.scope(), &|item| {
+            if let Item::Tool(tool) = item {
+                return Some(SavedTab {
+                    kind: SavedKind::Tool,
+                    tool: Some(tool),
+                    ..SavedTab::default()
+                });
+            }
             if item == Item::Settings {
                 return Some(SavedTab {
                     kind: SavedKind::Settings,
@@ -684,7 +722,12 @@ impl App {
         let sessions = &self.sessions;
         let bootstrap = &self.preferences.bootstrap;
         let mut followed_outlines = Vec::new();
+        let mut tools = BTreeSet::new();
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
+            if tab.kind == SavedKind::Tool {
+                let tool = tab.tool?;
+                return tools.insert(tool).then_some((None, Item::Tool(tool)));
+            }
             if tab.kind == SavedKind::Settings {
                 return Some((None, Item::Settings));
             }
@@ -764,6 +807,11 @@ impl App {
             }
             Some((Some(scope), Item::File(file)))
         });
+        self.content_pane = self.panes.panes().into_iter().find(|id| {
+            self.panes.pane(*id).is_some_and(|pane| {
+                pane.is_empty() || pane.items().any(|item| !matches!(item, Item::Tool(_)))
+            })
+        });
         for (scope, path) in followed_outlines {
             let Some(file) = self.editor.opened(scope, &path) else {
                 continue;
@@ -788,6 +836,7 @@ impl App {
         }
         self.refresh_excerpts();
         self.sweep();
+        self.focus_pane(self.panes.focus());
     }
 
     /// Opens what the reviews in the panes show, then closes every file no
@@ -928,6 +977,7 @@ impl App {
                 | Item::Excerpts(_)
                 | Item::Search(_)
                 | Item::Agent(..)
+                | Item::Tool(_)
                 | Item::Settings => {}
             }
         }
@@ -1010,7 +1060,7 @@ impl App {
                 None => pane.append(tab, scope),
             }
         }
-        self.panes.close_empty();
+        self.panes.close_if_empty(drag.from);
         self.focus_pane(landed);
         self.sweep();
         self.store();
@@ -1049,6 +1099,14 @@ impl App {
     /// is only where the name, the icon and the marks are read from.
     pub(super) fn tab_entry(&self, item: Item) -> Option<TabEntry> {
         match item {
+            Item::Tool(tool) => Some(TabEntry {
+                item,
+                name: tool.label().to_owned(),
+                icon: tool.icon(),
+                dirty: false,
+                preview: false,
+                pinned: false,
+            }),
             Item::File(file) => {
                 let FileEntry {
                     name,
@@ -1171,6 +1229,7 @@ impl App {
     /// the cells they report their bounds in, so what the window hit-tests a
     /// drop against is exactly what the last frame drew.
     pub(super) fn pane_view(&mut self, theme: &Theme) -> Box<dyn Element<Message>> {
+        self.tree_scroll();
         let mut drawn = Vec::new();
         let mut drawn_tabs = Vec::new();
         let mut cells = Vec::new();
@@ -1202,66 +1261,75 @@ impl App {
         let display = self.preferences.display;
         let shortcuts = self.empty_pane_shortcuts();
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
-        panes::pane_tree(theme, &self.panes, scope, self.editor_focused, &|pane| {
-            let (bounds, bar, tab_bounds) = cells
-                .iter()
-                .find(|(id, _)| *id == pane.id())
-                .map(|(_, cells)| cells.clone())
-                .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
-            let active = pane.active(scope);
-            let file = active.and_then(Item::file);
-            let display = self.display_of(file, display);
-            let conflicted = file.is_some_and(|file| {
-                let Some(scope) = self.editor.scope_of(file) else {
-                    return false;
-                };
-                let Some(document) = self.editor.get(file) else {
-                    return false;
-                };
-                self.reviews
-                    .get(&scope)
-                    .and_then(|review| review.mark(document.borrow().buffer().path()))
-                    == Some(FileStatus::Conflicted)
-            });
-            Contents {
-                tabs: pane
-                    .tabs(scope)
-                    .into_iter()
-                    .filter_map(|item| {
-                        let mut entry = self.tab_entry(item)?;
-                        entry.pinned = pane.is_pinned(item);
-                        Some(entry)
-                    })
-                    .collect(),
-                active,
-                content: self.shown(theme, pane.id(), active, bounds.get().size.width),
-                conflicted,
-                bounds,
-                bar,
-                tab_bounds,
-                link: link
-                    .clone()
-                    .filter(|(open, _)| file == Some(*open))
-                    .map(|(_, span)| span),
-                hovered: talked_about
-                    .clone()
-                    .filter(|(open, _)| file == Some(*open))
-                    .map(|(_, span)| span),
-                found: self.found_in(file),
-                breakpoints: file
-                    .map(|file| self.breakpoints_of(file))
-                    .unwrap_or_default(),
-                stopped: file.and_then(|file| self.stopped_in(file)),
-                caret,
-                prediction_visible: self.preferences.edit_predictions.enabled
-                    && self.completions.is_none(),
-                display,
-                crumbs: file
-                    .filter(|_| display.breadcrumbs)
-                    .and_then(|file| self.crumbs_of(file)),
-                shortcuts: shortcuts.clone(),
-            }
-        })
+        panes::pane_tree(
+            theme,
+            &self.panes,
+            scope,
+            self.editor_focused
+                || self.tree_focused
+                || self.changes_focused
+                || self.terminal_focused,
+            &|pane| {
+                let (bounds, bar, tab_bounds) = cells
+                    .iter()
+                    .find(|(id, _)| *id == pane.id())
+                    .map(|(_, cells)| cells.clone())
+                    .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
+                let active = pane.active(scope);
+                let file = active.and_then(Item::file);
+                let display = self.display_of(file, display);
+                let conflicted = file.is_some_and(|file| {
+                    let Some(scope) = self.editor.scope_of(file) else {
+                        return false;
+                    };
+                    let Some(document) = self.editor.get(file) else {
+                        return false;
+                    };
+                    self.reviews
+                        .get(&scope)
+                        .and_then(|review| review.mark(document.borrow().buffer().path()))
+                        == Some(FileStatus::Conflicted)
+                });
+                Contents {
+                    tabs: pane
+                        .tabs(scope)
+                        .into_iter()
+                        .filter_map(|item| {
+                            let mut entry = self.tab_entry(item)?;
+                            entry.pinned = pane.is_pinned(item);
+                            Some(entry)
+                        })
+                        .collect(),
+                    active,
+                    content: self.shown(theme, pane.id(), active, bounds.get().size.width),
+                    conflicted,
+                    bounds,
+                    bar,
+                    tab_bounds,
+                    link: link
+                        .clone()
+                        .filter(|(open, _)| file == Some(*open))
+                        .map(|(_, span)| span),
+                    hovered: talked_about
+                        .clone()
+                        .filter(|(open, _)| file == Some(*open))
+                        .map(|(_, span)| span),
+                    found: self.found_in(file),
+                    breakpoints: file
+                        .map(|file| self.breakpoints_of(file))
+                        .unwrap_or_default(),
+                    stopped: file.and_then(|file| self.stopped_in(file)),
+                    caret,
+                    prediction_visible: self.preferences.edit_predictions.enabled
+                        && self.completions.is_none(),
+                    display,
+                    crumbs: file
+                        .filter(|_| display.breadcrumbs)
+                        .and_then(|file| self.crumbs_of(file)),
+                    shortcuts: shortcuts.clone(),
+                }
+            },
+        )
     }
 
     /// The commands an empty pane offers, each with the keys it answers to
@@ -1321,6 +1389,9 @@ impl App {
     /// What a pane showing `item` draws beneath its bar of tabs.
     fn shown(&self, theme: &Theme, pane: PaneId, item: Option<Item>, width: f32) -> Content {
         match item {
+            Some(Item::Tool(tool)) => {
+                Content::Built(Box::new(self.tool_content(theme, tool, width)))
+            }
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),
                 None => Content::Empty,
@@ -1432,12 +1503,37 @@ impl App {
                     .collect::<Vec<_>>();
                 panes::tab_menu(pane, &tabs, item)
             }
-            MenuTarget::Pane(pane) => panes::pane_menu(pane, self.panes.is_split()),
-            MenuTarget::Project(project) => crate::workspace::project_menu_items(
-                self.open.get(project)?,
-                &self.session_bases,
-                self.showing_bases,
-            ),
+            MenuTarget::Pane(pane) => {
+                let mut items = self.tool_menu(Some(pane));
+                items.push(pm_ui::menu_separator());
+                items.extend(panes::pane_menu(pane, self.panes.is_split()));
+                items
+            }
+            MenuTarget::Tools => {
+                let mut items = self.tool_menu(None);
+                items.push(pm_ui::menu_separator());
+                items.push(pm_ui::menu_entry(
+                    "Reset Window Layout",
+                    Some(Message::ResetWindowLayout),
+                ));
+                items
+            }
+            MenuTarget::Project(project) => {
+                let mut items = crate::workspace::project_menu_items(
+                    self.open.get(project)?,
+                    &self.session_bases,
+                    self.showing_bases,
+                );
+                items.extend(self.project_group_items(project));
+                items
+            }
+            MenuTarget::ProjectGroup(index) => {
+                self.project_groups.get(index)?;
+                vec![
+                    pm_ui::menu_entry("Rename Group…", Some(Message::RenameProjectGroup(index))),
+                    pm_ui::menu_entry("Remove Group", Some(Message::RemoveProjectGroup(index))),
+                ]
+            }
             MenuTarget::Projects => crate::workspace::add_project_items(),
             MenuTarget::Session(session) => {
                 let held = self.sessions.get(session)?;

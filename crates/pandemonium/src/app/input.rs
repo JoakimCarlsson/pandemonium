@@ -1225,8 +1225,7 @@ impl App {
             self.request_redraw();
             return;
         }
-        if self.secondary_sidebar_open
-            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes
+        if self.tool_visible(crate::panes::Tool::Changes)
             && self.history_graph_open
             && self
                 .pointer
@@ -1339,8 +1338,7 @@ impl App {
     /// Whether a commit message box is on screen: in the sidebar listing the
     /// changes, or in the review pane under the pointer.
     fn commit_showing(&self) -> bool {
-        let listing = self.secondary_sidebar_open
-            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes;
+        let listing = self.tool_visible(crate::panes::Tool::Changes);
         let reviewing = self.scope().is_some_and(|scope| {
             self.pointer
                 .and_then(|at| self.geometry.pane_at(at))

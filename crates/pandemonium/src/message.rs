@@ -17,12 +17,11 @@ use crate::keymap::Action;
 use crate::markdown::DiagramZoom;
 use crate::notice::{NoticeId, NotificationAction};
 use crate::panel::PanelView;
-use crate::panes::{Item, PaneId, SplitDirection, SplitId};
+use crate::panes::{Item, PaneId, SplitDirection, SplitId, Tool};
 use crate::review::comment::{CommentId, Side as CommentSide};
 use crate::review::{ChangeId, ConflictAction, Group, RepositoryAction};
 use crate::settings::{FormField, SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
-use crate::workspace::SidebarView;
 
 /// A matching option on a project search pane.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -221,6 +220,18 @@ pub enum Message {
     CloseProject(ProjectId),
     /// Open the menu of things that can be done to this project.
     ProjectMenu(ProjectId),
+    /// Name a new project group, optionally placing a project in it.
+    NewProjectGroup(Option<ProjectId>),
+    /// Name an existing project group.
+    RenameProjectGroup(usize),
+    /// Remove a group while keeping its projects open.
+    RemoveProjectGroup(usize),
+    /// Fold or unfold a project group.
+    ToggleProjectGroup(usize),
+    /// Open the actions for a project group.
+    ProjectGroupMenu(usize),
+    /// Move a project to a group, or leave it ungrouped.
+    AssignProjectGroup(ProjectId, Option<usize>),
     /// Press, drag or let go of this project's row in the projects sidebar.
     DragProject(ProjectId, ResizeEvent),
     /// Cut a session of the active project from the branch it has out.
@@ -241,18 +252,14 @@ pub enum Message {
     FinishSession(SessionId),
     /// Finish this session, having been told to.
     EndSession(SessionId),
-    /// Resize the sessions sidebar.
-    ResizeSidebar(ResizeEvent),
     /// Minimize the application window.
     MinimizeWindow,
     /// Toggle whether the application window is maximized.
     ToggleMaximizedWindow,
     /// Close the application window.
     CloseWindow,
-    /// Toggle the primary sidebar.
-    TogglePrimarySidebar,
-    /// Toggle the bottom panel.
-    ToggleBottomPanel,
+    /// Close a registered tool, or reopen it when it is closed.
+    ToggleTool(Tool),
     /// Bring this view of the bottom panel to the front, opening the panel.
     ShowPanelView(PanelView),
     /// Close the bottom panel when this view is in front of it, and bring
@@ -278,12 +285,6 @@ pub enum Message {
     RenameTerminal(ShellId),
     /// Drag the terminal's scrollbar, so many lines to a pixel of travel.
     ScrollTerminal(ResizeEvent, f32),
-    /// Toggle the secondary sidebar.
-    ToggleSecondarySidebar,
-    /// Resize the bottom panel.
-    ResizeBottomPanel(ResizeEvent),
-    /// Resize the secondary sidebar.
-    ResizeSecondarySidebar(ResizeEvent),
     /// Resize the Source Control graph.
     ResizeHistoryGraph(ResizeEvent),
     /// Show or hide the Source Control graph.
@@ -492,8 +493,14 @@ pub enum Message {
     CloseOtherTerminals(ShellId),
     /// End every shell of the project.
     CloseAllTerminals,
-    /// Show this in the sidebar that lists the worktree.
-    SetSidebarView(SidebarView),
+    /// Show a registered workspace tool wherever its tab lives.
+    ShowTool(Tool),
+    /// Move a registered workspace tool into this pane.
+    MoveTool(PaneId, Tool),
+    /// Show the menu of workspace tools.
+    ShowToolsMenu,
+    /// Restore the default pane arrangement without closing live tabs.
+    ResetWindowLayout,
     /// Open the active project's changes for review, in a pane.
     OpenReview,
     /// Open the active worktree's changes as excerpts of their files, to be

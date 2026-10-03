@@ -19,6 +19,7 @@ mod drag;
 mod excerpts;
 mod form;
 mod formatter;
+mod groups;
 mod health;
 mod input;
 mod language;
@@ -42,6 +43,7 @@ mod session;
 mod settings;
 mod tasks;
 mod terminal;
+mod tools;
 mod tree;
 mod views;
 
@@ -79,15 +81,12 @@ use crate::keymap::Resolver;
 use crate::message::Message;
 use crate::notice::Notices;
 use crate::onboarding;
-use crate::panel::{Panel, PanelView};
+use crate::panel::PanelView;
 use crate::panes::{Item, PaneTree, Saved};
 use crate::review::Review;
 use crate::settings::Settings;
 use crate::terminal::{Shell, Terminals};
-use crate::workspace::{
-    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panes,
-    SECONDARY_SIDEBAR_RANGE, SidebarView, TabMenu,
-};
+use crate::workspace::{self, Layout, MenuTarget, Panes, TabMenu};
 
 /// The blames that have come back from the threads that asked for them.
 type Blamed = Arc<Mutex<Vec<(editor::FileId, Vec<pm_core::Blame>)>>>;
@@ -325,6 +324,8 @@ pub struct App {
     project_drag: Option<reorder::ProjectDrag>,
     /// Where the projects sidebar's rows came out in the last frame.
     project_list: pm_ui::Bounds,
+    /// Named groups shown in the Projects pane.
+    project_groups: Vec<crate::project_groups::ProjectGroup>,
     /// Whether keystrokes go to the file tree.
     tree_focused: bool,
     /// Where the file tree's rows came out in the last frame.
@@ -333,28 +334,12 @@ pub struct App {
     tree_area: pm_ui::Bounds,
     /// Where the name being typed into the file tree came out.
     tree_field: pm_ui::Bounds,
-    /// Current width and drag state of the sessions sidebar.
-    sidebar: ResizeState,
-    /// Current height and drag state of the bottom panel.
-    bottom_panel: ResizeState,
     /// Current height and drag state of the Source Control graph.
     history_graph: ResizeState,
-    /// Current width and drag state of the secondary sidebar.
-    secondary_sidebar: ResizeState,
-    /// Whether the primary sidebar is visible.
-    primary_sidebar_open: bool,
-    /// Whether the bottom panel is visible.
-    bottom_panel_open: bool,
-    /// Which of the bottom panel's views is in front.
-    panel_view: PanelView,
     /// How far the bottom panel's list of problems is scrolled.
     problems_scroll: pm_ui::Scrolled,
     /// Where the bottom panel's list of problems came out last frame.
     problems_area: pm_ui::Bounds,
-    /// Whether the secondary sidebar is visible.
-    secondary_sidebar_open: bool,
-    /// Which of the worktree's two lists that sidebar is showing.
-    secondary_sidebar_view: SidebarView,
     /// Whether the Source Control graph is visible.
     history_graph_open: bool,
     /// Whether the Source Control changes section is expanded.
@@ -387,6 +372,8 @@ pub struct App {
     mcp_servers: Vec<pm_acp::McpServer>,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
+    /// Last pane used for documents, so tools open files beside their own tab.
+    content_pane: Option<crate::panes::PaneId>,
     /// The panes the last launch left, until the window is ready to open them.
     saved: Saved,
     /// The shells the last launch had running, until they are started again.
@@ -775,37 +762,18 @@ impl App {
             arriving: None,
             project_drag: None,
             project_list: drag::unmeasured(),
+            project_groups: restored.project_groups,
             tree_focused: false,
             tree_rows: drag::unmeasured(),
             tree_area: drag::unmeasured(),
             tree_field: drag::unmeasured(),
-            sidebar: ResizeState::new(
-                layout.primary_sidebar_width,
-                PRIMARY_SIDEBAR_RANGE.0,
-                PRIMARY_SIDEBAR_RANGE.1,
-            ),
-            bottom_panel: ResizeState::new(
-                layout.bottom_panel_height,
-                BOTTOM_PANEL_RANGE.0,
-                BOTTOM_PANEL_RANGE.1,
-            ),
             history_graph: ResizeState::new(
                 layout.history_graph_height,
                 workspace::HISTORY_GRAPH_RANGE.0,
                 workspace::HISTORY_GRAPH_RANGE.1,
             ),
-            secondary_sidebar: ResizeState::new(
-                layout.secondary_sidebar_width,
-                SECONDARY_SIDEBAR_RANGE.0,
-                SECONDARY_SIDEBAR_RANGE.1,
-            ),
-            primary_sidebar_open: layout.primary_sidebar_open,
-            bottom_panel_open: layout.bottom_panel_open,
-            panel_view: PanelView::default(),
             problems_scroll: pm_ui::Scrolled::default(),
             problems_area: pm_ui::Bounds::default(),
-            secondary_sidebar_open: layout.secondary_sidebar_open,
-            secondary_sidebar_view: layout.secondary_sidebar_view,
             history_graph_open: layout.history_graph_open,
             changes_section_open: layout.changes_section_open,
             writing: None,
@@ -822,6 +790,7 @@ impl App {
             agent_servers: restored.agent_servers,
             mcp_servers: restored.mcp_servers,
             panes: PaneTree::default(),
+            content_pane: None,
             saved,
             shells,
             geometry: Geometry::default(),
@@ -928,7 +897,9 @@ impl App {
             return;
         };
         if self.showing_terminals() && self.terminals.count(scope) == 0 {
-            self.bottom_panel_open = false;
+            if let Some(pane) = self.tool_pane(crate::panes::Tool::Terminal) {
+                self.close_item(pane, Item::Tool(crate::panes::Tool::Terminal));
+            }
             self.terminal_focused = false;
         }
     }
@@ -968,7 +939,7 @@ impl App {
             (true, _) if showing(|item| matches!(item, Item::Search(_))) => Some("search"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
-            (true, _) if showing(crate::panes::Item::is_window_wide) => Some("settings"),
+            (true, _) if showing(|item| item == Item::Settings) => Some("settings"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
             _ => None,
@@ -1322,6 +1293,9 @@ impl App {
             self.open_menu(MenuTarget::Terminal(id));
             return;
         }
+        if self.group_command(message) {
+            return;
+        }
         if let Message::ProjectMenu(id) = message {
             self.open_project_menu(id);
             return;
@@ -1378,6 +1352,10 @@ impl App {
             return;
         }
         self.menu = None;
+        if self.tool_command(message) {
+            self.request_redraw();
+            return;
+        }
         if self.tree_command(message) {
             return;
         }
@@ -1389,37 +1367,6 @@ impl App {
             return;
         }
         if self.tab_command(message) {
-            self.request_redraw();
-            return;
-        }
-        if let Message::ResizeSidebar(event) = message {
-            self.fit_panels();
-            let snapped = self
-                .sidebar
-                .resize(event, Axis::Horizontal, ResizeEdge::End);
-            self.primary_sidebar_open = !snapped;
-            self.store_settled(event);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ResizeBottomPanel(event) = message {
-            self.fit_panels();
-            let snapped = self
-                .bottom_panel
-                .resize(event, Axis::Vertical, ResizeEdge::Start);
-            self.bottom_panel_open = !snapped;
-            self.terminal_focused = self.showing_terminals();
-            self.store_settled(event);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ResizeSecondarySidebar(event) = message {
-            self.fit_panels();
-            let snapped = self
-                .secondary_sidebar
-                .resize(event, Axis::Horizontal, ResizeEdge::Start);
-            self.secondary_sidebar_open = !snapped;
-            self.store_settled(event);
             self.request_redraw();
             return;
         }
@@ -1441,19 +1388,6 @@ impl App {
         }
         if message == Message::ToggleChangesSection {
             self.changes_section_open = !self.changes_section_open;
-            self.store();
-            self.request_redraw();
-            return;
-        }
-        if message == Message::TogglePrimarySidebar {
-            self.primary_sidebar_open = !self.primary_sidebar_open;
-            self.store();
-            self.request_redraw();
-            return;
-        }
-        if message == Message::ToggleBottomPanel {
-            self.bottom_panel_open = !self.bottom_panel_open;
-            self.terminal_focused = self.showing_terminals();
             self.store();
             self.request_redraw();
             return;
@@ -1741,13 +1675,7 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::SetSidebarView(view) = message {
-            self.secondary_sidebar_view = view;
-            self.secondary_sidebar_open = true;
-            self.store();
-            self.request_redraw();
-            return;
-        }
+
         if message == Message::ShowStatusBranches {
             self.branch_picker_at = self.opener();
             self.open_picker(crate::picker::Kind::Branches);
@@ -1835,12 +1763,7 @@ impl App {
             self.request_redraw();
             return;
         }
-        if message == Message::ToggleSecondarySidebar {
-            self.secondary_sidebar_open = !self.secondary_sidebar_open;
-            self.store();
-            self.request_redraw();
-            return;
-        }
+
         if message == Message::OpenProject {
             self.ask_project();
             return;
@@ -2349,6 +2272,7 @@ impl App {
             preferences: self.preferences.clone(),
             onboarded: self.onboarded,
             projects: self.open.roots(),
+            project_groups: self.project_groups.clone(),
             active: self
                 .open
                 .active()
@@ -2366,13 +2290,6 @@ impl App {
     /// Which regions are showing right now, and how large they are.
     fn layout(&self) -> Layout {
         Layout {
-            primary_sidebar_open: self.primary_sidebar_open,
-            primary_sidebar_width: self.sidebar.extent(),
-            bottom_panel_open: self.bottom_panel_open,
-            bottom_panel_height: self.bottom_panel.extent(),
-            secondary_sidebar_open: self.secondary_sidebar_open,
-            secondary_sidebar_width: self.secondary_sidebar.extent(),
-            secondary_sidebar_view: self.secondary_sidebar_view,
             history_graph_height: self.history_graph.extent(),
             history_graph_open: self.history_graph_open,
             changes_section_open: self.changes_section_open,
@@ -2390,22 +2307,7 @@ impl App {
         };
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();
-        let width = size.width as f32 / scale;
         let height = size.height as f32 / scale;
-        let reach = (width - REACHABLE_MARGIN).max(0.0);
-        let primary = if self.primary_sidebar_open {
-            self.sidebar.extent()
-        } else {
-            0.0
-        };
-        let secondary = if self.secondary_sidebar_open {
-            self.secondary_sidebar.extent()
-        } else {
-            0.0
-        };
-        self.sidebar.fit(reach - secondary);
-        self.secondary_sidebar.fit(reach - primary);
-        self.bottom_panel.fit(height - REACHABLE_MARGIN);
         self.history_graph.fit(height - REACHABLE_MARGIN);
     }
 
@@ -2753,29 +2655,10 @@ impl App {
         self.follow_agents();
         self.settle_excerpts();
         self.refresh_annotations();
-        let shell = self
-            .showing_terminals()
-            .then(|| self.active_shell())
-            .flatten();
-        let shells = self
-            .scope()
-            .map(|scope| self.terminals.list(scope))
-            .unwrap_or_default();
+        if self.showing_terminals() {
+            self.active_shell();
+        }
         let theme = self.theme();
-        let panel = Panel {
-            view: self.panel_view,
-            shell,
-            shells,
-            focused: self.terminal_focused,
-            linking: self.modifiers.control_key(),
-            problems: match self.bottom_panel_open {
-                true => self.problems(),
-                false => Vec::new(),
-            },
-            problems_scroll: self.problems_scroll.clone(),
-            problems_area: self.problems_area.clone(),
-            debug: self.debug_in_panel(&theme),
-        };
         let showing = self.active_file();
         let drop = self
             .drop_highlight()
@@ -2785,48 +2668,16 @@ impl App {
             })
             .or_else(|| self.project_caret());
         let carried = self.carried_tab().or_else(|| self.carried_entries());
-        let tree_scroll = self.tree_scroll();
-        let layout = self.layout();
         let editor = self.pane_view(&theme);
         let menu = self.menu_items();
         let overlays = self.overlays(&theme);
         let scope = self.scope();
         let sidebar = self.sidebar_projects();
-        let caret = self.caret_solid();
-        let files = workspace::Worktree {
-            listing: scope.and_then(|scope| self.files.get(&scope)).map(|tree| {
-                crate::tree::Listing {
-                    tree,
-                    review: scope.and_then(|scope| self.reviews.get(&scope)),
-                    selection: scope.and_then(|scope| self.selections.get(&scope)),
-                    edit: self.tree_edit.as_ref(),
-                    clipboard: self.tree_clipboard.as_ref(),
-                    dropping: self
-                        .entry_drag
-                        .as_ref()
-                        .filter(|drag| drag.is_carried())
-                        .and_then(|drag| drag.target.as_deref())
-                        .or(self.arriving.as_deref()),
-                    focused: self.tree_focused,
-                    caret,
-                    scroll: tree_scroll,
-                    rows: self.tree_rows.clone(),
-                    area: self.tree_area.clone(),
-                    field: self.tree_field.clone(),
-                }
-            }),
-            review: scope.and_then(|scope| self.reviews.get(&scope)),
-            committing: self.writing == Some(Writing::Commit),
-            caret,
-            commit_bounds: self.commit_bounds.clone(),
-            history_refs_bounds: self.history_refs_bounds.clone(),
-            history_graph_bounds: self.history_graph_bounds.clone(),
-            changes_area: self.changes_area.clone(),
-            history_all: self.history_all,
-            history_graph_height: layout.history_graph_height,
-            history_graph_open: layout.history_graph_open,
-            changes_section_open: layout.changes_section_open,
-        };
+        let review = scope.and_then(|scope| self.reviews.get(&scope));
+        let shells = self
+            .scope()
+            .map_or(0, |scope| self.terminals.list(scope).len());
+        let terminal_visible = self.showing_terminals();
         let server = self.active_file_id().and_then(|file| {
             self.editor
                 .server_states(file)
@@ -2863,10 +2714,8 @@ impl App {
                 workspace::ProjectList {
                     open: &self.open,
                     sessions: &sidebar,
-                    bounds: self.project_list.clone(),
                 },
-                files,
-                layout,
+                review,
                 self.command_center_bounds.clone(),
                 Panes {
                     editor,
@@ -2874,7 +2723,8 @@ impl App {
                     showing,
                     drop,
                     carried,
-                    panel,
+                    shells,
+                    terminal_visible,
                     agents: self
                         .open
                         .active()

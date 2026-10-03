@@ -485,6 +485,7 @@ fn hint(theme: &Theme, kind: Kind) -> Div<Message> {
     let label = match kind {
         Kind::Line => "Enter a line number, or a line and column",
         Kind::Rename => "Enter the new name, everywhere the symbol is used",
+        Kind::ProjectGroup(..) => "Organise projects under a named, collapsible heading",
         Kind::BreakpointCondition | Kind::BreakpointHits => {
             "Passed to the adapter as typed, e.g. 5 or >= 5"
         }

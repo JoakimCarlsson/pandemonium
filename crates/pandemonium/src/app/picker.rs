@@ -158,6 +158,9 @@ impl App {
                 self.set_breakpoint_field(kind, typed)
             }
             (Kind::RenameTerminal(id), _) => self.rename_terminal(id, &typed),
+            (Kind::ProjectGroup(group, project), _) => {
+                self.save_project_group(group, project, &typed)
+            }
             (Kind::Watch, _) => self.save_watch(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
@@ -369,6 +372,7 @@ impl App {
             | Kind::Line
             | Kind::Rename
             | Kind::RenameTerminal(_)
+            | Kind::ProjectGroup(..)
             | Kind::BreakpointCondition
             | Kind::BreakpointHits
             | Kind::BreakpointLog
@@ -544,8 +548,7 @@ impl App {
         }
         self.reread_review_later(scope);
         if !changed {
-            self.secondary_sidebar_view = crate::workspace::SidebarView::Changes;
-            self.secondary_sidebar_open = true;
+            self.show_tool(crate::panes::Tool::Changes);
             return;
         }
 

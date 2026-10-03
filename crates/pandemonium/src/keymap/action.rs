@@ -10,6 +10,8 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+use crate::panes::Tool;
+
 /// Where a cursor is sent, moving it or selecting as it goes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Travel {
@@ -357,6 +359,10 @@ pub enum Action {
     CollapseFiles,
     /// Open the settings screen.
     OpenSettings,
+    /// Restore the default arrangement while retaining open tabs.
+    ResetWindowLayout,
+    /// Show a registered workspace tool in its pane.
+    ShowTool(Tool),
     /// Open language discovery and server configuration.
     OpenLanguages,
     /// Choose language support from the extension catalogue.
@@ -415,6 +421,11 @@ pub enum Action {
 /// commands sit together rather than alphabetically.
 const CATALOGUE: &[(Action, &str, &str)] = &[
     (
+        Action::ResetWindowLayout,
+        "window.reset_layout",
+        "Reset Window Layout",
+    ),
+    (
         Action::ToggleAgentDetails,
         "agent::ToggleDetails",
         "Toggle Agent Details",
@@ -427,6 +438,36 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     ),
     (Action::ShowFiles, "palette.files", "Go to File"),
     (Action::ShowProjects, "palette.projects", "Go to Project"),
+    (
+        Action::ShowTool(Tool::Projects),
+        "pane.projects",
+        "Open Projects Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Files),
+        "pane.files",
+        "Open Files Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Changes),
+        "pane.changes",
+        "Open Changes Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Terminal),
+        "pane.terminal",
+        "Open Terminal Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Problems),
+        "pane.problems",
+        "Open Problems Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Debug),
+        "pane.debug",
+        "Open Debug Console Pane",
+    ),
     (Action::ShowSessions, "palette.sessions", "Go to Session"),
     (Action::ShowSymbols, "palette.symbols", "Go to Symbol"),
     (Action::ShowOutline, "view.outline", "Show Outline"),
@@ -934,7 +975,7 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (
         Action::ToggleSidebar,
         "window.toggle_sidebar",
-        "Toggle Sidebar",
+        "Toggle Projects Pane",
     ),
     (
         Action::TogglePanel,
@@ -944,7 +985,7 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (
         Action::ToggleSecondarySidebar,
         "window.toggle_secondary_sidebar",
-        "Toggle Secondary Sidebar",
+        "Toggle Files Pane",
     ),
     (
         Action::ToggleFullscreen,

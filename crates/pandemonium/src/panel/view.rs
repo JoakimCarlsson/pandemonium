@@ -1,24 +1,19 @@
-//! The bottom panel as it is drawn: the bar of views, and the one in front.
-//!
-//! The bar along the top names every view and lights the chosen one, with
-//! the view's own actions and the control that closes the panel at its far
-//! end. The terminal view is the shell in front beside the list of every
-//! shell the worktree is running, once there is more than one to list.
+//! Content for the Problems, Debug Console and Terminal tool tabs.
 
 use pm_ui::{
-    Bounds, Div, IconName, IconSize, Scrolled, Styled, Theme, h_flex, icon, icon_button, rule,
-    text, v_flex, view_tab,
+    Bounds, Div, IconName, IconSize, Scrolled, Styled, Theme, h_flex, icon, icon_button, text,
+    v_flex,
 };
 
 use crate::message::Message;
 use crate::panel::PanelView;
-use crate::panel::problems::{ProblemFile, badge, problems_view};
+use crate::panel::problems::{ProblemFile, problems_view};
 use crate::terminal::{Shell, ShellEntry, terminal_view};
 
 /// How wide the list of shells beside the terminal is.
 const SHELL_LIST_WIDTH: f32 = 180.0;
 
-/// What the bottom panel is showing, and what each of its views holds.
+/// The content and input state of one worktree tool view.
 ///
 /// Only the view in front is filled in: the debugger is built by the window
 /// that knows whether its console has the keyboard, and a shell is started
@@ -44,77 +39,25 @@ pub struct Panel {
     pub debug: Option<Div<Message>>,
 }
 
-/// Builds the bottom panel, `height` tall.
-pub fn bottom_panel(theme: &Theme, height: f32, panel: Panel) -> Div<Message> {
-    let count = panel.problems.iter().map(|file| file.problems.len()).sum();
-    let view = panel.view;
-
-    v_flex()
-        .w_full()
-        .h_px(height)
-        .overflow_hidden()
-        .bg(theme.colors.background)
-        .child(bar(theme, view, count))
-        .child(
-            v_flex()
-                .w_full()
-                .flex_1()
-                .overflow_hidden()
-                .child(match view {
-                    PanelView::Problems => problems_view(
-                        theme,
-                        &panel.problems,
-                        panel.problems_scroll,
-                        panel.problems_area,
-                    ),
-                    PanelView::Debug => panel.debug.unwrap_or_else(v_flex),
-                    PanelView::Terminal => terminals(theme, panel),
-                }),
-        )
-}
-
-/// Builds the bar: one label per view, then the view's own actions, standing
-/// on the hairline that parts it from the view.
-fn bar(theme: &Theme, view: PanelView, problems: usize) -> Div<Message> {
-    let actions = h_flex()
-        .h_full()
-        .px(1.5)
-        .gap(1)
-        .items_center()
-        .when(view == PanelView::Terminal, |actions| {
-            actions.child(icon_button(theme, IconName::Plus, Message::NewTerminal))
-        })
-        .child(icon_button(
+/// Builds the content of a worktree tool beneath its ordinary pane tabs.
+pub fn panel_content(theme: &Theme, panel: Panel) -> Div<Message> {
+    match panel.view {
+        PanelView::Problems => problems_view(
             theme,
-            IconName::Close,
-            Message::ToggleBottomPanel,
-        ));
-
-    v_flex()
-        .w_full()
-        .h_px(theme.size.tab_bar)
-        .bg(theme.colors.surface)
-        .child(
-            h_flex()
-                .w_full()
-                .flex_1()
-                .pl(1)
-                .items_stretch()
-                .children(PanelView::ALL.map(|offered| {
-                    let count =
-                        (offered == PanelView::Problems && problems > 0).then_some(problems);
-                    view_tab(
-                        theme,
-                        offered.label(),
-                        offered == view,
-                        count.map(|count| badge(theme, count)),
-                        Message::ShowPanelView(offered),
-                    )
-                }))
-                .child(h_flex().flex_1())
-                .child(actions),
-        )
-        .child(rule(theme))
+            &panel.problems,
+            panel.problems_scroll,
+            panel.problems_area,
+        ),
+        PanelView::Debug => panel.debug.unwrap_or_else(v_flex),
+        PanelView::Terminal => v_flex()
+            .w_full()
+            .flex_1()
+            .overflow_hidden()
+            .child(h_flex().w_full().justify_end().child(
+                icon_button(theme, IconName::Plus, Message::NewTerminal).tooltip("New Terminal"),
+            ))
+            .child(terminals(theme, panel)),
+    }
 }
 
 /// Builds the terminal view: the shell in front, and the list of them.
