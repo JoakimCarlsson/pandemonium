@@ -13,24 +13,23 @@
 
 use std::cell::Ref;
 use std::path::Path;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use similar::{ChangeTag, TextDiff};
 
 use pm_acp::{
     About, Ask, Input, Kind, Knob, Limits, Output, Setting, Status, Step, ToolCall, Usage, Voice,
-    Weight,
 };
 use pm_gfx::{Image, Rect, Rgba, Size};
 use pm_text::{Highlight, Language};
 use pm_ui::{
     Div, Element, Font, Grain, IconName, IconSize, IntoElement, LayoutContext, PaintContext,
     PointerCursor, SCROLLBAR_GUTTER, STEP, Scroll, Selection, SelectionContent, SelectionRow, Side,
-    Style, Styled, TextSize, Theme, above, button, h_flex, icon, icon_button, measured, paragraph,
-    picture, rule, scroll_area, scrollbar, space, switch, text, v_flex,
+    Style, Styled, TextSize, Theme, above, h_flex, icon, icon_button, measured, paragraph, picture,
+    rule, scroll_area, scrollbar, space, switch, text, v_flex,
 };
 
-use crate::agent::{Block, Form, Page, Spot, Standing, Talk, TalkId};
+use crate::agent::{Block, Form, FormRow, Pending, Spot, Standing, Talk, TalkId};
 use crate::editor::{code_highlights, tint};
 use crate::image::Decoding;
 use crate::input::{bare_input_view, hinted_input_view};
@@ -79,6 +78,9 @@ const NARROWEST: usize = 24;
 /// Side of the mark before each row of a question.
 const MARK: f32 = 16.0;
 
+/// Most lines of an alternative's preview shown.
+const PREVIEW_LINES: usize = 16;
+
 /// Mark before the agent's reply.
 const BULLET: &str = "";
 
@@ -105,6 +107,15 @@ const WORKING: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
 /// How many characters of a failed call's error its header shows.
 const REASON: usize = 72;
+
+/// How many characters of what a call is doing a heading shows.
+const ACTIVITY: usize = 60;
+
+/// How long a call inside another runs before the heading over it names it.
+///
+/// A subagent runs many calls of a few milliseconds each; naming every one
+/// as it starts would rewrite the heading faster than it can be read.
+const SETTLE: Duration = Duration::from_millis(750);
 
 /// The colour a piece of a row is drawn in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -275,7 +286,7 @@ pub fn agent_pane(
         .children(
             talk.forms()
                 .iter()
-                .map(|form| question(theme, talk.id(), form, answering, solid)),
+                .map(|form| question(theme, talk, form, answering, solid)),
         )
         .child(match talk.offered().is_empty() {
             true => composer(theme, talk, typing, solid).into_element(),
@@ -1458,14 +1469,22 @@ fn flatten_calls<'a>(talk: &'a Talk, call: &'a ToolCall, calls: &mut Vec<&'a Too
     }
 }
 
-/// The deepest active descendant, or this call if it is unfinished.
+/// The deepest active descendant that has run for [`SETTLE`], or this call
+/// if it is unfinished.
 fn active_call<'a>(talk: &'a Talk, call: &'a ToolCall) -> Option<&'a ToolCall> {
     talk.transcript()
         .children(&call.id)
         .iter()
         .rev()
+        .filter(|child| settled(child))
         .find_map(|child| active_call(talk, child))
         .or_else(|| call.is_running().then_some(call))
+}
+
+/// Whether `call` has been running long enough to be named in a heading.
+fn settled(call: &ToolCall) -> bool {
+    call.started
+        .is_some_and(|started| started.elapsed() >= SETTLE)
 }
 
 /// One passage, as rows marked with `mark` and wrapped to the width.
@@ -1839,9 +1858,13 @@ fn subject(call: &ToolCall, root: &Path) -> String {
         .unwrap_or_else(|| call.title.clone())
 }
 
-/// The activity named by a call without its status and timer.
+/// The activity named by a call without its status and timer, on one line
+/// cut to fit a heading.
 fn activity(call: &ToolCall, root: &Path) -> String {
-    format!("{} {}", tool_label(call), subject(call, root))
+    shortened(
+        &format!("{} {}", tool_label(call), first_line(&subject(call, root))),
+        ACTIVITY,
+    )
 }
 
 /// A timed card header including a subagent's count and current activity.
@@ -1926,11 +1949,15 @@ fn reason(call: &ToolCall) -> Option<String> {
             .trim();
         (!line.is_empty() && !line.starts_with("```")).then_some(line)
     })?;
-    Some(if line.chars().count() > REASON {
-        format!("{}…", line.chars().take(REASON - 1).collect::<String>())
-    } else {
-        line.to_owned()
-    })
+    Some(shortened(line, REASON))
+}
+
+/// `line` cut to `most` characters, ending in an ellipsis where it was cut.
+fn shortened(line: &str, most: usize) -> String {
+    match line.chars().count() > most {
+        true => format!("{}…", line.chars().take(most - 1).collect::<String>()),
+        false => line.to_owned(),
+    }
 }
 
 /// Whether `name` reads as the name of a markup tag.
@@ -2651,121 +2678,74 @@ fn thousands(count: u64) -> String {
     }
 }
 
-/// Builds the card offering the ways the agent can be logged in.
+/// What each row of the card in front sends, in the order the rows are drawn.
 ///
-/// The agent opens no conversation until it is logged in, so this sits where
-/// a question from it would: under the conversation, above the prompt.
-fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
+/// A row is pressed with the pointer or reached with the keyboard, and both
+/// send what this says, so the card and the keys never disagree.
+pub fn pending_messages(talk: &Talk) -> Vec<Message> {
     let session = talk.id();
-    let buttons = talk
-        .logins()
-        .iter()
-        .enumerate()
-        .map(|(place, method)| {
-            button(method.name.clone(), Message::LogInAgent(session, place))
-                .h_px(theme.size.control)
-                .filled()
-        })
-        .collect::<Vec<_>>();
-
-    v_flex().w_full().px(1.25).pt(0.5).child(
-        v_flex()
-            .w_full()
-            .p(0.75)
-            .gap(0.75)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.accent)
-            .bg(theme.colors.surface)
-            .child(
-                text(format!("{BULLET}Log in to {}", talk.agent().name))
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.accent),
-            )
-            .child(h_flex().gap(0.75).children(buttons)),
-    )
+    match talk.pending() {
+        Some(Pending::Ask(id)) => talk
+            .asks()
+            .iter()
+            .find(|ask| ask.id == id)
+            .map_or_else(Vec::new, |ask| ask_messages(session, ask)),
+        Some(Pending::Form(ticket)) => talk
+            .forms()
+            .iter()
+            .find(|form| form.id() == ticket)
+            .map_or_else(Vec::new, |form| {
+                form.rows()
+                    .into_iter()
+                    .map(|row| form_message(session, form, row))
+                    .collect()
+            }),
+        Some(Pending::Login) => login_messages(talk),
+        None => Vec::new(),
+    }
 }
 
-/// Builds the card holding something the agent needs from the reader: a form
-/// to fill in, or a page to visit.
-///
-/// The form is shown a question at a time, a tab each, with what can be
-/// chosen laid out as rows to press and a row for the reader's own words
-/// where the agent takes them. The card folds down to its tabs, and Escape
-/// walks away from it as the cross does.
-///
-/// `answering` is the ticket and the field of the box that has the keyboard,
-/// if one has, and `solid` whether its caret is in its visible blink phase.
-fn question(
-    theme: &Theme,
-    session: TalkId,
-    form: &Form,
-    answering: Option<(u64, usize)>,
-    solid: bool,
-) -> Div<Message> {
-    let ticket = form.id();
-    let pages = form.pages();
-    let tabs = match form.link() {
-        Some(_) => vec![question_tab(theme, "Sign in".to_owned(), true, None)],
-        None => pages
-            .iter()
-            .enumerate()
-            .map(|(place, page)| {
-                question_tab(
-                    theme,
-                    form.fields()[page.field].title.clone(),
-                    place == form.page(),
-                    Some(Message::ShowAnswerPage(session, ticket, place)),
-                )
-            })
-            .collect(),
-    };
-    let fold = match form.folded() {
-        true => IconName::ChevronUp,
-        false => IconName::ChevronDown,
-    };
-    let header = h_flex()
-        .w_full()
-        .items_center()
-        .gap(0.5)
-        .child(h_flex().flex_1().gap(1).children(tabs))
-        .child(icon_button(
-            theme,
-            fold,
-            Message::FoldAnswer(session, ticket),
-        ))
-        .child(icon_button(
-            theme,
-            IconName::Close,
-            Message::CancelAnswer(session, ticket),
-        ));
-    let page = pages.get(form.page()).copied();
-    let asked = page
-        .map(|page| form.fields()[page.field].description.as_str())
-        .filter(|description| !description.is_empty())
-        .unwrap_or(form.message());
-    let rows = match (form.link(), page) {
-        (Some(link), _) => vec![question_row(
-            theme,
-            false,
-            None,
-            link.url.clone(),
-            String::new(),
-            Message::OpenAnswerLink(session, ticket),
-        )],
-        (None, Some(page)) => {
-            let typing = answering
-                .filter(|(ticket, _)| *ticket == form.id())
-                .map(|(_, place)| place);
-            page_rows(theme, session, form, page, typing, solid)
-        }
-        (None, None) => Vec::new(),
-    };
-    let submit = match form.link() {
-        Some(_) => ("Open link", Message::OpenAnswerLink(session, ticket)),
-        None => ("Submit answers", Message::SendAnswer(session, ticket)),
-    };
+/// What each choice of the permission request `ask` sends.
+fn ask_messages(session: TalkId, ask: &Ask) -> Vec<Message> {
+    (0..ask.choices.len())
+        .map(|place| Message::AnswerAgent(session, ask.id, place))
+        .collect()
+}
 
+/// What the row `row` of `form` sends.
+fn form_message(session: TalkId, form: &Form, row: FormRow) -> Message {
+    let ticket = form.id();
+    match row {
+        FormRow::Choice(place, option) => Message::ChooseAnswer(session, ticket, place, option),
+        FormRow::Own(place) => Message::TypeAnswer(session, ticket, place),
+        FormRow::Submit => Message::SendAnswer(session, ticket),
+        FormRow::Link => Message::OpenAnswerLink(session, ticket),
+    }
+}
+
+/// What each way of logging in the agent offers sends.
+fn login_messages(talk: &Talk) -> Vec<Message> {
+    (0..talk.logins().len())
+        .map(|place| Message::LogInAgent(talk.id(), place))
+        .collect()
+}
+
+/// The row of `card` the keyboard is on, when it is the card in front.
+fn lit_row(talk: &Talk, card: Pending) -> Option<usize> {
+    (talk.pending() == Some(card)).then(|| talk.pending_cursor())
+}
+
+/// Builds the card something waiting on the reader is drawn in: `header`
+/// across its top, `body` under it, and `hint` at its foot.
+///
+/// A login, a permission and a question are one card three times, so they
+/// sit between the conversation and the prompt looking like one thing.
+fn pending_card(
+    theme: &Theme,
+    header: Div<Message>,
+    body: Vec<Div<Message>>,
+    hint: Option<&str>,
+) -> Div<Message> {
     v_flex().w_full().items_center().px(1.25).pt(0.5).child(
         v_flex()
             .w_full()
@@ -2777,230 +2757,78 @@ fn question(
             .border_1(theme.colors.border)
             .bg(theme.colors.surface)
             .child(header)
-            .when(!form.folded(), |card| {
-                card.child(
-                    paragraph()
-                        .break_long_words()
-                        .span(asked, Font::new(TextSize::Base), theme.colors.text)
-                        .w_full(),
-                )
-                .child(v_flex().w_full().gap(0.25).children(rows))
-                .child(submit_row(theme, submit.0, submit.1, form.answered()))
-                .child(
-                    text("Esc to cancel")
-                        .text_xs()
-                        .color(theme.colors.text_subtle),
-                )
+            .children(body)
+            .when_some(hint, |card, hint| {
+                card.child(text(hint).text_xs().color(theme.colors.text_subtle))
             }),
     )
 }
 
-/// One tab of the form's header, underlined while it is the page shown.
-fn question_tab(
-    theme: &Theme,
-    title: String,
-    shown: bool,
-    message: Option<Message>,
-) -> Div<Message> {
-    let (color, edge) = match shown {
-        true => (theme.colors.text, theme.colors.accent),
-        false => (theme.colors.text_muted, theme.colors.surface),
-    };
-    h_flex()
-        .px(0.25)
-        .pb(0.25)
-        .border_side(Side::Bottom, 2.0, edge)
-        .when_some(message, Div::on_click)
-        .child(text(title).text_sm().color(color))
-}
-
-/// The rows of the page asking `page`: one per thing it can be, then the
-/// reader's own words where the agent takes them. `typing` is the field
-/// whose box has the keyboard, if one of this form's has.
-fn page_rows(
-    theme: &Theme,
-    session: TalkId,
-    form: &Form,
-    page: Page,
-    typing: Option<usize>,
-    solid: bool,
-) -> Vec<Div<Message>> {
-    let ticket = form.id();
-    let field = &form.fields()[page.field];
-    let round = !matches!(field.input, Input::Many { .. });
-    let choice = |option: usize, title: String, description: String| {
-        question_row(
-            theme,
-            form.chosen(page.field, option),
-            Some(round),
-            title,
-            description,
-            Message::ChooseAnswer(session, ticket, page.field, option),
-        )
-    };
-    let mut rows = match &field.input {
-        Input::One { options, .. } | Input::Many { options, .. } => options
-            .iter()
-            .enumerate()
-            .map(|(option, alternative)| {
-                choice(
-                    option,
-                    alternative.title.clone(),
-                    alternative.description.clone(),
-                )
-            })
-            .collect(),
-        Input::Toggle { .. } => vec![
-            choice(0, "Yes".to_owned(), String::new()),
-            choice(1, "No".to_owned(), String::new()),
-        ],
-        Input::Text { .. } | Input::Number { .. } => {
-            answer_box(theme, session, form, page.field, typing, solid)
-                .into_iter()
-                .collect()
-        }
-    };
-    if let Some(other) = page.other {
-        let picked = form.other_picked(other);
-        rows.push(
-            v_flex()
-                .w_full()
-                .child(question_row(
-                    theme,
-                    picked,
-                    Some(round),
-                    form.fields()[other].title.clone(),
-                    String::new(),
-                    Message::PickAnswerOther(session, ticket, other),
-                ))
-                .when_some(
-                    answer_box(theme, session, form, other, typing, solid).filter(|_| picked),
-                    |column, written| {
-                        column.child(h_flex().w_full().pl(MARK / STEP + 1.5).child(written))
-                    },
-                ),
-        );
-    }
-    rows
-}
-
-/// The box the field at `place` is written in, lit while it has the keyboard.
-fn answer_box(
-    theme: &Theme,
-    session: TalkId,
-    form: &Form,
-    place: usize,
-    typing: Option<usize>,
-    solid: bool,
-) -> Option<Div<Message>> {
-    let ticket = form.id();
-    Some(hinted_input_view(
-        theme,
-        form.text_box(place)?,
-        typing == Some(place),
-        solid,
-        "Type your answer…",
-        move |phase, from, to| Message::WriteAnswer(session, ticket, place, phase, from, to),
-        Message::ShowInputMenu,
-    ))
-}
-
-/// The row a form is sent from, lit once there is an answer to send.
-fn submit_row(theme: &Theme, label: &str, message: Message, ready: bool) -> Div<Message> {
-    let (fill, hover, edge, ink) = match ready {
-        true => (
-            theme.colors.accent,
-            theme.colors.accent_hover,
-            theme.colors.accent,
-            theme.colors.text_on_accent,
-        ),
-        false => (
-            theme.colors.surface,
-            theme.colors.surface_hover,
-            theme.colors.border,
-            theme.colors.text_muted,
-        ),
-    };
+/// The header of a card waiting on the reader: its `tabs`, then `controls`
+/// at the far end.
+fn card_header(tabs: Vec<Div<Message>>, controls: Vec<Div<Message>>) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(theme.size.control)
-        .px(1)
         .items_center()
-        .rounded(theme.radius.md)
-        .border_1(edge)
-        .bg(fill)
-        .hover_bg(hover)
-        .on_click(message)
-        .child(text(label).text_sm().font_semibold().color(ink))
+        .gap(0.5)
+        .child(h_flex().flex_1().gap(1).children(tabs))
+        .children(controls)
 }
 
-/// One row of a question: a mark, round for one of several and square for
-/// any of several, then `title` with `description` under it.
-fn question_row(
-    theme: &Theme,
-    chosen: bool,
-    round: Option<bool>,
-    title: String,
-    description: String,
-    message: Message,
-) -> Div<Message> {
-    let edge = match chosen {
-        true => theme.colors.accent,
-        false => theme.colors.border_selected,
-    };
-    let corner = match round {
-        Some(true) => theme.radius.full,
-        _ => theme.radius.sm,
-    };
-    h_flex()
-        .w_full()
-        .px(0.5)
-        .py(0.5)
-        .gap(1)
-        .items_center()
-        .rounded(theme.radius.md)
-        .when(chosen, |row| row.bg(theme.colors.surface_selected))
-        .hover_bg(theme.colors.surface_hover)
-        .on_click(message)
-        .when(round.is_some(), |row| {
-            row.child(
-                v_flex()
-                    .size_px(MARK)
-                    .items_center()
-                    .justify_center()
-                    .rounded(corner)
-                    .border_1(edge)
-                    .when(chosen, |mark| {
-                        mark.child(
-                            v_flex()
-                                .size_px(MARK / 2.0)
-                                .rounded(corner)
-                                .bg(theme.colors.accent),
-                        )
-                    }),
+/// What a card waiting on the reader says it is asking, wrapped to the card.
+fn asked(theme: &Theme, asked: &str) -> Div<Message> {
+    v_flex().w_full().child(
+        paragraph()
+            .break_long_words()
+            .span(asked, Font::new(TextSize::Base), theme.colors.text)
+            .w_full(),
+    )
+}
+
+/// Builds the card offering the ways the agent can be logged in.
+///
+/// The agent opens no conversation until it is logged in, so this sits where
+/// a question from it would: under the conversation, above the prompt.
+fn login(theme: &Theme, talk: &Talk) -> Div<Message> {
+    let lit = lit_row(talk, Pending::Login);
+    let rows = talk
+        .logins()
+        .iter()
+        .zip(login_messages(talk))
+        .enumerate()
+        .map(|(place, (method, message))| {
+            card_row(
+                theme,
+                Line {
+                    mark: None,
+                    title: method.name.clone(),
+                    description: method.description.clone().unwrap_or_default(),
+                    lit: lit == Some(place),
+                    key: place + 1,
+                    message,
+                },
             )
         })
-        .child(
-            v_flex()
-                .flex_1()
-                .gap(0.25)
-                .child(text(title).text_sm().color(theme.colors.text))
-                .when(!description.is_empty(), |column| {
-                    column.child(
-                        paragraph()
-                            .break_long_words()
-                            .span(
-                                description,
-                                Font::new(TextSize::Xs),
-                                theme.colors.text_muted,
-                            )
-                            .w_full(),
-                    )
-                }),
-        )
+        .collect::<Vec<_>>();
+
+    pending_card(
+        theme,
+        card_header(
+            vec![card_tab(theme, "Log in".to_owned(), true, None)],
+            Vec::new(),
+        ),
+        vec![
+            asked(theme, &format!("{} needs logging in.", talk.agent().name)),
+            v_flex().w_full().gap(0.25).children(rows),
+        ],
+        None,
+    )
 }
 
 /// Builds the card asking whether the agent may do what it is asking about.
+///
+/// The call is shown as the conversation shows it, and each answer the agent
+/// takes is a row under it; the cross and Escape refuse it.
 fn permission(theme: &Theme, talk: &Talk, ask: &Ask, columns: usize) -> Div<Message> {
     let session = talk.id();
     let mut header = called(talk, &ask.tool);
@@ -3020,31 +2848,428 @@ fn permission(theme: &Theme, talk: &Talk, ask: &Ask, columns: usize) -> Div<Mess
                 }))
         })
         .collect::<Vec<_>>();
-    let choices = ask
+    let lit = lit_row(talk, Pending::Ask(ask.id));
+    let rows = ask
         .choices
         .iter()
+        .zip(ask_messages(session, ask))
         .enumerate()
-        .map(|(place, choice)| {
-            let message = Message::AnswerAgent(session, ask.id, place);
-            let button = button(choice.name.clone(), message).h_px(theme.size.control);
-            match choice.kind {
-                Weight::AllowOnce | Weight::AllowAlways => button.filled(),
-                Weight::RejectOnce | Weight::RejectAlways => button.outlined(),
-            }
+        .map(|(place, (choice, message))| {
+            card_row(
+                theme,
+                Line {
+                    mark: None,
+                    title: choice.name.clone(),
+                    description: String::new(),
+                    lit: lit == Some(place),
+                    key: place + 1,
+                    message,
+                },
+            )
         })
         .collect::<Vec<_>>();
 
-    v_flex().w_full().px(1.25).pt(0.5).child(
-        v_flex()
-            .w_full()
-            .p(0.75)
-            .gap(0.75)
-            .rounded(theme.radius.lg)
-            .border_1(theme.colors.warning)
-            .bg(theme.colors.surface)
-            .children(content)
-            .child(h_flex().gap(0.75).children(choices)),
+    pending_card(
+        theme,
+        card_header(
+            vec![card_tab(theme, "Permission".to_owned(), true, None)],
+            vec![icon_button(
+                theme,
+                IconName::Close,
+                Message::DenyAgent(session, ask.id),
+            )],
+        ),
+        vec![
+            v_flex()
+                .w_full()
+                .p(0.75)
+                .rounded(theme.radius.md)
+                .bg(theme.colors.background)
+                .overflow_hidden()
+                .children(content),
+            v_flex().w_full().gap(0.25).children(rows),
+        ],
+        Some("Esc to deny"),
     )
+}
+
+/// Builds the card holding something the agent needs from the reader: a form
+/// to fill in, or a page to visit.
+///
+/// The form is shown a question at a time, a tab each, with what can be
+/// chosen laid out as rows to press and a row for the reader's own words
+/// where the agent takes them. The card folds down to its tabs, and Escape
+/// walks away from it as the cross does.
+///
+/// `answering` is the ticket and the field of the box that has the keyboard,
+/// if one has, and `solid` whether its caret is in its visible blink phase.
+fn question(
+    theme: &Theme,
+    talk: &Talk,
+    form: &Form,
+    answering: Option<(u64, usize)>,
+    solid: bool,
+) -> Div<Message> {
+    let session = talk.id();
+    let ticket = form.id();
+    let pages = form.pages();
+    let tabs = match form.link() {
+        Some(_) => vec![card_tab(theme, "Sign in".to_owned(), true, None)],
+        None => pages
+            .iter()
+            .enumerate()
+            .map(|(place, page)| {
+                card_tab(
+                    theme,
+                    form.fields()[page.field].title.clone(),
+                    place == form.page(),
+                    Some(Message::ShowAnswerPage(session, ticket, place)),
+                )
+            })
+            .collect(),
+    };
+    let fold = match form.folded() {
+        true => IconName::ChevronUp,
+        false => IconName::ChevronDown,
+    };
+    let header = card_header(
+        tabs,
+        vec![
+            icon_button(theme, fold, Message::FoldAnswer(session, ticket)),
+            icon_button(
+                theme,
+                IconName::Close,
+                Message::CancelAnswer(session, ticket),
+            ),
+        ],
+    );
+    if form.folded() {
+        return pending_card(theme, header, Vec::new(), None);
+    }
+    let question = pages
+        .get(form.page())
+        .map(|page| form.fields()[page.field].description.as_str())
+        .filter(|description| !description.is_empty())
+        .unwrap_or(form.message());
+    let typing = answering
+        .filter(|(asked, _)| *asked == ticket)
+        .map(|(_, place)| place);
+    let lit = lit_row(talk, Pending::Form(ticket));
+    let rows = form
+        .rows()
+        .into_iter()
+        .enumerate()
+        .map(|(place, row)| {
+            let line = Line {
+                mark: None,
+                title: String::new(),
+                description: String::new(),
+                lit: lit == Some(place),
+                key: place + 1,
+                message: form_message(session, form, row),
+            };
+            form_row(theme, session, form, row, line, typing, solid)
+        })
+        .collect::<Vec<_>>();
+
+    pending_card(
+        theme,
+        header,
+        vec![
+            asked(theme, question),
+            v_flex().w_full().gap(0.25).children(rows),
+        ]
+        .into_iter()
+        .chain(form.preview().map(|preview| preview_block(theme, preview)))
+        .collect(),
+        Some("Esc to cancel"),
+    )
+}
+
+/// Builds the row `row` of `form`, filling `line` in with what it shows.
+/// `typing` is the field whose box has the keyboard, if one of this form's has.
+fn form_row(
+    theme: &Theme,
+    session: TalkId,
+    form: &Form,
+    row: FormRow,
+    line: Line,
+    typing: Option<usize>,
+    solid: bool,
+) -> Div<Message> {
+    let round = |place: usize| {
+        !matches!(
+            form.fields().get(place).map(|field| &field.input),
+            Some(Input::Many { .. })
+        )
+    };
+    match row {
+        FormRow::Choice(place, option) => {
+            let chosen = form.chosen(place, option);
+            let (title, description) = match &form.fields()[place].input {
+                Input::One { options, .. } | Input::Many { options, .. } => options
+                    .get(option)
+                    .map(|alternative| (alternative.title.clone(), alternative.description.clone()))
+                    .unwrap_or_default(),
+                _ => (
+                    match option {
+                        0 => "Yes",
+                        _ => "No",
+                    }
+                    .to_owned(),
+                    String::new(),
+                ),
+            };
+            card_row(
+                theme,
+                Line {
+                    mark: Some(Mark {
+                        round: round(place),
+                        chosen,
+                    }),
+                    title,
+                    description,
+                    ..line
+                },
+            )
+        }
+        FormRow::Own(place) => {
+            let written = answer_box(theme, session, form, place, typing == Some(place), solid);
+            let owner = form
+                .pages()
+                .into_iter()
+                .find(|page| page.other == Some(place));
+            match (owner, written) {
+                (Some(owner), written) => {
+                    let picked = form.other_picked(place);
+                    v_flex()
+                        .w_full()
+                        .child(card_row(
+                            theme,
+                            Line {
+                                mark: Some(Mark {
+                                    round: round(owner.field),
+                                    chosen: picked,
+                                }),
+                                title: form.fields()[place].title.clone(),
+                                ..line
+                            },
+                        ))
+                        .when_some(written.filter(|_| picked), |column, written| {
+                            column.child(h_flex().w_full().pl(MARK / STEP + 1.5).child(written))
+                        })
+                }
+                (None, written) => written.unwrap_or_else(v_flex),
+            }
+        }
+        FormRow::Submit => submit_row(theme, "Submit answers", form.answered(), line),
+        FormRow::Link => {
+            let url = form
+                .link()
+                .map_or_else(String::new, |link| link.url.clone());
+            let site = url
+                .split("://")
+                .nth(1)
+                .and_then(|rest| rest.split('/').next())
+                .unwrap_or(&url)
+                .to_owned();
+            card_row(
+                theme,
+                Line {
+                    title: format!("Open {site} in the browser"),
+                    description: url,
+                    ..line
+                },
+            )
+        }
+    }
+}
+
+/// Builds what an alternative would look like, as the agent drew it.
+fn preview_block(theme: &Theme, preview: &str) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .p(0.75)
+        .rounded(theme.radius.md)
+        .border_1(theme.colors.border)
+        .bg(theme.colors.background)
+        .overflow_hidden()
+        .children(preview.lines().take(PREVIEW_LINES).map(|line| {
+            text(line.to_owned())
+                .text_sm()
+                .font_mono()
+                .color(theme.colors.text_muted)
+        }))
+}
+
+/// One tab of a card's header, underlined while it is the one shown.
+fn card_tab(theme: &Theme, title: String, shown: bool, message: Option<Message>) -> Div<Message> {
+    let (color, edge) = match shown {
+        true => (theme.colors.text, theme.colors.accent),
+        false => (theme.colors.text_muted, theme.colors.surface),
+    };
+    h_flex()
+        .px(0.25)
+        .pb(0.25)
+        .border_side(Side::Bottom, 2.0, edge)
+        .when_some(message, Div::on_click)
+        .child(text(title).text_sm().color(color))
+}
+
+/// The box the field at `place` is written in, lit while it has the keyboard.
+fn answer_box(
+    theme: &Theme,
+    session: TalkId,
+    form: &Form,
+    place: usize,
+    typing: bool,
+    solid: bool,
+) -> Option<Div<Message>> {
+    let ticket = form.id();
+    Some(hinted_input_view(
+        theme,
+        form.text_box(place)?,
+        typing,
+        solid,
+        "Type your answer…",
+        move |phase, from, to| Message::WriteAnswer(session, ticket, place, phase, from, to),
+        Message::ShowInputMenu,
+    ))
+}
+
+/// The row a form is sent from, lit once there is an answer to send.
+fn submit_row(theme: &Theme, label: &str, ready: bool, line: Line) -> Div<Message> {
+    let (fill, hover, edge, ink) = match ready {
+        true => (
+            theme.colors.accent,
+            theme.colors.accent_hover,
+            theme.colors.accent,
+            theme.colors.text_on_accent,
+        ),
+        false => (
+            match line.lit {
+                true => theme.colors.surface_hover,
+                false => theme.colors.surface,
+            },
+            theme.colors.surface_hover,
+            theme.colors.border,
+            theme.colors.text_muted,
+        ),
+    };
+    h_flex()
+        .w_full()
+        .h_px(theme.size.control)
+        .px(1)
+        .gap(1)
+        .items_center()
+        .rounded(theme.radius.md)
+        .border_1(match line.lit {
+            true => theme.colors.border_focused,
+            false => edge,
+        })
+        .bg(fill)
+        .hover_bg(hover)
+        .on_click(line.message)
+        .child(key_hint(line.key).text_sm().color(ink))
+        .child(text(label).text_sm().font_semibold().color(ink))
+}
+
+/// The digit that presses the row counted `key` from one, while there is one.
+fn key_hint(key: usize) -> pm_ui::Text {
+    text(match key {
+        1..=9 => key.to_string(),
+        _ => String::new(),
+    })
+}
+
+/// The mark before a row that can be chosen.
+#[derive(Clone, Copy)]
+struct Mark {
+    /// Whether it is round, one of several, rather than square, any of several.
+    round: bool,
+    /// Whether it is chosen.
+    chosen: bool,
+}
+
+/// One row of a card waiting on the reader.
+struct Line {
+    /// The mark before it, where it is a choice.
+    mark: Option<Mark>,
+    /// What it says.
+    title: String,
+    /// What else there is to say about it, under the title.
+    description: String,
+    /// Whether the keyboard is on it.
+    lit: bool,
+    /// Its place in the card, counted from one, which is the digit that presses it.
+    key: usize,
+    /// What pressing it sends.
+    message: Message,
+}
+
+/// Builds `line`: its mark, its title with its description under it, and
+/// the digit that presses it at the far end.
+fn card_row(theme: &Theme, line: Line) -> Div<Message> {
+    let chosen = line.mark.is_some_and(|mark| mark.chosen);
+    h_flex()
+        .w_full()
+        .px(0.5)
+        .py(0.5)
+        .gap(1)
+        .items_center()
+        .rounded(theme.radius.md)
+        .when(line.lit, |row| row.bg(theme.colors.surface_hover))
+        .when(chosen && !line.lit, |row| {
+            row.bg(theme.colors.surface_selected)
+        })
+        .hover_bg(theme.colors.surface_hover)
+        .on_click(line.message)
+        .when_some(line.mark, |row, mark| row.child(choice_mark(theme, mark)))
+        .child(
+            v_flex()
+                .flex_1()
+                .gap(0.25)
+                .child(text(line.title).text_sm().color(theme.colors.text))
+                .when(!line.description.is_empty(), |column| {
+                    column.child(
+                        paragraph()
+                            .break_long_words()
+                            .span(
+                                line.description,
+                                Font::new(TextSize::Xs),
+                                theme.colors.text_muted,
+                            )
+                            .w_full(),
+                    )
+                }),
+        )
+        .child(key_hint(line.key).text_xs().color(theme.colors.text_subtle))
+}
+
+/// Builds `mark`: a ring or a square, filled while it is chosen.
+fn choice_mark(theme: &Theme, mark: Mark) -> Div<Message> {
+    let corner = match mark.round {
+        true => theme.radius.full,
+        false => theme.radius.sm,
+    };
+    let edge = match mark.chosen {
+        true => theme.colors.accent,
+        false => theme.colors.border_selected,
+    };
+    v_flex()
+        .size_px(MARK)
+        .items_center()
+        .justify_center()
+        .rounded(corner)
+        .border_1(edge)
+        .when(mark.chosen, |ring| {
+            ring.child(
+                v_flex()
+                    .size_px(MARK / 2.0)
+                    .rounded(corner)
+                    .bg(theme.colors.accent),
+            )
+        })
 }
 
 /// Builds the box the next prompt is written in, and what it takes.
@@ -3536,7 +3761,7 @@ fn working(talk: &Talk) -> String {
         .iter()
         .rev()
         .find_map(|block| match block {
-            Block::Ran(call) => active_call(talk, call).map(|active| {
+            Block::Ran(call) if settled(call) => active_call(talk, call).map(|active| {
                 if active.id == call.id {
                     activity(active, talk.root())
                 } else {

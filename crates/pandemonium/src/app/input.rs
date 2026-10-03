@@ -187,7 +187,7 @@ impl App {
         if self.is_copy(event) && self.copy_reading_text() {
             return self.request_redraw();
         }
-        if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_agent_question() {
+        if self.send_to_pending(event) {
             return self.request_redraw();
         }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {

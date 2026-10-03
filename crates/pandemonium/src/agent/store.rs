@@ -29,7 +29,7 @@ use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
     About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Limits, Method, Mode,
-    Notify, Reply, Request, Session, Setting, Status, Stop, ToolCall, Usage, Voice,
+    Notify, Reply, Request, Session, Setting, Status, Stop, ToolCall, Usage, Voice, Weight,
 };
 
 use crate::agent::form::Form;
@@ -58,6 +58,17 @@ pub enum Standing {
     Done,
     /// It is doing nothing and waiting on nobody.
     Idle,
+}
+
+/// Something the agent is waiting on the reader for, by the ticket it is under.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Pending {
+    /// A permission request.
+    Ask(u64),
+    /// A question.
+    Form(u64),
+    /// A choice of how to log in.
+    Login,
 }
 
 /// How many of the window's conversations stand each way.
@@ -111,6 +122,9 @@ pub struct Talk {
     clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
+    /// The row of the permission request or the login in front that the
+    /// keyboard is on.
+    cursor: usize,
     /// The questions the agent has put to the reader, oldest first.
     forms: Vec<Form>,
     /// The commands the agent has said it takes, as it last said them.
@@ -1155,10 +1169,67 @@ impl Talk {
             return;
         };
         let waiting = self.asks.remove(at);
+        self.cursor = 0;
         match waiting.choices.get(place) {
             Some(choice) => self.conversation.allow(ask, &choice.id),
             None => self.conversation.refuse(ask),
         }
+    }
+
+    /// What is waiting on the reader in front of everything else: the
+    /// oldest permission request, then the oldest question, then a login.
+    pub fn pending(&self) -> Option<Pending> {
+        if let Some(ask) = self.asks.first() {
+            return Some(Pending::Ask(ask.id));
+        }
+        if let Some(form) = self.forms.first() {
+            return Some(Pending::Form(form.id()));
+        }
+        (!self.logins.is_empty()).then_some(Pending::Login)
+    }
+
+    /// The row of the card in front that the keyboard is on.
+    pub fn pending_cursor(&self) -> usize {
+        match self.pending() {
+            Some(Pending::Form(_)) => self.forms.first().map_or(0, Form::cursor),
+            Some(Pending::Ask(_) | Pending::Login) => self.cursor,
+            None => 0,
+        }
+    }
+
+    /// Moves the keyboard `by` rows through the card in front, round from
+    /// the last to the first.
+    pub fn step_pending(&mut self, by: isize) {
+        let count = match self.pending() {
+            Some(Pending::Form(_)) => {
+                if let Some(form) = self.forms.first_mut() {
+                    form.step(by);
+                }
+                return;
+            }
+            Some(Pending::Ask(_)) => self.asks.first().map_or(0, |ask| ask.choices.len()),
+            Some(Pending::Login) => self.logins.len(),
+            None => return,
+        };
+        self.cursor = (self.cursor as isize + by).rem_euclid(count.max(1) as isize) as usize;
+    }
+
+    /// Refuses the permission request `ask`, this once where the agent offers
+    /// that, and by the protocol's own refusal where it offers no way to.
+    pub fn deny(&mut self, ask: u64) {
+        let Some(waiting) = self.asks.iter().find(|waiting| waiting.id == ask) else {
+            return;
+        };
+        let place = [Weight::RejectOnce, Weight::RejectAlways]
+            .iter()
+            .find_map(|weight| {
+                waiting
+                    .choices
+                    .iter()
+                    .position(|choice| choice.kind == *weight)
+            })
+            .unwrap_or(usize::MAX);
+        self.answer(ask, place);
     }
 
     /// The questions waiting on the reader.
@@ -1207,6 +1278,7 @@ impl Talk {
                 };
                 self.transcript.note(note);
                 self.logins = methods;
+                self.cursor = 0;
             }
             Event::Said(voice, text) => self.transcript.say(voice, &text),
             Event::Ran(call) => {
@@ -1222,7 +1294,12 @@ impl Talk {
             Event::Titled(title) => self.title = Some(title).filter(|title| !title.is_empty()),
             Event::Used(usage) => self.usage = Some(usage),
             Event::Limited(limits) => self.limits = Some(limits),
-            Event::Asked(ask) => self.asks.push(ask),
+            Event::Asked(ask) => {
+                if self.asks.is_empty() {
+                    self.cursor = 0;
+                }
+                self.asks.push(ask);
+            }
             Event::Elicited(elicitation) => self.forms.push(Form::new(elicitation)),
             Event::Concluded(id) => self
                 .forms
@@ -1578,6 +1655,7 @@ impl Talks {
                 next_preview: 0,
                 clipboard_files: Vec::new(),
                 asks: Vec::new(),
+                cursor: 0,
                 forms: Vec::new(),
                 commands: Vec::new(),
                 skills: installed_skills(root, agent),

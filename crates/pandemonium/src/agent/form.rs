@@ -1,6 +1,6 @@
 //! A question the agent put to the reader, and what has been filled in so far.
 
-use pm_acp::{Elicitation, Field, Given, Input, Inquiry, Link, Reply};
+use pm_acp::{Alternative, Elicitation, Field, Given, Input, Inquiry, Link, Reply};
 
 use crate::input::Input as TextBox;
 
@@ -17,6 +17,8 @@ pub struct Form {
     picked: Vec<bool>,
     /// The page the reader is looking at.
     page: usize,
+    /// The row of the page the keyboard is on.
+    cursor: usize,
     /// Whether the form is folded down to its tabs.
     folded: bool,
 }
@@ -32,6 +34,19 @@ pub struct Page {
     pub field: usize,
     /// The line of text that answers it in the reader's own words, if any.
     pub other: Option<usize>,
+}
+
+/// One row of the page in front, in the order it is drawn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormRow {
+    /// The alternative in the second place, of the field in the first.
+    Choice(usize, usize),
+    /// The box the field in this place is written in.
+    Own(usize),
+    /// Send the form as it is filled in.
+    Submit,
+    /// Visit the page the agent sent the reader to.
+    Link,
 }
 
 impl Form {
@@ -52,6 +67,7 @@ impl Form {
             boxes,
             picked,
             page: 0,
+            cursor: 0,
             folded: false,
         }
     }
@@ -112,7 +128,86 @@ impl Form {
     /// Turns to the `page`-th page.
     pub fn show_page(&mut self, page: usize) {
         self.page = page.min(self.pages().len().saturating_sub(1));
+        self.cursor = 0;
         self.folded = false;
+    }
+
+    /// Turns `by` pages along, round from the last to the first.
+    pub fn turn(&mut self, by: isize) {
+        let count = self.pages().len().max(1) as isize;
+        self.show_page((self.page as isize + by).rem_euclid(count) as usize);
+    }
+
+    /// The rows of the page in front, in the order they are drawn.
+    pub fn rows(&self) -> Vec<FormRow> {
+        if self.link().is_some() {
+            return vec![FormRow::Link];
+        }
+        let Some(page) = self.pages().get(self.page).copied() else {
+            return vec![FormRow::Submit];
+        };
+        let mut rows = match &self.fields()[page.field].input {
+            Input::One { options, .. } | Input::Many { options, .. } => (0..options.len())
+                .map(|option| FormRow::Choice(page.field, option))
+                .collect(),
+            Input::Toggle { .. } => vec![
+                FormRow::Choice(page.field, 0),
+                FormRow::Choice(page.field, 1),
+            ],
+            Input::Text { .. } | Input::Number { .. } => vec![FormRow::Own(page.field)],
+        };
+        rows.extend(page.other.map(FormRow::Own));
+        rows.push(FormRow::Submit);
+        rows
+    }
+
+    /// The row of the page the keyboard is on.
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Moves the keyboard `by` rows, round from the last to the first.
+    pub fn step(&mut self, by: isize) {
+        let count = self.rows().len().max(1) as isize;
+        self.cursor = (self.cursor as isize + by).rem_euclid(count) as usize;
+    }
+
+    /// Puts the keyboard on the `row`-th row.
+    pub fn point_at(&mut self, row: usize) {
+        self.cursor = row.min(self.rows().len().saturating_sub(1));
+    }
+
+    /// What the alternative the keyboard is on looks like, or else the one
+    /// chosen on this page, where the agent drew it one.
+    pub fn preview(&self) -> Option<&str> {
+        let lit = match self.rows().get(self.cursor) {
+            Some(FormRow::Choice(place, option)) => self.alternative(*place, *option),
+            _ => None,
+        };
+        let page = self.pages().get(self.page).copied()?;
+        let chosen = || {
+            (0..self.alternatives(page.field).len())
+                .filter(|option| self.chosen(page.field, *option))
+                .find_map(|option| self.alternative(page.field, option))
+                .filter(|alternative| alternative.preview.is_some())
+        };
+        lit.filter(|alternative| alternative.preview.is_some())
+            .or_else(chosen)?
+            .preview
+            .as_deref()
+    }
+
+    /// The alternatives the field at `place` offers.
+    fn alternatives(&self, place: usize) -> &[Alternative] {
+        match self.fields().get(place).map(|field| &field.input) {
+            Some(Input::One { options, .. } | Input::Many { options, .. }) => options,
+            _ => &[],
+        }
+    }
+
+    /// The `option`-th alternative the field at `place` offers.
+    fn alternative(&self, place: usize, option: usize) -> Option<&Alternative> {
+        self.alternatives(place).get(option)
     }
 
     /// Whether the form is folded down to its tabs.
@@ -160,8 +255,14 @@ impl Form {
     }
 
     /// Turns to the page after the one the reader is on, if there is one.
+    ///
+    /// On the last page there is nothing after it, and the keyboard goes to
+    /// the row that sends the form instead.
     fn advance(&mut self) {
-        self.page = (self.page + 1).min(self.pages().len().saturating_sub(1));
+        match self.page + 1 < self.pages().len() {
+            true => self.show_page(self.page + 1),
+            false => self.cursor = self.rows().len().saturating_sub(1),
+        }
     }
 
     /// What the `place`-th field is filled in with now.

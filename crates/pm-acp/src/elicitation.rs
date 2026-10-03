@@ -109,6 +109,9 @@ pub struct Alternative {
     pub title: String,
     /// What else there is to say about it.
     pub description: String,
+    /// What it would look like, where the agent drew it: a mockup, a
+    /// snippet of code, two things side by side.
+    pub preview: Option<String>,
 }
 
 /// What the reader filled one field in with.
@@ -279,6 +282,7 @@ fn alternatives(property: &Value) -> Vec<Alternative> {
                     .as_str()
                     .unwrap_or_default()
                     .to_owned(),
+                preview: preview(option),
             })
         })
         .collect::<Vec<_>>();
@@ -301,7 +305,18 @@ fn alternatives(property: &Value) -> Vec<Alternative> {
                 value: value.to_owned(),
                 title: title.to_owned(),
                 description: String::new(),
+                preview: None,
             })
         })
         .collect()
+}
+
+/// The preview an option carries under one of the `_meta` extensions, where
+/// it carries one: the protocol has no place of its own for it yet.
+fn preview(option: &Value) -> Option<String> {
+    option["_meta"]
+        .as_object()?
+        .values()
+        .find_map(|extension| extension["preview"].as_str())
+        .map(str::to_owned)
 }

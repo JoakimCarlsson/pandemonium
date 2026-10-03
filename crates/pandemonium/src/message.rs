@@ -660,9 +660,12 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
-    /// Pick the row of the reader's own words, the field in this place of
-    /// the form the agent put under this ticket, and give its box the keyboard.
-    PickAnswerOther(TalkId, u64, usize),
+    /// Refuse this session's permission request under this ticket.
+    DenyAgent(TalkId, u64),
+    /// Give the keyboard to the box the field in this place of the form the
+    /// agent put under this ticket is written in, picking it where it is the
+    /// reader's own answer to a choice.
+    TypeAnswer(TalkId, u64, usize),
     /// Put the caret of the box the field in this place of the form the
     /// agent put under this ticket is written in where a press landed,
     /// selecting to it.

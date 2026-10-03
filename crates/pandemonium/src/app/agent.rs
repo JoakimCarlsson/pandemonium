@@ -14,7 +14,7 @@ use pm_text::Position;
 use pm_ui::{Axis, Div, MenuItem, ResizeEvent, ResizePhase, Theme};
 use winit::window::UserAttentionType;
 
-use crate::agent::{Form, Standing, Talk, TalkId, Tally, knob_rows};
+use crate::agent::{Standing, Talk, TalkId, Tally, knob_rows};
 use crate::app::places::{Place, linked_file};
 use crate::app::{App, Writing};
 use crate::config::{AgentOptions, KnobValue};
@@ -136,8 +136,13 @@ impl App {
                     talk.answer(ask, place);
                 }
             }
-            Message::PickAnswerOther(session, ticket, place) => {
-                self.pick_answer_other(session, ticket, place);
+            Message::TypeAnswer(session, ticket, place) => {
+                self.type_answer(session, ticket, place);
+            }
+            Message::DenyAgent(session, ask) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.deny(ask);
+                }
             }
             Message::WriteAnswer(session, ticket, place, phase, anchor, head) => {
                 self.point_in(Writing::Answer(session, ticket, place), phase, anchor, head);
@@ -746,27 +751,6 @@ impl App {
             return false;
         }
         talk.cancel();
-        true
-    }
-
-    /// Walks away from the question the agent in front is waiting on, answering whether there was one.
-    pub(super) fn cancel_agent_question(&mut self) -> bool {
-        let session = match self.writing {
-            Some(Writing::Prompt(session) | Writing::Answer(session, ..)) => Some(session),
-            _ if self.editor_focused => self.active_tab().and_then(Item::session),
-            _ => None,
-        };
-        let Some(session) = session else {
-            return false;
-        };
-        let Some(ticket) = self
-            .agents
-            .get(session)
-            .and_then(|talk| talk.forms().first().map(Form::id))
-        else {
-            return false;
-        };
-        self.dismiss_answer(session, ticket, pm_acp::Reply::Cancel);
         true
     }
 
