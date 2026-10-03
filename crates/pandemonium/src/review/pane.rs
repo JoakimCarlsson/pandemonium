@@ -184,7 +184,10 @@ fn drawn(
 ) -> Vec<Div<Message>> {
     let rows = rows(review, shown, split);
     let first = review.scroll(shown).min(rows.len().saturating_sub(1));
-    let picked = review.comments().picked();
+    let picked = review
+        .comments()
+        .picked()
+        .or_else(|| review.comments().composing().map(|draft| draft.anchor));
     rows.into_iter()
         .skip(first)
         .take(DRAWN)
@@ -993,7 +996,7 @@ fn range_of(hunk: &Hunk) -> String {
 
 /// What the number column of a row of a hunk needs to be a way to comment:
 /// which change the row is of, which sides of it can be commented on, and
-/// the lines a gesture is sweeping over now.
+/// the lines being selected or commented on.
 struct Spot {
     /// Which file the pane is of, when it is of one alone.
     shown: Option<ChangeId>,
@@ -1005,7 +1008,7 @@ struct Spot {
     new: bool,
     /// Whether a comment is waiting for a line to be put on.
     moving: bool,
-    /// The lines a gesture is sweeping over, when it is in this file.
+    /// The selected or drafted lines, when they are in this file.
     picked: Option<Anchor>,
 }
 
@@ -1041,7 +1044,7 @@ impl Spot {
         }
     }
 
-    /// Whether a gesture is sweeping over `number` on `side`.
+    /// Whether `number` on `side` is selected or being commented on.
     fn sweeps(&self, side: CommentSide, number: usize) -> bool {
         self.picked.as_ref().is_some_and(|picked| {
             picked.side == side && (picked.first..=picked.last).contains(&number)
@@ -1094,7 +1097,6 @@ fn line_row(
     shade: Option<&[Option<Highlight>]>,
     spot: &Spot,
 ) -> Div<Message> {
-    let (gutter, wash) = washes(theme, Some(line.kind));
     let side = match line.kind {
         LineKind::Removed => CommentSide::Old,
         LineKind::Added | LineKind::Context => CommentSide::New,
@@ -1105,15 +1107,7 @@ fn line_row(
     }
     .filter(|_| spot.allows(side));
     let swept = number_here.is_some_and(|number| spot.sweeps(side, number));
-    let gutter = match swept {
-        true => Some(
-            theme
-                .colors
-                .accent
-                .alpha(theme.emphasis.change * GUTTER_DEPTH),
-        ),
-        false => gutter,
-    };
+    let (gutter, wash) = comment_washes(theme, Some(line.kind), swept);
     let numbers = h_flex()
         .w_px(NUMBERS)
         .px(0.5)
@@ -1155,7 +1149,6 @@ fn half(
     new: bool,
     spot: &Spot,
 ) -> Div<Message> {
-    let (gutter, wash) = washes(theme, line.map(|line| line.kind));
     let number = line.and_then(|line| match new {
         true => line.new,
         false => line.old,
@@ -1167,15 +1160,7 @@ fn half(
     };
     let commenting = number.filter(|_| spot.allows(side));
     let swept = commenting.is_some_and(|number| spot.sweeps(side, number));
-    let gutter = match swept {
-        true => Some(
-            theme
-                .colors
-                .accent
-                .alpha(theme.emphasis.change * GUTTER_DEPTH),
-        ),
-        false => gutter,
-    };
+    let (gutter, wash) = comment_washes(theme, line.map(|line| line.kind), swept);
     let numbers = h_flex()
         .w_px(SIDE_NUMBER)
         .px(0.5)
@@ -1206,6 +1191,21 @@ fn half(
             Some(line) => shaded(theme, &line.text, shade.unwrap_or_default()),
             None => h_flex().child(text(" ").text_sm().font_mono()),
         })
+}
+
+/// Highlights the full selected comment range, retaining the diff wash elsewhere.
+fn comment_washes(
+    theme: &Theme,
+    kind: Option<LineKind>,
+    selected: bool,
+) -> (Option<Rgba>, Option<Rgba>) {
+    match selected {
+        true => (
+            Some(theme.colors.accent.alpha(theme.emphasis.selection)),
+            Some(theme.colors.selection.alpha(theme.emphasis.selection)),
+        ),
+        false => washes(theme, kind),
+    }
 }
 
 /// The washes a line of `kind` is drawn on: the deeper one of its gutter,
