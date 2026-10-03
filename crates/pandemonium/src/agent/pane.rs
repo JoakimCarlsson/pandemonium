@@ -204,7 +204,7 @@ impl Live {
                 if finished.is_some() {
                     format!("Thought for {seconds}s")
                 } else {
-                    format!("Thinking · {seconds}s")
+                    "Thinking".to_owned()
                 }
             }
         }
@@ -424,6 +424,14 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
             let opens = at == 0 || !wrapped.said[at - 1];
             let closes = wrapped.said.get(last + 1) != Some(&true);
             drawn.push(bubble(theme, message, opens, closes));
+        } else if matches!(wrapped.entries[at], Entry::Working) {
+            drawn.push(
+                v_flex()
+                    .w_full()
+                    .pb(0.75)
+                    .border_side(Side::Bottom, 1.0, theme.colors.border_variant)
+                    .child(self::row(theme, wrapped.row(at), at, talk, None)),
+            );
         } else if let Some(block) = wrapped.reply(talk, at) {
             let mut rows = vec![self::row(theme, wrapped.row(at), at, talk, Some(block))];
             let mut last = at;
@@ -638,7 +646,7 @@ pub struct Wrapped {
     tops: Vec<f32>,
     /// The measures of the theme the heights were taken in.
     measures: Option<Measures>,
-    /// The line saying a turn is running, as it was last said.
+    /// The elapsed-time heading above the current response.
     working: Row,
     /// The row between two parts, which holds nothing.
     gap: Row,
@@ -657,7 +665,7 @@ struct Wrapping {
     shown: u64,
     /// How many characters a line was wrapped at.
     columns: usize,
-    /// Whether a turn was running, which adds a line at the foot.
+    /// Whether a turn was running, which adds a heading above its response.
     busy: bool,
 }
 
@@ -705,7 +713,7 @@ enum Entry {
     Gap,
     /// A row of a part, by the part's place and the row's place in it.
     Part(usize, usize),
-    /// The line saying a turn is running.
+    /// The elapsed-time heading above the current response.
     Working,
 }
 
@@ -756,6 +764,9 @@ impl Wrapped {
             columns,
             busy: talk.is_busy(),
         };
+        if wrapping.busy {
+            self.working = vec![piece(working(talk), Tone::Quiet)];
+        }
         if self.wrapping != Some(wrapping) {
             self.rewrap(talk, columns);
             self.wrapping = self
@@ -767,18 +778,20 @@ impl Wrapped {
             self.measures = None;
         }
         self.refresh_clocks();
-        if wrapping.busy {
-            self.working = vec![piece(working(talk), Tone::Quiet)];
-            if let Some(last) = self.selection_rows.len().checked_sub(1) {
-                self.selection_rows.replace(
-                    last,
-                    SelectionRow {
-                        text: working(talk),
-                        lead: 0,
-                        separator: "\n",
-                    },
-                );
-            }
+        if wrapping.busy
+            && let Some(at) = self
+                .entries
+                .iter()
+                .position(|entry| matches!(entry, Entry::Working))
+        {
+            self.selection_rows.replace(
+                self.selection_starts[at].row,
+                SelectionRow {
+                    text: working(talk),
+                    lead: 0,
+                    separator: "\n",
+                },
+            );
         }
         let measures = measures(theme);
         if self.measures != Some(measures) {
@@ -832,15 +845,30 @@ impl Wrapped {
             self.parts.push(part);
             at = key.end;
         }
+        let turn = blocks
+            .iter()
+            .rposition(|block| matches!(block, Block::Said(Voice::Reader, _)))
+            .map_or(0, |prompt| prompt + 1);
+        let response = turn
+            + blocks[turn..]
+                .iter()
+                .take_while(|block| matches!(block, Block::Picture(_)))
+                .count();
         self.entries.clear();
         for (place, part) in self.parts.iter().enumerate() {
+            if talk.is_busy() && part.key.start == response {
+                if !self.entries.is_empty() {
+                    self.entries.push(Entry::Gap);
+                }
+                self.entries.push(Entry::Working);
+            }
             if !self.entries.is_empty() && part.leads {
                 self.entries.push(Entry::Gap);
             }
             self.entries
                 .extend((0..part.rows.len()).map(|row| Entry::Part(place, row)));
         }
-        if talk.is_busy() {
+        if talk.is_busy() && response == blocks.len() {
             if !self.entries.is_empty() {
                 self.entries.push(Entry::Gap);
             }
@@ -885,6 +913,9 @@ impl Wrapped {
             .map(|at| {
                 let row = self.row(at);
                 let mut height = row_height(theme, row);
+                if matches!(self.entries[at], Entry::Working) {
+                    height += space(0.75) + 1.0;
+                }
                 if self.reply(talk, at).is_some() && self.reply_ends(at) {
                     height += reply_actions_height(theme);
                 }
@@ -1400,7 +1431,15 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
         .rev()
         .find_map(|parent| active_call(talk, parent).map(|call| (*parent, call)))
     {
-        let mut row = called(talk, call);
+        let mut row = if expanded {
+            called(talk, call)
+        } else {
+            vec![
+                piece(String::new(), Tone::DetailGroup(at)),
+                piece(String::new(), Tone::Quiet),
+                piece(format!(" {}", activity(call, talk.root())), Tone::Quiet),
+            ]
+        };
         if call.id != parent.id {
             row[2].text = format!(
                 " {} · {}",
@@ -1457,7 +1496,9 @@ fn tool_group_row(talk: &Talk, blocks: &[Block], at: usize, expanded: bool) -> R
             row.push(piece(format!(" · {count} {state}"), tone));
         }
     }
-    row.push(timer(started, finished));
+    if expanded {
+        row.push(timer(started, finished));
+    }
     row
 }
 
@@ -1862,7 +1903,21 @@ fn subject(call: &ToolCall, root: &Path) -> String {
 /// cut to fit a heading.
 fn activity(call: &ToolCall, root: &Path) -> String {
     shortened(
-        &format!("{} {}", tool_label(call), first_line(&subject(call, root))),
+        &format!(
+            "{} {}",
+            match call.kind {
+                Kind::Read => "Reading",
+                Kind::Search => "Searching",
+                Kind::Execute => "Running",
+                Kind::Edit => "Editing",
+                Kind::Delete => "Deleting",
+                Kind::Move => "Moving",
+                Kind::Fetch => "Fetching",
+                Kind::Think => "Thinking",
+                _ => tool_label(call),
+            },
+            first_line(&subject(call, root))
+        ),
         ACTIVITY,
     )
 }
@@ -2580,7 +2635,9 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
         .when_some(talk.usage(), |bar, usage| {
             bar.child(text(used(usage)).text_xs().color(theme.colors.text_subtle))
         })
-        .child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
+        .when(!talk.is_busy(), |bar| {
+            bar.child(text(doing(talk)).text_xs().color(theme.colors.text_subtle))
+        })
 }
 
 /// What the header says of how full the model's context is, and what the
@@ -3751,48 +3808,12 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
     }
 }
 
-/// The changing activity label for a turn in progress.
+/// The elapsed-time heading above the current turn’s response.
 fn working(talk: &Talk) -> String {
-    let elapsed = talk.working_for().unwrap_or_default();
-    let frame = (elapsed.as_millis() / 250 % WORKING.len() as u128) as usize;
-    let current = talk
-        .transcript()
-        .blocks()
-        .iter()
-        .rev()
-        .find_map(|block| match block {
-            Block::Ran(call) if settled(call) => active_call(talk, call).map(|active| {
-                if active.id == call.id {
-                    activity(active, talk.root())
-                } else {
-                    format!(
-                        "{} · {}",
-                        subject(call, talk.root()),
-                        activity(active, talk.root())
-                    )
-                }
-            }),
-            _ => None,
-        });
-    let mut label = format!("{}  Working · {}s", WORKING[frame], elapsed.as_secs());
-    let blocks = talk.transcript().blocks();
-    let turn = blocks
-        .iter()
-        .rposition(|block| matches!(block, Block::Said(Voice::Reader, _)))
-        .map_or(0, |prompt| prompt + 1);
-    let mut calls = Vec::new();
-    for block in &blocks[turn..] {
-        if let Block::Ran(call) = block {
-            flatten_calls(talk, call, &mut calls);
-        }
-    }
-    if calls.iter().any(|call| call.subagent && call.is_running()) {
-        label.push_str(&format!(" · {}", tally(&calls)));
-    }
-    if let Some(current) = current {
-        label.push_str(&format!(" · {current}"));
-    }
-    label
+    format!(
+        "Working for {}s",
+        talk.working_for().unwrap_or_default().as_secs()
+    )
 }
 
 /// What the header says the session is doing.
