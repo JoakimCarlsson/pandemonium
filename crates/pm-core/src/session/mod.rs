@@ -15,10 +15,12 @@
 //! [`store`] is the set itself.
 
 mod bootstrap;
+mod conversation;
 mod placement;
 mod store;
 
 pub use bootstrap::Bootstrap;
+pub use conversation::ConversationFork;
 pub use placement::slug;
 pub use store::{Cutting, Found, Sessions, StartError, Started};
 

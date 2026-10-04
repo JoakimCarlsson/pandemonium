@@ -601,13 +601,20 @@ impl App {
             let project = self.open.get(scope.project())?.root().to_path_buf();
             let worktree = self.root_of(scope)?;
             if let Some(talk) = item.session().and_then(|talk| self.agents.get(talk)) {
+                if !talk.persistable() {
+                    return None;
+                }
                 return Some(SavedTab {
                     kind: SavedKind::Agent,
                     project,
                     worktree,
                     agent: talk.agent().id.to_owned(),
                     account: talk.profile().cloned(),
-                    session: talk.resumable().unwrap_or_default(),
+                    session: talk
+                        .resumable()
+                        .or_else(|| talk.fork_metadata().map(|fork| fork.destination.clone()))
+                        .unwrap_or_default(),
+                    fork: talk.fork_metadata().cloned(),
                     title: talk.title().unwrap_or_default().to_owned(),
                     ..SavedTab::default()
                 });
@@ -760,11 +767,23 @@ impl App {
                     }
                     env.push(profile.environment(agent)?);
                 }
+                if let Some(fork) = &tab.fork
+                    && (fork.agent != tab.agent
+                        || fork.destination != tab.session
+                        || fork.destination == fork.source
+                        || fork.destination.is_empty())
+                {
+                    return None;
+                }
                 let talk = match tab.session.is_empty() {
                     true => agents.start(project, session, &root, &env, agent)?,
+                    false if tab.fork.is_some() => {
+                        agents.restore_fork(scope, &root, &env, agent, &tab.session)?
+                    }
                     false => agents.resume(project, session, &root, &env, agent, &tab.session)?,
                 };
                 if let Some(opened) = agents.get_mut(talk) {
+                    opened.set_fork_metadata(tab.fork.clone());
                     opened.entitle(&tab.title);
                     opened.set_profile(tab.account.clone());
                 }

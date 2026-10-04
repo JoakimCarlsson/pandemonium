@@ -747,6 +747,8 @@ pub enum Message {
     SelectAllAgentText(TalkId),
     /// Start this session's agent again, carrying on the conversation it was in.
     ReconnectAgent(TalkId),
+    /// Fork the whole native conversation while sharing its current files.
+    ForkAgent(TalkId),
     /// Log this session's agent out.
     LogOutAgent(TalkId),
     /// List this session's saved conversations to choose one to forget.

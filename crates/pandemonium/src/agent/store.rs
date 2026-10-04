@@ -88,6 +88,10 @@ pub struct Tally {
 
 /// One conversation: what is running, what has been said, what it is owed.
 pub struct Talk {
+    /// Persisted native conversation ancestry, after the fork succeeds.
+    fork: Option<pm_core::ConversationFork>,
+    /// The source provider identity until the fork opens successfully.
+    fork_source: Option<String>,
     /// The prompt awaiting its filesystem baseline.
     pub(crate) pending_prompt: Option<(String, Vec<Attachment>)>,
     /// Completed file-changing calls already reported in this turn.
@@ -287,6 +291,26 @@ impl Talk {
     /// The worktree the agent is working in.
     pub fn root(&self) -> &Path {
         self.conversation.root()
+    }
+
+    /// Whether an idle native whole-session fork is available.
+    pub fn can_fork(&self) -> bool {
+        self.ready && !self.busy && self.conversation.can_fork()
+    }
+
+    /// Whether saving this tab cannot turn an unfinished fork into a fresh session.
+    pub fn persistable(&self) -> bool {
+        self.fork_source.is_none()
+    }
+
+    /// The durable relationship of this native conversation fork.
+    pub fn fork_metadata(&self) -> Option<&pm_core::ConversationFork> {
+        self.fork.as_ref()
+    }
+
+    /// Restores native ancestry alongside the destination identity.
+    pub fn set_fork_metadata(&mut self, fork: Option<pm_core::ConversationFork>) {
+        self.fork = fork;
     }
 
     /// Whether this agent can list and load saved conversations.
@@ -1386,6 +1410,17 @@ impl Talk {
         match event {
             Event::Ready => {
                 self.ready = true;
+                if let Some(source) = self.fork_source.take() {
+                    self.fork = self
+                        .resumable()
+                        .map(|destination| pm_core::ConversationFork {
+                            agent: self.agent().id.to_owned(),
+                            source,
+                            destination,
+                            shared_root: self.root().to_path_buf(),
+                        });
+                    self.transcript.note("Native whole-session fork. Files are shared with the source; no filesystem snapshot or rewind was applied.");
+                }
                 self.logins.clear();
             }
             Event::Listed(page, more) => {
@@ -1480,6 +1515,8 @@ impl Talk {
                 self.remember_on_ready = true;
                 self.busy = false;
                 self.busy_since = None;
+                self.fork = None;
+                self.fork_source = None;
                 self.transcript.note("Logged out.");
             }
             Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
@@ -1669,6 +1706,10 @@ fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
 enum Opening<'a> {
     /// Start a new conversation.
     New,
+    /// Fork a native whole conversation in a separate agent process.
+    Fork(&'a str),
+    /// Restore an exact identity without falling back to a new conversation.
+    Strict(&'a str),
     /// Offer login before opening a new conversation.
     Login,
     /// Restore a saved pane, falling back to a fresh conversation.
@@ -1745,6 +1786,49 @@ impl Talks {
         self.open(project, session, root, env, agent, Opening::Restore(resume))
     }
 
+    /// Forks an idle native conversation, retaining its project, files and account.
+    pub fn fork(&mut self, source: TalkId) -> Option<TalkId> {
+        let talk = self.get(source).filter(|talk| talk.can_fork())?;
+        let (project, session, root, env, agent, provider, profile) = (
+            talk.project,
+            talk.session,
+            talk.root().to_path_buf(),
+            talk.env.clone(),
+            talk.agent(),
+            talk.resumable()?,
+            talk.profile.clone(),
+        );
+        let id = self.open(
+            project,
+            session,
+            &root,
+            &env,
+            agent,
+            Opening::Fork(&provider),
+        )?;
+        self.get_mut(id)?.set_profile(profile);
+        Some(id)
+    }
+
+    /// Restores a fork's exact destination without substituting a fresh conversation.
+    pub fn restore_fork(
+        &mut self,
+        scope: Scope,
+        root: &Path,
+        env: &[(String, String)],
+        agent: Agent,
+        destination: &str,
+    ) -> Option<TalkId> {
+        self.open(
+            scope.project(),
+            scope.session(),
+            root,
+            env,
+            agent,
+            Opening::Strict(destination),
+        )
+    }
+
     /// Loads a saved conversation into `id`, keeping its existing chat tab.
     pub fn load(&mut self, id: TalkId, env: &[(String, String)], saved: &str) -> bool {
         let Some(talk) = self.talks.get(&id) else {
@@ -1786,6 +1870,8 @@ impl Talks {
         let notify = self.notify.clone()?;
         let remember_on_ready = matches!(opening, Opening::New | Opening::Login);
         let started = match opening {
+            Opening::Fork(source) => Session::fork(agent, root, env, source, notify.clone()),
+            Opening::Strict(saved) => Session::load(agent, root, env, saved, notify.clone()),
             Opening::Exact(_, saved) => Session::load(agent, root, env, saved, notify.clone()),
             Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
             Opening::New => Session::start(agent, root, env, notify.clone()),
@@ -1814,6 +1900,11 @@ impl Talks {
         self.talks.insert(
             id,
             Talk {
+                fork: None,
+                fork_source: match opening {
+                    Opening::Fork(source) => Some(source.to_owned()),
+                    _ => None,
+                },
                 pending_prompt: None,
                 finished_calls: BTreeSet::new(),
                 active_calls: BTreeSet::new(),
@@ -1896,6 +1987,8 @@ impl Talks {
         match Session::start(talk.agent(), talk.root(), &talk.env, notify) {
             Ok(conversation) => {
                 talk.conversation = conversation;
+                talk.fork = None;
+                talk.fork_source = None;
                 talk.ready = false;
                 talk.remember_on_ready = true;
                 talk.busy = false;
@@ -1930,7 +2023,19 @@ impl Talks {
         let Some(conversation) = talk.resumable() else {
             return false;
         };
-        match Session::reconnect(talk.agent(), talk.root(), &talk.env, &conversation, notify) {
+        let restored = match talk.fork.is_some() {
+            true => Session::reconnect_exact(
+                talk.agent(),
+                talk.root(),
+                &talk.env,
+                &conversation,
+                notify,
+            ),
+            false => {
+                Session::reconnect(talk.agent(), talk.root(), &talk.env, &conversation, notify)
+            }
+        };
+        match restored {
             Ok(session) => {
                 talk.conversation = session;
                 talk.ready = false;

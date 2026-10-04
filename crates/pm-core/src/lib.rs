@@ -27,6 +27,7 @@ pub use git::{
 pub use project::{OpenError, Project, ProjectId, Projects, Repository, repositories};
 pub use scope::Scope;
 pub use session::{
-    Bootstrap, Cutting, Found, Session, SessionId, Sessions, StartError, Started, slug,
+    Bootstrap, ConversationFork, Cutting, Found, Session, SessionId, Sessions, StartError, Started,
+    slug,
 };
 pub use task::{Task, TaskSource, tasks, tasks_checked};
