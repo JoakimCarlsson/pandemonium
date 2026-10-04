@@ -8,8 +8,9 @@ Default sign-in uses that provider's shared account storage. Agents that offer
 no supported login method report that in the conversation.
 
 Claude Code, Codex and Grok additionally support separate named profiles.
-Choose an account or organisation when starting an agent from the palette,
-keybinding or chat pane. Creating a profile asks only for a name, such as Work,
+New chats from the palette, keybinding or chat pane start immediately with the
+default account. Add or remove profiles under **Settings → Agents → Agent
+Servers → Accounts…**; use a chat's account icon to choose another profile. Creating a profile asks only for a name, such as Work,
 Personal or your organisation. In a worktree, creation immediately opens a new
 conversation using empty, separate provider storage. Login is requested
 immediately after the provider handshake, before opening a conversation,
@@ -51,12 +52,12 @@ never copied, read by profile management or included in launch arguments.
 
 ## Availability
 
-Claude Code, Codex and Grok offer account profiles directly when starting an
-agent. Select an agent from the palette, keybinding or chat pane to see
-Default account, its profiles, Create account profile and Remove account
-profile. Profiles can also be managed through **Settings → Agents
-→ Agent Servers → Accounts…**, beside each supported agent. Listing
-and removal work without a project; creation and sign-in use the active worktree. No manual editor-settings flag is required.
+Claude Code, Codex and Grok offer account profiles through **Settings → Agents
+→ Agent Servers → Accounts…**, beside each supported agent. New chats start
+immediately with the default account; use a conversation's account icon to
+choose another configured profile. Listing and removal work without a project;
+creation and sign-in use the active worktree. No manual editor-settings flag is
+required.
 
 | Agent | Profile environment | Availability |
 | --- | --- | --- |

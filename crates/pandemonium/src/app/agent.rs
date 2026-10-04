@@ -703,7 +703,7 @@ impl App {
             Some(session) => pm_core::Scope::of(project.id(), session),
             None => pm_core::Scope::checkout(project.id()),
         };
-        self.open_picker(Kind::Accounts(Some(scope), agent));
+        self.start_account(Some(scope), agent, None);
     }
 
     /// Starts `agent` in `root` for `project`, and opens the pane it is read in.
