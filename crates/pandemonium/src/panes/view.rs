@@ -169,8 +169,10 @@ impl Drawing<'_> {
                     Message::ResizeSplit(id, index, event, scale)
                 });
                 for index in drawn {
-                    element =
-                        element.child(node.shares(self.scope)[index], self.node(&node.children()[index]));
+                    element = element.child(
+                        node.shares(self.scope)[index],
+                        self.node(&node.children()[index]),
+                    );
                 }
                 Box::new(element)
             }
