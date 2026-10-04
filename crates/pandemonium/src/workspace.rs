@@ -108,6 +108,10 @@ pub struct SidebarProject {
 
 /// One session as presented by the workspace model.
 pub struct SidebarSession {
+    /// The durable parent label, retained after the parent session is finished.
+    pub parent: Option<String>,
+    /// The number of delegation ancestors used to indent the row.
+    pub depth: usize,
     /// Which session the row is of.
     pub id: SessionId,
     /// Human-readable name of the work.
@@ -1269,14 +1273,17 @@ fn session_row(theme: &Theme, session: &SidebarSession, focused: bool) -> Div<Me
         .on_click(Message::SelectSession(session.id))
         .on_secondary_click(Message::SessionMenu(session.id))
         .child(marker(theme, session.selected))
-        .child(v_flex().w_px(SESSION_INDENT))
+        .child(v_flex().w_px(SESSION_INDENT * (1 + session.depth.min(4)) as f32))
         .child(state_dot(theme, session.status_color))
         .child(v_flex().w(1))
         .child(named(
-            text(session.name.clone())
-                .text_sm()
-                .font_light()
-                .color(theme.colors.text),
+            text(session.parent.as_ref().map_or_else(
+                || session.name.clone(),
+                |parent| format!("{} ← {parent}", session.name),
+            ))
+            .text_sm()
+            .font_light()
+            .color(theme.colors.text),
         ))
         .when(session.pending > 0, |row| {
             row.child(

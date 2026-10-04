@@ -729,6 +729,7 @@ impl App {
         let searches = &mut self.searches;
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
+        let notices = &mut self.notices;
         let sessions = &self.sessions;
         let bootstrap = &self.preferences.bootstrap;
         let mut followed_outlines = Vec::new();
@@ -748,6 +749,14 @@ impl App {
             let held = sessions
                 .of(project)
                 .find(|session| session.root() == tab.worktree);
+            if tab.kind == SavedKind::Agent
+                && !tab.worktree.as_os_str().is_empty()
+                && tab.worktree != checkout
+                && held.is_none()
+            {
+                notices.trouble(format!("Cannot restore agent: session worktree {} is missing. Reopen its project and refresh sessions.", tab.worktree.display()), None);
+                return None;
+            }
             let mut env = bootstrap.env(held.and_then(pm_core::Session::port));
             let session = held.map(pm_core::Session::id);
             let scope = match session {

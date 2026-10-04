@@ -60,3 +60,5 @@ pub use worktree::{
     remembered_base, remembered_name, remembered_port, remembered_review, remove_worktree, since,
     work_at_risk, worktrees,
 };
+
+pub(crate) use worktree::{remember_delegation, remembered_delegation};

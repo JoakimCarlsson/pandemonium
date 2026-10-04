@@ -16,6 +16,7 @@ pub mod extensions;
 mod fonts;
 mod keymap;
 pub mod languages;
+mod orchestration;
 mod overrides;
 mod paths;
 mod preferences;
@@ -263,3 +264,5 @@ pub fn save(restored: &Restored) {
     }
     let _ = fs::write(path, text);
 }
+
+pub use orchestration::Orchestration;

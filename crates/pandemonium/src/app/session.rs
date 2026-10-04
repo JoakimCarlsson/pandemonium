@@ -196,7 +196,7 @@ impl App {
             return;
         };
 
-        self.cut_session_later(&project, &name, &base, &chosen, &under);
+        self.cut_session_later(&project, &name, &base, &chosen, &under, None);
     }
 
     /// Points the window at `session`, bringing its agent forward if it has one.
@@ -299,6 +299,7 @@ impl App {
         if self.session == Some(session) {
             self.select_checkout();
         }
+        self.store();
     }
 
     /// Points the window back at the active project's own checkout.
@@ -390,6 +391,8 @@ impl App {
                         SidebarSession {
                             id: session.id(),
                             name: session.name().to_owned(),
+                            parent: session.delegation().map(|parent| parent.name.clone()),
+                            depth: session.delegation().map_or(0, |parent| parent.depth),
                             added: summary.added,
                             removed: summary.removed,
                             status_color: self.session_color(&theme, session.id()),

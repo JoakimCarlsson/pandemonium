@@ -16,11 +16,13 @@
 
 mod bootstrap;
 mod conversation;
+mod delegation;
 mod placement;
 mod store;
 
 pub use bootstrap::Bootstrap;
 pub use conversation::ConversationFork;
+pub use delegation::Delegation;
 pub use placement::slug;
 pub use store::{Cutting, Found, Sessions, StartError, Started};
 
@@ -52,6 +54,8 @@ impl SessionId {
 /// in beside them.
 #[derive(Clone, Debug)]
 pub struct Session {
+    /// Durable ancestry when an agent delegated this worktree.
+    delegation: Option<Delegation>,
     /// What this session is called for as long as it is open.
     id: SessionId,
     /// The project whose repositories it was cut from.
@@ -80,6 +84,11 @@ struct Cut {
 }
 
 impl Session {
+    /// The durable parent of this session, including parents no longer open.
+    pub fn delegation(&self) -> Option<&Delegation> {
+        self.delegation.as_ref()
+    }
+
     /// What this session is called for as long as it is open.
     pub fn id(&self) -> SessionId {
         self.id

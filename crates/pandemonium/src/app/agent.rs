@@ -744,16 +744,14 @@ impl App {
         agent: Agent,
         profile: Option<&crate::config::Profile>,
         login: bool,
-    ) {
+    ) -> Option<TalkId> {
         let scope = match session {
             Some(session) => pm_core::Scope::of(project, session),
             None => pm_core::Scope::checkout(project),
         };
         let mut env = self.worktree_env(scope);
         if let Some(profile) = profile {
-            let Some(environment) = profile.environment(agent) else {
-                return;
-            };
+            let environment = profile.environment(agent)?;
             env.push(environment);
         }
         let started = match login {
@@ -764,7 +762,7 @@ impl App {
         };
         let Some(talk) = started else {
             self.notices.trouble("The agent could not start", None);
-            return;
+            return None;
         };
         if let Some(opened) = self.agents.get_mut(talk) {
             opened.set_profile(profile.cloned());
@@ -774,6 +772,7 @@ impl App {
         }
         self.show_item(self.panes.focus(), scope, Item::Agent(scope, talk), false);
         self.focus_prompt(talk);
+        Some(talk)
     }
 
     /// Gets out of one thing the focused prompt is in the middle of.
@@ -1058,6 +1057,12 @@ impl App {
             }
             return;
         }
+        if self.open_session_reference(&link) {
+            return;
+        }
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
         match linked_file(talk.root(), &link) {
             Some((path, line)) => {
                 let place = Place {

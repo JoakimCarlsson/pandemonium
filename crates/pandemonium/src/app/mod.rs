@@ -31,6 +31,7 @@ mod mcp;
 mod modal;
 mod notice;
 mod operations;
+mod orchestration;
 mod outline;
 mod panel;
 mod panes;
@@ -162,6 +163,8 @@ pub enum Wake {
     Paste,
     /// Files have been carried onto the window from outside it.
     Arrival,
+    /// A caller-bound editor MCP invocation is waiting.
+    Orchestration,
     /// The MCP registry has answered a search.
     Registry,
 }
@@ -213,6 +216,8 @@ impl RemoteOperation {
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
 pub struct App {
+    /// Authenticated session orchestration and pending child creations.
+    orchestration: orchestration::Orchestration,
     /// The platform window, once the event loop has opened one.
     window: Option<Arc<Window>>,
     /// Whether that window has the keyboard, which is whether the reader is
@@ -723,6 +728,7 @@ impl App {
             notices.trouble(error, None);
         }
         Self {
+            orchestration: orchestration::Orchestration::default(),
             window: None,
             window_focused: true,
             window_occluded: false,
@@ -2868,6 +2874,7 @@ impl ApplicationHandler<Wake> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         self.pending[event as usize].store(false, Ordering::Release);
         match event {
+            Wake::Orchestration => self.serve_orchestration(),
             Wake::Terminal => {
                 let pumped = self.terminals.pump();
                 let tasks_pumped = self.tasks.pump();
@@ -2895,6 +2902,7 @@ impl ApplicationHandler<Wake> for App {
                     self.hear_health_turns();
                     self.request_redraw();
                 }
+                self.finish_delegations();
                 if self.agents.take_renamed() {
                     self.store();
                 }
@@ -3045,6 +3053,7 @@ impl ApplicationHandler<Wake> for App {
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.agents.set_notify(self.waker(Wake::Agent));
+        self.start_orchestration();
         self.debuggers.set_notify(self.waker(Wake::Debug));
         self.editor.set_notify(self.waker(Wake::Language));
         if let Some(directory) = config::servers() {

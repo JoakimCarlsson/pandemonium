@@ -89,11 +89,13 @@ pub struct Offered {
 
 /// The tool servers a conversation opens with, and what became of each:
 /// those `transports` cannot reach are left out of what the agent is told.
-pub(crate) fn offer(transports: Transports) -> (Value, Vec<Offered>) {
-    let servers = OFFERED
+pub(crate) fn offer(transports: Transports, scoped: Vec<McpServer>) -> (Value, Vec<Offered>) {
+    let mut servers = OFFERED
         .read()
         .map(|servers| servers.clone())
         .unwrap_or_default();
+    servers.retain(|server| !scoped.iter().any(|owned| owned.name == server.name));
+    servers.extend(scoped);
     let reaches = |server: &McpServer| match server.reach {
         Reach::Command { .. } => true,
         Reach::Http { .. } => transports.http,

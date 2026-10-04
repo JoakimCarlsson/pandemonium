@@ -2247,6 +2247,7 @@ version = "0.8.0"
 dependencies = [
  "arboard",
  "base64",
+ "getrandom 0.3.4",
  "image",
  "mermaid-svg",
  "pm-acp",
