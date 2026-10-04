@@ -2784,7 +2784,11 @@ impl App {
         );
         self.scroll.set_content_height(painted.height);
 
-        renderer.render(list);
+        renderer.render(list, || {
+            if let Some(window) = self.window.as_ref() {
+                window.pre_present_notify();
+            }
+        });
         self.update_pointer_cursor();
         if self
             .ui
