@@ -103,7 +103,7 @@ impl App {
     }
 
     /// Brings an existing view forward or opens it beside `pane`.
-    fn open_beside(&mut self, pane: PaneId, item: Item) {
+    pub(super) fn open_beside(&mut self, pane: PaneId, item: Item) {
         let holder = self.panes.panes().into_iter().find(|pane| {
             self.panes
                 .pane(*pane)

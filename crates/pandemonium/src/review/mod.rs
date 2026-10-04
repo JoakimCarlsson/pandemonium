@@ -32,3 +32,5 @@ pub use remark::{Delivery, block_rows, comment_block, composer_block, composer_r
 pub use sidebar::{SourceControlControls, change_menu, changes_sidebar, status_color};
 pub use store::{ChangeId, Group, Review, StashAction};
 pub use work::{Done, Work};
+
+pub(crate) use pane::{TurnDiff, step_prefix, turns_pane};

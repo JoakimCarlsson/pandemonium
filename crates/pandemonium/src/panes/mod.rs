@@ -14,7 +14,7 @@ mod tree;
 mod view;
 
 pub use arrangement::Arrangement;
-pub use item::{Item, Role};
+pub use item::{Item, Role, TurnSpan};
 pub use saved::{Saved, SavedAxis, SavedKind, SavedNode, SavedTab};
 pub use tool::Tool;
 pub use tree::{Pane, PaneId, PaneTree, SplitDirection, SplitId};

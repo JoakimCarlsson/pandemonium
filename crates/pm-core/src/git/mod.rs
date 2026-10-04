@@ -13,6 +13,7 @@
 mod blame;
 mod branch;
 mod changes;
+mod checkpoint;
 mod clone;
 mod commit;
 mod diff;
@@ -21,16 +22,23 @@ mod head;
 mod index;
 mod operation;
 mod run;
+mod snapshot;
 mod stash;
 mod status;
 mod worktree;
 
-pub use blame::{Blame, blame};
+pub use blame::{Blame, blame, blame_at};
 pub use branch::{
     Branch, branches, create_branch, fetch, fetch_from, force_push, pull, push_branch, push_to,
     remotes, switch_branch, sync,
 };
 pub use changes::{Change, ChangeKind, changes};
+pub use checkpoint::{
+    CHECKPOINT_HEAD, Checkpoint, CheckpointStep, begin_checkpoint, begin_checkpoint_number,
+    between, checkpoint, checkpoint_at, checkpoint_step, checkpoint_steps, checkpoint_turn,
+    checkpoints, end_checkpoint, hunk_step, hunk_steps, rewind, rewind_number, rewind_paths,
+    take_rewind_context,
+};
 pub use clone::{clone, named};
 pub use commit::{Commit, amend, cherry_pick, commit, history, last_message};
 pub use diff::{Hunk, Line, LineKind, Side, diff, diffs, untracked};
@@ -44,6 +52,7 @@ pub use operation::{
     operation, skip_operation,
 };
 pub use run::Said;
+pub use snapshot::snapshot;
 pub use stash::{Stash, stash_apply, stash_drop, stash_pop, stash_push, stashes};
 pub use status::{Changed, FileStatus, Status};
 pub use worktree::{

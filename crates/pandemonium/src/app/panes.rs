@@ -221,6 +221,7 @@ impl App {
             Item::Rendered(_)
             | Item::Outline(_)
             | Item::Review(_)
+            | Item::Turns(..)
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
@@ -320,7 +321,8 @@ impl App {
         match item {
             Item::File(file) | Item::Rendered(file) => self.editor.scope_of(file),
             Item::Image(image) => self.images.scope_of(image),
-            Item::Review(scope)
+            Item::Turns(scope, _)
+            | Item::Review(scope)
             | Item::Outline(scope)
             | Item::Change(scope, _)
             | Item::Excerpts(scope)
@@ -560,6 +562,9 @@ impl App {
     /// difference between what was open and what is open says it.
     fn remember_closed(&mut self, before: &BTreeSet<Item>) {
         let held = self.panes.held();
+        self.checkpointing
+            .diffs
+            .retain(|(scope, span), _| held.contains(&Item::Turns(*scope, *span)));
         let gone = before
             .iter()
             .filter(|item| !held.contains(item))
@@ -604,6 +609,15 @@ impl App {
                     account: talk.profile().cloned(),
                     session: talk.resumable().unwrap_or_default(),
                     title: talk.title().unwrap_or_default().to_owned(),
+                    ..SavedTab::default()
+                });
+            }
+            if let Item::Turns(_, span) = item {
+                return Some(SavedTab {
+                    kind: SavedKind::Turns,
+                    project,
+                    worktree,
+                    turns: Some(span),
                     ..SavedTab::default()
                 });
             }
@@ -701,6 +715,7 @@ impl App {
             .iter()
             .map(|project| (project.root().to_path_buf(), project.id()))
             .collect::<Vec<_>>();
+        let mut comparisons = Vec::new();
         let editor = &mut self.editor;
         let images = &mut self.images;
         let excerpts = &mut self.excerpts;
@@ -755,6 +770,14 @@ impl App {
                 }
                 return Some((Some(scope), Item::Agent(scope, talk)));
             }
+            if tab.kind == SavedKind::Turns {
+                if let Some(span) = tab.turns {
+                    comparisons.push((scope, span));
+
+                    return Some((Some(scope), Item::Turns(scope, span)));
+                }
+                return None;
+            }
             if tab.kind == SavedKind::Review {
                 return Some((Some(scope), Item::Review(scope)));
             }
@@ -802,6 +825,9 @@ impl App {
             }
             Some((Some(scope), Item::File(file)))
         });
+        for (scope, span) in comparisons {
+            self.read_turn_diff(scope, span);
+        }
         self.recent.clear();
         if let Some(documents) = self
             .panes
@@ -976,6 +1002,7 @@ impl App {
                 Item::Rendered(_)
                 | Item::Outline(_)
                 | Item::Review(_)
+                | Item::Turns(..)
                 | Item::Excerpts(_)
                 | Item::Search(_)
                 | Item::Agent(..)
@@ -1171,6 +1198,14 @@ impl App {
                 name: "Search: Replace in Project".to_owned(),
                 icon: IconName::Search,
                 dirty: self.is_dirty(Item::Search(scope)),
+                preview: false,
+                pinned: false,
+            }),
+            Item::Turns(_, span) => Some(TabEntry {
+                item,
+                name: format!("Turns {} → {}", span.from, span.to),
+                icon: IconName::GitCompare,
+                dirty: false,
                 preview: false,
                 pinned: false,
             }),
@@ -1388,6 +1423,16 @@ impl App {
             }
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),
+                None => Content::Empty,
+            },
+            Some(Item::Turns(scope, span)) => match self.checkpointing.diffs.get(&(scope, span)) {
+                Some(diff) => Content::Built(Box::new(crate::review::turns_pane(
+                    theme,
+                    scope,
+                    span,
+                    diff,
+                    self.preferences.split_diff,
+                ))),
                 None => Content::Empty,
             },
             Some(Item::Review(project)) => match self.reviews.get(&project) {

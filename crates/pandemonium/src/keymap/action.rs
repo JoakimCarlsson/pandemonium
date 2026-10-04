@@ -297,6 +297,8 @@ pub enum Action {
     ShowChanges,
     /// Open those changes for review, in a pane.
     OpenReview,
+    /// Compare any two persisted worktree turns.
+    CompareTurns,
     /// Open those changes as excerpts of their files, edited in one pane.
     EditChanges,
     /// Open the focused markdown file rendered, in a pane beside it.
@@ -880,6 +882,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     ),
     (Action::RevertChange, "git.revert_change", "Revert Change"),
     (Action::ShowChanges, "git.changes", "Show Source Control"),
+    (
+        Action::CompareTurns,
+        "agent.compare_turns",
+        "Compare Turns…",
+    ),
     (Action::OpenReview, "git.review", "Review Changes"),
     (Action::EditChanges, "git.edit_changes", "Edit Changes"),
     (

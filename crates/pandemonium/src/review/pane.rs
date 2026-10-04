@@ -20,8 +20,8 @@
 //! old side set beside the new so a line and what became of it are read
 //! across rather than down.
 
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use pm_core::{Changed, Hunk, Line, LineKind};
 use pm_gfx::Rgba;
@@ -958,6 +958,13 @@ fn heading_row(
                 .font_mono()
                 .color(theme.colors.text_muted),
         )
+        .when_some(
+            review
+                .change(index)
+                .and_then(|changed| review.patch(&changed.path))
+                .and_then(|patch| patch.attribution.get(&(staged, at))),
+            |row, step| row.child(provenance(theme, review.checkpoint_scope, step)),
+        )
         .child(h_flex().flex_1())
         .when(hunk_anchor(review, index, staged, hunk).is_some(), |row| {
             row.child(worded(
@@ -1396,4 +1403,211 @@ pub fn line_at(
             .and_then(|row| numbered(row, index, side));
         below.or(above)
     })
+}
+
+/// The immutable content and scrolling of a persisted turn comparison pane.
+#[derive(Default)]
+pub(crate) struct TurnDiff {
+    /// Files, hunks and their optional conservative provenance.
+    pub(crate) files: BTreeMap<PathBuf, Vec<(Hunk, Option<pm_core::CheckpointStep>)>>,
+    /// The first visible row.
+    pub(crate) scroll: usize,
+}
+
+/// A compact, stable identifier for a checkpoint heading's transcript target.
+pub fn step_prefix(step: &pm_core::CheckpointStep) -> u64 {
+    u64::from_str_radix(step.commit.get(..16).unwrap_or_default(), 16).unwrap_or_default()
+}
+
+/// Draws a provenance label and enables navigation only for an identified call.
+fn provenance(
+    theme: &Theme,
+    scope: Option<pm_core::Scope>,
+    step: &pm_core::CheckpointStep,
+) -> Div<Message> {
+    h_flex()
+        .items_center()
+        .child(
+            text(format!("{} · turn {}", step.title, step.turn))
+                .text_xs()
+                .color(theme.colors.text_muted),
+        )
+        .when_some(scope.filter(|_| step.tool.is_some()), |label, scope| {
+            label.on_click(Message::ShowCheckpointStep(scope, step_prefix(step)))
+        })
+}
+
+/// Builds a read-only turn comparison with the review's hunk and line primitives.
+pub(crate) fn turns_pane(
+    theme: &Theme,
+    scope: pm_core::Scope,
+    span: crate::panes::TurnSpan,
+    diff: &TurnDiff,
+    split: bool,
+) -> Div<Message> {
+    let rows = turn_rows(diff, split);
+    let empty = rows.is_empty();
+    let visible = rows
+        .into_iter()
+        .skip(diff.scroll)
+        .take(DRAWN)
+        .map(|row| turn_row(theme, scope, row));
+    v_flex()
+        .w_full()
+        .h_full()
+        .overflow_hidden()
+        .bg(theme.colors.background)
+        .child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap(1)
+                .child(text(format!("Turn {} → {}", span.from, span.to)).text_sm())
+                .child(layout_toggle(theme, split))
+                .child(worded(
+                    theme,
+                    "Rewind to first turn",
+                    true,
+                    Message::RequestRewind(scope, span.from),
+                ))
+                .child(worded(
+                    theme,
+                    "Rewind to second turn",
+                    true,
+                    Message::RequestRewind(scope, span.to),
+                )),
+        )
+        .child(
+            v_flex()
+                .w_full()
+                .flex_1()
+                .overflow_hidden()
+                .when(empty, |pane| {
+                    pane.child(nothing(theme, "No changes between these turns"))
+                })
+                .children(visible),
+        )
+}
+
+/// One lightweight row of a turn comparison, laid out only when visible.
+enum TurnRow<'a> {
+    /// A changed file's heading.
+    File(&'a Path),
+    /// A binary or metadata-only file change.
+    Metadata,
+    /// A hunk's ranges and conservative provenance.
+    Heading(&'a Hunk, Option<&'a pm_core::CheckpointStep>),
+    /// A unified diff line.
+    Line(&'a Line),
+    /// The old and new lines in a split comparison.
+    Pair(Option<&'a Line>, Option<&'a Line>),
+}
+
+/// Lists comparison rows without constructing off-screen UI elements.
+fn turn_rows(diff: &TurnDiff, split: bool) -> Vec<TurnRow<'_>> {
+    let mut rows = Vec::new();
+    for (path, hunks) in &diff.files {
+        rows.push(TurnRow::File(path));
+        if hunks.is_empty() {
+            rows.push(TurnRow::Metadata);
+        }
+        for (hunk, step) in hunks {
+            rows.push(TurnRow::Heading(hunk, step.as_ref()));
+            if split {
+                rows.extend(
+                    paired(0, path, false, hunk)
+                        .into_iter()
+                        .filter_map(|row| match row {
+                            Row::Pair(_, _, _, old, new) => Some(TurnRow::Pair(old, new)),
+                            _ => None,
+                        }),
+                );
+            } else {
+                rows.extend(hunk.lines.iter().map(TurnRow::Line));
+            }
+        }
+    }
+    rows
+}
+
+impl TurnDiff {
+    /// Counts rows in the currently selected diff layout.
+    pub(crate) fn row_count(&self, split: bool) -> usize {
+        turn_rows(self, split).len()
+    }
+}
+
+/// Draws one visible turn row with the review's existing line and hunk primitives.
+fn turn_row(theme: &Theme, scope: pm_core::Scope, row: TurnRow<'_>) -> Div<Message> {
+    match row {
+        TurnRow::File(path) => h_flex().h_px(theme.size.row).child(
+            text(path.display().to_string())
+                .text_sm()
+                .font_mono()
+                .color(theme.colors.text),
+        ),
+        TurnRow::Metadata => h_flex()
+            .h_px(theme.size.row)
+            .child(text("Binary content or file metadata changed").text_xs()),
+        TurnRow::Heading(hunk, step) => h_flex()
+            .w_full()
+            .h_px(theme.size.row)
+            .items_center()
+            .gap(1)
+            .bg(theme.colors.accent.alpha(theme.emphasis.change))
+            .child(text(range_of(hunk)).text_xs().font_mono())
+            .child(text(hunk.heading.clone()).text_xs())
+            .when_some(step, |row, step| {
+                row.child(provenance(theme, Some(scope), step))
+            }),
+        TurnRow::Line(line) => line_row(
+            theme,
+            line,
+            None,
+            &Spot {
+                shown: None,
+                index: 0,
+                old: false,
+                new: false,
+                moving: false,
+                picked: None,
+            },
+        ),
+        TurnRow::Pair(old, new) => readonly_pair(theme, old, new),
+    }
+}
+
+/// Draws one read-only split row using the review's numbers, marks and text styles.
+fn readonly_pair(theme: &Theme, old: Option<&Line>, new: Option<&Line>) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .h_px(theme.size.row)
+        .items_stretch()
+        .child(readonly_half(theme, old, false))
+        .child(readonly_half(theme, new, true))
+}
+
+/// Draws one half of a checkpoint row with the review's line washes.
+fn readonly_half(theme: &Theme, line: Option<&Line>, new: bool) -> Div<Message> {
+    let (gutter, wash) = washes(theme, line.map(|line| line.kind));
+    h_flex()
+        .flex_1()
+        .overflow_hidden()
+        .when_some(wash, Div::bg)
+        .child(
+            h_flex()
+                .w_px(SIDE_NUMBER)
+                .justify_end()
+                .when_some(gutter, Div::bg)
+                .child(number(
+                    theme,
+                    line.and_then(|line| if new { line.new } else { line.old }),
+                )),
+        )
+        .child(marked(theme, line))
+        .child(shaded(
+            theme,
+            line.map_or(" ", |line| line.text.as_str()),
+            &[],
+        ))
 }

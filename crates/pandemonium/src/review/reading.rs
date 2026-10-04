@@ -86,6 +86,30 @@ impl Reading {
             patches.entry(path.to_path_buf()).or_default().unstaged = hunks;
         }
         patches.retain(|path, _| changed.iter().any(|(_, changed)| changed.path == *path));
+        for repository in &repositories {
+            let steps = pm_core::checkpoint_steps(&repository.root);
+            for (path, patch) in &mut patches {
+                if !path.starts_with(&repository.root) {
+                    continue;
+                }
+                for (staged, hunks) in [(true, &patch.staged), (false, &patch.unstaged)] {
+                    for (at, step) in pm_core::hunk_steps(
+                        &repository.root,
+                        path,
+                        pm_core::CHECKPOINT_HEAD,
+                        hunks,
+                        &steps,
+                    )
+                    .into_iter()
+                    .enumerate()
+                    {
+                        if let Some(step) = step {
+                            patch.attribution.insert((staged, at), step);
+                        }
+                    }
+                }
+            }
+        }
         let conflicts = changed
             .iter()
             .filter(|(_, changed)| changed.is_conflicted())

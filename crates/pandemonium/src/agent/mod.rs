@@ -27,3 +27,5 @@ pub use store::{Pasted, Pending, Standing, Talk, TalkId, Talks, Tally};
 pub use transcript::Block;
 
 pub use pm_ui::Spot;
+
+pub(crate) use pane::tool_offset;
