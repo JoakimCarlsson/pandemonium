@@ -400,10 +400,9 @@ impl Split {
 
     /// The children drawn while the window shows `scope`, by their index.
     ///
-    /// A child with nothing to show in that worktree gives its room to the
-    /// ones that do, so a division made in one project does not leave empty
-    /// halves in another. When no child shows anything the first is drawn
-    /// alone, which is how a window with nothing open is one empty pane.
+    /// An empty pane keeps its space. A child holding only tabs of other
+    /// worktrees gives its room to the visible children. When none are
+    /// visible, the first child is drawn alone.
     pub fn drawn(&self, scope: Option<Scope>) -> Vec<usize> {
         let shown = (0..self.children.len())
             .filter(|index| self.children[*index].shows(scope))
@@ -472,7 +471,7 @@ impl Node {
         }
     }
 
-    /// Whether anything under this node has a tab `scope` sees.
+    /// Whether this node contains an empty pane or a tab `scope` sees.
     fn shows(&self, scope: Option<Scope>) -> bool {
         match self {
             Self::Pane(pane) => pane.is_empty() || pane.shown(scope).next().is_some(),
@@ -693,37 +692,6 @@ impl PaneTree {
     /// wherever they are in the tree.
     pub fn retain(&mut self, mut keep: impl FnMut(Item) -> bool) {
         self.root.walk_mut(&mut |pane| pane.retain(&mut keep));
-    }
-
-    /// Closes every pane with nothing in it, save the last one standing.
-    ///
-    /// A pane whose last tab has closed is a division of the window with
-    /// nothing to divide, so it gives its room back to its neighbour; the
-    /// window itself is always one pane, empty or not.
-    pub fn close_empty(&mut self) {
-        while let Some(empty) = self.empty() {
-            if !self.close(empty) {
-                return;
-            }
-        }
-    }
-
-    /// Closes `id` after its last tab leaves, preserving unrelated empty panes.
-    pub fn close_if_empty(&mut self, id: PaneId) {
-        if self.pane(id).is_some_and(Pane::is_empty) {
-            self.close(id);
-        }
-    }
-
-    /// A pane with nothing open in it, if the window has one.
-    fn empty(&self) -> Option<PaneId> {
-        let mut empty = None;
-        self.root.walk(&mut |pane| {
-            if empty.is_none() && pane.is_empty() {
-                empty = Some(pane.id);
-            }
-        });
-        empty
     }
 
     /// Splits the pane `id` names `direction`-ward, and names the new pane.
