@@ -35,7 +35,7 @@ pub use limits::{Limits, Window};
 pub use mcp::{McpServer, Offered, Reach, command_line, command_words, install_mcp};
 pub use registry::{Listing, search as search_registry};
 pub use request::{Answer, Exit, Request, Run};
-pub use session::{Notify, Session};
+pub use session::{Conversation, Notify, Session};
 pub use update::{
     About, Ask, Choice, Command, Cost, Event, History, Kind, Knob, Location, Method, Mode, Output,
     Pick, Setting, Status, Step, Stop, ToolCall, Usage, Voice, Way, Weight,

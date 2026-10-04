@@ -23,7 +23,7 @@ pub use pane::{
     agent_pane, content_height, everything, knob_rows, lines_between, mode_icon, pending_messages,
     selected_text, standing_color, words_between,
 };
-pub use store::{Pasted, Pending, Standing, Talk, TalkId, Talks, Tally};
+pub use store::{McpFactory, Pasted, Pending, Standing, Talk, TalkId, Talks, Tally};
 pub use transcript::Block;
 
 pub use pm_ui::Spot;

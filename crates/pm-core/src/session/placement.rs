@@ -16,23 +16,24 @@ fn kept(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
 }
 
-/// The worktree of a session called `name`, of `project`, under `worktrees`.
-///
-/// A path already taken is stepped past rather than reused: two sessions of
-/// one project may well be called the same thing, and the second of them is
-/// still a worktree of its own.
-pub fn place(worktrees: &Path, project: &str, name: &str) -> PathBuf {
+/// Atomically reserves an unused session directory, stepping past existing names.
+pub fn reserve(worktrees: &Path, project: &str, name: &str) -> std::io::Result<PathBuf> {
     let directory = worktrees.join(slug(project));
+    std::fs::create_dir_all(&directory)?;
     let wanted = slug(name);
-    let taken = directory.join(&wanted);
-    if !taken.exists() {
-        return taken;
+    for nth in 1.. {
+        let path = directory.join(if nth == 1 {
+            wanted.clone()
+        } else {
+            format!("{wanted}-{nth}")
+        });
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
     }
-
-    (2..)
-        .map(|nth| directory.join(format!("{wanted}-{nth}")))
-        .find(|path| !path.exists())
-        .unwrap_or(taken)
+    unreachable!()
 }
 
 /// `name` as one path segment: kept characters, and dashes for the rest.

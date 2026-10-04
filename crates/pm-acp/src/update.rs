@@ -25,6 +25,8 @@ pub type Tools = BTreeMap<String, ToolCall>;
 /// Something the agent has said or asked, on its way to the window.
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// A queued editor prompt is ready for its normal delivery and checkpoint seam.
+    PromptReady(String),
     /// The session is open and will take prompts.
     Ready,
     /// Saved sessions returned by the agent, with whether more pages follow.

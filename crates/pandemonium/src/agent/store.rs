@@ -37,6 +37,9 @@ use pm_core::{ProjectId, Scope, SessionId};
 use pm_gfx::Point;
 use pm_ui::{Axis, Bounds, Placements, ResizeEvent, ResizePhase, Scrolled, Selection, Spot};
 
+/// Issues a caller-bound editor MCP server before its ACP process is started.
+pub type McpFactory = Arc<dyn Fn(TalkId) -> Result<pm_acp::McpServer, String> + Send + Sync>;
+
 /// A conversation's identity for as long as it is running.
 ///
 /// Ids are handed out by [`Talks`] and are unique across the window, so a
@@ -88,6 +91,10 @@ pub struct Tally {
 
 /// One conversation: what is running, what has been said, what it is owed.
 pub struct Talk {
+    /// MCP servers bound only to this editor conversation.
+    mcp: Vec<pm_acp::McpServer>,
+    /// Follow-ups held in the ACP prompt queue until their checkpoint can be prepared.
+    queued_messages: usize,
     /// Persisted native conversation ancestry, after the fork succeeds.
     fork: Option<pm_core::ConversationFork>,
     /// The source provider identity until the fork opens successfully.
@@ -857,6 +864,11 @@ impl Talk {
         self.conversation.knobs()
     }
 
+    /// Whether advertised model or mode changes are still awaiting adapter confirmation.
+    pub fn is_configuring(&self) -> bool {
+        self.conversation.is_configuring()
+    }
+
     /// The knob `id` names.
     pub fn knob(&self, id: &str) -> Option<Knob> {
         self.knobs().into_iter().find(|knob| knob.id == id)
@@ -1209,6 +1221,35 @@ impl Talk {
         self.deliver(text, Vec::new());
     }
 
+    /// Queues a bounded follow-up through the normal prompt and checkpoint seam.
+    pub fn message(&mut self, text: &str, limit: usize) -> Result<bool, String> {
+        if !self.is_running() || !self.ready {
+            return Err(
+                "The target agent is not ready; open its pane to reconnect or log in".to_owned(),
+            );
+        }
+        if self.busy {
+            self.conversation.queue_prompt(text, limit)?;
+            self.queued_messages += 1;
+            self.transcript
+                .note("A delegated follow-up is queued after this turn.");
+            Ok(true)
+        } else {
+            self.send_text(text);
+            Ok(false)
+        }
+    }
+
+    /// Clears queued follow-ups when cancellation or failure prevents delivery.
+    fn clear_messages(&mut self) {
+        self.conversation.clear_prompts();
+        if self.queued_messages > 0 {
+            self.queued_messages = 0;
+            self.transcript
+                .note("Queued delegated messages were discarded; send them again after recovery.");
+        }
+    }
+
     /// Hands `text` and its `attachments` to the agent, and has the
     /// conversation wait on the turn that follows.
     fn deliver(&mut self, text: &str, attachments: Vec<Attachment>) {
@@ -1253,6 +1294,7 @@ impl Talk {
 
     /// Cancels delivery when a filesystem baseline could not be captured.
     pub(crate) fn checkpoint_failed(&mut self) {
+        self.clear_messages();
         if let Some((text, attachments)) = self.pending_prompt.take() {
             if self.prompt.value().is_empty() {
                 self.prompt.set(&text);
@@ -1303,6 +1345,7 @@ impl Talk {
 
     /// Stops the turn that is running.
     pub fn cancel(&mut self) {
+        self.clear_messages();
         if self.pending_prompt.take().is_some() {
             self.busy = false;
             self.busy_since = None;
@@ -1408,8 +1451,19 @@ impl Talk {
     /// Takes in one thing the agent said.
     fn take(&mut self, event: Event) {
         match event {
+            Event::PromptReady(message) => {
+                self.queued_messages = self.queued_messages.saturating_sub(1);
+                self.send_text(&message);
+            }
             Event::Ready => {
                 self.ready = true;
+                if self
+                    .mcp_servers()
+                    .iter()
+                    .any(|server| server.name == "pandemonium-sessions" && !server.given)
+                {
+                    self.transcript.note("Editor session orchestration is unsupported: this adapter does not advertise MCP HTTP support. Choose an HTTP-capable adapter to delegate sessions.");
+                }
                 if let Some(source) = self.fork_source.take() {
                     self.fork = self
                         .resumable()
@@ -1479,10 +1533,12 @@ impl Talk {
                 self.busy_since = None;
                 self.unseen = stop != Stop::Cancelled;
                 if stop != Stop::EndTurn {
+                    self.clear_messages();
                     self.transcript.note(note(stop));
                 }
             }
             Event::Failed(trouble) => {
+                self.clear_messages();
                 self.pending_prompt = None;
                 self.transcript.finish_thought();
                 self.busy = false;
@@ -1521,6 +1577,7 @@ impl Talk {
             }
             Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
             Event::Ended => {
+                self.clear_messages();
                 self.pending_prompt = None;
                 self.transcript.finish_thought();
                 self.busy = false;
@@ -1721,6 +1778,8 @@ enum Opening<'a> {
 /// Every agent session the window is running.
 #[derive(Default)]
 pub struct Talks {
+    /// The editor-owned server factory, bound to a freshly allocated conversation id.
+    mcp: Option<McpFactory>,
     /// The sessions, by the id each was handed.
     talks: BTreeMap<TalkId, Talk>,
     /// The id the next session started will be given.
@@ -1744,6 +1803,11 @@ pub struct Talks {
 }
 
 impl Talks {
+    /// Offers each new conversation a separately authenticated editor server.
+    pub fn set_mcp(&mut self, factory: McpFactory) {
+        self.mcp = Some(factory);
+    }
+
     /// Wakes the window through `notify` whenever an agent says something.
     pub fn set_notify(&mut self, notify: Notify) {
         self.notify = Some(notify);
@@ -1869,14 +1933,34 @@ impl Talks {
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
         let remember_on_ready = matches!(opening, Opening::New | Opening::Login);
-        let started = match opening {
-            Opening::Fork(source) => Session::fork(agent, root, env, source, notify.clone()),
-            Opening::Strict(saved) => Session::load(agent, root, env, saved, notify.clone()),
-            Opening::Exact(_, saved) => Session::load(agent, root, env, saved, notify.clone()),
-            Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
-            Opening::New => Session::start(agent, root, env, notify.clone()),
-            Opening::Login => Session::start_login(agent, root, env, notify.clone()),
+        let id = match opening {
+            Opening::Exact(id, _) => id,
+            _ => {
+                let id = self.next;
+                self.next = TalkId(id.0 + 1);
+                id
+            }
         };
+        let mcp = match self.talks.get(&id) {
+            Some(talk) => talk.mcp.clone(),
+            None => match self.mcp.as_ref().map(|factory| factory(id)).transpose() {
+                Ok(server) => server.into_iter().collect::<Vec<_>>(),
+                Err(error) => {
+                    eprintln!("Could not authenticate editor MCP tools: {error}");
+                    return None;
+                }
+            },
+        };
+        let requested = match opening {
+            Opening::Fork(source) => pm_acp::Conversation::Fork(source.to_owned()),
+            Opening::Strict(saved) | Opening::Exact(_, saved) => {
+                pm_acp::Conversation::Load(saved.to_owned())
+            }
+            Opening::Restore(saved) => pm_acp::Conversation::Restore(saved.to_owned()),
+            Opening::New => pm_acp::Conversation::New,
+            Opening::Login => pm_acp::Conversation::Login,
+        };
+        let started = Session::configured(agent, root, env, requested, mcp.clone(), notify.clone());
         let conversation = match started {
             Ok(conversation) => conversation,
             Err(error) => {
@@ -1889,17 +1973,11 @@ impl Talks {
             }
         };
 
-        let id = match opening {
-            Opening::Exact(id, _) => id,
-            _ => {
-                let id = self.next;
-                self.next = TalkId(id.0 + 1);
-                id
-            }
-        };
         self.talks.insert(
             id,
             Talk {
+                mcp,
+                queued_messages: 0,
                 fork: None,
                 fork_source: match opening {
                     Opening::Fork(source) => Some(source.to_owned()),
@@ -1984,7 +2062,14 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
-        match Session::start(talk.agent(), talk.root(), &talk.env, notify) {
+        match Session::configured(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            pm_acp::Conversation::New,
+            talk.mcp.clone(),
+            notify,
+        ) {
             Ok(conversation) => {
                 talk.conversation = conversation;
                 talk.fork = None;
@@ -2023,18 +2108,18 @@ impl Talks {
         let Some(conversation) = talk.resumable() else {
             return false;
         };
-        let restored = match talk.fork.is_some() {
-            true => Session::reconnect_exact(
-                talk.agent(),
-                talk.root(),
-                &talk.env,
-                &conversation,
-                notify,
-            ),
-            false => {
-                Session::reconnect(talk.agent(), talk.root(), &talk.env, &conversation, notify)
-            }
+        let requested = match talk.fork.is_some() {
+            true => pm_acp::Conversation::ReconnectExact(conversation),
+            false => pm_acp::Conversation::Reconnect(conversation),
         };
+        let restored = Session::configured(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            requested,
+            talk.mcp.clone(),
+            notify,
+        );
         match restored {
             Ok(session) => {
                 talk.conversation = session;

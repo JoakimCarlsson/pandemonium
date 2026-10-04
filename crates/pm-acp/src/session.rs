@@ -76,6 +76,8 @@ pub type Notify = Arc<dyn Fn() + Send + Sync>;
 /// How a process opens its first conversation after the handshake.
 #[derive(Default)]
 struct Opening {
+    /// MCP servers belonging only to this connection.
+    servers: Vec<mcp::McpServer>,
     /// The native conversation to fork instead of opening or loading.
     fork: Option<String>,
     /// The conversation to restore, when supplied.
@@ -86,6 +88,42 @@ struct Opening {
     quiet: bool,
     /// Whether the client explicitly requests login before opening a conversation.
     login_first: bool,
+}
+
+/// The conversation an adapter is asked to open after negotiation.
+pub enum Conversation {
+    /// A fresh conversation.
+    New,
+    /// Login before a fresh conversation.
+    Login,
+    /// Restore a saved conversation, falling back when unavailable.
+    Restore(String),
+    /// Load an exact saved conversation with replay.
+    Load(String),
+    /// Resume without replay, falling back when unavailable.
+    Reconnect(String),
+    /// Resume an exact saved conversation without replay.
+    ReconnectExact(String),
+    /// Fork an advertised native conversation.
+    Fork(String),
+}
+
+impl Conversation {
+    /// The requested opening behavior before adapter negotiation.
+    fn opening(self) -> Opening {
+        let mut opening = Opening::default();
+        match self {
+            Self::New => {}
+            Self::Login => opening.login_first = true,
+            Self::Restore(id) | Self::Reconnect(id) => {
+                opening.resume = Some(id);
+                opening.resume_fallback = true;
+            }
+            Self::Load(id) | Self::ReconnectExact(id) => opening.resume = Some(id),
+            Self::Fork(id) => opening.fork = Some(id),
+        }
+        opening
+    }
 }
 
 /// What one request was sent to find out.
@@ -197,6 +235,8 @@ impl Outgoing {
 
 /// A turn waiting for the agent, including context attached to its text.
 struct Prompt {
+    /// Whether the editor must prepare this queued prompt before wire delivery.
+    deferred: bool,
     /// The words the reader sent.
     text: String,
     /// Files and images sent with those words.
@@ -206,6 +246,8 @@ struct Prompt {
 /// What the agent has said, and what it has not been told yet.
 #[derive(Default)]
 struct State {
+    /// MCP servers belonging only to this connection.
+    servers: Vec<mcp::McpServer>,
     /// The source of a fork awaiting negotiation.
     fork: Option<String>,
     /// Whether the adapter advertises native conversation forking.
@@ -308,6 +350,25 @@ impl Session {
         notify: Notify,
     ) -> std::io::Result<Self> {
         Self::open(agent, root, env, Opening::default(), notify)
+    }
+
+    /// Starts one agent with caller-owned MCP servers and the requested opening behavior.
+    pub fn configured(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        conversation: Conversation,
+        servers: Vec<mcp::McpServer>,
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        let quiet = matches!(
+            conversation,
+            Conversation::Reconnect(_) | Conversation::ReconnectExact(_)
+        );
+        let mut opening = conversation.opening();
+        opening.quiet = quiet;
+        opening.servers = servers;
+        Self::open(agent, root, env, opening, notify)
     }
 
     /// Starts the agent and offers its login methods before opening any conversation.
@@ -489,6 +550,7 @@ impl Session {
         };
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
+            state.servers = opening.servers;
             state.fork = opening.fork;
             state.resume = opening.resume;
             state.resume_fallback = opening.resume_fallback;
@@ -680,6 +742,7 @@ impl Session {
             return;
         };
         let prompt = Prompt {
+            deferred: false,
             text: text.to_owned(),
             attachments,
         };
@@ -698,6 +761,33 @@ impl Session {
         });
     }
 
+    /// Queues an editor-owned follow-up for normal delivery after a successful turn.
+    pub fn queue_prompt(&self, text: &str, limit: usize) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "The agent prompt queue is unavailable")?;
+        if state.queued.len() >= limit {
+            return Err("The target's pending message limit was reached".to_owned());
+        }
+        state.queued.push(Prompt {
+            deferred: true,
+            text: text.to_owned(),
+            attachments: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// Discards pending prompts when cancellation or failure prevents safe delivery.
+    pub fn clear_prompts(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.queued.clear();
+            state
+                .events
+                .retain(|event| !matches!(event, Event::PromptReady(_)));
+        }
+    }
+
     /// Whether this agent has advertised image prompt support.
     pub fn can_image(&self) -> bool {
         self.state.lock().is_ok_and(|state| state.images)
@@ -705,6 +795,7 @@ impl Session {
 
     /// Stops the turn that is running, if one is.
     pub fn cancel(&self) {
+        self.clear_prompts();
         let Ok(state) = self.state.lock() else {
             return;
         };
@@ -843,6 +934,16 @@ impl Session {
         drop(state);
         self.send(request);
         (self.notify)();
+    }
+
+    /// Whether any model or mode option requests still await their adapter response.
+    pub fn is_configuring(&self) -> bool {
+        self.state.lock().is_ok_and(|state| {
+            state
+                .sent
+                .values()
+                .any(|sent| matches!(sent, Sent::Knob(_) | Sent::Mode(_)))
+        })
     }
 
     /// Sets the knob `knob` names to the value `value` names.
@@ -1260,11 +1361,19 @@ impl Reader {
                         self.raise(event);
                     }
                 }
+                if stop != Stop::EndTurn
+                    && let Ok(mut state) = self.state.lock()
+                {
+                    state.queued.clear();
+                }
                 self.raise(Event::Stopped(stop));
                 self.idle();
                 self.measurement.refresh();
             }
             (Sent::Turn, Some(error)) => {
+                if let Ok(mut state) = self.state.lock() {
+                    state.queued.clear();
+                }
                 self.raise(Event::Failed(complaint(error)));
                 self.idle();
                 self.measurement.refresh();
@@ -1286,9 +1395,10 @@ impl Reader {
                 self.knobbed(were);
             }
             (_, Some(error)) => self.raise(Event::Failed(complaint(error))),
-            (Sent::Mode(_), None) => {}
+            (Sent::Mode(_), None) => self.wake(),
             (Sent::Knob(_), None) => {
                 self.knobbed(update::knobs(&message["result"]["configOptions"]));
+                self.wake();
             }
         }
     }
@@ -1329,7 +1439,12 @@ impl Reader {
             .lock()
             .map(|state| state.transports)
             .unwrap_or_default();
-        let (servers, plan) = mcp::offer(transports);
+        let scoped = self
+            .state
+            .lock()
+            .map(|state| state.servers.clone())
+            .unwrap_or_default();
+        let (servers, plan) = mcp::offer(transports, scoped);
         if let Ok(mut state) = self.state.lock() {
             state.mcp = plan;
         }
@@ -1501,6 +1616,13 @@ impl Reader {
             return;
         }
         let prompt = state.queued.remove(0);
+        if prompt.deferred {
+            state.events.push(Event::PromptReady(prompt.text));
+            state.fresh = true;
+            drop(state);
+            self.wake();
+            return;
+        }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         state.busy = true;
         state.sent.insert(id, Sent::Turn);

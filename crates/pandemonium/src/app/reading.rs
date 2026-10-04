@@ -42,6 +42,8 @@ enum Back {
     Changes(Changes),
     /// A session's worktrees, cut or refused.
     Cut(Result<Cutting, StartError>),
+    /// A caller-bound delegated worktree creation.
+    Delegated(u64, Result<Cutting, StartError>),
     /// A session taken off disk, or why it could not be.
     Finished(SessionId, Result<(), StartError>),
     /// What git said once it had changed a project's branch.
@@ -97,6 +99,11 @@ pub(super) struct Readings {
 }
 
 impl App {
+    /// Whether a session is reserved for asynchronous worktree teardown.
+    pub(super) fn session_finishing(&self, session: SessionId) -> bool {
+        self.readings.finishing.contains(&session)
+    }
+
     /// Asks git again what `scope`'s worktree holds, and shows it once git
     /// has answered.
     pub(super) fn reread_review_later(&mut self, scope: Scope) {
@@ -288,6 +295,7 @@ impl App {
         base: &str,
         chosen: &[PathBuf],
         under: &std::path::Path,
+        delegation: Option<u64>,
     ) {
         let cut = self.sessions.cut_later(
             project,
@@ -297,7 +305,10 @@ impl App {
             under,
             &self.preferences.bootstrap,
         );
-        self.spawn_read(move || Back::Cut(cut()));
+        self.spawn_read(move || match delegation {
+            Some(ticket) => Back::Delegated(ticket, cut()),
+            None => Back::Cut(cut()),
+        });
     }
 
     /// Takes `session`'s worktrees off disk, and everything reading them out
@@ -384,6 +395,7 @@ impl App {
                     }
                 }
                 Back::Cut(cut) => self.take_cut(cut),
+                Back::Delegated(ticket, cut) => self.take_delegated_cut(ticket, cut),
                 Back::Finished(session, finished) => self.take_finished(session, finished),
                 Back::Branched(project, said) => self.branch_changed(project, said),
                 Back::Bases(project, bases) => self.take_bases(project, bases),
@@ -505,6 +517,7 @@ impl App {
     /// it could not be taken off.
     fn take_finished(&mut self, session: SessionId, finished: Result<(), StartError>) {
         self.readings.finishing.remove(&session);
+        self.delegation_removed(session, &finished);
         match finished {
             Ok(()) => self.forget_session(session),
             Err(trouble) => self.say_trouble("The session could not be finished", &trouble),

@@ -38,6 +38,8 @@ const LEGACY_PANEL_HEIGHT: f32 = 220.0;
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub(super) struct Stored {
+    /// Limits and explicit project grants for autonomous session tools.
+    orchestration: super::Orchestration,
     /// Named accounts and real-login isolation evidence, without credentials.
     accounts: super::Accounts,
     /// The last options chosen for each agent CLI.
@@ -893,6 +895,7 @@ impl Stored {
         let defaults = Preferences::default();
         let bootstrap = self.bootstrap();
         Preferences {
+            orchestration: self.orchestration,
             agent_options: self.agents.unwrap_or_default(),
             theme_mode: self.theme_mode.unwrap_or(defaults.theme_mode),
             theme_family: self
@@ -1034,6 +1037,7 @@ impl Stored {
         let overrides = StoredOverrides::of(&preferences.theme_overrides);
 
         Self {
+            orchestration: preferences.orchestration.clone(),
             accounts: accounts.clone(),
             agents: (!preferences.agent_options.is_empty())
                 .then(|| preferences.agent_options.clone()),

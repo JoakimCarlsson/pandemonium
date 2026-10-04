@@ -285,6 +285,8 @@ impl Default for EditPredictions {
 /// Everything the reader decides about how the editor draws and behaves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
+    /// Limits and explicit project grants for editor-owned session tools.
+    pub orchestration: super::Orchestration,
     /// The last options chosen for each agent CLI, by agent id.
     pub agent_options: BTreeMap<String, AgentOptions>,
     /// Which theme the editor draws in.
@@ -356,6 +358,7 @@ impl Default for Preferences {
     /// The preferences a first launch starts from.
     fn default() -> Self {
         Self {
+            orchestration: super::Orchestration::default(),
             agent_options: BTreeMap::new(),
             theme_mode: ThemeMode::System,
             theme_family: DEFAULT_FAMILY,

@@ -31,6 +31,7 @@ mod message;
 mod notice;
 mod notification;
 mod onboarding;
+mod orchestration;
 mod outline;
 mod panel;
 mod panes;
