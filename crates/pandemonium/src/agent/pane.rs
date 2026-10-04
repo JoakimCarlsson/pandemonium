@@ -608,6 +608,7 @@ fn row_height(theme: &Theme, row: &Row) -> f32 {
                 112.0
             } else {
                 match piece.tone {
+                    Tone::TurnActions(_) => theme.size.row,
                     Tone::Heading(1) => theme.text.xl.line_height,
                     Tone::Said | Tone::Spoken | Tone::Heading(_) => theme.text.lg.line_height,
                     _ => theme.text.sm.line_height,
@@ -673,8 +674,9 @@ struct Wrapping {
 
 /// The measures of a theme the height of a row is taken in: the lines of a
 /// top heading, of the conversation's type, of its smaller type and of code,
-/// the edge of a bubble, the room around details and the reply action control.
-type Measures = [f32; 7];
+/// the edge of a bubble, the room around details, the reply action control
+/// and the turn action row.
+type Measures = [f32; 8];
 
 /// One part of the conversation: one block, or a run of tool calls drawn
 /// under one heading, and the rows it comes to.
@@ -958,6 +960,7 @@ fn measures(theme: &Theme) -> Measures {
         space(BUBBLE),
         space(0.75),
         theme.size.icon_control,
+        theme.size.row,
     ]
 }
 
@@ -2446,13 +2449,14 @@ fn diff_background(theme: &Theme, row: &Row) -> Option<Rgba> {
 /// land, so a drag over it can be read back as the text it passed over.
 fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -> Div<Message> {
     let session = talk.id();
+    let height = row_height(theme, row);
     if let Some(Tone::TurnActions(block)) = row.first().map(|piece| piece.tone) {
         let Some(turn) = talk.checkpoint_turns.get(&block).copied() else {
-            return h_flex().h_px(theme.size.row);
+            return h_flex().h_px(height);
         };
         return h_flex()
             .w_full()
-            .h_px(theme.size.row)
+            .h_px(height)
             .items_center()
             .gap(2)
             .child(
@@ -2475,7 +2479,6 @@ fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -
         selection.select(anchor, head);
     }
     let start = talk.wrapped().borrow().selection_starts[at];
-    let height = row_height(theme, row);
     if row.is_empty() {
         return h_flex().h_px(height);
     }
