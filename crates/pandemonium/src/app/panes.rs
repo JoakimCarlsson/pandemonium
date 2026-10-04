@@ -169,14 +169,18 @@ impl App {
     /// than twenty — and it is the pane's tab, not the window's, so a file
     /// previewed on the right leaves the pane on the left as it was.
     pub(super) fn show_file(&mut self, pane: PaneId, file: FileId, preview: bool) {
-        let Some(scope) = self.editor.scope_of(file) else {
-            return;
-        };
-        self.show_item(pane, scope, Item::File(file), preview);
+        self.show_item(pane, self.editor.scope_of(file), Item::File(file), preview);
     }
 
     /// Shows `item` of `scope` in `pane`, opening a tab for it if need be.
-    pub(super) fn show_item(&mut self, pane: PaneId, scope: Scope, item: Item, preview: bool) {
+    pub(super) fn show_item(
+        &mut self,
+        pane: PaneId,
+        scope: impl Into<Option<Scope>>,
+        item: Item,
+        preview: bool,
+    ) {
+        let scope = scope.into();
         let pane = self.pane_for(pane, item.role());
         if let Some(ui) = self.ui.as_mut() {
             ui.clear_text_selection();
@@ -185,9 +189,13 @@ impl App {
         if preview {
             self.close_previews(pane, item);
         }
-        self.point_at(scope);
+        if let Some(scope) = scope {
+            self.point_at(scope);
+        }
+        let showing = self.scope();
         if let Some(pane) = self.panes.pane_mut(pane) {
             pane.open(scope, item);
+            pane.activate(showing, item);
         }
         self.focus_pane(pane);
         self.sweep();
@@ -594,7 +602,20 @@ impl App {
                     ..SavedTab::default()
                 });
             }
-            let scope = self.scope_of(item)?;
+            let Some(scope) = self.scope_of(item) else {
+                let file = item.file()?;
+                let document = self.editor.get(file)?;
+                let document = document.borrow();
+                let head = document.buffer().selection().head;
+                return Some(SavedTab {
+                    kind: SavedKind::File,
+                    path: document.buffer().path().to_path_buf(),
+                    scroll: document.scroll(),
+                    line: head.line,
+                    column: head.column,
+                    ..SavedTab::default()
+                });
+            };
             let project = self.open.get(scope.project())?.root().to_path_buf();
             let worktree = self.root_of(scope)?;
             if let Some(talk) = item.session().and_then(|talk| self.agents.get(talk)) {
@@ -738,6 +759,15 @@ impl App {
             }
             if tab.kind == SavedKind::Settings {
                 return None;
+            }
+            if tab.kind == SavedKind::File && tab.project.as_os_str().is_empty() {
+                let file = editor.open_loose(&tab.path)?;
+                if let Some(document) = editor.get(file) {
+                    document
+                        .borrow_mut()
+                        .restore(tab.line, tab.column, tab.scroll);
+                }
+                return Some((None, Item::File(file)));
             }
             let (checkout, project) = projects
                 .iter()

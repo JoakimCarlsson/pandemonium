@@ -728,7 +728,7 @@ impl App {
     ///
     /// Reaching another file this way is a jump like any other, so where the
     /// pane was is taken down on the trail and going back returns to it.
-    fn open_tree_file(&mut self, path: &Path, pane: PaneId, preview: bool) {
+    pub(super) fn open_tree_file(&mut self, path: &Path, pane: PaneId, preview: bool) {
         let Some((scope, root)) = self.worktree_holding(path) else {
             return;
         };
@@ -1202,7 +1202,7 @@ impl App {
     }
 
     /// The worktree the window is holding that `path` lives in.
-    fn worktree_holding(&self, path: &Path) -> Option<(Scope, PathBuf)> {
+    pub(super) fn worktree_holding(&self, path: &Path) -> Option<(Scope, PathBuf)> {
         self.worktrees()
             .into_iter()
             .filter(|(_, root)| path.starts_with(root))
