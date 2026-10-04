@@ -922,7 +922,7 @@ impl App {
         };
         if self.showing_terminals() && self.terminals.count(scope) == 0 {
             if let Some(pane) = self.tool_pane(crate::panes::Tool::Terminal) {
-                self.close_item(pane, Item::Tool(crate::panes::Tool::Terminal));
+                self.close_item(pane, self.tool_item(crate::panes::Tool::Terminal));
             }
             self.terminal_focused = false;
         }

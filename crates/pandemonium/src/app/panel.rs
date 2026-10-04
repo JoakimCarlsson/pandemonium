@@ -6,7 +6,7 @@ use crate::app::places::Place;
 use crate::app::{App, Writing};
 use crate::message::Message;
 use crate::panel::{PanelView, Problem, ProblemFile};
-use crate::panes::{Item, Tool};
+use crate::panes::Tool;
 
 impl App {
     /// Brings the registered tool for `view` forward in its pane.
@@ -56,7 +56,7 @@ impl App {
                 let tool = Tool::from(view);
                 match self.tool_pane(tool) {
                     Some(pane) if self.tool_visible(tool) => {
-                        self.close_item(pane, Item::Tool(tool))
+                        self.close_item(pane, self.tool_item(tool))
                     }
                     _ => self.show_tool(tool),
                 }
