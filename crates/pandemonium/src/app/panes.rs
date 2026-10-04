@@ -144,13 +144,15 @@ impl App {
                 self.editor_focused = false;
                 self.changes_focused = true;
             }
-            Some(Item::Tool(Tool::Terminal)) => {
+            Some(item @ (Item::Tool(Tool::Terminal) | Item::WorktreeTool(_, Tool::Terminal))) => {
                 self.editor_focused = false;
                 self.terminal_focused = true;
-                self.remember_role(pane, Some(Item::Tool(Tool::Terminal)));
+                self.remember_role(pane, Some(item));
             }
-            Some(Item::Tool(Tool::Chat)) => self.remember_role(pane, Some(Item::Tool(Tool::Chat))),
-            Some(Item::Tool(_)) => {}
+            Some(item @ (Item::Tool(Tool::Chat) | Item::WorktreeTool(_, Tool::Chat))) => {
+                self.remember_role(pane, Some(item));
+            }
+            Some(Item::Tool(_) | Item::WorktreeTool(..)) => {}
             front => self.remember_role(pane, front),
         }
     }
@@ -233,7 +235,8 @@ impl App {
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
-            | Item::Tool(_) => false,
+            | Item::Tool(_)
+            | Item::WorktreeTool(..) => false,
         }
     }
 
@@ -289,16 +292,24 @@ impl App {
         if let Some(fresh) = self.panes.pane_mut(fresh) {
             fresh.open(scope, item);
         }
-        if matches!(item, Item::Tool(_))
+        if matches!(item, Item::Tool(_) | Item::WorktreeTool(..))
             && let Some(source) = self.panes.pane_mut(pane)
         {
             source.close(item);
+            self.remove_empty_pane(pane);
         }
         self.focus_pane(fresh);
         self.store();
     }
 
-    /// Closes `pane`, leaving the window as it was when it has only the one.
+    /// Removes a source pane emptied by moving its last tab, preserving hidden tabs.
+    pub(super) fn remove_empty_pane(&mut self, pane: PaneId) {
+        if self.panes.pane(pane).is_some_and(panes::Pane::is_empty) {
+            self.panes.close(pane);
+        }
+    }
+
+    /// Closes the visible tabs of `pane`, preserving other worktrees and the last pane.
     pub(super) fn close_pane(&mut self, pane: PaneId) {
         if let Some(search) = self
             .tabs_of(pane)
@@ -308,7 +319,14 @@ impl App {
             self.close_item(pane, search);
             return;
         }
-        if self.panes.close(pane) {
+        let visible = self.tabs_of(pane);
+        let has_hidden = self
+            .panes
+            .pane(pane)
+            .is_some_and(|pane| pane.items().any(|item| !visible.contains(&item)));
+        if has_hidden {
+            self.close_tabs(pane, |pane| pane.retain(|item| !visible.contains(&item)));
+        } else if self.panes.close(pane) {
             self.focus_pane(self.panes.focus());
             self.sweep();
             self.store();
@@ -335,6 +353,7 @@ impl App {
             | Item::Excerpts(scope)
             | Item::Search(scope)
             | Item::Agent(scope, _) => Some(scope),
+            Item::WorktreeTool(scope, _) => Some(scope),
             Item::Tool(_) => None,
         }
     }
@@ -556,6 +575,7 @@ impl App {
         }
         self.remember_closed(&before);
         self.sweep();
+        self.panes.keep_focus_drawn(self.scope());
         self.focus_pane(self.panes.focus());
         self.store();
     }
@@ -595,10 +615,19 @@ impl App {
     /// run gave them, which is the only thing the next launch can act on.
     pub(super) fn saved_panes(&self) -> Saved {
         self.panes.save(self.scope(), &|item| {
-            if let Item::Tool(tool) = item {
+            if let Item::Tool(tool) | Item::WorktreeTool(_, tool) = item {
                 return Some(SavedTab {
                     kind: SavedKind::Tool,
                     tool: Some(tool),
+                    project: self
+                        .scope_of(item)
+                        .and_then(|scope| self.open.get(scope.project()))
+                        .map(|project| project.root().to_path_buf())
+                        .unwrap_or_default(),
+                    worktree: self
+                        .scope_of(item)
+                        .and_then(|scope| self.root_of(scope))
+                        .unwrap_or_default(),
                     ..SavedTab::default()
                 });
             }
@@ -741,6 +770,7 @@ impl App {
             .map(|project| (project.root().to_path_buf(), project.id()))
             .collect::<Vec<_>>();
         let mut comparisons = Vec::new();
+        let restoring_scope = self.scope();
         let editor = &mut self.editor;
         let images = &mut self.images;
         let excerpts = &mut self.excerpts;
@@ -755,7 +785,23 @@ impl App {
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
             if tab.kind == SavedKind::Tool {
                 let tool = tab.tool?;
-                return tools.insert(tool).then_some((None, Item::Tool(tool)));
+                let scope = if tab.project.as_os_str().is_empty() {
+                    restoring_scope
+                } else {
+                    let (_, project) = projects.iter().find(|(root, _)| *root == tab.project)?;
+                    Some(
+                        match sessions
+                            .of(*project)
+                            .find(|session| session.root() == tab.worktree)
+                        {
+                            Some(session) => Scope::of(*project, session.id()),
+                            None => Scope::checkout(*project),
+                        },
+                    )
+                };
+                let item = Item::tool(tool, scope);
+                let scope = if item.is_window_wide() { None } else { scope };
+                return tools.insert(item).then_some((scope, item));
             }
             if tab.kind == SavedKind::Settings {
                 return None;
@@ -1060,7 +1106,8 @@ impl App {
                 | Item::Excerpts(_)
                 | Item::Search(_)
                 | Item::Agent(..)
-                | Item::Tool(_) => {}
+                | Item::Tool(_)
+                | Item::WorktreeTool(..) => {}
             }
         }
         self.activate_tab(pane, item);
@@ -1107,8 +1154,8 @@ impl App {
     /// Lets go of a carried tab where the pointer has reached.
     ///
     /// The tab moves rather than copies: it leaves the pane it came from,
-    /// the way dragging a tab does everywhere. Its source pane keeps its
-    /// space when empty, ready for another tab.
+    /// the way dragging a tab does everywhere. Moving its last tab removes
+    /// the source pane unless it still holds another worktree's tabs.
     fn drop_tab(&mut self, drag: TabDrag) {
         let Some((target, place)) = drag.target else {
             return;
@@ -1141,6 +1188,7 @@ impl App {
                 Some(index) => pane.insert(tab, scope, index),
                 None => pane.append(tab, scope),
             }
+            self.remove_empty_pane(drag.from);
         }
         self.focus_pane(landed);
         self.sweep();
@@ -1180,7 +1228,7 @@ impl App {
     /// is only where the name, the icon and the marks are read from.
     pub(super) fn tab_entry(&self, item: Item) -> Option<TabEntry> {
         match item {
-            Item::Tool(tool) => Some(TabEntry {
+            Item::Tool(tool) | Item::WorktreeTool(_, tool) => Some(TabEntry {
                 item,
                 name: tool.label().to_owned(),
                 icon: tool.icon(),
@@ -1470,7 +1518,7 @@ impl App {
     /// What a pane showing `item` draws beneath its bar of tabs.
     fn shown(&self, theme: &Theme, pane: PaneId, item: Option<Item>, width: f32) -> Content {
         match item {
-            Some(Item::Tool(tool)) => {
+            Some(Item::Tool(tool) | Item::WorktreeTool(_, tool)) => {
                 Content::Built(Box::new(self.tool_content(theme, tool, width)))
             }
             Some(Item::File(file)) => match self.editor.get(file) {

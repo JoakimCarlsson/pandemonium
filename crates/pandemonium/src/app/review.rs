@@ -1181,7 +1181,8 @@ impl App {
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
-            | Item::Tool(_) => None,
+            | Item::Tool(_)
+            | Item::WorktreeTool(..) => None,
         }
     }
 }

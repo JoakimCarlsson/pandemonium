@@ -25,7 +25,7 @@ impl App {
         match message {
             Message::ShowTool(tool) => self.show_tool(tool),
             Message::ToggleTool(tool) => match self.tool_pane(tool) {
-                Some(pane) => self.close_item(pane, Item::Tool(tool)),
+                Some(pane) => self.close_item(pane, self.tool_item(tool)),
                 None => self.show_tool(tool),
             },
             Message::ShowToolsMenu => self.open_menu(MenuTarget::Tools),
@@ -35,12 +35,17 @@ impl App {
         true
     }
 
+    /// The tool identity for the worktree currently shown.
+    pub(super) fn tool_item(&self, tool: Tool) -> Item {
+        Item::tool(tool, self.scope())
+    }
+
     /// The pane holding the registered tool, including one whose tab is behind another.
     pub(super) fn tool_pane(&self, tool: Tool) -> Option<PaneId> {
         self.panes.panes().into_iter().find(|id| {
             self.panes
                 .pane(*id)
-                .is_some_and(|pane| pane.items().any(|item| item == Item::Tool(tool)))
+                .is_some_and(|pane| pane.tabs(self.scope()).contains(&self.tool_item(tool)))
         })
     }
 
@@ -50,7 +55,7 @@ impl App {
             self.panes
                 .pane(id)
                 .and_then(|pane| pane.active(self.scope()))
-                == Some(Item::Tool(tool))
+                == Some(self.tool_item(tool))
         })
     }
 
@@ -61,18 +66,18 @@ impl App {
         } else {
             match self.tool_pane(tool) {
                 Some(pane) => pane,
-                None => self.pane_for(self.panes.focus(), Item::Tool(tool).role()),
+                None => self.pane_for(self.panes.focus(), self.tool_item(tool).role()),
             }
         };
         self.move_tool(pane, tool);
     }
 
-    /// Moves a tool's one tab to `target`, preserving all other tabs in either pane.
+    /// Moves the current worktree's tool tab to `target`, preserving other tabs.
     fn move_tool(&mut self, target: PaneId, tool: Tool) {
         if self.panes.pane(target).is_none() {
             return;
         }
-        let item = Item::Tool(tool);
+        let item = self.tool_item(tool);
         let scope = self.scope();
         if let Some(source) = self.tool_pane(tool)
             && source != target
@@ -80,6 +85,7 @@ impl App {
             let tab = self.panes.pane_mut(source).and_then(|pane| pane.take(item));
             if let (Some(tab), Some(pane)) = (tab, self.panes.pane_mut(target)) {
                 pane.append(tab, scope);
+                self.remove_empty_pane(source);
             }
         } else if let Some(pane) = self.panes.pane_mut(target) {
             pane.open(scope, item);
@@ -119,7 +125,9 @@ impl App {
                     .map(|pane| pane.items().collect::<Vec<_>>())
                     .unwrap_or_default()
             })
-            .filter(|item| !matches!(item, Item::Tool(_)) && seen.insert(*item))
+            .filter(|item| {
+                !matches!(item, Item::Tool(_) | Item::WorktreeTool(..)) && seen.insert(*item)
+            })
             .collect::<Vec<_>>();
         let held = self.panes.held();
         let group = |direction| {
@@ -127,9 +135,9 @@ impl App {
                 .into_iter()
                 .filter(|tool| {
                     tool.default_split() == direction
-                        && (tool.opens_by_default() || held.contains(&Item::Tool(*tool)))
+                        && (tool.opens_by_default() || held.contains(&self.tool_item(*tool)))
                 })
-                .map(Item::Tool)
+                .map(|tool| self.tool_item(tool))
                 .collect::<Vec<_>>()
         };
         let left = group(SplitDirection::Left);
@@ -137,7 +145,7 @@ impl App {
         let above = group(SplitDirection::Up);
         let below = group(SplitDirection::Down);
         let front_below = below.iter().copied().find(|item| match item {
-            Item::Tool(tool) => self.tool_visible(*tool),
+            Item::Tool(tool) | Item::WorktreeTool(_, tool) => self.tool_visible(*tool),
             _ => false,
         });
         let size = self

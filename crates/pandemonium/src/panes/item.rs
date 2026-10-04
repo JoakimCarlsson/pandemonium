@@ -36,6 +36,8 @@ pub enum Role {
 pub enum Item {
     /// A workspace tool, hosted by the same pane as any document tab.
     Tool(Tool),
+    /// A tool opened for one worktree.
+    WorktreeTool(Scope, Tool),
     /// A file, open in the editor.
     File(FileId),
     /// A picture, open to be looked at.
@@ -65,12 +67,24 @@ pub enum Item {
 }
 
 impl Item {
+    /// A tool tab owned by its worktree, or by the window for navigators.
+    pub fn tool(tool: Tool, scope: Option<Scope>) -> Self {
+        match (tool, scope) {
+            (Tool::Chat | Tool::Terminal | Tool::Problems | Tool::Debug, Some(scope)) => {
+                Self::WorktreeTool(scope, tool)
+            }
+            _ => Self::Tool(tool),
+        }
+    }
+
     /// What this is for.
     pub fn role(self) -> Role {
         match self {
-            Self::Tool(Tool::Chat) | Self::Agent(..) => Role::Agent,
-            Self::Tool(Tool::Terminal) => Role::Terminal,
-            Self::Tool(_) => Role::Tool,
+            Self::Tool(Tool::Chat) | Self::WorktreeTool(_, Tool::Chat) | Self::Agent(..) => {
+                Role::Agent
+            }
+            Self::Tool(Tool::Terminal) | Self::WorktreeTool(_, Tool::Terminal) => Role::Terminal,
+            Self::Tool(_) | Self::WorktreeTool(..) => Role::Tool,
             _ => Role::Editor,
         }
     }
