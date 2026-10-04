@@ -1199,12 +1199,7 @@ impl Reader {
                     .as_str()
                     .filter(|id| !id.is_empty() && *id != source)
                 {
-                    Some(_) => {
-                        if let Ok(mut state) = self.state.lock() {
-                            state.fork = None;
-                        }
-                        self.opened(result);
-                    }
+                    Some(destination) => self.activate_fork(destination, result),
                     None => self.raise(Event::Failed(
                         "the agent returned no independent fork identity".to_owned(),
                     )),
@@ -1396,6 +1391,28 @@ impl Reader {
                     &json!({ "cwd": self.root, "mcpServers": servers }),
                 )
             }
+        }
+    }
+
+    /// Attaches the fork's destination before announcing readiness or releasing prompts.
+    ///
+    /// Adapters may return a saved, detached fork. Resume it where supported, or
+    /// load it when replay is the only attachment contract; never open a replacement.
+    fn activate_fork(&self, destination: &str, result: &Value) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        state.fork = None;
+        let attach = state.resumes || state.loads;
+        if attach {
+            state.resume = Some(destination.to_owned());
+            state.resume_fallback = false;
+            state.quiet = true;
+        }
+        drop(state);
+        match attach {
+            true => self.open(),
+            false => self.opened(result),
         }
     }
 
