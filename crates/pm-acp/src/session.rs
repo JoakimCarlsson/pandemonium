@@ -76,6 +76,8 @@ pub type Notify = Arc<dyn Fn() + Send + Sync>;
 /// How a process opens its first conversation after the handshake.
 #[derive(Default)]
 struct Opening {
+    /// The native conversation to fork instead of opening or loading.
+    fork: Option<String>,
     /// The conversation to restore, when supplied.
     resume: Option<String>,
     /// Whether a missing saved conversation falls back to a new one.
@@ -91,6 +93,8 @@ struct Opening {
 enum Sent {
     /// The handshake.
     Handshake,
+    /// A native copy of another conversation.
+    Fork(String),
     /// A login, after which the conversation is opened again.
     Login,
     /// The conversation being opened.
@@ -202,6 +206,10 @@ struct Prompt {
 /// What the agent has said, and what it has not been told yet.
 #[derive(Default)]
 struct State {
+    /// The source of a fork awaiting negotiation.
+    fork: Option<String>,
+    /// Whether the adapter advertises native conversation forking.
+    forks: bool,
     /// What the agent calls this conversation, once it has opened one.
     id: Option<String>,
     /// The conversation to take up again, before one has been opened.
@@ -377,6 +385,27 @@ impl Session {
         )
     }
 
+    /// Reconnects an exact conversation without ever substituting a fresh one.
+    pub fn reconnect_exact(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        id: &str,
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        Self::open(
+            agent,
+            root,
+            env,
+            Opening {
+                resume: Some(id.to_owned()),
+                quiet: true,
+                ..Opening::default()
+            },
+            notify,
+        )
+    }
+
     /// Loads `id` exactly, reporting failure when that saved session is gone.
     pub fn load(
         agent: Agent,
@@ -460,6 +489,7 @@ impl Session {
         };
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
+            state.fork = opening.fork;
             state.resume = opening.resume;
             state.resume_fallback = opening.resume_fallback;
             state.quiet = opening.quiet;
@@ -511,6 +541,35 @@ impl Session {
     #[must_use]
     pub fn id(&self) -> Option<String> {
         self.state.lock().ok()?.id.clone()
+    }
+
+    /// Whether the adapter can fork this idle, open conversation natively.
+    pub fn can_fork(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.forks && state.id.is_some() && !state.busy)
+    }
+
+    /// Starts a separate process and asks it to fork the whole source conversation.
+    ///
+    /// Negotiation is repeated in the destination process; failure never opens a fresh session.
+    pub fn fork(
+        agent: Agent,
+        root: &Path,
+        env: &[(String, String)],
+        source: &str,
+        notify: Notify,
+    ) -> std::io::Result<Self> {
+        Self::open(
+            agent,
+            root,
+            env,
+            Opening {
+                fork: Some(source.to_owned()),
+                ..Opening::default()
+            },
+            notify,
+        )
     }
 
     /// Whether this agent can list previously saved sessions.
@@ -1134,6 +1193,18 @@ impl Reader {
             (Sent::Handshake, None) => self.shook(&message["result"]),
             (Sent::Open, None) => self.opened(&message["result"]),
             (Sent::Resume, None) => self.resumed(&message["result"]),
+            (Sent::Fork(source), None) => {
+                let result = &message["result"];
+                match result["sessionId"]
+                    .as_str()
+                    .filter(|id| !id.is_empty() && *id != source)
+                {
+                    Some(destination) => self.activate_fork(destination, result),
+                    None => self.raise(Event::Failed(
+                        "the agent returned no independent fork identity".to_owned(),
+                    )),
+                }
+            }
             (Sent::List(cursor), None) => {
                 let result = &message["result"];
                 let next = result["nextCursor"].as_str().map(str::to_owned);
@@ -1232,6 +1303,7 @@ impl Reader {
             state.loads = capabilities["loadSession"] == json!(true);
             let sessions = &capabilities["sessionCapabilities"];
             state.lists = sessions["list"].is_object();
+            state.forks = sessions["fork"].is_object();
             state.resumes = sessions["resume"].is_object();
             state.closes = sessions["close"].is_object();
             state.deletes = sessions["delete"].is_object();
@@ -1261,18 +1333,36 @@ impl Reader {
         if let Ok(mut state) = self.state.lock() {
             state.mcp = plan;
         }
+        let fork = self.state.lock().ok().and_then(|state| state.fork.clone());
+        if let Some(source) = fork {
+            if !self.state.lock().is_ok_and(|state| state.forks) {
+                self.raise(Event::Failed(
+                    "this agent does not advertise native session/fork".to_owned(),
+                ));
+                return;
+            }
+            self.ask(
+                Sent::Fork(source.clone()),
+                "session/fork",
+                &json!({
+                    "sessionId": source,
+                    "cwd": self.root,
+                    "mcpServers": servers,
+                }),
+            );
+            return;
+        }
         let resumed = match self.state.lock() {
-            Ok(state) => state
-                .resume
-                .clone()
-                .filter(|_| state.loads || (state.quiet && state.resumes)),
+            Ok(state) => state.resume.clone().filter(|_| {
+                state.loads || ((state.quiet || !state.resume_fallback) && state.resumes)
+            }),
             Err(_) => None,
         };
         let resumes = self.state.lock().is_ok_and(|state| state.resumes);
         match resumed {
             Some(resumed) => self.ask(
                 Sent::Resume,
-                match quiet && resumes {
+                match resumes && (quiet || !self.state.lock().is_ok_and(|state| state.loads)) {
                     true => "session/resume",
                     false => "session/load",
                 },
@@ -1301,6 +1391,28 @@ impl Reader {
                     &json!({ "cwd": self.root, "mcpServers": servers }),
                 )
             }
+        }
+    }
+
+    /// Attaches the fork's destination before announcing readiness or releasing prompts.
+    ///
+    /// Adapters may return a saved, detached fork. Resume it where supported, or
+    /// load it when replay is the only attachment contract; never open a replacement.
+    fn activate_fork(&self, destination: &str, result: &Value) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        state.fork = None;
+        let attach = state.resumes || state.loads;
+        if attach {
+            state.resume = Some(destination.to_owned());
+            state.resume_fallback = false;
+            state.quiet = true;
+        }
+        drop(state);
+        match attach {
+            true => self.open(),
+            false => self.opened(result),
         }
     }
 

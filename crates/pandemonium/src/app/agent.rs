@@ -124,6 +124,7 @@ impl App {
                     self.start_agent(agent);
                 }
             }
+            Message::ForkAgent(source) => self.fork_agent(source),
             Message::ShowAgentAccounts(session) => self.show_agent_accounts(session),
             Message::ManageAccountProfiles(agent) => {
                 self.open_picker(Kind::Accounts(self.scope(), agent));
@@ -329,6 +330,25 @@ impl App {
         if let Some(talk) = self.agents.get(session) {
             talk.delete_saved(saved);
         }
+    }
+
+    /// Opens a native whole-session fork in the source's existing filesystem scope.
+    fn fork_agent(&mut self, source: TalkId) {
+        let Some(destination) = self.agents.fork(source) else {
+            self.notices
+                .trouble("This conversation cannot be forked natively", None);
+            return;
+        };
+        let Some(scope) = self.agents.get(destination).map(Talk::scope) else {
+            return;
+        };
+        self.show_item(
+            self.panes.focus(),
+            scope,
+            Item::Agent(scope, destination),
+            false,
+        );
+        self.focus_prompt(destination);
     }
 
     /// Starts the agent of `session` again and carries on its conversation.

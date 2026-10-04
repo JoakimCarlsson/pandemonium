@@ -148,6 +148,9 @@ pub struct SavedTab {
     pub account: Option<crate::config::Profile>,
     /// What that agent called the conversation, so it can be taken up again.
     pub session: String,
+    /// Native whole-session fork ancestry, independent of filesystem checkpoints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork: Option<pm_core::ConversationFork>,
     /// The title the agent gave that conversation, drawn until it gives one
     /// again after being taken up.
     pub title: String,

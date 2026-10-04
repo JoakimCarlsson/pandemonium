@@ -2687,6 +2687,27 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
                 talk.profile_name().unwrap_or("Default account")
             )),
         )
+        .when_some(talk.fork_metadata(), |bar, fork| {
+            bar.child(
+                h_flex()
+                    .tooltip(format!(
+                        "Whole conversation forked from {} · files at {}",
+                        fork.source,
+                        fork.shared_root.display()
+                    ))
+                    .child(
+                        text("Native fork · shared files")
+                            .text_xs()
+                            .color(theme.colors.text_subtle),
+                    ),
+            )
+        })
+        .when(talk.can_fork(), |bar| {
+            bar.child(
+                icon_button(theme, IconName::GitFork, Message::ForkAgent(talk.id()))
+                    .tooltip("Fork whole conversation · native context · shared current files"),
+            )
+        })
         .when(talk.can_list(), |bar| {
             bar.child(
                 icon_button(
