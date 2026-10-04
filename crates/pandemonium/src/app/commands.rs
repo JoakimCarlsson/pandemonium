@@ -533,7 +533,14 @@ impl App {
 
     /// The worktree the file `id` names was opened from.
     pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<std::path::PathBuf> {
-        self.root_of(self.editor.scope_of(id)?)
+        match self.editor.scope_of(id) {
+            Some(scope) => self.root_of(scope),
+            None => self
+                .editor
+                .path(id)?
+                .parent()
+                .map(std::path::Path::to_path_buf),
+        }
     }
 
     /// Puts what the pointer is carrying down where the cursor is.

@@ -1391,10 +1391,10 @@ fn named_servers(servers: &BTreeMap<String, Vec<Server>>) -> HashMap<&'static st
         .collect()
 }
 
-/// One open file: the worktree it belongs to and the document itself.
+/// One open file: its optional worktree and the document itself.
 struct Entry {
-    /// The worktree the file was opened from.
-    scope: Scope,
+    /// The worktree the file was opened from, or none for a loose file.
+    scope: Option<Scope>,
     /// The worktree root that owns this file's language servers.
     root: PathBuf,
     /// The document, shared with whichever panes are drawing it.
@@ -1701,10 +1701,7 @@ impl Files {
             return Some(id);
         }
 
-        let mut buffer = Buffer::open(path).ok()?;
-        let habits = self.habits_of(buffer.language());
-        buffer.set_habit(habits.indent);
-        buffer.force_indent(habits.indent_fixed.then_some(habits.indent));
+        let buffer = self.prepared_buffer(path)?;
         let servers = buffer
             .language()
             .map(|language| self.servers.open(root, language))
@@ -1715,7 +1712,7 @@ impl Files {
         self.open.insert(
             id,
             Entry {
-                scope,
+                scope: Some(scope),
                 root: root.to_path_buf(),
                 document: Rc::new(RefCell::new(Document::new(buffer, preview, servers, None))),
             },
@@ -1724,12 +1721,48 @@ impl Files {
         Some(id)
     }
 
+    /// Opens a standalone file without attaching its folder to a project.
+    pub fn open_loose(&mut self, path: &Path) -> Option<FileId> {
+        if let Some(id) = self
+            .open
+            .iter()
+            .find(|(_, entry)| {
+                entry.scope.is_none() && entry.document.borrow().buffer().path() == path
+            })
+            .map(|(id, _)| *id)
+        {
+            self.keep(id);
+            return Some(id);
+        }
+        let buffer = self.prepared_buffer(path)?;
+        let id = self.next;
+        self.next = FileId(id.0 + 1);
+        self.open.insert(
+            id,
+            Entry {
+                scope: None,
+                root: path.parent()?.to_path_buf(),
+                document: Rc::new(RefCell::new(Document::new(buffer, false, Vec::new(), None))),
+            },
+        );
+        Some(id)
+    }
+
+    /// Reads a file with the editor's indentation preferences applied.
+    fn prepared_buffer(&self, path: &Path) -> Option<Buffer> {
+        let mut buffer = Buffer::open(path).ok()?;
+        let habits = self.habits_of(buffer.language());
+        buffer.set_habit(habits.indent);
+        buffer.force_indent(habits.indent_fixed.then_some(habits.indent));
+        Some(buffer)
+    }
+
     /// The file `path` is open as in `scope`, if it is open at all.
     fn find(&self, scope: Scope, path: &Path) -> Option<FileId> {
         self.open
             .iter()
             .find(|(_, entry)| {
-                entry.scope == scope && entry.document.borrow().buffer().path() == path
+                entry.scope == Some(scope) && entry.document.borrow().buffer().path() == path
             })
             .map(|(id, _)| *id)
     }
@@ -1743,7 +1776,7 @@ impl Files {
     pub fn search_snapshots(&self, scope: Scope) -> HashMap<PathBuf, String> {
         self.open
             .values()
-            .filter(|entry| entry.scope == scope)
+            .filter(|entry| entry.scope == Some(scope))
             .map(|entry| {
                 let document = entry.document.borrow();
                 (
@@ -1761,7 +1794,7 @@ impl Files {
 
     /// The worktree the file `id` names was opened from.
     pub fn scope_of(&self, id: FileId) -> Option<Scope> {
-        self.open.get(&id).map(|entry| entry.scope)
+        self.open.get(&id).and_then(|entry| entry.scope)
     }
 
     /// The file `id` names as a bar of tabs presents it.
@@ -1813,7 +1846,9 @@ impl Files {
             let habits = self.habits_of(document.buffer().language());
             document.save(habits);
             drop(document);
-            self.ask_baseline(id, root);
+            if entry.scope.is_some() {
+                self.ask_baseline(id, root);
+            }
         }
     }
 
@@ -1856,7 +1891,7 @@ impl Files {
             .map(|(id, entry)| (*id, entry.scope))
             .collect::<Vec<_>>();
         for (id, scope) in dirty {
-            match root(scope) {
+            match scope.and_then(root) {
                 Some(root) => self.save(id, &root),
                 None => {
                     if let Some(entry) = self.open.get(&id) {
@@ -1872,7 +1907,8 @@ impl Files {
     /// Whether `project` has an open document whose edits are not on disk.
     pub fn project_is_dirty(&self, project: ProjectId) -> bool {
         self.open.values().any(|entry| {
-            entry.scope.project() == project && entry.document.borrow().buffer().is_dirty()
+            entry.scope.is_some_and(|scope| scope.project() == project)
+                && entry.document.borrow().buffer().is_dirty()
         })
     }
 
@@ -1896,7 +1932,7 @@ impl Files {
         let clean = self
             .open
             .iter()
-            .filter(|(_, entry)| entry.scope == scope)
+            .filter(|(_, entry)| entry.scope == Some(scope))
             .filter(|(_, entry)| {
                 let document = entry.document.borrow();
                 !document.buffer().is_dirty() && wanted(document.buffer().path())
@@ -1947,7 +1983,7 @@ impl Files {
 
     /// Closes every file and server of `scope` over its worktree roots.
     pub fn close_scope(&mut self, scope: Scope, roots: &[PathBuf]) {
-        self.open.retain(|_, entry| entry.scope != scope);
+        self.open.retain(|_, entry| entry.scope != Some(scope));
         for root in roots {
             self.servers.close(root);
         }
@@ -1956,7 +1992,7 @@ impl Files {
     /// Closes every file of `project` and ends servers over all its roots.
     pub fn close_project(&mut self, project: ProjectId, roots: &[PathBuf]) {
         self.open
-            .retain(|_, entry| entry.scope.project() != project);
+            .retain(|_, entry| !entry.scope.is_some_and(|scope| scope.project() == project));
         for root in roots {
             self.servers.close(root);
         }
