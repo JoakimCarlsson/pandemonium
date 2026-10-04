@@ -8,8 +8,6 @@
 
 use std::collections::BTreeMap;
 
-use pm_core::Scope;
-
 use crate::app::App;
 use crate::panes::{Item, PaneId, Role, SplitDirection};
 
@@ -79,33 +77,5 @@ impl App {
         if let Some(role) = front.map(Item::role).filter(|role| *role != Role::Tool) {
             self.recent.insert(role, pane);
         }
-    }
-
-    /// Whether `pane` is holding documents, before its tabs change.
-    pub(super) fn holds_documents(&self, pane: PaneId) -> bool {
-        self.panes
-            .pane(pane)
-            .is_some_and(|pane| pane.items().any(|item| item.role() == Role::Editor))
-    }
-
-    /// Closes `pane` if its tabs are gone, unless it was the window's last
-    /// place for documents.
-    ///
-    /// Closing the last file above a terminal would hand the whole window to
-    /// the terminal, and the next file would have to make a pane to open in.
-    /// The empty pane stays instead, where that file will go.
-    pub(super) fn close_vacated(&mut self, pane: PaneId, held_documents: bool) {
-        let scope: Option<Scope> = self.scope();
-        let another = self.panes.panes().into_iter().any(|other| {
-            other != pane
-                && self
-                    .panes
-                    .pane(other)
-                    .is_some_and(|other| other.serves(scope, Role::Editor))
-        });
-        if held_documents && !another {
-            return;
-        }
-        self.panes.close_if_empty(pane);
     }
 }

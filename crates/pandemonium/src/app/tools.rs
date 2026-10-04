@@ -81,7 +81,6 @@ impl App {
             if let (Some(tab), Some(pane)) = (tab, self.panes.pane_mut(target)) {
                 pane.append(tab, scope);
             }
-            self.panes.close_if_empty(source);
         } else if let Some(pane) = self.panes.pane_mut(target) {
             pane.open(scope, item);
         }

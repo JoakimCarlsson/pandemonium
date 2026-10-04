@@ -237,7 +237,7 @@ fn pane_view(
         .when(divided && focused && tabs.is_empty(), |pane| {
             pane.border_1(theme.colors.border_focused)
         })
-        .when(!tabs.is_empty(), |view| {
+        .when(divided || !tabs.is_empty(), |view| {
             view.child(measured(
                 contents.bar,
                 tab_bar(

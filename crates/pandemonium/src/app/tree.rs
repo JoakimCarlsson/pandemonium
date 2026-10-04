@@ -793,7 +793,6 @@ impl App {
         }
         let items = moving.iter().map(|(item, _)| *item).collect::<Vec<_>>();
         self.panes.retain(|item| !items.contains(&item));
-        self.panes.close_empty();
         self.sweep();
         for (_, path) in moving {
             let moved = to.join(path.strip_prefix(from).unwrap_or(Path::new("")));
@@ -823,7 +822,6 @@ impl App {
             return;
         }
         self.panes.retain(|item| !gone.contains(&item));
-        self.panes.close_empty();
         self.sweep();
         self.store();
     }

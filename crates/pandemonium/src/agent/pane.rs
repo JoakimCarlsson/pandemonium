@@ -120,8 +120,6 @@ const SETTLE: Duration = Duration::from_millis(750);
 /// The colour a piece of a row is drawn in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Tone {
-    /// Filesystem actions attached to a reader prompt block.
-    TurnActions(usize),
     /// What the reader said.
     Said,
     /// What the agent said.
@@ -425,7 +423,38 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
             }
             let opens = at == 0 || !wrapped.said[at - 1];
             let closes = wrapped.said.get(last + 1) != Some(&true);
-            drawn.push(bubble(theme, message, opens, closes));
+            let content = bubble(theme, message, opens, closes);
+            if let Some(turn) = wrapped.reader_turn(talk, last) {
+                let session = talk.id();
+                let actions = h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap(0.5)
+                    .child(
+                        icon_button(
+                            theme,
+                            IconName::GitCompare,
+                            Message::DiffAgentTurn(session, turn),
+                        )
+                        .tooltip("Diff this turn"),
+                    )
+                    .child(
+                        icon_button(
+                            theme,
+                            IconName::Undo,
+                            Message::RewindAgentTurn(session, turn),
+                        )
+                        .tooltip("Rewind to before this turn"),
+                    );
+                drawn.push(v_flex().w_full().child(HoverMessage {
+                    content,
+                    actions,
+                    closes,
+                    actions_height: message_actions_height(theme),
+                }));
+            } else {
+                drawn.push(content);
+            }
         } else if matches!(wrapped.entries[at], Entry::Working) {
             drawn.push(
                 v_flex()
@@ -454,11 +483,11 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 .tooltip("Copy · Shift: copy formatted")
                 .on_secondary_click(Message::ShowAgentTextMenu(session, Some(block)));
             let closes = wrapped.reply_ends(last);
-            drawn.push(v_flex().w_full().child(Reply {
+            drawn.push(v_flex().w_full().child(HoverMessage {
                 content,
-                button,
+                actions: button,
                 closes,
-                actions_height: reply_actions_height(theme),
+                actions_height: message_actions_height(theme),
             }));
         } else if let Some(owner) = wrapped
             .row(at)
@@ -490,25 +519,25 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
     (drawn, offset)
 }
 
-/// A reply with a copy control beneath its text while hovered.
-struct Reply {
+/// A message with actions beneath its text while hovered.
+struct HoverMessage {
     /// The visible rows and their transcript gestures.
     content: Div<Message>,
-    /// The copy action, including its confirmation icon.
-    button: Div<Message>,
-    /// Whether the reply's last row is among the rows built.
+    /// The message actions, including any confirmation icons.
+    actions: Div<Message>,
+    /// Whether the message's last row is among the rows built.
     closes: bool,
-    /// The reserved height beneath the text for reply actions.
+    /// The reserved height beneath the text for message actions.
     actions_height: f32,
 }
 
-impl Element<Message> for Reply {
-    /// Uses the reply's own layout, including its reserved action row.
+impl Element<Message> for HoverMessage {
+    /// Uses the message's own layout, including its reserved action row.
     fn layout_style(&self) -> Style {
         self.content.layout_style()
     }
 
-    /// Measures the visible text and reserves space for actions at the reply's end.
+    /// Measures the visible text and reserves space for actions at the message's end.
     fn measure(&mut self, available: Size, cx: &mut LayoutContext<'_>) -> Size {
         let mut size = self.content.measure(available, cx);
         if self.closes {
@@ -517,7 +546,7 @@ impl Element<Message> for Reply {
         size
     }
 
-    /// Paints the reply and its copy control when the pointer is over it.
+    /// Paints the message and its actions when the pointer is over it.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, Message>) {
         let actions_height = if self.closes {
             self.actions_height
@@ -534,8 +563,8 @@ impl Element<Message> for Reply {
             cx,
         );
         if self.closes && cx.input().is_over(bounds) {
-            let size = self.button.measure(bounds.size, &mut cx.layout);
-            self.button.paint(
+            let size = self.actions.measure(bounds.size, &mut cx.layout);
+            self.actions.paint(
                 Rect::from_xywh(
                     bounds.left(),
                     bounds.bottom() - size.height,
@@ -548,8 +577,8 @@ impl Element<Message> for Reply {
     }
 }
 
-/// The height reserved beneath a reply for its hover actions.
-fn reply_actions_height(theme: &Theme) -> f32 {
+/// The height reserved beneath a message for its hover actions.
+fn message_actions_height(theme: &Theme) -> f32 {
     theme.size.icon_control + space(0.5)
 }
 
@@ -673,7 +702,7 @@ struct Wrapping {
 
 /// The measures of a theme the height of a row is taken in: the lines of a
 /// top heading, of the conversation's type, of its smaller type and of code,
-/// the edge of a bubble, the room around details and the reply action control.
+/// the edge of a bubble, the room around details and the message action control.
 type Measures = [f32; 7];
 
 /// One part of the conversation: one block, or a run of tool calls drawn
@@ -745,6 +774,16 @@ impl Wrapped {
             Block::Said(Voice::Agent, _)
         )
         .then_some(block)
+    }
+
+    /// The filesystem turn attached to the reader message containing `at`.
+    fn reader_turn(&self, talk: &Talk, at: usize) -> Option<u64> {
+        let Entry::Part(part, _) = self.entries[at] else {
+            return None;
+        };
+        talk.checkpoint_turns
+            .get(&self.parts[part].key.start)
+            .copied()
     }
 
     /// Whether `at` is the last row of its transcript block.
@@ -919,7 +958,7 @@ impl Wrapped {
                     height += space(0.75) + 1.0;
                 }
                 if self.reply(talk, at).is_some() && self.reply_ends(at) {
-                    height += reply_actions_height(theme);
+                    height += message_actions_height(theme);
                 }
                 if self.said[at] {
                     if at == 0 || !self.said[at - 1] {
@@ -927,6 +966,9 @@ impl Wrapped {
                     }
                     if self.said.get(at + 1) != Some(&true) {
                         height += edge;
+                        if self.reader_turn(talk, at).is_some() {
+                            height += message_actions_height(theme);
+                        }
                     }
                 }
                 if row
@@ -1024,12 +1066,8 @@ fn wrap_part(talk: &Talk, key: PartKey) -> Part {
     let mut settled = true;
     let rows = match &blocks[at] {
         Block::Said(Voice::Reader, passage) => {
-            let (mut rows, decoded) =
-                reader_rows(talk, at, passage, (columns * 2 / 3).max(NARROWEST));
+            let (rows, decoded) = reader_rows(talk, at, passage, (columns * 2 / 3).max(NARROWEST));
             settled = decoded;
-            if talk.checkpoint_turns.contains_key(&at) {
-                rows.push(vec![piece(String::new(), Tone::TurnActions(at))]);
-            }
             rows
         }
         Block::Picture(image) => vec![vec![image_piece(image.clone())]],
@@ -2446,36 +2484,12 @@ fn diff_background(theme: &Theme, row: &Row) -> Option<Rgba> {
 /// land, so a drag over it can be read back as the text it passed over.
 fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -> Div<Message> {
     let session = talk.id();
-    if let Some(Tone::TurnActions(block)) = row.first().map(|piece| piece.tone) {
-        let Some(turn) = talk.checkpoint_turns.get(&block).copied() else {
-            return h_flex().h_px(theme.size.row);
-        };
-        return h_flex()
-            .w_full()
-            .h_px(theme.size.row)
-            .items_center()
-            .gap(2)
-            .child(
-                h_flex()
-                    .on_click(Message::DiffAgentTurn(session, turn))
-                    .child(text("Diff this turn").text_xs().color(theme.colors.accent)),
-            )
-            .child(
-                h_flex()
-                    .on_click(Message::RewindAgentTurn(session, turn))
-                    .child(
-                        text("Rewind to before this turn")
-                            .text_xs()
-                            .color(theme.colors.text_muted),
-                    ),
-            );
-    }
+    let height = row_height(theme, row);
     let mut selection = Selection::default();
     if let Some((anchor, head)) = talk.selection() {
         selection.select(anchor, head);
     }
     let start = talk.wrapped().borrow().selection_starts[at];
-    let height = row_height(theme, row);
     if row.is_empty() {
         return h_flex().h_px(height);
     }
@@ -3874,7 +3888,6 @@ fn quieten(tone: Tone) -> Tone {
 /// The colour `tone` comes out in.
 fn tone(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
-        Tone::TurnActions(_) => theme.colors.text_muted,
         Tone::Said => theme.colors.text,
         Tone::Spoken => theme.colors.text,
         Tone::Heading(_) => theme.colors.text,

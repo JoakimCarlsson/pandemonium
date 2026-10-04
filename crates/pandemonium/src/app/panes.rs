@@ -281,11 +281,10 @@ impl App {
         if let Some(fresh) = self.panes.pane_mut(fresh) {
             fresh.open(scope, item);
         }
-        if matches!(item, Item::Tool(_)) {
-            if let Some(source) = self.panes.pane_mut(pane) {
-                source.close(item);
-            }
-            self.panes.close_if_empty(pane);
+        if matches!(item, Item::Tool(_))
+            && let Some(source) = self.panes.pane_mut(pane)
+        {
+            source.close(item);
         }
         self.focus_pane(fresh);
         self.store();
@@ -541,14 +540,12 @@ impl App {
         }
     }
 
-    /// Changes the tabs of `pane` and closes whatever that left with nothing.
+    /// Closes tabs in `pane`, preserving its space when the last tab leaves.
     pub(super) fn close_tabs(&mut self, pane: PaneId, close: impl FnOnce(&mut panes::Pane)) {
         let before = self.panes.held();
-        let held_documents = self.holds_documents(pane);
         if let Some(pane) = self.panes.pane_mut(pane) {
             close(pane);
         }
-        self.close_vacated(pane, held_documents);
         self.remember_closed(&before);
         self.sweep();
         self.focus_pane(self.panes.focus());
@@ -971,7 +968,6 @@ impl App {
             .filter(|item| self.scope_of(*item).is_some_and(leaving))
             .collect::<BTreeSet<_>>();
         self.panes.retain(|item| !gone.contains(&item));
-        self.panes.close_empty();
     }
 
     /// Carries a tab, or lets go of it where the pointer has reached.
@@ -1081,8 +1077,8 @@ impl App {
     /// Lets go of a carried tab where the pointer has reached.
     ///
     /// The tab moves rather than copies: it leaves the pane it came from,
-    /// the way dragging a tab does everywhere, and the pane it leaves empty
-    /// gives its room back to its neighbours.
+    /// the way dragging a tab does everywhere. Its source pane keeps its
+    /// space when empty, ready for another tab.
     fn drop_tab(&mut self, drag: TabDrag) {
         let Some((target, place)) = drag.target else {
             return;
@@ -1106,7 +1102,6 @@ impl App {
             DropPlace::Into => (target, None),
             DropPlace::Tab(index) => (target, Some(index)),
         };
-        let held_documents = self.holds_documents(drag.from);
         let carried = self
             .panes
             .pane_mut(drag.from)
@@ -1117,7 +1112,6 @@ impl App {
                 None => pane.append(tab, scope),
             }
         }
-        self.close_vacated(drag.from, held_documents);
         self.focus_pane(landed);
         self.sweep();
         self.store();

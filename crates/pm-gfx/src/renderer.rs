@@ -67,6 +67,8 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    /// The physical size the swapchain was last configured to present.
+    configured_size: (u32, u32),
     scale: f32,
     text: TextSystem,
     atlas: GlyphAtlas,
@@ -288,6 +290,7 @@ impl Renderer {
             surface,
             device,
             queue,
+            configured_size: (config.width, config.height),
             config,
             scale,
             text: TextSystem::new(),
@@ -321,26 +324,39 @@ impl Renderer {
         )
     }
 
-    /// Reconfigures the surface for a new physical size and scale factor.
+    /// Records the latest physical size and scale factor for the next frame.
+    ///
+    /// Resize events can arrive faster than frames are presented. Updating
+    /// the logical size immediately keeps layout current while deferring
+    /// swapchain recreation until a frame needs the final physical size.
     pub fn resize(&mut self, width: u32, height: u32, scale: f32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.scale = scale.max(f32::EPSILON);
-        self.surface.configure(&self.device, &self.config);
     }
 
-    /// Draws one frame of `list` and presents it.
+    /// Recreates the swapchain at the latest requested physical size.
+    fn configure_surface(&mut self) {
+        self.surface.configure(&self.device, &self.config);
+        self.configured_size = (self.config.width, self.config.height);
+    }
+
+    /// Draws one frame of `list` and presents it, notifying the window through
+    /// `before_present` immediately before submitting the frame to the display.
     ///
     /// A surface that timed out or is hidden skips the frame and is asked
     /// again on the next one; only a surface that is outdated or lost is
-    /// configured again.
-    pub fn render(&mut self, list: &DrawList) {
+    /// configured again, along with a changed physical size.
+    pub fn render(&mut self, list: &DrawList, before_present: impl FnOnce()) {
         self.text.end_frame();
+        if self.configured_size != (self.config.width, self.config.height) {
+            self.configure_surface();
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
+                self.configure_surface();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Timeout
@@ -452,6 +468,7 @@ impl Renderer {
         }
 
         self.queue.submit(Some(encoder.finish()));
+        before_present();
         self.queue.present(frame);
 
         self.quads = quads;
