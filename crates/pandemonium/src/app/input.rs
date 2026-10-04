@@ -157,6 +157,7 @@ impl App {
     /// terminal, then modal editing, then the window's own chords, then the
     /// search bar, then the text itself. Only a key nothing wanted becomes focus movement.
     /// A binding being recorded in the keymap screen comes before all of them.
+    /// Enter belongs to a focused agent prompt before other pane controls.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
         if matches!(self.writing, Some(Writing::LanguageServerField(_)))
@@ -172,6 +173,12 @@ impl App {
             return self.request_redraw();
         }
         if self.send_to_prompt(event) {
+            return self.request_redraw();
+        }
+        if matches!(self.writing, Some(Writing::Prompt(_)))
+            && event.logical_key == Key::Named(NamedKey::Enter)
+            && self.send_to_input(event)
+        {
             return self.request_redraw();
         }
         if !self.settings_open && self.send_to_notification(event) {
@@ -634,6 +641,7 @@ impl App {
         match event.logical_key.as_ref() {
             Key::Named(NamedKey::ArrowUp) => self.step_command(session, -1),
             Key::Named(NamedKey::ArrowDown) => self.step_command(session, 1),
+            Key::Named(NamedKey::Enter) if self.modifiers.shift_key() => false,
             Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.take_chosen();
