@@ -51,6 +51,8 @@ pub enum Item {
     /// the same worktree's changes are two views of one thing, the way two
     /// panes showing one file are.
     Review(Scope),
+    /// A persisted, read-only comparison of worktree turns.
+    Turns(Scope, TurnSpan),
     /// The diff of one changed file, which is what a row of that list opens.
     Change(Scope, ChangeId),
     /// Everything that has changed in one worktree, as excerpts of the files
@@ -134,4 +136,17 @@ impl Item {
     pub fn is_window_wide(self) -> bool {
         matches!(self, Self::Tool(_))
     }
+}
+
+/// A comparison of completed turns, optionally using the second turn's start baseline.
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub struct TurnSpan {
+    /// The earlier completed turn.
+    pub from: u64,
+    /// The later completed turn.
+    pub to: u64,
+    /// Exclude reader edits captured before the later turn began.
+    pub baseline: bool,
 }

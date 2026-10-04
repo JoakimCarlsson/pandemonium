@@ -76,6 +76,8 @@ pub enum SavedKind {
     Search,
     /// The worktree's changes, gathered for review.
     Review,
+    /// A persisted comparison of worktree turns.
+    Turns,
     /// The diff of one file of the worktree.
     Change,
     /// An agent session over the worktree.
@@ -121,6 +123,8 @@ impl From<SavedAxis> for Axis {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SavedTab {
+    /// The endpoints for a persisted turn comparison.
+    pub turns: Option<crate::panes::TurnSpan>,
     /// Which kind of thing it held.
     pub kind: SavedKind,
     /// The registered tool held by a tool tab.

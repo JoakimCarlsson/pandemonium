@@ -211,7 +211,7 @@ pub fn untracked(root: &Path, paths: &[&Path]) -> Vec<Vec<Hunk>> {
 }
 
 /// Each file of a patch of several, as the path it is to and its own patch.
-fn split(text: &str) -> Vec<(PathBuf, &str)> {
+pub(super) fn split(text: &str) -> Vec<(PathBuf, &str)> {
     let mut files: Vec<(PathBuf, &str)> = Vec::new();
     let mut named: Option<PathBuf> = None;
     let mut from = 0;
@@ -259,7 +259,7 @@ fn sided(line: &str) -> Option<PathBuf> {
 /// Everything before the first hunk heading is git naming the two sides,
 /// which the screen already knows, and the one line git writes about a file
 /// that ends without a newline belongs to neither side.
-fn read(text: &str) -> Vec<Hunk> {
+pub(super) fn read(text: &str) -> Vec<Hunk> {
     let mut hunks: Vec<Hunk> = Vec::new();
     let mut old = 0;
     let mut new = 0;

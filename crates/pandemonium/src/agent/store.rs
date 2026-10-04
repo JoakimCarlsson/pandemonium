@@ -88,6 +88,18 @@ pub struct Tally {
 
 /// One conversation: what is running, what has been said, what it is owed.
 pub struct Talk {
+    /// The prompt awaiting its filesystem baseline.
+    pub(crate) pending_prompt: Option<(String, Vec<Attachment>)>,
+    /// Completed file-changing calls already reported in this turn.
+    finished_calls: BTreeSet<String>,
+    /// Active file-changing tool ids for conservative overlap attribution.
+    active_calls: BTreeSet<String>,
+    /// Calls whose execution overlapped another file-changing call.
+    overlapping: BTreeSet<String>,
+    /// The filesystem turn number attached to each reader block.
+    pub(crate) checkpoint_turns: BTreeMap<usize, u64>,
+    /// Context correction to prepend after a filesystem rewind.
+    pub(crate) rewind_note: Option<String>,
     /// Which session this is.
     id: TalkId,
     /// The project whose worktree it is working in.
@@ -1110,6 +1122,9 @@ impl Talk {
     /// echoes it: an agent is not obliged to say back what it was told, and
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
+        if self.busy {
+            return;
+        }
         let text = self.prompt.value().trim().to_owned();
         if text.is_empty() && self.attachments.is_empty() {
             return;
@@ -1159,6 +1174,9 @@ impl Talk {
     /// It is a turn like any other: it is put in the transcript as the
     /// reader's, and the conversation follows what comes back.
     pub fn send_text(&mut self, text: &str) {
+        if self.busy {
+            return;
+        }
         let text = text.trim();
         if text.is_empty() {
             return;
@@ -1170,7 +1188,11 @@ impl Talk {
     /// Hands `text` and its `attachments` to the agent, and has the
     /// conversation wait on the turn that follows.
     fn deliver(&mut self, text: &str, attachments: Vec<Attachment>) {
-        self.conversation.prompt(text, attachments);
+        self.pending_prompt = Some((text.to_owned(), attachments));
+        self.finished_calls.clear();
+        self.active_calls.clear();
+        self.overlapping.clear();
+        (self.notify)();
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
@@ -1179,9 +1201,91 @@ impl Talk {
         self.following = true;
     }
 
+    /// Whether filesystem-changing tools are still running at a snapshot boundary.
+    pub(crate) fn has_active_file_tools(&self) -> bool {
+        !self.active_calls.is_empty()
+    }
+
+    /// Delivers the pending prompt only after its baseline has been captured.
+    pub(crate) fn checkpoint_ready(&mut self, turn: u64) {
+        if let Some(block) = self
+            .transcript
+            .blocks()
+            .iter()
+            .rposition(|block| matches!(block, Block::Said(Voice::Reader, _)))
+        {
+            if turn > 0 {
+                self.checkpoint_turns.insert(block, turn);
+            }
+            self.shown_revision += 1;
+        }
+        if let Some((mut text, attachments)) = self.pending_prompt.take() {
+            if let Some(note) = self.rewind_note.take() {
+                text = format!("{note}\n{text}");
+            }
+            self.conversation.prompt(&text, attachments);
+        }
+    }
+
+    /// Cancels delivery when a filesystem baseline could not be captured.
+    pub(crate) fn checkpoint_failed(&mut self) {
+        if let Some((text, attachments)) = self.pending_prompt.take() {
+            if self.prompt.value().is_empty() {
+                self.prompt.set(&text);
+            }
+            self.attachment_previews
+                .extend(std::iter::repeat_n(None, attachments.len()));
+            self.attachments.extend(attachments);
+        }
+        self.busy = false;
+        self.busy_since = None;
+        self.transcript
+            .note("Prompt was not sent because its checkpoint failed.");
+    }
+
+    /// Expands the enclosing group and call before calculating its transcript offset.
+    pub(crate) fn expand_checkpoint_tool(&mut self, id: &str) {
+        if let Some(block) = self
+            .transcript
+            .blocks()
+            .iter()
+            .position(|block| matches!(block, Block::Ran(call) if call.id == id))
+        {
+            let start = self.transcript.blocks()[..block]
+                .iter()
+                .rposition(|block| !matches!(block, Block::Ran(_)))
+                .map_or(0, |block| block + 1);
+            self.expanded_details.insert(start);
+            self.expanded_cards.insert(id.to_owned());
+            self.shown_revision += 1;
+        }
+    }
+
+    /// Reveals a tool call without continuing to follow the transcript tail.
+    pub(crate) fn reveal_tool(&mut self, id: &str, offset: f32) {
+        self.expand_checkpoint_tool(id);
+        self.following = false;
+        self.scroll = offset.max(0.0);
+    }
+
+    /// Records a filesystem rewind without claiming to rewind provider context.
+    pub(crate) fn rewound(&mut self, turn: u64) {
+        let note = format!("Worktree rewound to the end of turn {turn}");
+        self.transcript.note(&note);
+        self.rewind_note = Some(format!(
+            "{note}. Your conversation context has not been rewound."
+        ));
+    }
+
     /// Stops the turn that is running.
-    pub fn cancel(&self) {
-        self.conversation.cancel();
+    pub fn cancel(&mut self) {
+        if self.pending_prompt.take().is_some() {
+            self.busy = false;
+            self.busy_since = None;
+            self.transcript.note("Stopped before sending the prompt.");
+        } else {
+            self.conversation.cancel();
+        }
     }
 
     /// Answers the permission request `ask` with the choice in `place`.
@@ -1344,6 +1448,7 @@ impl Talk {
                 }
             }
             Event::Failed(trouble) => {
+                self.pending_prompt = None;
                 self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
@@ -1379,6 +1484,7 @@ impl Talk {
             }
             Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
             Event::Ended => {
+                self.pending_prompt = None;
                 self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
@@ -1592,6 +1698,8 @@ pub struct Talks {
     /// The file and terminal requests the agents have raised and the window
     /// has not yet taken, with the ticket each is answered under.
     requests: Vec<(TalkId, u64, Request)>,
+    /// Filesystem boundaries to capture in protocol order.
+    pub(crate) checkpoint_moments: Vec<(TalkId, Option<pm_acp::ToolCall>)>,
 }
 
 impl Talks {
@@ -1706,6 +1814,12 @@ impl Talks {
         self.talks.insert(
             id,
             Talk {
+                pending_prompt: None,
+                finished_calls: BTreeSet::new(),
+                active_calls: BTreeSet::new(),
+                overlapping: BTreeSet::new(),
+                checkpoint_turns: BTreeMap::new(),
+                rewind_note: None,
                 id,
                 project,
                 session,
@@ -1971,6 +2085,37 @@ impl Talks {
                 }
                 if matches!(event, Event::Stopped(Stop::EndTurn)) {
                     self.turns.push(talk.scope());
+                }
+                if talk.is_busy()
+                    && matches!(event, Event::Stopped(_) | Event::Failed(_) | Event::Ended)
+                {
+                    self.checkpoint_moments.push((talk.id, None));
+                }
+                if let Event::Ran(call) = &event {
+                    let writes = matches!(
+                        call.kind,
+                        pm_acp::Kind::Edit
+                            | pm_acp::Kind::Delete
+                            | pm_acp::Kind::Move
+                            | pm_acp::Kind::Execute
+                            | pm_acp::Kind::Other
+                    );
+                    if writes && talk.is_busy() {
+                        if !matches!(call.status, Status::Done | Status::Failed) {
+                            talk.active_calls.insert(call.id.clone());
+                            if talk.active_calls.len() > 1 {
+                                talk.overlapping.extend(talk.active_calls.iter().cloned());
+                            }
+                        } else if talk.finished_calls.insert(call.id.clone()) {
+                            talk.active_calls.remove(&call.id);
+                            let mut call = call.clone();
+                            if talk.overlapping.contains(&call.id) {
+                                call.id.clear();
+                                call.title = "Overlapping tool activity".to_owned();
+                            }
+                            self.checkpoint_moments.push((talk.id, Some(call)));
+                        }
+                    }
                 }
                 talk.take(event);
                 changed = true;

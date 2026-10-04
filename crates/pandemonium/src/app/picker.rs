@@ -193,6 +193,7 @@ impl App {
     /// Carries out what one row of the picker stood for.
     fn take(&mut self, choice: Choice) {
         match choice {
+            Choice::Checkpoint(scope, from, turn) => self.choose_turn(scope, from, turn),
             Choice::Act(action) => self.act(action),
             Choice::InstallLanguageExtension(index) => self.install_language_extension(index),
             Choice::InstallLanguageServer(command) => self.start_server_install(command, true),
@@ -299,6 +300,7 @@ impl App {
     /// gathered so far, and are filled as the rest arrives.
     pub(super) fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
+            Kind::Turns => Vec::new(),
             Kind::Commands => self.command_rows(),
             Kind::LanguageServers => self.language_server_rows(),
             Kind::LanguageExtensions => {

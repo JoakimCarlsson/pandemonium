@@ -37,6 +37,17 @@ pub enum ProjectSearchOption {
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+    /// Opens the changes made during one reader prompt.
+    DiffAgentTurn(TalkId, u64),
+    /// Offers a filesystem rewind before one reader prompt.
+    RewindAgentTurn(TalkId, u64),
+    /// Executes an explicitly confirmed filesystem rewind.
+    ConfirmRewind(Scope, u64),
+    /// Counts files and offers confirmation for a saved target.
+    RequestRewind(Scope, u64),
+    /// Scrolls the transcript to the call identified by a checkpoint commit prefix.
+    ShowCheckpointStep(Scope, u64),
+
     /// Copies the focused reading surface’s selected text.
     CopyText,
     /// Follows a link in a rendered document.

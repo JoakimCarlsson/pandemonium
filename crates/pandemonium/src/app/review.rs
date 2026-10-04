@@ -1147,6 +1147,9 @@ impl App {
     /// file's diff scrolls apart from the review it came from, because they
     /// are two panes and the reader is somewhere different in each.
     pub(super) fn scroll_review(&mut self, rows: isize) -> bool {
+        if self.scroll_turns(rows) {
+            return true;
+        }
         let Some((scope, shown)) = self.review_under() else {
             return false;
         };
@@ -1170,7 +1173,8 @@ impl App {
         match item {
             Item::Review(scope) => Some((scope, None)),
             Item::Change(scope, change) => Some((scope, Some(change))),
-            Item::File(_)
+            Item::Turns(..)
+            | Item::File(_)
             | Item::Image(_)
             | Item::Rendered(_)
             | Item::Outline(_)

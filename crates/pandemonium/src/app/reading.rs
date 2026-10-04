@@ -26,6 +26,8 @@ use crate::review::{Done, Reading, Work};
 
 /// What one piece of work away from the window came back with.
 enum Back {
+    /// A serialized checkpoint operation and its refreshed durable turn list.
+    Checkpointed(Scope, Box<super::checkpoint::CheckpointBack>),
     /// A worktree's review, read whole.
     Review(Scope, Reading),
     /// How far every session has drifted.
@@ -70,6 +72,8 @@ pub(super) struct Readings {
     again: BTreeSet<Scope>,
     /// The work waiting for its worktree, in the order it was asked for.
     queued: BTreeMap<Scope, VecDeque<Work>>,
+    /// Checkpoint operations sharing the worktree serialization seam.
+    pub(super) checkpoints: BTreeMap<Scope, VecDeque<super::checkpoint::CheckpointWork>>,
     /// The worktrees git is doing something to now.
     working: BTreeSet<Scope>,
     /// The worktrees whose excerpts' last commit is being read now.
@@ -158,8 +162,21 @@ impl App {
 
     /// Starts the next piece of work waiting for `scope`, unless git is
     /// busy with that worktree already.
-    fn work_next(&mut self, scope: Scope) {
+    pub(super) fn work_next(&mut self, scope: Scope) {
         if self.readings.reading.contains(&scope) || self.readings.working.contains(&scope) {
+            return;
+        }
+        if let Some(work) = self
+            .readings
+            .checkpoints
+            .get_mut(&scope)
+            .and_then(VecDeque::pop_front)
+        {
+            let Some(root) = self.root_of(scope) else {
+                return;
+            };
+            self.readings.working.insert(scope);
+            self.spawn_read(move || Back::Checkpointed(scope, Box::new(work.run(&root))));
             return;
         }
         let Some(work) = self
@@ -178,9 +195,14 @@ impl App {
     /// Whether work is waiting for `scope`'s worktree.
     fn has_queued(&self, scope: Scope) -> bool {
         self.readings
-            .queued
+            .checkpoints
             .get(&scope)
             .is_some_and(|queued| !queued.is_empty())
+            || self
+                .readings
+                .queued
+                .get(&scope)
+                .is_some_and(|queued| !queued.is_empty())
     }
 
     /// Asks git again how far every session has drifted, and shows it once
@@ -334,6 +356,16 @@ impl App {
         let any = !done.is_empty();
         for back in done {
             match back {
+                Back::Checkpointed(scope, back) => {
+                    self.readings.working.remove(&scope);
+                    self.take_checkpointed(scope, *back);
+                    if self.has_queued(scope) {
+                        self.work_next(scope);
+                    } else {
+                        self.reread_review_later(scope);
+                    }
+                    self.hear_checkpoint_moments();
+                }
                 Back::Review(scope, reading) => self.take_review(scope, reading),
                 Back::Drift(drifts) => self.take_drift(drifts),
                 Back::Worked(scope, done) => self.take_worked(scope, done),
@@ -363,6 +395,9 @@ impl App {
     /// Puts `reading` into `scope`'s review and everything drawn from it.
     fn take_review(&mut self, scope: Scope, reading: Reading) {
         self.readings.reading.remove(&scope);
+        if let Some(review) = self.reviews.get_mut(&scope) {
+            review.checkpoint_scope = Some(scope);
+        }
         if self
             .reviews
             .get_mut(&scope)

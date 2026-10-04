@@ -10,6 +10,7 @@ mod agent;
 mod agents;
 mod answer;
 mod arrival;
+mod checkpoint;
 mod clicks;
 mod client;
 mod commands;
@@ -436,6 +437,8 @@ pub struct App {
     git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
     /// What git is being asked about the worktrees away from the window.
     readings: reading::Readings,
+    /// Persisted checkpoint views and pending agent baselines.
+    checkpointing: checkpoint::Checkpointing,
     /// What the pickers have gathering away from the window.
     listings: listing::Listings,
     /// The repositories a clone has finished with, and where they landed.
@@ -831,6 +834,7 @@ impl App {
             spun: std::time::Instant::now(),
             git_results: Arc::new(Mutex::new(Vec::new())),
             readings: reading::Readings::default(),
+            checkpointing: checkpoint::Checkpointing::default(),
             listings: listing::Listings::default(),
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
@@ -2877,7 +2881,9 @@ impl ApplicationHandler<Wake> for App {
             }
             Wake::Agent => {
                 let before = self.agents.tally();
-                if self.agents.pump() {
+                let pumped = self.agents.pump();
+                self.hear_checkpoint_moments();
+                if pumped {
                     self.start_account_logins();
                     self.apply_agent_options();
                     self.serve_agents();

@@ -120,6 +120,8 @@ const SETTLE: Duration = Duration::from_millis(750);
 /// The colour a piece of a row is drawn in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Tone {
+    /// Filesystem actions attached to a reader prompt block.
+    TurnActions(usize),
     /// What the reader said.
     Said,
     /// What the agent said.
@@ -988,7 +990,8 @@ fn part_key(talk: &Talk, at: usize, columns: usize) -> PartKey {
             .max()
             .unwrap_or_default(),
         expanded,
-        shown: if expanded
+        shown: if matches!(blocks[at], Block::Said(Voice::Reader, _))
+            || expanded
             || terminal
             || blocks[at..end]
                 .iter()
@@ -1021,8 +1024,12 @@ fn wrap_part(talk: &Talk, key: PartKey) -> Part {
     let mut settled = true;
     let rows = match &blocks[at] {
         Block::Said(Voice::Reader, passage) => {
-            let (rows, decoded) = reader_rows(talk, at, passage, (columns * 2 / 3).max(NARROWEST));
+            let (mut rows, decoded) =
+                reader_rows(talk, at, passage, (columns * 2 / 3).max(NARROWEST));
             settled = decoded;
+            if talk.checkpoint_turns.contains_key(&at) {
+                rows.push(vec![piece(String::new(), Tone::TurnActions(at))]);
+            }
             rows
         }
         Block::Picture(image) => vec![vec![image_piece(image.clone())]],
@@ -2439,6 +2446,30 @@ fn diff_background(theme: &Theme, row: &Row) -> Option<Rgba> {
 /// land, so a drag over it can be read back as the text it passed over.
 fn row(theme: &Theme, row: &Row, at: usize, talk: &Talk, reply: Option<usize>) -> Div<Message> {
     let session = talk.id();
+    if let Some(Tone::TurnActions(block)) = row.first().map(|piece| piece.tone) {
+        let Some(turn) = talk.checkpoint_turns.get(&block).copied() else {
+            return h_flex().h_px(theme.size.row);
+        };
+        return h_flex()
+            .w_full()
+            .h_px(theme.size.row)
+            .items_center()
+            .gap(2)
+            .child(
+                h_flex()
+                    .on_click(Message::DiffAgentTurn(session, turn))
+                    .child(text("Diff this turn").text_xs().color(theme.colors.accent)),
+            )
+            .child(
+                h_flex()
+                    .on_click(Message::RewindAgentTurn(session, turn))
+                    .child(
+                        text("Rewind to before this turn")
+                            .text_xs()
+                            .color(theme.colors.text_muted),
+                    ),
+            );
+    }
     let mut selection = Selection::default();
     if let Some((anchor, head)) = talk.selection() {
         selection.select(anchor, head);
@@ -3822,6 +3853,7 @@ fn quieten(tone: Tone) -> Tone {
 /// The colour `tone` comes out in.
 fn tone(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
+        Tone::TurnActions(_) => theme.colors.text_muted,
         Tone::Said => theme.colors.text,
         Tone::Spoken => theme.colors.text,
         Tone::Heading(_) => theme.colors.text,
@@ -3888,4 +3920,27 @@ fn relative(path: &Path, root: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+}
+
+/// Finds a tool's wrapped row after expanding its enclosing tool group.
+pub(crate) fn tool_offset(theme: &Theme, talk: &Talk, width: f32, id: &str) -> Option<f32> {
+    let block = talk
+        .transcript()
+        .blocks()
+        .iter()
+        .position(|block| matches!(block, Block::Ran(call) if call.id == id))?;
+    let columns = columns(theme, width);
+    let wrapped = wrapped(theme, talk, columns);
+    let row = wrapped.entries.iter().position(|entry| match entry {
+        Entry::Part(part, row) => {
+            let part = &wrapped.parts[*part];
+            part.key.start <= block
+                && part.key.end > block
+                && part.rows[*row]
+                    .first()
+                    .is_some_and(|piece| piece.card.as_deref() == Some(id))
+        }
+        _ => false,
+    })?;
+    Some(wrapped.tops[row] + space(INSET))
 }

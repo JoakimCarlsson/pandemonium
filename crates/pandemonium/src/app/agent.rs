@@ -113,6 +113,11 @@ impl App {
     /// window can go on trying the rest.
     pub(super) fn agent_command(&mut self, message: Message) -> bool {
         match message {
+            Message::DiffAgentTurn(talk, turn) => self.diff_agent_turn(talk, turn),
+            Message::RewindAgentTurn(talk, turn) => self.ask_rewind_agent(talk, turn),
+            Message::RequestRewind(scope, turn) => self.plan_rewind(scope, turn),
+            Message::ConfirmRewind(scope, turn) => self.confirm_rewind(scope, turn),
+            Message::ShowCheckpointStep(scope, prefix) => self.show_checkpoint_step(scope, prefix),
             Message::NewAgentSession => self.open_picker(Kind::Agents),
             Message::StartAgent(agent) => {
                 if agent.startable() {
@@ -258,7 +263,7 @@ impl App {
             }
             Message::ShowAgentHistory(session) => self.show_agent_history(session),
             Message::StopAgentTurn(session) => {
-                if let Some(talk) = self.agents.get(session) {
+                if let Some(talk) = self.agents.get_mut(session) {
                     talk.cancel();
                 }
             }
@@ -767,7 +772,7 @@ impl App {
         {
             return true;
         }
-        match self.agents.get(session).filter(|talk| talk.is_busy()) {
+        match self.agents.get_mut(session).filter(|talk| talk.is_busy()) {
             Some(talk) => talk.cancel(),
             None => self.writing = None,
         }
@@ -775,13 +780,13 @@ impl App {
     }
 
     /// Stops the turn in the agent pane that has the keyboard.
-    pub(super) fn cancel_busy_agent(&self) -> bool {
+    pub(super) fn cancel_busy_agent(&mut self) -> bool {
         let session = match self.writing {
             Some(Writing::Prompt(session)) => Some(session),
             _ if self.editor_focused => self.active_tab().and_then(Item::session),
             _ => None,
         };
-        let Some(talk) = session.and_then(|session| self.agents.get(session)) else {
+        let Some(talk) = session.and_then(|session| self.agents.get_mut(session)) else {
             return false;
         };
         if !talk.is_busy() {
@@ -1331,6 +1336,7 @@ impl App {
     /// A conversation behind another tab is left where it is until a pane
     /// shows it again, which is when a frame is drawn and this is asked.
     pub(super) fn follow_agents(&mut self) {
+        self.hear_checkpoint_moments();
         for session in self.shown_agents() {
             if self
                 .agents

@@ -173,6 +173,7 @@ impl App {
             Action::NewFile => return self.apply(Message::NewTreeFile),
             Action::NewFolder => return self.apply(Message::NewTreeFolder),
             Action::CollapseFiles => return self.apply(Message::CollapseTree),
+            Action::CompareTurns => self.compare_turns(),
             Action::OpenReview => return self.apply(Message::OpenReview),
             Action::EditChanges | Action::ReviewSession => {
                 return self.apply(Message::OpenExcerpts);

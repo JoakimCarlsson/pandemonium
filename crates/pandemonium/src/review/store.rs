@@ -149,10 +149,14 @@ pub struct Patch {
     pub staged: Vec<Hunk>,
     /// What the worktree holds that the index does not.
     pub unstaged: Vec<Hunk>,
+    /// Conservative provenance for each side and hunk index.
+    pub attribution: BTreeMap<(bool, usize), pm_core::CheckpointStep>,
 }
 
 /// What one worktree has changed, as the window last read it.
 pub struct Review {
+    /// The owning worktree for checkpoint transcript navigation.
+    pub(crate) checkpoint_scope: Option<pm_core::Scope>,
     /// The worktree this is a review of.
     root: PathBuf,
     /// The repositories the worktree holds, the root's own first.
@@ -217,6 +221,7 @@ impl Review {
     /// by a reading made away from the window, through [`Review::read_later`].
     pub fn of(root: &Path) -> Self {
         Self {
+            checkpoint_scope: None,
             root: root.to_path_buf(),
             repositories: Vec::new(),
             active: 0,

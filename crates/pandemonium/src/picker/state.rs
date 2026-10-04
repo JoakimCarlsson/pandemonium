@@ -32,6 +32,8 @@ const SHOWN: usize = 200;
 pub enum Kind {
     /// Every command the window can carry out.
     Commands,
+    /// Persisted turn comparison endpoints.
+    Turns,
     /// Every server the editor can install.
     LanguageServers,
     /// Language packages offered by the maintained catalogue.
@@ -142,6 +144,7 @@ impl Kind {
     /// What the field says while nothing has been typed into it.
     pub fn placeholder(self) -> &'static str {
         match self {
+            Self::Turns => "Choose a turn to compare…",
             Self::Commands => "Run a command",
             Self::LanguageServers => "Install Language Server…",
             Self::LanguageExtensions => "Install Language Support…",
@@ -266,6 +269,8 @@ impl Kind {
 /// What choosing one row does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Choice {
+    /// Choose the next endpoint of a persisted comparison.
+    Checkpoint(Scope, Option<u64>, u64),
     /// Points at an existing session worktree.
     Session(SessionId, crate::health::Health),
     /// Carry out this command.
