@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::panes::Saved;
+use crate::panes::SavedLayout;
 use crate::terminal::SavedShell;
 use crate::workspace::Layout;
 use stored::Stored;
@@ -84,8 +84,8 @@ pub struct Restored {
     pub active: Option<PathBuf>,
     /// Which regions the window showed, and how large they were.
     pub layout: Layout,
-    /// How the window was divided into panes, and what was open in them.
-    pub panes: Saved,
+    /// How each project divided the window into panes, and what was open in them.
+    pub layouts: Vec<SavedLayout>,
     /// The shells the window had running, and what they were called.
     pub shells: Vec<SavedShell>,
     /// The size and state of the window itself.

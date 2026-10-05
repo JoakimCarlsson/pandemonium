@@ -26,6 +26,7 @@ mod health;
 mod input;
 mod language;
 mod languages;
+mod layouts;
 mod listing;
 mod mcp;
 mod modal;
@@ -86,7 +87,7 @@ use crate::message::Message;
 use crate::notice::Notices;
 use crate::onboarding;
 use crate::panel::PanelView;
-use crate::panes::{Item, PaneTree, Saved};
+use crate::panes::{Item, PaneTree};
 use crate::review::Review;
 use crate::settings::Settings;
 use crate::terminal::{Shell, Terminals};
@@ -390,8 +391,12 @@ pub struct App {
     panes: PaneTree,
     /// The pane last used for each role, so tools open files beside their own tab.
     recent: placement::Recent,
+    /// The pane trees of the projects that are not on screen.
+    shelf: layouts::Shelf,
+    /// The project whose pane tree is on screen.
+    layout_of: Option<pm_core::ProjectId>,
     /// The panes the last launch left, until the window is ready to open them.
-    saved: Saved,
+    saved: Vec<crate::panes::SavedLayout>,
     /// The shells the last launch had running, until they are started again.
     shells: Vec<crate::terminal::SavedShell>,
     /// Where those panes and their tabs came out in the last frame.
@@ -713,7 +718,7 @@ impl App {
         }
 
         let layout = restored.layout;
-        let saved = restored.panes;
+        let saved = restored.layouts;
         let shells = restored.shells;
 
         let files = open
@@ -813,6 +818,8 @@ impl App {
             account_logins: BTreeSet::new(),
             mcp_servers: restored.mcp_servers,
             panes: PaneTree::default(),
+            shelf: layouts::Shelf::new(),
+            layout_of: None,
             recent: placement::Recent::new(),
             saved,
             shells,
@@ -1245,6 +1252,7 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        self.sync_layout();
         if message == Message::CopyText {
             self.copy_reading_text();
             self.dismiss_menu();
@@ -1485,14 +1493,8 @@ impl App {
         }
         if let Message::ResizeSplit(split, divider, event, scale) = message {
             if let Some(axis) = self.panes.split_axis(split) {
-                let scope = self.scope();
-                self.panes.resize(
-                    split,
-                    divider,
-                    event.delta(axis) * scale,
-                    event.phase,
-                    scope,
-                );
+                self.panes
+                    .resize(split, divider, event.delta(axis) * scale, event.phase);
             }
             self.store_settled(event);
             self.request_redraw();
@@ -1830,7 +1832,8 @@ impl App {
             self.debuggers.forget(|scope| scope.project() == id);
             self.agents.close_project(id);
             self.sessions.close_project(id);
-            self.drop_project_tabs(id);
+            self.forget_layout(id);
+            self.sync_layout();
             self.store();
             self.request_redraw();
             return;
@@ -2302,7 +2305,7 @@ impl App {
                 .active()
                 .map(|project| project.root().to_path_buf()),
             layout: self.layout(),
-            panes: self.saved_panes(),
+            layouts: self.saved_layouts(),
             shells: self.terminals.saved(&self.worktrees()),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
@@ -2446,6 +2449,7 @@ impl App {
 
     /// Writes the window's preferences, projects and layout down.
     fn store(&mut self) {
+        self.sync_layout();
         self.remember_window();
         config::save(&self.state());
     }
@@ -2680,6 +2684,7 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
+        self.sync_layout();
         self.refresh_health_diagnostics();
         self.see_shown_agents();
         self.follow_agents();
@@ -3072,7 +3077,7 @@ impl ApplicationHandler<Wake> for App {
         self.reread_changes_now();
 
         let saved = std::mem::take(&mut self.saved);
-        self.restore_panes(&saved);
+        self.restore_layouts(&saved);
         let shells = std::mem::take(&mut self.shells);
         self.restore_shells(&shells);
 

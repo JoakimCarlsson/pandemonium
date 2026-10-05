@@ -12,8 +12,6 @@ use pm_ui::{
     kbd, measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
-use pm_core::Scope;
-
 use crate::editor::{Breakpoint, Crumbs, Display, OpenFile, buffer_view, crumb_bar, search_bar};
 use crate::excerpts::{OpenExcerpts, excerpts_view};
 use crate::message::Message;
@@ -109,20 +107,17 @@ pub struct Shortcut {
     pub keys: String,
 }
 
-/// Builds the tree of panes `scope` draws, `focused` when the window's own
-/// focus is.
+/// Builds the tree of panes, `focused` when the window's own focus is.
 pub fn pane_tree(
     theme: &Theme,
     tree: &PaneTree,
-    scope: Option<Scope>,
     focused: bool,
     contents: &dyn Fn(&Pane) -> Contents,
 ) -> Box<dyn Element<Message>> {
-    let divided = tree.drawn(scope).len() > 1;
+    let divided = tree.panes().len() > 1;
     let drawing = Drawing {
         theme,
         tree,
-        scope,
         focused,
         divided,
         contents,
@@ -136,8 +131,6 @@ struct Drawing<'a> {
     theme: &'a Theme,
     /// The tree being drawn.
     tree: &'a PaneTree,
-    /// The worktree the window is showing.
-    scope: Option<Scope>,
     /// Whether the window's own focus is on the panes.
     focused: bool,
     /// Whether more than one pane is drawn.
@@ -147,9 +140,7 @@ struct Drawing<'a> {
 }
 
 impl Drawing<'_> {
-    /// Builds one node: a split of the children `scope` draws, or the pane
-    /// at a leaf. A split drawing one child is no division, so that child is
-    /// drawn in its place.
+    /// Builds one node: a split of its children, or the pane at a leaf.
     fn node(&self, node: &Node) -> Box<dyn Element<Message>> {
         match node {
             Node::Pane(pane) => Box::new(pane_view(
@@ -160,19 +151,14 @@ impl Drawing<'_> {
                 self.divided,
             )),
             Node::Split(node) => {
-                let drawn = node.drawn(self.scope);
-                if let [only] = drawn[..] {
-                    return self.node(&node.children()[only]);
-                }
+                let drawn = 0..node.children().len();
                 let id = node.id();
                 let mut element = split(node.axis()).on_resize(move |index, event, scale| {
                     Message::ResizeSplit(id, index, event, scale)
                 });
                 for index in drawn {
-                    element = element.child(
-                        node.shares(self.scope)[index],
-                        self.node(&node.children()[index]),
-                    );
+                    element =
+                        element.child(node.shares()[index], self.node(&node.children()[index]));
                 }
                 Box::new(element)
             }

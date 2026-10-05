@@ -25,6 +25,16 @@ pub struct Saved {
     pub root: SavedNode,
 }
 
+/// One project's division of the window, written down beside the project's root.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SavedLayout {
+    /// The root of the project this division belongs to.
+    pub project: PathBuf,
+    /// The division and what was open in it.
+    pub panes: Saved,
+}
+
 /// One node of the written-down tree: a pane, or a division of nodes.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]

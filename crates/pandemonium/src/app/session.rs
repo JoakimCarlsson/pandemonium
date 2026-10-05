@@ -319,7 +319,9 @@ impl App {
     /// back to a worktree finds it as it was left, expanded folders and all.
     pub(super) fn point_at(&mut self, scope: Scope) {
         self.open.activate(scope.project());
+        self.sync_layout();
         self.session = scope.session();
+        self.panes.inherit(scope);
 
         let Some(root) = self.root_of(scope) else {
             return;

@@ -15,7 +15,7 @@ mod view;
 
 pub use arrangement::Arrangement;
 pub use item::{Item, Role, TurnSpan};
-pub use saved::{Saved, SavedAxis, SavedKind, SavedNode, SavedTab};
+pub use saved::{Saved, SavedAxis, SavedKind, SavedLayout, SavedNode, SavedTab};
 pub use tool::Tool;
 pub use tree::{Pane, PaneId, PaneTree, SplitDirection, SplitId};
 pub use view::{Content, Contents, Shortcut, TabEntry, pane_tree, tab_menu, unsaved_menu};
