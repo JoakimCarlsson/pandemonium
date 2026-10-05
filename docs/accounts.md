@@ -12,7 +12,7 @@ New chats from the palette, keybinding or chat pane start immediately with the
 default account. Add or remove profiles under **Settings → Agents → Agent
 Servers → Accounts…**; use a chat's account icon to choose another profile. Creating a profile asks only for a name, such as Work,
 Personal or your organisation. In a worktree, creation immediately opens a new
-conversation using empty, separate provider storage. Login is requested
+conversation using separate login storage and the shared global setup. Login is requested
 immediately after the provider handshake, before opening a conversation,
 even if the agent would otherwise accept the new session. When the agent offers one
 login method, the editor starts it automatically; when it offers several, the
@@ -26,7 +26,7 @@ Each profile has its own `CLAUDE_CONFIG_DIR`, using Claude's documented
 [multiple-account setup](https://code.claude.com/docs/en/authentication#log-in-with-multiple-accounts).
 New profiles select `forceLoginMethod: claudeai` without pinning an organisation.
 Codex profiles request file credential storage in their own `config.toml`;
-Grok profiles start with empty provider storage. Provider policies still apply.
+Grok profiles start with separate login storage. Provider policies still apply.
 Existing profiles and their provider settings are retained, including any
 organisation restrictions created previously.
 
@@ -48,7 +48,19 @@ Config stores metadata in `settings.yaml` under the editor's home
 `accounts/<agent>/<profile-id>/`; names never become paths. Removing a profile
 removes its listing, retains its login storage and leaves existing conversations
 running. A new profile with the same label gets fresh storage. Credentials are
-never copied, read by profile management or included in launch arguments.
+never imported from another account or included in launch arguments; profile management does not read credential files.
+
+## Shared global setup
+
+Named accounts inherit supported global preferences, instructions, skills and local plugins from the provider's original home, resolved from its environment override or the usual `~/.claude`, `~/.codex` or `~/.grok`. Setup refreshes before starting, restoring or reconnecting a conversation, including for profiles created before this fix. Existing profile settings and authored files take precedence; inherited preferences continue to follow global edits until changed inside the profile.
+
+Authored asset directories use symbolic links when available. Existing profile directories retain their contents and receive missing shared entries. Platforms that cannot create links receive copies, refreshed on launch while unedited. Claude's local marketplace cache and user installation records are inherited; account-synced plugins remain local to the signed-in account. Grok's local plugin installations are shared. Codex's skill picker reads the selected provider home as well as the usual user and project skill directories.
+
+Login storage, provider transcripts, history, session databases and memory stay in their existing homes. The fix does not move or merge conversations between identities. Existing conversations keep their original profile and resume identifiers; a different account still opens a new conversation.
+
+Only supported preference fields are inherited. Credential fields, environment injection, HTTP authentication headers, authentication helpers, account restrictions, custom model providers and managed account policies are excluded. Codex's selected global configuration preset contributes its supported preferences; each profile retains file credential storage. Claude's mixed `.claude.json` application state and MCP credentials are not imported. Profile-specific setup and account-managed extensions remain owned by that profile.
+
+Provider behavior is described in [Claude's directory reference](https://code.claude.com/docs/en/claude-directory), [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference) and [skills](https://learn.chatgpt.com/docs/build-skills), and Grok's [configuration](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md) and [skills](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md) references.
 
 ## Availability
 
@@ -92,3 +104,5 @@ for a name,
 starts the subscription sign-in flow and lets you choose an organisation in
 that flow. Confirm that restart retains the chosen identity. Provider login
 and token refresh remain the agent's responsibility.
+
+To verify shared setup, install a distinctive global instruction and skill, then open both a new and an existing profile. Confirm they load the instruction and skill, edit the globals, and confirm a new or reconnected session picks up the edits. Set a profile-specific preference and confirm later global edits retain that override. Resume an existing conversation after editor restart and confirm its profile, identity and history remain intact.

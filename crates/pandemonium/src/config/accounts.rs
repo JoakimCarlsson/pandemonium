@@ -161,7 +161,7 @@ fn safe_component(value: &str) -> bool {
 }
 
 /// The home variable for agents with separate account storage.
-fn variable(agent: Agent) -> Option<&'static str> {
+pub(super) fn variable(agent: Agent) -> Option<&'static str> {
     if matches!(agent.source, Source::Command) {
         return None;
     }
