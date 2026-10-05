@@ -2266,6 +2266,7 @@ dependencies = [
  "serde_json",
  "serde_norway",
  "similar",
+ "toml",
  "wayland-backend",
  "wayland-client",
  "winit",

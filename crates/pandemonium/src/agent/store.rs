@@ -1710,17 +1710,31 @@ fn mentioned(root: &Path, text: &str) -> Vec<PathBuf> {
 }
 
 /// Finds skills Codex can invoke from the user's and worktree's skill folders.
-fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
+fn installed_skills(root: &Path, agent: Agent, environment: &[(String, String)]) -> Vec<Command> {
     if agent.id != "codex" {
         return Vec::new();
     }
     let mut folders = Vec::new();
     if let Some(home) = env::home_dir() {
-        folders.push(home.join(".codex/skills"));
         folders.push(home.join(".agents/skills"));
     }
-    if let Some(home) = env::var_os("CODEX_HOME") {
-        folders.push(std::path::PathBuf::from(home).join("skills"));
+    let home = environment
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "CODEX_HOME")
+        .map(|(_, value)| PathBuf::from(value))
+        .or_else(|| {
+            agent
+                .env
+                .iter()
+                .rev()
+                .find(|(key, _)| *key == "CODEX_HOME")
+                .map(|(_, value)| PathBuf::from(value))
+        })
+        .or_else(|| env::var_os("CODEX_HOME").map(PathBuf::from))
+        .or_else(|| Some(env::home_dir()?.join(".codex")));
+    if let Some(home) = home {
+        folders.push(home.join("skills"));
     }
     folders.push(root.join(".codex/skills"));
     folders.push(root.join(".agents/skills"));
@@ -1960,7 +1974,7 @@ impl Talks {
             Opening::New => pm_acp::Conversation::New,
             Opening::Login => pm_acp::Conversation::Login,
         };
-        let started = Session::configured(agent, root, env, requested, mcp.clone(), notify.clone());
+        let started = configured_session(agent, root, env, requested, mcp.clone(), notify.clone());
         let conversation = match started {
             Ok(conversation) => conversation,
             Err(error) => {
@@ -2007,7 +2021,7 @@ impl Talks {
                 cursor: 0,
                 forms: Vec::new(),
                 commands: Vec::new(),
-                skills: installed_skills(root, agent),
+                skills: installed_skills(root, agent, env),
                 history: Vec::new(),
                 listing: false,
                 history_error: None,
@@ -2062,7 +2076,7 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
-        match Session::configured(
+        match configured_session(
             talk.agent(),
             talk.root(),
             &talk.env,
@@ -2071,6 +2085,7 @@ impl Talks {
             notify,
         ) {
             Ok(conversation) => {
+                talk.skills = installed_skills(talk.root(), talk.agent(), &talk.env);
                 talk.conversation = conversation;
                 talk.fork = None;
                 talk.fork_source = None;
@@ -2112,7 +2127,7 @@ impl Talks {
             true => pm_acp::Conversation::ReconnectExact(conversation),
             false => pm_acp::Conversation::Reconnect(conversation),
         };
-        let restored = Session::configured(
+        let restored = configured_session(
             talk.agent(),
             talk.root(),
             &talk.env,
@@ -2122,6 +2137,7 @@ impl Talks {
         );
         match restored {
             Ok(session) => {
+                talk.skills = installed_skills(talk.root(), talk.agent(), &talk.env);
                 talk.conversation = session;
                 talk.ready = false;
                 talk.busy = false;
@@ -2354,4 +2370,17 @@ fn ended(session: &Session) -> String {
         true => "The agent has stopped.".to_owned(),
         false => format!("The agent has stopped: {last}"),
     }
+}
+
+/// Prepares the selected account's global setup before every ACP process launch.
+fn configured_session(
+    agent: Agent,
+    root: &Path,
+    environment: &[(String, String)],
+    conversation: pm_acp::Conversation,
+    servers: Vec<pm_acp::McpServer>,
+    notify: Notify,
+) -> std::io::Result<Session> {
+    crate::config::prepare_account(agent, environment)?;
+    Session::configured(agent, root, environment, conversation, servers, notify)
 }

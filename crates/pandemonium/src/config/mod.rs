@@ -10,7 +10,10 @@
 //! or outdated file is a first launch, and a write that cannot land leaves the
 //! running editor alone.
 
+mod account_history;
 mod account_identity;
+mod account_settings;
+mod account_setup;
 mod accounts;
 pub mod extensions;
 mod fonts;
@@ -34,6 +37,7 @@ use crate::terminal::SavedShell;
 use crate::workspace::Layout;
 use stored::Stored;
 
+pub use account_setup::prepare as prepare_account;
 pub use accounts::{Accounts, Profile};
 pub use fonts::FontSlot;
 pub use overrides::ThemeOverrides;

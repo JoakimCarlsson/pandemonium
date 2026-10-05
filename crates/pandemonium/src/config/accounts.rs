@@ -153,7 +153,7 @@ impl Profile {
 }
 
 /// Whether a stored identifier is a single safe directory component.
-fn safe_component(value: &str) -> bool {
+pub(super) fn safe_component(value: &str) -> bool {
     !value.is_empty()
         && value
             .bytes()
@@ -161,7 +161,7 @@ fn safe_component(value: &str) -> bool {
 }
 
 /// The home variable for agents with separate account storage.
-fn variable(agent: Agent) -> Option<&'static str> {
+pub(super) fn variable(agent: Agent) -> Option<&'static str> {
     if matches!(agent.source, Source::Command) {
         return None;
     }

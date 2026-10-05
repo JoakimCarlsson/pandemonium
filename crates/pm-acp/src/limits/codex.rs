@@ -26,9 +26,13 @@ pub(super) fn read() -> Option<Limits> {
     read_at(&home()?)
 }
 
-/// The latest account limits recorded under this session's selected Codex home.
+/// The latest account limits from a Codex home whose session records belong to one account.
 pub(super) fn read_at(home: &Path) -> Option<Limits> {
-    let day = newest_day(&home.join("sessions"))?;
+    let sessions = home.join("sessions");
+    if sessions.join(".pandemonium-shared-history").exists() {
+        return None;
+    }
+    let day = newest_day(&sessions)?;
     let mut files = fs::read_dir(day)
         .ok()?
         .filter_map(Result::ok)
