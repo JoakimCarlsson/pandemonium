@@ -714,7 +714,7 @@ impl App {
         }
     }
 
-    /// Starts `agent` where the window is pointed, and opens its pane.
+    /// Offers configured accounts before starting `agent` where the window is pointed.
     ///
     /// Where that is depends on what the reader has picked: the worktree of
     /// the session in hand, or the project's own checkout when they are in
@@ -728,7 +728,11 @@ impl App {
             Some(session) => pm_core::Scope::of(project.id(), session),
             None => pm_core::Scope::checkout(project.id()),
         };
-        self.start_account(Some(scope), agent, None);
+        if self.accounts.profiles(agent).next().is_some() {
+            self.open_picker(Kind::Accounts(Some(scope), agent));
+        } else {
+            self.start_account(Some(scope), agent, None);
+        }
     }
 
     /// Starts `agent` in `root` for `project`, and opens the pane it is read in.
