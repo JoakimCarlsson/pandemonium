@@ -24,7 +24,7 @@ use crate::config::{
     VimBinding, WindowState,
 };
 use crate::editor::{CursorShape, Display};
-use crate::panes::{Saved, SavedAxis, SavedKind, SavedNode, SavedTab, Tool};
+use crate::panes::{Saved, SavedAxis, SavedKind, SavedLayout, SavedNode, SavedTab, Tool};
 use crate::terminal::SavedShell;
 use crate::workspace::Layout;
 
@@ -226,8 +226,13 @@ pub(super) struct Stored {
     project_groups: Option<Vec<crate::project_groups::ProjectGroup>>,
     /// The root of the project the window was pointed at.
     active_project: Option<PathBuf>,
-    /// How the window was divided into panes, and what was open in them.
+    /// The one division of every project's window, as written before each
+    /// project kept its own; read once and handed to the active project.
+    #[serde(skip_serializing_if = "Option::is_none")]
     panes: Option<Saved>,
+    /// How each project divided the window into panes, and what was open in them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layouts: Option<Vec<SavedLayout>>,
     /// The shells the window had running, and what they were called.
     #[serde(skip_serializing_if = "Option::is_none")]
     shells: Option<Vec<SavedShell>>,
@@ -734,7 +739,7 @@ impl Stored {
             active: self.active_project.clone(),
             layout: self.layout(),
             window: self.window(),
-            panes: self.pane_layout(),
+            layouts: self.project_layouts(),
             shells: self.shells.clone().unwrap_or_default(),
             language_servers: self.language_servers(),
             agent_servers: self.agent_servers(),
@@ -782,6 +787,25 @@ impl Stored {
             link: self.worktree_link.clone().unwrap_or(defaults.link),
             copy: self.worktree_copy.clone().unwrap_or(defaults.copy),
             port: self.worktree_port.clone().or(defaults.port),
+        }
+    }
+
+    /// Each project's division of the window, giving a file written before
+    /// projects kept their own to the project the window was pointed at.
+    fn project_layouts(&self) -> Vec<SavedLayout> {
+        if let Some(layouts) = &self.layouts {
+            return layouts.clone();
+        }
+        let owner = self
+            .active_project
+            .clone()
+            .or_else(|| self.projects.as_ref()?.first().cloned());
+        match (self.panes.is_some(), owner) {
+            (true, Some(project)) => vec![SavedLayout {
+                project,
+                panes: self.pane_layout(),
+            }],
+            _ => Vec::new(),
         }
     }
 
@@ -1024,7 +1048,7 @@ impl Stored {
             project_groups,
             active,
             layout,
-            panes,
+            layouts,
             shells,
             window,
             language_servers,
@@ -1141,7 +1165,8 @@ impl Stored {
             projects: Some(projects.clone()),
             project_groups: (!project_groups.is_empty()).then(|| project_groups.clone()),
             active_project: active.clone(),
-            panes: Some(panes.clone()),
+            panes: None,
+            layouts: Some(layouts.clone()),
             shells: Some(shells.clone()),
             primary_sidebar_open: None,
             primary_sidebar_width: None,

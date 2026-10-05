@@ -19,7 +19,7 @@ use crate::editor::{Display, FileEntry, FileId, OpenFile};
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::{
-    self, Content, Contents, Item, PaneId, Role, Saved, SavedKind, SavedTab, Shortcut,
+    self, Content, Contents, Item, PaneId, PaneTree, Role, Saved, SavedKind, SavedTab, Shortcut,
     SplitDirection, TabEntry, Tool,
 };
 use crate::workspace::{MenuTarget, TabMenu};
@@ -183,6 +183,14 @@ impl App {
         preview: bool,
     ) {
         let scope = scope.into();
+        let switched = scope.is_some_and(|scope| Some(scope.project()) != self.layout_of);
+        if let Some(scope) = scope {
+            self.point_at(scope);
+        }
+        let pane = match switched {
+            true => self.panes.focus(),
+            false => pane,
+        };
         let pane = self.pane_for(pane, item.role());
         if let Some(ui) = self.ui.as_mut() {
             ui.clear_text_selection();
@@ -190,9 +198,6 @@ impl App {
         self.agents.clear_selections();
         if preview {
             self.close_previews(pane, item);
-        }
-        if let Some(scope) = scope {
-            self.point_at(scope);
         }
         let showing = self.scope();
         if let Some(pane) = self.panes.pane_mut(pane) {
@@ -575,7 +580,6 @@ impl App {
         }
         self.remember_closed(&before);
         self.sweep();
-        self.panes.keep_focus_drawn(self.scope());
         self.focus_pane(self.panes.focus());
         self.store();
     }
@@ -613,8 +617,8 @@ impl App {
     ///
     /// A pane names its files by where they live rather than by the id this
     /// run gave them, which is the only thing the next launch can act on.
-    pub(super) fn saved_panes(&self) -> Saved {
-        self.panes.save(self.scope(), &|item| {
+    pub(super) fn saved_panes(&self, tree: &PaneTree, scope: Option<Scope>) -> Saved {
+        tree.save(scope, &|item| {
             if let Item::Tool(tool) | Item::WorktreeTool(_, tool) = item {
                 return Some(SavedTab {
                     kind: SavedKind::Tool,
@@ -763,14 +767,14 @@ impl App {
     /// A file whose project is no longer open, or which is no longer on
     /// disk, is left behind: the window comes back as much like itself as
     /// what is still there allows.
-    pub(super) fn restore_panes(&mut self, saved: &Saved) {
+    pub(super) fn restore_panes(&mut self, saved: &Saved, owner: pm_core::ProjectId) {
         let projects = self
             .open
             .iter()
             .map(|project| (project.root().to_path_buf(), project.id()))
             .collect::<Vec<_>>();
         let mut comparisons = Vec::new();
-        let restoring_scope = self.scope();
+        let restoring_scope = Some(Scope::checkout(owner));
         let editor = &mut self.editor;
         let images = &mut self.images;
         let excerpts = &mut self.excerpts;
@@ -789,6 +793,9 @@ impl App {
                     restoring_scope
                 } else {
                     let (_, project) = projects.iter().find(|(root, _)| *root == tab.project)?;
+                    if *project != owner {
+                        return None;
+                    }
                     Some(
                         match sessions
                             .of(*project)
@@ -819,6 +826,9 @@ impl App {
                 .iter()
                 .find(|(root, _)| *root == tab.project)
                 .cloned()?;
+            if project != owner {
+                return None;
+            }
             let held = sessions
                 .of(project)
                 .find(|session| session.root() == tab.worktree);
@@ -930,12 +940,11 @@ impl App {
             self.read_turn_diff(scope, span);
         }
         self.recent.clear();
-        if let Some(documents) = self
-            .panes
-            .panes()
-            .into_iter()
-            .find(|id| self.serves(*id, Role::Editor))
-        {
+        if let Some(documents) = self.panes.panes().into_iter().find(|id| {
+            self.panes
+                .pane(*id)
+                .is_some_and(|pane| pane.serves(Scope::checkout(owner), Role::Editor))
+        }) {
             self.recent.insert(Role::Editor, documents);
         }
         for (scope, path) in followed_outlines {
@@ -966,13 +975,14 @@ impl App {
         if super::settings::settings_was_open(&saved.root) {
             self.open_settings();
         }
+        self.shelve_restored(owner);
     }
 
     /// Opens what the reviews in the panes show, then closes every file no
     /// pane is holding open any more.
     pub(super) fn sweep(&mut self) {
         self.open_reviewed_files();
-        let held = self.panes.held();
+        let held = self.held_everywhere();
         self.excerpts
             .retain(|scope, _| held.contains(&Item::Excerpts(*scope)));
         self.searches
@@ -1028,11 +1038,6 @@ impl App {
         {
             self.writing = None;
         }
-    }
-
-    /// Takes the files of `project` out of every pane that was showing them.
-    pub(super) fn drop_project_tabs(&mut self, project: pm_core::ProjectId) {
-        self.drop_tabs(&|scope| scope.project() == project);
     }
 
     /// Closes every tab of the worktrees `leaving` names, wherever they are.
@@ -1362,8 +1367,7 @@ impl App {
         let mut drawn = Vec::new();
         let mut drawn_tabs = Vec::new();
         let mut cells = Vec::new();
-        self.panes.keep_focus_drawn(self.scope());
-        for pane in self.panes.drawn(self.scope()) {
+        for pane in self.panes.panes() {
             drawn.push(pane);
             for item in self.tabs_of(pane) {
                 drawn_tabs.push((pane, item));
@@ -1393,7 +1397,6 @@ impl App {
         panes::pane_tree(
             theme,
             &self.panes,
-            scope,
             self.editor_focused
                 || self.tree_focused
                 || self.changes_focused

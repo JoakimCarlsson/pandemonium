@@ -7,7 +7,7 @@
 //! what a tab holds or how a pane is drawn — a pane names what is open in
 //! it, and the stores behind those names say what they are.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use pm_core::Scope;
 use pm_ui::{Axis, ResizePhase};
@@ -364,10 +364,6 @@ pub struct Split {
     children: Vec<Node>,
     /// Each child's share of the split, in the same order.
     shares: Vec<f32>,
-    /// The shares a worktree has dragged its own dividers to, which take the
-    /// place of `shares` there so that a drag in one project leaves the
-    /// others as they were.
-    scoped: HashMap<Option<Scope>, Vec<f32>>,
     /// The share the divider being dragged started the drag at.
     dragging: Option<f32>,
 }
@@ -388,65 +384,35 @@ impl Split {
         &self.children
     }
 
-    /// Each child's share of the split in `scope`, in the same order.
-    pub fn shares(&self, scope: Option<Scope>) -> &[f32] {
-        self.scoped.get(&scope).unwrap_or(&self.shares)
-    }
-
-    /// The shares written down for the split: the ones no worktree has its own of.
-    pub fn base_shares(&self) -> &[f32] {
+    /// Each child's share of the split, in the same order.
+    pub fn shares(&self) -> &[f32] {
         &self.shares
     }
 
-    /// The children drawn while the window shows `scope`, by their index.
-    ///
-    /// An empty pane keeps its space. A child holding only tabs of other
-    /// worktrees gives its room to the visible children. When none are
-    /// visible, the first child is drawn alone.
-    pub fn drawn(&self, scope: Option<Scope>) -> Vec<usize> {
-        let shown = (0..self.children.len())
-            .filter(|index| self.children[*index].shows(scope))
-            .collect::<Vec<_>>();
-        if shown.is_empty() && !self.children.is_empty() {
-            vec![0]
-        } else {
-            shown
-        }
-    }
-
-    /// Moves the divider after the `index`-th child drawn in `scope` by
-    /// `delta` of the split as drawn.
+    /// Moves the divider after the `index`-th child by `delta` of the split.
     ///
     /// The two panes either side of a divider trade their shares between
     /// them: everything else in the split keeps what it had, which is what
     /// makes dragging one divider leave the rest of the window where it was.
     /// Every event of a drag reports travel from the same press, so what the
     /// travel is added to is where the divider stood when the press landed.
-    fn resize(&mut self, index: usize, delta: f32, phase: ResizePhase, scope: Option<Scope>) {
-        let drawn = self.drawn(scope);
-        let (Some(first), Some(second)) =
-            (drawn.get(index).copied(), drawn.get(index + 1).copied())
-        else {
+    fn resize(&mut self, index: usize, delta: f32, phase: ResizePhase) {
+        let (first, second) = (index, index + 1);
+        if second >= self.shares.len() {
             return;
-        };
-        let mut shares = self.shares(scope).to_vec();
-        if phase == ResizePhase::Started {
-            self.dragging = shares.get(first).copied();
         }
-        let (Some(start), Some(before), Some(after)) = (
-            self.dragging,
-            shares.get(first).copied(),
-            shares.get(second).copied(),
-        ) else {
+        if phase == ResizePhase::Started {
+            self.dragging = Some(self.shares[first]);
+        }
+        let Some(start) = self.dragging else {
             return;
         };
-        let whole: f32 = drawn.iter().map(|child| shares[*child]).sum();
-        let pair = before + after;
+        let whole: f32 = self.shares.iter().sum();
+        let pair = self.shares[first] + self.shares[second];
         let min = MIN_SHARE * pair;
         let taken = (start + delta * whole).clamp(min, (pair - min).max(min));
-        shares[first] = taken;
-        shares[second] = pair - taken;
-        self.scoped.insert(scope, shares);
+        self.shares[first] = taken;
+        self.shares[second] = pair - taken;
         if phase == ResizePhase::Ended {
             self.dragging = None;
         }
@@ -468,26 +434,6 @@ impl Node {
             (Self::Pane(pane), _) => Some(pane.id),
             (Self::Split(split), true) => split.children.last()?.edge(last),
             (Self::Split(split), false) => split.children.first()?.edge(last),
-        }
-    }
-
-    /// Whether this node contains an empty pane or a tab `scope` sees.
-    fn shows(&self, scope: Option<Scope>) -> bool {
-        match self {
-            Self::Pane(pane) => pane.is_empty() || pane.shown(scope).next().is_some(),
-            Self::Split(split) => split.children.iter().any(|child| child.shows(scope)),
-        }
-    }
-
-    /// Calls `visit` on every pane under this node drawn in `scope`.
-    fn walk_drawn(&self, scope: Option<Scope>, visit: &mut impl FnMut(&Pane)) {
-        match self {
-            Self::Pane(pane) => visit(pane),
-            Self::Split(split) => {
-                for index in split.drawn(scope) {
-                    split.children[index].walk_drawn(scope, visit);
-                }
-            }
         }
     }
 
@@ -526,6 +472,9 @@ pub struct PaneTree {
     next_pane: u64,
     /// The id the next split made will be given.
     next_split: u64,
+    /// The worktrees that have been given their tools by [`PaneTree::inherit`],
+    /// so a tool a reader closed is not brought back by the next visit.
+    seeded: BTreeSet<Scope>,
 }
 
 impl Default for PaneTree {
@@ -537,6 +486,7 @@ impl Default for PaneTree {
             focus: first,
             next_pane: 1,
             next_split: 0,
+            seeded: BTreeSet::new(),
         }
     }
 }
@@ -612,6 +562,53 @@ impl PaneTree {
         }
     }
 
+    /// Gives `scope` the worktree tools its project's other worktrees have.
+    ///
+    /// A worktree that holds no tool tab of its own gets one for each tool
+    /// the checkout holds, in the same pane and in the same place in its bar,
+    /// or those of the first worktree that has any when the checkout has
+    /// none. That is how a session is cut into the layout of its project.
+    pub fn inherit(&mut self, scope: Scope) {
+        let owns = |item: Item| matches!(item, Item::WorktreeTool(owner, _) if owner == scope);
+        if !self.seeded.insert(scope) || self.held().into_iter().any(owns) {
+            return;
+        }
+        let checkout = Scope::checkout(scope.project());
+        let held = self.held();
+        let template = [checkout]
+            .into_iter()
+            .chain(held.iter().filter_map(|item| match item {
+                Item::WorktreeTool(owner, _) if owner.project() == scope.project() => Some(*owner),
+                _ => None,
+            }))
+            .find(|from| {
+                held.iter()
+                    .any(|item| matches!(item, Item::WorktreeTool(owner, _) if owner == from))
+            });
+        let Some(from) = template else {
+            return;
+        };
+        self.root.walk_mut(&mut |pane| {
+            let copies = pane
+                .tabs
+                .iter()
+                .filter_map(|tab| match tab.item {
+                    Item::WorktreeTool(owner, tool) if owner == from => Some((
+                        Item::WorktreeTool(scope, tool),
+                        pane.active.get(&Some(from)) == Some(&tab.item),
+                    )),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for (item, front) in copies {
+                pane.tabs.push(Tab::new(item, Some(scope)));
+                if front {
+                    pane.active.insert(Some(scope), item);
+                }
+            }
+        });
+    }
+
     /// The window as it stands, in the shape a launch restores it from.
     ///
     /// A tab `tab` cannot name is left out — it is one the next
@@ -643,6 +640,7 @@ impl PaneTree {
             focus: PaneId(0),
             next_pane: panes,
             next_split: splits,
+            seeded: BTreeSet::new(),
         };
         let panes = tree.panes();
         tree.focus = panes
@@ -658,24 +656,6 @@ impl PaneTree {
         let mut panes = Vec::new();
         self.root.walk(&mut |pane| panes.push(pane.id));
         panes
-    }
-
-    /// The panes drawn while the window shows `scope`, in drawing order.
-    pub fn drawn(&self, scope: Option<Scope>) -> Vec<PaneId> {
-        let mut panes = Vec::new();
-        self.root.walk_drawn(scope, &mut |pane| panes.push(pane.id));
-        panes
-    }
-
-    /// Hands the keyboard to a drawn pane when `scope` does not draw the one
-    /// holding it, so what is opened next lands where it can be seen.
-    pub fn keep_focus_drawn(&mut self, scope: Option<Scope>) {
-        let drawn = self.drawn(scope);
-        if !drawn.contains(&self.focus)
-            && let Some(first) = drawn.first()
-        {
-            self.focus = *first;
-        }
     }
 
     /// Everything open in any pane of the window.
@@ -710,11 +690,9 @@ impl PaneTree {
             && split.axis == axis
         {
             let place = if direction.before() { index } else { index + 1 };
-            for shares in split.scoped.values_mut().chain([&mut split.shares]) {
-                let share = shares[index] / 2.0;
-                shares[index] = share;
-                shares.insert(place, share);
-            }
+            let share = split.shares[index] / 2.0;
+            split.shares[index] = share;
+            split.shares.insert(place, share);
             split.children.insert(place, Node::Pane(Pane::new(fresh)));
             self.focus = fresh;
             return Some(fresh);
@@ -730,7 +708,6 @@ impl PaneTree {
                 axis,
                 children: Vec::new(),
                 shares: vec![1.0, 1.0],
-                scoped: HashMap::new(),
                 dragging: None,
             }),
         );
@@ -766,9 +743,7 @@ impl PaneTree {
         };
 
         split.children.remove(index);
-        for shares in split.scoped.values_mut().chain([&mut split.shares]) {
-            shares.remove(index);
-        }
+        split.shares.remove(index);
         let survivor = index.min(split.children.len().saturating_sub(1));
         let focus = split
             .children
@@ -786,16 +761,9 @@ impl PaneTree {
         true
     }
 
-    /// Moves the divider after the `index`-th child `scope` draws in the
-    /// split `id` names by `delta`.
-    pub fn resize(
-        &mut self,
-        id: SplitId,
-        index: usize,
-        delta: f32,
-        phase: ResizePhase,
-        scope: Option<Scope>,
-    ) {
+    /// Moves the divider after the `index`-th child of the split `id` names
+    /// by `delta`.
+    pub fn resize(&mut self, id: SplitId, index: usize, delta: f32, phase: ResizePhase) {
         fn find(node: &mut Node, id: SplitId) -> Option<&mut Split> {
             match node {
                 Node::Pane(_) => None,
@@ -810,7 +778,7 @@ impl PaneTree {
         }
 
         if let Some(split) = find(&mut self.root, id) {
-            split.resize(index, delta, phase, scope);
+            split.resize(index, delta, phase);
         }
     }
 
@@ -925,7 +893,7 @@ fn written(node: &Node, scope: Option<Scope>, tab: &dyn Fn(Item) -> Option<Saved
         },
         Node::Split(split) => SavedNode::Split {
             axis: split.axis().into(),
-            shares: split.base_shares().to_vec(),
+            shares: split.shares().to_vec(),
             children: split
                 .children()
                 .iter()
@@ -986,7 +954,6 @@ fn read(node: &SavedNode, panes: &mut u64, splits: &mut u64, open: &mut Reopen<'
                 axis: (*axis).into(),
                 children: read,
                 shares,
-                scoped: HashMap::new(),
                 dragging: None,
             })
         }
@@ -1007,12 +974,17 @@ fn arranged(
             *next_pane += 1;
             let mut pane = Pane::new(id);
             for item in items {
-                let tab = tabs
-                    .remove(item)
-                    .or_else(|| item.is_window_wide().then(|| Tab::new(*item, None)));
+                let tab = tabs.remove(item).or_else(|| match item {
+                    Item::Tool(_) => Some(Tab::new(*item, None)),
+                    Item::WorktreeTool(owner, _) => Some(Tab::new(*item, Some(*owner))),
+                    _ => None,
+                });
                 if let Some(tab) = tab {
                     pane.append(tab, scope);
                 }
+            }
+            if let Some(first) = pane.tabs(scope).first().copied() {
+                pane.activate(scope, first);
             }
             Node::Pane(pane)
         }
@@ -1039,7 +1011,6 @@ fn arranged(
                 axis: *axis,
                 children: nodes,
                 shares: children.iter().map(|(share, _)| share.max(0.01)).collect(),
-                scoped: HashMap::new(),
                 dragging: None,
             })
         }

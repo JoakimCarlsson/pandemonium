@@ -45,15 +45,18 @@ impl Tool {
     /// The side used by the default layout preset, expressed as an ordinary split.
     pub const fn default_split(self) -> SplitDirection {
         match self {
-            Self::Projects => SplitDirection::Left,
-            Self::Files | Self::Changes | Self::Chat => SplitDirection::Right,
+            Self::Projects | Self::Files | Self::Changes => SplitDirection::Left,
+            Self::Chat => SplitDirection::Right,
             Self::Terminal | Self::Problems | Self::Debug => SplitDirection::Down,
         }
     }
 
     /// Whether resetting the layout reopens this tool when it was closed.
     pub const fn opens_by_default(self) -> bool {
-        matches!(self, Self::Projects | Self::Files | Self::Changes)
+        matches!(
+            self,
+            Self::Projects | Self::Files | Self::Changes | Self::Terminal | Self::Chat
+        )
     }
 
     /// The name shown on this tool's tab and in menus.

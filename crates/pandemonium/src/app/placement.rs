@@ -43,7 +43,7 @@ impl App {
         if role == Role::Tool || self.serves(wanted, role) {
             return wanted;
         }
-        let drawn = self.panes.drawn(self.scope());
+        let drawn = self.panes.panes();
         let recent = self
             .recent
             .get(&role)

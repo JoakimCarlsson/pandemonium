@@ -9,6 +9,7 @@ use crate::panel::{Panel, PanelView};
 use crate::panes::{Arrangement, Item, PaneId, Role, SplitDirection, Tool};
 use crate::review::SourceControlControls;
 use crate::workspace::MenuTarget;
+use pm_core::Scope;
 
 /// Width restored for a column of tool tabs.
 const DEFAULT_TOOL_WIDTH: f32 = 252.0;
@@ -51,7 +52,7 @@ impl App {
 
     /// Whether a tool is the front tab of any pane currently drawn.
     pub(super) fn tool_visible(&self, tool: Tool) -> bool {
-        self.panes.drawn(self.scope()).into_iter().any(|id| {
+        self.panes.panes().into_iter().any(|id| {
             self.panes
                 .pane(id)
                 .and_then(|pane| pane.active(self.scope()))
@@ -106,56 +107,57 @@ impl App {
             .collect()
     }
 
-    /// Restores default tool groups while retaining documents, buffers and running processes.
-    fn reset_window_layout(&mut self) {
-        let scope = self.scope();
-        let active = self
-            .recent
-            .get(&Role::Editor)
-            .copied()
-            .and_then(|id| self.panes.pane(id)?.active(scope));
-        let mut seen = BTreeSet::new();
-        let documents = self
-            .panes
-            .panes()
-            .into_iter()
-            .flat_map(|id| {
-                self.panes
-                    .pane(id)
-                    .map(|pane| pane.items().collect::<Vec<_>>())
-                    .unwrap_or_default()
-            })
-            .filter(|item| {
-                !matches!(item, Item::Tool(_) | Item::WorktreeTool(..)) && seen.insert(*item)
-            })
-            .collect::<Vec<_>>();
-        let held = self.panes.held();
-        let group = |direction| {
-            Tool::ALL
-                .into_iter()
-                .filter(|tool| {
-                    tool.default_split() == direction
-                        && (tool.opens_by_default() || held.contains(&self.tool_item(*tool)))
-                })
-                .map(|tool| self.tool_item(tool))
-                .collect::<Vec<_>>()
-        };
-        let left = group(SplitDirection::Left);
-        let right = group(SplitDirection::Right);
-        let above = group(SplitDirection::Up);
-        let below = group(SplitDirection::Down);
-        let front_below = below.iter().copied().find(|item| match item {
-            Item::Tool(tool) | Item::WorktreeTool(_, tool) => self.tool_visible(*tool),
-            _ => false,
-        });
-        let size = self
-            .renderer
+    /// The window's width and height, from the surface or the last size written down.
+    fn window_size(&self) -> pm_gfx::Size {
+        self.renderer
             .as_ref()
             .map(|renderer| renderer.size())
             .unwrap_or(pm_gfx::Size::new(
                 self.window_state.width,
                 self.window_state.height,
-            ));
+            ))
+    }
+
+    /// The default division of one project's window, and the index of the
+    /// pane its documents go in.
+    ///
+    /// Projects, files and changes share the left column, documents have the
+    /// middle with the terminal beneath them, and chat has the right column.
+    /// Any other tool in `held` keeps to the side it opens on, conversations in
+    /// `documents` join chat, and the rest are the tabs the document pane starts with.
+    pub(super) fn default_arrangement(
+        &self,
+        scope: Option<Scope>,
+        documents: Vec<Item>,
+        held: &BTreeSet<Item>,
+    ) -> (Arrangement, usize) {
+        let group = |direction| {
+            let mut items = Vec::new();
+            for tool in Tool::ALL
+                .into_iter()
+                .filter(|tool| tool.default_split() == direction)
+            {
+                let opened = tool.opens_by_default().then(|| Item::tool(tool, scope));
+                let kept = held.iter().copied().filter(|item| {
+                    matches!(item, Item::Tool(held) | Item::WorktreeTool(_, held) if *held == tool)
+                });
+                for item in opened.into_iter().chain(kept) {
+                    if !items.contains(&item) {
+                        items.push(item);
+                    }
+                }
+            }
+            items
+        };
+        let (conversations, documents): (Vec<_>, Vec<_>) = documents
+            .into_iter()
+            .partition(|item| item.role() == Role::Agent);
+        let left = group(SplitDirection::Left);
+        let mut right = group(SplitDirection::Right);
+        right.extend(conversations);
+        let above = group(SplitDirection::Up);
+        let below = group(SplitDirection::Down);
+        let size = self.window_size();
         let focus = usize::from(!left.is_empty()) + usize::from(!above.is_empty());
         let columns_width = DEFAULT_TOOL_WIDTH
             * (usize::from(!left.is_empty()) + usize::from(!right.is_empty())) as f32;
@@ -192,16 +194,54 @@ impl App {
         if !right.is_empty() {
             children.push((DEFAULT_TOOL_WIDTH, Arrangement::Pane(right)));
         }
-        let layout = Arrangement::Split {
-            axis: Axis::Horizontal,
-            children,
-        };
+        (
+            Arrangement::Split {
+                axis: Axis::Horizontal,
+                children,
+            },
+            focus,
+        )
+    }
+
+    /// Restores the active project's default tool groups while retaining its
+    /// documents, buffers and running processes. No other project's window is touched.
+    fn reset_window_layout(&mut self) {
+        let scope = self.scope();
+        let active = self
+            .recent
+            .get(&Role::Editor)
+            .copied()
+            .and_then(|id| self.panes.pane(id)?.active(scope));
+        let fronts = self
+            .panes
+            .panes()
+            .into_iter()
+            .filter_map(|id| self.panes.pane(id)?.active(scope))
+            .collect::<BTreeSet<_>>();
+        let mut seen = BTreeSet::new();
+        let documents = self
+            .panes
+            .panes()
+            .into_iter()
+            .flat_map(|id| {
+                self.panes
+                    .pane(id)
+                    .map(|pane| pane.items().collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .filter(|item| {
+                !matches!(item, Item::Tool(_) | Item::WorktreeTool(..)) && seen.insert(*item)
+            })
+            .collect::<Vec<_>>();
+        let (layout, focus) = self.default_arrangement(scope, documents, &self.panes.held());
         self.panes.arrange(&layout, focus, scope);
         for id in self.panes.panes() {
             if let Some(pane) = self.panes.pane_mut(id) {
                 let tabs = pane.tabs(scope);
-                let front = front_below
-                    .filter(|item| tabs.contains(item))
+                let front = tabs
+                    .iter()
+                    .copied()
+                    .find(|item| fronts.contains(item))
                     .or_else(|| tabs.first().copied());
                 if let Some(item) = front {
                     pane.activate(scope, item);
