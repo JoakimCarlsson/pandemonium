@@ -153,7 +153,7 @@ impl Profile {
 }
 
 /// Whether a stored identifier is a single safe directory component.
-fn safe_component(value: &str) -> bool {
+pub(super) fn safe_component(value: &str) -> bool {
     !value.is_empty()
         && value
             .bytes()

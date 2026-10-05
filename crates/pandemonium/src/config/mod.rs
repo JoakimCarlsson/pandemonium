@@ -10,6 +10,7 @@
 //! or outdated file is a first launch, and a write that cannot land leaves the
 //! running editor alone.
 
+mod account_history;
 mod account_identity;
 mod account_settings;
 mod account_setup;

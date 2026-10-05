@@ -134,6 +134,7 @@ pub fn prepare(agent: Agent, environment: &[(String, String)]) -> io::Result<()>
     if agent.id == "claude-code" {
         inherited.plugins = account_settings::plugins(&source, &directory, &inherited.plugins)?;
     }
+    super::account_history::prepare(&source, &directory, agent.id)?;
     let bytes = serde_json::to_vec_pretty(&inherited).map_err(io::Error::other)?;
     write(&record, &bytes)
 }
@@ -326,13 +327,13 @@ pub(super) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Links shared setup directly on Unix.
 #[cfg(unix)]
-fn link(source: &Path, target: &Path, _directory: bool) -> io::Result<()> {
+pub(super) fn link(source: &Path, target: &Path, _directory: bool) -> io::Result<()> {
     std::os::unix::fs::symlink(source, target)
 }
 
 /// Uses Windows links when available, allowing the caller to fall back to copying.
 #[cfg(windows)]
-fn link(source: &Path, target: &Path, directory: bool) -> io::Result<()> {
+pub(super) fn link(source: &Path, target: &Path, directory: bool) -> io::Result<()> {
     if directory {
         std::os::windows::fs::symlink_dir(source, target)
     } else {
@@ -342,7 +343,7 @@ fn link(source: &Path, target: &Path, directory: bool) -> io::Result<()> {
 
 /// Requests copy fallback on platforms without symbolic link support.
 #[cfg(not(any(unix, windows)))]
-fn link(_source: &Path, _target: &Path, _directory: bool) -> io::Result<()> {
+pub(super) fn link(_source: &Path, _target: &Path, _directory: bool) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Symbolic links unavailable",
@@ -364,7 +365,7 @@ fn validate(inherited: &Inherited, entries: &[&str]) -> io::Result<()> {
 }
 
 /// Removes an owned symbolic link without following its target.
-fn unlink(path: &Path) -> io::Result<()> {
+pub(super) fn unlink(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     if fs::symlink_metadata(path)?.file_type().is_symlink_dir() {
         return fs::remove_dir(path);

@@ -54,9 +54,9 @@ never imported from another account or included in launch arguments; profile man
 
 Named accounts inherit supported global preferences, instructions, skills and local plugins from the provider's original home, resolved from its environment override or the usual `~/.claude`, `~/.codex` or `~/.grok`. Setup refreshes before starting, restoring or reconnecting a conversation, including for profiles created before this fix. Existing profile settings and authored files take precedence; inherited preferences continue to follow global edits until changed inside the profile.
 
-Authored asset directories use symbolic links when available. Existing profile directories retain their contents and receive missing shared entries. Platforms that cannot create links receive copies, refreshed on launch while unedited. Claude's local marketplace cache and user installation records are inherited; account-synced plugins remain local to the signed-in account. Grok's local plugin installations are shared. Codex's skill picker reads the selected provider home as well as the usual user and project skill directories.
+Authored asset directories use symbolic links when available. Existing profile directories retain their contents and receive missing shared entries. Platforms that cannot create links receive copies, refreshed on launch while unedited. Conversation stores on those platforms synchronize missing records when an account starts; live sharing requires symbolic links. Claude's local marketplace cache and user installation records are inherited; account-synced plugins remain local to the signed-in account. Grok's local plugin installations are shared. Codex's skill picker reads the selected provider home as well as the usual user and project skill directories.
 
-Login storage, provider transcripts, history, session databases and memory stay in their existing homes. The fix does not move or merge conversations between identities. Existing conversations keep their original profile and resume identifiers; a different account still opens a new conversation.
+Native conversation records are shared across accounts: Claude uses `projects` and `file-history`, Codex uses `sessions` and `archived_sessions`, and Grok uses `sessions` under the original provider home. Existing profile records are merged without replacing a conversation, then profiles use that common store. Original profile directories are retained under `.pandemonium-history-originals`; conflicting conversation files stop migration and retain both originals. History can therefore list and resume a previous conversation using the currently selected account. Existing open tabs retain their selected account and conversation identifiers. Credential files, login state and unrelated provider databases remain separate.
 
 Only supported preference fields are inherited. Credential fields, environment injection, HTTP authentication headers, authentication helpers, account restrictions, custom model providers and managed account policies are excluded. Codex's selected global configuration preset contributes its supported preferences; each profile retains file credential storage. Claude's mixed `.claude.json` application state and MCP credentials are not imported. Profile-specific setup and account-managed extensions remain owned by that profile.
 
@@ -86,7 +86,7 @@ profiles select Claude subscription login. Cursor profiles stay unavailable
 on every platform until its token storage is established, including macOS's
 machine-wide Keychain login.
 
-Codex limits read session records under the selected profile's home. Grok
+Codex's file-based limit fallback is disabled for shared conversation stores because their records may belong to different accounts; provider-reported limits still apply. Grok
 limits come from the selected agent's ACP connection. Claude limits come only
 from that connection's rate-limit updates for profiled sessions; the fallback
 usage service is disabled because it would read profile credentials. Cursor
@@ -105,4 +105,4 @@ starts the subscription sign-in flow and lets you choose an organisation in
 that flow. Confirm that restart retains the chosen identity. Provider login
 and token refresh remain the agent's responsibility.
 
-To verify shared setup, install a distinctive global instruction and skill, then open both a new and an existing profile. Confirm they load the instruction and skill, edit the globals, and confirm a new or reconnected session picks up the edits. Set a profile-specific preference and confirm later global edits retain that override. Resume an existing conversation after editor restart and confirm its profile, identity and history remain intact.
+To verify shared setup, install a distinctive global instruction and skill, then open both a new and an existing profile. Confirm they load the instruction and skill, edit the globals, and confirm a new or reconnected session picks up the edits. Set a profile-specific preference and confirm later global edits retain that override. Open history from a second account, confirm conversations from the default and other profiles are listed, and resume one using the selected account. Create a conversation on either account and confirm it appears on the other. After editor restart, confirm existing tabs retain their selected account and conversations remain resumable.
