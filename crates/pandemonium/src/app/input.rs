@@ -197,10 +197,10 @@ impl App {
         if self.send_to_pending(event) {
             return self.request_redraw();
         }
-        if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
+        if self.send_to_picker(event) || self.picker_swallows(event) {
             return self.request_redraw();
         }
-        if self.send_to_picker(event) {
+        if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
             return self.request_redraw();
         }
         if self.send_to_outline(event) {
@@ -331,6 +331,13 @@ impl App {
         if let Some(taken) = taken {
             self.apply(taken);
         }
+    }
+
+    /// Whether an open picker keeps a key the picker itself did not act on.
+    ///
+    /// The picker is modal: only the window's own chords may pass it.
+    fn picker_swallows(&self, event: &KeyEvent) -> bool {
+        self.picker.is_some() && !self.is_window_chord_over_text(&event.logical_key.as_ref())
     }
 
     /// Sends a keypress to the list the window is asking a choice from.
