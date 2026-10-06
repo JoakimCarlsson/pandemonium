@@ -39,6 +39,8 @@ pub enum Event {
     Said(Voice, String),
     /// A tool call, as it now stands.
     Ran(ToolCall),
+    /// A shell that continues after its launching call, or has finished.
+    Background(Background),
     /// The plan the agent is working to, replacing the one before it.
     Planned(Vec<Step>),
     /// The commands this agent takes, as it now offers them.
@@ -278,6 +280,64 @@ pub struct ToolCall {
     pub parent: Option<String>,
     /// Whether this card represents a delegated agent's work.
     pub subagent: bool,
+}
+
+/// A shell process whose lifetime is reported through tool results.
+#[derive(Clone, Debug)]
+pub struct Background {
+    /// The handle the agent uses to resume the shell.
+    pub id: String,
+    /// The command that started it.
+    pub label: String,
+    /// Whether the handle still represents running work.
+    pub running: bool,
+}
+
+/// Reads a shell handle or its completion from one tool update.
+pub(crate) fn background(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    if !matches!(
+        update["sessionUpdate"].as_str(),
+        Some("tool_call" | "tool_call_update")
+    ) {
+        return None;
+    }
+    let input = &update["rawInput"];
+    let output = &update["rawOutput"];
+    let id = background_handle(output)
+        .or_else(|| background_handle(input).filter(|id| shells.contains_key(id)))?;
+    let running = !["exit_code", "exitCode", "exit_status", "exitStatus"]
+        .iter()
+        .any(|key| !output[*key].is_null())
+        && !matches!(update["status"].as_str(), Some("failed" | "cancelled"));
+    let label = if running {
+        let label = input["cmd"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| argument(input))
+            .unwrap_or_else(|| format!("Shell {id}"));
+        shells.entry(id.clone()).or_insert(label).clone()
+    } else {
+        shells.remove(&id)?
+    };
+    Some(Event::Background(Background { id, label, running }))
+}
+
+/// Reads the process identity a shell tool reports in its input or output.
+fn background_handle(value: &Value) -> Option<String> {
+    [
+        "session_id",
+        "sessionId",
+        "cell_id",
+        "process_id",
+        "processId",
+    ]
+    .iter()
+    .find_map(|key| {
+        value[*key]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| value[*key].as_i64().map(|id| id.to_string()))
+    })
 }
 
 impl ToolCall {
