@@ -1274,6 +1274,9 @@ impl Reader {
                 }
             }
             (None, Some("session/update")) => self.updated(&message["params"]),
+            (None, Some(method)) if method.starts_with("_x.ai/") => {
+                self.extended(&message["params"])
+            }
             (None, Some("elicitation/complete")) => {
                 let id = message["params"]["elicitationId"].as_str();
                 self.raise(Event::Concluded(id.unwrap_or_default().to_owned()));
@@ -1368,6 +1371,9 @@ impl Reader {
                     && let Ok(mut state) = self.state.lock()
                 {
                     state.queued.clear();
+                }
+                for event in update::outliving(&self.tools, &mut self.shells) {
+                    self.raise(event);
                 }
                 self.raise(Event::Stopped(stop));
                 self.idle();
@@ -1643,9 +1649,25 @@ impl Reader {
     /// as long as it takes to add what it came to.
     fn updated(&mut self, params: &Value) {
         let mut events = self.subagents.events(params, &mut self.tools);
-        if let Some(event) = update::background(&params["update"], &mut self.shells) {
-            events.push(event);
-        }
+        let session = params["sessionId"].as_str().unwrap_or_default();
+        events.extend(update::background(
+            session,
+            &params["update"],
+            &mut self.shells,
+        ));
+        self.deliver(events);
+    }
+
+    /// Takes down what an agent says of its background work in a notice of
+    /// its own, outside the protocol's updates.
+    fn extended(&mut self, params: &Value) {
+        let session = params["sessionId"].as_str().unwrap_or_default();
+        let events = update::background(session, &params["update"], &mut self.shells);
+        self.deliver(events);
+    }
+
+    /// Hands what was read to the window, and wakes it.
+    fn deliver(&mut self, events: Vec<Event>) {
         if events.is_empty() {
             return;
         }

@@ -293,8 +293,38 @@ pub struct Background {
     pub running: bool,
 }
 
+/// Reads what one update says of the commands running beyond the turn.
+pub(crate) fn background(
+    session: &str,
+    update: &Value,
+    shells: &mut BTreeMap<String, String>,
+) -> Vec<Event> {
+    let events = finished(update, shells);
+    if !events.is_empty() {
+        return events;
+    }
+    let ended = reported_over(update, shells);
+    if !ended.is_empty() {
+        return ended;
+    }
+    if let Some(event) = reported_running(update, shells) {
+        return vec![event];
+    }
+    if let Some(event) = settled(update, shells) {
+        return vec![event];
+    }
+    let ended = ended_with_owner(update, shells);
+    if !ended.is_empty() {
+        return ended;
+    }
+    if let Some(event) = launched(session, update, shells) {
+        return vec![event];
+    }
+    background_shell(update, shells).into_iter().collect()
+}
+
 /// Reads a shell handle or its completion from one tool update.
-pub(crate) fn background(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+fn background_shell(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
     if !matches!(
         update["sessionUpdate"].as_str(),
         Some("tool_call" | "tool_call_update")
@@ -320,6 +350,181 @@ pub(crate) fn background(update: &Value, shells: &mut BTreeMap<String, String>) 
         shells.remove(&id)?
     };
     Some(Event::Background(Background { id, label, running }))
+}
+
+/// Takes the commands a turn left running as background work.
+///
+/// Any agent can leave a command running past the end of its turn without
+/// saying anything more of it than the status its tool call already carries,
+/// so a command call still running at that point is the work to follow.
+pub(crate) fn outliving(tools: &Tools, shells: &mut BTreeMap<String, String>) -> Vec<Event> {
+    let mut events = Vec::new();
+    for call in tools.values() {
+        if !call.is_running()
+            || call.subagent
+            || call.kind != Kind::Execute
+            || shells.contains_key(&call.id)
+        {
+            continue;
+        }
+        let label = call.argument.clone().unwrap_or_else(|| call.title.clone());
+        shells.insert(call.id.clone(), label.clone());
+        events.push(Event::Background(Background {
+            id: call.id.clone(),
+            label,
+            running: true,
+        }));
+    }
+    events
+}
+
+/// Reads a background task an agent says it has started, by the result of
+/// the tool call that started it.
+fn reported_running(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    let output = &update["rawOutput"];
+    if output["type"].as_str() != Some("BackgroundTaskStarted") {
+        return None;
+    }
+    let id = output["task_id"].as_str()?;
+    let label = output["command"]
+        .as_str()
+        .map_or_else(|| format!("Task {id}"), str::to_owned);
+    shells.insert(id.to_owned(), label.clone());
+    Some(Event::Background(Background {
+        id: id.to_owned(),
+        label,
+        running: true,
+    }))
+}
+
+/// Reads the background tasks an agent says are over, from its task list or
+/// from the notice of one completing.
+fn reported_over(update: &Value, shells: &mut BTreeMap<String, String>) -> Vec<Event> {
+    let mut over = Vec::new();
+    if update["sessionUpdate"].as_str() == Some("background_tasks") {
+        for task in update["tasks"].as_array().into_iter().flatten() {
+            if task["status"].as_str() != Some("running")
+                && let Some(id) = task["task_id"].as_str()
+            {
+                over.push(id.to_owned());
+            }
+        }
+    }
+    if update["sessionUpdate"].as_str() == Some("task_completed")
+        && let Some(id) = update["task_snapshot"]["task_id"].as_str()
+    {
+        over.push(id.to_owned());
+    }
+    over.into_iter()
+        .filter_map(|id| {
+            let label = shells.remove(&id)?;
+            Some(Event::Background(Background {
+                id,
+                label,
+                running: false,
+            }))
+        })
+        .collect()
+}
+
+/// Reads the end of a command that outlived its turn from its tool call.
+fn settled(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    if !matches!(
+        update["status"].as_str(),
+        Some("completed" | "failed" | "cancelled")
+    ) {
+        return None;
+    }
+    let id = update["toolCallId"].as_str()?;
+    let label = shells.remove(id)?;
+    Some(Event::Background(Background {
+        id: id.to_owned(),
+        label,
+        running: false,
+    }))
+}
+
+/// Reads the start of a background command from the tool call that began it.
+///
+/// The command is noted by call when the agent asks for it to run in the
+/// background; the handle arrives on a later update of the same call.
+fn launched(session: &str, update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    let call = update["toolCallId"].as_str()?;
+    let noted = format!("call:{call}");
+    if update["rawInput"]["run_in_background"].as_bool() == Some(true)
+        && let Some(command) = update["rawInput"]["command"].as_str()
+    {
+        shells.insert(noted, command.to_owned());
+        return None;
+    }
+    let id = update["_meta"]["claudeCode"]["toolResponse"]["backgroundTaskId"].as_str()?;
+    let label = shells
+        .remove(&noted)
+        .unwrap_or_else(|| format!("Shell {id}"));
+    shells.insert(id.to_owned(), label.clone());
+    if update["_meta"]["claudeCode"]["toolResponse"]["backgroundEndsWithFinalResponse"].as_bool()
+        == Some(true)
+    {
+        shells.insert(format!("owner:{session}:{id}"), String::new());
+    }
+    Some(Event::Background(Background {
+        id: id.to_owned(),
+        label,
+        running: true,
+    }))
+}
+
+/// Reads the end of the background commands a subagent owned from the end
+/// of the subagent, which takes them down with its final response.
+fn ended_with_owner(update: &Value, shells: &mut BTreeMap<String, String>) -> Vec<Event> {
+    if update["sessionUpdate"].as_str() != Some("subagent_state_update")
+        || matches!(update["state"].as_str(), Some("running" | "paused") | None)
+    {
+        return Vec::new();
+    }
+    let Some(owner) = update["subagentSessionId"].as_str() else {
+        return Vec::new();
+    };
+    let prefix = format!("owner:{owner}:");
+    let owned: Vec<String> = shells
+        .keys()
+        .filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned))
+        .collect();
+    owned
+        .into_iter()
+        .filter_map(|id| {
+            shells.remove(&format!("{prefix}{id}"));
+            let label = shells.remove(&id)?;
+            Some(Event::Background(Background {
+                id,
+                label,
+                running: false,
+            }))
+        })
+        .collect()
+}
+
+/// Reads the end of background commands from the agent being woken for one.
+///
+/// The agent names no task when it is told one finished, so every command
+/// it was running is taken to be over: the next update that starts a turn
+/// of its own is the notification, and a command still going is put back
+/// by the agent's next look at it.
+fn finished(update: &Value, shells: &mut BTreeMap<String, String>) -> Vec<Event> {
+    if update["_meta"]["_claude/origin"]["kind"].as_str() != Some("task-notification") {
+        return Vec::new();
+    }
+    std::mem::take(shells)
+        .into_iter()
+        .filter(|(id, _)| !id.starts_with("call:") && !id.starts_with("owner:"))
+        .map(|(id, label)| {
+            Event::Background(Background {
+                id,
+                label,
+                running: false,
+            })
+        })
+        .collect()
 }
 
 /// Reads the process identity a shell tool reports in its input or output.
