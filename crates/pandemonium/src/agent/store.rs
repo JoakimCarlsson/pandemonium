@@ -794,6 +794,11 @@ impl Talk {
         self.busy
     }
 
+    /// Whether the prompt is held back and has not gone to the agent yet.
+    pub fn is_sending(&self) -> bool {
+        self.pending_prompt.is_some()
+    }
+
     /// How long the current turn has been running.
     pub fn working_for(&self) -> Option<Duration> {
         self.busy_since.map(|since| since.elapsed())
@@ -1268,7 +1273,7 @@ impl Talk {
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
-        self.busy_since = Some(Instant::now());
+        self.busy_since = None;
         self.unseen = false;
         self.following = true;
     }
@@ -1295,6 +1300,7 @@ impl Talk {
             if let Some(note) = self.rewind_note.take() {
                 text = format!("{note}\n{text}");
             }
+            self.busy_since = Some(Instant::now());
             self.conversation.prompt(&text, attachments);
         }
     }
