@@ -27,12 +27,13 @@ pub fn install(servers: &Path, command: &str, recipe: Recipe) -> Result<PathBuf,
         return Err("Managed server names and versions cannot contain paths.".into());
     }
     let parent = servers.join(command);
-    let version = parent.join(recipe.version());
+    let directory_name = recipe.directory_name();
+    let version = parent.join(&directory_name);
     if let Some(executable) = program::managed_in(&version) {
         return Ok(executable);
     }
     fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
-    let partial = parent.join(format!("{}.partial", recipe.version()));
+    let partial = parent.join(format!("{directory_name}.partial"));
     if partial.exists() {
         fs::remove_dir_all(&partial).map_err(|error| error.to_string())?;
     }

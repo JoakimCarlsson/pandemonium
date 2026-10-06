@@ -572,6 +572,7 @@ impl Session {
             stdout: BufReader::new(stdout),
             next,
             tools: Tools::new(),
+            shells: std::collections::BTreeMap::new(),
             subagents: Subagents::default(),
             ticket: 0,
             terminals: 0,
@@ -1231,6 +1232,8 @@ struct Reader {
     next: Arc<AtomicI64>,
     /// The tool calls of this conversation, as they now stand.
     tools: Tools,
+    /// Background shell handles and the commands that launched them.
+    shells: std::collections::BTreeMap<String, String>,
     /// Child session lifetimes and the cards receiving their updates.
     subagents: Subagents,
     /// The ticket the next request will be put to the reader or the window
@@ -1271,6 +1274,9 @@ impl Reader {
                 }
             }
             (None, Some("session/update")) => self.updated(&message["params"]),
+            (None, Some(method)) if method.starts_with("_x.ai/") => {
+                self.extended(&message["params"])
+            }
             (None, Some("elicitation/complete")) => {
                 let id = message["params"]["elicitationId"].as_str();
                 self.raise(Event::Concluded(id.unwrap_or_default().to_owned()));
@@ -1365,6 +1371,9 @@ impl Reader {
                     && let Ok(mut state) = self.state.lock()
                 {
                     state.queued.clear();
+                }
+                for event in update::outliving(&self.tools, &mut self.shells) {
+                    self.raise(event);
                 }
                 self.raise(Event::Stopped(stop));
                 self.idle();
@@ -1639,7 +1648,20 @@ impl Reader {
     /// The update is read before the state is taken, which is held only for
     /// as long as it takes to add what it came to.
     fn updated(&mut self, params: &Value) {
-        let events = self.subagents.events(params, &mut self.tools);
+        let mut events = self.subagents.events(params, &mut self.tools);
+        events.extend(update::background(&params["update"], &mut self.shells));
+        self.deliver(events);
+    }
+
+    /// Takes down what an agent says of its background work in a notice of
+    /// its own, outside the protocol's updates.
+    fn extended(&mut self, params: &Value) {
+        let events = update::background(&params["update"], &mut self.shells);
+        self.deliver(events);
+    }
+
+    /// Hands what was read to the window, and wakes it.
+    fn deliver(&mut self, events: Vec<Event>) {
         if events.is_empty() {
             return;
         }
@@ -1883,6 +1905,7 @@ fn handshake() -> Value {
             "auth": { "terminal": true },
             "elicitation": { "form": {}, "url": {} },
             "subagents": {},
+            "_meta": { "jetbrains": { "air": { "version": 1, "capabilities": ["asyncTasks"] } } },
         },
     })
 }

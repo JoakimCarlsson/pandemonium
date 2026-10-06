@@ -37,6 +37,6 @@ pub use registry::{Listing, search as search_registry};
 pub use request::{Answer, Exit, Request, Run};
 pub use session::{Conversation, Notify, Session};
 pub use update::{
-    About, Ask, Choice, Command, Cost, Event, History, Kind, Knob, Location, Method, Mode, Output,
-    Pick, Setting, Status, Step, Stop, ToolCall, Usage, Voice, Way, Weight,
+    About, Ask, Background, Choice, Command, Cost, Event, History, Kind, Knob, Location, Method,
+    Mode, Output, Pick, Setting, Status, Step, Stop, ToolCall, Usage, Voice, Way, Weight,
 };

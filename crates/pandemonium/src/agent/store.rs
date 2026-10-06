@@ -129,6 +129,8 @@ pub struct Talk {
     logins: Vec<Method>,
     /// Everything said so far.
     transcript: Transcript,
+    /// Running shells and subagents reported by this conversation.
+    background: BTreeMap<String, String>,
     /// The buffer the next prompt is written in.
     ///
     /// A prompt is several lines as often as it is one, so it is written in
@@ -792,6 +794,11 @@ impl Talk {
         self.busy
     }
 
+    /// Whether the prompt is held back and has not gone to the agent yet.
+    pub fn is_sending(&self) -> bool {
+        self.pending_prompt.is_some()
+    }
+
     /// How long the current turn has been running.
     pub fn working_for(&self) -> Option<Duration> {
         self.busy_since.map(|since| since.elapsed())
@@ -905,7 +912,7 @@ impl Talk {
         match (
             self.is_running(),
             self.asks.is_empty() && self.forms.is_empty(),
-            self.busy,
+            self.busy || !self.background.is_empty(),
             self.unseen,
         ) {
             (false, ..) => Standing::Stopped,
@@ -914,6 +921,11 @@ impl Talk {
             (_, _, _, true) => Standing::Done,
             _ => Standing::Idle,
         }
+    }
+
+    /// Running work that can continue after the current turn.
+    pub fn background(&self) -> &BTreeMap<String, String> {
+        &self.background
     }
 
     /// Marks what the conversation has done as read.
@@ -1261,7 +1273,7 @@ impl Talk {
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
-        self.busy_since = Some(Instant::now());
+        self.busy_since = None;
         self.unseen = false;
         self.following = true;
     }
@@ -1288,6 +1300,7 @@ impl Talk {
             if let Some(note) = self.rewind_note.take() {
                 text = format!("{note}\n{text}");
             }
+            self.busy_since = Some(Instant::now());
             self.conversation.prompt(&text, attachments);
         }
     }
@@ -1504,10 +1517,33 @@ impl Talk {
             }
             Event::Said(voice, text) => self.transcript.say(voice, &text),
             Event::Ran(call) => {
+                if call.subagent {
+                    if call.is_running() {
+                        self.background.insert(
+                            format!("agent:{}", call.id),
+                            format!(
+                                "Subagent · {}",
+                                call.argument.as_deref().unwrap_or(&call.title)
+                            ),
+                        );
+                    } else {
+                        self.background.remove(&format!("agent:{}", call.id));
+                    }
+                }
                 if call.status == Status::Failed && self.opened_failures.insert(call.id.clone()) {
                     self.expanded_cards.insert(call.id.clone());
                 }
                 self.transcript.ran(call);
+            }
+            Event::Background(shell) => {
+                if shell.running {
+                    self.background.insert(
+                        format!("shell:{}", shell.id),
+                        format!("Shell · {}", shell.label),
+                    );
+                } else {
+                    self.background.remove(&format!("shell:{}", shell.id));
+                }
             }
             Event::Planned(steps) => self.transcript.planned(steps),
             Event::Offers(commands) => self.commands = commands,
@@ -1567,6 +1603,7 @@ impl Talk {
                 .transcript
                 .note("The agent could not carry on the old conversation, so this one is new."),
             Event::LoggedOut => {
+                self.background.clear();
                 self.ready = false;
                 self.remember_on_ready = true;
                 self.busy = false;
@@ -1577,6 +1614,7 @@ impl Talk {
             }
             Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
             Event::Ended => {
+                self.background.clear();
                 self.clear_messages();
                 self.pending_prompt = None;
                 self.transcript.finish_thought();
@@ -2011,6 +2049,7 @@ impl Talks {
                 env: env.to_vec(),
                 logins: Vec::new(),
                 transcript: Transcript::default(),
+                background: BTreeMap::new(),
                 prompt: Input::many_lines("Prompt"),
                 attachments: Vec::new(),
                 attachment_previews: Vec::new(),

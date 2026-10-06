@@ -55,4 +55,15 @@ impl Recipe {
             | Self::Pip { version, .. } => version,
         }
     }
+
+    /// The directory name this recipe installs under: the version, plus the
+    /// extra packages an npm recipe pins, so changing one replaces the install.
+    pub fn directory_name(self) -> String {
+        match self {
+            Self::Npm { version, extra, .. } if !extra.is_empty() => {
+                format!("{version}+{}", extra.join("+").replace('/', "_"))
+            }
+            _ => self.version().to_owned(),
+        }
+    }
 }

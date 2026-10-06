@@ -39,6 +39,8 @@ pub enum Event {
     Said(Voice, String),
     /// A tool call, as it now stands.
     Ran(ToolCall),
+    /// A shell that continues after its launching call, or has finished.
+    Background(Background),
     /// The plan the agent is working to, replacing the one before it.
     Planned(Vec<Step>),
     /// The commands this agent takes, as it now offers them.
@@ -278,6 +280,243 @@ pub struct ToolCall {
     pub parent: Option<String>,
     /// Whether this card represents a delegated agent's work.
     pub subagent: bool,
+}
+
+/// A shell process whose lifetime is reported through tool results.
+#[derive(Clone, Debug)]
+pub struct Background {
+    /// The handle the agent uses to resume the shell.
+    pub id: String,
+    /// The command that started it.
+    pub label: String,
+    /// Whether the handle still represents running work.
+    pub running: bool,
+}
+
+/// Reads what one update says of the commands running beyond the turn.
+pub(crate) fn background(update: &Value, shells: &mut BTreeMap<String, String>) -> Vec<Event> {
+    if let Some(event) = async_task(update, shells).or_else(|| notified(update, shells)) {
+        return vec![event];
+    }
+    let ended = reported_over(update, shells);
+    if !ended.is_empty() {
+        return ended;
+    }
+    if let Some(event) = reported_running(update, shells) {
+        return vec![event];
+    }
+    if let Some(event) = settled(update, shells) {
+        return vec![event];
+    }
+    background_shell(update, shells).into_iter().collect()
+}
+
+/// Reads a shell handle or its completion from one tool update.
+fn background_shell(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    if !matches!(
+        update["sessionUpdate"].as_str(),
+        Some("tool_call" | "tool_call_update")
+    ) {
+        return None;
+    }
+    let input = &update["rawInput"];
+    let output = &update["rawOutput"];
+    let id = background_handle(output)
+        .or_else(|| background_handle(input).filter(|id| shells.contains_key(id)))?;
+    let running = !["exit_code", "exitCode", "exit_status", "exitStatus"]
+        .iter()
+        .any(|key| !output[*key].is_null())
+        && !matches!(update["status"].as_str(), Some("failed" | "cancelled"));
+    let label = if running {
+        let label = input["cmd"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| argument(input))
+            .unwrap_or_else(|| format!("Shell {id}"));
+        shells.entry(id.clone()).or_insert(label).clone()
+    } else {
+        shells.remove(&id)?
+    };
+    Some(Event::Background(Background { id, label, running }))
+}
+
+/// Takes the commands a turn left running as background work.
+///
+/// Any agent can leave a command running past the end of its turn without
+/// saying anything more of it than the status its tool call already carries,
+/// so a command call still running at that point is the work to follow.
+pub(crate) fn outliving(tools: &Tools, shells: &mut BTreeMap<String, String>) -> Vec<Event> {
+    let mut events = Vec::new();
+    for call in tools.values() {
+        if !call.is_running()
+            || call.subagent
+            || call.kind != Kind::Execute
+            || shells.contains_key(&call.id)
+        {
+            continue;
+        }
+        let label = call.argument.clone().unwrap_or_else(|| call.title.clone());
+        shells.insert(call.id.clone(), label.clone());
+        events.push(Event::Background(Background {
+            id: call.id.clone(),
+            label,
+            running: true,
+        }));
+    }
+    events
+}
+
+/// Reads a background task an agent says it has started, by the result of
+/// the tool call that started it.
+fn reported_running(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    let output = &update["rawOutput"];
+    if output["type"].as_str() != Some("BackgroundTaskStarted") {
+        return None;
+    }
+    let id = output["task_id"].as_str()?;
+    let label = output["command"]
+        .as_str()
+        .map_or_else(|| format!("Task {id}"), str::to_owned);
+    shells.insert(id.to_owned(), label.clone());
+    Some(Event::Background(Background {
+        id: id.to_owned(),
+        label,
+        running: true,
+    }))
+}
+
+/// Reads the background tasks an agent says are over, from its task list or
+/// from the notice of one completing.
+fn reported_over(update: &Value, shells: &mut BTreeMap<String, String>) -> Vec<Event> {
+    let mut over = Vec::new();
+    if update["sessionUpdate"].as_str() == Some("background_tasks") {
+        for task in update["tasks"].as_array().into_iter().flatten() {
+            if task["status"].as_str() != Some("running")
+                && let Some(id) = task["task_id"].as_str()
+            {
+                over.push(id.to_owned());
+            }
+        }
+    }
+    if update["sessionUpdate"].as_str() == Some("task_completed")
+        && let Some(id) = update["task_snapshot"]["task_id"].as_str()
+    {
+        over.push(id.to_owned());
+    }
+    over.into_iter()
+        .filter_map(|id| {
+            let label = shells.remove(&id)?;
+            Some(Event::Background(Background {
+                id,
+                label,
+                running: false,
+            }))
+        })
+        .collect()
+}
+
+/// Reads the end of a command that outlived its turn from its tool call.
+fn settled(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    if !matches!(
+        update["status"].as_str(),
+        Some("completed" | "failed" | "cancelled")
+    ) {
+        return None;
+    }
+    let id = update["toolCallId"].as_str()?;
+    let label = shells.remove(id)?;
+    Some(Event::Background(Background {
+        id: id.to_owned(),
+        label,
+        running: false,
+    }))
+}
+
+/// Reads the start or end of a background task from the lifecycle an agent
+/// reports for it once it has been told the window follows one.
+///
+/// The agent names the task in both, and ends it however it ended, a stop
+/// from outside included. A task that is a subagent is left to its card.
+fn async_task(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    let id = update["asyncTaskId"].as_str()?.to_owned();
+    match update["sessionUpdate"].as_str()? {
+        "async_task_spawned" => {
+            if update["taskType"].as_str() == Some("local_agent") {
+                return None;
+            }
+            let label = update["description"]
+                .as_str()
+                .or_else(|| update["name"].as_str())
+                .filter(|label| !label.is_empty())
+                .map_or_else(|| format!("Task {id}"), str::to_owned);
+            shells.insert(id.clone(), label.clone());
+            Some(Event::Background(Background {
+                id,
+                label,
+                running: true,
+            }))
+        }
+        "async_task_state_update" => {
+            if matches!(update["state"].as_str(), Some("running" | "paused")) {
+                return None;
+            }
+            let label = shells.remove(&id)?;
+            Some(Event::Background(Background {
+                id,
+                label,
+                running: false,
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// Reads the end of a background task from the notice an agent is woken
+/// with, which reaches a window as the task of a subagent started to read it.
+///
+/// A task that a subagent began is reported over this way and by no update
+/// of its own: the notice names the task and how it ended.
+fn notified(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<Event> {
+    if update["sessionUpdate"].as_str() != Some("subagent_spawned") {
+        return None;
+    }
+    let notice = update["task"].as_str()?;
+    if !notice.contains("<task-notification>") {
+        return None;
+    }
+    let between = |open: &str, close: &str| {
+        let start = notice.find(open)? + open.len();
+        let end = notice[start..].find(close)? + start;
+        Some(notice[start..end].trim())
+    };
+    if between("<status>", "</status>") == Some("running") {
+        return None;
+    }
+    let id = between("<task-id>", "</task-id>")?.to_owned();
+    let label = shells.remove(&id)?;
+    Some(Event::Background(Background {
+        id,
+        label,
+        running: false,
+    }))
+}
+
+/// Reads the process identity a shell tool reports in its input or output.
+fn background_handle(value: &Value) -> Option<String> {
+    [
+        "session_id",
+        "sessionId",
+        "cell_id",
+        "process_id",
+        "processId",
+    ]
+    .iter()
+    .find_map(|key| {
+        value[*key]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| value[*key].as_i64().map(|id| id.to_string()))
+    })
 }
 
 impl ToolCall {

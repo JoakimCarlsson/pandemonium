@@ -256,6 +256,9 @@ pub fn agent_pane(
         .overflow_hidden()
         .bg(theme.colors.background)
         .child(header(theme, talk))
+        .when(!talk.background().is_empty(), |pane| {
+            pane.child(background(theme, talk))
+        })
         .child(rule(theme))
         .child(measured(
             talk.view(),
@@ -294,6 +297,20 @@ pub fn agent_pane(
                 above(composer(theme, talk, typing, solid), commands(theme, talk)).into_element()
             }
         })
+}
+
+/// Lists work the agent left running after its latest turn.
+fn background(theme: &Theme, talk: &Talk) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .px(1.5)
+        .py(0.5)
+        .bg(theme.colors.surface)
+        .children(talk.background().values().map(|label| {
+            text(format!("◐ {label} · running"))
+                .text_xs()
+                .color(theme.colors.text_muted)
+        }))
 }
 
 /// A transcript column with selection gestures and the menu for its reply, if any.
@@ -3922,12 +3939,26 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
     }
 }
 
-/// The elapsed-time heading above the current turn’s response.
+/// The heading above the current turn’s response: the spinner and a
+/// waiting label while the prompt is unsent, the elapsed time once it is.
 fn working(talk: &Talk) -> String {
+    if talk.is_sending() {
+        return format!("{} Sending prompt…", sending_frame());
+    }
     format!(
         "Working for {}s",
         talk.working_for().unwrap_or_default().as_secs()
     )
+}
+
+/// The spinner glyph for the wall clock, so it turns without being told when
+/// the wait began.
+fn sending_frame() -> &'static str {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    WORKING[(millis / 250 % WORKING.len() as u128) as usize]
 }
 
 /// Shows startup and stopped states in the header, leaving ready sessions quiet.
