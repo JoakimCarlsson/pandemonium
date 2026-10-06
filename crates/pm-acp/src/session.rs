@@ -1649,20 +1649,14 @@ impl Reader {
     /// as long as it takes to add what it came to.
     fn updated(&mut self, params: &Value) {
         let mut events = self.subagents.events(params, &mut self.tools);
-        let session = params["sessionId"].as_str().unwrap_or_default();
-        events.extend(update::background(
-            session,
-            &params["update"],
-            &mut self.shells,
-        ));
+        events.extend(update::background(&params["update"], &mut self.shells));
         self.deliver(events);
     }
 
     /// Takes down what an agent says of its background work in a notice of
     /// its own, outside the protocol's updates.
     fn extended(&mut self, params: &Value) {
-        let session = params["sessionId"].as_str().unwrap_or_default();
-        let events = update::background(session, &params["update"], &mut self.shells);
+        let events = update::background(&params["update"], &mut self.shells);
         self.deliver(events);
     }
 
@@ -1911,6 +1905,7 @@ fn handshake() -> Value {
             "auth": { "terminal": true },
             "elicitation": { "form": {}, "url": {} },
             "subagents": {},
+            "_meta": { "jetbrains": { "air": { "version": 1, "capabilities": ["asyncTasks"] } } },
         },
     })
 }
