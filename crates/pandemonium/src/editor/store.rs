@@ -1540,6 +1540,11 @@ impl Files {
             .collect()
     }
 
+    /// Installable programs that started servers run in turn but lack.
+    pub fn take_missing_tools(&mut self) -> Vec<&'static pm_text::program::Need> {
+        self.servers.take_missing_tools()
+    }
+
     /// The first installable configured server for `language`.
     pub fn installable_server(&self, language: pm_text::Language) -> Option<Server> {
         self.servers.installable(language)
