@@ -125,14 +125,53 @@ impl App {
             }
             self.request_redraw();
         }
+        self.offer_missing_tools();
     }
 
-    /// Finds an open language requesting this server before consulting the catalogue.
+    /// Offers each installable program a started server lacks once per
+    /// launch, explaining what is lost when installing is turned off.
+    fn offer_missing_tools(&mut self) {
+        for need in self.editor.take_missing_tools() {
+            if !self.offered_servers.insert(need.program) {
+                continue;
+            }
+            match self.preferences.install_language_servers {
+                crate::config::InstallLanguageServers::Ask => {
+                    self.notices.installation(
+                        need.program,
+                        self.server_install_language(need.program),
+                        crate::notice::InstallationStage::Offer,
+                        format!(
+                            "{} runs {}, which is not installed: {}. Would you like to install it?",
+                            need.server, need.program, need.loss
+                        ),
+                    );
+                }
+                crate::config::InstallLanguageServers::Always => {
+                    self.start_server_install(need.program, false);
+                }
+                crate::config::InstallLanguageServers::Never => {
+                    self.notices.trouble(
+                        format!("{}: {}", need.server, need.explanation()),
+                        Some(crate::message::Message::OpenServerLog),
+                    );
+                }
+            }
+            self.request_redraw();
+        }
+    }
+
+    /// Finds an open language requesting this server, or a server that runs
+    /// this program in turn, before consulting the catalogue.
     fn server_install_language(&self, command: &str) -> Option<&'static str> {
         let uses = |language: &pm_text::Language| {
             crate::settings::languages::servers(*language, &self.language_servers)
                 .iter()
-                .any(|server| server.command == command)
+                .any(|server| {
+                    server.command == command
+                        || pm_text::program::needs(server.command)
+                            .any(|need| need.program == command)
+                })
         };
         self.active_file()
             .and_then(|file| file.borrow().buffer().language())
@@ -185,8 +224,12 @@ impl App {
             self.installing_servers.remove(command);
             match result {
                 Ok(()) => {
-                    let started = self.editor.reopen_command(command);
-                    if started
+                    let tool = pm_text::program::needed_by(command).next().is_some();
+                    let started = pm_text::program::needed_by(command)
+                        .fold(self.editor.reopen_command(command), |started, server| {
+                            self.editor.reopen_command(server) || started
+                        });
+                    if (started || tool)
                         && let Some(directory) = crate::config::servers()
                         && let Some(recipe) = self.configured_server_recipe(command)
                     {

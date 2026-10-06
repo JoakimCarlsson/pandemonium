@@ -267,7 +267,19 @@ impl Client {
 
         let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"), log.clone());
         let stdout = process.stdout.take().expect("stdout was piped");
-        let troubles = missing_for(server.command);
+        let (offered, troubles): (Vec<_>, Vec<_>) = missing_for(server.command)
+            .into_iter()
+            .partition(|need| need.installable());
+        for need in offered {
+            log.write(&format!(
+                "{} runs `{}`, which is not installed yet; the editor can install it.",
+                need.server, need.program
+            ));
+        }
+        let troubles = troubles
+            .into_iter()
+            .map(|need| need.explanation())
+            .collect::<Vec<_>>();
         for trouble in &troubles {
             log.write(trouble);
         }

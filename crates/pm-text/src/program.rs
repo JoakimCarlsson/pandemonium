@@ -224,13 +224,15 @@ fn file_names(program: &str) -> Vec<String> {
 }
 
 /// The path a program at `program` runs with: its own directory first, then
-/// the inherited path, then the usual places that exist and are not on it.
+/// the inherited path, then the tools the editor installed, then the usual
+/// places that exist and are not on it.
 ///
 /// A server written in JavaScript starts through `env node`, and the node it
 /// means is the one installed beside it, which a window started from a
 /// desktop session is not told about the way a shell is. The same goes for
 /// the tools a server runs in turn: gopls runs `go`, and
-/// bash-language-server runs `shellcheck`.
+/// bash-language-server runs `shellcheck`, which the editor may have
+/// installed into its own home.
 pub fn path_beside(program: &Path) -> OsString {
     let inherited = env::var_os("PATH").unwrap_or_default();
     let beside = program.parent().map(Path::to_path_buf);
@@ -238,36 +240,86 @@ pub fn path_beside(program: &Path) -> OsString {
         .into_iter()
         .chain(env::split_paths(&inherited))
         .collect::<Vec<_>>();
-    for usual in usual_directories() {
-        if usual.is_dir() && !directories.contains(&usual) {
-            directories.push(usual);
+    for extra in managed_tool_directories().chain(usual_directories()) {
+        if extra.is_dir() && !directories.contains(&extra) {
+            directories.push(extra);
         }
     }
     env::join_paths(directories).unwrap_or(inherited)
 }
 
-/// The programs a server runs in turn, and what is lost without each.
-///
-/// A server that starts but cannot find one of them fails somewhere else,
-/// with a message about its own work rather than about the missing program.
-pub fn needs(command: &str) -> &'static [(&'static str, &'static str)] {
-    match command {
-        "gopls" => &[("go", "gopls cannot load a workspace without it")],
-        "bash-language-server" => &[("shellcheck", "shell scripts are not linted without it")],
-        _ => &[],
+/// The directories holding the tools the editor installed for the servers
+/// that run them.
+fn managed_tool_directories() -> impl Iterator<Item = PathBuf> {
+    NEEDS
+        .iter()
+        .filter_map(|need| {
+            let recipe = install::recipe(need.program)?;
+            managed_in(&servers()?.join(need.program).join(recipe.directory_name()))
+                .or_else(|| managed_fallback(need.program))
+        })
+        .filter_map(|program| program.parent().map(Path::to_path_buf))
+}
+
+/// A program a server runs in turn, and what is lost without it.
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct Need {
+    /// The server that runs it.
+    pub server: &'static str,
+    /// The program it runs.
+    pub program: &'static str,
+    /// What the server cannot do without it.
+    pub loss: &'static str,
+}
+
+impl Need {
+    /// Whether the editor has a recipe to install the program itself.
+    pub fn installable(&self) -> bool {
+        install::recipe(self.program).is_some()
+    }
+
+    /// A line saying the program is missing and what that costs.
+    pub fn explanation(&self) -> String {
+        format!(
+            "{} needs `{}`, which is not on the PATH or in the usual places: {}. Install it or add its directory to PATH.",
+            self.server, self.program, self.loss
+        )
     }
 }
 
-/// A line saying which of the programs `command` runs in turn are not
-/// installed, if any are not.
-pub fn missing_for(command: &str) -> Vec<String> {
-    needs(command)
+/// Every program a server runs in turn.
+///
+/// A server that starts but cannot find one of them fails somewhere else,
+/// with a message about its own work rather than about the missing program.
+const NEEDS: [Need; 2] = [
+    Need {
+        server: "gopls",
+        program: "go",
+        loss: "gopls cannot load a workspace without it",
+    },
+    Need {
+        server: "bash-language-server",
+        program: "shellcheck",
+        loss: "shell scripts are not linted without it",
+    },
+];
+
+/// The programs `command` runs in turn.
+pub fn needs(command: &str) -> impl Iterator<Item = &'static Need> {
+    NEEDS.iter().filter(move |need| need.server == command)
+}
+
+/// The servers that run `program` in turn.
+pub fn needed_by(program: &str) -> impl Iterator<Item = &'static str> {
+    NEEDS
         .iter()
-        .filter(|(program, _)| installed(program).is_none())
-        .map(|(program, loss)| {
-            format!(
-                "{command} needs `{program}`, which is not on the PATH or in the usual places: {loss}. Install it or add its directory to PATH."
-            )
-        })
+        .filter(move |need| need.program == program)
+        .map(|need| need.server)
+}
+
+/// The programs `command` runs in turn that are not installed.
+pub fn missing_for(command: &str) -> Vec<&'static Need> {
+    needs(command)
+        .filter(|need| installed(need.program).is_none())
         .collect()
 }

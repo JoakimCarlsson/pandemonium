@@ -62,10 +62,13 @@ struct Running {
     stopped: Option<ServerState>,
     /// Whether this slot's failure still needs to be reported.
     unreported: bool,
+    /// The programs the server runs in turn that were missing when it
+    /// started, which restart it once they are installed.
+    lacking: Vec<&'static str>,
 }
 
 use crate::language::{Language, Server};
-use crate::program::installed_with_recipe;
+use crate::program::{Need, installed, installed_with_recipe, missing_for};
 
 /// The language servers a window is running.
 #[derive(Default)]
@@ -80,6 +83,8 @@ pub struct Servers {
     notify: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Missing commands observed while opening documents.
     missing: HashSet<&'static str>,
+    /// Installable programs that started servers run in turn but lack.
+    missing_tools: HashSet<&'static Need>,
     /// Worktrees with an open document of each language.
     opened: HashMap<&'static str, HashSet<PathBuf>>,
     /// The directory every server's log is written in, when logs are kept.
@@ -158,7 +163,13 @@ impl Servers {
                             .or_default();
                         if running.stopped != Some(ServerState::Missing) {
                             let log = log::Log::open(logs.as_deref(), root, server.command);
-                            log.write(&format!("{} was not found", server.command));
+                            log.write(&match server.install {
+                                Some(_) => format!(
+                                    "{} is not installed yet; the editor can install it.",
+                                    server.command
+                                ),
+                                None => format!("{} was not found", server.command),
+                            });
                             running.stopped = Some(ServerState::Missing);
                         }
                         None
@@ -177,7 +188,11 @@ impl Servers {
                     previous.arguments != server.arguments
                         || previous.options != server.options
                         || running.program.as_ref() != Some(&program)
-                }) {
+                }) || running
+                    .lacking
+                    .iter()
+                    .any(|program| installed(program).is_some())
+                {
                     if let Some(client) = running.client.take() {
                         client.shutdown();
                     }
@@ -225,6 +240,10 @@ impl Servers {
                 }
                 if running.client.is_none() {
                     running.stopped = None;
+                    let lacking = missing_for(server.command);
+                    self.missing_tools
+                        .extend(lacking.iter().filter(|need| need.installable()));
+                    running.lacking = lacking.iter().map(|need| need.program).collect();
                     match Client::start(root, &program, *server, notify, logs.as_deref()) {
                         Ok(client) => running.client = Some(Arc::new(client)),
                         Err(error) => {
@@ -306,6 +325,13 @@ impl Servers {
         missing
             .into_iter()
             .filter_map(|command| self.wanted_server(command))
+            .collect()
+    }
+
+    /// Installable programs that started servers run in turn but lack.
+    pub fn take_missing_tools(&mut self) -> Vec<&'static Need> {
+        std::mem::take(&mut self.missing_tools)
+            .into_iter()
             .collect()
     }
 
