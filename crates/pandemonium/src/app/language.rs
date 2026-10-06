@@ -190,7 +190,7 @@ impl App {
                         && let Some(directory) = crate::config::servers()
                         && let Some(recipe) = self.configured_server_recipe(command)
                     {
-                        pm_text::install::prune_older(&directory, command, recipe.version());
+                        pm_text::install::prune_older(&directory, command, &recipe.directory_name());
                     }
                     if let Some(recipe) = self.configured_server_recipe(command) {
                         self.notices.installation(

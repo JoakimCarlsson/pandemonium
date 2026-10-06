@@ -100,7 +100,7 @@ pub fn installed_with_recipe(command: &str, recipe: Option<install::Recipe>) -> 
         .chain(usual_directories())
         .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
         .find(|program| program.is_file())
-        .or_else(|| managed_in(&servers()?.join(command).join(recipe?.version())))
+        .or_else(|| managed_in(&servers()?.join(command).join(recipe?.directory_name())))
 }
 
 /// Finds the last completed managed version while a newer recipe is unavailable.

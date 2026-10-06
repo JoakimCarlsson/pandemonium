@@ -257,7 +257,7 @@ pub const fn recipe(command: &str) -> Option<Recipe> {
         return Some(Recipe::Npm {
             package: "typescript-language-server",
             version: "6.0.1",
-            extra: &["typescript@7.0.2"],
+            extra: &["typescript@6.0.3"],
         });
     }
     if same(command, "basedpyright-langserver") {
