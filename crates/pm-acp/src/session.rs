@@ -572,6 +572,7 @@ impl Session {
             stdout: BufReader::new(stdout),
             next,
             tools: Tools::new(),
+            shells: std::collections::BTreeMap::new(),
             subagents: Subagents::default(),
             ticket: 0,
             terminals: 0,
@@ -1231,6 +1232,8 @@ struct Reader {
     next: Arc<AtomicI64>,
     /// The tool calls of this conversation, as they now stand.
     tools: Tools,
+    /// Background shell handles and the commands that launched them.
+    shells: std::collections::BTreeMap<String, String>,
     /// Child session lifetimes and the cards receiving their updates.
     subagents: Subagents,
     /// The ticket the next request will be put to the reader or the window
@@ -1639,7 +1642,10 @@ impl Reader {
     /// The update is read before the state is taken, which is held only for
     /// as long as it takes to add what it came to.
     fn updated(&mut self, params: &Value) {
-        let events = self.subagents.events(params, &mut self.tools);
+        let mut events = self.subagents.events(params, &mut self.tools);
+        if let Some(event) = update::background(&params["update"], &mut self.shells) {
+            events.push(event);
+        }
         if events.is_empty() {
             return;
         }
