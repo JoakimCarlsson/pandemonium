@@ -5,10 +5,12 @@
 //! for one, so a server and an adapter that live side by side in `~/.cargo/bin`
 //! are found the same way.
 
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 use crate::install;
 
@@ -87,7 +89,8 @@ fn usual_directories() -> Vec<PathBuf> {
 /// Where `command` is installed, on the path or in the usual places beside it.
 ///
 /// Nothing is started to find out: a program that is nowhere is one the
-/// reader does not have, and the editor does not try to run it.
+/// reader does not have, and the editor does not try to run it. The one
+/// question asked of a program is a rustup proxy's `rustup which`, once.
 pub fn installed(command: &str) -> Option<PathBuf> {
     installed_with_recipe(command, install::recipe(command))
 }
@@ -99,8 +102,88 @@ pub fn installed_with_recipe(command: &str, recipe: Option<install::Recipe>) -> 
     env::split_paths(&path)
         .chain(usual_directories())
         .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
-        .find(|program| program.is_file())
+        .find(|program| program.is_file() && runs(command, program))
         .or_else(|| managed_in(&servers()?.join(command).join(recipe?.version())))
+}
+
+/// Whether the program found for `command` at `program` runs `command`.
+///
+/// A rustup proxy in `.cargo/bin` stands in for every component rustup
+/// knows, installed or not; a `rust-analyzer` proxy whose toolchain lacks the
+/// component exits at once, and is no `rust-analyzer` at all.
+fn runs(command: &str, program: &Path) -> bool {
+    if command != "rust-analyzer" {
+        return true;
+    }
+    match proxied_rustup(program) {
+        Some(rustup) => rustup_has(&rustup, command),
+        None => true,
+    }
+}
+
+/// The `rustup` that `program` is a proxy of: the one beside it, when
+/// `program` is that file linked under another name.
+fn proxied_rustup(program: &Path) -> Option<PathBuf> {
+    let directory = program.parent()?;
+    file_names("rustup")
+        .iter()
+        .map(|name| directory.join(name))
+        .find(|rustup| rustup.is_file() && same_file(program, rustup))
+}
+
+/// Whether `left` and `right` are one file, through a symbolic or a hard link.
+fn same_file(left: &Path, right: &Path) -> bool {
+    if let (Ok(left), Ok(right)) = (left.canonicalize(), right.canonicalize())
+        && left == right
+    {
+        return true;
+    }
+    match (left.metadata(), right.metadata()) {
+        (Ok(left), Ok(right)) => same_metadata(&left, &right),
+        _ => false,
+    }
+}
+
+/// Whether two files' metadata name one file on disk.
+#[cfg(unix)]
+fn same_metadata(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+/// Whether two files' metadata name one file on disk.
+///
+/// Rustup hard-links its proxies; without a stable file identity, two
+/// executables of one length beside each other are taken to be one.
+#[cfg(not(unix))]
+fn same_metadata(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    left.len() == right.len()
+}
+
+/// Whether `rustup` has `component` in its active toolchain, asked once per
+/// rustup with `rustup which`.
+fn rustup_has(rustup: &Path, component: &str) -> bool {
+    static ANSWERS: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+    let answers = ANSWERS.get_or_init(Mutex::default);
+    if let Some(answer) = answers
+        .lock()
+        .ok()
+        .and_then(|answers| answers.get(rustup).copied())
+    {
+        return answer;
+    }
+    let answer = Command::new(rustup)
+        .args(["which", component])
+        .env("PATH", path_beside(rustup))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if let Ok(mut answers) = answers.lock() {
+        answers.insert(rustup.to_path_buf(), answer);
+    }
+    answer
 }
 
 /// Finds the last completed managed version while a newer recipe is unavailable.
