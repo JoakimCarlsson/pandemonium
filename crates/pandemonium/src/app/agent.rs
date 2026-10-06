@@ -805,8 +805,8 @@ impl App {
     /// Stops the turn in the agent pane that has the keyboard.
     pub(super) fn cancel_busy_agent(&mut self) -> bool {
         let session = match self.writing {
-            Some(Writing::Prompt(session)) => Some(session),
             _ if self.editor_focused => self.active_tab().and_then(Item::session),
+            Some(Writing::Prompt(session)) => Some(session),
             _ => None,
         };
         let Some(talk) = session.and_then(|session| self.agents.get_mut(session)) else {
