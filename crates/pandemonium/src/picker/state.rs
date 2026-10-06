@@ -398,10 +398,14 @@ impl Picker {
         &mut self.field
     }
 
-    /// Puts the field through `edit` and narrows the rows to what is left.
+    /// Puts the field through `edit` and narrows the rows to what is left,
+    /// leaving the selection where it is when the text did not change.
     pub fn edit(&mut self, edit: impl FnOnce(&mut Field)) {
+        let before = self.field.value().to_owned();
         edit(&mut self.field);
-        self.filter();
+        if self.field.value() != before {
+            self.filter();
+        }
     }
 
     /// Which list what has been typed asks for instead of this one, when it

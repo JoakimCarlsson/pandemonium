@@ -256,6 +256,9 @@ pub fn agent_pane(
         .overflow_hidden()
         .bg(theme.colors.background)
         .child(header(theme, talk))
+        .when(!talk.background().is_empty(), |pane| {
+            pane.child(background(theme, talk))
+        })
         .child(rule(theme))
         .child(measured(
             talk.view(),
@@ -294,6 +297,20 @@ pub fn agent_pane(
                 above(composer(theme, talk, typing, solid), commands(theme, talk)).into_element()
             }
         })
+}
+
+/// Lists work the agent left running after its latest turn.
+fn background(theme: &Theme, talk: &Talk) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .px(1.5)
+        .py(0.5)
+        .bg(theme.colors.surface)
+        .children(talk.background().values().map(|label| {
+            text(format!("◐ {label} · running"))
+                .text_xs()
+                .color(theme.colors.text_muted)
+        }))
 }
 
 /// A transcript column with selection gestures and the menu for its reply, if any.
