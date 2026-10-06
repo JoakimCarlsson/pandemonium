@@ -1,7 +1,8 @@
 //! The running binary's version and source commit, formatted for sharing.
 
-/// The workspace version this binary was built with.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The version label this binary was built with: the workspace version, or the
+/// channel name a preview install sets.
+pub const VERSION: &str = env!("PANDEMONIUM_VERSION");
 
 /// The short source commit, possibly dirty, or empty outside a Git checkout.
 pub const COMMIT: &str = env!("PANDEMONIUM_COMMIT");
