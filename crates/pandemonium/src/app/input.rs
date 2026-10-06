@@ -157,10 +157,12 @@ impl App {
     /// terminal, then modal editing, then the window's own chords, then the
     /// search bar, then the text itself. Only a key nothing wanted becomes focus movement.
     /// A binding being recorded in the keymap screen comes before all of them.
-    /// Enter belongs to a focused agent prompt before other pane controls.
+    /// Enter belongs to a focused agent prompt before other pane controls,
+    /// except while a picker is open: the picker has the keyboard then.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
-        if matches!(self.writing, Some(Writing::LanguageServerField(_)))
+        if self.picker.is_none()
+            && matches!(self.writing, Some(Writing::LanguageServerField(_)))
             && matches!(
                 event.logical_key,
                 Key::Named(NamedKey::Tab | NamedKey::PageDown | NamedKey::PageUp)
@@ -175,7 +177,8 @@ impl App {
         if self.send_to_prompt(event) {
             return self.request_redraw();
         }
-        if matches!(self.writing, Some(Writing::Prompt(_)))
+        if self.picker.is_none()
+            && matches!(self.writing, Some(Writing::Prompt(_)))
             && event.logical_key == Key::Named(NamedKey::Enter)
             && self.send_to_input(event)
         {
@@ -188,7 +191,7 @@ impl App {
             self.settings_key_pressed(event);
             return self.request_redraw();
         }
-        if self.paste_agent_prompt(event) {
+        if self.picker.is_none() && self.paste_agent_prompt(event) {
             return self.request_redraw();
         }
         if self.is_copy(event) && self.copy_reading_text() {
