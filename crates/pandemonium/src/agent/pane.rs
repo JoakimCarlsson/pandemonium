@@ -3922,12 +3922,26 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
     }
 }
 
-/// The elapsed-time heading above the current turn’s response.
+/// The heading above the current turn’s response: the spinner and a
+/// waiting label while the prompt is unsent, the elapsed time once it is.
 fn working(talk: &Talk) -> String {
+    if talk.is_sending() {
+        return format!("{} Sending prompt…", sending_frame());
+    }
     format!(
         "Working for {}s",
         talk.working_for().unwrap_or_default().as_secs()
     )
+}
+
+/// The spinner glyph for the wall clock, so it turns without being told when
+/// the wait began.
+fn sending_frame() -> &'static str {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    WORKING[(millis / 250 % WORKING.len() as u128) as usize]
 }
 
 /// Shows startup and stopped states in the header, leaving ready sessions quiet.
