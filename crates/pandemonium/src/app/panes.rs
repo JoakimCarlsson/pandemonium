@@ -301,17 +301,9 @@ impl App {
             && let Some(source) = self.panes.pane_mut(pane)
         {
             source.close(item);
-            self.remove_empty_pane(pane);
         }
         self.focus_pane(fresh);
         self.store();
-    }
-
-    /// Removes a source pane emptied by moving its last tab, preserving hidden tabs.
-    pub(super) fn remove_empty_pane(&mut self, pane: PaneId) {
-        if self.panes.pane(pane).is_some_and(panes::Pane::is_empty) {
-            self.panes.close(pane);
-        }
     }
 
     /// Closes the visible tabs of `pane`, preserving other worktrees and the last pane.
@@ -666,6 +658,9 @@ impl App {
                         .or_else(|| talk.fork_metadata().map(|fork| fork.destination.clone()))
                         .unwrap_or_default(),
                     fork: talk.fork_metadata().cloned(),
+                    context: talk
+                        .rewind_context()
+                        .map(|context| (context.to_owned(), talk.prompt().value().to_owned())),
                     title: talk.title().unwrap_or_default().to_owned(),
                     ..SavedTab::default()
                 });
@@ -876,6 +871,9 @@ impl App {
                 };
                 if let Some(opened) = agents.get_mut(talk) {
                     opened.set_fork_metadata(tab.fork.clone());
+                    if let Some((context, prompt)) = &tab.context {
+                        opened.restore_context(context.clone(), prompt);
+                    }
                     opened.entitle(&tab.title);
                     opened.set_profile(tab.account.clone());
                 }
@@ -1193,7 +1191,6 @@ impl App {
                 Some(index) => pane.insert(tab, scope, index),
                 None => pane.append(tab, scope),
             }
-            self.remove_empty_pane(drag.from);
         }
         self.focus_pane(landed);
         self.sweep();

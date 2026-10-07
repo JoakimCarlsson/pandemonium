@@ -39,6 +39,8 @@ pub enum ProjectSearchOption {
 pub enum Message {
     /// Opens the changes made during one reader prompt.
     DiffAgentTurn(TalkId, u64),
+    /// Rewinds conversation context before a reader message and restores its prompt.
+    RewindAgentContext(TalkId, usize),
     /// Offers a filesystem rewind before one reader prompt.
     RewindAgentTurn(TalkId, u64),
     /// Executes an explicitly confirmed filesystem rewind.
@@ -749,6 +751,8 @@ pub enum Message {
     ReconnectAgent(TalkId),
     /// Fork the whole native conversation while sharing its current files.
     ForkAgent(TalkId),
+    /// Branch through a native reply into a separate chat tab.
+    ForkAgentReply(TalkId, usize),
     /// Log this session's agent out.
     LogOutAgent(TalkId),
     /// List this session's saved conversations to choose one to forget.

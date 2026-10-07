@@ -84,7 +84,7 @@ impl Subagents {
                 update::event(&update, tools)
             }
             _ if self.cards.contains_key(session) => {
-                let Event::Said(Voice::Agent, text) = update::event(update, tools)? else {
+                let Event::Said(Voice::Agent, text, _) = update::event(update, tools)? else {
                     return None;
                 };
                 let call = tools.get_mut(self.cards.get(session)?)?;

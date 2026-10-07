@@ -73,7 +73,7 @@ impl App {
         self.move_tool(pane, tool);
     }
 
-    /// Moves the current worktree's tool tab to `target`, preserving other tabs.
+    /// Moves the current worktree's tool tab to `target`, preserving panes and other tabs.
     fn move_tool(&mut self, target: PaneId, tool: Tool) {
         if self.panes.pane(target).is_none() {
             return;
@@ -86,7 +86,6 @@ impl App {
             let tab = self.panes.pane_mut(source).and_then(|pane| pane.take(item));
             if let (Some(tab), Some(pane)) = (tab, self.panes.pane_mut(target)) {
                 pane.append(tab, scope);
-                self.remove_empty_pane(source);
             }
         } else if let Some(pane) = self.panes.pane_mut(target) {
             pane.open(scope, item);

@@ -99,6 +99,8 @@ pub struct Talk {
     fork: Option<pm_core::ConversationFork>,
     /// The source provider identity until the fork opens successfully.
     fork_source: Option<String>,
+    /// The native message selected for a pending fork.
+    fork_message: Option<String>,
     /// The prompt awaiting its filesystem baseline.
     pub(crate) pending_prompt: Option<(String, Vec<Attachment>)>,
     /// Completed file-changing calls already reported in this turn.
@@ -109,6 +111,8 @@ pub struct Talk {
     overlapping: BTreeSet<String>,
     /// The filesystem turn number attached to each reader block.
     pub(crate) checkpoint_turns: BTreeMap<usize, u64>,
+    /// Retained conversation history to send with the first prompt after a context rewind.
+    context: Option<String>,
     /// Context correction to prepend after a filesystem rewind.
     pub(crate) rewind_note: Option<String>,
     /// Which session this is.
@@ -304,12 +308,40 @@ impl Talk {
 
     /// Whether an idle native whole-session fork is available.
     pub fn can_fork(&self) -> bool {
-        self.ready && !self.busy && self.conversation.can_fork()
+        self.ready && !self.busy && self.context.is_none() && self.conversation.can_fork()
+    }
+
+    /// Whether this reply has a native identity and can start a separate conversation.
+    pub fn can_fork_reply(&self, block: usize) -> bool {
+        self.can_fork()
+            && self.conversation.can_fork_at()
+            && matches!(
+                self.transcript.blocks().get(block),
+                Some(Block::Said(Voice::Agent, _))
+            )
+            && self.transcript.message_id(block).is_some()
     }
 
     /// Whether saving this tab cannot turn an unfinished fork into a fresh session.
     pub fn persistable(&self) -> bool {
         self.fork_source.is_none()
+    }
+
+    /// Whether conversation context can be rewound without interrupting a turn.
+    pub fn can_rewind(&self) -> bool {
+        self.ready && !self.busy
+    }
+
+    /// Retained history awaiting the first prompt in a rewound conversation.
+    pub fn rewind_context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    /// Restores retained history and the editable prompt after reopening a rewound tab.
+    pub fn restore_context(&mut self, context: String, prompt: &str) {
+        self.context = Some(context);
+        self.prompt.set(prompt);
+        self.transcript.note("Conversation context rewound. Earlier messages will accompany your next prompt; files are unchanged.");
     }
 
     /// The durable relationship of this native conversation fork.
@@ -378,6 +410,15 @@ impl Talk {
     /// What the agent calls this conversation, once it has opened one.
     pub fn resumable(&self) -> Option<String> {
         self.conversation.id()
+    }
+
+    /// Reconnects to the saved identity, requiring an exact destination for forks.
+    fn reconnection(&self) -> Option<pm_acp::Conversation> {
+        let conversation = self.resumable()?;
+        Some(match self.fork.is_some() {
+            true => pm_acp::Conversation::ReconnectExact(conversation),
+            false => pm_acp::Conversation::Reconnect(conversation),
+        })
     }
 
     /// Everything said so far.
@@ -1170,7 +1211,7 @@ impl Talk {
     /// echoes it: an agent is not obliged to say back what it was told, and
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
-        if self.busy {
+        if self.busy || !self.logins.is_empty() {
             return;
         }
         let text = self.prompt.value().trim().to_owned();
@@ -1222,7 +1263,7 @@ impl Talk {
     /// It is a turn like any other: it is put in the transcript as the
     /// reader's, and the conversation follows what comes back.
     pub fn send_text(&mut self, text: &str) {
-        if self.busy {
+        if self.busy || !self.logins.is_empty() {
             return;
         }
         let text = text.trim();
@@ -1299,6 +1340,9 @@ impl Talk {
         if let Some((mut text, attachments)) = self.pending_prompt.take() {
             if let Some(note) = self.rewind_note.take() {
                 text = format!("{note}\n{text}");
+            }
+            if let Some(context) = self.context.take() {
+                text = format!("{context}{text}");
             }
             self.busy_since = Some(Instant::now());
             self.conversation.prompt(&text, attachments);
@@ -1483,10 +1527,20 @@ impl Talk {
                         .map(|destination| pm_core::ConversationFork {
                             agent: self.agent().id.to_owned(),
                             source,
+                            message_id: self.fork_message.take(),
                             destination,
                             shared_root: self.root().to_path_buf(),
                         });
-                    self.transcript.note("Native whole-session fork. Files are shared with the source; no filesystem snapshot or rewind was applied.");
+                    let history = if self
+                        .fork
+                        .as_ref()
+                        .is_some_and(|fork| fork.message_id.is_some())
+                    {
+                        "Native conversation fork through the selected reply."
+                    } else {
+                        "Native whole-session fork."
+                    };
+                    self.transcript.note(format!("{history} Files are shared with the source; no filesystem snapshot or rewind was applied."));
                 }
                 self.logins.clear();
             }
@@ -1499,6 +1553,12 @@ impl Talk {
                 self.listing = false;
             }
             Event::Login(mut methods) => {
+                self.ready = false;
+                self.busy = false;
+                self.busy_since = None;
+                self.clear_messages();
+                self.pending_prompt = None;
+                self.transcript.finish_thought();
                 if self.profile.is_some() && self.agent().id == "claude-code" {
                     methods.retain(|method| {
                         matches!(method.id.as_str(), "claude-ai-login" | "claude-login")
@@ -1515,7 +1575,9 @@ impl Talk {
                 self.logins = methods;
                 self.cursor = 0;
             }
-            Event::Said(voice, text) => self.transcript.say(voice, &text),
+            Event::Said(voice, text, message) => {
+                self.transcript.say_identified(voice, &text, message)
+            }
             Event::Ran(call) => {
                 if call.subagent {
                     if call.is_running() {
@@ -1610,6 +1672,7 @@ impl Talk {
                 self.busy_since = None;
                 self.fork = None;
                 self.fork_source = None;
+                self.fork_message = None;
                 self.transcript.note("Logged out.");
             }
             Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
@@ -1815,8 +1878,8 @@ fn installed_skills(root: &Path, agent: Agent, environment: &[(String, String)])
 enum Opening<'a> {
     /// Start a new conversation.
     New,
-    /// Fork a native whole conversation in a separate agent process.
-    Fork(&'a str),
+    /// Fork a native conversation, optionally through a selected provider message.
+    Fork(&'a str, Option<&'a str>),
     /// Restore an exact identity without falling back to a new conversation.
     Strict(&'a str),
     /// Offer login before opening a new conversation.
@@ -1903,8 +1966,15 @@ impl Talks {
     }
 
     /// Forks an idle native conversation, retaining its project, files and account.
-    pub fn fork(&mut self, source: TalkId) -> Option<TalkId> {
+    pub fn fork(&mut self, source: TalkId, block: Option<usize>) -> Option<TalkId> {
         let talk = self.get(source).filter(|talk| talk.can_fork())?;
+        let message = match block {
+            Some(block) if talk.can_fork_reply(block) => {
+                Some(talk.transcript.message_id(block)?.to_owned())
+            }
+            Some(_) => return None,
+            None => None,
+        };
         let (project, session, root, env, agent, provider, profile) = (
             talk.project,
             talk.session,
@@ -1920,7 +1990,7 @@ impl Talks {
             &root,
             &env,
             agent,
-            Opening::Fork(&provider),
+            Opening::Fork(&provider, message.as_deref()),
         )?;
         self.get_mut(id)?.set_profile(profile);
         Some(id)
@@ -2004,7 +2074,10 @@ impl Talks {
             },
         };
         let requested = match opening {
-            Opening::Fork(source) => pm_acp::Conversation::Fork(source.to_owned()),
+            Opening::Fork(source, None) => pm_acp::Conversation::Fork(source.to_owned()),
+            Opening::Fork(source, Some(message)) => {
+                pm_acp::Conversation::ForkAt(source.to_owned(), message.to_owned())
+            }
             Opening::Strict(saved) | Opening::Exact(_, saved) => {
                 pm_acp::Conversation::Load(saved.to_owned())
             }
@@ -2032,7 +2105,11 @@ impl Talks {
                 queued_messages: 0,
                 fork: None,
                 fork_source: match opening {
-                    Opening::Fork(source) => Some(source.to_owned()),
+                    Opening::Fork(source, _) => Some(source.to_owned()),
+                    _ => None,
+                },
+                fork_message: match opening {
+                    Opening::Fork(_, message) => message.map(str::to_owned),
                     _ => None,
                 },
                 pending_prompt: None,
@@ -2041,6 +2118,7 @@ impl Talks {
                 overlapping: BTreeSet::new(),
                 checkpoint_turns: BTreeMap::new(),
                 rewind_note: None,
+                context: None,
                 id,
                 project,
                 session,
@@ -2103,8 +2181,68 @@ impl Talks {
         Some(id)
     }
 
-    /// Starts the agent of the conversation `id` names again, in a new
-    /// conversation, answering whether it started.
+    /// Replaces an idle conversation with retained context before the selected reader prompt.
+    pub fn rewind(&mut self, id: TalkId, at: usize) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        if !talk.can_rewind() {
+            return false;
+        }
+        let Some(Block::Said(Voice::Reader, prompt)) = talk.transcript.blocks().get(at) else {
+            return false;
+        };
+        let prompt = prompt.clone();
+        let context = talk.transcript.context_before(at);
+        let conversation = match configured_session(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            pm_acp::Conversation::New,
+            talk.mcp.clone(),
+            notify,
+        ) {
+            Ok(conversation) => conversation,
+            Err(error) => {
+                talk.transcript
+                    .note(format!("Could not rewind conversation context: {error}"));
+                return false;
+            }
+        };
+        talk.clear_messages();
+        talk.conversation = conversation;
+        talk.fork = None;
+        talk.fork_source = None;
+        talk.fork_message = None;
+        talk.ready = false;
+        talk.remember_on_ready = true;
+        talk.mode = None;
+        talk.usage = None;
+        talk.commands.clear();
+        talk.logins.clear();
+        talk.asks.clear();
+        talk.forms.clear();
+        talk.background.clear();
+        talk.terminals.clear();
+        talk.checkpoint_turns.retain(|block, _| *block < at);
+        talk.transcript.rewind(at);
+        talk.restore_context(context, &prompt);
+        talk.attachments.clear();
+        talk.attachment_previews.clear();
+        talk.clear_selection();
+        talk.copied_replies.clear();
+        talk.expanded_details.clear();
+        talk.expanded_cards.clear();
+        talk.opened_failures.clear();
+        talk.shown_revision += 1;
+        talk.following = true;
+        true
+    }
+
+    /// Starts the agent after terminal login, retaining an existing conversation.
     ///
     /// This is what follows a login the agent had the reader do outside it:
     /// the agent reads what the login left behind only when it starts.
@@ -2115,19 +2253,18 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
+        let requested = talk.reconnection().unwrap_or(pm_acp::Conversation::New);
         match configured_session(
             talk.agent(),
             talk.root(),
             &talk.env,
-            pm_acp::Conversation::New,
+            requested,
             talk.mcp.clone(),
             notify,
         ) {
             Ok(conversation) => {
                 talk.skills = installed_skills(talk.root(), talk.agent(), &talk.env);
                 talk.conversation = conversation;
-                talk.fork = None;
-                talk.fork_source = None;
                 talk.ready = false;
                 talk.remember_on_ready = true;
                 talk.busy = false;
@@ -2159,12 +2296,8 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
-        let Some(conversation) = talk.resumable() else {
+        let Some(requested) = talk.reconnection() else {
             return false;
-        };
-        let requested = match talk.fork.is_some() {
-            true => pm_acp::Conversation::ReconnectExact(conversation),
-            false => pm_acp::Conversation::Reconnect(conversation),
         };
         let restored = configured_session(
             talk.agent(),
@@ -2332,7 +2465,10 @@ impl Talks {
                     self.turns.push(talk.scope());
                 }
                 if talk.is_busy()
-                    && matches!(event, Event::Stopped(_) | Event::Failed(_) | Event::Ended)
+                    && matches!(
+                        event,
+                        Event::Stopped(_) | Event::Failed(_) | Event::Login(_) | Event::Ended
+                    )
                 {
                     self.checkpoint_moments.push((talk.id, None));
                 }

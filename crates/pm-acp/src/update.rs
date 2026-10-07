@@ -35,8 +35,8 @@ pub enum Event {
     ListFailed(String),
     /// The agent will not open a session until it is logged in.
     Login(Vec<Method>),
-    /// A run of text, of whichever voice [`Voice`] names.
-    Said(Voice, String),
+    /// A run of text, its voice and its optional native provider message identity.
+    Said(Voice, String, Option<String>),
     /// A tool call, as it now stands.
     Ran(ToolCall),
     /// A shell that continues after its launching call, or has finished.
@@ -471,6 +471,18 @@ fn async_task(update: &Value, shells: &mut BTreeMap<String, String>) -> Option<E
     }
 }
 
+/// Reads streamed text together with the provider's native message identity.
+fn said(voice: Voice, update: &Value) -> Option<Event> {
+    Some(Event::Said(
+        voice,
+        text(&update["content"])?,
+        update["messageId"]
+            .as_str()
+            .filter(|id| !id.trim().is_empty())
+            .map(str::to_owned),
+    ))
+}
+
 /// Reads the end of a background task from the notice an agent is woken
 /// with, which reaches a window as the task of a subagent started to read it.
 ///
@@ -692,9 +704,9 @@ impl Stop {
 /// tell a client more than it draws.
 pub(crate) fn event(update: &Value, tools: &mut Tools) -> Option<Event> {
     match update["sessionUpdate"].as_str()? {
-        "user_message_chunk" => Some(Event::Said(Voice::Reader, text(&update["content"])?)),
-        "agent_message_chunk" => Some(Event::Said(Voice::Agent, text(&update["content"])?)),
-        "agent_thought_chunk" => Some(Event::Said(Voice::Thought, text(&update["content"])?)),
+        "user_message_chunk" => said(Voice::Reader, update),
+        "agent_message_chunk" => said(Voice::Agent, update),
+        "agent_thought_chunk" => said(Voice::Thought, update),
         "tool_call" | "tool_call_update" => {
             let call = merge(update, tools)?;
             (!call.title.is_empty()

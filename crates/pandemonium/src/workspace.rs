@@ -372,7 +372,7 @@ fn backdrop(message: Message) -> Div<Message> {
 pub fn add_project_items() -> Vec<MenuItem<Message>> {
     vec![
         menu_entry("Open Folder…", Some(Message::OpenProject)),
-        menu_entry("Clone from a URL…", Some(Message::CloneProject)),
+        menu_entry("Clone Repository…", Some(Message::CloneProject)),
         menu_separator(),
         menu_entry("New Group…", Some(Message::NewProjectGroup(None))),
     ]

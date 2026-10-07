@@ -80,6 +80,8 @@ struct Opening {
     servers: Vec<mcp::McpServer>,
     /// The native conversation to fork instead of opening or loading.
     fork: Option<String>,
+    /// The provider message through which the fork retains history.
+    fork_message: Option<String>,
     /// The conversation to restore, when supplied.
     resume: Option<String>,
     /// Whether a missing saved conversation falls back to a new one.
@@ -106,6 +108,8 @@ pub enum Conversation {
     ReconnectExact(String),
     /// Fork an advertised native conversation.
     Fork(String),
+    /// Fork through one native Claude agent message.
+    ForkAt(String, String),
 }
 
 impl Conversation {
@@ -121,6 +125,10 @@ impl Conversation {
             }
             Self::Load(id) | Self::ReconnectExact(id) => opening.resume = Some(id),
             Self::Fork(id) => opening.fork = Some(id),
+            Self::ForkAt(id, message) => {
+                opening.fork = Some(id);
+                opening.fork_message = Some(message);
+            }
         }
         opening
     }
@@ -250,8 +258,12 @@ struct State {
     servers: Vec<mcp::McpServer>,
     /// The source of a fork awaiting negotiation.
     fork: Option<String>,
+    /// The provider message through which the fork retains history.
+    fork_message: Option<String>,
     /// Whether the adapter advertises native conversation forking.
     forks: bool,
+    /// Whether the negotiated adapter implements Claude message fork points.
+    fork_points: bool,
     /// What the agent calls this conversation, once it has opened one.
     id: Option<String>,
     /// The conversation to take up again, before one has been opened.
@@ -552,6 +564,7 @@ impl Session {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
             state.servers = opening.servers;
             state.fork = opening.fork;
+            state.fork_message = opening.fork_message;
             state.resume = opening.resume;
             state.resume_fallback = opening.resume_fallback;
             state.quiet = opening.quiet;
@@ -611,6 +624,15 @@ impl Session {
         self.state
             .lock()
             .is_ok_and(|state| state.forks && state.id.is_some() && !state.busy)
+    }
+
+    /// Whether an idle native fork can retain history through a selected message.
+    pub fn can_fork_at(&self) -> bool {
+        self.can_fork()
+            && self
+                .state
+                .lock()
+                .is_ok_and(|state| state.fork_points && state.loads)
     }
 
     /// Starts a separate process and asks it to fork the whole source conversation.
@@ -1328,6 +1350,9 @@ impl Reader {
                 }
             }
             (Sent::List(_), Some(error)) => self.raise(Event::ListFailed(complaint(error))),
+            (Sent::Open | Sent::Resume, Some(error)) if error["code"] == json!(LOGIN_REQUIRED) => {
+                self.offer_login();
+            }
             (Sent::Resume, Some(_)) => {
                 let fallback = self.state.lock().is_ok_and(|state| state.resume_fallback);
                 if fallback {
@@ -1338,14 +1363,6 @@ impl Reader {
                 } else if let Some(error) = failure {
                     self.raise(Event::Failed(complaint(error)));
                 }
-            }
-            (Sent::Open, Some(error)) if error["code"] == json!(LOGIN_REQUIRED) => {
-                let logins = self
-                    .state
-                    .lock()
-                    .map(|state| state.logins.clone())
-                    .unwrap_or_default();
-                self.raise(Event::Login(logins));
             }
             (Sent::Login, None) => self.open(),
             (Sent::Logout, None) => {
@@ -1383,7 +1400,11 @@ impl Reader {
                 if let Ok(mut state) = self.state.lock() {
                     state.queued.clear();
                 }
-                self.raise(Event::Failed(complaint(error)));
+                if error["code"] == json!(LOGIN_REQUIRED) {
+                    self.offer_login();
+                } else {
+                    self.raise(Event::Failed(complaint(error)));
+                }
                 self.idle();
                 self.measurement.refresh();
             }
@@ -1412,6 +1433,20 @@ impl Reader {
         }
     }
 
+    /// Offers sign-in and discards queued prompts after an authentication failure.
+    fn offer_login(&self) {
+        let logins = self
+            .state
+            .lock()
+            .map(|mut state| {
+                state.queued.clear();
+                state.busy = false;
+                state.logins.clone()
+            })
+            .unwrap_or_default();
+        self.raise(Event::Login(logins));
+    }
+
     /// Takes down what the agent can do, and opens the conversation.
     fn shook(&self, result: &Value) {
         let logins = update::methods(&result["authMethods"]);
@@ -1423,6 +1458,7 @@ impl Reader {
             let sessions = &capabilities["sessionCapabilities"];
             state.lists = sessions["list"].is_object();
             state.forks = sessions["fork"].is_object();
+            state.fork_points = claude_fork_points(&result["agentInfo"]);
             state.resumes = sessions["resume"].is_object();
             state.closes = sessions["close"].is_object();
             state.deletes = sessions["delete"].is_object();
@@ -1465,15 +1501,33 @@ impl Reader {
                 ));
                 return;
             }
-            self.ask(
-                Sent::Fork(source.clone()),
-                "session/fork",
-                &json!({
-                    "sessionId": source,
-                    "cwd": self.root,
-                    "mcpServers": servers,
-                }),
-            );
+            let message = self
+                .state
+                .lock()
+                .ok()
+                .and_then(|state| state.fork_message.clone());
+            let mut params = json!({
+                "sessionId": source,
+                "cwd": self.root,
+                "mcpServers": servers,
+            });
+            if let Some(message) = message {
+                if !self
+                    .state
+                    .lock()
+                    .is_ok_and(|state| state.fork_points && state.loads)
+                {
+                    self.raise(Event::Failed(
+                        "this agent cannot fork at a selected message".to_owned(),
+                    ));
+                    return;
+                }
+                params["_meta"] = json!({"jetbrains": {"air": {"fork": {
+                    "version": 1,
+                    "messageId": message,
+                }}}});
+            }
+            self.ask(Sent::Fork(source.clone()), "session/fork", &params);
             return;
         }
         let resumed = match self.state.lock() {
@@ -1531,7 +1585,7 @@ impl Reader {
         if attach {
             state.resume = Some(destination.to_owned());
             state.resume_fallback = false;
-            state.quiet = true;
+            state.quiet = !state.loads;
         }
         drop(state);
         match attach {
@@ -1916,4 +1970,19 @@ fn complaint(error: &Value) -> String {
         .as_str()
         .unwrap_or("the agent refused")
         .to_owned()
+}
+
+/// Recognizes Claude adapter 0.71.0 and later, which implement AIR fork points.
+fn claude_fork_points(info: &Value) -> bool {
+    if info["name"].as_str() != Some("@agentclientprotocol/claude-agent-acp") {
+        return false;
+    }
+    let Some(version) = info["version"]
+        .as_str()
+        .filter(|version| !version.contains('-'))
+    else {
+        return false;
+    };
+    let numbers: Option<Vec<u64>> = version.split('.').map(|part| part.parse().ok()).collect();
+    numbers.is_some_and(|numbers| numbers.len() == 3 && numbers.as_slice() >= [0, 71, 0].as_slice())
 }
