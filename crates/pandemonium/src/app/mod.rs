@@ -21,6 +21,7 @@ mod drag;
 mod excerpts;
 mod form;
 mod formatter;
+mod github;
 mod groups;
 mod health;
 mod input;
@@ -1790,7 +1791,7 @@ impl App {
             return;
         }
         if message == Message::CloneProject {
-            self.open_picker(crate::picker::Kind::CloneUrl);
+            self.open_picker(crate::picker::Kind::CloneSources);
             self.request_redraw();
             return;
         }

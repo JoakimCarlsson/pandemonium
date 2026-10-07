@@ -46,6 +46,7 @@ impl App {
             Kind::WorkspaceSymbols => self.ask_typed_symbols(),
             Kind::Search => self.search_later(&seeded),
             Kind::Branches => self.ask_branches(),
+            Kind::CloneSources => self.ask_github_owners(),
             Kind::FetchRemotes => self.ask_remotes(true),
             Kind::PushRemotes => self.ask_remotes(false),
             _ => {}
@@ -148,6 +149,9 @@ impl App {
         let chosen = picker.chosen().cloned();
         let place = picker.selected();
 
+        if matches!(kind, Kind::CloneSources | Kind::CloneRepositories) && chosen.is_none() {
+            return;
+        }
         self.picker = None;
         self.leave_listings();
         match (kind, chosen) {
@@ -193,6 +197,15 @@ impl App {
     /// Carries out what one row of the picker stood for.
     fn take(&mut self, choice: Choice) {
         match choice {
+            Choice::CloneUrl => self.open_picker(Kind::CloneUrl),
+            Choice::CloneSources => self.open_picker(Kind::CloneSources),
+            Choice::GithubOwner(login, organization) => {
+                self.open_github_repositories(pm_core::GithubOwner {
+                    login,
+                    organization,
+                });
+            }
+            Choice::CloneRepository(url) => self.clone_project(&url),
             Choice::Checkpoint(scope, from, turn) => self.choose_turn(scope, from, turn),
             Choice::Act(action) => self.act(action),
             Choice::InstallLanguageExtension(index) => self.install_language_extension(index),
@@ -300,6 +313,8 @@ impl App {
     /// gathered so far, and are filled as the rest arrives.
     pub(super) fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
+            Kind::CloneSources => crate::app::github::source_rows(),
+            Kind::CloneRepositories => Vec::new(),
             Kind::Turns => Vec::new(),
             Kind::Commands => self.command_rows(),
             Kind::LanguageServers => self.language_server_rows(),
