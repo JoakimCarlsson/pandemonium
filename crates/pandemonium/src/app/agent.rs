@@ -127,7 +127,8 @@ impl App {
                     self.start_agent(agent);
                 }
             }
-            Message::ForkAgent(source) => self.fork_agent(source),
+            Message::ForkAgent(source) => self.fork_agent(source, None),
+            Message::ForkAgentReply(source, block) => self.fork_agent(source, Some(block)),
             Message::ShowAgentAccounts(session) => self.show_agent_accounts(session),
             Message::ManageAccountProfiles(agent) => {
                 self.open_picker(Kind::Accounts(self.scope(), agent));
@@ -335,9 +336,9 @@ impl App {
         }
     }
 
-    /// Opens a native whole-session fork in the source's existing filesystem scope.
-    fn fork_agent(&mut self, source: TalkId) {
-        let Some(destination) = self.agents.fork(source) else {
+    /// Opens a native conversation fork in the source's existing filesystem scope.
+    fn fork_agent(&mut self, source: TalkId, block: Option<usize>) {
+        let Some(destination) = self.agents.fork(source, block) else {
             self.notices
                 .trouble("This conversation cannot be forked natively", None);
             return;

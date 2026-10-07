@@ -99,6 +99,8 @@ pub struct Talk {
     fork: Option<pm_core::ConversationFork>,
     /// The source provider identity until the fork opens successfully.
     fork_source: Option<String>,
+    /// The native message selected for a pending fork.
+    fork_message: Option<String>,
     /// The prompt awaiting its filesystem baseline.
     pub(crate) pending_prompt: Option<(String, Vec<Attachment>)>,
     /// Completed file-changing calls already reported in this turn.
@@ -307,6 +309,17 @@ impl Talk {
     /// Whether an idle native whole-session fork is available.
     pub fn can_fork(&self) -> bool {
         self.ready && !self.busy && self.context.is_none() && self.conversation.can_fork()
+    }
+
+    /// Whether this reply has a native identity and can start a separate conversation.
+    pub fn can_fork_reply(&self, block: usize) -> bool {
+        self.can_fork()
+            && self.conversation.can_fork_at()
+            && matches!(
+                self.transcript.blocks().get(block),
+                Some(Block::Said(Voice::Agent, _))
+            )
+            && self.transcript.message_id(block).is_some()
     }
 
     /// Whether saving this tab cannot turn an unfinished fork into a fresh session.
@@ -1514,10 +1527,20 @@ impl Talk {
                         .map(|destination| pm_core::ConversationFork {
                             agent: self.agent().id.to_owned(),
                             source,
+                            message_id: self.fork_message.take(),
                             destination,
                             shared_root: self.root().to_path_buf(),
                         });
-                    self.transcript.note("Native whole-session fork. Files are shared with the source; no filesystem snapshot or rewind was applied.");
+                    let history = if self
+                        .fork
+                        .as_ref()
+                        .is_some_and(|fork| fork.message_id.is_some())
+                    {
+                        "Native conversation fork through the selected reply."
+                    } else {
+                        "Native whole-session fork."
+                    };
+                    self.transcript.note(format!("{history} Files are shared with the source; no filesystem snapshot or rewind was applied."));
                 }
                 self.logins.clear();
             }
@@ -1552,7 +1575,9 @@ impl Talk {
                 self.logins = methods;
                 self.cursor = 0;
             }
-            Event::Said(voice, text) => self.transcript.say(voice, &text),
+            Event::Said(voice, text, message) => {
+                self.transcript.say_identified(voice, &text, message)
+            }
             Event::Ran(call) => {
                 if call.subagent {
                     if call.is_running() {
@@ -1647,6 +1672,7 @@ impl Talk {
                 self.busy_since = None;
                 self.fork = None;
                 self.fork_source = None;
+                self.fork_message = None;
                 self.transcript.note("Logged out.");
             }
             Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
@@ -1852,8 +1878,8 @@ fn installed_skills(root: &Path, agent: Agent, environment: &[(String, String)])
 enum Opening<'a> {
     /// Start a new conversation.
     New,
-    /// Fork a native whole conversation in a separate agent process.
-    Fork(&'a str),
+    /// Fork a native conversation, optionally through a selected provider message.
+    Fork(&'a str, Option<&'a str>),
     /// Restore an exact identity without falling back to a new conversation.
     Strict(&'a str),
     /// Offer login before opening a new conversation.
@@ -1940,8 +1966,15 @@ impl Talks {
     }
 
     /// Forks an idle native conversation, retaining its project, files and account.
-    pub fn fork(&mut self, source: TalkId) -> Option<TalkId> {
+    pub fn fork(&mut self, source: TalkId, block: Option<usize>) -> Option<TalkId> {
         let talk = self.get(source).filter(|talk| talk.can_fork())?;
+        let message = match block {
+            Some(block) if talk.can_fork_reply(block) => {
+                Some(talk.transcript.message_id(block)?.to_owned())
+            }
+            Some(_) => return None,
+            None => None,
+        };
         let (project, session, root, env, agent, provider, profile) = (
             talk.project,
             talk.session,
@@ -1957,7 +1990,7 @@ impl Talks {
             &root,
             &env,
             agent,
-            Opening::Fork(&provider),
+            Opening::Fork(&provider, message.as_deref()),
         )?;
         self.get_mut(id)?.set_profile(profile);
         Some(id)
@@ -2041,7 +2074,10 @@ impl Talks {
             },
         };
         let requested = match opening {
-            Opening::Fork(source) => pm_acp::Conversation::Fork(source.to_owned()),
+            Opening::Fork(source, None) => pm_acp::Conversation::Fork(source.to_owned()),
+            Opening::Fork(source, Some(message)) => {
+                pm_acp::Conversation::ForkAt(source.to_owned(), message.to_owned())
+            }
             Opening::Strict(saved) | Opening::Exact(_, saved) => {
                 pm_acp::Conversation::Load(saved.to_owned())
             }
@@ -2069,7 +2105,11 @@ impl Talks {
                 queued_messages: 0,
                 fork: None,
                 fork_source: match opening {
-                    Opening::Fork(source) => Some(source.to_owned()),
+                    Opening::Fork(source, _) => Some(source.to_owned()),
+                    _ => None,
+                },
+                fork_message: match opening {
+                    Opening::Fork(_, message) => message.map(str::to_owned),
                     _ => None,
                 },
                 pending_prompt: None,
@@ -2176,6 +2216,7 @@ impl Talks {
         talk.conversation = conversation;
         talk.fork = None;
         talk.fork_source = None;
+        talk.fork_message = None;
         talk.ready = false;
         talk.remember_on_ready = true;
         talk.mode = None;

@@ -513,10 +513,27 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
                 .bg(theme.colors.background)
                 .tooltip("Copy · Shift: copy formatted")
                 .on_secondary_click(Message::ShowAgentTextMenu(session, Some(block)));
+            let actions =
+                h_flex()
+                    .gap(0.5)
+                    .child(button)
+                    .when(talk.can_fork_reply(block), |actions| {
+                        actions.child(
+                            icon_button(
+                                theme,
+                                IconName::GitFork,
+                                Message::ForkAgentReply(session, block),
+                            )
+                            .bg(theme.colors.background)
+                            .tooltip(
+                                "Branch from this reply · new chat tab · shared current files",
+                            ),
+                        )
+                    });
             let closes = wrapped.reply_ends(last);
             drawn.push(v_flex().w_full().child(HoverMessage {
                 content,
-                actions: button,
+                actions,
                 closes,
                 actions_height: message_actions_height(theme),
             }));
@@ -2750,8 +2767,11 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
             bar.child(
                 h_flex()
                     .tooltip(format!(
-                        "Whole conversation forked from {} · files at {}",
+                        "Conversation forked from {}{} · files at {}",
                         fork.source,
+                        fork.message_id
+                            .as_ref()
+                            .map_or(String::new(), |message| format!(" through {message}")),
                         fork.shared_root.display()
                     ))
                     .child(
