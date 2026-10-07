@@ -1328,6 +1328,9 @@ impl Reader {
                 }
             }
             (Sent::List(_), Some(error)) => self.raise(Event::ListFailed(complaint(error))),
+            (Sent::Open | Sent::Resume, Some(error)) if error["code"] == json!(LOGIN_REQUIRED) => {
+                self.offer_login();
+            }
             (Sent::Resume, Some(_)) => {
                 let fallback = self.state.lock().is_ok_and(|state| state.resume_fallback);
                 if fallback {
@@ -1338,14 +1341,6 @@ impl Reader {
                 } else if let Some(error) = failure {
                     self.raise(Event::Failed(complaint(error)));
                 }
-            }
-            (Sent::Open, Some(error)) if error["code"] == json!(LOGIN_REQUIRED) => {
-                let logins = self
-                    .state
-                    .lock()
-                    .map(|state| state.logins.clone())
-                    .unwrap_or_default();
-                self.raise(Event::Login(logins));
             }
             (Sent::Login, None) => self.open(),
             (Sent::Logout, None) => {
@@ -1383,7 +1378,11 @@ impl Reader {
                 if let Ok(mut state) = self.state.lock() {
                     state.queued.clear();
                 }
-                self.raise(Event::Failed(complaint(error)));
+                if error["code"] == json!(LOGIN_REQUIRED) {
+                    self.offer_login();
+                } else {
+                    self.raise(Event::Failed(complaint(error)));
+                }
                 self.idle();
                 self.measurement.refresh();
             }
@@ -1410,6 +1409,20 @@ impl Reader {
                 self.wake();
             }
         }
+    }
+
+    /// Offers sign-in and discards queued prompts after an authentication failure.
+    fn offer_login(&self) {
+        let logins = self
+            .state
+            .lock()
+            .map(|mut state| {
+                state.queued.clear();
+                state.busy = false;
+                state.logins.clone()
+            })
+            .unwrap_or_default();
+        self.raise(Event::Login(logins));
     }
 
     /// Takes down what the agent can do, and opens the conversation.

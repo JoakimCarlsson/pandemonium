@@ -380,6 +380,15 @@ impl Talk {
         self.conversation.id()
     }
 
+    /// Reconnects to the saved identity, requiring an exact destination for forks.
+    fn reconnection(&self) -> Option<pm_acp::Conversation> {
+        let conversation = self.resumable()?;
+        Some(match self.fork.is_some() {
+            true => pm_acp::Conversation::ReconnectExact(conversation),
+            false => pm_acp::Conversation::Reconnect(conversation),
+        })
+    }
+
     /// Everything said so far.
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
@@ -1170,7 +1179,7 @@ impl Talk {
     /// echoes it: an agent is not obliged to say back what it was told, and
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
-        if self.busy {
+        if self.busy || !self.logins.is_empty() {
             return;
         }
         let text = self.prompt.value().trim().to_owned();
@@ -1222,7 +1231,7 @@ impl Talk {
     /// It is a turn like any other: it is put in the transcript as the
     /// reader's, and the conversation follows what comes back.
     pub fn send_text(&mut self, text: &str) {
-        if self.busy {
+        if self.busy || !self.logins.is_empty() {
             return;
         }
         let text = text.trim();
@@ -1499,6 +1508,12 @@ impl Talk {
                 self.listing = false;
             }
             Event::Login(mut methods) => {
+                self.ready = false;
+                self.busy = false;
+                self.busy_since = None;
+                self.clear_messages();
+                self.pending_prompt = None;
+                self.transcript.finish_thought();
                 if self.profile.is_some() && self.agent().id == "claude-code" {
                     methods.retain(|method| {
                         matches!(method.id.as_str(), "claude-ai-login" | "claude-login")
@@ -2103,8 +2118,7 @@ impl Talks {
         Some(id)
     }
 
-    /// Starts the agent of the conversation `id` names again, in a new
-    /// conversation, answering whether it started.
+    /// Starts the agent after terminal login, retaining an existing conversation.
     ///
     /// This is what follows a login the agent had the reader do outside it:
     /// the agent reads what the login left behind only when it starts.
@@ -2115,19 +2129,18 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
+        let requested = talk.reconnection().unwrap_or(pm_acp::Conversation::New);
         match configured_session(
             talk.agent(),
             talk.root(),
             &talk.env,
-            pm_acp::Conversation::New,
+            requested,
             talk.mcp.clone(),
             notify,
         ) {
             Ok(conversation) => {
                 talk.skills = installed_skills(talk.root(), talk.agent(), &talk.env);
                 talk.conversation = conversation;
-                talk.fork = None;
-                talk.fork_source = None;
                 talk.ready = false;
                 talk.remember_on_ready = true;
                 talk.busy = false;
@@ -2159,12 +2172,8 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
-        let Some(conversation) = talk.resumable() else {
+        let Some(requested) = talk.reconnection() else {
             return false;
-        };
-        let requested = match talk.fork.is_some() {
-            true => pm_acp::Conversation::ReconnectExact(conversation),
-            false => pm_acp::Conversation::Reconnect(conversation),
         };
         let restored = configured_session(
             talk.agent(),
@@ -2332,7 +2341,10 @@ impl Talks {
                     self.turns.push(talk.scope());
                 }
                 if talk.is_busy()
-                    && matches!(event, Event::Stopped(_) | Event::Failed(_) | Event::Ended)
+                    && matches!(
+                        event,
+                        Event::Stopped(_) | Event::Failed(_) | Event::Login(_) | Event::Ended
+                    )
                 {
                     self.checkpoint_moments.push((talk.id, None));
                 }
