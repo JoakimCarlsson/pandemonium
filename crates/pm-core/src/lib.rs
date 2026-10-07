@@ -2,6 +2,7 @@
 
 mod files;
 mod git;
+mod github;
 mod project;
 mod scope;
 mod session;
@@ -23,6 +24,9 @@ pub use git::{
     rewind_number, rewind_paths, since, skip_operation, snapshot, stage, stash_apply, stash_drop,
     stash_pop, stash_push, stashes, switch_branch, sync, take_rewind_context, unstage, untracked,
     worktrees, write_index,
+};
+pub use github::{
+    GithubOwner, GithubRepository, github_owners, github_repositories, github_uses_ssh,
 };
 pub use project::{OpenError, Project, ProjectId, Projects, Repository, repositories};
 pub use scope::Scope;

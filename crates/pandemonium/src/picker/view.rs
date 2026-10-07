@@ -483,6 +483,7 @@ fn row(
 /// Builds the line under a prompt saying what it will do with what is typed.
 fn hint(theme: &Theme, kind: Kind) -> Div<Message> {
     let label = match kind {
+        Kind::CloneUrl => "Clone into a folder you choose, then open the project",
         Kind::Line => "Enter a line number, or a line and column",
         Kind::Rename => "Enter the new name, everywhere the symbol is used",
         Kind::ProjectGroup(..) => "Organise projects under a named, collapsible heading",
