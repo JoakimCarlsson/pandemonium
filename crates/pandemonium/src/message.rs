@@ -39,6 +39,8 @@ pub enum ProjectSearchOption {
 pub enum Message {
     /// Opens the changes made during one reader prompt.
     DiffAgentTurn(TalkId, u64),
+    /// Rewinds conversation context before a reader message and restores its prompt.
+    RewindAgentContext(TalkId, usize),
     /// Offers a filesystem rewind before one reader prompt.
     RewindAgentTurn(TalkId, u64),
     /// Executes an explicitly confirmed filesystem rewind.

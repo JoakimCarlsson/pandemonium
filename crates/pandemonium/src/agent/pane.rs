@@ -441,28 +441,42 @@ fn drawn(theme: &Theme, talk: &Talk, columns: usize) -> (Vec<Div<Message>>, f32)
             let opens = at == 0 || !wrapped.said[at - 1];
             let closes = wrapped.said.get(last + 1) != Some(&true);
             let content = bubble(theme, message, opens, closes);
-            if let Some(turn) = wrapped.reader_turn(talk, last) {
+            if let Some(block) = wrapped.reader_message(talk, last) {
                 let session = talk.id();
                 let actions = h_flex()
                     .w_full()
                     .justify_end()
                     .gap(0.5)
-                    .child(
-                        icon_button(
-                            theme,
-                            IconName::GitCompare,
-                            Message::DiffAgentTurn(session, turn),
+                    .when_some(wrapped.reader_turn(talk, last), |bar, turn| {
+                        bar.child(
+                            icon_button(
+                                theme,
+                                IconName::GitCompare,
+                                Message::DiffAgentTurn(session, turn),
+                            )
+                            .tooltip("Diff this turn"),
                         )
-                        .tooltip("Diff this turn"),
-                    )
-                    .child(
-                        icon_button(
-                            theme,
-                            IconName::Undo,
-                            Message::RewindAgentTurn(session, turn),
+                        .child(
+                            icon_button(
+                                theme,
+                                IconName::History,
+                                Message::RewindAgentTurn(session, turn),
+                            )
+                            .tooltip("Restore files to before this turn"),
                         )
-                        .tooltip("Rewind to before this turn"),
-                    );
+                    })
+                    .when(talk.can_rewind(), |bar| {
+                        bar.child(
+                            icon_button(
+                                theme,
+                                IconName::Undo,
+                                Message::RewindAgentContext(session, block),
+                            )
+                            .tooltip(
+                                "Rewind conversation to before this message · edit and resend",
+                            ),
+                        )
+                    });
                 drawn.push(v_flex().w_full().child(HoverMessage {
                     content,
                     actions,
@@ -810,13 +824,27 @@ impl Wrapped {
         .then_some(block)
     }
 
-    /// The filesystem turn attached to the reader message containing `at`.
-    fn reader_turn(&self, talk: &Talk, at: usize) -> Option<u64> {
+    /// The reader message containing this row, including messages from loaded history.
+    fn reader_message(&self, talk: &Talk, at: usize) -> Option<usize> {
         let Entry::Part(part, _) = self.entries[at] else {
             return None;
         };
+        let block = self.parts[part].key.start;
+        let blocks = talk.transcript().blocks();
+        let block = if matches!(blocks[block], Block::Picture(_)) {
+            blocks[..block]
+                .iter()
+                .rposition(|block| !matches!(block, Block::Picture(_)))?
+        } else {
+            block
+        };
+        matches!(blocks[block], Block::Said(Voice::Reader, _)).then_some(block)
+    }
+
+    /// The filesystem turn attached to the reader message containing `at`.
+    fn reader_turn(&self, talk: &Talk, at: usize) -> Option<u64> {
         talk.checkpoint_turns
-            .get(&self.parts[part].key.start)
+            .get(&self.reader_message(talk, at)?)
             .copied()
     }
 
@@ -1000,7 +1028,7 @@ impl Wrapped {
                     }
                     if self.said.get(at + 1) != Some(&true) {
                         height += edge;
-                        if self.reader_turn(talk, at).is_some() {
+                        if self.reader_message(talk, at).is_some() {
                             height += message_actions_height(theme);
                         }
                     }

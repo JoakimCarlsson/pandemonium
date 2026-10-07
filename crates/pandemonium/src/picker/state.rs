@@ -102,6 +102,10 @@ pub enum Kind {
     /// Which repositories of the active project the session about to be cut
     /// works in.
     SessionRepositories,
+    /// Accounts and organizations available for cloning through GitHub.
+    CloneSources,
+    /// Repositories belonging to the selected GitHub account.
+    CloneRepositories,
     /// The URL of a repository to clone and open.
     CloneUrl,
     /// A path to symlink into every new worktree.
@@ -174,6 +178,8 @@ impl Kind {
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
+            Self::CloneSources => "Choose a GitHub account or clone from a URL…",
+            Self::CloneRepositories => "Search repositories to clone…",
             Self::CloneUrl => "The repository to clone",
             Self::LinkedPath => "Path to link into new worktrees",
             Self::CopiedPath => "Path to copy into new worktrees",
@@ -327,6 +333,14 @@ pub enum Choice {
     Task(Scope, Box<pm_core::Task>),
     /// Tick or untick this repository for the session about to be cut.
     SessionRepository(PathBuf),
+    /// Enter a repository URL to clone.
+    CloneUrl,
+    /// Return to the GitHub account and organization list.
+    CloneSources,
+    /// Browse the repositories of this GitHub account.
+    GithubOwner(String, bool),
+    /// Clone and open the repository at this address.
+    CloneRepository(String),
     /// Cut the session about to be cut, of the repositories ticked.
     StartSession,
 }
@@ -564,7 +578,10 @@ impl Picker {
     /// How many rows the picker keeps after filtering.
     fn limit(&self) -> usize {
         match self.kind {
-            Kind::AgentHistory(_) | Kind::AgentDelete(_) => usize::MAX,
+            Kind::AgentHistory(_)
+            | Kind::AgentDelete(_)
+            | Kind::CloneSources
+            | Kind::CloneRepositories => usize::MAX,
             _ => SHOWN,
         }
     }

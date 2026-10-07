@@ -111,6 +111,8 @@ pub struct Talk {
     overlapping: BTreeSet<String>,
     /// The filesystem turn number attached to each reader block.
     pub(crate) checkpoint_turns: BTreeMap<usize, u64>,
+    /// Retained conversation history to send with the first prompt after a context rewind.
+    context: Option<String>,
     /// Context correction to prepend after a filesystem rewind.
     pub(crate) rewind_note: Option<String>,
     /// Which session this is.
@@ -306,7 +308,7 @@ impl Talk {
 
     /// Whether an idle native whole-session fork is available.
     pub fn can_fork(&self) -> bool {
-        self.ready && !self.busy && self.conversation.can_fork()
+        self.ready && !self.busy && self.context.is_none() && self.conversation.can_fork()
     }
 
     /// Whether this reply has a native identity and can start a separate conversation.
@@ -323,6 +325,23 @@ impl Talk {
     /// Whether saving this tab cannot turn an unfinished fork into a fresh session.
     pub fn persistable(&self) -> bool {
         self.fork_source.is_none()
+    }
+
+    /// Whether conversation context can be rewound without interrupting a turn.
+    pub fn can_rewind(&self) -> bool {
+        self.ready && !self.busy
+    }
+
+    /// Retained history awaiting the first prompt in a rewound conversation.
+    pub fn rewind_context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    /// Restores retained history and the editable prompt after reopening a rewound tab.
+    pub fn restore_context(&mut self, context: String, prompt: &str) {
+        self.context = Some(context);
+        self.prompt.set(prompt);
+        self.transcript.note("Conversation context rewound. Earlier messages will accompany your next prompt; files are unchanged.");
     }
 
     /// The durable relationship of this native conversation fork.
@@ -391,6 +410,15 @@ impl Talk {
     /// What the agent calls this conversation, once it has opened one.
     pub fn resumable(&self) -> Option<String> {
         self.conversation.id()
+    }
+
+    /// Reconnects to the saved identity, requiring an exact destination for forks.
+    fn reconnection(&self) -> Option<pm_acp::Conversation> {
+        let conversation = self.resumable()?;
+        Some(match self.fork.is_some() {
+            true => pm_acp::Conversation::ReconnectExact(conversation),
+            false => pm_acp::Conversation::Reconnect(conversation),
+        })
     }
 
     /// Everything said so far.
@@ -1183,7 +1211,7 @@ impl Talk {
     /// echoes it: an agent is not obliged to say back what it was told, and
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
-        if self.busy {
+        if self.busy || !self.logins.is_empty() {
             return;
         }
         let text = self.prompt.value().trim().to_owned();
@@ -1235,7 +1263,7 @@ impl Talk {
     /// It is a turn like any other: it is put in the transcript as the
     /// reader's, and the conversation follows what comes back.
     pub fn send_text(&mut self, text: &str) {
-        if self.busy {
+        if self.busy || !self.logins.is_empty() {
             return;
         }
         let text = text.trim();
@@ -1312,6 +1340,9 @@ impl Talk {
         if let Some((mut text, attachments)) = self.pending_prompt.take() {
             if let Some(note) = self.rewind_note.take() {
                 text = format!("{note}\n{text}");
+            }
+            if let Some(context) = self.context.take() {
+                text = format!("{context}{text}");
             }
             self.busy_since = Some(Instant::now());
             self.conversation.prompt(&text, attachments);
@@ -1522,6 +1553,12 @@ impl Talk {
                 self.listing = false;
             }
             Event::Login(mut methods) => {
+                self.ready = false;
+                self.busy = false;
+                self.busy_since = None;
+                self.clear_messages();
+                self.pending_prompt = None;
+                self.transcript.finish_thought();
                 if self.profile.is_some() && self.agent().id == "claude-code" {
                     methods.retain(|method| {
                         matches!(method.id.as_str(), "claude-ai-login" | "claude-login")
@@ -2081,6 +2118,7 @@ impl Talks {
                 overlapping: BTreeSet::new(),
                 checkpoint_turns: BTreeMap::new(),
                 rewind_note: None,
+                context: None,
                 id,
                 project,
                 session,
@@ -2143,8 +2181,68 @@ impl Talks {
         Some(id)
     }
 
-    /// Starts the agent of the conversation `id` names again, in a new
-    /// conversation, answering whether it started.
+    /// Replaces an idle conversation with retained context before the selected reader prompt.
+    pub fn rewind(&mut self, id: TalkId, at: usize) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        if !talk.can_rewind() {
+            return false;
+        }
+        let Some(Block::Said(Voice::Reader, prompt)) = talk.transcript.blocks().get(at) else {
+            return false;
+        };
+        let prompt = prompt.clone();
+        let context = talk.transcript.context_before(at);
+        let conversation = match configured_session(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            pm_acp::Conversation::New,
+            talk.mcp.clone(),
+            notify,
+        ) {
+            Ok(conversation) => conversation,
+            Err(error) => {
+                talk.transcript
+                    .note(format!("Could not rewind conversation context: {error}"));
+                return false;
+            }
+        };
+        talk.clear_messages();
+        talk.conversation = conversation;
+        talk.fork = None;
+        talk.fork_source = None;
+        talk.fork_message = None;
+        talk.ready = false;
+        talk.remember_on_ready = true;
+        talk.mode = None;
+        talk.usage = None;
+        talk.commands.clear();
+        talk.logins.clear();
+        talk.asks.clear();
+        talk.forms.clear();
+        talk.background.clear();
+        talk.terminals.clear();
+        talk.checkpoint_turns.retain(|block, _| *block < at);
+        talk.transcript.rewind(at);
+        talk.restore_context(context, &prompt);
+        talk.attachments.clear();
+        talk.attachment_previews.clear();
+        talk.clear_selection();
+        talk.copied_replies.clear();
+        talk.expanded_details.clear();
+        talk.expanded_cards.clear();
+        talk.opened_failures.clear();
+        talk.shown_revision += 1;
+        talk.following = true;
+        true
+    }
+
+    /// Starts the agent after terminal login, retaining an existing conversation.
     ///
     /// This is what follows a login the agent had the reader do outside it:
     /// the agent reads what the login left behind only when it starts.
@@ -2155,20 +2253,18 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
+        let requested = talk.reconnection().unwrap_or(pm_acp::Conversation::New);
         match configured_session(
             talk.agent(),
             talk.root(),
             &talk.env,
-            pm_acp::Conversation::New,
+            requested,
             talk.mcp.clone(),
             notify,
         ) {
             Ok(conversation) => {
                 talk.skills = installed_skills(talk.root(), talk.agent(), &talk.env);
                 talk.conversation = conversation;
-                talk.fork = None;
-                talk.fork_source = None;
-                talk.fork_message = None;
                 talk.ready = false;
                 talk.remember_on_ready = true;
                 talk.busy = false;
@@ -2200,12 +2296,8 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
-        let Some(conversation) = talk.resumable() else {
+        let Some(requested) = talk.reconnection() else {
             return false;
-        };
-        let requested = match talk.fork.is_some() {
-            true => pm_acp::Conversation::ReconnectExact(conversation),
-            false => pm_acp::Conversation::Reconnect(conversation),
         };
         let restored = configured_session(
             talk.agent(),
@@ -2373,7 +2465,10 @@ impl Talks {
                     self.turns.push(talk.scope());
                 }
                 if talk.is_busy()
-                    && matches!(event, Event::Stopped(_) | Event::Failed(_) | Event::Ended)
+                    && matches!(
+                        event,
+                        Event::Stopped(_) | Event::Failed(_) | Event::Login(_) | Event::Ended
+                    )
                 {
                     self.checkpoint_moments.push((talk.id, None));
                 }
