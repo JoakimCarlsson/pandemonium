@@ -749,6 +749,8 @@ pub enum Message {
     ReconnectAgent(TalkId),
     /// Fork the whole native conversation while sharing its current files.
     ForkAgent(TalkId),
+    /// Branch through a native reply into a separate chat tab.
+    ForkAgentReply(TalkId, usize),
     /// Log this session's agent out.
     LogOutAgent(TalkId),
     /// List this session's saved conversations to choose one to forget.

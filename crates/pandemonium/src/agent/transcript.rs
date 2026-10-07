@@ -37,6 +37,8 @@ pub enum Block {
 pub struct Transcript {
     /// The blocks, oldest first.
     blocks: Vec<Block>,
+    /// Native message identities attached to text blocks.
+    messages: BTreeMap<usize, String>,
     /// Subagent calls attached to an already known parent.
     children: BTreeMap<String, Vec<ToolCall>>,
     /// Start and optional finish of each thought passage.
@@ -87,6 +89,16 @@ impl Transcript {
     /// Two runs of the same voice with nothing between them are one passage:
     /// the agent broke it up to send it, not to have it read that way.
     pub fn say(&mut self, voice: Voice, text: &str) {
+        self.say_identified(voice, text, None);
+    }
+
+    /// The native provider identity of a text block, when the adapter supplies one.
+    pub fn message_id(&self, block: usize) -> Option<&str> {
+        self.messages.get(&block).map(String::as_str)
+    }
+
+    /// Adds streamed text without merging distinct provider messages.
+    pub fn say_identified(&mut self, voice: Voice, text: &str, message: Option<String>) {
         if voice != Voice::Thought {
             self.finish_thought();
         }
@@ -95,8 +107,13 @@ impl Transcript {
                 .thoughts
                 .last_key_value()
                 .is_none_or(|(_, (_, finished))| finished.is_none());
+        let same_message = message.as_deref().is_none_or(|message| {
+            self.messages
+                .get(&self.blocks.len().saturating_sub(1))
+                .is_none_or(|last| last == message)
+        });
         match self.blocks.last_mut() {
-            Some(Block::Said(said, passage)) if *said == voice && streaming => {
+            Some(Block::Said(said, passage)) if *said == voice && streaming && same_message => {
                 passage.push_str(text);
                 self.stamp(self.blocks.len() - 1);
             }
@@ -107,6 +124,9 @@ impl Transcript {
                         .insert(self.blocks.len() - 1, (Instant::now(), None));
                 }
             }
+        }
+        if let Some(message) = message {
+            self.messages.insert(self.blocks.len() - 1, message);
         }
     }
 
