@@ -177,11 +177,6 @@ impl Pane {
         self.shown(scope).next().is_none() || self.holds(scope, role)
     }
 
-    /// Whether nothing at all is open in the pane.
-    pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
-    }
-
     /// Whether the tab holding `item` is drawn in every worktree.
     pub fn is_pinned(&self, item: Item) -> bool {
         self.tabs.iter().any(|tab| tab.item == item && tab.pinned)
