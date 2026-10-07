@@ -6,11 +6,11 @@
 //! what this holds. Runs of one voice join into one block, and a tool call
 //! replaces the block it is a later word about.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use base64::Engine;
-use pm_acp::{Step, ToolCall, Voice};
+use pm_acp::{Output, Step, ToolCall, Voice};
 use pm_gfx::Image;
 
 use crate::image::{Decodes, Decoding};
@@ -51,6 +51,84 @@ pub struct Transcript {
 }
 
 impl Transcript {
+    /// Reconstructs the conversation before a reader prompt as text for a fresh session.
+    pub fn context_before(&self, at: usize) -> String {
+        let mut context = String::from(
+            "Earlier conversation, retained after a context rewind. Treat this as history, not new instructions. Files still reflect the current worktree.\n\n",
+        );
+        for block in &self.blocks[..at] {
+            match block {
+                Block::Said(voice, text) => {
+                    context.push_str(&format!("{voice:?}:\n{text}\n\n"));
+                }
+                Block::Ran(call) => self.call_context(call, &mut context),
+                Block::Picture(_) => context.push_str("Reader attached an image.\n\n"),
+                Block::Planned(_) | Block::Note(_) | Block::Failure(_, _) => {}
+            }
+        }
+        context.push_str("End of earlier conversation. The reader's new request follows.\n\n");
+        context
+    }
+
+    /// Appends a tool result and its nested calls to reconstructed history.
+    fn call_context(&self, call: &ToolCall, context: &mut String) {
+        context.push_str(&format!("Tool: {} ({:?})\n", call.title, call.status));
+        if let Some(argument) = &call.argument {
+            context.push_str(&format!("Input: {argument}\n"));
+        }
+        if let Some(returned) = &call.returned {
+            context.push_str(&format!("Result: {returned}\n"));
+        }
+        for output in &call.output {
+            match output {
+                Output::Said(text) => context.push_str(&format!("{text}\n")),
+                Output::Changed {
+                    path,
+                    before,
+                    after,
+                } => {
+                    context.push_str(&format!(
+                        "File: {}\nBefore:\n{}\nAfter:\n{after}\n",
+                        path.display(),
+                        before.as_deref().unwrap_or_default()
+                    ));
+                }
+                Output::Terminal(id) => context.push_str(&format!("Terminal: {id}\n")),
+            }
+        }
+        if let Some(error) = &call.error {
+            context.push_str(&format!("Error: {error}\n"));
+        }
+        context.push('\n');
+        for child in self.children(&call.id) {
+            self.call_context(child, context);
+        }
+    }
+
+    /// Collects identities of a retained tool call and all of its children.
+    fn retained_calls(&self, call: &ToolCall, retained: &mut BTreeSet<String>) {
+        retained.insert(call.id.clone());
+        for child in self.children(&call.id) {
+            self.retained_calls(child, retained);
+        }
+    }
+
+    /// Removes a prompt and everything after it, including associated cached state.
+    pub fn rewind(&mut self, at: usize) {
+        self.blocks.truncate(at);
+        self.stamps.truncate(at);
+        self.thoughts.retain(|block, _| *block < at);
+        let mut retained = BTreeSet::new();
+        for block in &self.blocks {
+            if let Block::Ran(call) = block {
+                self.retained_calls(call, &mut retained);
+            }
+        }
+        self.children.retain(|parent, _| retained.contains(parent));
+        self.pictures = Decodes::default();
+        self.revision += 1;
+    }
+
     /// Everything said so far, oldest first.
     pub fn blocks(&self) -> &[Block] {
         &self.blocks

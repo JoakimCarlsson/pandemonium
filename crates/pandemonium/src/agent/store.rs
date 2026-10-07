@@ -109,6 +109,8 @@ pub struct Talk {
     overlapping: BTreeSet<String>,
     /// The filesystem turn number attached to each reader block.
     pub(crate) checkpoint_turns: BTreeMap<usize, u64>,
+    /// Retained conversation history to send with the first prompt after a context rewind.
+    context: Option<String>,
     /// Context correction to prepend after a filesystem rewind.
     pub(crate) rewind_note: Option<String>,
     /// Which session this is.
@@ -304,12 +306,29 @@ impl Talk {
 
     /// Whether an idle native whole-session fork is available.
     pub fn can_fork(&self) -> bool {
-        self.ready && !self.busy && self.conversation.can_fork()
+        self.ready && !self.busy && self.context.is_none() && self.conversation.can_fork()
     }
 
     /// Whether saving this tab cannot turn an unfinished fork into a fresh session.
     pub fn persistable(&self) -> bool {
         self.fork_source.is_none()
+    }
+
+    /// Whether conversation context can be rewound without interrupting a turn.
+    pub fn can_rewind(&self) -> bool {
+        self.ready && !self.busy
+    }
+
+    /// Retained history awaiting the first prompt in a rewound conversation.
+    pub fn rewind_context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    /// Restores retained history and the editable prompt after reopening a rewound tab.
+    pub fn restore_context(&mut self, context: String, prompt: &str) {
+        self.context = Some(context);
+        self.prompt.set(prompt);
+        self.transcript.note("Conversation context rewound. Earlier messages will accompany your next prompt; files are unchanged.");
     }
 
     /// The durable relationship of this native conversation fork.
@@ -1300,6 +1319,9 @@ impl Talk {
             if let Some(note) = self.rewind_note.take() {
                 text = format!("{note}\n{text}");
             }
+            if let Some(context) = self.context.take() {
+                text = format!("{context}{text}");
+            }
             self.busy_since = Some(Instant::now());
             self.conversation.prompt(&text, attachments);
         }
@@ -2041,6 +2063,7 @@ impl Talks {
                 overlapping: BTreeSet::new(),
                 checkpoint_turns: BTreeMap::new(),
                 rewind_note: None,
+                context: None,
                 id,
                 project,
                 session,
@@ -2101,6 +2124,66 @@ impl Talks {
             },
         );
         Some(id)
+    }
+
+    /// Replaces an idle conversation with retained context before the selected reader prompt.
+    pub fn rewind(&mut self, id: TalkId, at: usize) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        if !talk.can_rewind() {
+            return false;
+        }
+        let Some(Block::Said(Voice::Reader, prompt)) = talk.transcript.blocks().get(at) else {
+            return false;
+        };
+        let prompt = prompt.clone();
+        let context = talk.transcript.context_before(at);
+        let conversation = match configured_session(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            pm_acp::Conversation::New,
+            talk.mcp.clone(),
+            notify,
+        ) {
+            Ok(conversation) => conversation,
+            Err(error) => {
+                talk.transcript
+                    .note(format!("Could not rewind conversation context: {error}"));
+                return false;
+            }
+        };
+        talk.clear_messages();
+        talk.conversation = conversation;
+        talk.fork = None;
+        talk.fork_source = None;
+        talk.ready = false;
+        talk.remember_on_ready = true;
+        talk.mode = None;
+        talk.usage = None;
+        talk.commands.clear();
+        talk.logins.clear();
+        talk.asks.clear();
+        talk.forms.clear();
+        talk.background.clear();
+        talk.terminals.clear();
+        talk.checkpoint_turns.retain(|block, _| *block < at);
+        talk.transcript.rewind(at);
+        talk.restore_context(context, &prompt);
+        talk.attachments.clear();
+        talk.attachment_previews.clear();
+        talk.clear_selection();
+        talk.copied_replies.clear();
+        talk.expanded_details.clear();
+        talk.expanded_cards.clear();
+        talk.opened_failures.clear();
+        talk.shown_revision += 1;
+        talk.following = true;
+        true
     }
 
     /// Starts the agent of the conversation `id` names again, in a new
