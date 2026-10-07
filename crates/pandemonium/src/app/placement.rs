@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use crate::app::App;
-use crate::panes::{Item, PaneId, Role, SplitDirection};
+use crate::panes::{Item, PaneId, Role, SplitDirection, Tool};
 
 /// The panes the keyboard was last in for each role, so the next tab of a
 /// role goes where the last one was looked at.
@@ -35,20 +35,27 @@ impl App {
 
     /// The pane a tab of `role` should open in, given the one asked for.
     ///
-    /// The pane asked for stands when it serves the role. Otherwise the pane
-    /// last used for the role, then any pane holding the role, then an empty
-    /// one; and only when no pane will do is the window divided, beside the
-    /// pane with the keyboard. A tool keeps to the pane it was asked for.
+    /// Conversations join the chat launcher's group or an existing chat group.
+    /// For other roles, the pane asked for stands when it serves the role.
+    /// Otherwise the pane last used for the role, then any pane holding the
+    /// role, then an empty one; and only when no pane will do is the window
+    /// divided, beside the pane with the keyboard. A tool keeps to the pane
+    /// it was asked for.
     pub(super) fn pane_for(&mut self, wanted: PaneId, role: Role) -> PaneId {
-        if role == Role::Tool || self.serves(wanted, role) {
+        if role == Role::Agent
+            && let Some(pane) = self.tool_pane(Tool::Chat)
+        {
+            return pane;
+        }
+        if role == Role::Tool || (role != Role::Agent && self.serves(wanted, role)) {
             return wanted;
         }
         let drawn = self.panes.panes();
-        let recent = self
-            .recent
-            .get(&role)
-            .copied()
-            .filter(|pane| drawn.contains(pane) && self.serves(*pane, role));
+        let recent = self.recent.get(&role).copied().filter(|pane| {
+            drawn.contains(pane)
+                && self.serves(*pane, role)
+                && (role != Role::Agent || self.holds(*pane, role))
+        });
         let found = recent
             .or_else(|| drawn.iter().copied().find(|pane| self.holds(*pane, role)))
             .or_else(|| drawn.iter().copied().find(|pane| self.serves(*pane, role)));
