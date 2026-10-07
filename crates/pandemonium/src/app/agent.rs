@@ -114,6 +114,9 @@ impl App {
     pub(super) fn agent_command(&mut self, message: Message) -> bool {
         match message {
             Message::DiffAgentTurn(talk, turn) => self.diff_agent_turn(talk, turn),
+            Message::RewindAgentContext(talk, block) => {
+                self.agents.rewind(talk, block);
+            }
             Message::RewindAgentTurn(talk, turn) => self.ask_rewind_agent(talk, turn),
             Message::RequestRewind(scope, turn) => self.plan_rewind(scope, turn),
             Message::ConfirmRewind(scope, turn) => self.confirm_rewind(scope, turn),

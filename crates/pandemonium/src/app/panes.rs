@@ -658,6 +658,9 @@ impl App {
                         .or_else(|| talk.fork_metadata().map(|fork| fork.destination.clone()))
                         .unwrap_or_default(),
                     fork: talk.fork_metadata().cloned(),
+                    context: talk
+                        .rewind_context()
+                        .map(|context| (context.to_owned(), talk.prompt().value().to_owned())),
                     title: talk.title().unwrap_or_default().to_owned(),
                     ..SavedTab::default()
                 });
@@ -868,6 +871,9 @@ impl App {
                 };
                 if let Some(opened) = agents.get_mut(talk) {
                     opened.set_fork_metadata(tab.fork.clone());
+                    if let Some((context, prompt)) = &tab.context {
+                        opened.restore_context(context.clone(), prompt);
+                    }
                     opened.entitle(&tab.title);
                     opened.set_profile(tab.account.clone());
                 }

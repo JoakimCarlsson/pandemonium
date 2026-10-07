@@ -158,6 +158,9 @@ pub struct SavedTab {
     pub account: Option<crate::config::Profile>,
     /// What that agent called the conversation, so it can be taken up again.
     pub session: String,
+    /// Retained history and editable prompt before the first turn after a context rewind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<(String, String)>,
     /// Native whole-session fork ancestry, independent of filesystem checkpoints.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork: Option<pm_core::ConversationFork>,
