@@ -389,24 +389,15 @@ impl Renderer {
         glyphs.group(layers);
         images.group(layers);
 
-        self.quad_instances.upload(
-            &self.device,
-            &self.queue,
-            bytemuck::cast_slice(&quads.grouped),
-        );
-        self.glyph_instances.upload(
-            &self.device,
-            &self.queue,
-            bytemuck::cast_slice(&glyphs.grouped),
-        );
+        self.quad_instances
+            .upload(&self.device, &self.queue, &quads.grouped);
+        self.glyph_instances
+            .upload(&self.device, &self.queue, &glyphs.grouped);
         self.image_upload.clear();
         self.image_upload
             .extend(images.grouped.iter().map(|(instance, _)| *instance));
-        self.image_instances.upload(
-            &self.device,
-            &self.queue,
-            bytemuck::cast_slice(&self.image_upload),
-        );
+        self.image_instances
+            .upload(&self.device, &self.queue, &self.image_upload);
 
         let view = frame
             .texture
@@ -435,34 +426,34 @@ impl Renderer {
 
             pass.set_bind_group(0, &self.viewport_group, &[]);
             for layer in list.layers() {
-                if let Some(buffer) = self.quad_instances.buffer()
-                    && let Some(range) = quads.layer(layer)
-                {
+                if let Some(range) = quads.layer(layer) {
                     pass.set_pipeline(&self.quad_pipeline);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..6, range);
-                }
-                if let Some(buffer) = self.image_instances.buffer()
-                    && let Some(range) = images.layer(layer)
-                {
-                    pass.set_pipeline(&self.image_pipeline);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    for index in range {
-                        let (_, picture) = images.grouped[index as usize];
-                        let Some(group) = self.textures.group(picture) else {
-                            continue;
-                        };
-                        pass.set_bind_group(1, group, &[]);
-                        pass.draw(0..6, index..index + 1);
+                    for (buffer, local, _) in self.quad_instances.slices(range) {
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..6, local);
                     }
                 }
-                if let Some(buffer) = self.glyph_instances.buffer()
-                    && let Some(range) = glyphs.layer(layer)
-                {
+                if let Some(range) = images.layer(layer) {
+                    pass.set_pipeline(&self.image_pipeline);
+                    for (buffer, local, base) in self.image_instances.slices(range) {
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        for index in local {
+                            let (_, picture) = images.grouped[base + index as usize];
+                            let Some(group) = self.textures.group(picture) else {
+                                continue;
+                            };
+                            pass.set_bind_group(1, group, &[]);
+                            pass.draw(0..6, index..index + 1);
+                        }
+                    }
+                }
+                if let Some(range) = glyphs.layer(layer) {
                     pass.set_pipeline(&self.glyph_pipeline);
                     pass.set_bind_group(1, self.atlas.group(), &[]);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..6, range);
+                    for (buffer, local, _) in self.glyph_instances.slices(range) {
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..6, local);
+                    }
                 }
             }
         }
@@ -534,13 +525,22 @@ impl Renderer {
                     continue;
                 };
 
+                let origin = [
+                    physical.x as f32 + slot.left as f32,
+                    physical.y as f32 - slot.top as f32,
+                ];
+                if origin[0] >= clip[2]
+                    || origin[1] >= clip[3]
+                    || origin[0] + slot.width as f32 <= clip[0]
+                    || origin[1] + slot.height as f32 <= clip[1]
+                {
+                    continue;
+                }
+
                 batch.push(
                     *layer,
                     GlyphInstance {
-                        origin: [
-                            (physical.x + slot.left) as f32,
-                            (physical.y - slot.top) as f32,
-                        ],
+                        origin,
                         size: [slot.width as f32, slot.height as f32],
                         uv_origin: [slot.x as f32 / atlas_size, slot.y as f32 / atlas_size],
                         uv_size: [
@@ -626,10 +626,10 @@ impl Renderer {
     /// Converts a logical clip rectangle to the physical bounds shaders test.
     fn clip(&self, clip: Rect) -> [f32; 4] {
         [
-            clip.left() * self.scale,
-            clip.top() * self.scale,
-            clip.right() * self.scale,
-            clip.bottom() * self.scale,
+            (clip.left() * self.scale).max(0.0),
+            (clip.top() * self.scale).max(0.0),
+            (clip.right() * self.scale).min(self.config.width as f32),
+            (clip.bottom() * self.scale).min(self.config.height as f32),
         ]
     }
 }

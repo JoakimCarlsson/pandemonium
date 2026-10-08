@@ -51,6 +51,13 @@ use crate::review::store::{ChangeId, Patch, Review};
 /// looking at and enough beyond it to fill any pane.
 const DRAWN: usize = 400;
 
+/// Maximum characters shaped for one clipped diff row, with an ellipsis for the rest.
+///
+/// Diff rows have no horizontal scrolling. Keeping a generous visible prefix
+/// prevents generated files with megabyte-long lines from blocking layout.
+/// The patch retains the complete line for staging and opening in the editor.
+const LINE_PREVIEW_CHARS: usize = 4096;
+
 /// How wide the column of line numbers is drawn.
 const NUMBERS: f32 = 76.0;
 
@@ -797,11 +804,7 @@ fn compare_half(theme: &Theme, line: Option<&str>, current: bool) -> Div<Message
         .items_center()
         .overflow_hidden()
         .bg(color.alpha(theme.emphasis.change))
-        .child(
-            text(line.unwrap_or_default().to_owned())
-                .text_sm()
-                .font_mono(),
-        )
+        .child(shaded(theme, line.unwrap_or_default(), &[]))
 }
 
 /// Builds the heading of one file: its path, its counts and its controls.
@@ -1258,12 +1261,17 @@ fn marked(theme: &Theme, line: Option<&Line>) -> Div<Message> {
 /// way the editor draws one its grammar says nothing about.
 fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message> {
     let mut runs: Vec<(Option<Highlight>, String)> = Vec::new();
-    for (column, ch) in said.chars().enumerate() {
+    let mut characters = said.chars();
+    for (column, ch) in characters.by_ref().take(LINE_PREVIEW_CHARS).enumerate() {
         let highlight = shade.get(column).copied().flatten();
         match runs.last_mut() {
             Some((last, run)) if *last == highlight => run.push(ch),
             _ => runs.push((highlight, ch.to_string())),
         }
+    }
+
+    if characters.next().is_some() {
+        runs.push((None, "…".to_owned()));
     }
 
     h_flex()
