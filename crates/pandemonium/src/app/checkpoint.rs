@@ -167,7 +167,10 @@ impl CheckpointWork {
                                 (path, hunks)
                             })
                             .collect();
-                        diff = Some(TurnDiff { files, scroll: 0 });
+                        diff = Some(TurnDiff {
+                            files,
+                            ..TurnDiff::default()
+                        });
                         Ok(String::new())
                     }
                     _ => Err("The requested turns have not been checkpointed".to_owned()),
@@ -470,10 +473,7 @@ impl App {
         };
         if let Some(diff) = self.checkpointing.diffs.get_mut(&(scope, span)) {
             let total = diff.row_count(self.preferences.split_diff);
-            diff.scroll = diff
-                .scroll
-                .saturating_add_signed(rows)
-                .min(total.saturating_sub(1));
+            diff.scroll.by(rows, total);
         }
         true
     }

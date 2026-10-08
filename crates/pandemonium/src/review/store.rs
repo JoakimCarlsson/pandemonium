@@ -196,7 +196,7 @@ pub struct Review {
     /// The whole review scrolls apart from each file's own diff, so what is
     /// scrolled is named by what the pane is showing: nothing for the review
     /// itself, the file for one of its diffs.
-    scrolls: BTreeMap<Option<ChangeId>, usize>,
+    scrolls: std::cell::RefCell<BTreeMap<Option<ChangeId>, super::scroll::DiffScroll>>,
     /// How far the sidebar's list of changes is scrolled.
     list_scroll: Scrolled,
     /// When the reader last asked for the worktree to be read again, while
@@ -237,7 +237,7 @@ impl Review {
             selected: None,
             marked: BTreeSet::new(),
             gesture: None,
-            scrolls: BTreeMap::new(),
+            scrolls: std::cell::RefCell::default(),
             list_scroll: Scrolled::default(),
             refreshed: None,
             reads: 0,
@@ -976,14 +976,19 @@ impl Review {
         self.done(self.active, said);
     }
 
+    /// Returns the scrolling and row geometry shared with the displayed diff.
+    pub(super) fn diff_scroll(&self, shown: Option<ChangeId>) -> super::scroll::DiffScroll {
+        self.scrolls.borrow_mut().entry(shown).or_default().clone()
+    }
+
     /// The first row the pane showing `shown` is drawn from.
     pub fn scroll(&self, shown: Option<ChangeId>) -> usize {
-        self.scrolls.get(&shown).copied().unwrap_or_default()
+        self.diff_scroll(shown).row()
     }
 
     /// Puts the pane showing `shown` at `row`.
     pub fn scroll_to(&mut self, shown: Option<ChangeId>, row: usize) {
-        self.scrolls.insert(shown, row);
+        self.diff_scroll(shown).to(row);
     }
 
     /// Scrolls that pane by `rows`, as far as there are rows to show.
@@ -992,9 +997,7 @@ impl Review {
     /// window made it — so it is held against the rows there are and the
     /// pane clips whatever is left over.
     pub fn scroll_by(&mut self, shown: Option<ChangeId>, rows: isize, total: usize) {
-        let at = self.scroll(shown);
-        let reached = at.saturating_add_signed(rows).min(total.saturating_sub(1));
-        self.scrolls.insert(shown, reached);
+        self.diff_scroll(shown).by(rows, total);
     }
 
     /// The files `ids` names that `wanted` accepts, with the repository
