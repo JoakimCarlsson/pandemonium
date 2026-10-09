@@ -19,7 +19,7 @@
 //! reader it is waiting to be read by.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 use crate::agent::Agent;
 use crate::attachment::Attachment;
 use crate::elicitation::{self, Reply};
+use crate::launch;
 use crate::limits::Meter;
 use crate::mcp;
 use crate::process::{self, Containment};
@@ -60,9 +61,6 @@ const FAILED: i64 = -32603;
 
 /// The error a request that makes no sense is refused with.
 const INVALID: i64 = -32602;
-
-/// How much of what an agent writes on its error pipe is kept.
-const TROUBLE: usize = 8 * 1024;
 
 /// How long the agent's process group has to end before it is killed.
 const END_WITHIN: Duration = Duration::from_secs(2);
@@ -181,6 +179,8 @@ struct Owed {
 enum Outgoing {
     /// A message ready to be written as it stands.
     Message(Value),
+    /// Replaces a failed startup pipe before replaying the handshake.
+    Restart(ChildStdin),
     /// Closes the agent's input after earlier messages have been written.
     Close {
         /// Notifies the shutdown worker once the input pipe is closed.
@@ -213,7 +213,9 @@ impl Outgoing {
     fn build(self) -> Value {
         match self {
             Self::Message(message) => message,
-            Self::Close { .. } => unreachable!("a close is handled before building"),
+            Self::Restart(_) | Self::Close { .. } => {
+                unreachable!("pipe controls are handled before building")
+            }
             Self::Turn {
                 id,
                 session,
@@ -313,8 +315,6 @@ struct State {
     events: Vec<Event>,
     /// Whether anything has arrived since the window last looked.
     fresh: bool,
-    /// The tail of what the agent has written on its error pipe.
-    trouble: String,
     /// The permission requests waiting on a reader, by the ticket each was
     /// put to them under, against the identity the agent asked under.
     parked: HashMap<u64, Value>,
@@ -332,10 +332,14 @@ pub struct Session {
     agent: Agent,
     /// The worktree it is working in.
     root: PathBuf,
+    /// The tail of the agent's error pipe, including a failed recovery.
+    trouble: Arc<Mutex<String>>,
     /// The process itself, kept so that it can be ended, until it has been.
-    process: Mutex<Option<Child>>,
+    process: Arc<Mutex<Option<Child>>>,
     /// The operating system container for every process the agent starts.
-    containment: Containment,
+    containment: Arc<Mutex<Containment>>,
+    /// Keeps a recoverable startup alive until the reader resolves it.
+    starting: Arc<AtomicBool>,
     /// Where messages for the agent are handed to the writer thread.
     outbox: Sender<Outgoing>,
     /// What the agent has said and what it is owed.
@@ -521,19 +525,29 @@ impl Session {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         process::configure(&mut command);
-        let mut process = command.spawn()?;
-        let containment = match Containment::new(&process) {
-            Ok(containment) => containment,
+        let mut child = command.spawn()?;
+        let containment = match Containment::new(&child) {
+            Ok(containment) => Arc::new(Mutex::new(containment)),
             Err(error) => {
-                let _ = process.kill();
-                std::thread::spawn(move || process.wait());
+                let _ = child.kill();
+                std::thread::spawn(move || child.wait());
                 return Err(error);
             }
         };
-
-        let stdin = process.stdin.take().expect("stdin was piped");
-        let stdout = process.stdout.take().expect("stdout was piped");
-        let stderr = process.stderr.take().expect("stderr was piped");
+        let stdin = child.stdin.take().expect("stdin was piped");
+        let stdout = BufReader::new(child.stdout.take().expect("stdout was piped"));
+        let stderr = child.stderr.take().expect("stderr was piped");
+        let process = Arc::new(Mutex::new(Some(child)));
+        let trouble = Arc::new(Mutex::new(String::new()));
+        let recovery = launch::Recovery::new(
+            agent,
+            command,
+            process.clone(),
+            containment.clone(),
+            trouble.clone(),
+            stderr,
+        );
+        let starting = Arc::new(AtomicBool::new(recovery.is_some()));
         let state = Arc::new(Mutex::new(State::default()));
         let next = Arc::new(AtomicI64::new(FIRST_REQUEST));
         let (outbox, pending) = mpsc::channel();
@@ -552,7 +566,9 @@ impl Session {
         let session = Self {
             agent,
             root: root.to_path_buf(),
-            process: Mutex::new(Some(process)),
+            trouble,
+            process,
+            starting: starting.clone(),
             containment,
             outbox: outbox.clone(),
             state: state.clone(),
@@ -570,19 +586,16 @@ impl Session {
             state.quiet = opening.quiet;
             state.login_first = opening.login_first;
         }
-        session.send(json!({
-            "jsonrpc": "2.0",
-            "id": HANDSHAKE,
-            "method": "initialize",
-            "params": handshake(),
-        }));
+        session.send(initialize());
 
         let reader = Reader {
             root: root.to_path_buf(),
             state: state.clone(),
             notify,
             replies: Replies { outbox },
-            stdout: BufReader::new(stdout),
+            stdout,
+            recovery,
+            starting,
             next,
             tools: Tools::new(),
             shells: std::collections::BTreeMap::new(),
@@ -593,7 +606,6 @@ impl Session {
         };
         std::thread::spawn(move || write(stdin, &pending));
         std::thread::spawn(move || reader.run());
-        std::thread::spawn(move || watch(BufReader::new(stderr), &state));
 
         Ok(session)
     }
@@ -1058,9 +1070,9 @@ impl Session {
     /// key, a version it refuses to run under, a package that would not fetch.
     #[must_use]
     pub fn trouble(&self) -> String {
-        self.state
+        self.trouble
             .lock()
-            .map(|state| state.trouble.clone())
+            .map(|trouble| trouble.clone())
             .unwrap_or_default()
     }
 
@@ -1072,13 +1084,14 @@ impl Session {
             .unwrap_or_default()
     }
 
-    /// Whether the agent's process is still there.
+    /// Whether the agent is running or its bounded startup recovery is pending.
     pub fn is_running(&self) -> bool {
-        self.process.lock().is_ok_and(|mut process| {
-            process
-                .as_mut()
-                .is_some_and(|process| matches!(process.try_wait(), Ok(None)))
-        })
+        self.starting.load(Ordering::Acquire)
+            || self.process.lock().is_ok_and(|mut process| {
+                process
+                    .as_mut()
+                    .is_some_and(|process| matches!(process.try_wait(), Ok(None)))
+            })
     }
 
     /// One request, numbered and taken down as sent.
@@ -1107,13 +1120,19 @@ impl Drop for Session {
         let _ = self.outbox.send(Outgoing::Close { closed });
         let Some(mut process) = self
             .process
-            .get_mut()
+            .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
         else {
             return;
         };
-        let containment = std::mem::replace(&mut self.containment, Containment::empty());
+        let containment = std::mem::replace(
+            &mut *self
+                .containment
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Containment::empty(),
+        );
         process::finish(std::thread::spawn(move || {
             let _ = closing.recv_timeout(Duration::from_millis(100));
             containment.terminate();
@@ -1126,16 +1145,24 @@ impl Drop for Session {
 }
 
 /// Writes what is handed over in `pending` to the agent's `stdin`, in order,
-/// until every sender has gone or the pipe has.
-fn write(mut stdin: ChildStdin, pending: &Receiver<Outgoing>) {
+/// until every sender has gone or the session closes.
+fn write(stdin: ChildStdin, pending: &Receiver<Outgoing>) {
+    let mut stdin = Some(stdin);
     for outgoing in pending {
-        if let Outgoing::Close { closed } = outgoing {
-            drop(stdin);
-            let _ = closed.send(());
-            return;
-        }
-        if transport::write(&mut stdin, &outgoing.build()).is_err() {
-            return;
+        match outgoing {
+            Outgoing::Close { closed } => {
+                drop(stdin);
+                let _ = closed.send(());
+                return;
+            }
+            Outgoing::Restart(replacement) => stdin = Some(replacement),
+            outgoing => {
+                if let Some(pipe) = &mut stdin
+                    && transport::write(pipe, &outgoing.build()).is_err()
+                {
+                    stdin = None;
+                }
+            }
         }
     }
 }
@@ -1249,6 +1276,10 @@ struct Reader {
     replies: Replies,
     /// The pipe the agent writes on.
     stdout: BufReader<std::process::ChildStdout>,
+    /// Bounded recovery of Claude's npm fallback before any protocol message.
+    recovery: Option<launch::Recovery>,
+    /// Whether the reader is still resolving a recoverable startup.
+    starting: Arc<AtomicBool>,
     /// The identifier the next request sent from here goes under, shared
     /// with the session.
     next: Arc<AtomicI64>,
@@ -1271,9 +1302,30 @@ struct Reader {
 impl Reader {
     /// Reads until the agent stops talking, and says so when it has.
     fn run(mut self) {
-        while let Ok(Some(message)) = transport::read(&mut self.stdout) {
-            self.dispatch(&message);
+        loop {
+            let mut connected = false;
+            while let Ok(Some(message)) = transport::read(&mut self.stdout) {
+                if !connected {
+                    connected = true;
+                    if let Some(mut recovery) = self.recovery.take() {
+                        recovery.connected();
+                    }
+                    self.starting.store(false, Ordering::Release);
+                }
+                self.dispatch(&message);
+            }
+            if !connected
+                && let Some(recovery) = &mut self.recovery
+                && let Some((stdin, stdout)) = recovery.restart()
+            {
+                let _ = self.replies.outbox.send(Outgoing::Restart(stdin));
+                self.replies.send(initialize());
+                self.stdout = stdout;
+                continue;
+            }
+            break;
         }
+        self.starting.store(false, Ordering::Release);
         self.measurement.connected.store(false, Ordering::Release);
         for event in update::halt(&mut self.tools, None, Status::Disconnected) {
             self.raise(event);
@@ -1904,27 +1956,6 @@ fn raise(state: &Mutex<State>, notify: &Notify, event: Event) {
     notify();
 }
 
-/// Keeps the tail of what the agent writes on its error pipe.
-fn watch(stderr: impl BufRead, state: &Mutex<State>) {
-    for line in stderr.lines().map_while(Result::ok) {
-        let Ok(mut state) = state.lock() else {
-            return;
-        };
-        state.trouble.push_str(&line);
-        state.trouble.push('\n');
-        if state.trouble.len() > TROUBLE {
-            let over = state.trouble.len() - TROUBLE;
-            let from = state
-                .trouble
-                .char_indices()
-                .map(|(at, _)| at)
-                .find(|at| *at >= over)
-                .unwrap_or(state.trouble.len());
-            state.trouble = state.trouble.split_off(from);
-        }
-    }
-}
-
 /// The turn `prompt` comes to, as the agent is asked to take it, with the
 /// files attached to it embedded where the agent `embeds`.
 fn turn(session: &str, prompt: &Prompt, embeds: bool) -> Value {
@@ -1941,6 +1972,16 @@ fn turn(session: &str, prompt: &Prompt, embeds: bool) -> Value {
     json!({
         "sessionId": session,
         "prompt": content,
+    })
+}
+
+/// The initialization request, identical on the initial launch and its retry.
+fn initialize() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": HANDSHAKE,
+        "method": "initialize",
+        "params": handshake(),
     })
 }
 
