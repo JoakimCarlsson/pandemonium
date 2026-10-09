@@ -23,6 +23,9 @@ const SPIN_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 /// How often a running agent's activity mark advances.
 const AGENT_FRAME: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// How often an open branch picker fetches and prunes remote branches.
+pub(super) const BRANCH_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
     ///
@@ -502,17 +505,41 @@ impl App {
     }
 
     /// Asks git away from the window for every branch of the active
-    /// project's active repository, for the branch picker.
-    fn ask_branches(&self) {
+    /// project's active repository, then fetches and prunes its remote branches.
+    fn ask_branches(&mut self) {
+        self.branch_refresh_at = None;
         let Some(id) = self.open.active().map(pm_core::Project::id) else {
             return;
         };
         let Some(root) = self.repository_root(self.git_scope(id)) else {
             return;
         };
-        self.ask_git_later(Kind::Branches, move || {
-            branch_rows(id, pm_core::branches(&root))
+        self.ask_git_updates_later(Kind::Branches, move |publish| {
+            publish(branch_rows(id, pm_core::branches(&root)), false);
+            let _ = pm_core::fetch(&root);
+            publish(branch_rows(id, pm_core::branches(&root)), true);
         });
+    }
+
+    /// Fetches fresh branches when the open branch picker's refresh is due.
+    pub(super) fn refresh_branches(&mut self) {
+        if self
+            .next_branch_refresh()
+            .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            self.ask_branches();
+        }
+    }
+
+    /// The next refresh deadline while the branch picker is visible.
+    pub(super) fn next_branch_refresh(&self) -> Option<std::time::Instant> {
+        self.branch_refresh_at.filter(|_| {
+            !self.window_occluded
+                && self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.kind() == Kind::Branches)
+        })
     }
 
     /// Asks git away from the window for every configured remote of the

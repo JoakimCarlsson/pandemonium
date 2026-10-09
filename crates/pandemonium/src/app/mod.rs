@@ -416,6 +416,8 @@ pub struct App {
     picker: Option<crate::picker::Picker>,
     /// The status-bar branch control anchoring its popover.
     branch_picker_at: Option<Rect>,
+    /// When the open branch picker should next fetch and prune its remotes.
+    branch_refresh_at: Option<Instant>,
     /// The agent control anchoring its choices.
     agent_picker_at: Option<Rect>,
     /// The control whose click is being handled, for what it opens to sit against.
@@ -832,6 +834,7 @@ impl App {
             trail: Trail::default(),
             picker: None,
             branch_picker_at: None,
+            branch_refresh_at: None,
             agent_picker_at: None,
             trigger: None,
             commit_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
@@ -2814,6 +2817,7 @@ impl ApplicationHandler<Wake> for App {
         }
         self.offer_missing_servers();
         self.hear_server_failures();
+        self.refresh_branches();
         if self.settle_moving() {
             self.request_redraw();
         }
@@ -2851,6 +2855,7 @@ impl ApplicationHandler<Wake> for App {
             next_annotation,
             self.next_prediction().filter(|_| seen),
             self.next_move(),
+            self.next_branch_refresh(),
             self.next_agent_selection_scroll().filter(|_| seen),
             self.ui.as_ref().and_then(pm_ui::Ui::next_tooltip),
             self.ui
