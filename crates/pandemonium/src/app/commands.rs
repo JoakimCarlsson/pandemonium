@@ -303,6 +303,9 @@ impl App {
         if !crate::input::Input::handles(action) {
             return false;
         }
+        if action == Action::Paste && self.picker.is_none() && self.paste_prompt() {
+            return true;
+        }
         let picker = self.picker.is_some();
         let mut copied = None;
         let mut changed = false;

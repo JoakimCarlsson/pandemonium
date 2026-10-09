@@ -452,15 +452,9 @@ impl Talk {
         self.conversation.can_image()
     }
 
-    /// Adds a chosen file to the next prompt, decoding its preview away from
-    /// the window when it is a picture.
-    pub fn attach_file(&mut self, path: PathBuf) {
-        self.attach_path(path.clone(), Attachment::File(path));
-    }
-
-    /// Adds a clipboard file as image bytes when the agent accepts its format,
+    /// Adds a chosen, pasted or dropped file as image bytes when the agent accepts its format,
     /// or as a link to the original file otherwise.
-    pub fn attach_pasted_file(&mut self, path: PathBuf) {
+    pub fn attach_file(&mut self, path: PathBuf) {
         let mime_type = path
             .extension()
             .and_then(|extension| extension.to_str())
