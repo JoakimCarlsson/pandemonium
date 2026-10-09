@@ -42,6 +42,38 @@ pub const fn recipe(command: &str) -> Option<Recipe> {
             ],
         });
     }
+    if same(command, "wgsl-analyzer") {
+        return Some(Recipe::Release {
+            version: "2026-09-30",
+            builds: &[
+                Build {
+                    platform: "linux-x86_64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-x86_64-unknown-linux-gnu.gz",
+                    sha256: "4635d9d804c9609dc7639632c14d9b6cf888b21f3c95d41c1dc55a33dc76f98e",
+                },
+                Build {
+                    platform: "linux-aarch64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-aarch64-unknown-linux-gnu.gz",
+                    sha256: "e5cb5b27f4b754a945e0b4c34a75f09690edda8fe99eeaa671550afeee671b07",
+                },
+                Build {
+                    platform: "macos-aarch64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-aarch64-apple-darwin.gz",
+                    sha256: "82b3703d885a82e91dcaf950974590a0b9b9202080a60fd7cc5ad7872bad8053",
+                },
+                Build {
+                    platform: "windows-x86_64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-x86_64-pc-windows-msvc.zip",
+                    sha256: "f9b9c0621149fcf989907787daeab9212035a42af45d4511b6ec50834a7e6b05",
+                },
+                Build {
+                    platform: "windows-aarch64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-aarch64-pc-windows-msvc.zip",
+                    sha256: "eb5d5dc97329315dd6dbe63ea1093fb068f938a312a9ccaa834bf416e916d004",
+                },
+            ],
+        });
+    }
     if same(command, "taplo") {
         return Some(Recipe::Release {
             version: "0.10.0",

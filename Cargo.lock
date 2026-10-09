@@ -2436,6 +2436,7 @@ dependencies = [
  "tree-sitter-sequel",
  "tree-sitter-toml-ng",
  "tree-sitter-typescript",
+ "tree-sitter-wesl",
  "tree-sitter-yaml",
  "ureq",
  "zip",
@@ -3852,6 +3853,16 @@ name = "tree-sitter-typescript"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-wesl"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a3c7d1b29fb828379d118b16b1ef735cfad38b17dd3e8e52ac33f1adf3eee7e"
 dependencies = [
  "cc",
  "tree-sitter-language",
