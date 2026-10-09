@@ -138,6 +138,10 @@ enum Tone {
     Quiet,
     /// The name of a tool it called.
     Tool,
+    /// The mark of a tool call that is still running.
+    Running,
+    /// The mark of a tool call that finished.
+    Finished,
     /// What it called that tool on.
     Argument,
     /// A group of tool calls or thoughts the reader can open.
@@ -269,6 +273,9 @@ pub fn agent_pane(
                         .pl(SIDE)
                         .pr(SCROLLBAR_GUTTER / STEP)
                         .py(INSET)
+                        .when(drawn.is_empty() && !talk.is_busy(), |column| {
+                            column.child(empty_chat(theme, talk))
+                        })
                         .children(drawn),
                 )
                 .w_full()
@@ -280,6 +287,9 @@ pub fn agent_pane(
         ))
         .when(!talk.logins().is_empty(), |pane| {
             pane.child(login(theme, talk))
+        })
+        .when(talk.is_busy() && talk.asks().is_empty(), |pane| {
+            pane.child(now_strip(theme, talk))
         })
         .children(
             talk.asks()
@@ -297,6 +307,36 @@ pub fn agent_pane(
                 above(composer(theme, talk, typing, solid), commands(theme, talk)).into_element()
             }
         })
+}
+
+/// What an untouched conversation says: who it is with, where, and what to
+/// type to begin.
+fn empty_chat(theme: &Theme, talk: &Talk) -> Div<Message> {
+    v_flex()
+        .w_full()
+        .gap(1)
+        .py(4)
+        .items_center()
+        .child(
+            text(format!(
+                "Ask {} to work in {}",
+                talk.agent().name,
+                name_of(talk.root())
+            ))
+            .text_base()
+            .font_semibold()
+            .color(theme.colors.text),
+        )
+        .child(
+            text("Changes land in this worktree, and you review them under Changes.")
+                .text_sm()
+                .color(theme.colors.text_muted),
+        )
+        .child(
+            text("Type / for commands, or attach files with +.")
+                .text_sm()
+                .color(theme.colors.text_subtle),
+        )
 }
 
 /// Lists work the agent left running after its latest turn.
@@ -2055,7 +2095,8 @@ fn called(talk: &Talk, call: &ToolCall) -> Row {
         match call.status {
             Status::Failed => Tone::Failed,
             Status::Cancelled | Status::Disconnected => Tone::Quiet,
-            _ => Tone::Tool,
+            Status::Done => Tone::Finished,
+            Status::Pending | Status::Running => Tone::Running,
         },
     );
     if call.is_running() {
@@ -2721,6 +2762,11 @@ fn header(theme: &Theme, talk: &Talk) -> Div<Message> {
             text(talk.agent().name.to_owned())
                 .text_xs()
                 .color(theme.colors.text_muted),
+        )
+        .child(
+            text(standing_label(talk.standing()))
+                .text_xs()
+                .color(standing_color(theme, talk.standing())),
         )
         .when_some(talk.organisation(), |bar, id| {
             bar.child(
@@ -3966,6 +4012,8 @@ fn tone(theme: &Theme, tone: Tone) -> Rgba {
         Tone::TableRule => theme.colors.text_subtle,
         Tone::Quiet => theme.colors.text_subtle,
         Tone::Tool => theme.colors.text_muted,
+        Tone::Running => theme.colors.warning,
+        Tone::Finished => theme.colors.success,
         Tone::Argument => theme.colors.text_subtle,
         Tone::DetailGroup(_) => theme.colors.text_subtle,
         Tone::Failed => theme.colors.danger,
@@ -3985,6 +4033,57 @@ pub fn standing_color(theme: &Theme, standing: Standing) -> Rgba {
         Standing::Done => theme.colors.link,
         Standing::Idle => theme.colors.text_subtle,
     }
+}
+
+/// What a session's mark says in words, beside the mark.
+fn standing_label(standing: Standing) -> &'static str {
+    match standing {
+        Standing::Stopped => "stopped",
+        Standing::Waiting => "needs you",
+        Standing::Working => "working",
+        Standing::Done => "done",
+        Standing::Idle => "idle",
+    }
+}
+
+/// What the agent is doing this moment, named by its latest unfinished tool
+/// call, or by the turn itself when none is.
+fn now(talk: &Talk) -> String {
+    if talk.is_sending() {
+        return "Sending prompt".to_owned();
+    }
+    talk.transcript()
+        .blocks()
+        .iter()
+        .rev()
+        .find_map(|block| match block {
+            Block::Ran(call) => active_call(talk, call),
+            _ => None,
+        })
+        .map_or_else(|| "Working".to_owned(), |call| activity(call, talk.root()))
+}
+
+/// The line above the composer that says what the agent is doing right now
+/// and for how long the turn has run.
+fn now_strip(theme: &Theme, talk: &Talk) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .px(1.5)
+        .py(0.5)
+        .gap(1)
+        .items_center()
+        .bg(theme.colors.surface)
+        .child(text(sending_frame()).text_xs().color(theme.colors.warning))
+        .child(text(now(talk)).text_xs().color(theme.colors.text_muted))
+        .child(h_flex().flex_1())
+        .child(
+            text(format!(
+                "{}s",
+                talk.working_for().unwrap_or_default().as_secs()
+            ))
+            .text_xs()
+            .color(theme.colors.text_subtle),
+        )
 }
 
 /// The heading above the current turn’s response: the spinner and a

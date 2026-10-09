@@ -1298,6 +1298,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::File(file) => {
                 let FileEntry {
@@ -1312,6 +1313,7 @@ impl App {
                     dirty,
                     preview,
                     pinned: false,
+                    standing: None,
                 })
             }
             Item::Image(image) => Some(TabEntry {
@@ -1321,6 +1323,7 @@ impl App {
                 dirty: false,
                 preview: self.images.is_preview(image),
                 pinned: false,
+                standing: None,
             }),
             Item::Rendered(file) => Some(TabEntry {
                 item,
@@ -1329,6 +1332,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Outline(scope) => Some(TabEntry {
                 item,
@@ -1344,6 +1348,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Excerpts(scope) => Some(TabEntry {
                 item,
@@ -1355,6 +1360,7 @@ impl App {
                 dirty: self.excerpts_dirty(scope),
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Search(scope) => Some(TabEntry {
                 item,
@@ -1363,6 +1369,7 @@ impl App {
                 dirty: self.is_dirty(Item::Search(scope)),
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Turns(_, span) => Some(TabEntry {
                 item,
@@ -1371,6 +1378,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Review(scope) => Some(TabEntry {
                 item,
@@ -1382,6 +1390,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Agent(_, session) => {
                 let talk = self.agents.get(session)?;
@@ -1394,6 +1403,7 @@ impl App {
                     dirty: false,
                     preview: false,
                     pinned: false,
+                    standing: Some(talk.standing()),
                 })
             }
             Item::Change(project, change) => {
@@ -1410,6 +1420,7 @@ impl App {
                     dirty: false,
                     preview: review.is_preview(change),
                     pinned: false,
+                    standing: None,
                 })
             }
         }

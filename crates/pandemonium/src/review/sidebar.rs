@@ -686,14 +686,29 @@ fn commit_button(theme: &Theme, index: usize, primary: &Primary) -> Div<Message>
     )
 }
 
-/// Builds the line saying what git refused to do, until it is asked again.
+/// Builds the banner saying what git refused to do, until it is asked again.
 fn trouble(theme: &Theme, said: &str) -> Div<Message> {
     v_flex().w_full().px(1.5).pb(1).child(
-        text(said.to_owned())
-            .text_xs()
-            .font_light()
-            .color(theme.colors.danger),
+        v_flex()
+            .w_full()
+            .px(1)
+            .py(0.75)
+            .rounded(theme.radius.md)
+            .bg(theme.colors.danger.alpha(0.12))
+            .child(text(refusal(said)).text_xs().color(theme.colors.danger)),
     )
+}
+
+/// What git said without its `fatal:` or `error:` prefix, opening with a capital.
+fn refusal(said: &str) -> String {
+    let said = said
+        .trim_start_matches("fatal: ")
+        .trim_start_matches("error: ");
+    let mut letters = said.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
 }
 
 /// Builds the heading above one group of changes, and the box that stages it.
