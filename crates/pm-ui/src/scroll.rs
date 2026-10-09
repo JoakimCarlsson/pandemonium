@@ -18,7 +18,7 @@ use pm_gfx::{Point, Rect, Size};
 use crate::element::{Element, IntoElement, LayoutContext, PaintContext};
 use crate::resize::ResizeEvent;
 use crate::style::{Style, Styled};
-use crate::widgets::{OnScroll, paint_scrollbar};
+use crate::widgets::{OnScroll, SCROLLBAR_GUTTER, paint_scrollbar};
 use std::sync::Arc;
 
 /// The scroll offset of one area, and the extents it is clamped against.
@@ -121,6 +121,8 @@ pub struct ScrollArea<M> {
     child: Box<dyn Element<M>>,
     /// Optional visible thumb and its drag handler.
     on_scroll: Option<OnScroll<M>>,
+    /// Whether overflowing content leaves room for the visible scrollbar.
+    scrollbar_gutter: bool,
     /// Whether placed text in this area can be selected.
     selectable: bool,
 }
@@ -132,6 +134,7 @@ pub fn scroll_area<M>(scroll: Scrolled, child: impl IntoElement<M>) -> ScrollAre
         style: Style::default(),
         child: child.into_element(),
         on_scroll: None,
+        scrollbar_gutter: false,
         selectable: false,
     }
 }
@@ -146,6 +149,12 @@ impl<M> ScrollArea<M> {
     /// Shows a scrollbar when content overflows, reporting thumb drags to the caller.
     pub fn with_scrollbar(mut self, on_scroll: impl Fn(ResizeEvent, f32) -> M + 'static) -> Self {
         self.on_scroll = Some(Arc::new(on_scroll));
+        self
+    }
+
+    /// Reserves room beside the content only while its scrollbar is visible.
+    pub fn reserve_scrollbar_gutter(mut self) -> Self {
+        self.scrollbar_gutter = true;
         self
     }
 }
@@ -170,7 +179,13 @@ impl<M: 'static> Element<M> for ScrollArea<M> {
 
     /// Paints the child at the scrolled offset, clipped to the area.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let content = self.child.measure(bounds.size, &mut cx.layout);
+        let mut available = bounds.size;
+        let mut content = self.child.measure(available, &mut cx.layout);
+        if self.scrollbar_gutter && self.on_scroll.is_some() && content.height > bounds.size.height
+        {
+            available.width = (available.width - SCROLLBAR_GUTTER).max(0.0);
+            content = self.child.measure(available, &mut cx.layout);
+        }
         let mut scroll = self.scroll.get();
         scroll.set_extents(bounds.size, content.height);
         self.scroll.set(scroll);
@@ -196,7 +211,7 @@ impl<M: 'static> Element<M> for ScrollArea<M> {
             Rect::from_xywh(
                 bounds.left(),
                 bounds.top() + scroll.origin().y,
-                bounds.size.width,
+                available.width,
                 content.height.max(bounds.size.height),
             ),
             cx,

@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use pm_core::{Changed, FileStatus, Head, Hunk, Line};
 use pm_text::{Buffer, Highlight};
-use pm_ui::{Bounds, Scrolled};
+use pm_ui::{Axis, Bounds, ResizeEvent, ResizePhase, Scrolled};
 
 use crate::input::Input;
 use crate::review::comment::Comments;
@@ -199,6 +199,8 @@ pub struct Review {
     scrolls: std::cell::RefCell<BTreeMap<Option<ChangeId>, super::scroll::DiffScroll>>,
     /// How far the sidebar's list of changes is scrolled.
     list_scroll: Scrolled,
+    /// The list's scroll offset when its current thumb drag began.
+    list_scroll_origin: Option<f32>,
     /// When the reader last asked for the worktree to be read again, while
     /// the refresh control is still turning for it.
     refreshed: Option<Instant>,
@@ -239,6 +241,7 @@ impl Review {
             gesture: None,
             scrolls: std::cell::RefCell::default(),
             list_scroll: Scrolled::default(),
+            list_scroll_origin: None,
             refreshed: None,
             reads: 0,
             comments: Comments::default(),
@@ -503,6 +506,21 @@ impl Review {
         let mut moved = self.list_scroll.get();
         moved.by(delta);
         self.list_scroll.set(moved);
+    }
+
+    /// Moves the changes list from its initial offset during a thumb drag.
+    pub fn drag_list_scroll(&mut self, event: ResizeEvent, step: f32) {
+        let mut scroll = self.list_scroll.get();
+        let base = match event.phase {
+            ResizePhase::Started => scroll.offset(),
+            _ => self.list_scroll_origin.unwrap_or(scroll.offset()),
+        };
+        self.list_scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        scroll.by(scroll.offset() - base - event.delta(Axis::Vertical) * step);
+        self.list_scroll.set(scroll);
     }
 
     /// Scrolls the selected history filter within the commits it has read.

@@ -1419,6 +1419,13 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::ScrollChanges(event, step) = message {
+            if let Some(review) = self.review_mut() {
+                review.drag_list_scroll(event, step);
+            }
+            self.request_redraw();
+            return;
+        }
         if message == Message::ToggleChangesSection {
             self.changes_section_open = !self.changes_section_open;
             self.store();

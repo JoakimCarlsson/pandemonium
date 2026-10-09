@@ -306,6 +306,8 @@ pub enum Message {
     ToggleHistoryGraph,
     /// Expand or collapse the Source Control changes section.
     ToggleChangesSection,
+    /// Drag the Source Control changes list's scroll thumb.
+    ScrollChanges(ResizeEvent, f32),
     /// Show the available Source Control commit actions.
     ShowCommitMenu,
     /// Show the Source Control action menu.
