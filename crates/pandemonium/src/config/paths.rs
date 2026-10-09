@@ -142,3 +142,8 @@ pub fn servers() -> Option<PathBuf> {
 pub fn logs() -> Option<PathBuf> {
     home().map(|home| home.join(LOGS_DIRECTORY))
 }
+
+/// The directory pasted images are kept in while agents need their file links.
+pub fn clipboard() -> Option<PathBuf> {
+    home().map(|home| home.join("clipboard"))
+}

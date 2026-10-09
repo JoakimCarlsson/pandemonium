@@ -523,15 +523,22 @@ impl App {
 
     /// Pastes clipboard files, image data or text into the focused agent prompt.
     fn paste_agent_prompt(&mut self, event: &KeyEvent) -> bool {
-        let Some(Writing::Prompt(session)) = self.writing else {
-            return false;
-        };
-        if !self.modifiers.super_key() && !self.modifiers.control_key() {
+        if (!self.modifiers.super_key() && !self.modifiers.control_key())
+            || self.modifiers.alt_key()
+        {
             return false;
         }
         if !matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("v")) {
             return false;
         }
+        self.paste_prompt()
+    }
+
+    /// Reads clipboard attachments or text for the focused prompt away from the window.
+    pub(super) fn paste_prompt(&mut self) -> bool {
+        let Some(Writing::Prompt(session)) = self.writing else {
+            return false;
+        };
         let Some(talk) = self.agents.get(session) else {
             return false;
         };
@@ -573,7 +580,7 @@ impl App {
             match pasting {
                 Pasting::Files(files) => {
                     for path in files {
-                        talk.attach_pasted_file(path);
+                        talk.attach_file(path);
                     }
                 }
                 Pasting::Image(pasted) => talk.attach_pasted(pasted),

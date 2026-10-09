@@ -157,7 +157,7 @@ pub fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
 
 /// Keeps a pasted PNG readable by an agent that accepts file links.
 pub fn save_pasted_image(png: &[u8]) -> Option<std::path::PathBuf> {
-    let directory = std::env::temp_dir().join("pandemonium");
+    let directory = crate::config::clipboard()?;
     std::fs::create_dir_all(&directory).ok()?;
     let sequence = NEXT_PASTED_IMAGE.fetch_add(1, Ordering::Relaxed);
     let path = directory.join(format!("pasted-{}-{sequence}.png", std::process::id()));
