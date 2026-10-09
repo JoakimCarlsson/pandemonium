@@ -16,6 +16,7 @@ mod pane;
 mod reading;
 mod remark;
 mod repository;
+mod scroll;
 mod shade;
 mod sidebar;
 mod store;

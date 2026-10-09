@@ -12,13 +12,8 @@ mod desktop;
 mod editor;
 mod emblem;
 mod excerpts;
-mod field;
 mod health;
 mod image;
-#[allow(
-    dead_code,
-    reason = "a box of text is offered whole — one line or many — before every box in the window has been moved onto it"
-)]
 mod input;
 #[allow(
     dead_code,

@@ -9,10 +9,11 @@ use std::path::Path;
 
 use pm_core::{FileStatus, FileTree, Row};
 use pm_ui::{
-    Bounds, Div, IconName, IconSize, Scrolled, Styled, Theme, field, h_flex, icon, icon_button,
-    measured, scroll_area, text, v_flex,
+    Bounds, Div, IconName, IconSize, Scrolled, Styled, Theme, h_flex, icon, icon_button, measured,
+    scroll_area, text, v_flex,
 };
 
+use crate::input::input_view;
 use crate::message::Message;
 use crate::review::{Review, status_color};
 use crate::tree::{Clipboard, Edit, EditKind, Selection};
@@ -200,14 +201,18 @@ fn edit_lines(
         .child(v_flex().w(1))
         .child(measured(
             listing.field.clone(),
-            field(edit.field().value(), edit.field().caret(), listing.caret)
-                .selection(edit.field().selection())
-                .flex_1()
-                .h_px(theme.size.row - 2.0)
-                .px(1)
-                .border_1(border)
-                .bg(theme.colors.background)
-                .on_press(Message::PlaceTreeEdit),
+            input_view(
+                theme,
+                edit.field(),
+                true,
+                listing.caret,
+                1.0,
+                Message::WriteTreeEdit,
+                Message::ShowInputMenu,
+            )
+            .flex_1()
+            .h_px(theme.size.row - 2.0)
+            .border_1(border),
         ))
         .child(v_flex().w(1));
 

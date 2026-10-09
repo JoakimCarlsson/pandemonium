@@ -1419,6 +1419,13 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::ScrollChanges(event, step) = message {
+            if let Some(review) = self.review_mut() {
+                review.drag_list_scroll(event, step);
+            }
+            self.request_redraw();
+            return;
+        }
         if message == Message::ToggleChangesSection {
             self.changes_section_open = !self.changes_section_open;
             self.store();
@@ -1566,10 +1573,8 @@ impl App {
             self.open_editor_menu(pane);
             return;
         }
-        if let Message::PlacePicker(caret) = message {
-            if let Some(picker) = self.picker.as_mut() {
-                picker.edit(|field| field.place(caret));
-            }
+        if let Message::WritePicker(phase, anchor, head) = message {
+            self.point_focused_input(phase, anchor, head);
             self.request_redraw();
             return;
         }
@@ -1598,22 +1603,20 @@ impl App {
             self.focus_pane(pane);
             return self.act(action);
         }
-        if let Message::FocusSearch(pane, field, caret) = message {
+        if let Message::WriteSearch(pane, field, phase, anchor, head) = message {
             self.focus_pane(pane);
-            self.focus_search(field, caret);
+            self.focus_search(field);
+            self.point_focused_input(phase, anchor, head);
             self.request_redraw();
             return;
         }
-        if let Message::FocusProjectSearch(pane, field, caret) = message {
+        if let Message::WriteProjectSearch(pane, field, phase, anchor, head) = message {
             self.focus_pane(pane);
             if let Some(Item::Search(scope)) = self.active_tab()
-                && let Some(search) = self.searches.get_mut(&scope)
+                && self.searches.contains_key(&scope)
             {
-                match field {
-                    editor::SearchField::Query => search.query.place(caret),
-                    editor::SearchField::Replacement => search.replacement.place(caret),
-                }
                 self.project_search_field = Some(field);
+                self.point_focused_input(phase, anchor, head);
             }
             self.request_redraw();
             return;
@@ -2429,23 +2432,7 @@ impl App {
         head: Position,
     ) {
         self.write_in(writing);
-        let pressed = phase == ResizePhase::Started;
-        let still = anchor == head;
-        if pressed {
-            self.text_extends = self.extends_text();
-        }
-        if still && !pressed {
-            return;
-        }
-        let extend = self.text_extends;
-        let presses = match (still, extend) {
-            (true, false) => self.text_clicks.press(anchor),
-            _ => {
-                self.text_clicks.clear();
-                0
-            }
-        };
-        self.with_written(|input| input.point(phase, anchor, head, presses, extend));
+        self.point_focused_input(phase, anchor, head);
     }
 
     /// Writes the window's preferences, projects and layout down.

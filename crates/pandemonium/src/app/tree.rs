@@ -12,11 +12,12 @@ use std::path::{Path, PathBuf};
 use pm_core::{EntryId, Scope, ops};
 use pm_gfx::Point;
 use pm_ui::{ResizeEvent, ResizePhase, Scrolled};
+use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
 use crate::app::App;
 use crate::desktop;
-use crate::field::Typed;
+use crate::input::Typed;
 use crate::message::Message;
 use crate::panes::{Item, PaneId, SplitDirection, Tool};
 use crate::prompt::{Answer, Prompt};
@@ -59,11 +60,9 @@ impl App {
             Message::NewTreeFile => self.start_tree_edit(EditKind::NewFile),
             Message::NewTreeFolder => self.start_tree_edit(EditKind::NewFolder),
             Message::RenameTreeEntry => self.start_tree_edit(EditKind::Rename),
-            Message::PlaceTreeEdit(caret) => {
+            Message::WriteTreeEdit(phase, anchor, head) => {
                 self.tree_focused = true;
-                if let Some(edit) = self.tree_edit.as_mut() {
-                    edit.field_mut().place(caret);
-                }
+                self.point_focused_input(phase, anchor, head);
             }
             Message::TrashTreeEntries => self.ask_to_remove(true),
             Message::DeleteTreeEntries => self.ask_to_remove(false),
@@ -964,8 +963,9 @@ impl App {
     ///
     /// Enter takes the name and Escape gives it up; every other key is the
     /// field's, apart from the window's own chords.
-    pub(super) fn send_to_tree_edit(&mut self, key: &Key<&str>) -> bool {
-        if self.tree_edit.is_none() || self.is_window_chord_over_text(key) {
+    pub(super) fn send_to_tree_edit(&mut self, event: &KeyEvent) -> bool {
+        let key = event.logical_key.as_ref();
+        if self.tree_edit.is_none() || self.is_window_chord_over_text(&key) {
             return false;
         }
         let modifiers = self.modifiers;
@@ -982,9 +982,9 @@ impl App {
             Key::Named(NamedKey::Escape) => {
                 self.cancel_tree_edit();
             }
-            key => {
+            _ => {
                 if let Some(edit) = self.tree_edit.as_mut()
-                    && edit.field_mut().press(key, modifiers) == Typed::Ignored
+                    && edit.field_mut().press(event, modifiers) == Typed::Ignored
                 {
                     return !self.primary_held();
                 }

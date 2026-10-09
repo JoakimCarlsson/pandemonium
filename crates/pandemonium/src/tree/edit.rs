@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use pm_core::ops;
 
-use crate::field::Field;
+use crate::input::Input;
 
 /// What the name being typed is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,7 +30,7 @@ pub struct Edit {
     /// The directory a new entry goes in, or the entry being renamed.
     at: PathBuf,
     /// What has been typed.
-    field: Field,
+    field: Input,
 }
 
 impl Edit {
@@ -39,7 +39,7 @@ impl Edit {
         Self {
             kind,
             at: directory.to_path_buf(),
-            field: Field::default(),
+            field: Input::default(),
         }
     }
 
@@ -56,7 +56,7 @@ impl Edit {
             Some(0) | None => name.chars().count(),
             Some(at) => name[..at].chars().count(),
         };
-        let mut field = Field::filled(name);
+        let mut field = Input::filled(name);
         field.place(stem);
         Self {
             kind: EditKind::Rename,
@@ -76,12 +76,12 @@ impl Edit {
     }
 
     /// What has been typed.
-    pub fn field(&self) -> &Field {
+    pub fn field(&self) -> &Input {
         &self.field
     }
 
     /// What has been typed, to be typed into.
-    pub fn field_mut(&mut self) -> &mut Field {
+    pub fn field_mut(&mut self) -> &mut Input {
         &mut self.field
     }
 
@@ -105,7 +105,8 @@ impl Edit {
 
     /// What is wrong with the name typed so far, if anything is.
     pub fn problem(&self) -> Option<String> {
-        let name = self.field.value().trim();
+        let value = self.field.value();
+        let name = value.trim();
         if name.is_empty() {
             return Some("A file or folder name must be provided".to_owned());
         }

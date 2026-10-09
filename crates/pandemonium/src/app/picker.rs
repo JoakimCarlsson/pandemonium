@@ -128,7 +128,7 @@ impl App {
         }
         if picker.kind() == Kind::WorkspaceSymbols {
             let query = Kind::WorkspaceSymbols
-                .query(picker.field().value())
+                .query(&picker.field().value())
                 .to_owned();
             return self.ask_workspace_symbols(query);
         }

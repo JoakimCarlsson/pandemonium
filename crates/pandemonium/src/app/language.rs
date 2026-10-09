@@ -746,7 +746,7 @@ impl App {
             return;
         };
         let query = Kind::WorkspaceSymbols
-            .query(picker.field().value())
+            .query(&picker.field().value())
             .to_owned();
         self.workspace_files = picker.rows().cloned().collect();
         self.workspace_symbols = (None, Vec::new());

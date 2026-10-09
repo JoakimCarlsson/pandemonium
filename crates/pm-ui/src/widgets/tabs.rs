@@ -43,6 +43,9 @@ pub struct Tab<M> {
     pub dirty: bool,
     /// Whether it holds something that is only being previewed.
     pub preview: bool,
+    /// The colour of the mark that says how what it holds is doing, when it
+    /// holds something that does anything.
+    pub signal: Option<Rgba>,
     /// Whether it is kept in the bar whatever else the bar is showing.
     pub pinned: bool,
     /// What pinning it, or letting it go again, sends.
@@ -71,6 +74,7 @@ pub fn tab<M>(icon: IconName, name: impl Into<String>, select: M, close: M, menu
         active: false,
         dirty: false,
         preview: false,
+        signal: None,
         pinned: false,
         pin: None,
         select,
@@ -91,6 +95,12 @@ impl<M> Tab<M> {
     /// Returns this tab marked as holding changes that are not on disk.
     pub fn dirty(mut self, dirty: bool) -> Self {
         self.dirty = dirty;
+        self
+    }
+
+    /// Returns this tab marked, in `signal`, with how what it holds is doing.
+    pub fn signal(mut self, signal: Option<Rgba>) -> Self {
+        self.signal = signal;
         self
     }
 
@@ -201,6 +211,9 @@ fn pane_tab<M: Clone + 'static>(theme: &Theme, tab: Tab<M>, focused: bool) -> Di
                 .size(IconSize::Medium)
                 .color(theme.colors.text_subtle),
         )
+        .when_some(tab.signal, |row, signal| {
+            row.child(unsaved_dot(theme, signal))
+        })
         .child(name)
         .when(tab.dirty, |row| row.child(unsaved_dot(theme, color)))
         .when_some(tab.pin, |row, pin| {
