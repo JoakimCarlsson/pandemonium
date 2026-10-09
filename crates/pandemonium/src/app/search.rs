@@ -9,14 +9,14 @@ use std::sync::{Arc, Mutex};
 
 use pm_core::Scope;
 use pm_text::{Finder, Position, Query};
-use pm_ui::{Div, Element, Field as UiField, Styled, Theme, field, h_flex, text, v_flex};
+use pm_ui::{Div, Element, Styled, Theme, h_flex, text, v_flex};
 
 use crate::app::listing::{SEARCH_LIMIT, Search as ListingSearch, SearchBatch, fingerprint};
 use crate::app::{App, Wake};
 use crate::editor::FileId;
 use crate::editor::SearchField;
 use crate::excerpts::{Excerpted, Excerpts, OpenExcerpts, excerpts_view};
-use crate::field::Field;
+use crate::input::{Input, hinted_input_view};
 use crate::keymap::Action;
 use crate::message::{Message, ProjectSearchOption};
 use crate::panes::{Item, PaneId};
@@ -28,9 +28,9 @@ const ROW_HEIGHT: f32 = 30.0;
 /// State of a worktree's search pane.
 pub(super) struct ProjectSearch {
     /// Text being looked for.
-    pub(super) query: Field,
+    pub(super) query: Input,
     /// Text to put in its place.
-    pub(super) replacement: Field,
+    pub(super) replacement: Input,
     /// Matching options.
     options: Query,
     /// Invalid regular expression error.
@@ -55,8 +55,8 @@ impl ProjectSearch {
     /// Creates an empty search pane.
     pub(super) fn new() -> Self {
         Self {
-            query: Field::default(),
-            replacement: Field::default(),
+            query: Input::default(),
+            replacement: Input::default(),
             options: Query::default(),
             error: None,
             excerpts: Rc::new(RefCell::new(Excerpts::default())),
@@ -164,7 +164,7 @@ impl App {
         if let Some(text) = seeded.or(selected)
             && let Some(search) = self.searches.get_mut(&scope)
         {
-            search.query.set(text);
+            search.query.set(&text);
         }
         let item = Item::Search(scope);
         let holder = self.panes.panes().into_iter().find(|pane| {
@@ -598,26 +598,26 @@ fn search_field(
     theme: &Theme,
     pane: PaneId,
     which: SearchField,
-    value: &Field,
+    value: &Input,
     focused: bool,
     placeholder: &str,
-) -> UiField<Message> {
-    field(value.value(), value.caret(), focused)
-        .selection(value.selection())
-        .placeholder(placeholder)
-        .font_mono()
-        .flex_1()
-        .h_px(ROW_HEIGHT - 6.0)
-        .px(1)
-        .py(0.5)
-        .rounded(theme.radius.md)
-        .bg(theme.colors.background)
-        .border_1(if focused {
-            theme.colors.border_focused
-        } else {
-            theme.colors.border
-        })
-        .on_press(move |caret| Message::FocusProjectSearch(pane, which, caret))
+) -> Div<Message> {
+    hinted_input_view(
+        theme,
+        value,
+        focused,
+        focused,
+        placeholder,
+        move |phase, anchor, head| Message::WriteProjectSearch(pane, which, phase, anchor, head),
+        Message::ShowInputMenu,
+    )
+    .flex_1()
+    .h_px(ROW_HEIGHT - 6.0)
+    .border_1(if focused {
+        theme.colors.border_focused
+    } else {
+        theme.colors.border
+    })
 }
 
 /// Draws one matching option switch.

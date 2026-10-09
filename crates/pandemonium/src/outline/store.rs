@@ -6,7 +6,7 @@ use pm_core::Scope;
 use pm_text::{Position, Symbol};
 
 use crate::editor::FileId;
-use crate::field::Field;
+use crate::input::Input;
 use crate::panes::PaneId;
 
 /// All open worktree outlines and their per-file state.
@@ -64,7 +64,7 @@ pub struct Outline {
     /// Where those symbols came from.
     pub source: String,
     /// The text the outline is narrowed by.
-    pub filter: Field,
+    pub filter: Input,
     /// The selected symbol's index in `symbols`.
     pub selected: Option<usize>,
     /// Name paths of folded symbols.

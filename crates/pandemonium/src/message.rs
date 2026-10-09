@@ -358,8 +358,8 @@ pub enum Message {
     OutlineSelect(Scope, usize),
     /// Expand or collapse one symbol in the worktree's outline.
     OutlineToggle(Scope, usize),
-    /// Give the outline filter its caret at this character.
-    OutlineFilterFocus(Scope, usize),
+    /// Select text in the outline filter and give it the keyboard.
+    WriteOutlineFilter(Scope, ResizePhase, Position, Position),
     /// Select every line a drag down this pane's gutter reaches.
     SelectLines(PaneId, Position, Position),
     /// Open the menu of things that can be done to the text in this pane.
@@ -390,10 +390,10 @@ pub enum Message {
     WriteDebugConsole(ResizePhase, Position, Position),
     /// Give this pane the keyboard, then carry out this command in it.
     PaneAction(PaneId, Action),
-    /// Send later keystrokes to this field of this pane's search bar.
-    FocusSearch(PaneId, SearchField, usize),
-    /// Focuses one field of a worktree search pane.
-    FocusProjectSearch(PaneId, SearchField, usize),
+    /// Select text in a field of this pane's search bar.
+    WriteSearch(PaneId, SearchField, ResizePhase, Position, Position),
+    /// Select text in a field of a worktree search pane.
+    WriteProjectSearch(PaneId, SearchField, ResizePhase, Position, Position),
     /// Flips a matching option in a worktree search pane.
     ToggleProjectSearch(PaneId, ProjectSearchOption),
     /// Confirms replacing all matches across multiple files.
@@ -408,8 +408,8 @@ pub enum Message {
     ToggleSearchReplace(PaneId),
     /// Close this pane's search bar.
     CloseSearch(PaneId),
-    /// Put the caret this many characters into the picker's field.
-    PlacePicker(usize),
+    /// Select text in the picker's input.
+    WritePicker(ResizePhase, Position, Position),
     /// Take the row the picker is showing in this place.
     ChoosePicker(usize),
     /// Take the completion the list is showing in this place.
@@ -444,8 +444,8 @@ pub enum Message {
     NewTreeFolder,
     /// Start typing a new name for the row the tree's keyboard is on.
     RenameTreeEntry,
-    /// Put the caret of the name being typed into the tree this far in.
-    PlaceTreeEdit(usize),
+    /// Select text in the name being typed into the tree.
+    WriteTreeEdit(ResizePhase, Position, Position),
     /// Ask whether what the tree is acting on should go to the trash.
     TrashTreeEntries,
     /// Ask whether what the tree is acting on should come off the disk.

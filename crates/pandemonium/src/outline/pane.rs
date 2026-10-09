@@ -1,8 +1,9 @@
 //! The outline pane's filter, source label, and indented symbol rows.
 
 use pm_core::Scope;
-use pm_ui::{Div, IconName, IconSize, Styled, Theme, field, h_flex, icon, text, v_flex};
+use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, text, v_flex};
 
+use crate::input::hinted_input_view;
 use crate::message::Message;
 use crate::outline::Outline;
 
@@ -88,13 +89,18 @@ pub fn outline_pane(
                 .gap(0.5)
                 .bg(theme.colors.surface)
                 .child(
-                    field(outline.filter.value(), outline.filter.caret(), focused)
-                        .selection(outline.filter.selection())
-                        .placeholder("Filter symbols")
-                        .w_full()
-                        .h_px(28.0)
-                        .bg(theme.colors.background)
-                        .on_press(move |caret| Message::OutlineFilterFocus(scope, caret)),
+                    hinted_input_view(
+                        theme,
+                        &outline.filter,
+                        focused,
+                        focused,
+                        "Filter symbols",
+                        move |phase, anchor, head| {
+                            Message::WriteOutlineFilter(scope, phase, anchor, head)
+                        },
+                        Message::ShowInputMenu,
+                    )
+                    .h_px(28.0),
                 )
                 .child(text(source).text_xs().color(theme.colors.text_muted)),
         )

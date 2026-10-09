@@ -14,7 +14,7 @@ use pm_text::Position;
 
 use crate::agent::TalkId;
 use crate::config::FontSlot;
-use crate::field::Field;
+use crate::input::Input;
 use crate::keymap::Action;
 use crate::terminal::ShellId;
 
@@ -365,7 +365,7 @@ pub struct Picker {
     /// What it is picking.
     kind: Kind,
     /// What has been typed into it.
-    field: Field,
+    field: Input,
     /// Everything it was given to offer.
     rows: Vec<Row>,
     /// Which of them the query leaves, best match first.
@@ -386,7 +386,7 @@ impl Picker {
     pub fn new(kind: Kind, rows: Vec<Row>, seeded: &str) -> Self {
         let mut picker = Self {
             kind,
-            field: Field::filled(seeded),
+            field: Input::filled(seeded),
             rows,
             matched: Vec::new(),
             candidates: Vec::new(),
@@ -403,18 +403,18 @@ impl Picker {
     }
 
     /// What has been typed into it.
-    pub fn field(&self) -> &Field {
+    pub fn field(&self) -> &Input {
         &self.field
     }
 
     /// What has been typed into it, to be typed into.
-    pub fn field_mut(&mut self) -> &mut Field {
+    pub fn field_mut(&mut self) -> &mut Input {
         &mut self.field
     }
 
     /// Puts the field through `edit` and narrows the rows to what is left,
     /// leaving the selection where it is when the text did not change.
-    pub fn edit(&mut self, edit: impl FnOnce(&mut Field)) {
+    pub fn edit(&mut self, edit: impl FnOnce(&mut Input)) {
         let before = self.field.value().to_owned();
         edit(&mut self.field);
         if self.field.value() != before {
@@ -535,7 +535,8 @@ impl Picker {
 
     /// Narrows the rows to the ones the query matches, best match first.
     pub fn filter(&mut self) {
-        let query = self.kind.query(self.field.value());
+        let value = self.field.value();
+        let query = self.kind.query(&value);
         let limit = self.limit();
         if self.kind.is_prompt() || self.kind.is_queried() || query.is_empty() {
             self.narrowed_by = None;

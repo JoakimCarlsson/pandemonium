@@ -482,23 +482,24 @@ impl App {
     /// The picker first, then a name being typed into the tree. The search
     /// bar lives in the open document, so it is reached through
     /// [`Self::edit_focused_field`].
-    pub(super) fn focused_field_mut(&mut self) -> Option<&mut crate::field::Field> {
+    pub(super) fn focused_field_mut(&mut self) -> Option<&mut crate::input::Input> {
         if let Some(picker) = self.picker.as_mut() {
             return Some(picker.field_mut());
         }
         self.tree_edit.as_mut().map(|edit| edit.field_mut())
     }
 
-    /// Puts `edit` through the single-line field that has the keyboard, if
-    /// one does.
+    /// Puts `edit` through the shared input that has the keyboard, if one does.
     ///
-    /// The picker first, then a name being typed into the tree, then the
-    /// search bar's query or replacement. This is the one place that says
-    /// which field has the keyboard.
+    /// The picker comes first, followed by a composing input, a tree rename,
+    /// search fields and the outline filter. All editing uses this seam.
     pub(super) fn edit_focused_field(
         &mut self,
-        edit: impl FnOnce(&mut crate::field::Field),
+        edit: impl FnOnce(&mut crate::input::Input),
     ) -> bool {
+        if self.picker.is_none() && self.writing.is_some() {
+            return self.with_written(edit).is_some();
+        }
         if let Some(field) = self.focused_field_mut() {
             edit(field);
             return true;
@@ -526,7 +527,37 @@ impl App {
                 .search_with(|search, buffer| search.edit_field(edit, buffer));
             return true;
         }
+        if let Some(Item::Outline(scope)) = self.active_tab()
+            && let Some(file) = self.outlines.followed(scope)
+        {
+            let state = self.outlines.get_mut(file);
+            edit(&mut state.filter);
+            state.scroll = 0;
+            return true;
+        }
         false
+    }
+
+    /// Routes pointer selection through the shared input with click counting and Shift extension.
+    pub(super) fn point_focused_input(
+        &mut self,
+        phase: ResizePhase,
+        anchor: pm_text::Position,
+        head: pm_text::Position,
+    ) {
+        if phase == ResizePhase::Started {
+            self.text_extends = self.extends_text();
+        }
+        let extend = self.text_extends;
+        let presses = if anchor == head && !extend && phase == ResizePhase::Started {
+            self.text_clicks.press(anchor)
+        } else {
+            if anchor != head || extend {
+                self.text_clicks.clear();
+            }
+            0
+        };
+        self.edit_focused_field(|input| input.point(phase, anchor, head, presses, extend));
     }
 
     /// The buffer being typed into that is not a pane's file, if there is one.
@@ -535,6 +566,36 @@ impl App {
     /// prompt is a buffer too, and a command that edits text means whichever
     /// of them has the keyboard, not the file behind it.
     pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
+        if let Some(picker) = self.picker.as_ref() {
+            return Some(picker.field().text());
+        }
+        if self.writing.is_none() {
+            if let Some(edit) = self.tree_edit.as_ref() {
+                return Some(edit.field().text());
+            }
+            if let Some(Item::Search(scope)) = self.active_tab()
+                && let Some(which) = self.project_search_field
+                && let Some(search) = self.searches.get(&scope)
+            {
+                return Some(match which {
+                    crate::editor::SearchField::Query => search.query.text(),
+                    crate::editor::SearchField::Replacement => search.replacement.text(),
+                });
+            }
+            if self.search_focused {
+                let file = self.active_file()?;
+                let file = file.borrow();
+                return Some(match file.search().field() {
+                    crate::editor::SearchField::Query => file.search().query().text(),
+                    crate::editor::SearchField::Replacement => file.search().replacement().text(),
+                });
+            }
+            if let Some(Item::Outline(scope)) = self.active_tab()
+                && let Some(file) = self.outlines.followed(scope)
+            {
+                return Some(self.outlines.get(file)?.filter.text());
+            }
+        }
         match self.writing? {
             crate::app::Writing::Commit => Some(self.review()?.message()?.text()),
             crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),

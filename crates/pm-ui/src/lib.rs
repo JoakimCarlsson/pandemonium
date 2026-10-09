@@ -55,10 +55,10 @@ pub use theme::{
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{
-    Button, ButtonVariant, Field, MenuItem, NotificationControl, SCROLLBAR_GUTTER, Scrollbar,
-    Switch, Tab, ThemePreview, ToggleState, button, checkbox, field, icon_badge, icon_button, kbd,
-    menu, menu_entry, menu_separator, menu_submenu, notification_control, rule, scrollbar, section,
-    switch, switch_field, tab, tab_bar, theme_gallery, theme_preview, tinted_icon_button,
-    toggle_grid, toggle_row, turning_icon_button, view_tab,
+    Button, ButtonVariant, MenuItem, NotificationControl, SCROLLBAR_GUTTER, Scrollbar, Switch, Tab,
+    ThemePreview, ToggleState, button, checkbox, icon_badge, icon_button, kbd, menu, menu_entry,
+    menu_separator, menu_submenu, notification_control, rule, scrollbar, section, switch,
+    switch_field, tab, tab_bar, theme_gallery, theme_preview, tinted_icon_button, toggle_grid,
+    toggle_row, turning_icon_button, view_tab,
 };
 pub use zoom::{MAX_ZOOM, Zoom, ZoomArea, Zoomed, zoom_area};

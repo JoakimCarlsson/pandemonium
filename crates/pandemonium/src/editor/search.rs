@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use pm_text::{Buffer, Finder, Position, Query};
 
-use crate::field::Field;
+use crate::input::Input;
 
 /// Which of the search bar's two fields the keyboard is going to.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -25,9 +25,9 @@ pub enum SearchField {
 #[derive(Default)]
 pub struct Search {
     /// The text being looked for.
-    query: Field,
+    query: Input,
     /// The text it is replaced with.
-    replacement: Field,
+    replacement: Input,
     /// Whether an upper-case letter in the query has to match one in the text.
     case_sensitive: bool,
     /// Whether a match has to be a whole word.
@@ -73,22 +73,13 @@ impl Search {
     }
 
     /// The field holding what is being looked for.
-    pub fn query(&self) -> &Field {
+    pub fn query(&self) -> &Input {
         &self.query
     }
 
     /// The field holding what it is replaced with.
-    pub fn replacement(&self) -> &Field {
+    pub fn replacement(&self) -> &Input {
         &self.replacement
-    }
-
-    /// Puts the caret `caret` characters into `field`.
-    pub fn place(&mut self, field: SearchField, caret: usize) {
-        self.focus(field);
-        match field {
-            SearchField::Query => self.query.place(caret),
-            SearchField::Replacement => self.replacement.place(caret),
-        }
     }
 
     /// Whether an upper-case letter in the query has to match one in the text.
@@ -147,7 +138,7 @@ impl Search {
         self.replacing = replacing || self.replacing;
         self.field = SearchField::Query;
         if let Some(seeded) = seeded.filter(|text| !text.is_empty() && !text.contains('\n')) {
-            self.query.set(seeded);
+            self.query.set(&seeded);
         }
         self.refresh(buffer);
     }
@@ -160,7 +151,7 @@ impl Search {
     }
 
     /// Puts whatever the keyboard is aimed at through `edit`.
-    pub fn edit_field(&mut self, edit: impl FnOnce(&mut Field), buffer: &Buffer) {
+    pub fn edit_field(&mut self, edit: impl FnOnce(&mut Input), buffer: &Buffer) {
         match self.field {
             SearchField::Query => {
                 edit(&mut self.query);

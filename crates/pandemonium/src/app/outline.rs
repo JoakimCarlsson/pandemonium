@@ -38,11 +38,9 @@ impl App {
                     self.outlines.get_mut(file).toggle(index);
                 }
             }
-            Message::OutlineFilterFocus(scope, caret) => {
+            Message::WriteOutlineFilter(scope, phase, anchor, head) => {
                 self.focus_outline(scope);
-                if let Some(file) = self.outlines.followed(scope) {
-                    self.outlines.get_mut(file).filter.place(caret);
-                }
+                self.point_focused_input(phase, anchor, head);
             }
             _ => return false,
         }
@@ -113,11 +111,11 @@ impl App {
                     self.jump_to_outline(scope, index);
                 }
             }
-            key => {
+            _ => {
                 self.outlines
                     .get_mut(file)
                     .filter
-                    .press(&key, self.modifiers);
+                    .press(event, self.modifiers);
                 let state = self.outlines.get_mut(file);
                 if !state
                     .visible()
