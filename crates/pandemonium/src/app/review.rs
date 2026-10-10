@@ -27,6 +27,13 @@ use crate::review::{
     ChangeId, Delivery, Group, Remarking, RepositoryAction, Review, Work, hunk_anchor, line_at,
 };
 
+/// The most changed files one review opens documents over at once.
+///
+/// Each one is opened in every server of its language and asked for its
+/// semantic tokens, so a worktree whose untracked output briefly lists
+/// thousands of files must not open them all.
+const REVIEW_OPENED_LIMIT: usize = 32;
+
 impl App {
     /// The review of the project the window is pointed at.
     pub(super) fn review(&self) -> Option<&Review> {
@@ -81,14 +88,16 @@ impl App {
             .collect()
     }
 
-    /// The changed files of `scope`'s review that are on disk to be opened.
+    /// The changed files of `scope`'s review that are on disk to be opened:
+    /// the first [`REVIEW_OPENED_LIMIT`] of those whose lines are showing.
     fn reviewed_paths(&self, scope: Scope) -> Vec<PathBuf> {
         self.reviews.get(&scope).map_or_else(Vec::new, |review| {
             review
                 .changed()
                 .iter()
                 .map(|changed| changed.path.clone())
-                .filter(|path| path.is_file())
+                .filter(|path| !review.is_collapsed(path) && path.is_file())
+                .take(REVIEW_OPENED_LIMIT)
                 .collect()
         })
     }

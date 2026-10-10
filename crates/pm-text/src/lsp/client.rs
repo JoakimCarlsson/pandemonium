@@ -103,6 +103,8 @@ struct State {
     dead: bool,
     /// Whether the handshake has been answered.
     ready: bool,
+    /// Why the server turned the handshake down, when it did.
+    refused: Option<String>,
     /// Messages held back until it has been, with only the latest text of
     /// each file among them.
     queued: Vec<Outgoing>,
@@ -469,11 +471,10 @@ impl Client {
     /// what is asked before the handshake is answered waits for it, and a
     /// server that turns out not to answer refuses it then.
     pub fn offers(&self, request: &Request, path: &Path) -> bool {
-        self.state.lock().ok().is_none_or(|state| {
-            !state.dead
-                && !state.unsupported.contains(request.capability())
-                && request.is_offered(&state.capabilities, Some(state.document(path)))
-        })
+        self.state
+            .lock()
+            .ok()
+            .is_none_or(|state| answers(&state, request, path))
     }
 
     /// Hands the server the settings `options`, a JSON object, when they are
@@ -664,6 +665,11 @@ impl Client {
         let Ok(mut state) = self.state.lock() else {
             return Asked(id);
         };
+        if !answers(&state, &request, path) {
+            state.answers.insert(id, Answer::Refused);
+            state.fresh = true;
+            return Asked(id);
+        }
         let diagnostics = match request {
             Request::CodeActions => state
                 .pushed
@@ -734,8 +740,14 @@ impl Client {
         };
         let outstanding = state.asked.remove(&asked.0).is_some();
         state.answers.remove(&asked.0);
-        if outstanding {
-            post(&mut state, &self.wire, Outgoing::Message(cancel(asked.0)));
+        if !outstanding {
+            return;
+        }
+        match state.ready {
+            true => post(&mut state, &self.wire, Outgoing::Message(cancel(asked.0))),
+            false => state
+                .queued
+                .retain(|held| asked_under(held) != Some(asked.0)),
         }
     }
 
@@ -894,6 +906,14 @@ impl Client {
         self.log.last_stderr()
     }
 
+    /// Why the server turned the handshake down, when it did.
+    ///
+    /// Such a server is not restarted: it would turn the next one down for
+    /// the same reason.
+    pub fn refusal(&self) -> Option<String> {
+        self.state.lock().ok()?.refused.clone()
+    }
+
     /// Whether this server has stopped answering.
     pub fn is_dead(&self) -> bool {
         self.state.lock().is_ok_and(|state| state.dead) && self.log.stderr_finished()
@@ -964,12 +984,48 @@ fn reap(mut process: Child) {
 /// A question asked before the handshake was answered was taken to be
 /// answerable, and is held back until the server has said whether it is.
 fn unoffered(state: &State, outgoing: &Outgoing) -> Option<i64> {
+    let id = asked_under(outgoing)?;
+    let (request, path) = state.asked.get(&id)?;
+    (!request.is_offered(&state.capabilities, Some(state.document(path)))).then_some(id)
+}
+
+/// The id of the question `outgoing` asks, when it asks one.
+fn asked_under(outgoing: &Outgoing) -> Option<i64> {
     let Outgoing::Message(message) = outgoing else {
         return None;
     };
-    let id = message["id"].as_i64()?;
-    let (request, path) = state.asked.get(&id)?;
-    (!request.is_offered(&state.capabilities, Some(state.document(path)))).then_some(id)
+    message.get("method")?;
+    message["id"].as_i64()
+}
+
+/// Whether the server, as far as `state` knows it, answers `request` about
+/// the file at `path`.
+fn answers(state: &State, request: &Request, path: &Path) -> bool {
+    !state.dead
+        && !state.unsupported.contains(request.capability())
+        && request.is_offered(&state.capabilities, Some(state.document(path)))
+}
+
+/// Takes the server to be gone: nothing is sent to it any more, what it
+/// was told goes, and every question still waiting on it is refused.
+fn abandon(state: &mut State) {
+    if !state.capabilities.is_known() {
+        state
+            .capabilities
+            .state(lsp_types::ServerCapabilities::default());
+    }
+    state.dead = true;
+    state.queued.clear();
+    state.pushed.clear();
+    state.pulled.clear();
+    state.pulling.clear();
+    state.workspace_edits.clear();
+    state.works.clear();
+    let unanswered = state.asked.drain().map(|(id, _)| id).collect::<Vec<_>>();
+    for id in unanswered {
+        state.answers.insert(id, Answer::Refused);
+    }
+    state.fresh = true;
 }
 
 /// The notification calling off the question asked under `id`.
@@ -1092,27 +1148,14 @@ impl Reader {
                 self.dispatch(message);
             }
         }
-        self.log.write("── the server stopped talking ──");
         let Ok(mut state) = self.state.lock() else {
             return;
         };
-        if !state.capabilities.is_known() {
-            state
-                .capabilities
-                .state(lsp_types::ServerCapabilities::default());
-        }
-        state.dead = true;
-        state.queued.clear();
-        state.pushed.clear();
-        state.pulled.clear();
-        state.pulling.clear();
-        state.workspace_edits.clear();
-        state.works.clear();
-        let unanswered = state.asked.drain().map(|(id, _)| id).collect::<Vec<_>>();
-        for id in unanswered {
-            state.answers.insert(id, Answer::Refused);
-        }
-        state.fresh = true;
+        self.log.write(match state.dead {
+            true => "── the server exited ──",
+            false => "── the server stopped talking ──",
+        });
+        abandon(&mut state);
         drop(state);
         (self.notify)();
     }
@@ -1367,18 +1410,11 @@ impl Reader {
     ///
     /// They are handed over under the state's lock, so a message the window
     /// sends the moment the handshake is marked answered queues behind them.
-    /// A server that turned the handshake down is taken to offer nothing,
-    /// and says why in its log.
+    /// A server that turned the handshake down is told nothing more.
     fn ready(&self, outcome: Result<Value, rpc::Failure>) {
         let result = match outcome {
             Ok(result) => rpc::result::<Initialize>(result),
-            Err(failure) => {
-                self.log.write(&format!(
-                    "the server turned the handshake down: {} ({})",
-                    failure.message, failure.code
-                ));
-                None
-            }
+            Err(failure) => return self.refused(&failure),
         };
         let InitializeResult { capabilities, .. } = result.unwrap_or_default();
         let Ok(mut state) = self.state.lock() else {
@@ -1413,6 +1449,25 @@ impl Reader {
             }
         }
         pull_all(&mut state, &self.wire);
+    }
+
+    /// Gives up on a server that turned the handshake down, and says why in
+    /// its log.
+    ///
+    /// Nothing held back for it is sent, and it is not told the handshake is
+    /// done: what it was asked is refused, and the window is woken to end it.
+    fn refused(&self, failure: &rpc::Failure) {
+        self.log.write(&format!(
+            "the server turned the handshake down: {} ({})",
+            failure.message, failure.code
+        ));
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        state.refused = Some(failure.message.clone());
+        abandon(&mut state);
+        drop(state);
+        (self.notify)();
     }
 
     /// Takes down one answer: to a question the window asked, or to the

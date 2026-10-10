@@ -2164,8 +2164,8 @@ impl App {
                         }
                         false => ignore_if_not_exists,
                     };
-                    self.close_tabs_of_on(host, &path);
                     self.tell_servers_removed_on(host, std::slice::from_ref(&path));
+                    self.close_tabs_of_on(host, &path);
                 }
             }
         }

@@ -2149,6 +2149,10 @@ impl App {
                         if let Some(review) = self.review_mut() {
                             review.toggle(index);
                         }
+                        if let Some(scope) = self.scope() {
+                            self.open_reviewed_files_of(scope);
+                            self.repaint_reviews();
+                        }
                     }
                 }
             }
