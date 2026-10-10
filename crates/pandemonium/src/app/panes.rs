@@ -361,6 +361,9 @@ impl App {
     /// quietly: the reader is asked which of the two things they meant, and
     /// the file stays open until they say.
     pub(super) fn close_item(&mut self, pane: PaneId, item: Item) {
+        if let Some(file) = item.file() {
+            self.sync_notebook(file);
+        }
         if let Some(file) = item.file().filter(|file| self.editor.is_dirty(*file)) {
             return self.open_menu(crate::workspace::MenuTarget::Unsaved(pane, file));
         }
@@ -470,9 +473,15 @@ impl App {
     pub(super) fn edit_active(&mut self, edit: impl FnOnce(&mut pm_text::Buffer)) {
         if let Some(typed) = self.typed_into() {
             typed.borrow_mut().edit(edit);
+            if let Some(crate::app::Writing::Notebook(file, _)) = self.writing {
+                self.sync_notebook(file);
+            }
             return;
         }
-        if let Some(file) = self.active_file_id() {
+        if let Some(file) = self
+            .active_file_id()
+            .filter(|file| !self.notebook_visible(*file))
+        {
             self.editor.edit(file, edit);
         }
     }
@@ -536,6 +545,9 @@ impl App {
     /// of them has the keyboard, not the file behind it.
     pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
         match self.writing? {
+            crate::app::Writing::Notebook(file, cell) => {
+                Some(self.notebooks.open.get(&file)?.inputs.get(&cell)?.text())
+            }
             crate::app::Writing::Commit => Some(self.review()?.message()?.text()),
             crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
             crate::app::Writing::Console(scope) => {
@@ -988,7 +1000,7 @@ impl App {
         for search in self.searches.values_mut() {
             search.held.retain(|file| self.editor.is_dirty(*file));
         }
-        let rendered = held
+        let mut rendered = held
             .iter()
             .copied()
             .filter_map(Item::rendered)
@@ -1021,12 +1033,19 @@ impl App {
                 .flat_map(|search| search.held.iter().copied()),
         );
         self.images.retain(&images);
+        rendered.extend(
+            files
+                .iter()
+                .copied()
+                .filter(|file| self.notebooks.open.contains_key(file)),
+        );
         self.renders.retain(&rendered);
         let sessions = held
             .iter()
             .copied()
             .filter_map(Item::session)
             .collect::<BTreeSet<_>>();
+        self.notebooks.retain(&files);
         self.editor.retain(&files);
         self.outlines.retain(|file| files.contains(&file));
         self.agents.retain(&sessions);
@@ -1520,6 +1539,31 @@ impl App {
         match item {
             Some(Item::Tool(tool) | Item::WorktreeTool(_, tool)) => {
                 Content::Built(Box::new(self.tool_content(theme, tool, width)))
+            }
+            Some(Item::File(file)) if self.notebook_visible(file) => {
+                let entry = &self.notebooks.open[&file];
+                let focused = match self.writing {
+                    Some(crate::app::Writing::Notebook(held, cell))
+                        if held == file && self.panes.focus() == pane =>
+                    {
+                        Some(cell)
+                    }
+                    _ => None,
+                };
+                Content::Built(Box::new(crate::notebook::notebook_pane(
+                    theme,
+                    pane,
+                    file,
+                    entry,
+                    &self.notebooks,
+                    &self.renders,
+                    &self.editor.path(file).unwrap_or_default(),
+                    self.window
+                        .as_ref()
+                        .map_or(1.0, |window| window.scale_factor() as f32),
+                    focused,
+                    self.caret_solid(),
+                )))
             }
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),

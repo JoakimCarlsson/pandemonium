@@ -31,6 +31,7 @@ mod layouts;
 mod listing;
 mod mcp;
 mod modal;
+mod notebook;
 mod notice;
 mod operations;
 mod orchestration;
@@ -107,6 +108,8 @@ type InstalledServers = Arc<Mutex<Vec<(&'static str, Result<(), String>)>>>;
 /// can both be true, and there is no such state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Writing {
+    /// The source input of one stable notebook cell.
+    Notebook(editor::FileId, pm_core::notebook::CellId),
     /// The commit message of the active project's review.
     Commit,
     /// The prompt of one agent session.
@@ -167,6 +170,8 @@ pub enum Wake {
     Arrival,
     /// A caller-bound editor MCP invocation is waiting.
     Orchestration,
+    /// A notebook kernel has returned discovery or execution events.
+    Notebook,
     /// The MCP registry has answered a search.
     Registry,
 }
@@ -370,6 +375,8 @@ pub struct App {
     images: crate::image::Images,
     /// What the markdown the panes are rendering keeps between frames.
     renders: crate::markdown::Renders,
+    /// Notebook inputs, output images and worktree-scoped kernel bridges.
+    notebooks: crate::notebook::Notebooks,
     /// The file followed and symbols shown by each worktree's outline.
     outlines: crate::outline::Store,
     /// Each worktree's changes as excerpts, for the panes editing them.
@@ -809,6 +816,7 @@ impl App {
             editor: Files::default(),
             images: crate::image::Images::default(),
             renders: crate::markdown::Renders::default(),
+            notebooks: crate::notebook::Notebooks::default(),
             outlines: crate::outline::Store::default(),
             excerpts: BTreeMap::new(),
             searches: BTreeMap::new(),
@@ -956,6 +964,7 @@ impl App {
             Some(Writing::Prompt(_)) => return Some("prompt"),
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
+            Some(Writing::Notebook(..)) => return Some("field"),
             Some(Writing::Comment(_)) => return Some("comment"),
             Some(Writing::McpSearch | Writing::AgentSearch) => {
                 return Some("search");
@@ -982,9 +991,13 @@ impl App {
 
     /// The file keystrokes are going to, if the pane is focused.
     pub(super) fn focused_file(&self) -> Option<editor::OpenFile> {
-        (self.editor_focused && !self.settings_open)
-            .then(|| self.active_file())
-            .flatten()
+        (self.editor_focused
+            && !self.settings_open
+            && !self
+                .active_file_id()
+                .is_some_and(|file| self.notebook_visible(file)))
+        .then(|| self.active_file())
+        .flatten()
     }
 
     /// Places the cursor where a press landed, or selects to where it reached.
@@ -1390,6 +1403,9 @@ impl App {
             return;
         }
         if self.tree_command(message) {
+            return;
+        }
+        if self.notebook_command(message) {
             return;
         }
         if self.diagram_command(message) {
@@ -1807,6 +1823,7 @@ impl App {
                         .chain(session.roots())
                         .map(|root| root.to_path_buf())
                 }));
+                self.notebooks.forget(|scope| scope.project() == id);
                 self.editor.close_project(id, &roots);
                 self.images.close_project(id);
             }
@@ -2371,6 +2388,9 @@ impl App {
     /// The box of text that has the keyboard, to write in.
     pub(super) fn written_in(&mut self) -> Option<&mut crate::input::Input> {
         match self.writing? {
+            Writing::Notebook(file, cell) => {
+                self.notebooks.open.get_mut(&file)?.inputs.get_mut(&cell)
+            }
             Writing::Commit => self.review_mut()?.message_mut(),
             Writing::Prompt(session) => self
                 .agents
@@ -2405,7 +2425,12 @@ impl App {
         if let Some(Writing::Comment(scope)) = self.writing {
             return self.reviews.get(&scope)?.comments().write(write);
         }
-        self.written_in().map(write)
+        let writing = self.writing;
+        let result = self.written_in().map(write);
+        if let Some(Writing::Notebook(file, _)) = writing {
+            self.sync_notebook(file);
+        }
+        result
     }
 
     /// Gives the keyboard to `writing`, taking it from whatever had it.
@@ -2686,6 +2711,7 @@ impl App {
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
         self.sync_layout();
+        self.sync_notebooks();
         self.refresh_health_diagnostics();
         self.see_shown_agents();
         self.follow_agents();
@@ -2985,6 +3011,7 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Picture => self.request_redraw(),
+            Wake::Notebook => self.take_notebook_events(),
             Wake::Shifted => {
                 if self.take_shifted() {
                     self.request_redraw();

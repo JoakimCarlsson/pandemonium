@@ -13,5 +13,5 @@ mod pane;
 mod store;
 
 pub use html::render_html;
-pub use pane::rendered_pane;
+pub use pane::{markdown_content, rendered_pane};
 pub use store::{DiagramZoom, Renders, is_markdown};

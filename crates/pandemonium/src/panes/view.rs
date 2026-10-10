@@ -204,6 +204,10 @@ fn pane_view(
         Content::File(file) => Some(file.clone()),
         _ => None,
     };
+    let notebook_json = showing
+        .as_ref()
+        .filter(|file| crate::notebook::Notebooks::is_notebook(file.borrow().buffer().path()))
+        .and_then(|_| active.and_then(Item::file));
     let conflict_file = active.and_then(Item::file).filter(|_| contents.conflicted);
     let excerpted = match &contents.content {
         Content::Excerpts(excerpts, remarking) => Some((excerpts.clone(), *remarking)),
@@ -233,6 +237,15 @@ fn pane_view(
                     focused,
                 ),
             ))
+        })
+        .when_some(notebook_json, |view, file| {
+            view.child(
+                pm_ui::button(
+                    "Notebook View",
+                    Message::Notebook(file, crate::notebook::Action::Json),
+                )
+                .ghost(),
+            )
         })
         .when_some(
             contents.crumbs.filter(|_| showing.is_some()),

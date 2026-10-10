@@ -474,6 +474,12 @@ impl App {
     /// when the answers land. Only the first step is taken here, or the
     /// writing would ask again and never settle.
     fn save_or_format(&mut self) {
+        if self
+            .active_file_id()
+            .is_some_and(|file| self.notebook_visible(file))
+        {
+            return self.save_active();
+        }
         let served = self
             .active_file()
             .is_some_and(|document| document.borrow().is_served());
@@ -503,6 +509,7 @@ impl App {
 
     /// Writes the file the focused pane is showing to disk.
     pub(super) fn save_active(&mut self) {
+        self.sync_notebooks();
         let Some(file) = self.active_file_id() else {
             return;
         };
@@ -516,6 +523,7 @@ impl App {
 
     /// Writes every changed file to disk, each into its own worktree.
     fn save_all(&mut self) {
+        self.sync_notebooks();
         let roots = self
             .scopes()
             .into_iter()

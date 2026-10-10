@@ -37,6 +37,19 @@ pub enum ProjectSearchOption {
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+    /// Applies an explicit notebook toolbar or cell operation.
+    Notebook(FileId, crate::notebook::Action),
+    /// Selects source text in a notebook cell.
+    PointNotebook(
+        PaneId,
+        FileId,
+        pm_core::notebook::CellId,
+        ResizePhase,
+        Position,
+        Position,
+    ),
+    /// Scrolls a notebook cell input using its text rail.
+    ScrollNotebookCell(FileId, pm_core::notebook::CellId, ResizeEvent, f32),
     /// Opens the changes made during one reader prompt.
     DiffAgentTurn(TalkId, u64),
     /// Rewinds conversation context before a reader message and restores its prompt.
