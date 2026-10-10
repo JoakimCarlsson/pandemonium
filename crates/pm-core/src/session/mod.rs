@@ -26,7 +26,7 @@ pub use delegation::Delegation;
 pub use placement::slug;
 pub use store::{Cutting, Found, Sessions, StartError, Started};
 
-use std::path::{Path, PathBuf};
+use pm_host::Location;
 
 use crate::git::{Summary, WorkAtRisk};
 use crate::project::ProjectId;
@@ -40,6 +40,11 @@ use crate::project::ProjectId;
 pub struct SessionId(u64);
 
 impl SessionId {
+    /// The worktree identity within this running editor window.
+    pub fn number(self) -> u64 {
+        self.0
+    }
+
     /// The id following this one, for the store handing them out.
     fn next(self) -> Self {
         Self(self.0 + 1)
@@ -63,7 +68,7 @@ pub struct Session {
     /// What the reader called it, which is what a row says.
     name: String,
     /// The folder the agent works in: the one worktree, or the folder of them.
-    root: PathBuf,
+    root: Location,
     /// The worktree cut of each repository, the outermost first.
     cuts: Vec<Cut>,
     /// The local port this session serves on, where one was free.
@@ -76,9 +81,9 @@ pub struct Session {
 #[derive(Clone, Debug)]
 struct Cut {
     /// The checkout it was cut from, which is where git is run to end it.
-    origin: PathBuf,
+    origin: Location,
     /// The worktree itself.
-    root: PathBuf,
+    root: Location,
     /// The commit it was cut from, shortened.
     base: String,
 }
@@ -105,13 +110,13 @@ impl Session {
     }
 
     /// The folder the agent works in.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &Location {
         &self.root
     }
 
     /// The root of every worktree cut for this session.
-    pub fn roots(&self) -> impl Iterator<Item = &Path> {
-        self.cuts.iter().map(|cut| cut.root.as_path())
+    pub fn roots(&self) -> impl Iterator<Item = &Location> {
+        self.cuts.iter().map(|cut| &cut.root)
     }
 
     /// The commit it was cut from, or the first of them for a session cut

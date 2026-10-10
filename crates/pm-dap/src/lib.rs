@@ -21,7 +21,7 @@ mod state;
 mod wire;
 
 pub use adapter::{ADAPTERS, Adapter, Connect};
-pub use attach::{Process, processes};
+pub use attach::{Process, processes, processes_on};
 pub use scenario::{Request, Scenario, scenarios};
 pub use session::{Notify, Session};
 pub use state::{

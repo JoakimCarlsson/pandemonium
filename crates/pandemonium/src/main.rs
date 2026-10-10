@@ -7,6 +7,7 @@ mod app;
 mod arrival;
 mod build_info;
 mod config;
+mod control;
 mod debug;
 mod desktop;
 mod editor;
@@ -52,6 +53,10 @@ use app::{App, Wake};
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--version") {
         println!("{}", build_info::description());
+        return;
+    }
+    if std::env::args().nth(1).as_deref() == Some("control") {
+        control::client(std::env::args().skip(2).collect());
         return;
     }
     shell_path::adopt();

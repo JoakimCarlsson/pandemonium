@@ -153,7 +153,7 @@ impl App {
             .map(|scenario| {
                 let (detail, enabled) = match scenario.adapter {
                     None => (format!("no debug adapter for `{}`", scenario.kind), false),
-                    Some(adapter) if !adapter.installed() => {
+                    Some(adapter) if adapter.program_on(&root.host).is_none() => {
                         (format!("{} is not installed", adapter.name), false)
                     }
                     Some(adapter) => {
@@ -177,7 +177,10 @@ impl App {
 
     /// Lists processes the editor can attach to.
     pub(super) fn process_rows(&self) -> Vec<Row> {
-        pm_dap::processes()
+        let Some(root) = self.scope().and_then(|scope| self.root_of(scope)) else {
+            return Vec::new();
+        };
+        pm_dap::processes_on(&root.host)
             .into_iter()
             .map(|process| Row {
                 section: None,
@@ -197,7 +200,10 @@ impl App {
         let Some(scope) = self.scope() else {
             return Vec::new();
         };
-        let python = pm_dap::processes()
+        let Some(root) = self.root_of(scope) else {
+            return Vec::new();
+        };
+        let python = pm_dap::processes_on(&root.host)
             .iter()
             .find(|process| process.pid == pid)
             .is_some_and(|process| process.name.starts_with("python"));
@@ -206,7 +212,7 @@ impl App {
             .into_iter()
             .filter_map(|index| {
                 let adapter = pm_dap::ADAPTERS[index];
-                adapter.installed().then(|| Row {
+                adapter.program_on(&root.host).is_some().then(|| Row {
                     section: None,
                     label: adapter.name.to_owned(),
                     detail: format!("Attach to {pid}"),

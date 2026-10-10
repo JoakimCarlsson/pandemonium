@@ -58,7 +58,7 @@ impl App {
         self.open.activate(project);
         self.session_bases = Vec::new();
         if let Some([only]) = self.open.get(project).map(pm_core::Project::repositories) {
-            let root = only.root().to_path_buf();
+            let root = only.root().clone();
             self.read_bases_later(project, move || {
                 let branches = pm_core::branches(&root);
                 let (checked_out, rest): (Vec<_>, Vec<_>) = branches
@@ -166,7 +166,7 @@ impl App {
         };
         let repositories = project.repositories().iter().map(|repository| {
             let root = repository.root();
-            let tick = match self.session_picks.contains(root) {
+            let tick = match self.session_picks.contains(&root.path) {
                 true => "✓",
                 false => "  ",
             };
@@ -277,7 +277,7 @@ impl App {
                 Scope::of(held.project(), session),
                 std::iter::once(held.root())
                     .chain(held.roots())
-                    .map(Path::to_path_buf)
+                    .map(|root| root.path.clone())
                     .collect::<Vec<_>>(),
             )
         }) else {

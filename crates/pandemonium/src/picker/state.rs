@@ -108,6 +108,12 @@ pub enum Kind {
     CloneRepositories,
     /// The URL of a repository to clone and open.
     CloneUrl,
+    /// An SSH alias and absolute project directory.
+    RemoteProject,
+    /// Saved SSH hosts and recently opened remote projects.
+    RemoteHosts,
+    /// Directories on the currently browsed remote host.
+    RemoteFolders,
     /// A path to symlink into every new worktree.
     LinkedPath,
     /// A path to copy into every new worktree.
@@ -178,6 +184,9 @@ impl Kind {
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
+            Self::RemoteProject => "host or host:/absolute/path",
+            Self::RemoteHosts => "Choose an SSH host or recent project",
+            Self::RemoteFolders => "Choose a remote folder",
             Self::CloneSources => "Choose a GitHub account or clone from a URL…",
             Self::CloneRepositories => "Search repositories to clone…",
             Self::CloneUrl => "The repository to clone",
@@ -224,6 +233,7 @@ impl Kind {
                 | Self::NewBranch
                 | Self::StashMessage
                 | Self::NewSession
+                | Self::RemoteProject
                 | Self::CloneUrl
                 | Self::LinkedPath
                 | Self::CopiedPath
@@ -275,6 +285,14 @@ impl Kind {
 /// What choosing one row does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Choice {
+    /// Enter an SSH alias or a complete remote project address.
+    RemoteAddress,
+    /// Authenticate and browse this saved SSH host.
+    RemoteHost(String),
+    /// Browse one remote directory.
+    RemoteDirectory(String, PathBuf),
+    /// Open one remote directory as a project.
+    RemoteOpen(String, PathBuf),
     /// Choose the next endpoint of a persisted comparison.
     Checkpoint(Scope, Option<u64>, u64),
     /// Points at an existing session worktree.

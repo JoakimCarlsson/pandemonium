@@ -1,7 +1,7 @@
 //! Commands a worktree offers from its own files.
 
+use pm_host::Location;
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -55,14 +55,15 @@ struct WrittenTask {
 }
 
 /// All tasks the worktree at `root` offers.
-pub fn tasks(root: &Path) -> Vec<Task> {
+pub fn tasks(root: impl Into<Location>) -> Vec<Task> {
     tasks_checked(root).0
 }
 
 /// All tasks and any error reading the project's tasks file.
-pub fn tasks_checked(root: &Path) -> (Vec<Task>, Option<String>) {
+pub fn tasks_checked(root: impl Into<Location>) -> (Vec<Task>, Option<String>) {
+    let root = root.into();
     let file = root.join(TASKS_FILE);
-    let (mut found, error) = match fs::read_to_string(&file) {
+    let (mut found, error) = match root.host.fs().read_to_string(&file) {
         Ok(content) => match serde_norway::from_str::<Vec<WrittenTask>>(&content) {
             Ok(written) => (
                 written
@@ -94,10 +95,15 @@ pub fn tasks_checked(root: &Path) -> (Vec<Task>, Option<String>) {
         .map(|task| task.label.clone())
         .collect::<HashSet<_>>();
     let mut roots = vec![root.to_path_buf()];
-    roots.extend(repositories(root).into_iter().filter(|path| path != root));
+    roots.extend(
+        repositories(&root)
+            .into_iter()
+            .map(|location| location.path)
+            .filter(|path| path != &root.path),
+    );
     for directory in roots {
-        let relative = directory.strip_prefix(root).unwrap_or(Path::new(""));
-        for task in detected(&directory) {
+        let relative = directory.strip_prefix(&root).unwrap_or(Path::new(""));
+        for task in detected(&root.at(&directory)) {
             let label = if relative.as_os_str().is_empty() {
                 task.label.clone()
             } else {
@@ -116,7 +122,7 @@ pub fn tasks_checked(root: &Path) -> (Vec<Task>, Option<String>) {
 }
 
 /// Tasks inferred from manifests and make targets in `root`.
-fn detected(root: &Path) -> Vec<Task> {
+fn detected(root: &Location) -> Vec<Task> {
     let mut found = Vec::new();
     let mut add = |label: &str, command: String, source| {
         found.push(Task {
@@ -128,24 +134,27 @@ fn detected(root: &Path) -> Vec<Task> {
             check: false,
         })
     };
-    if let Ok(cargo) = fs::read_to_string(root.join("Cargo.toml")) {
+    if let Ok(cargo) = root.host.fs().read_to_string(root.join("Cargo.toml")) {
         for name in ["build", "test", "check", "clippy"] {
             add(name, format!("cargo {name}"), "cargo");
         }
-        if cargo.lines().any(|line| line.trim() == "[[bin]]") || root.join("src/main.rs").is_file()
+        if cargo.lines().any(|line| line.trim() == "[[bin]]")
+            || root.host.fs().is_file(root.join("src/main.rs"))
         {
             add("run", "cargo run".to_owned(), "cargo");
         }
     }
-    if let Ok(package) = fs::read_to_string(root.join("package.json"))
+    if let Ok(package) = root.host.fs().read_to_string(root.join("package.json"))
         && let Ok(value) = serde_json::from_str::<serde_json::Value>(&package)
         && let Some(scripts) = value.get("scripts").and_then(serde_json::Value::as_object)
     {
-        let manager = if root.join("pnpm-lock.yaml").exists() {
+        let manager = if root.host.fs().exists(root.join("pnpm-lock.yaml")) {
             "pnpm"
-        } else if root.join("yarn.lock").exists() {
+        } else if root.host.fs().exists(root.join("yarn.lock")) {
             "yarn"
-        } else if root.join("bun.lock").exists() || root.join("bun.lockb").exists() {
+        } else if root.host.fs().exists(root.join("bun.lock"))
+            || root.host.fs().exists(root.join("bun.lockb"))
+        {
             "bun"
         } else {
             "npm"
@@ -155,7 +164,7 @@ fn detected(root: &Path) -> Vec<Task> {
         }
     }
     for filename in ["Makefile", "makefile", "GNUmakefile"] {
-        if let Ok(content) = fs::read_to_string(root.join(filename)) {
+        if let Ok(content) = root.host.fs().read_to_string(root.join(filename)) {
             for line in content.lines() {
                 if let Some((target, _)) = line.split_once(':')
                     && !target.is_empty()
@@ -169,7 +178,7 @@ fn detected(root: &Path) -> Vec<Task> {
             break;
         }
     }
-    if root.join("go.mod").is_file() {
+    if root.host.fs().is_file(root.join("go.mod")) {
         for (name, command) in [
             ("build", "go build ./..."),
             ("test", "go test ./..."),

@@ -1,5 +1,6 @@
 //! The set of sessions the window holds, and the seam that changes it.
 
+use pm_host::Location;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
@@ -111,11 +112,14 @@ impl Sessions {
             for cut in cuts.iter().rev() {
                 git::remove_worktree(&cut.origin, &cut.root).map_err(StartError::Git)?;
             }
-            if root.exists() {
-                std::fs::remove_dir_all(&root).map_err(|error| StartError::Place {
-                    path: root.clone(),
-                    trouble: error.to_string(),
-                })?;
+            if root.host.fs().exists(&root) {
+                root.host
+                    .fs()
+                    .remove_dir_all(&root)
+                    .map_err(|error| StartError::Place {
+                        path: root.path.clone(),
+                        trouble: error.to_string(),
+                    })?;
             }
             Ok(())
         }
@@ -204,6 +208,11 @@ impl Sessions {
         self.open.iter().find(|session| session.id == id)
     }
 
+    /// Every held session in the order it was started.
+    pub fn iter(&self) -> impl Iterator<Item = &Session> {
+        self.open.iter()
+    }
+
     /// The sessions of `project`, in the order they were started.
     pub fn of(&self, project: ProjectId) -> impl Iterator<Item = &Session> {
         self.open
@@ -262,7 +271,7 @@ pub struct Cutting {
     /// What the reader called it.
     name: String,
     /// The folder the agent works in.
-    root: PathBuf,
+    root: Location,
     /// The worktree cut of each repository, the outermost first.
     cuts: Vec<Cut>,
     /// The local port it serves on, where one was free.
@@ -283,7 +292,7 @@ pub struct Found {
     /// What it was called when it was cut.
     name: String,
     /// The session folder the worktrees sit in.
-    root: PathBuf,
+    root: Location,
     /// The worktree cut of each repository, the outermost first.
     cuts: Vec<Cut>,
     /// The local port it was given, if it was given one.
@@ -313,9 +322,9 @@ fn cut(
     let planned = project
         .repositories()
         .iter()
-        .filter(|repository| chosen.iter().any(|root| root == repository.root()))
+        .filter(|repository| chosen.iter().any(|root| root == &repository.root().path))
         .map(|repository| {
-            let origin = repository.root().to_path_buf();
+            let origin = repository.root().clone();
             let base = git::commit_of(&origin, cut_from).ok_or(StartError::NoCommit)?;
             Ok((origin, base))
         })
@@ -323,16 +332,21 @@ fn cut(
     if planned.is_empty() {
         return Err(StartError::NothingChosen);
     }
+    let under = worktrees_on(project, under).map_err(|error| StartError::Place {
+        path: under.to_path_buf(),
+        trouble: error.to_string(),
+    })?;
     let root =
-        placement::reserve(under, project.name(), name).map_err(|error| StartError::Place {
+        placement::reserve(&under, project.name(), name).map_err(|error| StartError::Place {
             path: under.to_path_buf(),
             trouble: error.to_string(),
         })?;
+    let root = project.root().at(root);
     let mut cuts = Vec::new();
     for (origin, base) in planned {
         let within = origin.strip_prefix(project.root()).unwrap_or(Path::new(""));
         let cut = Cut {
-            root: root.join(within),
+            root: root.at(root.join(within)),
             origin,
             base,
         };
@@ -362,7 +376,7 @@ fn cut(
     for cut in &cuts {
         trouble.extend(bootstrap::apply(&cut.origin, &cut.root, wanted));
     }
-    let port = bootstrap::free_port(taken);
+    let port = bootstrap::free_port(&project.root().host, taken);
     if let Some(port) = port {
         for cut in &cuts {
             git::remember_port(&cut.root, port);
@@ -380,17 +394,35 @@ fn cut(
     })
 }
 
+/// Resolves the editor's worktree storage on the same machine as the project.
+fn worktrees_on(project: &Project, local: &Path) -> std::io::Result<Location> {
+    let root = project.root();
+    if root.host.is_local() {
+        Ok(root.at(local))
+    } else {
+        let home = root.host.home().ok_or_else(|| {
+            std::io::Error::other("The remote host did not report a home directory")
+        })?;
+        Ok(root.at(home.join(".pandemonium/worktrees")))
+    }
+}
+
 /// The sessions of `project` under `under` whose folders are none of `held`.
-fn find(project: &Project, under: &Path, held: &[PathBuf]) -> Vec<Found> {
+fn find(project: &Project, under: &Path, held: &[Location]) -> Vec<Found> {
+    let Ok(under) = worktrees_on(project, under) else {
+        return Vec::new();
+    };
     let ours = under.join(placement::slug(project.name()));
-    let mut found: Vec<(PathBuf, Vec<Cut>)> = Vec::new();
+    let mut found: Vec<(Location, Vec<Cut>)> = Vec::new();
 
     for repository in project.repositories() {
-        let origin = repository.root().to_path_buf();
+        let origin = repository.root().clone();
         for root in git::worktrees(&origin) {
             let Some(folder) = session_folder(&ours, &root) else {
                 continue;
             };
+            let folder = origin.at(folder);
+            let root = origin.at(root);
             if held.contains(&folder) {
                 continue;
             }
@@ -451,11 +483,11 @@ fn session_folder(ours: &Path, root: &Path) -> Option<PathBuf> {
 }
 
 /// Takes away what a session that could not be cut in full had cut so far.
-fn tear_down(root: &Path, cuts: &[Cut]) {
+fn tear_down(root: &Location, cuts: &[Cut]) {
     for cut in cuts.iter().rev() {
         let _ = git::remove_worktree(&cut.origin, &cut.root);
     }
-    let _ = std::fs::remove_dir_all(root);
+    let _ = root.host.fs().remove_dir_all(root);
 }
 
 /// What a session directory is called when nothing wrote a name down.

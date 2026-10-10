@@ -6,15 +6,15 @@
 //! on a thread of its own, one at a time per worktree, and hands back what
 //! git said as a [`Done`] for the review to take in.
 
-use std::path::PathBuf;
+use pm_host::Location;
 
 /// What git said in each repository a piece of work was carried out in.
-type Heard = Vec<(PathBuf, pm_core::Said)>;
+type Heard = Vec<(Location, pm_core::Said)>;
 
 /// Something to have git do to one worktree, not done yet.
 pub struct Work {
     /// The repositories it is carried out in, whose buttons show it.
-    roots: Vec<PathBuf>,
+    roots: Vec<Location>,
     /// What those buttons say meanwhile: "Staging…".
     doing: &'static str,
     /// Whether the message of a repository it went through in is cleared.
@@ -29,7 +29,7 @@ impl Work {
     /// Work in the repositories at `roots`, shown on their buttons as
     /// `doing`, carried out by `run`.
     pub(super) fn new(
-        roots: Vec<PathBuf>,
+        roots: Vec<Location>,
         doing: &'static str,
         run: impl FnOnce() -> Heard + Send + 'static,
     ) -> Self {
@@ -55,7 +55,7 @@ impl Work {
     }
 
     /// Whether it is carried out in the repository at `root`.
-    pub(super) fn is_in(&self, root: &std::path::Path) -> bool {
+    pub(super) fn is_in(&self, root: &Location) -> bool {
         self.roots.iter().any(|held| held == root)
     }
 

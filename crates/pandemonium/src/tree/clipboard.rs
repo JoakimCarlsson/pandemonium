@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 pub struct Clipboard {
     /// What was cut or copied.
     pub paths: Vec<PathBuf>,
+    /// The machine holding these paths.
+    pub host: pm_host::Host,
     /// Whether pasting moves them rather than copying them.
     pub cut: bool,
 }

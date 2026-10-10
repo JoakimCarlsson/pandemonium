@@ -94,6 +94,8 @@ impl App {
             }
             Action::CloseWindow => return self.apply(Message::CloseWindow),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
+            Action::OpenRemoteProject => self.open_picker(Kind::RemoteHosts),
+            Action::ReconnectProject => self.reconnect_project(),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::NewSession => return self.apply(Message::NewSession),
             Action::RemoveProject => {
@@ -474,7 +476,7 @@ impl App {
         if served {
             return self.begin_save(self.active_language_settings().format_on_save);
         }
-        self.format_locally(true);
+        self.format_without_server(true);
         self.save_active();
     }
 
@@ -504,6 +506,7 @@ impl App {
             return;
         };
         self.editor.save(file, &root);
+        self.report_file_errors();
         self.reread_changes();
         self.follow_server_settings();
     }
@@ -521,19 +524,16 @@ impl App {
                 .find(|(held, _)| *held == scope)
                 .map(|(_, root)| root.clone())
         });
+        self.report_file_errors();
         self.reread_changes();
         self.follow_server_settings();
     }
 
     /// The worktree the file `id` names was opened from.
-    pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<std::path::PathBuf> {
+    pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<pm_host::Location> {
         match self.editor.scope_of(id) {
             Some(scope) => self.root_of(scope),
-            None => self
-                .editor
-                .path(id)?
-                .parent()
-                .map(std::path::Path::to_path_buf),
+            None => self.editor.path(id)?.parent().map(pm_host::Location::local),
         }
     }
 

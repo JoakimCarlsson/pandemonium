@@ -9,7 +9,6 @@
 //! waiting for it to go is done on a thread started for the purpose.
 
 use std::io::{ErrorKind, Read, Write};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{
     Receiver, Sender, SyncSender, TryRecvError, TrySendError, channel, sync_channel,
@@ -17,7 +16,7 @@ use std::sync::mpsc::{
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Duration;
 
-use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system};
+use pm_host::{CommandBuilder, ExitStatus, Location, PtyChild, PtyControl};
 
 /// How many bytes the reader thread hands over at a time.
 const CHUNK: usize = 8192;
@@ -48,12 +47,12 @@ const REAP_LOOKS: usize = 100;
 pub type Notify = Arc<dyn Fn() + Send + Sync>;
 
 /// The process a pty runs, shared by the threads that look at it.
-type SharedChild = Arc<Mutex<Box<dyn Child + Send + Sync>>>;
+type SharedChild = Arc<Mutex<PtyChild>>;
 
 /// A child process, the pty it runs in and the bytes it has written.
 pub struct Pty {
     /// The master side, which is what a resize is applied to.
-    master: Box<dyn MasterPty + Send>,
+    master: PtyControl,
     /// Bytes on their way to the writer thread and from it to the child.
     input: Sender<Vec<u8>>,
     /// Chunks the reader thread has read, oldest first.
@@ -108,59 +107,28 @@ impl Pty {
     /// Starts `command` in a pty of `cols` by `rows`, rooted at `cwd`.
     pub fn spawn(
         command: CommandBuilder,
-        cwd: &Path,
+        cwd: &Location,
         cols: usize,
         rows: usize,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        let pair = native_pty_system()
-            .openpty(size(cols, rows))
-            .map_err(std::io::Error::other)?;
-
-        let mut command = command;
-        command.cwd(cwd);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-
-        let child = Arc::new(Mutex::new(
-            pair.slave
-                .spawn_command(command)
-                .map_err(std::io::Error::other)?,
-        ));
+        let pty = cwd.host.pty(command, &cwd.path, cols, rows)?;
+        let child = Arc::new(Mutex::new(pty.child));
         let reaped = child.clone();
-        drop(pair.slave);
-
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(std::io::Error::other)?;
-        let writer = pair.master.take_writer().map_err(std::io::Error::other)?;
+        let reader = pty.reader;
+        let writer = pty.writer;
         let wake = Waker::new(notify);
         let output = spawn_reader(reader, reaped, wake.clone())?;
         let input = spawn_writer(writer)?;
 
         Ok(Self {
-            master: pair.master,
+            master: pty.control,
             input,
             output,
             child,
             wake,
             closed: false,
         })
-    }
-
-    /// The default interactive shell, as the platform and the user set it.
-    pub fn shell() -> CommandBuilder {
-        #[cfg(windows)]
-        let fallback = "cmd.exe".to_owned();
-        #[cfg(not(windows))]
-        let fallback = "/bin/sh".to_owned();
-
-        let program = std::env::var("SHELL")
-            .ok()
-            .filter(|shell| !shell.is_empty())
-            .unwrap_or(fallback);
-        CommandBuilder::new(program)
     }
 
     /// Takes what the child has written since the last call, up to
@@ -197,7 +165,7 @@ impl Pty {
 
     /// Tells the child the window is now `cols` by `rows`.
     pub fn resize(&mut self, cols: usize, rows: usize) {
-        let _ = self.master.resize(size(cols, rows));
+        let _ = self.master.resize(cols, rows);
     }
 
     /// Whether the child is still running.
@@ -344,7 +312,7 @@ fn spawn_writer(mut writer: Box<dyn Write + Send>) -> std::io::Result<Sender<Vec
 ///
 /// A thread that cannot be started leaves the child to the reader thread,
 /// which already reaps it once its pty closes.
-fn end(child: SharedChild, after: impl FnOnce(&mut Box<dyn Child + Send + Sync>) + Send + 'static) {
+fn end(child: SharedChild, after: impl FnOnce(&mut PtyChild) + Send + 'static) {
     let _ = std::thread::Builder::new()
         .name("pm-vt-pty-kill".to_owned())
         .spawn(move || {
@@ -353,17 +321,4 @@ fn end(child: SharedChild, after: impl FnOnce(&mut Box<dyn Child + Send + Sync>)
                 after(&mut child);
             }
         });
-}
-
-/// The pty size for a grid of `cols` by `rows`.
-///
-/// The pixel dimensions stay zero: nothing the editor runs asks for them, and
-/// a wrong answer is worse than no answer.
-fn size(cols: usize, rows: usize) -> PtySize {
-    PtySize {
-        rows: rows.max(1) as u16,
-        cols: cols.max(1) as u16,
-        pixel_width: 0,
-        pixel_height: 0,
-    }
 }

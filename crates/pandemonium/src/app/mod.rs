@@ -14,6 +14,8 @@ mod checkpoint;
 mod clicks;
 mod client;
 mod commands;
+mod control;
+mod control_agent;
 mod debug;
 mod dialog;
 mod disk;
@@ -42,6 +44,7 @@ mod placement;
 mod places;
 mod predict;
 mod reading;
+mod remote;
 mod reorder;
 mod review;
 mod search;
@@ -163,8 +166,12 @@ pub enum Wake {
     Picture,
     /// Something has been read off the clipboard into a prompt.
     Paste,
+    /// A remote machine handshake finished.
+    Remote,
     /// Files have been carried onto the window from outside it.
     Arrival,
+    /// A command from a local control client is waiting.
+    Control,
     /// A caller-bound editor MCP invocation is waiting.
     Orchestration,
     /// The MCP registry has answered a search.
@@ -291,6 +298,16 @@ pub struct App {
     showing_bases: bool,
     /// The projects this window holds open.
     open: Projects,
+    /// Shared machine connections for the window.
+    hosts: pm_host::Hosts,
+    /// The same-user socket used by remote control clients.
+    control: Option<crate::control::Server>,
+    /// The SSH login terminal while a connection is authenticating.
+    authentication: Option<remote::Authentication>,
+    /// The remote directory whose browser request is current.
+    remote_browse: Option<pm_host::Location>,
+    /// Remote handshakes completed away from the window.
+    remote_back: Arc<Mutex<Vec<remote::RemoteBack>>>,
     /// One file tree per worktree, so each keeps what it has expanded.
     files: BTreeMap<Scope, FileTree>,
     /// What each of those worktrees has changed, and what git said about it.
@@ -544,6 +561,8 @@ pub struct App {
     /// The logins running in terminals, as the conversation each is for and
     /// the worktree and shell it runs as.
     logins: Vec<(crate::agent::TalkId, Scope, crate::terminal::ShellId)>,
+    /// Image chunks uploaded by control clients for pending ACP prompts.
+    control_images: BTreeMap<(crate::agent::TalkId, u64), control_agent::ControlImage>,
     /// What the reader is being told about in the status bar.
     notices: Notices,
     /// Servers already offered or tried this launch.
@@ -712,12 +731,26 @@ impl App {
     pub fn restored(proxy: EventLoopProxy<Wake>) -> Self {
         let restored = config::load();
         let mut open = Projects::new();
+        let mut hosts = pm_host::Hosts::default();
+        let mut remote_errors = Vec::new();
         for root in &restored.projects {
-            let _ = open.find_or_open(root);
+            match hosts.restore(root) {
+                Ok(location) => {
+                    let _ = open.find_or_open(location);
+                }
+                Err(error) => {
+                    remote_errors.push(error.to_string());
+                    if let Ok(location) = hosts.location(root) {
+                        let _ = open.find_or_open(location);
+                    }
+                }
+            }
         }
         open.activate_first();
-        if let Some(active) = restored.active.as_ref() {
-            let _ = open.find_or_open(active);
+        if let Some(active) = restored.active.as_ref()
+            && let Ok(location) = hosts.location(active)
+        {
+            let _ = open.find_or_open(location);
         }
 
         let layout = restored.layout;
@@ -729,9 +762,25 @@ impl App {
             .map(|project| (Scope::checkout(project.id()), FileTree::new(project.root())))
             .collect();
         let pending: Pending = Arc::new(std::array::from_fn(|_| AtomicBool::new(false)));
+        for project in open.iter() {
+            project
+                .root()
+                .host
+                .set_notify(waker_through(&proxy, &pending, Wake::Remote));
+        }
         crate::image::wake_with(waker_through(&proxy, &pending, Wake::Picture));
 
         let mut notices = Notices::default();
+        let control = match crate::control::Server::start(proxy.clone()) {
+            Ok(server) => Some(server),
+            Err(error) => {
+                notices.trouble(format!("Phone control unavailable: {error}"), None);
+                None
+            }
+        };
+        for error in remote_errors {
+            notices.trouble(error, None);
+        }
         for error in config::take_extension_errors() {
             notices.trouble(error, None);
         }
@@ -770,6 +819,11 @@ impl App {
             session_bases: Vec::new(),
             showing_bases: false,
             open,
+            hosts,
+            control,
+            authentication: None,
+            remote_browse: None,
+            remote_back: Arc::default(),
             files,
             reviews: BTreeMap::new(),
             watchers: BTreeMap::new(),
@@ -891,6 +945,7 @@ impl App {
             task_errors: std::collections::BTreeSet::new(),
             errands: client::Errands::default(),
             logins: Vec::new(),
+            control_images: BTreeMap::new(),
             notices,
             offered_servers: BTreeSet::new(),
             server_failure_logs: Vec::new(),
@@ -920,6 +975,9 @@ impl App {
     /// the file tree lists, and it is started the first time its pane is
     /// drawn rather than when the project is opened.
     fn active_shell(&mut self) -> Option<Shell> {
+        if let Some(auth) = &self.authentication {
+            return Some(auth.shell.clone());
+        }
         let scope = self.scope()?;
         let root = self.root_of(scope)?;
         let env = self.worktree_env(scope);
@@ -928,6 +986,9 @@ impl App {
 
     /// Closes the panel once the worktree's last shell has exited.
     fn close_empty_panel(&mut self) {
+        if self.authentication.is_some() {
+            return;
+        }
         let Some(scope) = self.scope() else {
             return;
         };
@@ -1229,6 +1290,9 @@ impl App {
         if !self.terminal_focused || !self.showing_terminals() || self.picker.is_some() {
             return None;
         }
+        if let Some(auth) = &self.authentication {
+            return Some(auth.shell.clone());
+        }
         self.terminals.active(self.scope()?)
     }
 
@@ -1256,6 +1320,9 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if let Some(control) = &self.control {
+            control.changed();
+        }
         self.sync_layout();
         if message == Message::CopyText {
             self.copy_reading_text();
@@ -1727,12 +1794,12 @@ impl App {
             return;
         }
         if message == Message::SyncBranch {
-            self.remote_operation(RemoteOperation::Sync, pm_core::sync);
+            self.remote_operation(RemoteOperation::Sync, |root| pm_core::sync(root));
             self.request_redraw();
             return;
         }
         if message == Message::Fetch {
-            self.remote_operation(RemoteOperation::Fetch, pm_core::fetch);
+            self.remote_operation(RemoteOperation::Fetch, |root| pm_core::fetch(root));
             self.request_redraw();
             return;
         }
@@ -1747,7 +1814,7 @@ impl App {
             return;
         }
         if message == Message::ForcePush {
-            self.remote_operation(RemoteOperation::Push, pm_core::force_push);
+            self.remote_operation(RemoteOperation::Push, |root| pm_core::force_push(root));
             self.request_redraw();
             return;
         }
@@ -2234,7 +2301,10 @@ impl App {
             return;
         };
         let env = self.worktree_env(scope);
-        self.terminals.start(scope, &directory, &env);
+        let Some(root) = self.root_of(scope) else {
+            return;
+        };
+        self.terminals.start(scope, &root.at(directory), &env);
         self.show_panel(PanelView::Terminal);
         self.terminal_focused = true;
         self.editor_focused = false;
@@ -2307,10 +2377,7 @@ impl App {
             onboarded: self.onboarded,
             projects: self.open.roots(),
             project_groups: self.project_groups.clone(),
-            active: self
-                .open
-                .active()
-                .map(|project| project.root().to_path_buf()),
+            active: self.open.active().map(|project| project.root().stored()),
             layout: self.layout(),
             layouts: self.saved_layouts(),
             shells: self.terminals.saved(&self.worktrees()),
@@ -2675,6 +2742,7 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
+        self.report_file_errors();
         self.sync_layout();
         self.refresh_health_diagnostics();
         self.see_shown_agents();
@@ -2875,13 +2943,18 @@ impl ApplicationHandler<Wake> for App {
     /// Applies what the shells have written and draws the result.
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         self.pending[event as usize].store(false, Ordering::Release);
+        if event != Wake::Control
+            && let Some(control) = &self.control
+        {
+            control.changed();
+        }
         match event {
             Wake::Orchestration => self.serve_orchestration(),
             Wake::Terminal => {
                 let pumped = self.terminals.pump();
                 let tasks_pumped = self.tasks.pump();
                 self.hear_finished_tasks();
-                let logged_in = self.follow_logins();
+                let logged_in = self.follow_logins() | self.follow_authentication();
                 if pumped | tasks_pumped | self.follow_errands() | logged_in {
                     self.hear_failed_shells();
                     self.close_empty_panel();
@@ -2951,7 +3024,8 @@ impl ApplicationHandler<Wake> for App {
                 self.request_redraw();
             }
             Wake::Disk => {
-                if self.take_disk() {
+                self.take_disk();
+                {
                     self.request_redraw();
                 }
             }
@@ -2992,7 +3066,12 @@ impl ApplicationHandler<Wake> for App {
                     self.request_redraw();
                 }
             }
+            Wake::Remote => {
+                self.take_remote();
+                self.request_redraw();
+            }
             Wake::Arrival => self.take_arrivals(),
+            Wake::Control => self.take_control(),
             Wake::Registry => {
                 self.take_agent_downloads();
                 self.request_redraw();

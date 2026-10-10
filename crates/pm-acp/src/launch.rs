@@ -1,7 +1,7 @@
 //! Process startup and bounded recovery of Claude's npm-cached adapter.
 
+use pm_host::{Child, Command, Input as ChildStdin};
 use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStdin, ChildStdout, Command};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -42,10 +42,11 @@ impl Recovery {
         process: Arc<Mutex<Option<Child>>>,
         containment: Arc<Mutex<Containment>>,
         trouble: Arc<Mutex<String>>,
-        stderr: std::process::ChildStderr,
+        stderr: Box<dyn std::io::Read + Send>,
     ) -> Option<Self> {
         let watcher = capture(stderr, trouble.clone());
-        let recoverable = cfg!(unix)
+        let recoverable = command.is_local()
+            && cfg!(unix)
             && agent.source == Source::Package(CLAUDE_PACKAGE)
             && agent.program == "claude-agent-acp"
             && command.get_args().next() == Some(std::ffi::OsStr::new("--yes"));
@@ -60,7 +61,9 @@ impl Recovery {
     }
 
     /// Repairs a recognized startup failure and returns fresh pipes for one retry.
-    pub(super) fn restart(&mut self) -> Option<(ChildStdin, BufReader<ChildStdout>)> {
+    pub(super) fn restart(
+        &mut self,
+    ) -> Option<(ChildStdin, BufReader<Box<dyn std::io::Read + Send>>)> {
         let restarted = self.retry();
         if restarted.is_none()
             && let Some(original) = &self.original
@@ -73,7 +76,7 @@ impl Recovery {
     }
 
     /// Waits briefly for startup to end, validates the failure, and replaces the child.
-    fn retry(&mut self) -> Option<(ChildStdin, BufReader<ChildStdout>)> {
+    fn retry(&mut self) -> Option<(ChildStdin, BufReader<Box<dyn std::io::Read + Send>>)> {
         self.watcher.recv_timeout(EXIT_WITHIN).ok()?;
         if self.original.is_some() {
             return None;
@@ -183,7 +186,7 @@ fn repair(_failure: &str) -> bool {
 }
 
 /// Captures stderr independently and signals when the pipe closes.
-fn capture(stderr: std::process::ChildStderr, trouble: Arc<Mutex<String>>) -> Receiver<()> {
+fn capture(stderr: Box<dyn std::io::Read + Send>, trouble: Arc<Mutex<String>>) -> Receiver<()> {
     let (done, finished) = mpsc::channel();
     std::thread::spawn(move || {
         watch(BufReader::new(stderr), &trouble);

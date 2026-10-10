@@ -93,6 +93,13 @@ impl Adapter {
             .find_map(|program| pm_text::program::installed(program))
     }
 
+    /// Finds the adapter executable on the machine owning the project.
+    pub fn program_on(self, host: &pm_host::Host) -> Option<PathBuf> {
+        self.programs
+            .iter()
+            .find_map(|program| pm_text::program::installed_on(host, program, None))
+    }
+
     /// Whether this adapter is installed.
     pub fn installed(self) -> bool {
         self.program().is_some()

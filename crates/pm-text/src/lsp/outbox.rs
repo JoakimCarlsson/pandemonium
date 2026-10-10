@@ -6,8 +6,8 @@
 //! with it. So nobody else writes: the window and the reader thread hand
 //! their messages over, and only this thread ever waits on the pipe.
 
+use pm_host::Input as ChildStdin;
 use std::io::BufWriter;
-use std::process::ChildStdin;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use lsp_types::notification::DidChangeTextDocument;

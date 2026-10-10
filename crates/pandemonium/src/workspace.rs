@@ -1260,6 +1260,12 @@ fn project_row(
 /// What a project's row states beside its name: the branch it has out, or
 /// how many repositories it holds when it holds several.
 fn project_reading(project: &Project) -> Option<String> {
+    if project.root().host.connecting() {
+        return Some("Connecting…".to_owned());
+    }
+    if !project.root().host.connected() {
+        return Some("Disconnected".to_owned());
+    }
     match (project.branch(), project.repositories().len()) {
         (Some(branch), _) => Some(branch.to_owned()),
         (None, 0) => None,

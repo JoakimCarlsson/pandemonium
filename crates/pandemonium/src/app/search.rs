@@ -92,7 +92,7 @@ impl ProjectSearch {
     /// Starts a new background search, replacing the visible results.
     fn search(
         &mut self,
-        root: PathBuf,
+        root: pm_host::Location,
         snapshots: HashMap<PathBuf, String>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) {

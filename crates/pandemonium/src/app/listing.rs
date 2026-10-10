@@ -9,6 +9,8 @@
 //! for branches and remotes away from the window too. Each wakes the window
 //! with what it found, and what belongs to a picker no longer open is let go.
 
+use pm_host::Location;
+
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -77,7 +79,7 @@ struct Files {
     /// The worktree they belong to.
     scope: Scope,
     /// Where the worktree sits on disk.
-    root: PathBuf,
+    root: Location,
     /// Every file listed so far, in the order the walk came upon them.
     paths: Mutex<Vec<PathBuf>>,
     /// Whether the walk has finished, written under the lock on `paths` so
@@ -386,7 +388,7 @@ pub(super) struct Search {
 impl Search {
     /// Searches a worktree for a results pane on a background thread.
     pub(super) fn run_project(
-        root: PathBuf,
+        root: Location,
         snapshots: HashMap<PathBuf, String>,
         finder: Finder,
         generation: u64,
@@ -404,7 +406,7 @@ impl Search {
                 if wanted.load(Ordering::Acquire) != generation {
                     return false;
                 }
-                let Some(content) = search_text(&path, &snapshots) else {
+                let Some(content) = search_text(&root.at(&path), &snapshots) else {
                     return true;
                 };
                 let mut ranges = match_ranges(&content, &finder, SEARCH_LIMIT - count + 1);
@@ -513,7 +515,7 @@ impl Search {
     /// A file too big to be source, one that is not text, or one that cannot
     /// be read is passed over.
     fn search_file(&self, path: &Path, rows: &mut Vec<Row>, room: usize) {
-        let Some(text) = search_text(path, &self.snapshots) else {
+        let Some(text) = search_text(&self.files.root.at(path), &self.snapshots) else {
             return;
         };
         let lines = search_lines(&text);
@@ -532,17 +534,31 @@ impl Search {
 }
 
 /// Reads a file's current open text or its disk copy for background search.
-pub(super) fn search_text(path: &Path, snapshots: &HashMap<PathBuf, String>) -> Option<String> {
-    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+pub(super) fn search_text(
+    location: &Location,
+    snapshots: &HashMap<PathBuf, String>,
+) -> Option<String> {
+    let path = &location.path;
+    if location
+        .host
+        .fs()
+        .symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
         return None;
     }
     if let Some(snapshot) = snapshots.get(path) {
         return Some(snapshot.clone());
     }
-    if !std::fs::metadata(path).is_ok_and(|meta| meta.len() <= SEARCHED_BYTES) {
+    if !location
+        .host
+        .fs()
+        .metadata(path)
+        .is_ok_and(|meta| meta.len() <= SEARCHED_BYTES)
+    {
         return None;
     }
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = location.host.fs().read(path).ok()?;
     if bytes[..bytes.len().min(SNIFFED_BYTES)].contains(&0) {
         return None;
     }

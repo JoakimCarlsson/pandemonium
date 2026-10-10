@@ -5,11 +5,11 @@
 //! for one, so a server and an adapter that live side by side in `~/.cargo/bin`
 //! are found the same way.
 
+use pm_host::Stdio;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
 use crate::install;
@@ -95,6 +95,19 @@ pub fn installed(command: &str) -> Option<PathBuf> {
     installed_with_recipe(command, install::recipe(command))
 }
 
+/// Resolves a program on its owning machine, using managed installs only locally.
+pub fn installed_on(
+    host: &pm_host::Host,
+    command: &str,
+    recipe: Option<install::Recipe>,
+) -> Option<PathBuf> {
+    if host.is_local() {
+        installed_with_recipe(command, recipe)
+    } else {
+        host.which(command)
+    }
+}
+
 /// Finds a custom executable first, then the configured recipe's managed version.
 pub fn installed_with_recipe(command: &str, recipe: Option<install::Recipe>) -> Option<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
@@ -172,7 +185,8 @@ fn rustup_has(rustup: &Path, component: &str) -> bool {
     {
         return answer;
     }
-    let answer = Command::new(rustup)
+    let answer = pm_host::Host::local()
+        .command(rustup)
         .args(["which", component])
         .env("PATH", path_beside(rustup))
         .stdin(Stdio::null())

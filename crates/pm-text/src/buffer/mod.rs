@@ -15,6 +15,7 @@ mod motion;
 mod snippet;
 mod tags;
 
+use pm_host::Location;
 use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,8 @@ use self::memo::Memo;
 pub struct Buffer {
     /// Where the file lives.
     path: PathBuf,
+    /// The machine on which this buffer is stored.
+    host: pm_host::Host,
     /// The text itself.
     text: Rope,
     /// The language it is written in, when the editor knows the extension.
@@ -89,10 +92,12 @@ pub struct Buffer {
 
 impl Buffer {
     /// Reads the file at `path` into a buffer.
-    pub fn open(path: impl Into<PathBuf>) -> io::Result<Self> {
-        let path = path.into();
-        let text = Rope::from_str(&std::fs::read_to_string(&path)?);
-        Ok(Self::of(path, text))
+    pub fn open(path: impl Into<Location>) -> io::Result<Self> {
+        let location = path.into();
+        let text = Rope::from_str(&location.host.fs().read_to_string(&location.path)?);
+        let mut buffer = Self::of(location.path, text);
+        buffer.host = location.host;
+        Ok(buffer)
     }
 
     /// A buffer holding `text`, called `path` though nothing is there.
@@ -117,6 +122,7 @@ impl Buffer {
             habit: Indent::default(),
             forced: None,
             path,
+            host: pm_host::Host::local(),
             text,
             language,
             syntax,
@@ -142,6 +148,11 @@ impl Buffer {
     /// Where the file lives.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The machine and path used for saving and reloading this buffer.
+    pub fn location(&self) -> Location {
+        Location::new(self.host.clone(), &self.path)
     }
 
     /// The file's own name, without the directories above it.
@@ -568,7 +579,7 @@ impl Buffer {
 
     /// Writes the buffer to disk.
     pub fn save(&mut self) -> io::Result<()> {
-        std::fs::write(&self.path, self.text.to_string())?;
+        self.host.fs().write(&self.path, self.text.to_string())?;
         self.history.commit();
         self.saved_depth = self.history.depth();
         Ok(())
@@ -582,7 +593,7 @@ impl Buffer {
     /// file that reads the same as the buffer is left alone, which is what
     /// the editor's own save looks like when the disk reports it back.
     pub fn reread(&mut self) -> io::Result<bool> {
-        let text = std::fs::read_to_string(&self.path)?;
+        let text = self.host.fs().read_to_string(&self.path)?;
         if self.text == text.as_str() {
             return Ok(false);
         }

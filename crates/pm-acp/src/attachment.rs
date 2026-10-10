@@ -14,8 +14,8 @@ const EMBEDDED: u64 = 256 * 1024;
 /// One piece of context attached to a prompt.
 #[derive(Clone, Debug)]
 pub enum Attachment {
-    /// A file the local agent can read through a resource link.
-    File(PathBuf),
+    /// A file on its owning machine, readable through a resource link.
+    File(pm_host::Location),
     /// A base64 encoded image the agent has said it accepts.
     Image {
         /// The image bytes encoded for the ACP prompt.
@@ -50,7 +50,7 @@ impl Attachment {
             Self::Selection {
                 path, first, last, ..
             } => {
-                let name = Self::File(path.clone()).label();
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
                 match first == last {
                     true => format!("{name}:{first}"),
                     false => format!("{name}:{first}-{last}"),
@@ -112,10 +112,10 @@ impl Attachment {
 }
 
 /// The text of the file at `path`, when it is text and small enough to send.
-fn embedded(path: &Path) -> Option<String> {
-    let size = std::fs::metadata(path).ok()?.len();
+fn embedded(path: &pm_host::Location) -> Option<String> {
+    let size = path.host.fs().metadata(path).ok()?.len();
     (size <= EMBEDDED)
-        .then(|| std::fs::read_to_string(path).ok())
+        .then(|| path.host.fs().read_to_string(path).ok())
         .flatten()
 }
 

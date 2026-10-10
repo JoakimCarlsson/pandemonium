@@ -1,10 +1,5 @@
 //! Processes available for attaching and adapter scenarios for them.
 
-#[cfg(target_os = "linux")]
-use std::fs;
-#[cfg(target_os = "macos")]
-use std::process::Command;
-
 use serde_json::{Map, json};
 
 use crate::{Adapter, Request, Scenario};
@@ -20,87 +15,41 @@ pub struct Process {
     pub command: String,
 }
 
-/// Lists visible processes, newest first where the platform exposes them.
+/// Lists visible processes on the local machine.
 pub fn processes() -> Vec<Process> {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    processes_on(&pm_host::Host::local())
+}
+
+/// Lists visible processes on the machine owning the project.
+pub fn processes_on(host: &pm_host::Host) -> Vec<Process> {
     let mut found = Vec::new();
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let found = Vec::new();
-    #[cfg(target_os = "linux")]
+    if let Ok(output) = host
+        .command("ps")
+        .args(["-axo", "pid=,comm=,args="])
+        .output()
     {
-        let mut started = std::collections::HashMap::new();
-        if let Ok(entries) = fs::read_dir("/proc") {
-            for entry in entries.flatten() {
-                let Some(pid) = entry
-                    .file_name()
-                    .to_str()
-                    .and_then(|name| name.parse::<u32>().ok())
-                else {
-                    continue;
-                };
-                if pid == std::process::id() {
-                    continue;
-                }
-                let root = entry.path();
-                let Ok(name) = fs::read_to_string(root.join("comm")) else {
-                    continue;
-                };
-                let command = fs::read(root.join("cmdline"))
-                    .map(|bytes| {
-                        String::from_utf8_lossy(&bytes)
-                            .replace('\0', " ")
-                            .trim()
-                            .to_owned()
-                    })
-                    .unwrap_or_default();
-                let tick = fs::read_to_string(root.join("stat"))
-                    .ok()
-                    .and_then(|stat| {
-                        stat.rsplit_once(')').and_then(|(_, rest)| {
-                            rest.split_whitespace().nth(19)?.parse::<u64>().ok()
-                        })
-                    })
-                    .unwrap_or_default();
-                started.insert(pid, tick);
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let mut fields = line.split_whitespace();
+            let (Some(pid), Some(name)) = (
+                fields.next().and_then(|pid| pid.parse::<u32>().ok()),
+                fields.next(),
+            ) else {
+                continue;
+            };
+            if !host.is_local() || pid != std::process::id() {
                 found.push(Process {
                     pid,
-                    name: name.trim().to_owned(),
-                    command,
+                    name: std::path::Path::new(name)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    command: fields.collect::<Vec<_>>().join(" "),
                 });
             }
         }
-        found.sort_by_key(|process| {
-            std::cmp::Reverse((
-                started.get(&process.pid).copied().unwrap_or_default(),
-                process.pid,
-            ))
-        });
     }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = Command::new("ps")
-            .args(["-axo", "pid=,comm=,args="])
-            .output()
-        {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let mut fields = line.split_whitespace();
-                let (Some(pid), Some(name)) = (
-                    fields.next().and_then(|pid| pid.parse::<u32>().ok()),
-                    fields.next(),
-                ) else {
-                    continue;
-                };
-                if pid != std::process::id() {
-                    found.push(Process {
-                        pid,
-                        name: name.to_owned(),
-                        command: fields.collect::<Vec<_>>().join(" "),
-                    });
-                }
-            }
-        }
-        found.sort_by_key(|process| std::cmp::Reverse(process.pid));
-    }
+    found.sort_by_key(|process| std::cmp::Reverse(process.pid));
     found
 }
 

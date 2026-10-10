@@ -31,4 +31,4 @@ pub use pty::Notify;
 pub use selection::{Place, Selection, Unit};
 pub use terminal::Terminal;
 
-pub use portable_pty::CommandBuilder;
+pub use pm_host::CommandBuilder;

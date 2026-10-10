@@ -1,7 +1,8 @@
 //! The set of projects the window holds open, and the seam that changes it.
 
+use pm_host::Location;
 use std::fmt::{self, Display, Formatter};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::project::repository;
 use crate::project::{Project, ProjectId, Repository};
@@ -39,15 +40,24 @@ impl Projects {
     /// the project that is already there instead of being held twice, so a
     /// menu entry, a keybinding and a restored window all land on the same
     /// project — and a repository inside a folder of several is the folder's.
-    pub fn find_or_open(&mut self, path: impl AsRef<Path>) -> Result<ProjectId, OpenError> {
-        let path = path.as_ref();
-        let path = std::fs::canonicalize(path).map_err(|_| OpenError::Missing {
-            path: path.to_path_buf(),
-        })?;
+    pub fn find_or_open(&mut self, path: impl Into<Location>) -> Result<ProjectId, OpenError> {
+        let location = path.into();
+        let path = if location.host.connected() {
+            location
+                .host
+                .fs()
+                .canonicalize(&location.path)
+                .map_err(|_| OpenError::Missing {
+                    path: location.path.clone(),
+                })?
+        } else {
+            location.path.clone()
+        };
+        let path = location.at(path);
         let holding = self
             .open
             .iter()
-            .filter(|project| path.starts_with(project.root()))
+            .filter(|project| path.host == project.root().host && path.starts_with(project.root()))
             .max_by_key(|project| project.root().components().count());
         if let Some(project) = holding {
             let id = project.id();
@@ -136,7 +146,8 @@ impl Projects {
         let roots = self
             .open
             .iter()
-            .map(|project| (project.id(), project.root().to_path_buf()))
+            .filter(|project| project.root().host.connected())
+            .map(|project| (project.id(), project.root().clone()))
             .collect::<Vec<_>>();
         move || {
             roots
@@ -175,16 +186,19 @@ impl Projects {
     pub fn roots(&self) -> Vec<PathBuf> {
         self.open
             .iter()
-            .map(|project| project.root().to_path_buf())
+            .map(|project| project.root().stored())
             .collect()
     }
 }
 
 /// The folder `path` names, or the one holding it when it names a file.
-fn folder_of(path: PathBuf) -> PathBuf {
-    match path.is_dir() {
+fn folder_of(path: Location) -> Location {
+    if !path.host.connected() {
+        return path;
+    }
+    match path.host.fs().is_dir(&path) {
         true => path,
-        false => path.parent().map_or(path.clone(), Path::to_path_buf),
+        false => path.parent().map_or(path.clone(), |parent| path.at(parent)),
     }
 }
 

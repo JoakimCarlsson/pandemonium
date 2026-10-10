@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pm-host.workspace = true
 flate2 = "1.1.10"
 globset = "0.4.20"
 lsp-types = { version = "0.97.0", features = ["proposed"] }

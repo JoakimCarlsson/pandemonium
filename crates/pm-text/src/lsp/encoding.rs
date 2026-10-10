@@ -144,7 +144,9 @@ impl Files {
         self.texts
             .entry(path.to_path_buf())
             .or_insert_with(|| {
-                std::fs::read_to_string(path)
+                pm_host::Host::local()
+                    .fs()
+                    .read_to_string(path)
                     .ok()
                     .map(|text| Rope::from_str(&text))
             })

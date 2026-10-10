@@ -85,7 +85,7 @@ impl App {
             .iter()
             .position(|project| project.id() == drag.project)?;
         let project = self.open.get(drag.project)?;
-        let group = project_groups::membership(&self.project_groups, project.root());
+        let group = project_groups::membership(&self.project_groups, &project.root().stored());
         if group == landing.group && (landing.gap == from || landing.gap == from + 1) {
             return None;
         }
@@ -136,8 +136,10 @@ impl App {
                         .open
                         .iter()
                         .position(|project| {
-                            project_groups::membership(&self.project_groups, project.root())
-                                == group
+                            project_groups::membership(
+                                &self.project_groups,
+                                &project.root().stored(),
+                            ) == group
                         })
                         .unwrap_or(self.open.iter().count()),
                     group,

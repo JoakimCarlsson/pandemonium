@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pm-host.workspace = true
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 sha2 = "0.11.0"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
