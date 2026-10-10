@@ -49,6 +49,8 @@ pub struct Log {
     stderr: Arc<Mutex<Option<String>>>,
     /// Whether the stderr reader has drained the process's final output.
     stderr_finished: Arc<AtomicBool>,
+    /// The last message the server logged or showed, with its kind.
+    said: Arc<Mutex<Option<(MessageType, String)>>>,
 }
 
 impl Log {
@@ -76,6 +78,7 @@ impl Log {
             grew: Arc::new(AtomicBool::new(false)),
             stderr: Arc::new(Mutex::new(None)),
             stderr_finished: Arc::new(AtomicBool::new(true)),
+            said: Arc::new(Mutex::new(None)),
         };
         log.write(&format!(
             "── {command} starting in {} at {} ──",
@@ -121,8 +124,19 @@ impl Log {
         self.write(&format!("{direction} {cut}{more}"));
     }
 
-    /// Writes one message the server logged or showed, marked with its kind.
+    /// Writes one message the server logged or showed, marked with its kind,
+    /// unless it is the one it said last.
+    ///
+    /// A server that both logs and shows a message, or says it again each
+    /// time it looks at the same trouble, has said it once.
     pub(super) fn message(&self, kind: MessageType, message: &str) {
+        let said = (kind, message.to_owned());
+        if let Ok(mut last) = self.said.lock() {
+            if last.as_ref() == Some(&said) {
+                return;
+            }
+            *last = Some(said);
+        }
         let kind = match kind {
             MessageType::ERROR => "error",
             MessageType::WARNING => "warning",

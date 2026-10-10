@@ -16,6 +16,9 @@ pub(super) const METHOD_NOT_FOUND: i64 = -32601;
 /// The error a server answers with when the editor called a request off.
 pub(super) const REQUEST_CANCELLED: i64 = -32800;
 
+/// The error a server answers with when the file changed before it could answer.
+pub(super) const CONTENT_MODIFIED: i64 = -32801;
+
 /// The error a server answers with when it cancelled a request of its own accord.
 pub(super) const SERVER_CANCELLED: i64 = -32802;
 
