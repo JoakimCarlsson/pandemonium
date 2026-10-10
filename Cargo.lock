@@ -2243,7 +2243,7 @@ dependencies = [
 
 [[package]]
 name = "pandemonium"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "arboard",
  "base64",
@@ -2360,7 +2360,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "pm-acp"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "libc",
  "pm-host",
@@ -2372,7 +2372,7 @@ dependencies = [
 
 [[package]]
 name = "pm-core"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "pm-host",
  "serde",
@@ -2382,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "pm-dap"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "pm-host",
  "pm-text",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "pm-gfx"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -2404,7 +2404,7 @@ dependencies = [
 
 [[package]]
 name = "pm-host"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "libc",
  "notify",
@@ -2416,14 +2416,14 @@ dependencies = [
 
 [[package]]
 name = "pm-server"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "pm-host",
 ]
 
 [[package]]
 name = "pm-text"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "flate2",
  "globset",
@@ -2466,14 +2466,14 @@ dependencies = [
 
 [[package]]
 name = "pm-ui"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "pm-gfx",
 ]
 
 [[package]]
 name = "pm-vim"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "pm-text",
  "regex",
@@ -2481,7 +2481,7 @@ dependencies = [
 
 [[package]]
 name = "pm-vt"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "pm-host",
  "unicode-width",
