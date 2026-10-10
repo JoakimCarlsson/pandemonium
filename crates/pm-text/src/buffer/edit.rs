@@ -53,17 +53,42 @@ impl Buffer {
         self.text_in(self.selection().start()..self.selection().end())
     }
 
+    /// Returns all nonempty selections in document order, separated by line breaks.
+    pub fn selected_texts(&self) -> String {
+        self.selections()
+            .into_iter()
+            .filter(|selection| !selection.is_empty())
+            .map(|selection| self.text_in(selection.start()..selection.end()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// What copying right now would put on the clipboard.
     ///
     /// With nothing selected it is the whole line, line break and all, which
     /// is what every editor copies from an empty selection and what makes
     /// copy-and-paste with no selection duplicate a line.
+    /// Multiple cursors contribute their selections or whole lines in document order.
     pub fn copied_text(&self) -> String {
-        if !self.selection().is_empty() {
-            return self.selected_text();
+        let mut text = String::new();
+        let mut copied_line = None;
+        for selection in self.selections() {
+            if selection.is_empty() && copied_line == Some(selection.head.line) {
+                continue;
+            }
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            if selection.is_empty() {
+                text.push_str(&self.line_text(selection.head.line));
+                text.push('\n');
+                copied_line = Some(selection.head.line);
+            } else {
+                text.push_str(&self.text_in(selection.start()..selection.end()));
+                copied_line = None;
+            }
         }
-        let line = self.selection().head.line;
-        format!("{}\n", self.line_text(line))
+        text
     }
 
     /// Takes out what copying right now would have taken.

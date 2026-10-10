@@ -2523,6 +2523,9 @@ impl App {
 
     /// Gives the keyboard to `writing`, taking it from whatever had it.
     pub(super) fn write_in(&mut self, writing: Writing) {
+        if let Some(ui) = self.ui.as_mut() {
+            ui.clear_text_selection();
+        }
         self.release_pane_focus();
         self.writing = Some(writing);
     }

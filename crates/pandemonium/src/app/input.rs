@@ -189,6 +189,9 @@ impl App {
         if !self.settings_open && self.send_to_notification(event) {
             return self.request_redraw();
         }
+        if self.picker.is_none() && self.is_copy(event) && self.copy_reading_text() {
+            return self.request_redraw();
+        }
         if self.resolve_input_edit(event) {
             return self.request_redraw();
         }
@@ -197,9 +200,6 @@ impl App {
             return self.request_redraw();
         }
         if self.picker.is_none() && self.paste_agent_prompt(event) {
-            return self.request_redraw();
-        }
-        if self.is_copy(event) && self.copy_reading_text() {
             return self.request_redraw();
         }
         if self.send_to_pending(event) {
@@ -231,6 +231,12 @@ impl App {
         }
         if self.send_to_terminal(event) {
             return self.request_redraw();
+        }
+        if let Some(chord) = keymap::chord(event, self.modifiers)
+            && self.resolver.preview(chord, &self.context()) == Resolution::Act(Action::Copy)
+        {
+            self.resolver.press(chord, &self.context());
+            return self.act(Action::Copy);
         }
         if self.send_to_vim(event) {
             return self.request_redraw();
@@ -593,12 +599,15 @@ impl App {
         any
     }
 
-    /// Whether `event` is the copy chord: C with Control or the platform key,
-    /// and Shift or not, the way a terminal's copy has it.
+    /// Whether `event` is Control-Insert or C with Control or the platform key.
     fn is_copy(&self, event: &KeyEvent) -> bool {
-        (self.modifiers.control_key() || self.modifiers.super_key())
-            && !self.modifiers.alt_key()
-            && matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("c"))
+        !self.modifiers.alt_key()
+            && (((self.modifiers.control_key() || self.modifiers.super_key())
+                && matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("c")))
+                || (self.modifiers.control_key()
+                    && !self.modifiers.super_key()
+                    && !self.modifiers.shift_key()
+                    && event.logical_key == Key::Named(NamedKey::Insert)))
     }
 
     /// Sends a keypress to the box of text that has the keyboard.
@@ -1281,7 +1290,7 @@ impl App {
             self.dismiss_picker();
         }
         if self.ui.as_ref().is_some_and(pm_ui::Ui::selecting_text) {
-            self.editor_focused = false;
+            self.release_pane_focus();
             self.resting = None;
             self.agents.clear_selections();
         }

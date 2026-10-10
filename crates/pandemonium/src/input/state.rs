@@ -254,17 +254,17 @@ impl Input {
         self.edit(pm_text::Buffer::select_all);
     }
 
-    /// Returns the selected text, if the selection is nonempty.
+    /// Returns every nonempty selection in document order.
     pub fn selected_text(&self) -> Option<String> {
         let document = self.document().borrow();
-        let selected = document.buffer().selected_text();
+        let selected = document.buffer().selected_texts();
         (!selected.is_empty()).then_some(selected)
     }
 
     /// Removes and returns the selected text, if any.
     pub fn cut_selection(&mut self) -> Option<String> {
         let selected = self.selected_text()?;
-        self.edit(pm_text::Buffer::delete);
+        self.edit(|buffer| buffer.at_each(pm_text::Buffer::delete));
         Some(selected)
     }
 
