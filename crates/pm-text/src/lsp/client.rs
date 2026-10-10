@@ -144,6 +144,9 @@ struct State {
     works: Works,
     /// What the server has asked to be shown that went wrong, not yet shown.
     troubles: Vec<String>,
+    /// The trouble the server last asked to be shown, which it is not shown
+    /// again for asking again.
+    shown: Option<String>,
     /// The semantic tokens last sent for each file, under the id the server
     /// gave them, for asking only what changed since.
     tokens: HashMap<PathBuf, (String, Vec<SemanticToken>)>,
@@ -1299,11 +1302,20 @@ impl Reader {
         if !matches!(kind, MessageType::ERROR | MessageType::WARNING) {
             return;
         }
-        self.with_state(|state| {
-            state.troubles.push(message.to_owned());
-            state.fresh = true;
-        });
-        (self.notify)();
+        let fresh = self
+            .with_state(|state| {
+                if state.shown.as_deref() == Some(message) {
+                    return false;
+                }
+                state.shown = Some(message.to_owned());
+                state.troubles.push(message.to_owned());
+                state.fresh = true;
+                true
+            })
+            .unwrap_or(false);
+        if fresh {
+            (self.notify)();
+        }
     }
 
     /// Hands one message to the writer.
@@ -1570,7 +1582,7 @@ impl Reader {
     /// a save waiting on the server hears it and goes ahead.
     ///
     /// Why is written to the log, unless it is only that the editor called
-    /// the question off itself.
+    /// the question off itself or the file changed under the answer.
     fn gave_up(&self, id: i64, failure: &rpc::Failure) {
         let asked = self
             .with_state(|state| {
@@ -1589,7 +1601,7 @@ impl Reader {
         let Some(request) = asked else {
             return;
         };
-        if failure.code != rpc::REQUEST_CANCELLED {
+        if !matches!(failure.code, rpc::REQUEST_CANCELLED | rpc::CONTENT_MODIFIED) {
             self.log.write(&format!(
                 "{} failed: {} ({})",
                 request.method(),
