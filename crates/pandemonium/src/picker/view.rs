@@ -8,7 +8,7 @@
 use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, kbd, rule, space, text, v_flex};
 
 use crate::agent::mode_icon;
-use crate::input::hinted_input_view;
+use crate::input::compact_hinted_input_view;
 use crate::message::Message;
 use crate::picker::state::{Choice, Kind, Picker, Row};
 
@@ -42,8 +42,10 @@ const VISIBLE: usize = 14;
 /// Most branch rows drawn in the compact status-bar popover.
 const BRANCH_VISIBLE: usize = 9;
 
-/// Approximate height of the picker's input and border.
-const FIELD_HEIGHT: f32 = 49.0;
+/// Height of the compact input, including its padding and border.
+fn field_height(theme: &Theme) -> f32 {
+    theme.text.sm.line_height + space(3.0) + 2.0
+}
 
 /// Approximate height of the explanatory line under a prompt.
 const HINT_HEIGHT: f32 = 32.0;
@@ -90,14 +92,13 @@ pub fn height(theme: &Theme, picker: &Picker) -> f32 {
             + sections as f32 * section_height
             + creation_height
             + 1.0
-            + theme.text.sm.line_height
-            + space(3.0);
+            + field_height(theme);
     }
     if picker.kind().is_prompt() {
-        return FIELD_HEIGHT + HINT_HEIGHT;
+        return field_height(theme) + HINT_HEIGHT;
     }
     let visible = visible_rows(picker.kind());
-    FIELD_HEIGHT + picker.shown_count().min(visible).max(1) as f32 * ROW_HEIGHT
+    field_height(theme) + picker.shown_count().min(visible).max(1) as f32 * ROW_HEIGHT
 }
 
 /// How many rows this kind of picker shows at once.
@@ -124,7 +125,7 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
             .child(rows(theme, picker))
             .child(rule(theme))
             .child(
-                hinted_input_view(
+                compact_hinted_input_view(
                     theme,
                     picker.field(),
                     true,
@@ -133,7 +134,7 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
                     Message::WritePicker,
                     Message::ShowInputMenu,
                 )
-                .h_px(FIELD_HEIGHT)
+                .h_px(field_height(theme))
                 .px(2)
                 .py(1.5),
             );
@@ -147,7 +148,7 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
         .border_1(theme.colors.border)
         .rounded(theme.radius.lg)
         .child(
-            hinted_input_view(
+            compact_hinted_input_view(
                 theme,
                 picker.field(),
                 true,
@@ -156,7 +157,7 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
                 Message::WritePicker,
                 Message::ShowInputMenu,
             )
-            .h_px(FIELD_HEIGHT)
+            .h_px(field_height(theme))
             .px(2)
             .py(1.5),
         )

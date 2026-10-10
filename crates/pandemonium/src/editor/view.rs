@@ -17,8 +17,8 @@ use pm_core::{Blame, Change, ChangeKind};
 use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, Size};
 use pm_text::{Buffer, Diagnostic, Highlight, Highlights, Position, Selection, Severity};
 use pm_ui::{
-    Element, Glyphs, IconName, IconSize, LayoutContext, PaintContext, PointerCursor, ResizeEvent,
-    ResizePhase, Style, Styled, Theme,
+    Element, Font, Glyphs, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
+    ResizeEvent, ResizePhase, Style, Styled, Theme,
 };
 
 use crate::editor::display::{CursorShape, Display};
@@ -232,6 +232,8 @@ pub struct BufferView<M> {
     plain: bool,
     /// What is shown in the quiet colour while there is no text at all.
     placeholder: Option<String>,
+    /// The theme font used instead of the editor grid when supplied.
+    font: Option<Font>,
     /// Whether a plain view keeps a scrollbar down its side for when its
     /// rows outgrow it.
     rail: bool,
@@ -265,6 +267,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         prediction_visible: true,
         plain: false,
         placeholder: None,
+        font: None,
         rail: false,
         display: Display::default(),
         style: Style::default(),
@@ -505,6 +508,12 @@ impl<M> BufferView<M> {
         self
     }
 
+    /// Returns this view using `font` for text, its placeholder and cursor geometry.
+    pub fn font(mut self, font: Font) -> Self {
+        self.font = Some(font);
+        self
+    }
+
     /// Returns this view with inline predictions shown or hidden.
     pub fn prediction_visible(mut self, visible: bool) -> Self {
         self.prediction_visible = visible;
@@ -538,7 +547,9 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
 
     /// Tells the document how much room it has, then draws what fits.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let font = cx.theme().text.code;
+        let font = self
+            .font
+            .map_or(cx.theme().text.code, |font| font.resolve(&cx.theme().text));
         let cell = Size::new(cx.measure("M", font).width.max(1.0), font.line_height);
         let theme = *cx.theme();
 

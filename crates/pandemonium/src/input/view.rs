@@ -7,13 +7,13 @@
 
 use pm_text::Position;
 use pm_ui::{
-    Div, IntoElement, MenuItem, ResizeEvent, ResizePhase, Styled, Theme, h_flex, menu_entry,
-    menu_separator,
+    Div, Font, IntoElement, MenuItem, ResizeEvent, ResizePhase, Styled, TextSize, Theme, h_flex,
+    menu_entry, menu_separator,
 };
 
 use crate::keymap::Action;
 
-use crate::editor::{OpenFile, plain_view};
+use crate::editor::{BufferView, OpenFile, plain_view};
 use crate::input::state::Input;
 use crate::message::Message;
 
@@ -100,12 +100,42 @@ pub fn hinted_input_view<M: Clone + 'static>(
     boxed(
         theme,
         1.0,
-        plain_view(input.text(), focused)
-            .caret(focused && solid)
-            .placeholder(placeholder)
-            .on_select(on_point)
-            .on_menu(on_menu),
+        hinted_view(input, focused, solid, placeholder, on_point, on_menu),
     )
+}
+
+/// Builds a single-line picker input at the theme's small monospaced text size.
+pub fn compact_hinted_input_view<M: Clone + 'static>(
+    theme: &Theme,
+    input: &Input,
+    focused: bool,
+    solid: bool,
+    placeholder: &str,
+    on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
+    on_menu: M,
+) -> Div<M> {
+    boxed(
+        theme,
+        1.0,
+        hinted_view(input, focused, solid, placeholder, on_point, on_menu)
+            .font(Font::new(TextSize::Sm).mono()),
+    )
+}
+
+/// Builds the editable text and placeholder shared by single-line input styles.
+fn hinted_view<M: Clone + 'static>(
+    input: &Input,
+    focused: bool,
+    solid: bool,
+    placeholder: &str,
+    on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
+    on_menu: M,
+) -> BufferView<M> {
+    plain_view(input.text(), focused)
+        .caret(focused && solid)
+        .placeholder(placeholder)
+        .on_select(on_point)
+        .on_menu(on_menu)
 }
 
 /// The border every box of text is drawn in, `lines` tall, round `view`.
