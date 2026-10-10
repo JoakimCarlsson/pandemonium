@@ -138,12 +138,13 @@ pub fn worktrees(root: impl Into<Location>) -> Vec<PathBuf> {
 /// a worktree by its real path and a session may hold it by a linked one.
 fn is_linked(root: impl Into<Location>, path: &Path) -> bool {
     let root = root.into();
-    let Ok(path) = path.canonicalize() else {
+    let fs = root.host.fs();
+    let Ok(path) = fs.canonicalize(path) else {
         return false;
     };
     worktrees(&root)
         .iter()
-        .any(|listed| listed.canonicalize().is_ok_and(|listed| listed == path))
+        .any(|listed| fs.canonicalize(listed).is_ok_and(|listed| listed == path))
 }
 
 /// The commit `revision` names in the repository at `root`, shortened.
