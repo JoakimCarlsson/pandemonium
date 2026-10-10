@@ -51,14 +51,14 @@ pub fn rows(open: &Projects, groups: &[ProjectGroup]) -> Vec<ProjectRow> {
         if !group.collapsed {
             rows.extend(
                 open.iter()
-                    .filter(|project| membership(groups, project.root()) == Some(index))
+                    .filter(|project| membership(groups, &project.root().stored()) == Some(index))
                     .map(|project| ProjectRow::Project(project.id(), Some(index))),
             );
         }
     }
     let ungrouped = open
         .iter()
-        .filter(|project| membership(groups, project.root()).is_none())
+        .filter(|project| membership(groups, &project.root().stored()).is_none())
         .map(|project| ProjectRow::Project(project.id(), None))
         .collect::<Vec<_>>();
     if !groups.is_empty() && !ungrouped.is_empty() {

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use pm_core::ops;
 
-use crate::field::Field;
+use crate::input::Input;
 
 /// What the name being typed is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,17 +29,20 @@ pub struct Edit {
     kind: EditKind,
     /// The directory a new entry goes in, or the entry being renamed.
     at: PathBuf,
+    /// The machine holding the edited entry.
+    host: pm_host::Host,
     /// What has been typed.
-    field: Field,
+    field: Input,
 }
 
 impl Edit {
     /// A name for a new entry of `kind` inside `directory`.
-    pub fn creating(kind: EditKind, directory: &Path) -> Self {
+    pub fn creating(kind: EditKind, directory: &pm_host::Location) -> Self {
         Self {
             kind,
             at: directory.to_path_buf(),
-            field: Field::default(),
+            host: directory.host.clone(),
+            field: Input::default(),
         }
     }
 
@@ -47,7 +50,7 @@ impl Edit {
     ///
     /// The caret starts before the extension, which is the part of a name a
     /// rename is nearly always about.
-    pub fn renaming(path: &Path) -> Self {
+    pub fn renaming(path: &pm_host::Location) -> Self {
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -56,11 +59,12 @@ impl Edit {
             Some(0) | None => name.chars().count(),
             Some(at) => name[..at].chars().count(),
         };
-        let mut field = Field::filled(name);
+        let mut field = Input::filled(name);
         field.place(stem);
         Self {
             kind: EditKind::Rename,
             at: path.to_path_buf(),
+            host: path.host.clone(),
             field,
         }
     }
@@ -76,12 +80,12 @@ impl Edit {
     }
 
     /// What has been typed.
-    pub fn field(&self) -> &Field {
+    pub fn field(&self) -> &Input {
         &self.field
     }
 
     /// What has been typed, to be typed into.
-    pub fn field_mut(&mut self) -> &mut Field {
+    pub fn field_mut(&mut self) -> &mut Input {
         &mut self.field
     }
 
@@ -105,7 +109,8 @@ impl Edit {
 
     /// What is wrong with the name typed so far, if anything is.
     pub fn problem(&self) -> Option<String> {
-        let name = self.field.value().trim();
+        let value = self.field.value();
+        let name = value.trim();
         if name.is_empty() {
             return Some("A file or folder name must be provided".to_owned());
         }
@@ -117,7 +122,7 @@ impl Edit {
         let target = self.target();
         let renaming_case = self.kind == EditKind::Rename
             && target.to_string_lossy().to_lowercase() == self.at.to_string_lossy().to_lowercase();
-        if !renaming_case && std::fs::symlink_metadata(&target).is_ok() {
+        if !renaming_case && self.host.fs().symlink_metadata(&target).is_ok() {
             return Some(format!(
                 "A file or folder {name} already exists at this location"
             ));

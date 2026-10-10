@@ -23,6 +23,9 @@ const SPIN_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 /// How often a running agent's activity mark advances.
 const AGENT_FRAME: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// How often an open branch picker fetches and prunes remote branches.
+pub(super) const BRANCH_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
     ///
@@ -56,6 +59,9 @@ impl App {
     /// Opens the picker of `kind` over `rows`, with `seeded` already typed.
     pub(super) fn open_picker_with(&mut self, kind: Kind, rows: Vec<Row>, seeded: String) {
         self.begin_opening();
+        if kind != Kind::RemoteFolders {
+            self.remote_browse = None;
+        }
         self.picker = Some(Picker::new(kind, rows, &seeded));
         self.completions = None;
         self.hint = None;
@@ -107,6 +113,7 @@ impl App {
     pub(super) fn dismiss_picker(&mut self) -> bool {
         self.branch_picker_at = None;
         self.agent_picker_at = None;
+        self.remote_browse = None;
         self.leave_listings();
         self.picker.take().is_some()
     }
@@ -128,7 +135,7 @@ impl App {
         }
         if picker.kind() == Kind::WorkspaceSymbols {
             let query = Kind::WorkspaceSymbols
-                .query(picker.field().value())
+                .query(&picker.field().value())
                 .to_owned();
             return self.ask_workspace_symbols(query);
         }
@@ -173,6 +180,9 @@ impl App {
             (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
                 self.toggle_session_repository(root, typed, place);
             }
+            (Kind::RemoteProject, _) | (Kind::RemoteHosts, None) => {
+                self.open_remote_project(&typed)
+            }
             (Kind::CloneUrl, _) => self.clone_project(&typed),
             (Kind::LinkedPath, _) => self.add_worktree_path(WorktreePaths::Linked, &typed),
             (Kind::CopiedPath, _) => self.add_worktree_path(WorktreePaths::Copied, &typed),
@@ -197,6 +207,16 @@ impl App {
     /// Carries out what one row of the picker stood for.
     fn take(&mut self, choice: Choice) {
         match choice {
+            Choice::RemoteAddress => self.open_picker(Kind::RemoteProject),
+            Choice::RemoteHost(host) => self.open_remote_project(&host),
+            Choice::RemoteDirectory(host, path) => {
+                if let Ok(host) = self.hosts.prepare(&host) {
+                    self.browse_remote(pm_host::Location::new(host, path));
+                }
+            }
+            Choice::RemoteOpen(host, path) => {
+                self.open_remote_project(&format!("{host}:{}", path.display()))
+            }
             Choice::CloneUrl => self.open_picker(Kind::CloneUrl),
             Choice::CloneSources => self.open_picker(Kind::CloneSources),
             Choice::GithubOwner(login, organization) => {
@@ -313,6 +333,8 @@ impl App {
     /// gathered so far, and are filled as the rest arrives.
     pub(super) fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
+            Kind::RemoteHosts => self.remote_host_rows(),
+            Kind::RemoteFolders => Vec::new(),
             Kind::CloneSources => crate::app::github::source_rows(),
             Kind::CloneRepositories => Vec::new(),
             Kind::Turns => Vec::new(),
@@ -414,6 +436,7 @@ impl App {
             | Kind::StashMessage
             | Kind::NewAccount(..)
             | Kind::NewSession
+            | Kind::RemoteProject
             | Kind::CloneUrl
             | Kind::LinkedPath
             | Kind::CopiedPath
@@ -482,7 +505,7 @@ impl App {
     /// A tab is drawn only in the worktree it was opened from, so the files
     /// listed for the pickers are this worktree's alone: a file of any other
     /// would open where it cannot be seen.
-    pub(super) fn here_on_disk(&self) -> Option<(pm_core::Scope, PathBuf)> {
+    pub(super) fn here_on_disk(&self) -> Option<(pm_core::Scope, pm_host::Location)> {
         let scope = self.scope()?;
         Some((scope, self.root_of(scope)?))
     }
@@ -502,17 +525,41 @@ impl App {
     }
 
     /// Asks git away from the window for every branch of the active
-    /// project's active repository, for the branch picker.
-    fn ask_branches(&self) {
+    /// project's active repository, then fetches and prunes its remote branches.
+    fn ask_branches(&mut self) {
+        self.branch_refresh_at = None;
         let Some(id) = self.open.active().map(pm_core::Project::id) else {
             return;
         };
         let Some(root) = self.repository_root(self.git_scope(id)) else {
             return;
         };
-        self.ask_git_later(Kind::Branches, move || {
-            branch_rows(id, pm_core::branches(&root))
+        self.ask_git_updates_later(Kind::Branches, move |publish| {
+            publish(branch_rows(id, pm_core::branches(&root)), false);
+            let _ = pm_core::fetch(&root);
+            publish(branch_rows(id, pm_core::branches(&root)), true);
         });
+    }
+
+    /// Fetches fresh branches when the open branch picker's refresh is due.
+    pub(super) fn refresh_branches(&mut self) {
+        if self
+            .next_branch_refresh()
+            .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            self.ask_branches();
+        }
+    }
+
+    /// The next refresh deadline while the branch picker is visible.
+    pub(super) fn next_branch_refresh(&self) -> Option<std::time::Instant> {
+        self.branch_refresh_at.filter(|_| {
+            !self.window_occluded
+                && self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.kind() == Kind::Branches)
+        })
     }
 
     /// Asks git away from the window for every configured remote of the

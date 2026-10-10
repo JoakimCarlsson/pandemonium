@@ -10,5 +10,8 @@
 mod state;
 mod view;
 
-pub use state::{Input, Submit};
-pub use view::{bare_input_view, hinted_input_view, input_menu, input_view, text_view};
+pub use state::{Input, Submit, Typed, command_line};
+pub use view::{
+    bare_input_view, compact_hinted_input_view, hinted_input_view, input_menu, input_view,
+    text_view,
+};

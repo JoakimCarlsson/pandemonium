@@ -5,7 +5,7 @@
 //! and line motions. What an input adds is the two things a box has and a
 //! document does not — how many lines it may hold, and what finishes it.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 
 use pm_gfx::Point;
@@ -15,7 +15,7 @@ use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::editor::{self, Document, OpenFile};
-use crate::field::Typed;
+use crate::keymap::Action;
 
 /// How much text a box holds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,7 +45,9 @@ pub enum Submit {
 /// One box of text being written in.
 pub struct Input {
     /// The text itself, and everything the editor knows about it.
-    text: OpenFile,
+    text: OnceCell<OpenFile>,
+    /// The name shown when the input buffer is first created.
+    name: String,
     /// How many lines it may hold.
     lines: Lines,
     /// What finishes it.
@@ -56,7 +58,8 @@ impl Input {
     /// A box of one line, sent with Enter, called `name` where a name shows.
     pub fn one_line(name: &str) -> Self {
         Self {
-            text: Rc::new(RefCell::new(Document::scratch(name))),
+            text: OnceCell::new(),
+            name: name.to_owned(),
             lines: Lines::One,
             submit: Submit::Enter,
         }
@@ -66,7 +69,8 @@ impl Input {
     /// long for the box carrying on down the next row.
     pub fn many_lines(name: &str) -> Self {
         Self {
-            text: Rc::new(RefCell::new(Document::scratch(name).wrapped())),
+            text: OnceCell::new(),
+            name: name.to_owned(),
             lines: Lines::Many,
             submit: Submit::Enter,
         }
@@ -80,12 +84,14 @@ impl Input {
 
     /// The buffer behind the box, for the screen that draws it.
     pub fn text(&self) -> OpenFile {
-        self.text.clone()
+        self.document().clone()
     }
 
     /// What is in the box.
     pub fn value(&self) -> String {
-        self.text.borrow().buffer().contents()
+        self.text
+            .get()
+            .map_or_else(String::new, |text| text.borrow().buffer().contents())
     }
 
     /// Whether there is nothing in it.
@@ -95,7 +101,7 @@ impl Input {
 
     /// How many rows its text comes to, as wide as the box was last drawn.
     pub fn rows(&self) -> usize {
-        self.text.borrow().total_rows()
+        self.document().borrow().total_rows()
     }
 
     /// Empties it.
@@ -114,6 +120,10 @@ impl Input {
 
     /// Pastes text at the current selection.
     pub fn paste(&mut self, value: &str) {
+        let value = match self.lines {
+            Lines::One => value.lines().next().unwrap_or(""),
+            Lines::Many => value,
+        };
         self.edit(|buffer| buffer.at_each(|buffer| buffer.paste(value)));
     }
 
@@ -133,11 +143,16 @@ impl Input {
     /// A box of one line has no line to break: Enter that does not finish it
     /// does nothing rather than growing a box the screen has no room for.
     pub fn press(&mut self, event: &KeyEvent, modifiers: ModifiersState) -> Typed {
-        let rows = self.text.borrow().rows();
+        let rows = self.document().borrow().rows();
         let Some(edit) = editor::edit(event, modifiers, rows) else {
             return Typed::Ignored;
         };
-        if self.lines == Lines::One && matches!(edit, editor::Edit::Newline) {
+        if self.lines == Lines::One
+            && matches!(
+                edit,
+                editor::Edit::Newline | editor::Edit::Indent | editor::Edit::Outdent
+            )
+        {
             return Typed::Ignored;
         }
 
@@ -185,7 +200,11 @@ impl Input {
 
     /// Whether `point` falls on the text of the box, as it was last drawn.
     pub fn covers(&self, point: Point) -> bool {
-        self.text.borrow().layout().text_area().contains(point)
+        self.document()
+            .borrow()
+            .layout()
+            .text_area()
+            .contains(point)
     }
 
     /// Scrolls the box `pixels` down, or up when `pixels` is negative.
@@ -193,33 +212,181 @@ impl Input {
     /// A box stops with its last line at its foot, not at its head the way
     /// a file does: past that there is only the empty box to look at.
     pub fn scroll_by(&self, pixels: f32) {
-        self.text.borrow_mut().scroll_by_pixels(pixels);
+        self.document().borrow_mut().scroll_by_pixels(pixels);
         self.keep_foot();
     }
 
     /// How many rows of its text are above the first one the box shows.
     pub fn rows_above(&self) -> usize {
-        self.text.borrow().rows_above()
+        self.document().borrow().rows_above()
     }
 
     /// Shows the box from the row `rows` into its text down, no deeper than
     /// its last line at its foot.
     pub fn scroll_to_row(&self, rows: usize) {
-        self.text.borrow_mut().scroll_to_wrapped(rows);
+        self.document().borrow_mut().scroll_to_wrapped(rows);
         self.keep_foot();
     }
 
     /// Brings a box scrolled past its last line back to that line at its foot.
     fn keep_foot(&self) {
-        let mut text = self.text.borrow_mut();
+        let mut text = self.document().borrow_mut();
         let deepest = text.row_after(text.last_row(), 1 - text.rows().max(1) as isize);
         if text.top() >= deepest {
             text.scroll_to_row(deepest);
         }
     }
 
-    /// Puts the buffer through `change`.
-    fn edit(&mut self, change: impl FnOnce(&mut pm_text::Buffer)) {
-        self.text.borrow_mut().edit(change);
+    /// Creates a single-line input containing `value`.
+    pub fn filled(value: impl AsRef<str>) -> Self {
+        let mut input = Self::default();
+        input.set(value.as_ref());
+        input
     }
+
+    /// Places the caret at a character offset in this single-line input.
+    pub fn place(&mut self, caret: usize) {
+        self.edit(|buffer| buffer.place(Position::new(0, caret), false));
+    }
+
+    /// Selects all text in the input.
+    pub fn select_all(&mut self) {
+        self.edit(pm_text::Buffer::select_all);
+    }
+
+    /// Returns every nonempty selection in document order.
+    pub fn selected_text(&self) -> Option<String> {
+        let document = self.document().borrow();
+        let selected = document.buffer().selected_texts();
+        (!selected.is_empty()).then_some(selected)
+    }
+
+    /// Removes and returns the selected text, if any.
+    pub fn cut_selection(&mut self) -> Option<String> {
+        let selected = self.selected_text()?;
+        self.edit(|buffer| buffer.at_each(pm_text::Buffer::delete));
+        Some(selected)
+    }
+
+    /// Initializes the document on first use, keeping nested search inputs lazy.
+    fn document(&self) -> &OpenFile {
+        self.text.get_or_init(|| {
+            let document = Document::scratch(&self.name);
+            let document = match self.lines {
+                Lines::One => document,
+                Lines::Many => document.wrapped(),
+            };
+            Rc::new(RefCell::new(document))
+        })
+    }
+
+    /// Whether the action edits input text, its selection or its clipboard.
+    pub fn handles(action: Action) -> bool {
+        matches!(
+            action,
+            Action::Cut
+                | Action::Copy
+                | Action::Paste
+                | Action::SelectAll
+                | Action::Undo
+                | Action::Redo
+                | Action::Move(_)
+                | Action::Select(_)
+                | Action::Backspace
+                | Action::Delete
+                | Action::DeleteWordLeft
+                | Action::DeleteWordRight
+                | Action::DeleteToLineStart
+                | Action::DeleteToLineEnd
+        )
+    }
+
+    /// Applies a named editing action, leaving clipboard access and submission to the caller.
+    pub fn act(&mut self, action: Action) -> bool {
+        match action {
+            Action::Undo => self.edit(|buffer| {
+                buffer.undo();
+            }),
+            Action::Redo => self.edit(|buffer| {
+                buffer.redo();
+            }),
+            Action::SelectAll => self.select_all(),
+            _ => {
+                if !Self::handles(action) {
+                    return false;
+                }
+                let rows = self.document().borrow().rows();
+                let Some(edit) = editor::action_edit(action, rows) else {
+                    return false;
+                };
+                self.edit(|buffer| buffer.at_each(|buffer| edit.apply(buffer)));
+            }
+        }
+        true
+    }
+
+    /// Puts the buffer through `change`.
+    pub fn edit(&mut self, change: impl FnOnce(&mut pm_text::Buffer)) {
+        self.document().borrow_mut().edit(change);
+    }
+}
+
+impl Default for Input {
+    /// Creates an empty single-line input without allocating its document yet.
+    fn default() -> Self {
+        Self::one_line("Input")
+    }
+}
+
+impl Clone for Input {
+    /// Copies the input's text and selection into an independent buffer.
+    fn clone(&self) -> Self {
+        let mut input = Self {
+            text: OnceCell::new(),
+            name: self.name.clone(),
+            lines: self.lines,
+            submit: self.submit,
+        };
+        if let Some(text) = self.text.get() {
+            let text = text.borrow();
+            input.set(&text.buffer().contents());
+            let selection = text.buffer().selection();
+            input.edit(|buffer| {
+                buffer.place(selection.anchor, false);
+                buffer.place(selection.head, true);
+            });
+        }
+        input
+    }
+}
+
+impl std::fmt::Debug for Input {
+    /// Describes the input's current text without exposing its document internals.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Input")
+            .field("value", &self.value())
+            .finish()
+    }
+}
+
+/// What a keypress aimed at an input came to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Typed {
+    /// The input took the key.
+    Taken,
+    /// The key means nothing to this input.
+    Ignored,
+}
+
+/// Whether the macOS command key asks to edit the current line.
+pub fn command_line(key: &Key<&str>, modifiers: ModifiersState) -> bool {
+    cfg!(target_os = "macos")
+        && modifiers.super_key()
+        && !modifiers.control_key()
+        && !modifiers.alt_key()
+        && matches!(
+            key,
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight | NamedKey::Backspace)
+        )
 }

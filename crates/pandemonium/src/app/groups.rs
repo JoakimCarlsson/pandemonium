@@ -95,17 +95,16 @@ impl App {
             return;
         }
         if let Some(project) = self.open.get(project) {
-            project_groups::assign(&mut self.project_groups, project.root(), group);
+            project_groups::assign(&mut self.project_groups, &project.root().stored(), group);
             self.store();
         }
     }
 
     /// Menu entries for assigning a project to existing or newly named groups.
     pub(super) fn project_group_items(&self, project: ProjectId) -> Vec<MenuItem<Message>> {
-        let current = self
-            .open
-            .get(project)
-            .and_then(|project| project_groups::membership(&self.project_groups, project.root()));
+        let current = self.open.get(project).and_then(|project| {
+            project_groups::membership(&self.project_groups, &project.root().stored())
+        });
         let mut items = vec![
             menu_separator(),
             menu_entry("New Group…", Some(Message::NewProjectGroup(Some(project)))),

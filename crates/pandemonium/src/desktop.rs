@@ -6,7 +6,7 @@
 //! server or without a file manager is a desktop where nothing happens, not one where the editor reports an
 //! error it cannot do anything about.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,49 +14,12 @@ use image::ColorType;
 use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 
+mod clipboard;
+
+pub use clipboard::{copy, copy_html, paste, paste_files, paste_image};
+
 /// The next pasted image's temporary file suffix.
 static NEXT_PASTED_IMAGE: AtomicU64 = AtomicU64::new(0);
-
-/// Puts `text` on the system clipboard.
-///
-/// The clipboard is served for as long as another application has not taken
-/// it over, which on Wayland and X11 alike means somebody has to stay and
-/// hand the text out. That somebody is a thread of ours, so the window goes
-/// on drawing while it waits.
-pub fn copy(text: String) {
-    std::thread::spawn(move || {
-        let Ok(mut clipboard) = arboard::Clipboard::new() else {
-            return;
-        };
-        #[cfg(target_os = "linux")]
-        {
-            use arboard::SetExtLinux;
-            let _ = clipboard.set().wait().text(text);
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = clipboard.set_text(text);
-        }
-    });
-}
-
-/// Puts an HTML fragment and its plain-text alternative on the system clipboard.
-pub fn copy_html(html: String, alt_text: String) {
-    std::thread::spawn(move || {
-        let Ok(mut clipboard) = arboard::Clipboard::new() else {
-            return;
-        };
-        #[cfg(target_os = "linux")]
-        {
-            use arboard::SetExtLinux;
-            let _ = clipboard.set().wait().html(html, Some(alt_text));
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = clipboard.set().html(html, Some(alt_text));
-        }
-    });
-}
 
 /// Shows `path` in the desktop's file manager.
 pub fn reveal(path: &Path) {
@@ -109,39 +72,6 @@ const OPENER: &str = "open";
 #[cfg(target_os = "windows")]
 const OPENER: &str = "explorer";
 
-/// What is on the system clipboard, if anything readable is.
-///
-/// Reading is done here and now rather than on a thread of its own: a paste
-/// is a keypress the reader is waiting on, and a clipboard that does not
-/// answer is a paste of nothing rather than a window that stops drawing.
-pub fn paste() -> Option<String> {
-    arboard::Clipboard::new().ok()?.get_text().ok()
-}
-
-/// Existing files named by the system clipboard, in clipboard order.
-pub fn paste_files() -> Option<Vec<PathBuf>> {
-    let files: Vec<_> = arboard::Clipboard::new()
-        .ok()?
-        .get()
-        .file_list()
-        .ok()?
-        .into_iter()
-        .filter(|path| path.is_file())
-        .collect();
-    (!files.is_empty()).then_some(files)
-}
-
-/// The image on the system clipboard, as its width, its height and its
-/// straight-alpha RGBA pixels.
-pub fn paste_image() -> Option<(u32, u32, Vec<u8>)> {
-    let image = arboard::Clipboard::new().ok()?.get_image().ok()?;
-    Some((
-        u32::try_from(image.width).ok()?,
-        u32::try_from(image.height).ok()?,
-        image.bytes.into_owned(),
-    ))
-}
-
 /// The longest side of a pasted image sent to an agent.
 pub const PASTED_IMAGE_MAX_SIDE: u32 = 2048;
 
@@ -157,7 +87,7 @@ pub fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
 
 /// Keeps a pasted PNG readable by an agent that accepts file links.
 pub fn save_pasted_image(png: &[u8]) -> Option<std::path::PathBuf> {
-    let directory = std::env::temp_dir().join("pandemonium");
+    let directory = crate::config::clipboard()?;
     std::fs::create_dir_all(&directory).ok()?;
     let sequence = NEXT_PASTED_IMAGE.fetch_add(1, Ordering::Relaxed);
     let path = directory.join(format!("pasted-{}-{sequence}.png", std::process::id()));

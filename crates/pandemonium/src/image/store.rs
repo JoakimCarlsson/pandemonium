@@ -22,6 +22,8 @@ struct Entry {
     scope: Scope,
     /// Where it lives.
     path: PathBuf,
+    /// The machine holding this picture.
+    host: pm_host::Host,
     /// How large the file is on disk, once it has been read.
     bytes: Arc<AtomicU64>,
     /// Whether it is only being looked at, and gives its tab up to the next.
@@ -61,7 +63,8 @@ impl Images {
     ///
     /// A picture that cannot be read still opens, saying why, because the
     /// reader asked for that file and a tab that does not appear says less.
-    pub fn open(&mut self, scope: Scope, path: &Path, preview: bool) -> ImageId {
+    pub fn open(&mut self, scope: Scope, location: &pm_host::Location, preview: bool) -> ImageId {
+        let path = &location.path;
         if let Some(id) = self.opened(scope, path) {
             if !preview {
                 self.keep(id);
@@ -71,12 +74,13 @@ impl Images {
         let id = self.next;
         self.next = ImageId(id.0 + 1);
         let bytes = Arc::new(AtomicU64::new(0));
-        self.pictures.start(id, read(path, bytes.clone()));
+        self.pictures.start(id, read(location, bytes.clone()));
         self.open.insert(
             id,
             Entry {
                 scope,
                 path: path.to_path_buf(),
+                host: location.host.clone(),
                 bytes,
                 preview,
             },
@@ -141,8 +145,13 @@ impl Images {
         let mut reread = false;
         for (id, entry) in &self.open {
             if entry.scope == scope && paths.contains(&entry.path) {
-                self.pictures
-                    .start(*id, read(&entry.path, entry.bytes.clone()));
+                self.pictures.start(
+                    *id,
+                    read(
+                        &pm_host::Location::new(entry.host.clone(), &entry.path),
+                        entry.bytes.clone(),
+                    ),
+                );
                 reread = true;
             }
         }
@@ -166,12 +175,16 @@ impl Images {
 
 /// Reads the file at `path` for its picture, noting its size in `bytes`.
 fn read(
-    path: &Path,
+    path: &pm_host::Location,
     bytes: Arc<AtomicU64>,
 ) -> impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static {
-    let path = path.to_path_buf();
+    let path = path.clone();
     move || {
-        let read = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let read = path
+            .host
+            .fs()
+            .read(&path.path)
+            .map_err(|error| error.to_string())?;
         bytes.store(read.len() as u64, Ordering::Relaxed);
         Ok(read)
     }

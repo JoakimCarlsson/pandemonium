@@ -37,6 +37,21 @@ pub enum ProjectSearchOption {
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+    /// Acts on tests in their originating project and worktree.
+    Test(Scope, crate::testing::Command),
+    /// Applies an explicit notebook toolbar or cell operation.
+    Notebook(FileId, crate::notebook::Action),
+    /// Selects source text in a notebook cell.
+    PointNotebook(
+        PaneId,
+        FileId,
+        pm_core::notebook::CellId,
+        ResizePhase,
+        Position,
+        Position,
+    ),
+    /// Scrolls a notebook cell input using its text rail.
+    ScrollNotebookCell(FileId, pm_core::notebook::CellId, ResizeEvent, f32),
     /// Opens the changes made during one reader prompt.
     DiffAgentTurn(TalkId, u64),
     /// Rewinds conversation context before a reader message and restores its prompt.
@@ -306,6 +321,8 @@ pub enum Message {
     ToggleHistoryGraph,
     /// Expand or collapse the Source Control changes section.
     ToggleChangesSection,
+    /// Drag the Source Control changes list's scroll thumb.
+    ScrollChanges(ResizeEvent, f32),
     /// Show the available Source Control commit actions.
     ShowCommitMenu,
     /// Show the Source Control action menu.
@@ -356,8 +373,8 @@ pub enum Message {
     OutlineSelect(Scope, usize),
     /// Expand or collapse one symbol in the worktree's outline.
     OutlineToggle(Scope, usize),
-    /// Give the outline filter its caret at this character.
-    OutlineFilterFocus(Scope, usize),
+    /// Select text in the outline filter and give it the keyboard.
+    WriteOutlineFilter(Scope, ResizePhase, Position, Position),
     /// Select every line a drag down this pane's gutter reaches.
     SelectLines(PaneId, Position, Position),
     /// Open the menu of things that can be done to the text in this pane.
@@ -388,10 +405,10 @@ pub enum Message {
     WriteDebugConsole(ResizePhase, Position, Position),
     /// Give this pane the keyboard, then carry out this command in it.
     PaneAction(PaneId, Action),
-    /// Send later keystrokes to this field of this pane's search bar.
-    FocusSearch(PaneId, SearchField, usize),
-    /// Focuses one field of a worktree search pane.
-    FocusProjectSearch(PaneId, SearchField, usize),
+    /// Select text in a field of this pane's search bar.
+    WriteSearch(PaneId, SearchField, ResizePhase, Position, Position),
+    /// Select text in a field of a worktree search pane.
+    WriteProjectSearch(PaneId, SearchField, ResizePhase, Position, Position),
     /// Flips a matching option in a worktree search pane.
     ToggleProjectSearch(PaneId, ProjectSearchOption),
     /// Confirms replacing all matches across multiple files.
@@ -406,8 +423,8 @@ pub enum Message {
     ToggleSearchReplace(PaneId),
     /// Close this pane's search bar.
     CloseSearch(PaneId),
-    /// Put the caret this many characters into the picker's field.
-    PlacePicker(usize),
+    /// Select text in the picker's input.
+    WritePicker(ResizePhase, Position, Position),
     /// Take the row the picker is showing in this place.
     ChoosePicker(usize),
     /// Take the completion the list is showing in this place.
@@ -442,8 +459,8 @@ pub enum Message {
     NewTreeFolder,
     /// Start typing a new name for the row the tree's keyboard is on.
     RenameTreeEntry,
-    /// Put the caret of the name being typed into the tree this far in.
-    PlaceTreeEdit(usize),
+    /// Select text in the name being typed into the tree.
+    WriteTreeEdit(ResizePhase, Position, Position),
     /// Ask whether what the tree is acting on should go to the trash.
     TrashTreeEntries,
     /// Ask whether what the tree is acting on should come off the disk.

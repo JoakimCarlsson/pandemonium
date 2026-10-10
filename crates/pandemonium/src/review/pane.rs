@@ -27,8 +27,8 @@ use pm_core::{Changed, Hunk, Line, LineKind};
 use pm_gfx::Rgba;
 use pm_text::Highlight;
 use pm_ui::{
-    Div, IconName, IconSize, Side, Styled, Theme, checkbox, h_flex, icon, icon_button, measured,
-    text, turning_icon_button, v_flex,
+    Div, Font, IconName, IconSize, Paragraph, Side, Styled, TextSize, Theme, checkbox, h_flex,
+    icon, icon_button, measured, paragraph, text, turning_icon_button, v_flex,
 };
 
 use crate::config::Preference;
@@ -38,9 +38,7 @@ use crate::review::action::{primary_face, primary_message};
 use crate::review::comment::{Anchor, Comment, Composing, Side as CommentSide};
 use crate::review::commit_editor;
 use crate::review::gutter::revealing;
-use crate::review::remark::{
-    Delivery, block_rows, comment_block, composer_block, composer_rows, pending_bar,
-};
+use crate::review::remark::{Delivery, comment_block, composer_block, pending_bar};
 use crate::review::sidebar::{staged_state, status_color};
 use crate::review::store::{ChangeId, Patch, Review};
 
@@ -51,9 +49,9 @@ use crate::review::store::{ChangeId, Patch, Review};
 /// looking at and enough beyond it to fill any pane.
 const DRAWN: usize = 400;
 
-/// Maximum characters shaped for one clipped diff row, with an ellipsis for the rest.
+/// Maximum characters shown for one wrapped diff row, with an ellipsis for the rest.
 ///
-/// Diff rows have no horizontal scrolling. Keeping a generous visible prefix
+/// Keeping a generous visible prefix
 /// prevents generated files with megabyte-long lines from blocking layout.
 /// The patch retains the complete line for staging and opening in the editor.
 const LINE_PREVIEW_CHARS: usize = 4096;
@@ -108,7 +106,7 @@ pub fn review_pane(
                 .when(empty, |pane| {
                     pane.child(nothing(theme, "No uncommitted changes"))
                 })
-                .children(drawn(theme, review, None, split, remarking)),
+                .child(drawn(theme, review, None, split, remarking)),
         ))
         .when(!empty, |pane| {
             pane.child(commit_bar(theme, review, typing, solid))
@@ -171,7 +169,7 @@ pub fn change_pane(
         })
         .child(measured(
             review.area(Some(id)),
-            v_flex().w_full().flex_1().overflow_hidden().children(drawn(
+            v_flex().w_full().flex_1().overflow_hidden().child(drawn(
                 theme,
                 review,
                 Some(id),
@@ -188,24 +186,32 @@ fn drawn(
     shown: Option<ChangeId>,
     split: bool,
     remarking: Remarking,
-) -> Vec<Div<Message>> {
+) -> super::scroll::DiffViewport {
+    let scroll = review.diff_scroll(shown);
     let rows = rows(review, shown, split);
     let first = review.scroll(shown).min(rows.len().saturating_sub(1));
+    if scroll.row() != first {
+        scroll.to(first);
+    }
     let picked = review
         .comments()
         .picked()
         .or_else(|| review.comments().composing().map(|draft| draft.anchor));
-    rows.into_iter()
+    let visible = rows
+        .into_iter()
+        .enumerate()
         .skip(first)
         .take(DRAWN)
-        .map(|row| {
+        .map(|(at, row)| {
             let outlined = shown.is_none() && !matches!(row, Row::FileGap | Row::FileEnd);
-            self::row(theme, review, row, (shown, &picked), remarking).when(outlined, |row| {
-                row.border_side(Side::Left, 1.0, theme.colors.border)
-                    .border_side(Side::Right, 1.0, theme.colors.border)
-            })
-        })
-        .collect()
+            let row =
+                self::row(theme, review, row, (shown, &picked), remarking).when(outlined, |row| {
+                    row.border_side(Side::Left, 1.0, theme.colors.border)
+                        .border_side(Side::Right, 1.0, theme.colors.border)
+                });
+            scroll.measured(at, row)
+        });
+    scroll.viewport(v_flex().w_full().children(visible))
 }
 
 /// Where in the review the file `id` names begins.
@@ -731,7 +737,6 @@ fn row(
             let spot = Spot::of(review, shown, index, path, staged, picked);
             h_flex()
                 .w_full()
-                .h_px(theme.size.row)
                 .items_stretch()
                 .overflow_hidden()
                 .child(half(theme, review, path, staged, old, false, &spot))
@@ -785,7 +790,6 @@ fn compare_heading(theme: &Theme, at: usize, total: usize) -> Div<Message> {
 fn compare_pair(theme: &Theme, current: Option<&str>, incoming: Option<&str>) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(theme.size.row)
         .items_stretch()
         .child(compare_half(theme, current, true))
         .child(v_flex().w_px(1.0).bg(theme.colors.border))
@@ -801,7 +805,7 @@ fn compare_half(theme: &Theme, line: Option<&str>, current: bool) -> Div<Message
     h_flex()
         .flex_1()
         .px(1.5)
-        .items_center()
+        .items_start()
         .overflow_hidden()
         .bg(color.alpha(theme.emphasis.change))
         .child(shaded(theme, line.unwrap_or_default(), &[]))
@@ -1122,7 +1126,7 @@ fn line_row(
         .w_px(NUMBERS)
         .px(0.5)
         .gap(0.5)
-        .items_center()
+        .items_start()
         .justify_end()
         .when_some(gutter, Div::bg)
         .child(number(theme, line.old))
@@ -1134,7 +1138,6 @@ fn line_row(
 
     h_flex()
         .w_full()
-        .h_px(theme.size.row)
         .items_stretch()
         .overflow_hidden()
         .when_some(wash, Div::bg)
@@ -1174,15 +1177,17 @@ fn half(
     let numbers = h_flex()
         .w_px(SIDE_NUMBER)
         .px(0.5)
-        .items_center()
+        .items_start()
         .justify_end()
         .when_some(gutter, Div::bg)
         .when_some(number, |slot, number| {
             slot.child(
-                text(number.to_string())
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.text_subtle),
+                h_flex().h_px(theme.size.row).items_center().child(
+                    text(number.to_string())
+                        .text_xs()
+                        .font_mono()
+                        .color(theme.colors.text_subtle),
+                ),
             )
         });
     let column = match commenting {
@@ -1199,7 +1204,7 @@ fn half(
         .child(marked(theme, line))
         .child(match line {
             Some(line) => shaded(theme, &line.text, shade.unwrap_or_default()),
-            None => h_flex().child(text(" ").text_sm().font_mono()),
+            None => shaded(theme, " ", &[]),
         })
 }
 
@@ -1247,19 +1252,24 @@ fn marked(theme: &Theme, line: Option<&Line>) -> Div<Message> {
         _ => " ",
     };
 
-    h_flex().w_px(MARK).items_center().justify_center().child(
-        text(mark)
-            .text_sm()
-            .font_mono()
-            .color(theme.colors.text_muted),
-    )
+    h_flex()
+        .w_px(MARK)
+        .h_px(theme.size.row)
+        .items_center()
+        .justify_center()
+        .child(
+            text(mark)
+                .text_sm()
+                .font_mono()
+                .color(theme.colors.text_muted),
+        )
 }
 
 /// Builds `said` as runs of one colour each, as `shade` colours it.
 ///
 /// A character `shade` says nothing about is drawn in the body colour, the
 /// way the editor draws one its grammar says nothing about.
-fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message> {
+fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Paragraph<Message> {
     let mut runs: Vec<(Option<Highlight>, String)> = Vec::new();
     let mut characters = said.chars();
     for (column, ch) in characters.by_ref().take(LINE_PREVIEW_CHARS).enumerate() {
@@ -1274,18 +1284,27 @@ fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message
         runs.push((None, "…".to_owned()));
     }
 
-    h_flex()
-        .items_center()
-        .children(runs.into_iter().map(|(highlight, run)| {
-            let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
-            text(run).text_sm().font_mono().color(color)
-        }))
+    let font = Font::new(TextSize::Sm).mono().leading(theme.size.row);
+    let mut content = paragraph()
+        .break_long_words()
+        .preserve_whitespace()
+        .flex_1();
+    if runs.is_empty() {
+        content = content.span(" ", font, theme.colors.text);
+    }
+    for (highlight, run) in runs {
+        let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
+        content = content.span(run, font, color);
+    }
+    content
 }
 
 /// Builds one of a line's numbers, or the blank where it has none.
 fn number(theme: &Theme, line: Option<usize>) -> Div<Message> {
     h_flex()
         .w_px(NUMBERS / 2.0 - 6.0)
+        .h_px(theme.size.row)
+        .items_center()
         .justify_end()
         .when_some(line, |slot, line| {
             slot.child(
@@ -1344,22 +1363,6 @@ pub fn hunk_anchor(
     }
 }
 
-/// How tall `row` is drawn.
-///
-/// Rows have no height of their own to ask for once they are drawn, so the
-/// heights are written down here beside the rows: a gesture that ends
-/// somewhere down the pane is turned into a line by adding them up.
-fn height(theme: &Theme, row: &Row<'_>) -> f32 {
-    match row {
-        Row::FileGap => FILE_GAP,
-        Row::FileEnd => 1.0,
-        Row::File(..) => theme.size.field,
-        Row::Comment(comment) => block_rows(comment) as f32 * theme.size.row,
-        Row::Composer(_) => composer_rows() as f32 * theme.size.row,
-        _ => theme.size.row,
-    }
-}
-
 /// The line, counted on `side` in the `index`-th change, that `row` is.
 fn numbered(row: &Row<'_>, index: usize, side: CommentSide) -> Option<usize> {
     let of = |line: &Line| match side {
@@ -1383,7 +1386,7 @@ fn numbered(row: &Row<'_>, index: usize, side: CommentSide) -> Option<usize> {
 /// comment, a heading, the space past the end — is taken to be at the line
 /// nearest to it.
 pub fn line_at(
-    theme: &Theme,
+    _theme: &Theme,
     review: &Review,
     (shown, split): (Option<ChangeId>, bool),
     (index, side): (usize, CommentSide),
@@ -1391,16 +1394,7 @@ pub fn line_at(
 ) -> Option<usize> {
     let rows = rows(review, shown, split);
     let first = review.scroll(shown).min(rows.len().saturating_sub(1));
-    let mut top = review.area(shown).get().top();
-    let mut reached = rows.len().saturating_sub(1);
-    for (at, row) in rows.iter().enumerate().skip(first) {
-        let bottom = top + height(theme, row);
-        if y < bottom {
-            reached = at;
-            break;
-        }
-        top = bottom;
-    }
+    let reached = review.diff_scroll(shown).at(y).unwrap_or(first);
     (0..rows.len()).find_map(|distance| {
         let below = rows
             .get(reached + distance)
@@ -1419,7 +1413,7 @@ pub(crate) struct TurnDiff {
     /// Files, hunks and their optional conservative provenance.
     pub(crate) files: BTreeMap<PathBuf, Vec<(Hunk, Option<pm_core::CheckpointStep>)>>,
     /// The first visible row.
-    pub(crate) scroll: usize,
+    pub(crate) scroll: super::scroll::DiffScroll,
 }
 
 /// A compact, stable identifier for a checkpoint heading's transcript target.
@@ -1455,11 +1449,16 @@ pub(crate) fn turns_pane(
 ) -> Div<Message> {
     let rows = turn_rows(diff, split);
     let empty = rows.is_empty();
+    let first = diff.scroll.row().min(rows.len().saturating_sub(1));
+    if diff.scroll.row() != first {
+        diff.scroll.to(first);
+    }
     let visible = rows
         .into_iter()
-        .skip(diff.scroll)
+        .enumerate()
+        .skip(first)
         .take(DRAWN)
-        .map(|row| turn_row(theme, scope, row));
+        .map(|(at, row)| diff.scroll.measured(at, turn_row(theme, scope, row)));
     v_flex()
         .w_full()
         .h_full()
@@ -1493,7 +1492,7 @@ pub(crate) fn turns_pane(
                 .when(empty, |pane| {
                     pane.child(nothing(theme, "No changes between these turns"))
                 })
-                .children(visible),
+                .child(diff.scroll.viewport(v_flex().w_full().children(visible))),
         )
 }
 
@@ -1589,7 +1588,6 @@ fn turn_row(theme: &Theme, scope: pm_core::Scope, row: TurnRow<'_>) -> Div<Messa
 fn readonly_pair(theme: &Theme, old: Option<&Line>, new: Option<&Line>) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(theme.size.row)
         .items_stretch()
         .child(readonly_half(theme, old, false))
         .child(readonly_half(theme, new, true))

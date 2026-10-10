@@ -58,7 +58,7 @@ impl App {
         self.open.activate(project);
         self.session_bases = Vec::new();
         if let Some([only]) = self.open.get(project).map(pm_core::Project::repositories) {
-            let root = only.root().to_path_buf();
+            let root = only.root().clone();
             self.read_bases_later(project, move || {
                 let branches = pm_core::branches(&root);
                 let (checked_out, rest): (Vec<_>, Vec<_>) = branches
@@ -166,7 +166,7 @@ impl App {
         };
         let repositories = project.repositories().iter().map(|repository| {
             let root = repository.root();
-            let tick = match self.session_picks.contains(root) {
+            let tick = match self.session_picks.contains(&root.path) {
                 true => "✓",
                 false => "  ",
             };
@@ -277,18 +277,20 @@ impl App {
                 Scope::of(held.project(), session),
                 std::iter::once(held.root())
                     .chain(held.roots())
-                    .map(Path::to_path_buf)
+                    .map(|root| root.path.clone())
                     .collect::<Vec<_>>(),
             )
         }) else {
             return;
         };
+        self.notebooks.forget(|held| held == scope);
         self.editor.close_scope(scope, &roots);
         self.sessions.forget(session);
 
         self.drop_tabs(&|held| held == scope);
         self.terminals.stop_all(scope);
         self.tasks.forget_scope(scope);
+        self.testing.worktrees.remove(&scope);
         self.checks.forget(scope);
         self.advance_checks();
         self.pending_debug.retain(|_, (held, _)| *held != scope);

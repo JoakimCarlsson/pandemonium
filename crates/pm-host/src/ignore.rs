@@ -31,7 +31,7 @@ impl Ignore {
     pub(super) fn read(root: &Path) -> Self {
         let mut directories = vec![root.to_path_buf()];
         directories.extend(
-            crate::project::repositories(root)
+            crate::filesystem::repositories(root)
                 .into_iter()
                 .filter(|repository| repository != root),
         );

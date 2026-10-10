@@ -3,10 +3,12 @@
 mod files;
 mod git;
 mod github;
+pub mod notebook;
 mod project;
 mod scope;
 mod session;
 mod task;
+pub mod testing;
 
 pub use files::{
     Disk, Entry, EntryId, FileTree, Row, Touch, Touched, Watcher, ops, walk, walk_each,
@@ -19,11 +21,11 @@ pub use git::{
     blame_at, branches, changes, checkpoint, checkpoint_at, checkpoint_step, checkpoint_steps,
     checkpoint_turn, checkpoints, cherry_pick, clone, commit, committed, contents,
     continue_operation, create_branch, diff, diffs, discard, discard_all, end_checkpoint, fetch,
-    fetch_from, force_push, history, hunk_step, hunk_steps, last_message, named, operation, pull,
-    push_branch, push_to, remember_review, remembered_review, remotes, remove_worktree, rewind,
-    rewind_number, rewind_paths, since, skip_operation, snapshot, stage, stash_apply, stash_drop,
-    stash_pop, stash_push, stashes, switch_branch, sync, take_rewind_context, unstage, untracked,
-    worktrees, write_index,
+    fetch_from, force_push, history, hunk_step, hunk_steps, last_message, named,
+    next_checkpoint_number, operation, pull, push_branch, push_to, remember_review,
+    remembered_review, remotes, remove_worktree, rewind, rewind_number, rewind_paths, since,
+    skip_operation, snapshot, stage, stash_apply, stash_drop, stash_pop, stash_push, stashes,
+    switch_branch, sync, take_rewind_context, unstage, untracked, worktrees, write_index,
 };
 pub use github::{
     GithubOwner, GithubRepository, github_owners, github_repositories, github_uses_ssh,

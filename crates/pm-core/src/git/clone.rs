@@ -4,7 +4,7 @@
 //! disk. This is the one that makes one: a URL and a directory to put it
 //! under, and what comes back is the checkout a project is then opened from.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::git::Said;
 use crate::git::run::git;
@@ -23,18 +23,19 @@ const GIT_SUFFIX: &str = ".git";
 /// both come after `--`: a URL is a place to fetch from, and one written so
 /// that git reads it as an option — `--upload-pack=…` names a program to run
 /// — is not a repository at all.
-pub fn clone(url: &str, under: &Path) -> Result<PathBuf, String> {
+pub fn clone(url: &str, under: impl Into<pm_host::Location>) -> Result<PathBuf, String> {
+    let under = under.into();
     let url = url.trim();
     let name = named(url).ok_or_else(|| format!("{url} does not name a repository"))?;
     if flag(url) || flag(&name) {
         return Err(format!("{url} is an option, not a repository"));
     }
     let root = under.join(&name);
-    if root.exists() {
+    if under.host.fs().exists(&root) {
         return Err(format!("{} is already there", root.display()));
     }
 
-    let said: Said = git(under, ["clone", "--", url, &name]);
+    let said: Said = git(&under, ["clone", "--", url, &name]);
     said.map(|_| root)
 }
 

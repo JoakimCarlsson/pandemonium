@@ -71,6 +71,9 @@ impl App {
             }
         };
         self.move_tool(pane, tool);
+        if tool == Tool::Tests {
+            self.maintain_tests();
+        }
     }
 
     /// Moves the current worktree's tool tab to `target`, preserving panes and other tabs.
@@ -319,6 +322,7 @@ impl App {
                     self.chat_scroll.clone(),
                 )
             }
+            Tool::Tests => self.test_content(theme),
             Tool::Terminal => self.panel_content(theme, PanelView::Terminal),
             Tool::Problems => self.panel_content(theme, PanelView::Problems),
             Tool::Debug => self.panel_content(theme, PanelView::Debug),

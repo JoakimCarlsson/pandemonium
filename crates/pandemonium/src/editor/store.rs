@@ -6,6 +6,13 @@
 //! one seam a file is opened, edited, saved and closed through, so the
 //! language server hears about every change exactly once.
 
+#![allow(
+    clippy::mutable_key_type,
+    reason = "Host equality and hashing use immutable SSH aliases only."
+)]
+
+use pm_host::Location;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -1308,7 +1315,7 @@ impl Document {
     ///
     /// Only a file with changes is tidied: saving everything must not
     /// rewrite a file nobody touched because it was untidy when it opened.
-    pub fn save(&mut self, habits: Habits) {
+    pub fn save(&mut self, habits: Habits) -> Result<(), String> {
         self.dismiss_prediction();
         if self.buffer.is_dirty() {
             if habits.trim_whitespace {
@@ -1322,13 +1329,12 @@ impl Document {
         for server in &self.servers {
             server.will_save(self.buffer.path());
         }
-        if self.buffer.save().is_err() {
-            return;
-        }
+        self.buffer.save().map_err(|error| error.to_string())?;
         let contents = self.buffer.contents();
         for server in &self.servers {
             server.did_save(self.buffer.path(), &contents);
         }
+        Ok(())
     }
 
     /// Reads this document from disk again, when it has nothing unsaved.
@@ -1396,7 +1402,7 @@ struct Entry {
     /// The worktree the file was opened from, or none for a loose file.
     scope: Option<Scope>,
     /// The worktree root that owns this file's language servers.
-    root: PathBuf,
+    root: Location,
     /// The document, shared with whichever panes are drawing it.
     document: OpenFile,
 }
@@ -1416,9 +1422,26 @@ pub struct Files {
     by_language: BTreeMap<String, Habits>,
     /// What the index holds for each of them, read away from the window.
     baselines: Baselines,
+    /// File errors waiting to be shown by the window.
+    troubles: Vec<String>,
+}
+
+/// Opens configured servers on the machine holding the document.
+fn servers_for(
+    servers: &mut Servers,
+    root: &Location,
+    language: Option<pm_text::Language>,
+) -> Vec<Arc<Client>> {
+    language
+        .map(|language| servers.open(root, language))
+        .unwrap_or_default()
 }
 
 impl Files {
+    /// Takes file errors for the window's notices.
+    pub fn take_troubles(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.troubles)
+    }
     /// Hides all inline predictions and cancels their requests.
     pub fn dismiss_predictions(&mut self) {
         for entry in self.open.values() {
@@ -1453,7 +1476,7 @@ impl Files {
     ///
     /// The document keeps what it had until the answer is back; before the
     /// thread reading baselines has been started, it is read here.
-    fn ask_baseline(&self, id: FileId, root: &Path) {
+    fn ask_baseline(&self, id: FileId, root: &Location) {
         let Some(entry) = self.open.get(&id) else {
             return;
         };
@@ -1510,7 +1533,7 @@ impl Files {
     }
 
     /// Logs of all configured server slots over a worktree.
-    pub fn server_logs_over(&self, root: &Path) -> Vec<(&'static str, PathBuf)> {
+    pub fn server_logs_over(&self, root: &Location) -> Vec<(&'static str, PathBuf)> {
         self.servers.logs_over(root)
     }
 
@@ -1520,22 +1543,26 @@ impl Files {
         missing
             .into_iter()
             .filter(|server| {
-                self.open.values().any(|entry| {
-                    let document = entry.document.borrow();
-                    document.buffer().language().is_some_and(|language| {
-                        (!document.is_served()
-                            || (pm_text::program::installed_with_recipe(
-                                server.command,
-                                server.install,
-                            )
-                            .is_none()
-                                && pm_text::program::managed_fallback(server.command).is_some()))
-                            && self
-                                .servers
-                                .installable(language)
-                                .is_some_and(|first| first.command == server.command)
+                self.open
+                    .values()
+                    .filter(|entry| entry.root.host.is_local())
+                    .any(|entry| {
+                        let document = entry.document.borrow();
+                        document.buffer().language().is_some_and(|language| {
+                            (!document.is_served()
+                                || (pm_text::program::installed_with_recipe(
+                                    server.command,
+                                    server.install,
+                                )
+                                .is_none()
+                                    && pm_text::program::managed_fallback(server.command)
+                                        .is_some()))
+                                && self
+                                    .servers
+                                    .installable(language)
+                                    .is_some_and(|first| first.command == server.command)
+                        })
                     })
-                })
             })
             .collect()
     }
@@ -1588,6 +1615,23 @@ impl Files {
         self.refresh();
     }
 
+    /// Replaces ended language servers on a reconnected host without rereading buffers.
+    pub fn reconnect_host(&mut self, host: &pm_host::Host) {
+        let roots = self
+            .open
+            .values()
+            .filter(|entry| &entry.root.host == host)
+            .map(|entry| entry.root.clone())
+            .collect::<std::collections::HashSet<_>>();
+        for root in roots {
+            self.servers.close(&root);
+        }
+        for entry in self.open.values().filter(|entry| &entry.root.host == host) {
+            entry.document.borrow_mut().set_servers(Vec::new());
+        }
+        self.refresh();
+    }
+
     /// Starts installed servers again for every open document of `language`.
     pub fn reopen_language(&mut self, language: pm_text::Language) {
         self.servers.reopen(language);
@@ -1599,7 +1643,7 @@ impl Files {
                 .language()
                 .is_some_and(|open| open.name() == language.name())
             {
-                let servers = self.servers.open(&entry.root, language);
+                let servers = servers_for(&mut self.servers, &entry.root, Some(language));
                 entry.document.borrow_mut().set_servers(servers);
             }
         }
@@ -1621,11 +1665,18 @@ impl Files {
         }
         self.open.values().any(|entry| {
             let document = entry.document.borrow();
-            document.is_served()
-                && document
-                    .buffer()
-                    .language()
-                    .is_some_and(|language| self.servers.uses(language, command))
+            document.buffer().language().is_some_and(|language| {
+                self.servers.uses(language, command)
+                    && (document.is_served()
+                        || self
+                            .servers
+                            .states(&entry.root, language)
+                            .iter()
+                            .any(|state| {
+                                state.command == command
+                                    && state.state == pm_text::ServerState::Starting
+                            }))
+            })
         })
     }
 
@@ -1683,7 +1734,7 @@ impl Files {
     }
 
     /// Every language server running over the worktree at `root`.
-    pub fn servers_over(&self, root: &Path) -> Vec<Arc<Client>> {
+    pub fn servers_over(&self, root: &Location) -> Vec<Arc<Client>> {
         self.servers.over(root)
     }
 
@@ -1695,7 +1746,7 @@ impl Files {
     pub fn open(
         &mut self,
         scope: Scope,
-        root: &Path,
+        root: &Location,
         path: &Path,
         preview: bool,
     ) -> Option<FileId> {
@@ -1706,11 +1757,8 @@ impl Files {
             return Some(id);
         }
 
-        let buffer = self.prepared_buffer(path)?;
-        let servers = buffer
-            .language()
-            .map(|language| self.servers.open(root, language))
-            .unwrap_or_default();
+        let buffer = self.prepared_buffer(root.at(path))?;
+        let servers = servers_for(&mut self.servers, root, buffer.language());
 
         let id = self.next;
         self.next = FileId(id.0 + 1);
@@ -1718,7 +1766,7 @@ impl Files {
             id,
             Entry {
                 scope: Some(scope),
-                root: root.to_path_buf(),
+                root: root.clone(),
                 document: Rc::new(RefCell::new(Document::new(buffer, preview, servers, None))),
             },
         );
@@ -1746,7 +1794,7 @@ impl Files {
             id,
             Entry {
                 scope: None,
-                root: path.parent()?.to_path_buf(),
+                root: Location::local(path.parent()?),
                 document: Rc::new(RefCell::new(Document::new(buffer, false, Vec::new(), None))),
             },
         );
@@ -1754,8 +1802,16 @@ impl Files {
     }
 
     /// Reads a file with the editor's indentation preferences applied.
-    fn prepared_buffer(&self, path: &Path) -> Option<Buffer> {
-        let mut buffer = Buffer::open(path).ok()?;
+    fn prepared_buffer(&mut self, location: impl Into<Location>) -> Option<Buffer> {
+        let location = location.into();
+        let mut buffer = match Buffer::open(&location) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                self.troubles
+                    .push(format!("Could not open {}: {error}", location.display()));
+                return None;
+            }
+        };
         let habits = self.habits_of(buffer.language());
         buffer.set_habit(habits.indent);
         buffer.force_indent(habits.indent_fixed.then_some(habits.indent));
@@ -1845,11 +1901,13 @@ impl Files {
     /// Saving is when the index is read again: what a file is compared
     /// against only changes when git is given something to change it with,
     /// and writing the file is the moment that becomes possible.
-    pub fn save(&mut self, id: FileId, root: &Path) {
+    pub fn save(&mut self, id: FileId, root: &Location) {
         if let Some(entry) = self.open.get(&id) {
             let mut document = entry.document.borrow_mut();
             let habits = self.habits_of(document.buffer().language());
-            document.save(habits);
+            if let Err(error) = document.save(habits) {
+                self.troubles.push(error);
+            }
             drop(document);
             if entry.scope.is_some() {
                 self.ask_baseline(id, root);
@@ -1862,7 +1920,7 @@ impl Files {
     /// This is a write somebody else asked for: it goes into the open buffer
     /// as one edit the reader can take back, and to disk untidied, because
     /// whoever wrote it reads it again and expects to find what they wrote.
-    pub fn write(&mut self, id: FileId, text: &str, root: &Path) {
+    pub fn write(&mut self, id: FileId, text: &str, root: &Location) {
         let Some(entry) = self.open.get(&id) else {
             return;
         };
@@ -1876,19 +1934,21 @@ impl Files {
                 });
             }
             let indent = self.habits_of(document.buffer().language()).indent;
-            document.save(Habits {
+            if let Err(error) = document.save(Habits {
                 indent,
                 indent_fixed: false,
                 trim_whitespace: false,
                 final_newline: false,
-            });
+            }) {
+                self.troubles.push(error);
+            }
         }
         self.ask_baseline(id, root);
     }
 
     /// Writes every open file with changes that are not on disk, each
     /// against its own worktree; a file nobody changed is left as it is.
-    pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<PathBuf>) {
+    pub fn save_all(&mut self, root: &dyn Fn(Scope) -> Option<Location>) {
         let dirty = self
             .open
             .iter()
@@ -1902,7 +1962,9 @@ impl Files {
                     if let Some(entry) = self.open.get(&id) {
                         let mut document = entry.document.borrow_mut();
                         let habits = self.habits_of(document.buffer().language());
-                        document.save(habits);
+                        if let Err(error) = document.save(habits) {
+                            self.troubles.push(error);
+                        }
                     }
                 }
             }
@@ -1918,13 +1980,18 @@ impl Files {
     }
 
     /// Reads every clean open document of `scope` from its changed worktree.
-    pub fn reload_project(&mut self, scope: Scope, root: &Path) {
+    pub fn reload_project(&mut self, scope: Scope, root: &Location) {
         self.reread(scope, root, |_| true);
     }
 
     /// Reads the clean open documents of `scope` at `paths` from disk again,
     /// answering whether any of them changed.
-    pub fn reread_paths(&mut self, scope: Scope, root: &Path, paths: &BTreeSet<PathBuf>) -> bool {
+    pub fn reread_paths(
+        &mut self,
+        scope: Scope,
+        root: &Location,
+        paths: &BTreeSet<PathBuf>,
+    ) -> bool {
         self.reread(scope, root, |path| paths.contains(path))
     }
 
@@ -1933,7 +2000,7 @@ impl Files {
     ///
     /// What the index holds for each of them is asked for again too, since
     /// a write under the worktree is as likely to be git's as anyone's.
-    fn reread(&mut self, scope: Scope, root: &Path, wanted: impl Fn(&Path) -> bool) -> bool {
+    fn reread(&mut self, scope: Scope, root: &Location, wanted: impl Fn(&Path) -> bool) -> bool {
         let clean = self
             .open
             .iter()
@@ -1955,7 +2022,7 @@ impl Files {
     }
 
     /// Tells the servers over `root` what changed on disk under it.
-    pub fn watched(&self, root: &Path, changes: &[(PathBuf, pm_text::Watched)]) {
+    pub fn watched(&self, root: &Location, changes: &[(PathBuf, pm_text::Watched)]) {
         self.servers.watched(root, changes);
     }
 
@@ -1988,18 +2055,30 @@ impl Files {
 
     /// Closes every file and server of `scope` over its worktree roots.
     pub fn close_scope(&mut self, scope: Scope, roots: &[PathBuf]) {
+        let owned = self
+            .open
+            .values()
+            .filter(|entry| entry.scope == Some(scope))
+            .map(|entry| entry.root.clone())
+            .collect::<std::collections::HashSet<_>>();
         self.open.retain(|_, entry| entry.scope != Some(scope));
-        for root in roots {
-            self.servers.close(root);
+        for root in owned {
+            if roots.contains(&root.path) && !self.open.values().any(|entry| entry.root == root) {
+                self.servers.close(&root);
+            }
         }
     }
 
-    /// Closes every file of `project` and ends servers over all its roots.
+    /// Closes every file of `project` and ends its unshared language servers.
     pub fn close_project(&mut self, project: ProjectId, roots: &[PathBuf]) {
-        self.open
-            .retain(|_, entry| !entry.scope.is_some_and(|scope| scope.project() == project));
-        for root in roots {
-            self.servers.close(root);
+        let scopes = self
+            .open
+            .values()
+            .filter_map(|entry| entry.scope)
+            .filter(|scope| scope.project() == project)
+            .collect::<BTreeSet<_>>();
+        for scope in scopes {
+            self.close_scope(scope, roots);
         }
     }
 
@@ -2016,19 +2095,18 @@ impl Files {
             .filter_map(|client| client.log_path().map(Path::to_path_buf))
             .collect::<Vec<_>>();
         for entry in self.open.values() {
-            let log = grown
-                .iter()
-                .any(|path| entry.document.borrow().buffer().path() == path);
+            let log = entry.root.host.is_local()
+                && grown
+                    .iter()
+                    .any(|path| entry.document.borrow().buffer().path() == path);
             if log && !entry.document.borrow().buffer().is_dirty() {
                 changed |= entry.document.borrow_mut().reread();
             }
         }
         for entry in self.open.values() {
             let language = entry.document.borrow().buffer().language();
-            if let Some(language) = language {
-                let servers = self.servers.open(&entry.root, language);
-                changed |= entry.document.borrow_mut().set_servers(servers);
-            }
+            let servers = servers_for(&mut self.servers, &entry.root, language);
+            changed |= entry.document.borrow_mut().set_servers(servers);
             if fresh {
                 entry.document.borrow_mut().refresh();
             }

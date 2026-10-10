@@ -2,11 +2,12 @@
 //! from the user's login shell, which is the one that knows where the user's
 //! toolchains live. Call before any thread is spawned.
 
+use pm_host::Child;
+use pm_host::Stdio;
 use std::env;
 use std::ffi::OsString;
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// How long the login shell may take to print its PATH before it is given up on.
@@ -33,7 +34,8 @@ pub fn adopt() {
 /// The PATH the login shell prints, if it prints one within [`SHELL_DEADLINE`].
 fn login_shell_path() -> Option<OsString> {
     let shell = env::var("SHELL").unwrap_or_else(|_| default_shell().to_owned());
-    let mut child = Command::new(shell)
+    let mut child = pm_host::Host::local()
+        .command(shell)
         .args(["-l", "-i", "-c", "printenv PATH"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

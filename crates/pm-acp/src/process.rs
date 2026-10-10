@@ -1,7 +1,7 @@
 //! Operating system containment for an agent and the processes it starts.
 
+use pm_host::{Child, Command};
 use std::io;
-use std::process::{Child, Command};
 
 #[cfg(unix)]
 use std::sync::{Mutex, OnceLock};
@@ -54,13 +54,7 @@ pub(super) fn finish(worker: std::thread::JoinHandle<()>) {
 
 /// Places a newly spawned agent in a process group of its own on Unix.
 pub(super) fn configure(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(not(unix))]
-    let _ = command;
+    command.process_group(0);
 }
 
 /// The group or job that contains an agent's descendants.
@@ -76,6 +70,9 @@ pub(super) struct Containment {
 impl Containment {
     /// Takes ownership of the operating system container for `process`.
     pub(super) fn new(process: &Child) -> io::Result<Self> {
+        if !process.is_local() {
+            return Ok(Self::empty());
+        }
         #[cfg(unix)]
         {
             Ok(Self {

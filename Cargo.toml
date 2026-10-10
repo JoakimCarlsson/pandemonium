@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+pm-host = { path = "crates/pm-host" }
 pm-acp = { path = "crates/pm-acp" }
 pm-core = { path = "crates/pm-core" }
 pm-dap = { path = "crates/pm-dap" }

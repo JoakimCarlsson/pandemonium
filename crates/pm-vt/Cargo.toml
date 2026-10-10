@@ -5,6 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-portable-pty = "0.9.0"
+pm-host.workspace = true
 unicode-width = "0.2.2"
 vte = "0.15.0"

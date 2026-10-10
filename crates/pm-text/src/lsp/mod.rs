@@ -13,6 +13,11 @@
 //! replaces that language's list outright, or through [`Servers::set_added`],
 //! which runs more servers after the ones the language names.
 
+#![allow(
+    clippy::mutable_key_type,
+    reason = "Host equality and hashing use immutable SSH aliases only."
+)]
+
 mod answer;
 mod capabilities;
 mod client;
@@ -27,8 +32,9 @@ mod sync;
 mod uri;
 mod watch;
 
+use pm_host::Location as HostLocation;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -45,9 +51,14 @@ pub use watch::Watched;
 /// How many consecutive exits are allowed before a server is abandoned.
 const RESTART_LIMIT: u32 = 4;
 
+/// A server startup performed away from the window thread.
+type Starting = std::sync::mpsc::Receiver<Result<Option<(PathBuf, Client)>, String>>;
+
 /// One server slot and its bounded restart schedule.
 #[derive(Default)]
 struct Running {
+    /// A server startup completed away from the window thread.
+    starting: Option<Starting>,
     /// The client currently occupying the slot.
     client: Option<Arc<Client>>,
     /// How often a client in this slot has died.
@@ -68,13 +79,13 @@ struct Running {
 }
 
 use crate::language::{Language, Server};
-use crate::program::{Need, installed, installed_with_recipe, missing_for};
+use crate::program::{Need, installed_with_recipe, missing_for};
 
 /// The language servers a window is running.
 #[derive(Default)]
 pub struct Servers {
     /// One server per worktree and language, by the command that started it.
-    running: HashMap<(PathBuf, &'static str), Running>,
+    running: HashMap<(HostLocation, &'static str), Running>,
     /// The servers to run for a language, where that was overridden by name.
     overrides: HashMap<&'static str, Vec<Server>>,
     /// The servers to run for a language after the ones it names.
@@ -86,7 +97,7 @@ pub struct Servers {
     /// Installable programs that started servers run in turn but lack.
     missing_tools: HashSet<&'static Need>,
     /// Worktrees with an open document of each language.
-    opened: HashMap<&'static str, HashSet<PathBuf>>,
+    opened: HashMap<&'static str, HashSet<HostLocation>>,
     /// The directory every server's log is written in, when logs are kept.
     logs: Option<PathBuf>,
 }
@@ -137,135 +148,185 @@ impl Servers {
     /// A server that is not installed is not asked for, and a server that
     /// will not start is remembered as one that will not start: a missing
     /// rust-analyzer is tried once per worktree, not once per file opened.
-    pub fn open(&mut self, root: &Path, language: Language) -> Vec<Arc<Client>> {
+    pub fn open(&mut self, root: &HostLocation, language: Language) -> Vec<Arc<Client>> {
         self.opened
             .entry(language.name())
             .or_default()
-            .insert(root.to_path_buf());
+            .insert(root.clone());
         let Some(notify) = self.notify.clone() else {
             return Vec::new();
         };
-        let wanted = self.wanted(language);
-        let logs = self.logs.clone();
-        wanted
-            .iter()
-            .filter_map(
-                |server| match installed_with_recipe(server.command, server.install) {
-                    Some(program) => Some((server, program)),
-                    None => {
-                        self.missing.insert(server.command);
-                        if let Some(program) = crate::program::managed_fallback(server.command) {
-                            return Some((server, program));
+        let mut clients = Vec::new();
+        for server in self.wanted(language) {
+            let running = self
+                .running
+                .entry((root.clone(), server.command))
+                .or_default();
+            if let Some(starting) = &running.starting {
+                match starting.try_recv() {
+                    Ok(result) => {
+                        running.starting = None;
+                        match result {
+                            Ok(Some((program, client))) => {
+                                running.program = Some(program);
+                                running.client = Some(Arc::new(client));
+                                running.stopped = None;
+                            }
+                            Ok(None) => {
+                                running.stopped = Some(ServerState::Missing);
+                                if root.host.is_local() {
+                                    self.missing.insert(server.command);
+                                }
+                            }
+                            Err(reason) => {
+                                running.stopped = Some(ServerState::Failed { reason });
+                                running.unreported = true;
+                            }
                         }
-                        let running = self
-                            .running
-                            .entry((root.to_path_buf(), server.command))
-                            .or_default();
-                        if running.stopped != Some(ServerState::Missing) {
-                            let log = log::Log::open(logs.as_deref(), root, server.command);
-                            log.write(&match server.install {
-                                Some(_) => format!(
-                                    "{} is not installed yet; the editor can install it.",
-                                    server.command
-                                ),
-                                None => format!("{} was not found", server.command),
-                            });
-                            running.stopped = Some(ServerState::Missing);
-                        }
-                        None
                     }
-                },
-            )
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|(server, program)| {
-                let notify = notify.clone();
-                let running = self
-                    .running
-                    .entry((root.to_path_buf(), server.command))
-                    .or_default();
-                if running.server.is_some_and(|previous| {
-                    previous.arguments != server.arguments
-                        || previous.options != server.options
-                        || running.program.as_ref() != Some(&program)
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        running.starting = None;
+                        running.stopped = Some(ServerState::Failed {
+                            reason: "The server startup stopped".to_owned(),
+                        });
+                        running.unreported = true;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+                }
+            }
+            if let Some(reason) = running.client.as_ref().and_then(|client| client.refusal()) {
+                if let Some(client) = running.client.take() {
+                    client.shutdown();
+                }
+                running.stopped = Some(ServerState::Failed { reason });
+                running.unreported = true;
+            }
+            if running
+                .client
+                .as_ref()
+                .is_some_and(|client| client.is_dead())
+            {
+                let stable = running
+                    .client
+                    .as_ref()
+                    .is_some_and(|client| client.was_stable());
+                let reason = running
+                    .client
+                    .as_ref()
+                    .and_then(|client| client.last_stderr())
+                    .unwrap_or_else(|| "The language server disconnected".to_owned());
+                running.client = None;
+                if stable {
+                    running.failures = 0;
+                }
+                running.failures += 1;
+                if running.failures >= RESTART_LIMIT {
+                    running.stopped = Some(ServerState::Failed { reason });
+                    running.unreported = true;
+                } else {
+                    let delay = Duration::from_secs(1 << (running.failures - 1));
+                    running.retry_at = Some(Instant::now() + delay);
+                    let wake = notify.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(delay);
+                        wake();
+                    });
+                }
+            }
+            if root.host.is_local() {
+                let installed = installed_with_recipe(server.command, server.install);
+                if installed.is_none() {
+                    self.missing.insert(server.command);
+                }
+                let changed = running.program.as_ref().is_some_and(|previous| {
+                    installed
+                        .as_ref()
+                        .is_some_and(|program| previous != program)
                 }) || running
                     .lacking
                     .iter()
-                    .any(|program| installed(program).is_some())
-                {
+                    .any(|program| crate::program::installed(program).is_some());
+                let available =
+                    running.stopped == Some(ServerState::Missing) && installed.is_some();
+                if changed || available {
                     if let Some(client) = running.client.take() {
                         client.shutdown();
                     }
+                    running.starting = None;
+                    running.stopped = None;
                     running.failures = 0;
                     running.retry_at = None;
                 }
-                running.server = Some(*server);
-                running.program = Some(program.clone());
-                if running
-                    .client
-                    .as_ref()
-                    .is_some_and(|client| client.is_dead())
-                {
-                    if running
-                        .client
-                        .as_ref()
-                        .is_some_and(|client| client.was_stable())
-                    {
-                        running.failures = 0;
-                    }
-                    let reason = running
-                        .client
-                        .as_ref()
-                        .and_then(|client| client.last_stderr())
-                        .unwrap_or_else(|| "the server stopped talking".to_owned());
-                    running.client = None;
-                    running.failures += 1;
-                    if running.failures < RESTART_LIMIT {
-                        let delay = Duration::from_secs(1 << (running.failures - 1));
-                        running.retry_at = Some(Instant::now() + delay);
-                        std::thread::spawn(move || {
-                            std::thread::sleep(delay);
-                            notify();
-                        });
-                    } else {
-                        running.stopped = Some(ServerState::Failed { reason });
-                        running.unreported = true;
-                    }
-                    return None;
+            }
+            if running.server.is_some_and(|previous| {
+                previous.arguments != server.arguments || previous.options != server.options
+            }) {
+                if let Some(client) = running.client.take() {
+                    client.shutdown();
                 }
-                if running.failures >= RESTART_LIMIT
-                    || running.retry_at.is_some_and(|at| Instant::now() < at)
-                {
-                    return None;
-                }
-                if running.client.is_none() {
-                    running.stopped = None;
-                    let lacking = missing_for(server.command);
-                    self.missing_tools
-                        .extend(lacking.iter().filter(|need| need.installable()));
-                    running.lacking = lacking.iter().map(|need| need.program).collect();
-                    match Client::start(root, &program, *server, notify, logs.as_deref()) {
-                        Ok(client) => running.client = Some(Arc::new(client)),
-                        Err(error) => {
-                            running.failures = RESTART_LIMIT;
-                            running.stopped = Some(ServerState::Failed {
-                                reason: error.to_string(),
+                running.starting = None;
+                running.stopped = None;
+                running.failures = 0;
+            }
+            if let Some(client) = &running.client {
+                clients.push(client.clone());
+                continue;
+            }
+            if running.starting.is_some()
+                || running.stopped.is_some()
+                || !root.host.connected()
+                || running.retry_at.is_some_and(|at| Instant::now() < at)
+            {
+                continue;
+            }
+            running.server = Some(server);
+            if root.host.is_local() {
+                let lacking = missing_for(server.command);
+                self.missing_tools
+                    .extend(lacking.iter().filter(|need| need.installable()));
+                running.lacking = lacking.iter().map(|need| need.program).collect();
+            }
+            let root = root.clone();
+            let logs = self.logs.clone();
+            let wake = notify.clone();
+            let (done, starting) = std::sync::mpsc::channel();
+            running.starting = Some(starting);
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let program =
+                        crate::program::installed_on(&root.host, server.command, server.install)
+                            .or_else(|| {
+                                root.host
+                                    .is_local()
+                                    .then(|| crate::program::managed_fallback(server.command))
+                                    .flatten()
                             });
-                            running.unreported = true;
-                        }
-                    }
-                }
-                running.client.clone()
-            })
-            .collect()
+                    let Some(program) = program else {
+                        let log = log::Log::open(logs.as_deref(), &root.stored(), server.command);
+                        log.write(&format!(
+                            "{} is not installed on {}",
+                            server.command,
+                            root.host.name().unwrap_or("the local machine")
+                        ));
+                        return Ok(None);
+                    };
+                    Client::start(&root, &program, server, wake.clone(), logs.as_deref())
+                        .map(|client| Some((program, client)))
+                        .map_err(|error| error.to_string())
+                })();
+                let _ = done.send(result);
+                wake();
+            });
+        }
+        clients
     }
 
     /// The configured servers' states for a language over a worktree.
-    pub fn states(&self, root: &Path, language: Language) -> Vec<ServerStatus> {
+    pub fn states(&self, root: &HostLocation, language: Language) -> Vec<ServerStatus> {
         self.wanted(language)
             .into_iter()
             .map(|server| {
-                let running = self.running.get(&(root.to_path_buf(), server.command));
+                let running = self.running.get(&(root.clone(), server.command));
                 let state = running
                     .and_then(|running| running.stopped.clone())
                     .or_else(|| {
@@ -284,7 +345,7 @@ impl Servers {
     }
 
     /// Persistent logs for every server slot over a worktree.
-    pub fn logs_over(&self, root: &Path) -> Vec<(&'static str, PathBuf)> {
+    pub fn logs_over(&self, root: &HostLocation) -> Vec<(&'static str, PathBuf)> {
         self.running
             .keys()
             .filter(|(started, _)| started == root)
@@ -293,10 +354,10 @@ impl Servers {
     }
 
     /// The log location independent of whether a client is running.
-    fn log_path(&self, root: &Path, command: &str) -> Option<PathBuf> {
+    fn log_path(&self, root: &HostLocation, command: &str) -> Option<PathBuf> {
         self.logs
             .as_ref()
-            .map(|directory| directory.join(log::name(root, command)))
+            .map(|directory| directory.join(log::name(&root.stored(), command)))
     }
 
     /// Takes each terminal failure once per server slot.
@@ -313,7 +374,7 @@ impl Servers {
                     state: running.stopped.clone()?,
                     log: logs
                         .as_ref()
-                        .map(|directory| directory.join(log::name(root, command))),
+                        .map(|directory| directory.join(log::name(&root.stored(), command))),
                 })
             })
             .collect()
@@ -352,12 +413,19 @@ impl Servers {
             .cloned()
             .unwrap_or_default();
         for root in roots {
+            for server in self.wanted(language) {
+                if let Some(running) = self.running.remove(&(root.clone(), server.command))
+                    && let Some(client) = running.client
+                {
+                    client.shutdown();
+                }
+            }
             self.open(&root, language);
         }
     }
 
     /// Keeps only roots that still have an open document of each language.
-    pub fn retain_opened(&mut self, documents: &[(PathBuf, &'static str)]) {
+    pub fn retain_opened(&mut self, documents: &[(HostLocation, &'static str)]) {
         self.opened.clear();
         for (root, language) in documents {
             self.opened
@@ -368,7 +436,11 @@ impl Servers {
     }
 
     /// Drops server slots whose documents or configuration changed.
-    pub fn reconcile(&mut self, documents: &[(PathBuf, Language)]) {
+    ///
+    /// A slot whose server was given up on is kept when its documents close,
+    /// so that opening one again does not start the same failure over;
+    /// [`Servers::reopen`] or a change to its configuration still does.
+    pub fn reconcile(&mut self, documents: &[(HostLocation, Language)]) {
         let wanted = documents
             .iter()
             .flat_map(|(root, language)| {
@@ -378,11 +450,12 @@ impl Servers {
             })
             .collect::<HashMap<_, _>>();
         self.running.retain(|key, running| {
-            let keep = wanted.get(key).is_some_and(|server| {
-                running.server.is_none_or(|previous| {
+            let keep = match wanted.get(key) {
+                Some(server) => running.server.is_none_or(|previous| {
                     previous.arguments == server.arguments && previous.options == server.options
-                })
-            });
+                }),
+                None => matches!(running.stopped, Some(ServerState::Failed { .. })),
+            };
             if !keep && let Some(client) = &running.client {
                 client.shutdown();
             }
@@ -449,7 +522,7 @@ impl Servers {
     }
 
     /// Ends every server started for `root`.
-    pub fn close(&mut self, root: &Path) {
+    pub fn close(&mut self, root: &HostLocation) {
         for roots in self.opened.values_mut() {
             roots.remove(root);
         }
@@ -466,7 +539,7 @@ impl Servers {
     }
 
     /// Every server running over `root`, whichever language it serves.
-    pub fn over(&self, root: &Path) -> Vec<Arc<Client>> {
+    pub fn over(&self, root: &HostLocation) -> Vec<Arc<Client>> {
         self.running
             .iter()
             .filter(|((started, _), _)| started == root)
@@ -475,7 +548,7 @@ impl Servers {
     }
 
     /// Tells every server running over `root` what changed on disk under it.
-    pub fn watched(&self, root: &Path, changes: &[(PathBuf, Watched)]) {
+    pub fn watched(&self, root: &HostLocation, changes: &[(PathBuf, Watched)]) {
         self.running
             .iter()
             .filter(|((started, _), _)| started == root)

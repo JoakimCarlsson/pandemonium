@@ -1,5 +1,7 @@
 //! A worktree-local chain of agent steps, turn boundaries and recoverable rewinds.
 
+use pm_host::Location;
+
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -42,7 +44,9 @@ pub struct Checkpoint {
 }
 
 /// Appends a commit to the private chain without changing HEAD or the index.
-pub fn checkpoint(root: &Path, parent: &str, tree: &str, message: &str) -> Said {
+pub fn checkpoint(root: impl Into<Location>, parent: &str, tree: &str, message: &str) -> Said {
+    let root = root.into();
+    let root = &root;
     let mut arguments = vec![
         "-c",
         "user.name=Pandemonium",
@@ -60,7 +64,9 @@ pub fn checkpoint(root: &Path, parent: &str, tree: &str, message: &str) -> Said 
 }
 
 /// Resolves a persisted turn boundary to its commit id.
-pub fn checkpoint_at(root: &Path, turn: u64) -> Option<String> {
+pub fn checkpoint_at(root: impl Into<Location>, turn: u64) -> Option<String> {
+    let root = root.into();
+    let root = &root;
     answer(
         root,
         [
@@ -73,7 +79,9 @@ pub fn checkpoint_at(root: &Path, turn: u64) -> Option<String> {
 }
 
 /// Saves the current tip as a numbered turn boundary.
-pub fn checkpoint_turn(root: &Path, turn: u64, commit: &str) -> Said {
+pub fn checkpoint_turn(root: impl Into<Location>, turn: u64, commit: &str) -> Said {
+    let root = root.into();
+    let root = &root;
     git(
         root,
         [
@@ -84,19 +92,38 @@ pub fn checkpoint_turn(root: &Path, turn: u64, commit: &str) -> Said {
     )
 }
 
+/// Returns the next turn number, including baselines of turns still in progress.
+pub fn next_checkpoint_number(root: impl Into<Location>) -> u64 {
+    let root = root.into();
+    answer(
+        &root,
+        [
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/worktree/pandemonium/starts/",
+            "refs/worktree/pandemonium/turns/",
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|name| name.rsplit('/').next()?.parse::<u64>().ok())
+    .max()
+    .unwrap_or(0)
+        + 1
+}
+
 /// Captures the first baseline and reader edits before an agent starts writing.
-pub fn begin_checkpoint(root: &Path) -> Result<u64, String> {
-    let turn = checkpoints(root)
-        .iter()
-        .map(|turn| turn.turn)
-        .max()
-        .unwrap_or(0)
-        + 1;
+pub fn begin_checkpoint(root: impl Into<Location>) -> Result<u64, String> {
+    let root = root.into();
+    let root = &root;
+    let turn = next_checkpoint_number(root);
     begin_checkpoint_number(root, turn)
 }
 
 /// Starts a shared scope turn with the same number in every constituent worktree.
-pub fn begin_checkpoint_number(root: &Path, turn: u64) -> Result<u64, String> {
+pub fn begin_checkpoint_number(root: impl Into<Location>, turn: u64) -> Result<u64, String> {
+    let root = root.into();
+    let root = &root;
     let tree = snapshot(root).ok_or("Could not snapshot the worktree")?;
     let mut tip =
         answer(root, ["rev-parse", "--verify", CHECKPOINT_HEAD]).map(|tip| tip.trim().to_owned());
@@ -134,12 +161,14 @@ pub fn begin_checkpoint_number(root: &Path, turn: u64) -> Result<u64, String> {
 
 /// Records changed files at a tool boundary, skipping unchanged trees.
 pub fn checkpoint_step(
-    root: &Path,
+    root: impl Into<Location>,
     turn: u64,
     title: &str,
     tool: Option<&str>,
     kind: Option<&str>,
 ) -> Said {
+    let root = root.into();
+    let root = &root;
     let tree = snapshot(root).ok_or("Could not snapshot the worktree")?;
     let tip = answer(root, ["rev-parse", "--verify", CHECKPOINT_HEAD]).ok_or("No turn baseline")?;
     let tip = tip.trim();
@@ -172,7 +201,9 @@ pub fn checkpoint_step(
 }
 
 /// Captures unreported changes and persists a prompt-labelled turn boundary.
-pub fn end_checkpoint(root: &Path, turn: u64, prompt: &str) -> Said {
+pub fn end_checkpoint(root: impl Into<Location>, turn: u64, prompt: &str) -> Said {
+    let root = root.into();
+    let root = &root;
     let tip = checkpoint_step(root, turn, "Changes at turn end", None, None)?;
     let tree =
         answer(root, ["rev-parse", &format!("{tip}^{{tree}}")]).ok_or("No checkpoint tree")?;
@@ -190,7 +221,9 @@ pub fn end_checkpoint(root: &Path, turn: u64, prompt: &str) -> Said {
 }
 
 /// Reads the checkpoint chain's step messages, with full object ids.
-pub fn checkpoint_steps(root: &Path) -> Vec<CheckpointStep> {
+pub fn checkpoint_steps(root: impl Into<Location>) -> Vec<CheckpointStep> {
+    let root = root.into();
+    let root = &root;
     let base = answer(
         root,
         [
@@ -229,7 +262,9 @@ pub fn checkpoint_steps(root: &Path) -> Vec<CheckpointStep> {
 }
 
 /// Lists completed turns and saved pre-rewind states from worktree-local refs.
-pub fn checkpoints(root: &Path) -> Vec<Checkpoint> {
+pub fn checkpoints(root: impl Into<Location>) -> Vec<Checkpoint> {
+    let root = root.into();
+    let root = &root;
     let refs = answer(
         root,
         [
@@ -281,7 +316,9 @@ pub fn checkpoints(root: &Path) -> Vec<Checkpoint> {
 }
 
 /// Compares two trees using the review pane's unified hunk parser.
-pub fn between(root: &Path, from: &str, to: &str) -> HashMap<PathBuf, Vec<Hunk>> {
+pub fn between(root: impl Into<Location>, from: &str, to: &str) -> HashMap<PathBuf, Vec<Hunk>> {
+    let root = root.into();
+    let root = &root;
     let text = answer(
         root,
         [
@@ -319,7 +356,13 @@ pub fn between(root: &Path, from: &str, to: &str) -> HashMap<PathBuf, Vec<Hunk>>
 }
 
 /// Lists changed paths without interpreting line-oriented path quoting.
-pub fn rewind_paths(root: &Path, from: &str, to: &str) -> Result<Vec<PathBuf>, String> {
+pub fn rewind_paths(
+    root: impl Into<Location>,
+    from: &str,
+    to: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let root = root.into();
+    let root = &root;
     let text = git(
         root,
         ["diff", "--name-only", "--no-renames", "-z", from, to, "--"],
@@ -332,18 +375,17 @@ pub fn rewind_paths(root: &Path, from: &str, to: &str) -> Result<Vec<PathBuf>, S
 }
 
 /// Saves the current files, then restores a checkpoint, leaving HEAD and index alone.
-pub fn rewind(root: &Path, to: &str) -> Said {
-    let turn = checkpoints(root)
-        .iter()
-        .map(|turn| turn.turn)
-        .max()
-        .unwrap_or(0)
-        + 1;
+pub fn rewind(root: impl Into<Location>, to: &str) -> Said {
+    let root = root.into();
+    let root = &root;
+    let turn = next_checkpoint_number(root);
     rewind_number(root, to, turn)
 }
 
 /// Restores one constituent worktree with a scope-wide backup number.
-pub fn rewind_number(root: &Path, to: &str, turn: u64) -> Said {
+pub fn rewind_number(root: impl Into<Location>, to: &str, turn: u64) -> Said {
+    let root = root.into();
+    let root = &root;
     let target = git(root, ["rev-parse", "--verify", &format!("{to}^{{commit}}")])?;
     let target = target.trim();
     let tree = snapshot(root).ok_or("Could not snapshot before rewinding")?;
@@ -366,12 +408,16 @@ pub fn rewind_number(root: &Path, to: &str, turn: u64) -> Said {
         .collect::<std::collections::HashSet<_>>();
     for path in paths.iter().filter(|path| !exists.contains(*path)) {
         let absolute = root.join(path);
-        let result = std::fs::symlink_metadata(&absolute);
+        let result = root.host.fs().symlink_metadata(&absolute);
         match result {
             Ok(metadata) if metadata.is_dir() => {
                 return Err(format!("Refusing to delete directory {}", path.display()));
             }
-            Ok(_) => std::fs::remove_file(absolute).map_err(|error| error.to_string())?,
+            Ok(_) => root
+                .host
+                .fs()
+                .remove_file(absolute)
+                .map_err(|error| error.to_string())?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.to_string()),
         }
@@ -401,12 +447,14 @@ pub fn rewind_number(root: &Path, to: &str, turn: u64) -> Said {
 
 /// Attributes several hunks with one content read and one blame per file.
 pub fn hunk_steps(
-    root: &Path,
+    root: impl Into<Location>,
     path: &Path,
     revision: &str,
     hunks: &[Hunk],
     steps: &[CheckpointStep],
 ) -> Vec<Option<CheckpointStep>> {
+    let root = root.into();
+    let root = &root;
     if hunks.is_empty() || steps.is_empty() {
         return vec![None; hunks.len()];
     }
@@ -426,12 +474,14 @@ pub fn hunk_steps(
 
 /// Attributes changed new-side lines only when their text still matches the checkpoint.
 pub fn hunk_step(
-    root: &Path,
+    root: impl Into<Location>,
     path: &Path,
     revision: &str,
     hunk: &Hunk,
     steps: &[CheckpointStep],
 ) -> Option<CheckpointStep> {
+    let root = root.into();
+    let root = &root;
     hunk_steps(root, path, revision, std::slice::from_ref(hunk), steps)
         .pop()
         .flatten()
@@ -474,7 +524,9 @@ fn attribute_hunk(
 }
 
 /// Takes the context correction saved by a successful rewind, including after relaunch.
-pub fn take_rewind_context(root: &Path) -> Option<String> {
+pub fn take_rewind_context(root: impl Into<Location>) -> Option<String> {
+    let root = root.into();
+    let root = &root;
     let message = answer(
         root,
         [

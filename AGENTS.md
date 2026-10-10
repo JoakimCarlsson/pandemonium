@@ -26,6 +26,12 @@ the draw list.
 One crate per layer, each depending only on the layers below it. `pm-core` is
 the domain; nothing in it knows that a UI exists.
 
+- `pm-host` — the bottom layer: local and SSH machine handles, filesystem
+  operations, processes, ptys, walks, watches and the byte transport. It
+  depends on nothing of ours; every other crate may depend on it.
+- `pm-server` — the headless `pandemonium-server` endpoint on a remote host.
+  Serves machine operations over standard input and output; knows `pm-host`
+  alone and no editor features.
 - `pm-core` — projects, sessions and worktrees: the model the whole window is
   drawn from. A project is a repository the window holds open; a session is an
   agent, its worktree and its branch. Everything is scoped by project id, from
@@ -92,8 +98,10 @@ which of them callers may name.
 - **Everything is a pane.** Files, diffs, agent sessions and terminals are the
   same kind of item in the same pane tree: splittable, tabbable, closable. No
   bespoke docks, no panel that only one feature can live in.
-- **The layers point one way.** `pm-core` and `pm-acp` depend on nothing of
-  ours; `pm-vim` and `pm-dap` know `pm-text` alone; `pm-ui` knows `pm-gfx` and
+- **The layers point one way.** `pm-host` depends on nothing of ours and every
+  other crate may depend on it; `pm-server`, `pm-core` and `pm-acp` know
+  `pm-host` alone; `pm-vim` knows `pm-text`; `pm-dap` knows `pm-text` and
+  `pm-host`; `pm-ui` knows `pm-gfx` and
   not the binary; the binary knows everyone. A layer never reaches back up.
 - **One seam, one place.** Creating a session, resolving a project, tearing a
   worktree down: each has exactly one implementation, and every caller — the

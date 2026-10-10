@@ -69,11 +69,19 @@ pub fn changes_sidebar(
         return empty(theme, width, "This folder is not a git repository");
     }
     let several = review.repositories().len() > 1;
-    let sections = review
+    let commit_controls = review
         .repositories()
         .iter()
         .enumerate()
-        .map(|(index, held)| section(theme, review, index, held, several, typing, &controls))
+        .map(|(index, held)| {
+            repository_controls(theme, review, index, held, several, typing, &controls)
+        })
+        .collect::<Vec<_>>();
+    let files = review
+        .repositories()
+        .iter()
+        .enumerate()
+        .map(|(index, held)| changed_files(theme, review, index, held, several))
         .collect::<Vec<_>>();
 
     v_flex()
@@ -89,13 +97,20 @@ pub fn changes_sidebar(
         ))
         .when(controls.changes_section_open, |sidebar| {
             sidebar.child(
-                v_flex().w_full().flex_1().overflow_hidden().child(measured(
-                    controls.changes_area.clone(),
-                    scroll_area(review.list_scroll(), v_flex().w_full().children(sections))
-                        .selectable()
-                        .w_full()
-                        .flex_1(),
-                )),
+                v_flex()
+                    .w_full()
+                    .flex_1()
+                    .overflow_hidden()
+                    .children(commit_controls)
+                    .child(measured(
+                        controls.changes_area.clone(),
+                        scroll_area(review.list_scroll(), v_flex().w_full().children(files))
+                            .selectable()
+                            .with_scrollbar(Message::ScrollChanges)
+                            .reserve_scrollbar_gutter()
+                            .w_full()
+                            .flex_1(),
+                    )),
             )
         })
         .when(!controls.changes_section_open, |sidebar| {
@@ -110,13 +125,11 @@ pub fn changes_sidebar(
         ))
 }
 
-/// Builds everything the sidebar lists for the `index`-th repository: its
-/// heading, when there are several, then its message, its button and its
-/// changes.
+/// Builds the fixed heading, commit message and actions for one repository.
 ///
 /// Only the active repository's button is measured, because the menu under
 /// it opens where it was drawn and there is one such menu at a time.
-fn section(
+fn repository_controls(
     theme: &Theme,
     review: &Review,
     index: usize,
@@ -127,20 +140,6 @@ fn section(
 ) -> Div<Message> {
     let active = index == review.active();
     let primary = review.primary(index);
-    let groups = Group::ALL.into_iter().flat_map(|listed| {
-        let rows = review.grouped(index, listed);
-        let mut built = Vec::new();
-        if rows.is_empty() {
-            return built;
-        }
-        built.push(group(theme, review, index, listed));
-        built.extend(
-            rows.into_iter()
-                .filter_map(|row| Some(change_row(theme, review, row, review.change(row)?))),
-        );
-        built
-    });
-    let unchanged = review.grouped_count(index) == 0;
 
     v_flex()
         .w_full()
@@ -165,6 +164,43 @@ fn section(
         })
         .when_some(held.trouble(), |section, said| {
             section.child(trouble(theme, said))
+        })
+}
+
+/// Builds one repository's staged, tracked and untracked file rows.
+fn changed_files(
+    theme: &Theme,
+    review: &Review,
+    index: usize,
+    held: &Repository,
+    several: bool,
+) -> Div<Message> {
+    let groups = Group::ALL.into_iter().flat_map(|listed| {
+        let rows = review.grouped(index, listed);
+        let mut built = Vec::new();
+        if rows.is_empty() {
+            return built;
+        }
+        built.push(group(theme, review, index, listed));
+        built.extend(
+            rows.into_iter()
+                .filter_map(|row| Some(change_row(theme, review, row, review.change(row)?))),
+        );
+        built
+    });
+    let unchanged = review.grouped_count(index) == 0;
+
+    v_flex()
+        .w_full()
+        .when(several, |files| {
+            files.child(
+                text(held.name().to_owned())
+                    .text_sm()
+                    .font_medium()
+                    .color(theme.colors.text_muted)
+                    .px(1.5)
+                    .py(1),
+            )
         })
         .when(unchanged && !several, |section| {
             section.child(
@@ -650,14 +686,29 @@ fn commit_button(theme: &Theme, index: usize, primary: &Primary) -> Div<Message>
     )
 }
 
-/// Builds the line saying what git refused to do, until it is asked again.
+/// Builds the banner saying what git refused to do, until it is asked again.
 fn trouble(theme: &Theme, said: &str) -> Div<Message> {
     v_flex().w_full().px(1.5).pb(1).child(
-        text(said.to_owned())
-            .text_xs()
-            .font_light()
-            .color(theme.colors.danger),
+        v_flex()
+            .w_full()
+            .px(1)
+            .py(0.75)
+            .rounded(theme.radius.md)
+            .bg(theme.colors.danger.alpha(0.12))
+            .child(text(refusal(said)).text_xs().color(theme.colors.danger)),
     )
+}
+
+/// What git said without its `fatal:` or `error:` prefix, opening with a capital.
+fn refusal(said: &str) -> String {
+    let said = said
+        .trim_start_matches("fatal: ")
+        .trim_start_matches("error: ");
+    let mut letters = said.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
 }
 
 /// Builds the heading above one group of changes, and the box that stages it.

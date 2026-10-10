@@ -5,11 +5,11 @@
 //! — none of which is an error the editor reports, because a file opens and
 //! edits the same either way. What it says about why goes to its log.
 
+use pm_host::{Child, Stdio};
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -103,6 +103,8 @@ struct State {
     dead: bool,
     /// Whether the handshake has been answered.
     ready: bool,
+    /// Why the server turned the handshake down, when it did.
+    refused: Option<String>,
     /// Messages held back until it has been, with only the latest text of
     /// each file among them.
     queued: Vec<Outgoing>,
@@ -142,6 +144,9 @@ struct State {
     works: Works,
     /// What the server has asked to be shown that went wrong, not yet shown.
     troubles: Vec<String>,
+    /// The trouble the server last asked to be shown, which it is not shown
+    /// again for asking again.
+    shown: Option<String>,
     /// The semantic tokens last sent for each file, under the id the server
     /// gave them, for asking only what changed since.
     tokens: HashMap<PathBuf, (String, Vec<SemanticToken>)>,
@@ -198,6 +203,8 @@ pub struct Client {
     name: &'static str,
     /// The worktree whose paths this server watches.
     root: PathBuf,
+    /// The machine owning this server and its protocol paths.
+    host: pm_host::Host,
     /// The process itself, kept so that it can be ended.
     process: Mutex<Option<Child>>,
     /// When this process was started, for measuring sustained operation.
@@ -217,13 +224,13 @@ impl Client {
     /// The handshake goes out here and is answered on the reader thread, so
     /// starting a server never blocks the frame that asked for one.
     pub fn start(
-        root: &Path,
+        root: &pm_host::Location,
         program: &Path,
         server: Server,
         notify: Arc<dyn Fn() + Send + Sync>,
         logs: Option<&Path>,
     ) -> std::io::Result<Self> {
-        let log = Log::open(logs, root, server.command);
+        let log = Log::open(logs, &root.stored(), server.command);
         let database = match server.command {
             "clangd" => database::beside_build(root),
             _ => None,
@@ -241,14 +248,17 @@ impl Client {
                 }
             }
         }
-        let spawned = Command::new(program)
+        let mut command = root.host.command(program);
+        if root.host.is_local() {
+            command.env("PATH", path_beside(program));
+        }
+        let spawned = command
             .args(server.arguments)
             .args(
                 database
                     .iter()
                     .map(|directory| format!("--compile-commands-dir={}", directory.display())),
             )
-            .env("PATH", path_beside(program))
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -267,9 +277,13 @@ impl Client {
 
         let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"), log.clone());
         let stdout = process.stdout.take().expect("stdout was piped");
-        let (offered, troubles): (Vec<_>, Vec<_>) = missing_for(server.command)
-            .into_iter()
-            .partition(|need| need.installable());
+        let (offered, troubles): (Vec<_>, Vec<_>) = (if root.host.is_local() {
+            missing_for(server.command)
+        } else {
+            Vec::new()
+        })
+        .into_iter()
+        .partition(|need| need.installable());
         for need in offered {
             log.write(&format!(
                 "{} runs `{}`, which is not installed yet; the editor can install it.",
@@ -313,12 +327,18 @@ impl Client {
         Ok(Self {
             name: server.command,
             root: root.to_path_buf(),
+            host: root.host.clone(),
             process: Mutex::new(Some(process)),
             started: Instant::now(),
             wire,
             state,
             log,
         })
+    }
+
+    /// The machine owning all file paths reported by this server.
+    pub fn host(&self) -> &pm_host::Host {
+        &self.host
     }
 
     /// The command the server was started as.
@@ -454,11 +474,10 @@ impl Client {
     /// what is asked before the handshake is answered waits for it, and a
     /// server that turns out not to answer refuses it then.
     pub fn offers(&self, request: &Request, path: &Path) -> bool {
-        self.state.lock().ok().is_none_or(|state| {
-            !state.dead
-                && !state.unsupported.contains(request.capability())
-                && request.is_offered(&state.capabilities, Some(state.document(path)))
-        })
+        self.state
+            .lock()
+            .ok()
+            .is_none_or(|state| answers(&state, request, path))
     }
 
     /// Hands the server the settings `options`, a JSON object, when they are
@@ -649,6 +668,11 @@ impl Client {
         let Ok(mut state) = self.state.lock() else {
             return Asked(id);
         };
+        if !answers(&state, &request, path) {
+            state.answers.insert(id, Answer::Refused);
+            state.fresh = true;
+            return Asked(id);
+        }
         let diagnostics = match request {
             Request::CodeActions => state
                 .pushed
@@ -719,8 +743,14 @@ impl Client {
         };
         let outstanding = state.asked.remove(&asked.0).is_some();
         state.answers.remove(&asked.0);
-        if outstanding {
-            post(&mut state, &self.wire, Outgoing::Message(cancel(asked.0)));
+        if !outstanding {
+            return;
+        }
+        match state.ready {
+            true => post(&mut state, &self.wire, Outgoing::Message(cancel(asked.0))),
+            false => state
+                .queued
+                .retain(|held| asked_under(held) != Some(asked.0)),
         }
     }
 
@@ -879,6 +909,14 @@ impl Client {
         self.log.last_stderr()
     }
 
+    /// Why the server turned the handshake down, when it did.
+    ///
+    /// Such a server is not restarted: it would turn the next one down for
+    /// the same reason.
+    pub fn refusal(&self) -> Option<String> {
+        self.state.lock().ok()?.refused.clone()
+    }
+
     /// Whether this server has stopped answering.
     pub fn is_dead(&self) -> bool {
         self.state.lock().is_ok_and(|state| state.dead) && self.log.stderr_finished()
@@ -949,12 +987,48 @@ fn reap(mut process: Child) {
 /// A question asked before the handshake was answered was taken to be
 /// answerable, and is held back until the server has said whether it is.
 fn unoffered(state: &State, outgoing: &Outgoing) -> Option<i64> {
+    let id = asked_under(outgoing)?;
+    let (request, path) = state.asked.get(&id)?;
+    (!request.is_offered(&state.capabilities, Some(state.document(path)))).then_some(id)
+}
+
+/// The id of the question `outgoing` asks, when it asks one.
+fn asked_under(outgoing: &Outgoing) -> Option<i64> {
     let Outgoing::Message(message) = outgoing else {
         return None;
     };
-    let id = message["id"].as_i64()?;
-    let (request, path) = state.asked.get(&id)?;
-    (!request.is_offered(&state.capabilities, Some(state.document(path)))).then_some(id)
+    message.get("method")?;
+    message["id"].as_i64()
+}
+
+/// Whether the server, as far as `state` knows it, answers `request` about
+/// the file at `path`.
+fn answers(state: &State, request: &Request, path: &Path) -> bool {
+    !state.dead
+        && !state.unsupported.contains(request.capability())
+        && request.is_offered(&state.capabilities, Some(state.document(path)))
+}
+
+/// Takes the server to be gone: nothing is sent to it any more, what it
+/// was told goes, and every question still waiting on it is refused.
+fn abandon(state: &mut State) {
+    if !state.capabilities.is_known() {
+        state
+            .capabilities
+            .state(lsp_types::ServerCapabilities::default());
+    }
+    state.dead = true;
+    state.queued.clear();
+    state.pushed.clear();
+    state.pulled.clear();
+    state.pulling.clear();
+    state.workspace_edits.clear();
+    state.works.clear();
+    let unanswered = state.asked.drain().map(|(id, _)| id).collect::<Vec<_>>();
+    for id in unanswered {
+        state.answers.insert(id, Answer::Refused);
+    }
+    state.fresh = true;
 }
 
 /// The notification calling off the question asked under `id`.
@@ -1060,7 +1134,7 @@ struct Reader {
     /// Where what the server says besides its answers is written down.
     log: Log,
     /// The pipe the server writes on.
-    stdout: BufReader<std::process::ChildStdout>,
+    stdout: BufReader<Box<dyn std::io::Read + Send>>,
 }
 
 impl Reader {
@@ -1077,27 +1151,14 @@ impl Reader {
                 self.dispatch(message);
             }
         }
-        self.log.write("── the server stopped talking ──");
         let Ok(mut state) = self.state.lock() else {
             return;
         };
-        if !state.capabilities.is_known() {
-            state
-                .capabilities
-                .state(lsp_types::ServerCapabilities::default());
-        }
-        state.dead = true;
-        state.queued.clear();
-        state.pushed.clear();
-        state.pulled.clear();
-        state.pulling.clear();
-        state.workspace_edits.clear();
-        state.works.clear();
-        let unanswered = state.asked.drain().map(|(id, _)| id).collect::<Vec<_>>();
-        for id in unanswered {
-            state.answers.insert(id, Answer::Refused);
-        }
-        state.fresh = true;
+        self.log.write(match state.dead {
+            true => "── the server exited ──",
+            false => "── the server stopped talking ──",
+        });
+        abandon(&mut state);
         drop(state);
         (self.notify)();
     }
@@ -1241,11 +1302,20 @@ impl Reader {
         if !matches!(kind, MessageType::ERROR | MessageType::WARNING) {
             return;
         }
-        self.with_state(|state| {
-            state.troubles.push(message.to_owned());
-            state.fresh = true;
-        });
-        (self.notify)();
+        let fresh = self
+            .with_state(|state| {
+                if state.shown.as_deref() == Some(message) {
+                    return false;
+                }
+                state.shown = Some(message.to_owned());
+                state.troubles.push(message.to_owned());
+                state.fresh = true;
+                true
+            })
+            .unwrap_or(false);
+        if fresh {
+            (self.notify)();
+        }
     }
 
     /// Hands one message to the writer.
@@ -1352,18 +1422,11 @@ impl Reader {
     ///
     /// They are handed over under the state's lock, so a message the window
     /// sends the moment the handshake is marked answered queues behind them.
-    /// A server that turned the handshake down is taken to offer nothing,
-    /// and says why in its log.
+    /// A server that turned the handshake down is told nothing more.
     fn ready(&self, outcome: Result<Value, rpc::Failure>) {
         let result = match outcome {
             Ok(result) => rpc::result::<Initialize>(result),
-            Err(failure) => {
-                self.log.write(&format!(
-                    "the server turned the handshake down: {} ({})",
-                    failure.message, failure.code
-                ));
-                None
-            }
+            Err(failure) => return self.refused(&failure),
         };
         let InitializeResult { capabilities, .. } = result.unwrap_or_default();
         let Ok(mut state) = self.state.lock() else {
@@ -1398,6 +1461,25 @@ impl Reader {
             }
         }
         pull_all(&mut state, &self.wire);
+    }
+
+    /// Gives up on a server that turned the handshake down, and says why in
+    /// its log.
+    ///
+    /// Nothing held back for it is sent, and it is not told the handshake is
+    /// done: what it was asked is refused, and the window is woken to end it.
+    fn refused(&self, failure: &rpc::Failure) {
+        self.log.write(&format!(
+            "the server turned the handshake down: {} ({})",
+            failure.message, failure.code
+        ));
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        state.refused = Some(failure.message.clone());
+        abandon(&mut state);
+        drop(state);
+        (self.notify)();
     }
 
     /// Takes down one answer: to a question the window asked, or to the
@@ -1500,7 +1582,7 @@ impl Reader {
     /// a save waiting on the server hears it and goes ahead.
     ///
     /// Why is written to the log, unless it is only that the editor called
-    /// the question off itself.
+    /// the question off itself or the file changed under the answer.
     fn gave_up(&self, id: i64, failure: &rpc::Failure) {
         let asked = self
             .with_state(|state| {
@@ -1519,7 +1601,7 @@ impl Reader {
         let Some(request) = asked else {
             return;
         };
-        if failure.code != rpc::REQUEST_CANCELLED {
+        if !matches!(failure.code, rpc::REQUEST_CANCELLED | rpc::CONTENT_MODIFIED) {
             self.log.write(&format!(
                 "{} failed: {} ({})",
                 request.method(),

@@ -4,7 +4,8 @@
 //! directory under the pointer, or the one holding the file under it, and
 //! the tree marks that directory while they are over it. They are always
 //! copied in; what was carried stays where it was.
-//! Over the rest of the window, files open in the pane under the pointer.
+//! Over chat panes, files attach to the next prompt. Elsewhere they open
+//! in the pane under the pointer.
 
 use std::path::PathBuf;
 
@@ -59,6 +60,11 @@ impl App {
             .or(self.pointer)
             .and_then(|point| self.geometry.pane_at(point))
             .unwrap_or_else(|| self.panes.focus());
+        let session = self
+            .panes
+            .pane(pane)
+            .and_then(|pane| pane.active(self.scope()))
+            .and_then(crate::panes::Item::session);
         for path in paths {
             let path = match path.canonicalize() {
                 Ok(path) => path,
@@ -70,6 +76,10 @@ impl App {
             if !path.is_file() {
                 continue;
             }
+            if let Some(talk) = session.and_then(|session| self.agents.get_mut(session)) {
+                talk.attach_file(path);
+                continue;
+            }
             if self.worktree_holding(&path).is_some() {
                 self.open_tree_file(&path, pane, false);
             } else if let Some(file) = self.editor.open_loose(&path) {
@@ -78,6 +88,10 @@ impl App {
                 self.notices
                     .trouble(format!("Could not read {}", path.display()), None);
             }
+        }
+        if let Some(session) = session {
+            self.panes.set_focus(pane);
+            self.focus_prompt(session);
         }
     }
 }

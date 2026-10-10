@@ -7,6 +7,8 @@
 //! which has nothing in the index to be restored from and is thrown away by
 //! being taken off the disk.
 
+use pm_host::Location;
+
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -39,8 +41,9 @@ impl Revision {
 ///
 /// A file that git has never heard of has no baseline, which is what makes
 /// every line of a new file read as added rather than as unchanged.
-pub fn baseline(root: &Path, path: &Path) -> Option<String> {
-    let root = holding(root, path);
+pub fn baseline(root: impl Into<Location>, path: &Path) -> Option<String> {
+    let root = root.into();
+    let root = holding(&root, path);
     let relative = within(&root, path)?;
     answer(&root, [OsStr::new("show"), &staged(relative)])
 }
@@ -50,8 +53,9 @@ pub fn baseline(root: &Path, path: &Path) -> Option<String> {
 ///
 /// A file the last commit does not have — one added since, or a repository
 /// with no commit yet — has none.
-pub fn committed(root: &Path, path: &Path) -> Option<String> {
-    let root = holding(root, path);
+pub fn committed(root: impl Into<Location>, path: &Path) -> Option<String> {
+    let root = root.into();
+    let root = holding(&root, path);
     let relative = within(&root, path)?;
     let mut named = std::ffi::OsString::from("HEAD:");
     named.push(relative.as_os_str());
@@ -66,15 +70,16 @@ pub fn committed(root: &Path, path: &Path) -> Option<String> {
 /// file, because a review of two thousand changed files would otherwise be
 /// four thousand subprocesses. A file the revision does not have answers
 /// nothing, as it does there.
-pub fn contents(root: &Path, wanted: &[(&Path, Revision)]) -> Vec<Option<String>> {
+pub fn contents(root: impl Into<Location>, wanted: &[(&Path, Revision)]) -> Vec<Option<String>> {
+    let root = root.into();
     let mut answers = vec![None; wanted.len()];
     let mut asked = BTreeMap::<PathBuf, Vec<(usize, String)>>::new();
     for (at, (path, revision)) in wanted.iter().enumerate() {
-        let repository = holding(root, path);
+        let repository = holding(&root, path);
         if let Some(named) =
             within(&repository, path).and_then(|relative| revision.naming(relative))
         {
-            asked.entry(repository).or_default().push((at, named));
+            asked.entry(repository.path).or_default().push((at, named));
         }
     }
     for (repository, asked) in asked {
@@ -82,7 +87,7 @@ pub fn contents(root: &Path, wanted: &[(&Path, Revision)]) -> Vec<Option<String>
             .iter()
             .map(|(_, named)| format!("{named}\n"))
             .collect::<String>();
-        let Some(output) = streamed(&repository, ["cat-file", "--batch"], input) else {
+        let Some(output) = streamed(root.at(&repository), ["cat-file", "--batch"], input) else {
             continue;
         };
         for ((at, _), text) in asked.iter().zip(batched(&output)) {
@@ -126,13 +131,15 @@ fn batched(output: &[u8]) -> Vec<Option<String>> {
 /// Adding is also how a file that has been deleted or renamed is staged:
 /// git reads the worktree and writes down what it finds, including that
 /// there is nothing there any more.
-pub fn stage(root: &Path, paths: &[impl AsRef<Path>]) -> Said {
-    run(root, &["add", "--"], paths)
+pub fn stage(root: impl Into<Location>, paths: &[impl AsRef<Path>]) -> Said {
+    let root = root.into();
+    run(&root, &["add", "--"], paths)
 }
 
 /// Takes what the index holds for `paths` back out of it.
-pub fn unstage(root: &Path, paths: &[impl AsRef<Path>]) -> Said {
-    run(root, &["restore", "--staged", "--"], paths)
+pub fn unstage(root: impl Into<Location>, paths: &[impl AsRef<Path>]) -> Said {
+    let root = root.into();
+    run(&root, &["restore", "--staged", "--"], paths)
 }
 
 /// Puts `path` back the way the index holds it, losing what was typed into it.
@@ -140,13 +147,17 @@ pub fn unstage(root: &Path, paths: &[impl AsRef<Path>]) -> Said {
 /// A file the last commit never had has nothing to be put back to, so
 /// throwing its changes away is throwing the file away: that is what the
 /// worktree looked like before it was made.
-pub fn discard(root: &Path, path: &Path, created: bool) -> Said {
+pub fn discard(root: impl Into<Location>, path: &Path, created: bool) -> Said {
+    let root = root.into();
     if created {
-        return std::fs::remove_file(path)
+        return root
+            .host
+            .fs()
+            .remove_file(path)
             .map(|()| String::new())
             .map_err(|error| error.to_string());
     }
-    run(root, &["restore", "--worktree", "--"], &[path])
+    run(&root, &["restore", "--worktree", "--"], &[path])
 }
 
 /// Puts `content` into the index as what `path` holds.
@@ -156,46 +167,43 @@ pub fn discard(root: &Path, path: &Path, created: bool) -> Said {
 /// what the worktree has in their place — and written in whole. Git is given
 /// the blob and then told that the path is that blob, which is the same pair
 /// of commands `git add` runs for the whole of a file.
-pub fn write_index(root: &Path, path: &Path, content: &str) -> Said {
-    let Some(relative) = within(root, path) else {
+pub fn write_index(root: impl Into<Location>, path: &Path, content: &str) -> Said {
+    let root = root.into();
+    let Some(relative) = within(&root, path) else {
         return Ok(String::new());
     };
     let named = relative.to_string_lossy().into_owned();
     let sha = piped(
-        root,
+        &root,
         ["hash-object", "-w", "--stdin", "--path", &named],
         content,
     )?;
 
     git(
-        root,
+        &root,
         [
             OsStr::new("update-index"),
             OsStr::new("--add"),
             OsStr::new("--cacheinfo"),
-            OsStr::new(mode(path)),
+            OsStr::new(mode(&root, path)),
             OsStr::new(sha.trim()),
             relative.as_os_str(),
         ],
     )
 }
 
-/// The mode git records for `path`: executable, or an ordinary file.
-#[cfg(unix)]
-fn mode(path: &Path) -> &'static str {
-    use std::os::unix::fs::PermissionsExt;
-
-    let executable = std::fs::metadata(path)
-        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false);
-    if executable { "100755" } else { "100644" }
-}
-
-/// The mode git records for `path`: always an ordinary file, since the
-/// filesystem keeps no executable bit to read.
-#[cfg(not(unix))]
-fn mode(_path: &Path) -> &'static str {
-    "100644"
+/// The mode git records for a file on its execution machine.
+fn mode(root: &Location, path: &Path) -> &'static str {
+    if root
+        .host
+        .fs()
+        .metadata(path)
+        .is_ok_and(|metadata| metadata.executable)
+    {
+        "100755"
+    } else {
+        "100644"
+    }
 }
 
 /// Puts every one of `paths` back the way the index holds it.
@@ -203,8 +211,9 @@ fn mode(_path: &Path) -> &'static str {
 /// Every file goes in one call: putting four files back is one thing to have
 /// asked for, and a run that stopped halfway through would leave a worktree
 /// nobody asked for.
-pub fn discard_all(root: &Path, paths: &[impl AsRef<Path>]) -> Said {
-    run(root, &["restore", "--worktree", "--"], paths)
+pub fn discard_all(root: impl Into<Location>, paths: &[impl AsRef<Path>]) -> Said {
+    let root = root.into();
+    run(&root, &["restore", "--worktree", "--"], paths)
 }
 
 /// Runs a git command over `paths`, each named from the worktree down.
@@ -212,17 +221,18 @@ pub fn discard_all(root: &Path, paths: &[impl AsRef<Path>]) -> Said {
 /// A path outside the worktree is not git's to act on and is left out; a
 /// call left with no paths at all is one that would otherwise have meant
 /// every path, which is never what was asked for.
-fn run(root: &Path, command: &[&str], paths: &[impl AsRef<Path>]) -> Said {
+fn run(root: impl Into<Location>, command: &[&str], paths: &[impl AsRef<Path>]) -> Said {
+    let root = root.into();
     let mut arguments = command.iter().map(OsStr::new).collect::<Vec<_>>();
     let within = paths
         .iter()
-        .filter_map(|path| self::within(root, path.as_ref()))
+        .filter_map(|path| self::within(&root, path.as_ref()))
         .collect::<Vec<_>>();
     if within.is_empty() {
         return Ok(String::new());
     }
     arguments.extend(within.iter().map(|path| path.as_os_str()));
-    git(root, arguments)
+    git(&root, arguments)
 }
 
 /// How the index is named where git takes a revision.

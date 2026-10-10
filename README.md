@@ -65,6 +65,8 @@ Set `PANDEMONIUM_VERSION` to pin a release. The script checks the download
 against the release's `SHA256SUMS`, puts the binary in `~/.local/bin`, and adds
 a launcher entry on Linux or `Pandemonium.app` in `~/Applications` on macOS.
 
+For remote projects and phone control, see the [SSH guide](docs/ssh.md).
+
 ## Building
 
 You need a recent stable Rust toolchain (edition 2024) and a GPU that wgpu is

@@ -51,38 +51,48 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - run: cargo build -p pandemonium --locked --profile dist --target ${{ matrix.target }}
+      - run: cargo build -p pandemonium -p pm-server --locked --profile dist --target ${{ matrix.target }}
 
       - name: Package
         run: |
-          name="pandemonium-$VERSION-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          cp LICENSE README.md "dist/$name/"
-          cp assets/icons/LICENSES "dist/$name/LICENSES-icons"
-          cd dist
+          editor="pandemonium-$VERSION-${{ matrix.target }}"
+          server="pandemonium-server-$VERSION-${{ matrix.target }}"
+          mkdir -p "build/dist/$editor" "build/dist/$server"
+          for package in "$editor" "$server"; do
+            cp LICENSE README.md "build/dist/$package/"
+          done
+          cp assets/icons/LICENSES "build/dist/$editor/LICENSES-icons"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "../target/${{ matrix.target }}/dist/pandemonium.exe" "$name/"
-            7z a "$name.zip" "$name" >/dev/null
+            cp "target/${{ matrix.target }}/dist/pandemonium.exe" "build/dist/$editor/"
+            cp "target/${{ matrix.target }}/dist/pandemonium-server.exe" "build/dist/$server/"
           else
-            cp "../target/${{ matrix.target }}/dist/pandemonium" "$name/"
-            cp ../packaging/pandemonium.desktop "$name/"
-            mkdir -p "$name/icons"
-            cp ../assets/brand/pandemonium.svg ../assets/brand/png/pandemonium-*.png "$name/icons/"
-            rm "$name/icons/pandemonium-1024.png"
-            tar -czf "$name.tar.gz" "$name"
+            cp "target/${{ matrix.target }}/dist/pandemonium" "build/dist/$editor/"
+            cp "target/${{ matrix.target }}/dist/pandemonium-server" "build/dist/$server/"
+            cp packaging/pandemonium.desktop "build/dist/$editor/"
+            mkdir -p "build/dist/$editor/icons"
+            cp assets/brand/pandemonium.svg assets/brand/png/pandemonium-*.png "build/dist/$editor/icons/"
+            rm "build/dist/$editor/icons/pandemonium-1024.png"
+          fi
+          cd build/dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$editor.zip" "$editor" >/dev/null
+            7z a "$server.zip" "$server" >/dev/null
+          else
+            tar -czf "$editor.tar.gz" "$editor"
+            tar -czf "$server.tar.gz" "$server"
           fi
           if [ "${{ runner.os }}" = "macOS" ]; then
-            ../scripts/bundle-macos.sh "$name/pandemonium" Pandemonium.app \
+            ../../scripts/bundle-macos.sh "$editor/pandemonium" Pandemonium.app \
               Pandemonium io.github.joakimcarlsson.pandemonium
-            ditto -c -k --keepParent Pandemonium.app "$name.app.zip"
+            ditto -c -k --keepParent Pandemonium.app "$editor.app.zip"
           fi
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: |
-            dist/pandemonium-*.tar.gz
-            dist/pandemonium-*.zip
+            build/dist/pandemonium-*.tar.gz
+            build/dist/pandemonium-*.zip
           if-no-files-found: error
 
   publish:
@@ -94,11 +104,11 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          path: dist
+          path: build/dist
           merge-multiple: true
 
       - name: Checksums
-        working-directory: dist
+        working-directory: build/dist
         run: sha256sum pandemonium-* > SHA256SUMS
 
       - name: Create the release
@@ -107,7 +117,7 @@ jobs:
         run: |
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$GITHUB_REF_NAME" build/dist/* \
             --verify-tag \
             --generate-notes \
             --title "$GITHUB_REF_NAME" \

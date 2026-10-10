@@ -69,6 +69,8 @@ pub struct Paragraph<M> {
     lines: Vec<Line>,
     /// Whether a word wider than the offered width may break between characters.
     break_long_words: bool,
+    /// Whether indentation and spaces survive line wrapping.
+    preserve_whitespace: bool,
     /// An explicit copy boundary before this paragraph.
     separator: Option<&'static str>,
 }
@@ -80,6 +82,7 @@ pub fn paragraph<M>() -> Paragraph<M> {
         style: Style::default(),
         lines: Vec::new(),
         break_long_words: false,
+        preserve_whitespace: false,
         separator: None,
     }
 }
@@ -94,6 +97,12 @@ impl<M> Paragraph<M> {
     /// Allows words wider than the paragraph to break between characters.
     pub fn break_long_words(mut self) -> Self {
         self.break_long_words = true;
+        self
+    }
+
+    /// Preserves indentation and spaces when displaying wrapped source code.
+    pub fn preserve_whitespace(mut self) -> Self {
+        self.preserve_whitespace = true;
         self
     }
 
@@ -170,14 +179,21 @@ impl<M> Paragraph<M> {
                 }
                 let blank = token.trim().is_empty();
                 let size = cx.measure(token, font);
-                if self.break_long_words && !blank && size.width > width {
+                if self.break_long_words
+                    && (!blank || self.preserve_whitespace)
+                    && size.width > width
+                {
                     for (offset, character) in token.chars().enumerate() {
                         let character = character.to_string();
                         let size = cx.measure(&character, font);
                         if x + size.width > width
                             && !lines.last().is_some_and(|line| line.pieces.is_empty())
                         {
-                            trim_trailing_space(lines.last_mut().expect("there is always a line"));
+                            if !self.preserve_whitespace {
+                                trim_trailing_space(
+                                    lines.last_mut().expect("there is always a line"),
+                                );
+                            }
                             lines.push(Line::default());
                             x = 0.0;
                         }
@@ -196,12 +212,17 @@ impl<M> Paragraph<M> {
                     continue;
                 }
                 let line = lines.last_mut().expect("there is always a line");
-                if blank && line.pieces.is_empty() {
+                if blank && line.pieces.is_empty() && !self.preserve_whitespace {
                     line.height = line.height.max(font.line_height);
                     continue;
                 }
-                if !blank && x + size.width > width && !line.pieces.is_empty() {
-                    trim_trailing_space(line);
+                if (!blank || self.preserve_whitespace)
+                    && x + size.width > width
+                    && !line.pieces.is_empty()
+                {
+                    if !self.preserve_whitespace {
+                        trim_trailing_space(line);
+                    }
                     lines.push(Line::default());
                     x = 0.0;
                 }
@@ -218,8 +239,10 @@ impl<M> Paragraph<M> {
                 x += size.width;
             }
         }
-        for line in &mut lines {
-            trim_trailing_space(line);
+        if !self.preserve_whitespace {
+            for line in &mut lines {
+                trim_trailing_space(line);
+            }
         }
         lines
     }

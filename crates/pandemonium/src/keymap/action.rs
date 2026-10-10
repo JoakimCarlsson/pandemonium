@@ -69,6 +69,10 @@ pub enum Action {
     ShowProblems,
     /// Add a repository to the window as a project.
     AddProject,
+    /// Opens a project through the system SSH transport.
+    OpenRemoteProject,
+    /// Reconnects the active project's remote machine.
+    ReconnectProject,
     /// Take the focused project out of the window.
     RemoveProject,
     /// Start a session on the focused project, in a worktree of its own.
@@ -470,6 +474,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "pane.debug",
         "Open Debug Console Pane",
     ),
+    (
+        Action::ShowTool(Tool::Tests),
+        "pane.tests",
+        "Open Test Explorer",
+    ),
     (Action::ShowTool(Tool::Chat), "pane.chat", "Open Chat Pane"),
     (Action::ShowSessions, "palette.sessions", "Go to Session"),
     (Action::ShowSymbols, "palette.symbols", "Go to Symbol"),
@@ -489,6 +498,16 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::ToggleServerTrace,
         "language.trace",
         "Toggle Language Server Trace",
+    ),
+    (
+        Action::OpenRemoteProject,
+        "project.open_remote",
+        "Project: Open Remote…",
+    ),
+    (
+        Action::ReconnectProject,
+        "project.reconnect",
+        "Project: Reconnect",
     ),
     (Action::AddProject, "project.add", "Add Project"),
     (Action::RemoveProject, "project.remove", "Remove Project"),

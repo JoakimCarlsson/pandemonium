@@ -5,7 +5,7 @@
 //! file being open: going back to where a definition was asked for, and
 //! opening again the tab that was closed last.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use pm_core::{ProjectId, Scope};
 use pm_text::Position;
@@ -101,7 +101,11 @@ fn trim(places: &mut Vec<Place>) {
 ///
 /// A line is read from the `#L12` an address in a browser would carry, or
 /// from the `:12` or `:12:4` a compiler writes after a path.
-pub(super) fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
+pub(super) fn linked_file(
+    root: impl Into<pm_host::Location>,
+    link: &str,
+) -> Option<(PathBuf, usize)> {
+    let root = root.into();
     let path = match link.split_once("://") {
         Some(("file", path)) => path,
         Some(_) => return None,
@@ -115,11 +119,14 @@ pub(super) fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
         None => after_colons(path),
     };
     let path = root.join(path.replace("%20", " "));
-    let resolved = path.canonicalize().ok()?;
+    let resolved = root.host.fs().canonicalize(&path).ok()?;
     let inside = root
-        .canonicalize()
+        .host
+        .fs()
+        .canonicalize(&root)
         .is_ok_and(|root| resolved.starts_with(root));
-    (inside && resolved.is_file()).then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
+    (inside && root.host.fs().is_file(&resolved))
+        .then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
 }
 
 /// `path` without the `:line` or `:line:column` written after it, and the

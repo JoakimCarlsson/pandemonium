@@ -86,7 +86,7 @@ impl App {
         };
         let (tasks, error) = pm_core::tasks_checked(&root);
         if let Some(error) = error
-            && self.task_errors.insert(root)
+            && self.task_errors.insert(root.stored())
         {
             self.notices.trouble(error, None);
         }
@@ -150,6 +150,7 @@ impl App {
                 Some(Message::ShowPanelView(PanelView::Terminal)),
             );
         }
+        self.take_test_results();
         self.advance_checks();
     }
 }

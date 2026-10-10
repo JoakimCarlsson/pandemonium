@@ -17,8 +17,8 @@ use pm_core::{Blame, Change, ChangeKind};
 use pm_gfx::{FontStyle, Point, Quad, Rect, Rgba, Size};
 use pm_text::{Buffer, Diagnostic, Highlight, Highlights, Position, Selection, Severity};
 use pm_ui::{
-    Element, Glyphs, IconName, IconSize, LayoutContext, PaintContext, PointerCursor, ResizeEvent,
-    ResizePhase, Style, Styled, Theme,
+    Element, Font, Glyphs, IconName, IconSize, LayoutContext, PaintContext, PointerCursor,
+    ResizeEvent, ResizePhase, Style, Styled, Theme,
 };
 
 use crate::editor::display::{CursorShape, Display};
@@ -207,6 +207,8 @@ pub struct BufferView<M> {
     breakpoints: Vec<Breakpoint>,
     /// The line a paused program stands on in this file, if it does.
     stopped: Option<usize>,
+    /// Current revision coverage by zero-based line and whether it was hit.
+    coverage: Vec<(usize, bool)>,
     /// What a press or a drag on the minimap sends, given the line it is on.
     on_minimap: Option<Arc<dyn Fn(usize) -> M>>,
     /// What a press of the secondary button over the pane sends.
@@ -230,6 +232,8 @@ pub struct BufferView<M> {
     plain: bool,
     /// What is shown in the quiet colour while there is no text at all.
     placeholder: Option<String>,
+    /// The theme font used instead of the editor grid when supplied.
+    font: Option<Font>,
     /// Whether a plain view keeps a scrollbar down its side for when its
     /// rows outgrow it.
     rail: bool,
@@ -252,6 +256,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_breakpoint_menu: None,
         breakpoints: Vec::new(),
         stopped: None,
+        coverage: Vec::new(),
         on_scroll: None,
         on_minimap: None,
         on_menu: None,
@@ -262,6 +267,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         prediction_visible: true,
         plain: false,
         placeholder: None,
+        font: None,
         rail: false,
         display: Display::default(),
         style: Style::default(),
@@ -417,6 +423,12 @@ impl<M> BufferView<M> {
         self
     }
 
+    /// Returns this pane marking covered and uncovered source lines of the current revision.
+    pub fn coverage(mut self, lines: Vec<(usize, bool)>) -> Self {
+        self.coverage = lines;
+        self
+    }
+
     /// Returns this pane marking `breakpoints` in its gutter.
     pub fn breakpoints(mut self, breakpoints: Vec<Breakpoint>) -> Self {
         self.breakpoints = breakpoints;
@@ -496,6 +508,12 @@ impl<M> BufferView<M> {
         self
     }
 
+    /// Returns this view using `font` for text, its placeholder and cursor geometry.
+    pub fn font(mut self, font: Font) -> Self {
+        self.font = Some(font);
+        self
+    }
+
     /// Returns this view with inline predictions shown or hidden.
     pub fn prediction_visible(mut self, visible: bool) -> Self {
         self.prediction_visible = visible;
@@ -529,7 +547,9 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
 
     /// Tells the document how much room it has, then draws what fits.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let font = cx.theme().text.code;
+        let font = self
+            .font
+            .map_or(cx.theme().text.code, |font| font.resolve(&cx.theme().text));
         let cell = Size::new(cx.measure("M", font).width.max(1.0), font.line_height);
         let theme = *cx.theme();
 
@@ -623,6 +643,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         if !self.plain && self.display.current_line {
             self.paint_current_line(&painting, cx);
         }
+        self.paint_coverage(&painting, cx);
         self.paint_stopped(&painting, cx);
         self.paint_conflict_backgrounds(&painting, &conflicts, cx);
         self.paint_search(&painting, cx);
@@ -715,6 +736,36 @@ impl<M> BufferView<M> {
                 .text
                 .alpha(painting.theme.emphasis.current_line),
         ));
+    }
+
+    /// Marks executable lines in the gutter and washes uncovered source lines.
+    fn paint_coverage(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let layout = painting.layout;
+        for (line, covered) in &self.coverage {
+            let Some(top) = painting.top_of(*line) else {
+                continue;
+            };
+            let color = if *covered {
+                painting.theme.colors.success
+            } else {
+                painting.theme.colors.danger
+            };
+            cx.quad(Quad::filled(
+                Rect::from_xywh(layout.bounds.left(), top, 3.0, layout.cell.height),
+                color,
+            ));
+            if !covered {
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(
+                        layout.bounds.left() + layout.gutter,
+                        top,
+                        layout.bounds.size.width - layout.gutter,
+                        layout.cell.height,
+                    ),
+                    color.alpha(0.08),
+                ));
+            }
+        }
     }
 
     /// Washes the line a paused program stands on.

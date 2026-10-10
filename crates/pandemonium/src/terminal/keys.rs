@@ -127,7 +127,7 @@ pub fn macos(key: &LogicalKey, state: ModifiersState) -> Option<(Key, Modifiers)
 
 /// The clipboard command `key` stands for in a terminal, if it stands for one.
 ///
-/// Control-Shift-C and Control-Shift-V are the terminal's own copy and paste,
+/// Control-Shift-C and Control-Insert copy, and Control-Shift-V pastes.
 /// Shift-Insert pastes as it always has, and Control-V pastes too, the way it
 /// does everywhere else in the window. Plain Control-C copies only while
 /// something is `selected`; otherwise it is the interrupt it has always been.
@@ -138,6 +138,7 @@ pub fn clipboard(key: &LogicalKey, state: ModifiersState, selected: bool) -> Opt
     let (control, shift) = (state.control_key(), state.shift_key());
     let letter = match key {
         LogicalKey::Character(text) => text.chars().next().map(|ch| ch.to_ascii_lowercase()),
+        LogicalKey::Named(NamedKey::Insert) if control && !shift => return Some(Action::Copy),
         LogicalKey::Named(NamedKey::Insert) if shift && !control => return Some(Action::Paste),
         _ => None,
     }?;

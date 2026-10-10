@@ -7,8 +7,10 @@
 //! open document once a language server has said what its names are, so a
 //! change reads the way the same file does in an editor pane.
 
+use pm_host::Location;
+
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use pm_core::{Hunk, Line, LineKind, Revision};
 use pm_text::{Buffer, Highlight};
@@ -69,7 +71,7 @@ impl Shading {
     /// What the commit and the index hold is asked of git for every file at
     /// once, because a subprocess per file and version is what made staging
     /// two thousand files leave the review unread for a quarter of a minute.
-    pub fn all(root: &Path, patches: &BTreeMap<PathBuf, Patch>) -> BTreeMap<PathBuf, Self> {
+    pub fn all(root: &Location, patches: &BTreeMap<PathBuf, Patch>) -> BTreeMap<PathBuf, Self> {
         let shown = patches
             .iter()
             .map(|(path, patch)| (path.as_path(), shown(patch)))
@@ -97,7 +99,7 @@ impl Shading {
                 for (version, lines) in versions {
                     let text = match version.revision() {
                         Some(revision) => held.remove(&(path, revision)),
-                        None => std::fs::read_to_string(path).ok(),
+                        None => root.host.fs().read_to_string(path).ok(),
                     };
                     let Some(text) = text else {
                         continue;
