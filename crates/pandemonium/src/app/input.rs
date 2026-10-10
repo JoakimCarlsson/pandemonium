@@ -718,6 +718,9 @@ impl App {
     /// Does what finishing the box that has the keyboard means.
     fn submit_writing(&mut self, writing: Writing) {
         match writing {
+            Writing::Notebook(file, cell) => {
+                self.notebook_command(Message::Notebook(file, crate::notebook::Action::Run(cell)));
+            }
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
             Writing::Answer(session, ticket, _) => self.send_answer(session, ticket),
@@ -1378,7 +1381,7 @@ impl App {
             self.request_redraw();
             return;
         }
-        if self.scroll_rendered(delta) {
+        if self.scroll_notebook(delta) || self.scroll_rendered(delta) {
             self.request_redraw();
             return;
         }

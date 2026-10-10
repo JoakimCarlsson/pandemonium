@@ -283,6 +283,7 @@ impl App {
         }) else {
             return;
         };
+        self.notebooks.forget(|held| held == scope);
         self.editor.close_scope(scope, &roots);
         self.sessions.forget(session);
 

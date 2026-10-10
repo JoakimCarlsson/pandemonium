@@ -24,6 +24,7 @@ mod input;
 mod keymap;
 mod markdown;
 mod message;
+mod notebook;
 mod notice;
 mod notification;
 mod onboarding;

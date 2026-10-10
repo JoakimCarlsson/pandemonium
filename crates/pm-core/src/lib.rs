@@ -3,6 +3,7 @@
 mod files;
 mod git;
 mod github;
+pub mod notebook;
 mod project;
 mod scope;
 mod session;
