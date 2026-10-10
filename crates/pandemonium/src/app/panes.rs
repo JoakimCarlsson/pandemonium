@@ -1448,6 +1448,7 @@ impl App {
                         .map(|file| self.breakpoints_of(file))
                         .unwrap_or_default(),
                     stopped: file.and_then(|file| self.stopped_in(file)),
+                    coverage: file.map_or_else(Vec::new, |file| self.coverage_of(file)),
                     caret,
                     prediction_visible: self.preferences.edit_predictions.enabled
                         && self.completions.is_none(),

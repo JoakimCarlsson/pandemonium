@@ -37,6 +37,8 @@ pub enum ProjectSearchOption {
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+    /// Acts on tests in their originating project and worktree.
+    Test(Scope, crate::testing::Command),
     /// Opens the changes made during one reader prompt.
     DiffAgentTurn(TalkId, u64),
     /// Rewinds conversation context before a reader message and restores its prompt.

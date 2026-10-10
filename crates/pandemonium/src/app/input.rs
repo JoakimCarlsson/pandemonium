@@ -1335,7 +1335,11 @@ impl App {
             return;
         }
         let (rows, carry) = self.wheel_split(delta, text.code.line_height);
-        if self.scroll_outline(-rows) || self.scroll_review(-rows) || self.scroll_excerpts(-rows) {
+        if self.scroll_tests(-rows)
+            || self.scroll_outline(-rows)
+            || self.scroll_review(-rows)
+            || self.scroll_excerpts(-rows)
+        {
             self.wheel_carry = carry;
             self.request_redraw();
             return;

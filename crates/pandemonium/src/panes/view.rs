@@ -86,6 +86,8 @@ pub struct Contents {
     pub breakpoints: Vec<Breakpoint>,
     /// The line a paused program stands on in the file in front, if it does.
     pub stopped: Option<usize>,
+    /// Coverage marks belonging to the file's exact saved revision.
+    pub coverage: Vec<(usize, bool)>,
     /// Whether the caret is solid this instant, for its blink.
     pub caret: bool,
     /// Whether inline predictions are visible in this pane.
@@ -197,6 +199,7 @@ fn pane_view(
     let found = contents.found.clone();
     let breakpoints = contents.breakpoints.clone();
     let stopped = contents.stopped;
+    let coverage = contents.coverage.clone();
     let caret = contents.caret;
     let prediction_visible = contents.prediction_visible;
     let display = contents.display;
@@ -247,6 +250,7 @@ fn pane_view(
                 .found(found)
                 .breakpoints(breakpoints)
                 .stopped(stopped)
+                .coverage(coverage)
                 .caret(caret)
                 .display(display)
                 .on_select(move |phase, anchor, head| Message::SelectText(id, phase, anchor, head))

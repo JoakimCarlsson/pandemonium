@@ -7,6 +7,7 @@ mod project;
 mod scope;
 mod session;
 mod task;
+pub mod testing;
 
 pub use files::{
     Disk, Entry, EntryId, FileTree, Row, Touch, Touched, Watcher, ops, walk, walk_each,

@@ -150,6 +150,7 @@ impl App {
                 Some(Message::ShowPanelView(PanelView::Terminal)),
             );
         }
+        self.take_test_results();
         self.advance_checks();
     }
 }

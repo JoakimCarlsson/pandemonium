@@ -16,6 +16,8 @@ use crate::panes::SplitDirection;
 pub enum Tool {
     /// Open projects and their sessions.
     Projects,
+    /// Test discovery, results and coverage across open worktrees.
+    Tests,
     /// Files of the active worktree.
     Files,
     /// Source control for the active worktree.
@@ -32,8 +34,9 @@ pub enum Tool {
 
 impl Tool {
     /// Registered tools, in the order menus offer them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Projects,
+        Self::Tests,
         Self::Files,
         Self::Changes,
         Self::Terminal,
@@ -45,7 +48,7 @@ impl Tool {
     /// The side used by the default layout preset, expressed as an ordinary split.
     pub const fn default_split(self) -> SplitDirection {
         match self {
-            Self::Projects | Self::Files | Self::Changes => SplitDirection::Left,
+            Self::Projects | Self::Files | Self::Changes | Self::Tests => SplitDirection::Left,
             Self::Chat => SplitDirection::Right,
             Self::Terminal | Self::Problems | Self::Debug => SplitDirection::Down,
         }
@@ -63,6 +66,7 @@ impl Tool {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Projects => "Projects",
+            Self::Tests => "Tests",
             Self::Files => "Files",
             Self::Changes => "Changes",
             Self::Chat => "Chat",
@@ -76,6 +80,7 @@ impl Tool {
     pub const fn icon(self) -> IconName {
         match self {
             Self::Projects => IconName::Folder,
+            Self::Tests => IconName::Debug,
             Self::Files => IconName::File,
             Self::Changes => IconName::GitCompare,
             Self::Chat => IconName::Sparkle,

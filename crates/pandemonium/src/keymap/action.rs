@@ -470,6 +470,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "pane.debug",
         "Open Debug Console Pane",
     ),
+    (
+        Action::ShowTool(Tool::Tests),
+        "pane.tests",
+        "Open Test Explorer",
+    ),
     (Action::ShowTool(Tool::Chat), "pane.chat", "Open Chat Pane"),
     (Action::ShowSessions, "palette.sessions", "Go to Session"),
     (Action::ShowSymbols, "palette.symbols", "Go to Symbol"),
