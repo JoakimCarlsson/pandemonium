@@ -46,7 +46,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
                         channel(&request.args, "output")?,
                         channel(&request.args, "error")?,
                     ],
-                    "pty" => vec![channel(&request.args, "output")?],
+                    "pty" | "tcp" => vec![channel(&request.args, "output")?],
                     _ => Vec::new(),
                 };
                 for channel in streams {
@@ -58,7 +58,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
                 }
                 let raw = match request.op.as_str() {
                     "write" => Some(frame.channel),
-                    "spawn" | "pty" => Some(channel(&request.args, "input")?),
+                    "spawn" | "pty" | "tcp" => Some(channel(&request.args, "input")?),
                     _ => None,
                 };
                 let receiver = raw.map(|channel| {
@@ -144,7 +144,7 @@ fn dispatch(
     let fs = Host::local().fs();
     match request.op.as_str() {
         "hello" => Ok(
-            json!({"version":env!("CARGO_PKG_VERSION"),"os":std::env::consts::OS,"home":std::env::home_dir()}),
+            json!({"version":env!("CARGO_PKG_VERSION"),"protocol":wire::PROTOCOL,"os":std::env::consts::OS,"home":std::env::home_dir()}),
         ),
         "which" => Ok(json!(
             Host::local().which(
@@ -153,6 +153,37 @@ fn dispatch(
                     .ok_or_else(|| io::Error::other("missing program"))?
             )
         )),
+        "environment" => Ok(json!(
+            std::env::var(
+                args["name"]
+                    .as_str()
+                    .ok_or_else(|| io::Error::other("missing environment name"))?
+            )
+            .ok()
+        )),
+        "free_port" => Ok(json!(Host::local().free_port()?)),
+        "tcp" => {
+            let port: u16 = serde_json::from_value(args["port"].clone())?;
+            let stream = std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
+                std::time::Duration::from_secs(2),
+            )?;
+            pipe_out(
+                Box::new(stream.try_clone()?),
+                output.clone(),
+                channel_value(&args, "output")?,
+                gate,
+                state.clone(),
+            );
+            let input = input.ok_or_else(|| io::Error::other("missing TCP input"))?;
+            let output = output.clone();
+            std::thread::spawn(move || {
+                let mut stream = stream;
+                let _ = receive(input, &mut stream, &output);
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            });
+            Ok(Value::Null)
+        }
         "read" => {
             let file = std::fs::File::open(path(&args, "path")?)?;
             pipe_out(
@@ -165,12 +196,8 @@ fn dispatch(
             Ok(Value::Null)
         }
         "write" => {
-            let mut file = std::fs::File::create(path(&args, "path")?)?;
-            receive(
-                input.ok_or_else(|| io::Error::other("missing file input"))?,
-                &mut file,
-                output,
-            )?;
+            let input = input.ok_or_else(|| io::Error::other("missing file input"))?;
+            crate::filesystem::replace(&path(&args, "path")?, |file| receive(input, file, output))?;
             Ok(Value::Null)
         }
         "metadata" => Ok(json!(fs.metadata(path(&args, "path")?)?)),

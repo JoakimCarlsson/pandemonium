@@ -21,7 +21,6 @@
 use pm_host::{Child, Input as ChildStdin, Stdio};
 use std::collections::HashMap;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -331,7 +330,7 @@ pub struct Session {
     /// Which agent this is.
     agent: Agent,
     /// The worktree it is working in.
-    root: PathBuf,
+    root: pm_host::Location,
     /// The tail of the agent's error pipe, including a failed recovery.
     trouble: Arc<Mutex<String>>,
     /// The process itself, kept so that it can be ended, until it has been.
@@ -352,6 +351,8 @@ pub struct Session {
     notify: Notify,
     /// Keeps periodic limit refreshes alive until this session closes.
     limit_polling: Option<Sender<()>>,
+    /// Editor service forwards retained for the conversation lifetime.
+    tunnels: Vec<Arc<pm_host::Tunnel>>,
 }
 
 impl Session {
@@ -361,7 +362,7 @@ impl Session {
     /// session is startable in a frame because nothing of it is waited for.
     pub fn start(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
@@ -371,7 +372,7 @@ impl Session {
     /// Starts one agent with caller-owned MCP servers and the requested opening behavior.
     pub fn configured(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         conversation: Conversation,
         servers: Vec<mcp::McpServer>,
@@ -390,7 +391,7 @@ impl Session {
     /// Starts the agent and offers its login methods before opening any conversation.
     pub fn start_login(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         notify: Notify,
     ) -> std::io::Result<Self> {
@@ -415,7 +416,7 @@ impl Session {
     /// fresh agent in it is nearer to what the reader left than no pane.
     pub fn resume(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         id: &str,
         notify: Notify,
@@ -443,7 +444,7 @@ impl Session {
     /// conversation and says so with [`Event::Fresh`].
     pub fn reconnect(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         id: &str,
         notify: Notify,
@@ -465,7 +466,7 @@ impl Session {
     /// Reconnects an exact conversation without ever substituting a fresh one.
     pub fn reconnect_exact(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         id: &str,
         notify: Notify,
@@ -486,7 +487,7 @@ impl Session {
     /// Loads `id` exactly, reporting failure when that saved session is gone.
     pub fn load(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         id: &str,
         notify: Notify,
@@ -512,12 +513,12 @@ impl Session {
     /// whatever the machine's environment named.
     fn open(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         opening: Opening,
         notify: Notify,
     ) -> std::io::Result<Self> {
-        let mut command = agent.command();
+        let mut command = agent.command_on(&root.host);
         command
             .current_dir(root)
             .envs(env.iter().map(|(name, value)| (name, value)))
@@ -553,7 +554,11 @@ impl Session {
         let (outbox, pending) = mpsc::channel();
 
         let measurement = Measurement {
-            meter: Meter::of(agent, env),
+            meter: if root.host.is_local() {
+                Meter::of(agent, env)
+            } else {
+                Meter::Unmetered
+            },
             state: state.clone(),
             notify: notify.clone(),
             next: next.clone(),
@@ -565,7 +570,7 @@ impl Session {
         };
         let session = Self {
             agent,
-            root: root.to_path_buf(),
+            root: root.clone(),
             trouble,
             process,
             starting: starting.clone(),
@@ -575,6 +580,7 @@ impl Session {
             next: next.clone(),
             notify: notify.clone(),
             limit_polling: Some(measurement.poll()),
+            tunnels: Vec::new(),
         };
         if let Ok(mut state) = session.state.lock() {
             state.sent.insert(HANDSHAKE, Sent::Handshake);
@@ -589,7 +595,7 @@ impl Session {
         session.send(initialize());
 
         let reader = Reader {
-            root: root.to_path_buf(),
+            root: root.clone(),
             state: state.clone(),
             notify,
             replies: Replies { outbox },
@@ -610,6 +616,11 @@ impl Session {
         Ok(session)
     }
 
+    /// Retains a scoped editor service forward until this conversation closes.
+    pub fn keep_tunnel(&mut self, tunnel: Arc<pm_host::Tunnel>) {
+        self.tunnels.push(tunnel);
+    }
+
     /// Which agent this session is running.
     #[must_use]
     pub fn agent(&self) -> Agent {
@@ -618,7 +629,7 @@ impl Session {
 
     /// The worktree it is working in.
     #[must_use]
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &pm_host::Location {
         &self.root
     }
 
@@ -652,7 +663,7 @@ impl Session {
     /// Negotiation is repeated in the destination process; failure never opens a fresh session.
     pub fn fork(
         agent: Agent,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         source: &str,
         notify: Notify,
@@ -688,7 +699,7 @@ impl Session {
             &mut state,
             Sent::List(None),
             "session/list",
-            &json!({ "cwd": self.root }),
+            &json!({ "cwd": self.root.path }),
         );
         drop(state);
         self.send(request);
@@ -1267,7 +1278,7 @@ impl Measurement {
 /// The thread reading everything the agent says.
 struct Reader {
     /// The worktree the agent is working in.
-    root: PathBuf,
+    root: pm_host::Location,
     /// What the agent has said and what it is owed.
     state: Arc<Mutex<State>>,
     /// How the window is woken once something has arrived.
@@ -1397,7 +1408,7 @@ impl Reader {
                     self.ask(
                         Sent::List(next.clone()),
                         "session/list",
-                        &json!({ "cwd": self.root, "cursor": next }),
+                        &json!({ "cwd": self.root.path, "cursor": next }),
                     );
                 }
             }
@@ -1560,7 +1571,7 @@ impl Reader {
                 .and_then(|state| state.fork_message.clone());
             let mut params = json!({
                 "sessionId": source,
-                "cwd": self.root,
+                "cwd": self.root.path,
                 "mcpServers": servers,
             });
             if let Some(message) = message {
@@ -1598,7 +1609,7 @@ impl Reader {
                 },
                 &json!({
                     "sessionId": resumed,
-                    "cwd": self.root,
+                    "cwd": self.root.path,
                     "mcpServers": servers,
                 }),
             ),
@@ -1618,7 +1629,7 @@ impl Reader {
                 self.ask(
                     Sent::Open,
                     "session/new",
-                    &json!({ "cwd": self.root, "mcpServers": servers }),
+                    &json!({ "cwd": self.root.path, "mcpServers": servers }),
                 )
             }
         }

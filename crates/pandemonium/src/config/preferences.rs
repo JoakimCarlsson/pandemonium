@@ -285,6 +285,10 @@ impl Default for EditPredictions {
 /// Everything the reader decides about how the editor draws and behaves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
+    /// Recent remote folders, retained when their projects are closed.
+    pub remote_projects: Vec<PathBuf>,
+    /// SSH aliases successfully connected through the remote folder picker.
+    pub remote_hosts: Vec<String>,
     /// Limits and explicit project grants for editor-owned session tools.
     pub orchestration: super::Orchestration,
     /// The last options chosen for each agent CLI, by agent id.
@@ -358,6 +362,8 @@ impl Default for Preferences {
     /// The preferences a first launch starts from.
     fn default() -> Self {
         Self {
+            remote_projects: Vec::new(),
+            remote_hosts: Vec::new(),
             orchestration: super::Orchestration::default(),
             agent_options: BTreeMap::new(),
             theme_mode: ThemeMode::System,

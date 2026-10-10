@@ -66,6 +66,9 @@ impl App {
                     "id": project.id().number(),
                     "name": project.name(),
                     "root": project.root().display().to_string(),
+                    "host": project.root().host.name(),
+                    "connected": project.root().host.connected(),
+                    "connecting": project.root().host.connecting(),
                     "active": self.open.active().is_some_and(|active| active.id() == project.id()),
                 })
             })
@@ -168,7 +171,7 @@ impl App {
         let mut words = line.split_whitespace();
         let command = words.next().unwrap_or("help");
         match command {
-            "help" => Ok("status | project open PATH | project use N | project close N | session new PROJECT NAME | session use N | session checkout PROJECT | session finish N confirm | file read PROJECT SESSION|checkout PATH | file open PROJECT SESSION|checkout PATH | agent list | agent start PROJECT SESSION|checkout AGENT | agent show N | agent send N PROMPT | agent stop N | agent answer N ASK CHOICE".to_owned()),
+            "help" => Ok("status | project open PATH | project remote HOST[:/PATH] | project reconnect N | project use N | project close N | session new PROJECT NAME | session use N | session checkout PROJECT | session finish N confirm | file read PROJECT SESSION|checkout PATH | file open PROJECT SESSION|checkout PATH | agent list | agent start PROJECT SESSION|checkout AGENT | agent show N | agent send N PROMPT | agent stop N | agent answer N ASK CHOICE".to_owned()),
             "status" => Ok(self.control_status()),
             "project" => self.control_project(words.collect()),
             "session" => self.control_session(words.collect()),
@@ -299,6 +302,16 @@ impl App {
     /// Applies a project command from the terminal.
     fn control_project(&mut self, words: Vec<&str>) -> Result<String, String> {
         match words.as_slice() {
+            ["remote", address @ ..] if !address.is_empty() => {
+                self.open_remote_project(&address.join(" "));
+                Ok("SSH connection started".to_owned())
+            }
+            ["reconnect", index] => {
+                let project = self.control_project_id(index)?;
+                self.open.activate(project);
+                self.reconnect_project();
+                Ok("SSH reconnect started".to_owned())
+            }
             ["open", path @ ..] if !path.is_empty() => {
                 let path = PathBuf::from(path.join(" "));
                 let id = self
@@ -322,7 +335,7 @@ impl App {
                 self.apply(Message::CloseProject(id));
                 Ok("Project closed".to_owned())
             }
-            _ => Err("usage: project open PATH | project use N | project close N".to_owned()),
+            _ => Err("usage: project open PATH | project remote HOST[:/PATH] | project reconnect N | project use N | project close N".to_owned()),
         }
     }
 
@@ -332,9 +345,6 @@ impl App {
             ["new", project, name @ ..] if !name.is_empty() => {
                 let id = self.control_project_id(project)?;
                 let opened = self.open.get(id).ok_or_else(|| "project unavailable".to_owned())?;
-                if !opened.root().host.is_local() {
-                    return Err("sessions on SSH projects are not available yet".to_owned());
-                }
                 if opened.repositories().is_empty() {
                     return Err("project has no repository to cut a session from".to_owned());
                 }
@@ -376,17 +386,14 @@ impl App {
                 .join("\n")),
             ["start", project, session, agent] => {
                 let project = self.control_project_id(project)?;
-                if self.open.get(project).is_some_and(|held| !held.root().host.is_local()) {
-                    return Err("agents on SSH projects are not available yet".to_owned());
-                }
                 let session = if *session == "checkout" { None } else { Some(self.control_session_id(session)?) };
                 if session.is_some_and(|id| self.sessions.get(id).is_none_or(|held| held.project() != project)) {
                     return Err("session belongs to another project".to_owned());
                 }
                 let agent = pm_acp::Agent::named(agent).ok_or_else(|| "unknown agent".to_owned())?;
                 let root = match session {
-                    Some(id) => self.sessions.get(id).map(Session::root).map(PathBuf::from),
-                    None => self.open.get(project).map(Project::root).map(|root| root.path.clone()),
+                    Some(id) => self.sessions.get(id).map(Session::root).cloned(),
+                    None => self.open.get(project).map(Project::root).cloned(),
                 }.ok_or_else(|| "worktree unavailable".to_owned())?;
                 let before = self.agents.iter().count();
                 self.open_agent(project, session, &root, agent, None, false);

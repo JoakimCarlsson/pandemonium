@@ -30,10 +30,12 @@ const TREE_PAGE: isize = 10;
 /// What a move, a copy or a removal in the tree came to, away from the
 /// window.
 pub(super) enum Shifted {
-    /// These were taken off the disk.
-    Removed(Vec<PathBuf>),
+    /// These were taken off the disk on the given machine.
+    Removed(pm_host::Host, Vec<PathBuf>),
     /// These were put in place.
     Placed {
+        /// The machine on which the operation completed.
+        host: pm_host::Host,
         /// The folder they were put into, to be opened, where there was one.
         directory: Option<PathBuf>,
         /// Where each moved entry was, and where it is now.
@@ -126,7 +128,7 @@ impl App {
     }
 
     /// The worktree the tree is listing.
-    fn tree_root(&self) -> Option<pm_host::Location> {
+    pub(super) fn tree_root(&self) -> Option<pm_host::Location> {
         self.files
             .get(&self.scope()?)
             .map(|tree| tree.root().clone())
@@ -462,6 +464,17 @@ impl App {
         let Some(root) = self.tree_root() else {
             return;
         };
+        self.carry_out_tree_edit_on(&root, kind, at, target);
+    }
+
+    /// Applies a tree edit on the machine selected when the operation began.
+    pub(super) fn carry_out_tree_edit_on(
+        &mut self,
+        root: &pm_host::Location,
+        kind: EditKind,
+        at: &Path,
+        target: &Path,
+    ) {
         let target = target.to_path_buf();
         let done = match kind {
             EditKind::NewFile => ops::create_file(root.at(&target)),
@@ -473,11 +486,11 @@ impl App {
         }
         match kind {
             EditKind::Rename => {
-                self.retarget_tabs(at, &target);
-                self.tell_servers_moved(&[(at.to_path_buf(), target.clone())]);
+                self.retarget_tabs_on(&root.host, at, &target);
+                self.tell_servers_moved_on(&root.host, &[(at.to_path_buf(), target.clone())]);
             }
             EditKind::NewFile | EditKind::NewFolder => {
-                self.tell_servers_made(std::slice::from_ref(&target));
+                self.tell_servers_made_on(&root.host, std::slice::from_ref(&target));
             }
         }
         self.reread_worktree();
@@ -561,7 +574,7 @@ impl App {
                     false => ops::remove(root.at(path)).is_ok(),
                 })
                 .collect();
-            Shifted::Removed(removed)
+            Shifted::Removed(root.host, removed)
         });
         self.focus_tree();
     }
@@ -591,22 +604,23 @@ impl App {
         let any = !shifted.is_empty();
         for done in shifted {
             match done {
-                Shifted::Removed(removed) => {
+                Shifted::Removed(host, removed) => {
                     for path in &removed {
-                        self.close_tabs_of(path);
+                        self.close_tabs_of_on(&host, path);
                     }
-                    self.tell_servers_removed(&removed);
+                    self.tell_servers_removed_on(&host, &removed);
                     self.reread_worktree();
                 }
                 Shifted::Placed {
+                    host,
                     directory,
                     moved,
                     placed,
                 } => {
                     for (from, to) in &moved {
-                        self.retarget_tabs(from, to);
+                        self.retarget_tabs_on(&host, from, to);
                     }
-                    self.tell_servers_moved(&moved);
+                    self.tell_servers_moved_on(&host, &moved);
                     if let Some(directory) = directory
                         && let Some(tree) =
                             self.scope().and_then(|scope| self.files.get_mut(&scope))
@@ -668,6 +682,7 @@ impl App {
         };
         let acting = self.tree_acting_on();
         self.shift_later(move || Shifted::Placed {
+            host: root.host.clone(),
             directory: None,
             moved: Vec::new(),
             placed: acting
@@ -701,6 +716,7 @@ impl App {
                 }
             }
             Shifted::Placed {
+                host: root.host.clone(),
                 directory: Some(directory),
                 moved,
                 placed,
@@ -826,40 +842,53 @@ impl App {
     ///
     /// A file with changes that are not on disk keeps its tab where it is,
     /// so nothing typed into it is lost to a rename.
-    pub(super) fn retarget_tabs(&mut self, from: &Path, to: &Path) {
+    pub(super) fn retarget_tabs_on(&mut self, host: &pm_host::Host, from: &Path, to: &Path) {
         let moving = self
             .panes
             .held()
             .into_iter()
             .filter_map(|item| {
                 let file = item.file()?;
+                let root = self.worktree_of(file)?;
+                if &root.host != host {
+                    return None;
+                }
+                let scope = self.editor.scope_of(file)?;
                 let path = self.editor.path(file)?;
-                (path.starts_with(from) && !self.editor.is_dirty(file)).then_some((item, path))
+                (path.starts_with(from) && !self.editor.is_dirty(file))
+                    .then_some((item, path, scope, root))
             })
             .collect::<Vec<_>>();
         if moving.is_empty() {
             return;
         }
-        let items = moving.iter().map(|(item, _)| *item).collect::<Vec<_>>();
+        let items = moving
+            .iter()
+            .map(|(item, _, _, _)| *item)
+            .collect::<Vec<_>>();
         self.panes.retain(|item| !items.contains(&item));
         self.sweep();
-        for (_, path) in moving {
+        for (_, path, scope, root) in moving {
             let moved = to.join(path.strip_prefix(from).unwrap_or(Path::new("")));
-            self.open_tree_file(&moved, self.panes.focus(), false);
+            if let Some(file) = self.editor.open(scope, &root, &moved, false) {
+                self.show_file(self.panes.focus(), file, false);
+            }
         }
         self.store();
     }
 
     /// Closes every tab showing a file at or under `path`, having nothing
     /// unsaved in it.
-    pub(super) fn close_tabs_of(&mut self, path: &Path) {
+    pub(super) fn close_tabs_of_on(&mut self, host: &pm_host::Host, path: &Path) {
         let gone = self
             .panes
             .held()
             .into_iter()
             .filter(|item| {
                 item.file().is_some_and(|file| {
-                    !self.editor.is_dirty(file)
+                    self.worktree_of(file)
+                        .is_some_and(|root| &root.host == host)
+                        && !self.editor.is_dirty(file)
                         && self
                             .editor
                             .path(file)

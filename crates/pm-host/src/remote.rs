@@ -12,6 +12,9 @@ use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+/// A window wake callback shared by machine and connection generations.
+type Notify = Arc<dyn Fn() + Send + Sync>;
+
 /// The deadline for a control or file operation.
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// Raw chunks in flight per stream, bounded to four megabytes.
@@ -24,7 +27,17 @@ pub(crate) struct Remote {
     /// The current connection generation.
     connection: Mutex<Option<Arc<Connection>>>,
     /// The private SSH multiplex socket used for interactive authentication.
-    control: Mutex<Option<std::path::PathBuf>>,
+    pub(crate) control: Mutex<Option<std::path::PathBuf>>,
+    /// Machine details received from the current endpoint.
+    pub(crate) information: Mutex<Value>,
+    /// Shared reverse forwards, retained by the conversations using them.
+    pub(crate) forwards: Mutex<HashMap<u16, Weak<crate::Tunnel>>>,
+    /// Whether authentication or an endpoint handshake is in progress.
+    pub(crate) connecting: AtomicBool,
+    /// Serializes connection replacement for projects sharing this host.
+    dialing: Mutex<()>,
+    /// Wakes the window when the shared connection state changes.
+    pub(crate) notify: Arc<Mutex<Option<Notify>>>,
 }
 impl Remote {
     /// Validates an SSH destination before it reaches the command line.
@@ -44,10 +57,15 @@ impl Remote {
             name: name.to_owned(),
             connection: Mutex::new(None),
             control: Mutex::new(None),
+            information: Mutex::new(Value::Null),
+            forwards: Mutex::new(HashMap::new()),
+            connecting: AtomicBool::new(false),
+            dialing: Mutex::new(()),
+            notify: Arc::new(Mutex::new(None)),
         })
     }
-    /// Builds the local SSH login terminal, preserving system SSH configuration.
-    pub fn authentication(&self) -> io::Result<CommandBuilder> {
+    /// Reserves one private SSH master socket shared by every project on this host.
+    fn reserve_control(&self) -> io::Result<std::path::PathBuf> {
         let directory = std::env::home_dir()
             .ok_or_else(|| io::Error::other("No home directory for SSH control socket"))?
             .join(".cache/pandemonium/ssh");
@@ -57,28 +75,83 @@ impl Remote {
             .map_err(io::Error::other)?
             .as_nanos();
         let socket = directory.join(format!("{}-{nonce:x}", std::process::id()));
+        self.forwards.lock().unwrap().clear();
+        if let Some(previous) = self.control.lock().unwrap().replace(socket.clone()) {
+            end_master(self.name.clone(), previous);
+        }
+        Ok(socket)
+    }
+
+    /// Builds the local SSH login terminal, preserving system SSH configuration.
+    pub fn authentication(&self) -> io::Result<CommandBuilder> {
+        self.connecting.store(true, Ordering::Release);
+        let socket = self.reserve_control()?;
         let mut command = CommandBuilder::new("ssh");
         command.args(["-M", "-S"]);
         command.arg(&socket);
-        command.args(["-o", "ControlPersist=60", "-T", &self.name, "true"]);
-        if let Some(previous) = self.control.lock().unwrap().replace(socket) {
-            end_master(self.name.clone(), previous);
-        }
+        command.args([
+            "-o",
+            "ControlPersist=60",
+            "-o",
+            "ConnectTimeout=10",
+            "-T",
+            &self.name,
+            "true",
+        ]);
         Ok(command)
     }
 
-    /// Starts SSH and requires the endpoint's exact package version.
+    /// Connects to a compatible endpoint, installing it when authentication permits.
     pub fn connect(&self) -> io::Result<()> {
+        let _dialing = self.dialing.lock().unwrap();
+        self.connecting.store(true, Ordering::Release);
+        let result = match self.try_connect() {
+            Ok(()) => Ok(()),
+            Err(original) => self
+                .install_server()
+                .map_err(|error| {
+                    io::Error::other(format!("{original} Server setup failed: {error}"))
+                })
+                .and_then(|()| self.try_connect()),
+        };
+        self.connecting.store(false, Ordering::Release);
+        if let Some(notify) = self.notify.lock().unwrap().clone() {
+            notify();
+        }
+        result
+    }
+
+    /// Starts SSH and requires the endpoint's package and transport versions.
+    fn try_connect(&self) -> io::Result<()> {
         if let Some(connection) = self.connection.lock().unwrap().take() {
             connection.close();
         }
+        if self.control.lock().unwrap().is_none() {
+            self.reserve_control()?;
+        }
         let mut command = std::process::Command::new("ssh");
-        command.arg("-T");
+        command.args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "ConnectTimeout=10",
+        ]);
         if let Some(control) = self.control.lock().unwrap().as_ref() {
-            command.arg("-S").arg(control);
+            command.arg("-S").arg(control).args([
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                "ControlPersist=60",
+            ]);
         }
         let mut child = command
-            .args([&self.name, "pandemonium-server --stdio"])
+            .arg(&self.name)
+            .arg(crate::bootstrap::server_command())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -101,6 +174,7 @@ impl Remote {
             alive: AtomicBool::new(true),
             child: Mutex::new(Some(child)),
             errors: Mutex::new(String::new()),
+            notify: self.notify.clone(),
         });
         if let Some(mut stderr) = stderr {
             let target = Arc::downgrade(&connection);
@@ -127,17 +201,23 @@ impl Remote {
             .as_ref()
             .ok()
             .and_then(|value| value["version"].as_str());
-        if version != Some(env!("CARGO_PKG_VERSION")) {
+        let protocol = handshake
+            .as_ref()
+            .ok()
+            .and_then(|value| value["protocol"].as_u64());
+        if version != Some(env!("CARGO_PKG_VERSION")) || protocol != Some(crate::wire::PROTOCOL) {
             let found = version.unwrap_or("not installed");
             let detail = connection.errors.lock().unwrap().clone();
             connection.close();
             return Err(io::Error::other(format!(
-                "pandemonium-server {} is needed on {}, found {found}. Build with `cargo build -p pm-server --release`, then `scp target/release/pandemonium-server {}:.local/bin/pandemonium-server` (create ~/.local/bin and put it on the remote PATH). {detail}",
+                "pandemonium-server {} is needed on {}, found {found} (transport {protocol:?}, need {}). Build with `cargo build -p pm-server --release`, then `scp target/release/pandemonium-server {}:.local/bin/pandemonium-server` (create ~/.local/bin and put it on the remote PATH). {detail}",
                 env!("CARGO_PKG_VERSION"),
                 self.name,
+                crate::wire::PROTOCOL,
                 self.name
             )));
         }
+        *self.information.lock().unwrap() = handshake?;
         *self.connection.lock().unwrap() = Some(connection);
         Ok(())
     }
@@ -168,6 +248,21 @@ impl Remote {
     pub fn request(&self, op: &str, args: Value) -> io::Result<Value> {
         self.connection()?.request(op, args)
     }
+    /// Opens a loopback TCP stream on the host through the multiplexed transport.
+    pub fn tcp(&self, port: u16) -> io::Result<(crate::Input, crate::command::Reader)> {
+        let connection = self.connection()?;
+        let channel = connection.channel();
+        let input = connection.channel();
+        let output = connection.channel();
+        let reader = connection.reader(output, false);
+        connection.request(
+            "tcp",
+            json!({"channel":channel,"input":input,"output":output,"port":port}),
+        )?;
+        let writer = StreamWriter::new(connection, input);
+        Ok((Box::new(writer), Box::new(reader)))
+    }
+
     /// Reads raw file bytes on a request channel.
     pub fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         let connection = self.connection()?;
@@ -227,6 +322,7 @@ impl Remote {
                 .then(|| Box::new(StreamWriter::new(connection.clone(), input)) as crate::Input),
             stdout,
             stderr,
+            grouped: false,
             process: Process::Remote(ArcProcess {
                 connection,
                 channel: process,
@@ -319,6 +415,8 @@ pub struct Connection {
     child: Mutex<Option<std::process::Child>>,
     /// SSH diagnostics for failed handshakes.
     errors: Mutex<String>,
+    /// Shares connection-state notifications with the owning machine.
+    notify: Arc<Mutex<Option<Notify>>>,
 }
 impl Connection {
     /// Allocates a unique logical channel.
@@ -458,7 +556,7 @@ impl Connection {
     }
     /// Ends every outstanding operation and stream when SSH exits.
     fn close(&self) {
-        self.alive.store(false, Ordering::Release);
+        let changed = self.alive.swap(false, Ordering::AcqRel);
         self.pending.lock().unwrap().clear();
         for flow in self.flows.lock().unwrap().values() {
             flow.close();
@@ -468,6 +566,9 @@ impl Connection {
         if let Some(mut child) = self.child.lock().unwrap().take() {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        if changed && let Some(notify) = self.notify.lock().unwrap().clone() {
+            notify();
         }
     }
 }

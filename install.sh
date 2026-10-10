@@ -50,7 +50,7 @@ detect_target() {
 
 # Prints the version the latest release is tagged with, without the leading v.
 latest_version() {
-    url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" \
+    url="$(curl --connect-timeout 10 --max-time 120 -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" \
         || fail "could not reach the latest release of $REPO"
     tag="${url##*/tag/}"
     [ "$tag" != "$url" ] || fail "$REPO has no published release yet"
@@ -98,7 +98,7 @@ install_app_bundle() {
     base="$1"
     name="$2"
     tmp="$3"
-    if ! curl -fsSL "$base/$name.app.zip" -o "$tmp/$name.app.zip"; then
+    if ! curl --connect-timeout 10 --max-time 120 -fsSL "$base/$name.app.zip" -o "$tmp/$name.app.zip"; then
         echo "note: this release has no macOS app; only the binary was installed"
         return
     fi
@@ -134,9 +134,9 @@ main() {
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
     echo "downloading $binary $VERSION for $target"
-    curl -fsSL "$base/$name.tar.gz" -o "$tmp/$name.tar.gz" \
+    curl --connect-timeout 10 --max-time 120 -fsSL "$base/$name.tar.gz" -o "$tmp/$name.tar.gz" \
         || fail "no build of $VERSION for $target at $base/$name.tar.gz"
-    curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" \
+    curl --connect-timeout 10 --max-time 120 -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" \
         || fail "could not download SHA256SUMS for $VERSION"
     verify "$tmp" "$name.tar.gz"
 

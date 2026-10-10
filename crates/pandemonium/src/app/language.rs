@@ -1212,7 +1212,7 @@ impl App {
             for request in client.take_workspace_edits() {
                 let supported = request.supported;
                 let edits = request.edits.clone();
-                let success = supported && self.apply_changes(edits);
+                let success = supported && self.apply_changes_on(client.host(), edits);
                 client.answer_workspace_edit(request, success);
                 applied = true;
             }
@@ -1304,7 +1304,7 @@ impl App {
                 self.link_found(pending, &found);
             }
             Answer::Locations(found) if pending.request == Request::References => {
-                self.show_references(found);
+                self.show_references(pending.client.host(), found);
             }
             Answer::Locations(found) => self.follow_definition(pending, found),
             Answer::Hover(text) => {
@@ -1349,11 +1349,14 @@ impl App {
             Answer::Resolved(item) => self.take_resolved(pending, *item),
             Answer::CodeActions(actions) => self.show_code_actions(pending, actions),
             Answer::Edits(files) => {
-                self.apply_edits(files);
+                self.apply_changes_on(
+                    pending.client.host(),
+                    files.into_iter().map(WorkspaceChange::Edit).collect(),
+                );
                 self.save_once_formatted(pending);
             }
             Answer::Changes(changes) => {
-                self.apply_changes(changes);
+                self.apply_changes_on(pending.client.host(), changes);
             }
             Answer::Hints(hints) => {
                 if let Some(document) = self.editor.get(pending.file) {
@@ -1382,9 +1385,11 @@ impl App {
             Answer::Lenses(lenses) => self.take_lenses(pending, lenses),
             Answer::CallItems(items) => self.follow_calls(pending, items),
             Answer::Named(found) => match &pending.request {
-                Request::WorkspaceSymbols(query) => self.show_workspace_symbols(query, found),
+                Request::WorkspaceSymbols(query) => {
+                    self.show_workspace_symbols(pending.client.host(), query, found)
+                }
                 _ => {
-                    let rows = self.named_rows(found);
+                    let rows = self.named_rows(pending.client.host(), found);
                     self.open_picker_with(Kind::Calls, rows, String::new());
                 }
             },
@@ -1641,7 +1646,12 @@ impl App {
     ///
     /// What each server finds is added to what the others found for the
     /// same query, and a query the reader has typed past is dropped.
-    fn show_workspace_symbols(&mut self, query: &str, found: Vec<NamedLocation>) {
+    fn show_workspace_symbols(
+        &mut self,
+        host: &pm_host::Host,
+        query: &str,
+        found: Vec<NamedLocation>,
+    ) {
         let open = self
             .picker
             .as_ref()
@@ -1649,7 +1659,7 @@ impl App {
         if !open || self.workspace_symbols.0.as_deref() != Some(query) {
             return;
         }
-        let rows = self.named_rows(found);
+        let rows = self.named_rows(host, found);
         self.workspace_symbols.1.extend(rows);
         let rows = self
             .workspace_symbols
@@ -1664,12 +1674,12 @@ impl App {
     }
 
     /// The picker rows of named places: a symbol and where it is.
-    fn named_rows(&self, found: Vec<NamedLocation>) -> Vec<Row> {
+    fn named_rows(&self, host: &pm_host::Host, found: Vec<NamedLocation>) -> Vec<Row> {
         found
             .into_iter()
             .filter_map(|named| {
                 let location = named.location;
-                let place = self.place_of(&location.path, location.range.start)?;
+                let place = self.place_on(host, &location.path, location.range.start)?;
                 let file = format!(
                     "{}:{}",
                     self.relative_to(place.scope, &location.path),
@@ -1695,11 +1705,11 @@ impl App {
     }
 
     /// Goes to the first place a server named, taking down where the cursor was.
-    fn go_to_first(&mut self, found: &[Location]) {
+    fn go_to_first(&mut self, host: &pm_host::Host, found: &[Location]) {
         let Some(location) = found.first() else {
             return;
         };
-        let Some(place) = self.place_of(&location.path, location.range.start) else {
+        let Some(place) = self.place_on(host, &location.path, location.range.start) else {
             return;
         };
         self.jump_to(&place);
@@ -1722,17 +1732,17 @@ impl App {
             return;
         }
         match found.len() {
-            0 | 1 => self.go_to_first(&found),
-            _ => self.show_references(found),
+            0 | 1 => self.go_to_first(pending.client.host(), &found),
+            _ => self.show_references(pending.client.host(), found),
         }
     }
 
     /// Opens the picker over everywhere a symbol is used.
-    fn show_references(&mut self, found: Vec<Location>) {
+    fn show_references(&mut self, host: &pm_host::Host, found: Vec<Location>) {
         let rows = found
             .into_iter()
             .filter_map(|location| {
-                let place = self.place_of(&location.path, location.range.start)?;
+                let place = self.place_on(host, &location.path, location.range.start)?;
                 let name = location
                     .path
                     .file_name()
@@ -2056,16 +2066,11 @@ impl App {
         }
         let client = offered.client.clone();
         let action = offered.action.clone();
-        if self.apply_changes(action.edits)
+        if self.apply_changes_on(client.host(), action.edits)
             && let Some(command) = action.command
         {
             client.execute_command(command);
         }
-    }
-
-    /// Makes the changes a formatter asked for.
-    pub(super) fn apply_edits(&mut self, files: Vec<FileEdit>) -> bool {
-        self.apply_changes(files.into_iter().map(WorkspaceChange::Edit).collect())
     }
 
     /// Makes the changes a rename or a fix asked for, in the order asked.
@@ -2077,8 +2082,15 @@ impl App {
     /// follow. Nothing is done at all when a file to be moved or taken away
     /// has changes the reader has not saved: those are the reader's, and a
     /// server's rename is not something to lose them to.
-    pub(super) fn apply_changes(&mut self, changes: Vec<WorkspaceChange>) -> bool {
-        if let Some(unsaved) = changes.iter().find_map(|change| self.unsaved_under(change)) {
+    pub(super) fn apply_changes_on(
+        &mut self,
+        host: &pm_host::Host,
+        changes: Vec<WorkspaceChange>,
+    ) -> bool {
+        if let Some(unsaved) = changes
+            .iter()
+            .find_map(|change| self.unsaved_under(host, change))
+        {
             self.notices.trouble(
                 format!(
                     "Save {} before a server moves or removes it.",
@@ -2093,7 +2105,7 @@ impl App {
         for change in changes {
             match change {
                 WorkspaceChange::Edit(FileEdit { path, edits }) => {
-                    applied &= self.edit_file(&path, edits);
+                    applied &= self.edit_file(host, &path, edits);
                 }
                 WorkspaceChange::Create {
                     path,
@@ -2101,13 +2113,15 @@ impl App {
                     ignore_if_exists,
                 } => {
                     shifted = true;
-                    let made = match pm_host::Host::local().fs().symlink_metadata(&path).is_ok() {
-                        true if overwrite => pm_host::Host::local().fs().write(&path, "").is_ok(),
+                    let made = match host.fs().symlink_metadata(&path).is_ok() {
+                        true if overwrite => host.fs().write(&path, "").is_ok(),
                         true => ignore_if_exists,
-                        false => ops::create_file(&path).is_ok(),
+                        false => {
+                            ops::create_file(pm_host::Location::new(host.clone(), &path)).is_ok()
+                        }
                     };
                     if made {
-                        self.tell_servers_made(std::slice::from_ref(&path));
+                        self.tell_servers_made_on(host, std::slice::from_ref(&path));
                     }
                     applied &= made;
                 }
@@ -2118,20 +2132,20 @@ impl App {
                     ignore_if_exists,
                 } => {
                     shifted = true;
-                    self.save_under(&from);
-                    let taken =
-                        pm_host::Host::local().fs().symlink_metadata(&to).is_ok() && from != to;
+                    self.save_under(host, &from);
+                    let taken = host.fs().symlink_metadata(&to).is_ok() && from != to;
                     let moved = match taken {
                         true if ignore_if_exists && !overwrite => continue,
-                        true if overwrite => {
-                            ops::remove(&to).and_then(|()| ops::rename(&from, &to))
-                        }
-                        _ => ops::rename(&from, &to),
+                        true if overwrite => ops::remove(pm_host::Location::new(host.clone(), &to))
+                            .and_then(|()| {
+                                ops::rename(pm_host::Location::new(host.clone(), &from), &to)
+                            }),
+                        _ => ops::rename(pm_host::Location::new(host.clone(), &from), &to),
                     };
                     applied &= moved.is_ok();
                     if moved.is_ok() {
-                        self.retarget_tabs(&from, &to);
-                        self.tell_servers_moved(&[(from, to)]);
+                        self.retarget_tabs_on(host, &from, &to);
+                        self.tell_servers_moved_on(host, &[(from, to)]);
                     }
                 }
                 WorkspaceChange::Delete {
@@ -2139,12 +2153,19 @@ impl App {
                     ignore_if_not_exists,
                 } => {
                     shifted = true;
-                    applied &= match pm_host::Host::local().fs().symlink_metadata(&path).is_ok() {
-                        true => ops::trash(&path).is_ok(),
+                    applied &= match host.fs().symlink_metadata(&path).is_ok() {
+                        true => {
+                            let location = pm_host::Location::new(host.clone(), &path);
+                            if host.is_local() {
+                                ops::trash(location).is_ok()
+                            } else {
+                                ops::remove(location).is_ok()
+                            }
+                        }
                         false => ignore_if_not_exists,
                     };
-                    self.close_tabs_of(&path);
-                    self.tell_servers_removed(std::slice::from_ref(&path));
+                    self.close_tabs_of_on(host, &path);
+                    self.tell_servers_removed_on(host, std::slice::from_ref(&path));
                 }
             }
         }
@@ -2159,6 +2180,7 @@ impl App {
     /// open, on disk when it is not.
     fn edit_file(
         &mut self,
+        host: &pm_host::Host,
         path: &std::path::Path,
         edits: Vec<(std::ops::Range<Position>, String)>,
     ) -> bool {
@@ -2166,7 +2188,7 @@ impl App {
             return true;
         }
         match self
-            .opened_file(path)
+            .opened_file(host, path)
             .and_then(|file| self.editor.get(file))
         {
             Some(document) => {
@@ -2175,23 +2197,29 @@ impl App {
                     .edit(|buffer| buffer.apply_edits(edits));
                 true
             }
-            None => write_through(path, edits),
+            None => write_through(&pm_host::Location::new(host.clone(), path), edits),
         }
     }
 
     /// The open file at `path`, in whichever worktree has it open.
-    fn opened_file(&self, path: &std::path::Path) -> Option<FileId> {
+    fn opened_file(&self, host: &pm_host::Host, path: &std::path::Path) -> Option<FileId> {
         self.scopes()
             .into_iter()
+            .filter(|scope| self.root_of(*scope).is_some_and(|root| &root.host == host))
             .find_map(|scope| self.editor.opened(scope, path))
     }
 
     /// The open files at or under `path`.
-    fn opened_under(&self, path: &std::path::Path) -> Vec<FileId> {
+    fn opened_under(&self, host: &pm_host::Host, path: &std::path::Path) -> Vec<FileId> {
         self.panes
             .held()
             .into_iter()
             .filter_map(|item| item.file())
+            .filter(|file| {
+                self.editor
+                    .get(*file)
+                    .is_some_and(|document| &document.borrow().buffer().location().host == host)
+            })
             .filter(|file| {
                 self.editor
                     .path(*file)
@@ -2201,13 +2229,13 @@ impl App {
     }
 
     /// A file with unsaved changes that `change` would move or take away.
-    fn unsaved_under(&self, change: &WorkspaceChange) -> Option<PathBuf> {
+    fn unsaved_under(&self, host: &pm_host::Host, change: &WorkspaceChange) -> Option<PathBuf> {
         let path = match change {
             WorkspaceChange::Rename { from, .. } => from,
             WorkspaceChange::Delete { path, .. } => path,
             WorkspaceChange::Edit(_) | WorkspaceChange::Create { .. } => return None,
         };
-        self.opened_under(path)
+        self.opened_under(host, path)
             .into_iter()
             .find(|file| self.editor.is_dirty(*file))
             .and_then(|file| self.editor.path(file))
@@ -2215,8 +2243,8 @@ impl App {
 
     /// Writes the open files at or under `path` to disk, so that what a
     /// server changed in them moves with them.
-    fn save_under(&mut self, path: &std::path::Path) {
-        for file in self.opened_under(path) {
+    fn save_under(&mut self, host: &pm_host::Host, path: &std::path::Path) {
+        for file in self.opened_under(host, path) {
             if self.editor.is_dirty(file)
                 && let Some(root) = self.worktree_of(file)
             {
@@ -2227,14 +2255,27 @@ impl App {
 
     /// The place `at` in the file at `path` comes to, in whichever worktree holds it.
     pub(super) fn place_of(&self, path: &std::path::Path, at: Position) -> Option<Place> {
+        self.place_on(&pm_host::Host::local(), path, at)
+    }
+
+    /// Resolves a server path only among worktrees on the reporting machine.
+    fn place_on(
+        &self,
+        host: &pm_host::Host,
+        path: &std::path::Path,
+        at: Position,
+    ) -> Option<Place> {
         let scope = self
             .scopes()
             .into_iter()
             .filter_map(|scope| Some((scope, self.root_of(scope)?)))
-            .filter(|(_, root)| path.starts_with(root))
+            .filter(|(_, root)| &root.host == host && path.starts_with(root))
             .max_by_key(|(_, root)| root.as_os_str().len())
             .map(|(scope, _)| scope)
-            .or_else(|| self.scope())?;
+            .or_else(|| {
+                self.scope()
+                    .filter(|scope| self.root_of(*scope).is_some_and(|root| &root.host == host))
+            })?;
         Some(Place {
             scope,
             path: path.to_path_buf(),
@@ -2255,7 +2296,10 @@ impl App {
 }
 
 /// Makes `edits` to the file at `path`, which nothing has open.
-fn write_through(path: &std::path::Path, edits: Vec<(std::ops::Range<Position>, String)>) -> bool {
+fn write_through(
+    path: &pm_host::Location,
+    edits: Vec<(std::ops::Range<Position>, String)>,
+) -> bool {
     let Ok(mut buffer) = pm_text::Buffer::open(path) else {
         return false;
     };

@@ -1,6 +1,6 @@
 //! Typed ACP control for clients outside the desktop window.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use base64::Engine;
 use pm_acp::{Agent, Attachment, Setting, Way};
@@ -41,8 +41,8 @@ impl App {
                 json!({ "agents": pm_acp::agents().iter().map(|agent| json!({
                 "id": agent.id,
                 "name": agent.name,
-                "startable": agent.startable(),
-                "installed": agent.installed(),
+                "startable": self.open.active().map_or_else(|| agent.startable(), |project| agent.startable_on(&project.root().host)),
+                "installed": self.open.active().map_or_else(|| agent.installed(), |project| project.root().host.which(agent.program).is_some()),
             })).collect::<Vec<_>>() }),
             ),
             AgentOperation::Start {
@@ -120,13 +120,6 @@ impl App {
             .find(|held| held.id().number() == project)
             .map(Project::id)
             .ok_or_else(|| "project unavailable".to_owned())?;
-        let opened = self
-            .open
-            .get(project)
-            .ok_or_else(|| "project unavailable".to_owned())?;
-        if !opened.root().host.is_local() {
-            return Err("agents on SSH projects are not available yet".to_owned());
-        }
         let session = session
             .map(|id| {
                 self.sessions
@@ -144,16 +137,9 @@ impl App {
             return Err("session belongs to another project".to_owned());
         }
         let agent = Agent::named(agent).ok_or_else(|| "unknown agent".to_owned())?;
-        if !agent.startable() {
-            return Err("agent is not installed or startable".to_owned());
-        }
         let root = match session {
-            Some(id) => self.sessions.get(id).map(Session::root).map(PathBuf::from),
-            None => self
-                .open
-                .get(project)
-                .map(Project::root)
-                .map(|root| root.path.clone()),
+            Some(id) => self.sessions.get(id).map(Session::root).cloned(),
+            None => self.open.get(project).map(Project::root).cloned(),
         }
         .ok_or_else(|| "worktree unavailable".to_owned())?;
         let before = self.agents.iter().map(Talk::id).collect::<Vec<_>>();
@@ -264,9 +250,11 @@ impl App {
         if text.trim().is_empty() && files.is_empty() && images.is_empty() {
             return Err("prompt is empty".to_owned());
         }
-        let root = talk
-            .root()
-            .canonicalize()
+        let location = talk.root();
+        let root = location
+            .host
+            .fs()
+            .canonicalize(location)
             .map_err(|error| error.to_string())?;
         let mut attachments = Vec::new();
         for file in files {
@@ -277,14 +265,15 @@ impl App {
             {
                 return Err("attached files must be relative to the worktree".to_owned());
             }
-            let path = root
-                .join(relative)
-                .canonicalize()
+            let path = location
+                .host
+                .fs()
+                .canonicalize(root.join(relative))
                 .map_err(|error| error.to_string())?;
-            if !path.starts_with(&root) || !path.is_file() {
+            if !path.starts_with(&root) || !location.host.fs().is_file(&path) {
                 return Err("attached file is outside the worktree or is not a file".to_owned());
             }
-            attachments.push(Attachment::File(path));
+            attachments.push(Attachment::File(location.at(path)));
         }
         if !images.is_empty() && !talk.can_image() {
             return Err("agent does not accept image prompts".to_owned());

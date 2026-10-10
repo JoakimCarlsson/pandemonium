@@ -27,6 +27,29 @@ impl Host {
     pub fn connected(&self) -> bool {
         self.0.as_ref().is_none_or(|remote| remote.connected())
     }
+    /// Whether SSH authentication or endpoint setup is currently running.
+    pub fn connecting(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|remote| remote.connecting.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Wakes the caller on connection-state changes without polling the transport.
+    pub fn set_notify(&self, notify: Arc<dyn Fn() + Send + Sync>) {
+        if let Some(remote) = &self.0 {
+            *remote.notify.lock().unwrap() = Some(notify);
+        }
+    }
+
+    /// Clears authentication progress after a login terminal fails or is cancelled.
+    pub fn cancel_authentication(&self) {
+        if let Some(remote) = &self.0 {
+            remote
+                .connecting
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+
     /// Starts a command builder on this machine.
     pub fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
         Command::on(self.clone(), program)
@@ -49,6 +72,65 @@ impl Host {
             None => Ok(()),
         }
     }
+    /// The operating system reported by the owning machine.
+    pub fn os(&self) -> String {
+        match &self.0 {
+            Some(remote) => remote.information.lock().unwrap()["os"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_owned(),
+            None => std::env::consts::OS.to_owned(),
+        }
+    }
+
+    /// The home directory reported by the owning machine.
+    pub fn home(&self) -> Option<std::path::PathBuf> {
+        match &self.0 {
+            Some(remote) => remote.information.lock().unwrap()["home"]
+                .as_str()
+                .map(std::path::PathBuf::from),
+            None => std::env::home_dir(),
+        }
+    }
+
+    /// Reads one environment variable on the owning machine.
+    pub fn environment(&self, name: &str) -> Option<String> {
+        match &self.0 {
+            Some(remote) => remote
+                .request("environment", serde_json::json!({"name":name}))
+                .ok()?
+                .as_str()
+                .map(str::to_owned),
+            None => std::env::var(name).ok(),
+        }
+    }
+
+    /// Opens a loopback TCP stream on the owning machine.
+    pub fn tcp(&self, port: u16) -> io::Result<(crate::Input, crate::command::Reader)> {
+        match &self.0 {
+            Some(remote) => remote.tcp(port),
+            None => {
+                let stream = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))?;
+                Ok((Box::new(stream.try_clone()?), Box::new(stream)))
+            }
+        }
+    }
+
+    /// Finds a currently unused loopback port on the owning machine.
+    pub fn free_port(&self) -> io::Result<u16> {
+        match &self.0 {
+            Some(remote) => {
+                serde_json::from_value(remote.request("free_port", serde_json::json!({}))?)
+                    .map_err(io::Error::other)
+            }
+            None => Ok(
+                std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?
+                    .local_addr()?
+                    .port(),
+            ),
+        }
+    }
+
     /// Finds an installed program on this machine.
     pub fn which(&self, program: &str) -> Option<std::path::PathBuf> {
         match &self.0 {
@@ -96,6 +178,13 @@ impl PartialEq for Host {
     }
 }
 impl Eq for Host {}
+
+impl std::hash::Hash for Host {
+    /// Hashes the same stable machine identity used by equality.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name().hash(state);
+    }
+}
 
 /// One connection for every SSH alias held by the window.
 #[derive(Default)]

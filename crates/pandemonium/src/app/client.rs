@@ -12,6 +12,7 @@ use std::path::Path;
 
 use pm_acp::{Answer, Exit, Request, Run};
 use pm_core::Scope;
+use pm_host::Location;
 
 use crate::agent::TalkId;
 use crate::app::App;
@@ -35,18 +36,23 @@ impl App {
             let Some(scope) = self.agents.get(talk).map(|talk| talk.scope()) else {
                 continue;
             };
+            let Some(root) = self.root_of(scope) else {
+                continue;
+            };
             let answer = match request {
                 Request::Read { path } => match self.read_for_agent(scope, &path) {
                     Some(answer) => answer,
                     None => {
-                        self.answer_later(talk, ticket, move || read_from_disk(&path));
+                        self.answer_later(talk, ticket, move || read_from_disk(&root.at(path)));
                         continue;
                     }
                 },
                 Request::Write { path, text } => match self.write_for_agent(scope, &path, &text) {
                     Some(answer) => answer,
                     None => {
-                        self.answer_later(talk, ticket, move || write_to_disk(&path, &text));
+                        self.answer_later(talk, ticket, move || {
+                            write_to_disk(&root.at(path), &text)
+                        });
                         continue;
                     }
                 },
@@ -172,9 +178,12 @@ impl App {
     fn run_for_agent(&mut self, talk: TalkId, scope: Scope, run: Run) -> Answer {
         let mut env = self.worktree_env(scope);
         env.extend(run.env);
+        let Some(root) = self.root_of(scope) else {
+            return gone();
+        };
         match self
             .terminals
-            .run(scope, &run.cwd, &run.command, &run.args, &env)
+            .run(scope, &root.at(run.cwd), &run.command, &run.args, &env)
         {
             Ok(id) => {
                 self.errands
@@ -239,8 +248,8 @@ fn gone() -> Answer {
 }
 
 /// The file at `path` as the disk has it.
-fn read_from_disk(path: &Path) -> Answer {
-    match pm_host::Host::local().fs().read_to_string(path) {
+fn read_from_disk(path: &Location) -> Answer {
+    match path.host.fs().read_to_string(path) {
         Ok(text) => Answer::Text(text),
         Err(error) => Answer::Failed(error.to_string()),
     }
@@ -248,13 +257,11 @@ fn read_from_disk(path: &Path) -> Answer {
 
 /// Makes the file at `path` on the disk hold `text`, making its folder if
 /// it has none.
-fn write_to_disk(path: &Path, text: &str) -> Answer {
+fn write_to_disk(path: &Location, text: &str) -> Answer {
     let written = path
         .parent()
-        .map_or(Ok(()), |parent| {
-            pm_host::Host::local().fs().create_dir_all(parent)
-        })
-        .and_then(|()| pm_host::Host::local().fs().write(path, text));
+        .map_or(Ok(()), |parent| path.host.fs().create_dir_all(parent))
+        .and_then(|()| path.host.fs().write(path, text));
     match written {
         Ok(()) => Answer::Done,
         Err(error) => Answer::Failed(error.to_string()),

@@ -94,7 +94,7 @@ impl App {
             }
             Action::CloseWindow => return self.apply(Message::CloseWindow),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
-            Action::OpenRemoteProject => self.open_picker(Kind::RemoteProject),
+            Action::OpenRemoteProject => self.open_picker(Kind::RemoteHosts),
             Action::ReconnectProject => self.reconnect_project(),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::NewSession => return self.apply(Message::NewSession),

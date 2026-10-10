@@ -67,7 +67,7 @@ No parameters. Returns the protocol version and supported method names.
 
 Parameters: `{"line":"status"}`. Returns `{"text":"..."}`. This is the
 same command surface used by `pandemonium control` in a terminal. `help`
-returns its current grammar. It covers project open/select/close, worktree
+returns its current grammar. It covers local and SSH project open/select/reconnect/close, worktree
 session create/select/finish, file open/read, agent list/start/show/send/stop,
 and ACP permission answers. Commands use the numbered indices shown by
 `status` or `state.snapshot`. A session finish command requires the literal
@@ -91,6 +91,9 @@ and `agents`:
   "agents": [{"index": 0, "id": 0, "project": 0, "project_id": 0, "session": null, "session_id": null, "agent": "codex", "title": null, "standing": "working", "transcript_revision": 7, "requests": []}]
 }
 ```
+
+Each project also reports `host` (the SSH alias, or `null` for local),
+`connected`, and `connecting`. A root path belongs to that host.
 
 An agent's `session` is `null` when it runs in the project's checkout.
 `standing` is one of `stopped`, `waiting`, `working`, `done`, or `idle`.

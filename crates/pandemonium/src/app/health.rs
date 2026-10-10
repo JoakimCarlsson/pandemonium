@@ -10,9 +10,6 @@ use crate::tasks::{Outcome, RunId, Shown};
 impl App {
     /// Queues the worktree's health tasks, cancelling its previous check run.
     pub(super) fn run_checks(&mut self, scope: Scope, automatic: bool) {
-        if self.refuse_remote(scope, "Tasks") {
-            return;
-        }
         if self.root_of(scope).is_none() {
             return;
         }

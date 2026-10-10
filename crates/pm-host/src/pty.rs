@@ -140,9 +140,17 @@ impl Host {
     /// The user's interactive shell on this machine.
     pub fn shell(&self) -> CommandBuilder {
         if !self.is_local() {
-            let mut command = CommandBuilder::new("sh");
-            command.args(["-c", "exec \"${SHELL:-/bin/sh}\" -l"]);
-            return command;
+            return CommandBuilder::new(
+                self.environment("SHELL")
+                    .filter(|shell| !shell.is_empty())
+                    .unwrap_or_else(|| {
+                        if self.os() == "windows" {
+                            "cmd.exe".to_owned()
+                        } else {
+                            "/bin/sh".to_owned()
+                        }
+                    }),
+            );
         }
         CommandBuilder::new(
             std::env::var("SHELL")

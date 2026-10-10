@@ -304,6 +304,8 @@ pub struct App {
     control: Option<crate::control::Server>,
     /// The SSH login terminal while a connection is authenticating.
     authentication: Option<remote::Authentication>,
+    /// The remote directory whose browser request is current.
+    remote_browse: Option<pm_host::Location>,
     /// Remote handshakes completed away from the window.
     remote_back: Arc<Mutex<Vec<remote::RemoteBack>>>,
     /// One file tree per worktree, so each keeps what it has expanded.
@@ -760,6 +762,12 @@ impl App {
             .map(|project| (Scope::checkout(project.id()), FileTree::new(project.root())))
             .collect();
         let pending: Pending = Arc::new(std::array::from_fn(|_| AtomicBool::new(false)));
+        for project in open.iter() {
+            project
+                .root()
+                .host
+                .set_notify(waker_through(&proxy, &pending, Wake::Remote));
+        }
         crate::image::wake_with(waker_through(&proxy, &pending, Wake::Picture));
 
         let mut notices = Notices::default();
@@ -814,6 +822,7 @@ impl App {
             hosts,
             control,
             authentication: None,
+            remote_browse: None,
             remote_back: Arc::default(),
             files,
             reviews: BTreeMap::new(),

@@ -19,8 +19,7 @@
 //! same project do not fight over one.
 
 use std::io;
-use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// How many times a port is asked for before the session goes without one.
 const ATTEMPTS: usize = 8;
@@ -79,15 +78,23 @@ impl Bootstrap {
 /// What could not be brought across comes back as one line apiece. A path the
 /// repository does not have is not one of them: a declaration covers every
 /// project the reader opens, and most projects have most of it missing.
-pub fn apply(origin: &Path, root: &Path, wanted: &Bootstrap) -> Vec<String> {
-    let linked = wanted
-        .link
-        .iter()
-        .map(|path| (path, link(&origin.join(path), &root.join(path))));
-    let copied = wanted
-        .copy
-        .iter()
-        .map(|path| (path, copy(&origin.join(path), &root.join(path))));
+pub fn apply(
+    origin: &pm_host::Location,
+    root: &pm_host::Location,
+    wanted: &Bootstrap,
+) -> Vec<String> {
+    let linked = wanted.link.iter().map(|path| {
+        (
+            path,
+            link(&origin.at(origin.join(path)), &root.at(root.join(path))),
+        )
+    });
+    let copied = wanted.copy.iter().map(|path| {
+        (
+            path,
+            copy(&origin.at(origin.join(path)), &root.at(root.join(path))),
+        )
+    });
 
     linked
         .chain(copied)
@@ -115,32 +122,32 @@ pub fn apply(origin: &Path, root: &Path, wanted: &Bootstrap) -> Vec<String> {
 /// than copied, since the worktree cut there already stands in for part of
 /// it.
 pub fn loose(
-    origin: &Path,
-    root: &Path,
+    origin: &pm_host::Location,
+    root: &pm_host::Location,
     repositories: &[PathBuf],
     wanted: &Bootstrap,
 ) -> Vec<String> {
     let mut trouble = Vec::new();
-    let Ok(entries) = pm_host::Host::local().fs().read_dir(origin) else {
+    let Ok(entries) = origin.host.fs().read_dir(origin) else {
         return trouble;
     };
     for entry in entries.flatten() {
-        let source = entry.path();
-        let destination = root.join(entry.file_name());
-        let linked = wanted.link.iter().any(|path| origin.join(path) == source);
-        if linked || repositories.contains(&source) {
+        let source = origin.at(entry.path());
+        let destination = root.at(root.join(entry.file_name()));
+        let linked = wanted
+            .link
+            .iter()
+            .any(|path| origin.join(path) == source.path);
+        if linked || repositories.contains(&source.path) {
             continue;
         }
         let holding = repositories
             .iter()
             .any(|repository| repository.starts_with(&source));
         let brought = match holding {
-            true => pm_host::Host::local()
-                .fs()
-                .create_dir_all(&destination)
-                .map(|()| {
-                    trouble.extend(loose(&source, &destination, repositories, wanted));
-                }),
+            true => root.host.fs().create_dir_all(&destination).map(|()| {
+                trouble.extend(loose(&source, &destination, repositories, wanted));
+            }),
             false => copy(&source, &destination),
         };
         if let Err(error) = brought {
@@ -156,7 +163,7 @@ pub fn loose(
 /// Symlinks `source` into the worktree at `destination`.
 ///
 /// The link is absolute, so it resolves however the worktree is reached.
-fn link(source: &Path, destination: &Path) -> io::Result<()> {
+fn link(source: &pm_host::Location, destination: &pm_host::Location) -> io::Result<()> {
     if !skippable(source, destination)? {
         return Ok(());
     }
@@ -164,23 +171,17 @@ fn link(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 /// Copies `source` into the worktree at `destination`, directories and all.
-fn copy(source: &Path, destination: &Path) -> io::Result<()> {
+fn copy(source: &pm_host::Location, destination: &pm_host::Location) -> io::Result<()> {
     if !skippable(source, destination)? {
         return Ok(());
     }
-    let kind = pm_host::Host::local()
-        .fs()
-        .symlink_metadata(source)?
-        .file_type();
+    let kind = source.host.fs().symlink_metadata(source)?.file_type();
     match () {
         () if kind.is_symlink() => {
-            symlink(&pm_host::Host::local().fs().read_link(source)?, destination)
+            symlink(&source.at(source.host.fs().read_link(source)?), destination)
         }
         () if kind.is_dir() => copy_tree(source, destination),
-        () => pm_host::Host::local()
-            .fs()
-            .copy(source, destination)
-            .map(|_| ()),
+        () => source.host.fs().copy(source, destination).map(|_| ()),
     }
 }
 
@@ -190,60 +191,40 @@ fn copy(source: &Path, destination: &Path) -> io::Result<()> {
 /// worktree already has it, and either is the ordinary case rather than a
 /// failure. The parent is made either way, because a path may name a file
 /// inside a directory git left out.
-fn skippable(source: &Path, destination: &Path) -> io::Result<bool> {
-    if pm_host::Host::local()
-        .fs()
-        .symlink_metadata(source)
-        .is_err()
-        || pm_host::Host::local()
-            .fs()
-            .symlink_metadata(destination)
-            .is_ok()
+fn skippable(source: &pm_host::Location, destination: &pm_host::Location) -> io::Result<bool> {
+    if source.host.fs().symlink_metadata(source).is_err()
+        || destination.host.fs().symlink_metadata(destination).is_ok()
     {
         return Ok(false);
     }
     if let Some(parent) = destination.parent() {
-        pm_host::Host::local().fs().create_dir_all(parent)?;
+        destination.host.fs().create_dir_all(parent)?;
     }
     Ok(true)
 }
 
 /// Copies the directory at `source` to `destination`, recursively.
-fn copy_tree(source: &Path, destination: &Path) -> io::Result<()> {
-    pm_host::Host::local().fs().create_dir_all(destination)?;
-    for entry in pm_host::Host::local().fs().read_dir(source)? {
+fn copy_tree(source: &pm_host::Location, destination: &pm_host::Location) -> io::Result<()> {
+    destination.host.fs().create_dir_all(destination)?;
+    for entry in source.host.fs().read_dir(source)? {
         let entry = entry?;
-        let destination = destination.join(entry.file_name());
-        match entry.file_type()?.is_dir() {
-            true => copy_tree(&entry.path(), &destination)?,
-            false => {
-                pm_host::Host::local()
-                    .fs()
-                    .copy(entry.path(), destination)?;
-            }
-        }
+        let destination = destination.at(destination.join(entry.file_name()));
+        copy(&source.at(entry.path()), &destination)?;
     }
     Ok(())
 }
 
-/// Symlinks a source through the local machine boundary.
-fn symlink(source: &Path, destination: &Path) -> io::Result<()> {
-    pm_host::Host::local().fs().symlink(source, destination)
+/// Symlinks a source through its owning machine boundary.
+fn symlink(source: &pm_host::Location, destination: &pm_host::Location) -> io::Result<()> {
+    destination.host.fs().symlink(source, destination)
 }
 
-/// A local port nothing is listening on, and that `taken` has not been given.
+/// A port on `host` nothing is listening on, and that `taken` has not been given.
 ///
 /// The port is asked of the operating system and released again, so nothing
 /// holds it between being handed out and the session's own server binding it.
 /// Two sessions can be handed the same port only if the first has not bound
 /// it yet, which is why the ones already handed out are passed in.
-pub fn free_port(taken: &[u16]) -> Option<u16> {
-    (0..ATTEMPTS).find_map(|_| {
-        let port = TcpListener::bind(("127.0.0.1", 0))
-            .ok()?
-            .local_addr()
-            .ok()?
-            .port();
-        (!taken.contains(&port)).then_some(port)
-    })
+pub fn free_port(host: &pm_host::Host, taken: &[u16]) -> Option<u16> {
+    (0..ATTEMPTS).find_map(|_| host.free_port().ok().filter(|port| !taken.contains(port)))
 }

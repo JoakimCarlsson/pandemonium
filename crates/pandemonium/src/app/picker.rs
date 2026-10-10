@@ -58,14 +58,10 @@ impl App {
 
     /// Opens the picker of `kind` over `rows`, with `seeded` already typed.
     pub(super) fn open_picker_with(&mut self, kind: Kind, rows: Vec<Row>, seeded: String) {
-        if kind == Kind::NewSession && self.scope().is_some_and(|scope| self.is_remote(scope)) {
-            return self.open_picker_with(
-                Kind::SessionRepositories,
-                self.unsupported_row("Sessions"),
-                String::new(),
-            );
-        }
         self.begin_opening();
+        if kind != Kind::RemoteFolders {
+            self.remote_browse = None;
+        }
         self.picker = Some(Picker::new(kind, rows, &seeded));
         self.completions = None;
         self.hint = None;
@@ -117,6 +113,7 @@ impl App {
     pub(super) fn dismiss_picker(&mut self) -> bool {
         self.branch_picker_at = None;
         self.agent_picker_at = None;
+        self.remote_browse = None;
         self.leave_listings();
         self.picker.take().is_some()
     }
@@ -183,7 +180,9 @@ impl App {
             (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
                 self.toggle_session_repository(root, typed, place);
             }
-            (Kind::RemoteProject, _) => self.open_remote_project(&typed),
+            (Kind::RemoteProject, _) | (Kind::RemoteHosts, None) => {
+                self.open_remote_project(&typed)
+            }
             (Kind::CloneUrl, _) => self.clone_project(&typed),
             (Kind::LinkedPath, _) => self.add_worktree_path(WorktreePaths::Linked, &typed),
             (Kind::CopiedPath, _) => self.add_worktree_path(WorktreePaths::Copied, &typed),
@@ -208,6 +207,16 @@ impl App {
     /// Carries out what one row of the picker stood for.
     fn take(&mut self, choice: Choice) {
         match choice {
+            Choice::RemoteAddress => self.open_picker(Kind::RemoteProject),
+            Choice::RemoteHost(host) => self.open_remote_project(&host),
+            Choice::RemoteDirectory(host, path) => {
+                if let Ok(host) = self.hosts.prepare(&host) {
+                    self.browse_remote(pm_host::Location::new(host, path));
+                }
+            }
+            Choice::RemoteOpen(host, path) => {
+                self.open_remote_project(&format!("{host}:{}", path.display()))
+            }
             Choice::CloneUrl => self.open_picker(Kind::CloneUrl),
             Choice::CloneSources => self.open_picker(Kind::CloneSources),
             Choice::GithubOwner(login, organization) => {
@@ -324,6 +333,8 @@ impl App {
     /// gathered so far, and are filled as the rest arrives.
     pub(super) fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
+            Kind::RemoteHosts => self.remote_host_rows(),
+            Kind::RemoteFolders => Vec::new(),
             Kind::CloneSources => crate::app::github::source_rows(),
             Kind::CloneRepositories => Vec::new(),
             Kind::Turns => Vec::new(),

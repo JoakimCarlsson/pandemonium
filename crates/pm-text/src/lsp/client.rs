@@ -198,6 +198,8 @@ pub struct Client {
     name: &'static str,
     /// The worktree whose paths this server watches.
     root: PathBuf,
+    /// The machine owning this server and its protocol paths.
+    host: pm_host::Host,
     /// The process itself, kept so that it can be ended.
     process: Mutex<Option<Child>>,
     /// When this process was started, for measuring sustained operation.
@@ -217,13 +219,13 @@ impl Client {
     /// The handshake goes out here and is answered on the reader thread, so
     /// starting a server never blocks the frame that asked for one.
     pub fn start(
-        root: &Path,
+        root: &pm_host::Location,
         program: &Path,
         server: Server,
         notify: Arc<dyn Fn() + Send + Sync>,
         logs: Option<&Path>,
     ) -> std::io::Result<Self> {
-        let log = Log::open(logs, root, server.command);
+        let log = Log::open(logs, &root.stored(), server.command);
         let database = match server.command {
             "clangd" => database::beside_build(root),
             _ => None,
@@ -241,15 +243,17 @@ impl Client {
                 }
             }
         }
-        let spawned = pm_host::Host::local()
-            .command(program)
+        let mut command = root.host.command(program);
+        if root.host.is_local() {
+            command.env("PATH", path_beside(program));
+        }
+        let spawned = command
             .args(server.arguments)
             .args(
                 database
                     .iter()
                     .map(|directory| format!("--compile-commands-dir={}", directory.display())),
             )
-            .env("PATH", path_beside(program))
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -268,9 +272,13 @@ impl Client {
 
         let outbox = Outbox::start(process.stdin.take().expect("stdin was piped"), log.clone());
         let stdout = process.stdout.take().expect("stdout was piped");
-        let (offered, troubles): (Vec<_>, Vec<_>) = missing_for(server.command)
-            .into_iter()
-            .partition(|need| need.installable());
+        let (offered, troubles): (Vec<_>, Vec<_>) = (if root.host.is_local() {
+            missing_for(server.command)
+        } else {
+            Vec::new()
+        })
+        .into_iter()
+        .partition(|need| need.installable());
         for need in offered {
             log.write(&format!(
                 "{} runs `{}`, which is not installed yet; the editor can install it.",
@@ -314,12 +322,18 @@ impl Client {
         Ok(Self {
             name: server.command,
             root: root.to_path_buf(),
+            host: root.host.clone(),
             process: Mutex::new(Some(process)),
             started: Instant::now(),
             wire,
             state,
             log,
         })
+    }
+
+    /// The machine owning all file paths reported by this server.
+    pub fn host(&self) -> &pm_host::Host {
+        &self.host
     }
 
     /// The command the server was started as.

@@ -49,9 +49,6 @@ impl App {
 
     /// Rows of tasks detected or defined by the worktree in front.
     pub(super) fn task_rows(&mut self) -> Vec<Row> {
-        if self.scope().is_some_and(|scope| self.is_remote(scope)) {
-            return self.unsupported_row("Tasks");
-        }
         let Some(scope) = self.scope() else {
             return Vec::new();
         };
@@ -87,12 +84,9 @@ impl App {
         let Some(root) = self.root_of(scope) else {
             return Vec::new();
         };
-        if self.is_remote(scope) {
-            return Vec::new();
-        }
         let (tasks, error) = pm_core::tasks_checked(&root);
         if let Some(error) = error
-            && self.task_errors.insert(root.path)
+            && self.task_errors.insert(root.stored())
         {
             self.notices.trouble(error, None);
         }
@@ -101,9 +95,6 @@ impl App {
 
     /// Runs a task through the one task seam and optionally shows its shell.
     pub(super) fn run_task(&mut self, scope: Scope, task: &Task, shown: Shown) -> Option<RunId> {
-        if self.refuse_remote(scope, "Tasks") {
-            return None;
-        }
         let root = self.root_of(scope)?;
         let env = self.worktree_env(scope);
         let started = self

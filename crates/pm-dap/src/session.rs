@@ -15,7 +15,6 @@
 use pm_host::{Child, Stdio};
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader, Read};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -54,7 +53,7 @@ pub struct Session {
     /// What the program is being debugged as.
     scenario: Scenario,
     /// The worktree it is being debugged in.
-    root: PathBuf,
+    root: pm_host::Location,
     /// The adapter's process, kept so that it can be ended.
     process: Arc<Mutex<Option<Child>>>,
     /// The way messages go to the adapter.
@@ -72,7 +71,7 @@ impl Session {
     /// nothing of it is waited for.
     pub fn start(
         scenario: Scenario,
-        root: &Path,
+        root: &pm_host::Location,
         breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
         notify: Notify,
     ) -> io::Result<Self> {
@@ -82,21 +81,23 @@ impl Session {
                 format!("no debug adapter for `{}`", scenario.kind),
             )
         })?;
-        let program = adapter.program().ok_or_else(|| {
+        let program = adapter.program_on(&root.host).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("{} is not installed", adapter.name),
             )
         })?;
         let port = match adapter.connect {
-            Connect::Tcp => free_port()?,
+            Connect::Tcp => root.host.free_port()?,
             Connect::Stdio => 0,
         };
 
-        let mut process = pm_host::Host::local()
-            .command(&program)
+        let mut command = root.host.command(&program);
+        if root.host.is_local() {
+            command.env("PATH", pm_text::program::path_beside(&program));
+        }
+        let mut process = command
             .args(adapter.arguments_for(port))
-            .env("PATH", pm_text::program::path_beside(&program))
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -117,7 +118,7 @@ impl Session {
             notify: notify.clone(),
             request: scenario.request,
             arguments: scenario.arguments(),
-            root: root.to_path_buf(),
+            root: root.clone(),
         };
 
         if let Some(stderr) = stderr {
@@ -138,7 +139,7 @@ impl Session {
 
         let session = Self {
             scenario,
-            root: root.to_path_buf(),
+            root: root.clone(),
             process,
             wire,
             state,
@@ -167,7 +168,7 @@ impl Session {
     }
 
     /// The worktree it is being debugged in.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &pm_host::Location {
         &self.root
     }
 
@@ -435,7 +436,7 @@ struct Reader {
     /// What it is launched or attached with.
     arguments: Value,
     /// The worktree it is being debugged in.
-    root: PathBuf,
+    root: pm_host::Location,
 }
 
 impl Reader {
@@ -646,7 +647,9 @@ impl Reader {
                 let reason = said.to_owned();
                 #[cfg(target_os = "linux")]
                 let reason = if self.request == Request::Attach
-                    && pm_host::Host::local()
+                    && self
+                        .root
+                        .host
                         .fs()
                         .read_to_string("/proc/sys/kernel/yama/ptrace_scope")
                         .ok()
@@ -1005,7 +1008,7 @@ fn send_breakpoints(wire: &Wire, state: &Mutex<State>, path: &Path, lines: &[Bre
 fn reach(port: u16, queued: Receiver<Value>, reader: Reader) {
     let started = Instant::now();
     let stream = loop {
-        match TcpStream::connect((Ipv4Addr::LOCALHOST, port)) {
+        match reader.root.host.tcp(port) {
             Ok(stream) => break stream,
             Err(_) if started.elapsed() < CONNECT_WITHIN => thread::sleep(CONNECT_RETRY),
             Err(error) => {
@@ -1020,10 +1023,9 @@ fn reach(port: u16, queued: Receiver<Value>, reader: Reader) {
             }
         }
     };
-    if let Ok(sink) = stream.try_clone() {
-        thread::spawn(move || wire::write_all(queued, sink));
-    }
-    reader.run(stream);
+    let (sink, source) = stream;
+    thread::spawn(move || wire::write_all(queued, sink));
+    reader.run(source);
 }
 
 /// Copies what an adapter writes on `source` into the console, a line at a
@@ -1042,13 +1044,6 @@ fn echo(source: impl Read + Send + 'static, state: Arc<Mutex<State>>, notify: No
             notify();
         }
     });
-}
-
-/// A port on the loopback address nobody is listening on.
-fn free_port() -> io::Result<u16> {
-    Ok(TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?
-        .local_addr()?
-        .port())
 }
 
 /// The state behind `state`, even where a thread panicked holding it.

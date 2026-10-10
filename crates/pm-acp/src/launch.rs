@@ -45,7 +45,8 @@ impl Recovery {
         stderr: Box<dyn std::io::Read + Send>,
     ) -> Option<Self> {
         let watcher = capture(stderr, trouble.clone());
-        let recoverable = cfg!(unix)
+        let recoverable = command.is_local()
+            && cfg!(unix)
             && agent.source == Source::Package(CLAUDE_PACKAGE)
             && agent.program == "claude-agent-acp"
             && command.get_args().next() == Some(std::ffi::OsStr::new("--yes"));

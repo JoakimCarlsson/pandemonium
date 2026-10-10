@@ -95,6 +95,19 @@ pub fn installed(command: &str) -> Option<PathBuf> {
     installed_with_recipe(command, install::recipe(command))
 }
 
+/// Resolves a program on its owning machine, using managed installs only locally.
+pub fn installed_on(
+    host: &pm_host::Host,
+    command: &str,
+    recipe: Option<install::Recipe>,
+) -> Option<PathBuf> {
+    if host.is_local() {
+        installed_with_recipe(command, recipe)
+    } else {
+        host.which(command)
+    }
+}
+
 /// Finds a custom executable first, then the configured recipe's managed version.
 pub fn installed_with_recipe(command: &str, recipe: Option<install::Recipe>) -> Option<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();

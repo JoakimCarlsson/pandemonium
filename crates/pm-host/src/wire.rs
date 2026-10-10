@@ -97,3 +97,6 @@ pub(crate) struct Reply {
     /// The portable failure, when the operation failed.
     pub error: Option<(String, String)>,
 }
+
+/// The host protocol revision, independent of the release version.
+pub const PROTOCOL: u64 = 2;

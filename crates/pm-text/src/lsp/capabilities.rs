@@ -729,11 +729,11 @@ fn states(stated: &ServerCapabilities, method: &str) -> bool {
 }
 
 /// Everything the editor says about itself when it starts `server` over `root`.
-pub(super) fn initialize(root: &Path, server: Server) -> InitializeParams {
+pub(super) fn initialize(root: &pm_host::Location, server: Server) -> InitializeParams {
     let options = serde_json::from_str::<Value>(server.options).ok();
     #[allow(deprecated)]
     InitializeParams {
-        process_id: Some(std::process::id()),
+        process_id: root.host.is_local().then_some(std::process::id()),
         root_uri: Some(uri::typed(root)),
         initialization_options: options,
         capabilities: client(),

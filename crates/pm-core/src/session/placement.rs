@@ -6,7 +6,8 @@
 //! editor's own home instead, one directory per project, so a session is a
 //! path anybody can guess and nothing the project can trip over.
 
-use std::path::{Path, PathBuf};
+use pm_host::Location;
+use std::path::PathBuf;
 
 /// What a session is called on disk when its name is nothing but punctuation.
 const UNNAMED: &str = "session";
@@ -17,9 +18,9 @@ fn kept(character: char) -> bool {
 }
 
 /// Atomically reserves an unused session directory, stepping past existing names.
-pub fn reserve(worktrees: &Path, project: &str, name: &str) -> std::io::Result<PathBuf> {
+pub fn reserve(worktrees: &Location, project: &str, name: &str) -> std::io::Result<PathBuf> {
     let directory = worktrees.join(slug(project));
-    pm_host::Host::local().fs().create_dir_all(&directory)?;
+    worktrees.host.fs().create_dir_all(&directory)?;
     let wanted = slug(name);
     for nth in 1.. {
         let path = directory.join(if nth == 1 {
@@ -27,7 +28,7 @@ pub fn reserve(worktrees: &Path, project: &str, name: &str) -> std::io::Result<P
         } else {
             format!("{wanted}-{nth}")
         });
-        match pm_host::Host::local().fs().create_dir(&path) {
+        match worktrees.host.fs().create_dir(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),

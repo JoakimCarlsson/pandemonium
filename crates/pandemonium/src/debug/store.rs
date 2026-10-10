@@ -257,7 +257,12 @@ impl Debuggers {
     ///
     /// The answer is why it would not start, which is the reader's to see:
     /// an adapter that is not installed is something they can fix.
-    pub fn start(&mut self, scope: Scope, root: &Path, scenario: Scenario) -> Result<(), String> {
+    pub fn start(
+        &mut self,
+        scope: Scope,
+        root: &pm_host::Location,
+        scenario: Scenario,
+    ) -> Result<(), String> {
         let notify = self
             .notify
             .clone()

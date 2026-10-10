@@ -22,7 +22,7 @@ impl App {
             self.open
                 .iter()
                 .flat_map(|project| self.sessions.of(project.id()))
-                .find(|session| session.root() == path)
+                .find(|session| session.root().stored() == path)
                 .map(|session| (session.id(), session.project()))
         });
         match session {

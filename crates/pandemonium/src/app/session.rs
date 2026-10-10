@@ -91,16 +91,6 @@ impl App {
     /// project has checked out. Cutting one from some other branch is the
     /// project's menu, where the branches are listed.
     pub(super) fn name_session_here(&mut self) {
-        if let Some(scope) = self.scope()
-            && self.refuse_remote(scope, "Sessions")
-        {
-            return;
-        }
-        if let Some(scope) = self.scope()
-            && self.refuse_remote(scope, "Sessions")
-        {
-            return;
-        }
         let Some(project) = self.open.active().map(pm_core::Project::id) else {
             return;
         };
@@ -128,11 +118,6 @@ impl App {
     /// Every repository starts ticked: a session that works across all of
     /// them is the one a reader who just presses enter meant.
     pub(super) fn start_session(&mut self, name: &str) {
-        if let Some(scope) = self.scope()
-            && self.refuse_remote(scope, "Sessions")
-        {
-            return;
-        }
         let name = name.trim();
         let Some(project) = self.open.active().filter(|_| !name.is_empty()) else {
             return;
@@ -199,11 +184,6 @@ impl App {
     /// Cuts the session being named, of the repositories ticked for it, and
     /// points the window at it once git has cut it.
     pub(super) fn cut_session(&mut self) {
-        if let Some(scope) = self.scope()
-            && self.refuse_remote(scope, "Sessions")
-        {
-            return;
-        }
         let name = std::mem::take(&mut self.session_name);
         let chosen = std::mem::take(&mut self.session_picks)
             .into_iter()
@@ -297,7 +277,7 @@ impl App {
                 Scope::of(held.project(), session),
                 std::iter::once(held.root())
                     .chain(held.roots())
-                    .map(Path::to_path_buf)
+                    .map(|root| root.path.clone())
                     .collect::<Vec<_>>(),
             )
         }) else {

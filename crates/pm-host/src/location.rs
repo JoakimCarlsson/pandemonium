@@ -4,7 +4,7 @@ use crate::Host;
 use std::path::{Path, PathBuf};
 
 /// A file or directory on a particular machine.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Location {
     /// The machine holding this path.
     pub host: Host,

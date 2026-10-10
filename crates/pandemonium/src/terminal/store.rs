@@ -270,7 +270,7 @@ impl Terminals {
     pub fn run(
         &mut self,
         scope: Scope,
-        cwd: &Path,
+        cwd: &Location,
         program: &str,
         args: &[String],
         env: &[(String, String)],
@@ -300,7 +300,7 @@ impl Terminals {
     pub fn run_task(
         &mut self,
         scope: Scope,
-        cwd: &Path,
+        cwd: &Location,
         task: &Task,
         env: &[(String, String)],
         replace: Option<ShellId>,

@@ -123,7 +123,11 @@ impl App {
             Message::ShowCheckpointStep(scope, prefix) => self.show_checkpoint_step(scope, prefix),
             Message::NewAgentSession => self.open_picker(Kind::Agents),
             Message::StartAgent(agent) => {
-                if agent.startable() {
+                if self
+                    .scope()
+                    .and_then(|scope| self.root_of(scope))
+                    .is_some_and(|root| agent.startable_on(&root.host))
+                {
                     self.start_agent(agent);
                 }
             }
@@ -287,9 +291,6 @@ impl App {
     /// from an installer instead of a package is listed unpickable until it
     /// is installed, with where to get it in its place.
     pub(super) fn agent_rows(&self) -> Vec<Row> {
-        if self.scope().is_some_and(|scope| self.is_remote(scope)) {
-            return self.unsupported_row("Agents");
-        }
         pm_acp::agents()
             .iter()
             .copied()
@@ -301,7 +302,10 @@ impl App {
                     false => agent.source.hint(),
                 },
                 choice: Choice::Agent(agent),
-                enabled: agent.startable(),
+                enabled: self
+                    .scope()
+                    .and_then(|scope| self.root_of(scope))
+                    .is_some_and(|root| agent.startable_on(&root.host)),
             })
             .collect()
     }
@@ -751,21 +755,18 @@ impl App {
         &mut self,
         project: pm_core::ProjectId,
         session: Option<pm_core::SessionId>,
-        root: &std::path::Path,
+        root: &pm_host::Location,
         agent: Agent,
         profile: Option<&crate::config::Profile>,
         login: bool,
     ) -> Option<TalkId> {
-        if self.refuse_remote(pm_core::Scope::checkout(project), "Agents") {
-            return None;
-        }
         let scope = match session {
             Some(session) => pm_core::Scope::of(project, session),
             None => pm_core::Scope::checkout(project),
         };
         let mut env = self.worktree_env(scope);
         if let Some(profile) = profile {
-            let environment = profile.environment(agent)?;
+            let environment = profile.environment_on(agent, &root.host)?;
             env.push(environment);
         }
         let started = match login {
@@ -964,8 +965,8 @@ impl App {
             return;
         };
         let scope = talk.scope();
-        let root = talk.root().to_path_buf();
-        let command = talk.agent().command();
+        let root = talk.root().clone();
+        let command = talk.agent().command_on(&root.host);
         let program = command.get_program().to_string_lossy().into_owned();
         let mut arguments = command
             .get_args()
@@ -984,7 +985,7 @@ impl App {
         environment.extend(talk.env().iter().cloned());
         environment.extend(env.iter().cloned());
         if let Some(profile) = talk.profile() {
-            let Some(selected) = profile.environment(talk.agent()) else {
+            let Some(selected) = profile.environment_on(talk.agent(), &root.host) else {
                 return;
             };
             environment.push(selected);

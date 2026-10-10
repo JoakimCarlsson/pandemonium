@@ -62,7 +62,7 @@ impl App {
             Some(session) => self
                 .sessions
                 .get(session)
-                .map(|session| Location::local(session.root())),
+                .map(|session| session.root().clone()),
             None => self
                 .open
                 .get(scope.project())
@@ -859,7 +859,7 @@ impl App {
                     Some(
                         match sessions
                             .of(*project)
-                            .find(|session| session.root() == tab.worktree)
+                            .find(|session| session.root().stored() == tab.worktree)
                         {
                             Some(session) => Scope::of(*project, session.id()),
                             None => Scope::checkout(*project),
@@ -891,7 +891,7 @@ impl App {
             }
             let held = sessions
                 .of(project)
-                .find(|session| session.root() == tab.worktree);
+                .find(|session| session.root().stored() == tab.worktree);
             if tab.kind == SavedKind::Agent
                 && !tab.worktree.as_os_str().is_empty()
                 && tab.worktree != checkout.stored()
@@ -907,20 +907,17 @@ impl App {
                 None => Scope::checkout(project),
             };
             let root = match session {
-                Some(_) => Location::local(&tab.worktree),
+                Some(session) => sessions.get(session)?.root().clone(),
                 None => checkout,
             };
 
             if tab.kind == SavedKind::Agent {
-                if !root.host.is_local() {
-                    return None;
-                }
                 let agent = pm_acp::Agent::named(&tab.agent)?;
                 if let Some(profile) = &tab.account {
                     if !crate::config::Accounts::supports(agent) {
                         return None;
                     }
-                    env.push(profile.environment(agent)?);
+                    env.push(profile.environment_on(agent, &root.host)?);
                 }
                 if let Some(fork) = &tab.fork
                     && (fork.agent != tab.agent

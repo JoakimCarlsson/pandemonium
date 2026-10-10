@@ -51,11 +51,12 @@ impl App {
         let session = self
             .sessions
             .of(project)
-            .find(|session| session.root() == Path::new(&identifier))
+            .find(|session| session.root().stored() == Path::new(&identifier))
             .ok_or(
                 "The target session is missing from the authorized project; refresh list_sessions",
             )?;
-        if self.session_finishing(session.id()) || !session.root().is_dir() {
+        if self.session_finishing(session.id()) || !session.root().host.fs().is_dir(session.root())
+        {
             return Err(
                 "The target worktree is being removed or is missing; refresh list_sessions"
                     .to_owned(),
@@ -77,7 +78,11 @@ impl App {
                 .collect::<Vec<_>>();
             let agents = pm_acp::agents()
                 .iter()
-                .filter(|agent| agent.startable())
+                .filter(|agent| {
+                    self.open
+                        .get(project)
+                        .is_some_and(|project| agent.startable_on(&project.root().host))
+                })
                 .take(64)
                 .map(|agent| {
                     let models = self.advertised_models(*agent);
@@ -118,7 +123,7 @@ impl App {
                     .ok_or("The target conversation disappeared")?;
                 let (summary, truncated) = conversation_summary(talk, turns, max);
                 Ok(
-                    json!({"session": self.sessions.get(session).map(|session| session.root()), "summary": summary, "truncated": truncated, "status": standing(talk.standing())}),
+                    json!({"session": self.sessions.get(session).map(|session| session.root().stored()), "summary": summary, "truncated": truncated, "status": standing(talk.standing())}),
                 )
             }
             "send_message" => {
@@ -159,7 +164,7 @@ impl App {
                     )?;
                 self.orchestration.messages.insert(call.caller, used + 1);
                 Ok(
-                    json!({"session": self.sessions.get(session).map(|session| session.root()), "delivery": if queued { "queued_after_turn" } else { "accepted" }}),
+                    json!({"session": self.sessions.get(session).map(|session| session.root().stored()), "delivery": if queued { "queued_after_turn" } else { "accepted" }}),
                 )
             }
             "cancel_session" => {
@@ -167,7 +172,7 @@ impl App {
                     .agents
                     .get(call.caller)
                     .ok_or("The caller disappeared")?;
-                let caller_root = caller.root().to_path_buf();
+                let caller_root = caller.root().stored();
                 if !self.is_descendant(session, &caller_root) {
                     return Err(
                         "Cancellation is limited to the caller's delegated descendants".to_owned(),
@@ -190,11 +195,11 @@ impl App {
             .of_session(session.id())
             .and_then(|id| self.agents.get(id));
         json!({
-            "session": session.root(), "name": session.name(),
+            "session": session.root().stored(), "name": session.name(),
             "project": self.open.get(session.project()).map(|project| project.root().stored()),
-            "open_link": open_link(session.root()), "files": session.root(),
-            "files_link": format!("{}?view=files", open_link(session.root())),
-            "review_link": format!("{}?view=review", open_link(session.root())),
+            "open_link": open_link(&session.root().stored()), "files": session.root().stored(),
+            "files_link": format!("{}?view=files", open_link(&session.root().stored())),
+            "review_link": format!("{}?view=review", open_link(&session.root().stored())),
             "status": talk.map_or("no_agent", |talk| standing(talk.standing())),
             "agent": talk.map(|talk| talk.agent().id),
             "parent": session.delegation(),
@@ -235,7 +240,7 @@ impl App {
                 .open
                 .iter()
                 .flat_map(|project| self.sessions.of(project.id()))
-                .find(|session| session.root() == parent.parent);
+                .find(|session| session.root().stored() == parent.parent);
         }
         false
     }

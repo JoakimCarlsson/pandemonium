@@ -214,15 +214,36 @@ impl Agent {
     /// run.
     #[must_use]
     pub fn command(self) -> Command {
-        let mut command = match (installed(self.program), self.source) {
+        self.command_on(&pm_host::Host::local())
+    }
+
+    /// Whether this agent can start on the owning machine.
+    pub fn startable_on(self, host: &pm_host::Host) -> bool {
+        if host.is_local() {
+            self.startable()
+        } else {
+            host.which(self.program).is_some()
+                || (matches!(self.source, Source::Package(_)) && host.which(RUNNER).is_some())
+        }
+    }
+
+    /// Builds the agent command on the owning machine, preserving its environment.
+    pub fn command_on(self, host: &pm_host::Host) -> Command {
+        let find = |program| {
+            if host.is_local() {
+                installed(program)
+            } else {
+                host.which(program)
+            }
+        };
+        let mut command = match (find(self.program), self.source) {
             (None, Source::Package(package)) => {
-                let mut command = pm_host::Host::local()
-                    .command(installed(RUNNER).unwrap_or_else(|| PathBuf::from(RUNNER)));
+                let mut command =
+                    host.command(find(RUNNER).unwrap_or_else(|| PathBuf::from(RUNNER)));
                 command.arg("--yes").arg(package);
                 command
             }
-            (program, _) => pm_host::Host::local()
-                .command(program.unwrap_or_else(|| PathBuf::from(self.program))),
+            (program, _) => host.command(program.unwrap_or_else(|| PathBuf::from(self.program))),
         };
         command.args(self.arguments);
         command.envs(self.env.iter().copied());

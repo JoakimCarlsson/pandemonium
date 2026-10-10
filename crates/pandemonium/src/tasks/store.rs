@@ -1,7 +1,8 @@
 //! The one seam for starting, stopping and observing worktree tasks.
 
+use pm_host::Location;
 use std::collections::BTreeMap;
-use std::path::{Component, Path};
+use std::path::Component;
 
 use pm_core::{ProjectId, Scope, Task};
 
@@ -97,7 +98,7 @@ impl Tasks {
         &mut self,
         terminals: &mut Terminals,
         scope: Scope,
-        root: &Path,
+        root: &Location,
         task: &Task,
         env: &[(String, String)],
         shown: Shown,
@@ -120,6 +121,7 @@ impl Tasks {
             .cwd
             .as_ref()
             .map_or_else(|| root.to_path_buf(), |relative| root.join(relative));
+        let cwd = root.at(cwd);
         let mut environment = env.to_vec();
         environment.extend(task.env.iter().cloned());
         let shell_id = terminals

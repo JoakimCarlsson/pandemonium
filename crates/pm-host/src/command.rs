@@ -92,6 +92,11 @@ impl Command {
             },
         }
     }
+    /// Whether the command will execute on the current machine.
+    pub fn is_local(&self) -> bool {
+        self.host.is_local()
+    }
+
     /// The executable named by the builder.
     pub fn get_program(&self) -> &OsStr {
         self.local.get_program()
@@ -169,17 +174,19 @@ impl Command {
         self
     }
     /// Places the process in a Unix process group.
-    #[cfg(unix)]
     pub fn process_group(&mut self, group: i32) -> &mut Self {
-        use std::os::unix::process::CommandExt;
-        self.local.process_group(group);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            self.local.process_group(group);
+        }
         self.spec.group = Some(group);
         self
     }
     /// Starts the child and takes ownership of its pipes.
     pub fn spawn(&mut self) -> io::Result<Child> {
         match &self.host.0 {
-            None => Child::local(self.local.spawn()?),
+            None => Child::local(self.local.spawn()?, self.spec.group == Some(0)),
             Some(remote) => remote.spawn(&self.spec),
         }
     }
@@ -197,7 +204,14 @@ impl Command {
     }
     /// Builds a native process on the endpoint.
     pub(crate) fn from_spec(spec: &Spec) -> Self {
-        let mut command = Host::local().command(&spec.program);
+        let program = Host::local()
+            .which(&spec.program)
+            .unwrap_or_else(|| PathBuf::from(&spec.program));
+        let mut command = Host::local().command(&program);
+        command.env(
+            "PATH",
+            crate::filesystem::executable_path(&program.to_string_lossy()),
+        );
         command.args(&spec.args);
         if let Some(cwd) = &spec.cwd {
             command.current_dir(cwd);
@@ -207,7 +221,6 @@ impl Command {
             .stdin(endpoint_stdio(spec.stdin))
             .stdout(endpoint_stdio(spec.stdout))
             .stderr(endpoint_stdio(spec.stderr));
-        #[cfg(unix)]
         if let Some(group) = spec.group {
             command.process_group(group);
         }
@@ -225,6 +238,9 @@ pub struct Child {
     pub stderr: Option<Reader>,
     /// The process control endpoint.
     pub(crate) process: Process,
+    /// Whether the child leads its own Unix process group.
+    #[cfg_attr(not(unix), expect(dead_code, reason = "Process groups are Unix-only."))]
+    pub(crate) grouped: bool,
 }
 
 /// Local process control or a channel on an SSH connection.
@@ -243,14 +259,20 @@ pub(crate) struct ArcProcess {
 }
 impl Child {
     /// Takes native pipes out of a local child.
-    fn local(mut process: std::process::Child) -> io::Result<Self> {
+    fn local(mut process: std::process::Child, grouped: bool) -> io::Result<Self> {
         Ok(Self {
             stdin: process.stdin.take().map(|pipe| Box::new(pipe) as Input),
             stdout: process.stdout.take().map(|pipe| Box::new(pipe) as Reader),
             stderr: process.stderr.take().map(|pipe| Box::new(pipe) as Reader),
             process: Process::Local(process),
+            grouped,
         })
     }
+    /// Whether this child owns a native process on the current machine.
+    pub fn is_local(&self) -> bool {
+        matches!(self.process, Process::Local(_))
+    }
+
     /// The local pid, or the channel id for a remote child.
     pub fn id(&self) -> u32 {
         match &self.process {
@@ -280,7 +302,13 @@ impl Child {
     /// Kills the child on its execution machine.
     pub fn kill(&mut self) -> io::Result<()> {
         match &mut self.process {
-            Process::Local(child) => child.kill(),
+            Process::Local(child) => {
+                #[cfg(unix)]
+                if self.grouped {
+                    unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+                }
+                child.kill()
+            }
             Process::Remote(remote) => remote
                 .connection
                 .request("kill", serde_json::json!({"channel":remote.channel}))

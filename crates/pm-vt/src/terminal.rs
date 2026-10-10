@@ -50,6 +50,9 @@ impl Terminal {
     ) -> std::io::Result<Self> {
         let cwd = cwd.into();
         let mut command = cwd.host.shell();
+        if !cwd.host.is_local() && cwd.host.os() != "windows" {
+            command.arg("-l");
+        }
         for (name, value) in env {
             command.env(name, value);
         }
@@ -75,7 +78,11 @@ impl Terminal {
         let mut command = match args.is_empty() {
             true => {
                 let mut shell = cwd.host.shell();
-                shell.arg(if cfg!(windows) { "/C" } else { "-c" });
+                shell.arg(if cwd.host.os() == "windows" {
+                    "/C"
+                } else {
+                    if cwd.host.is_local() { "-c" } else { "-lc" }
+                });
                 shell.arg(program);
                 shell
             }

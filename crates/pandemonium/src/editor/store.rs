@@ -6,6 +6,11 @@
 //! one seam a file is opened, edited, saved and closed through, so the
 //! language server hears about every change exactly once.
 
+#![allow(
+    clippy::mutable_key_type,
+    reason = "Host equality and hashing use immutable SSH aliases only."
+)]
+
 use pm_host::Location;
 
 use std::cell::RefCell;
@@ -1421,14 +1426,13 @@ pub struct Files {
     troubles: Vec<String>,
 }
 
-/// Opens configured servers for local documents, leaving remote documents unserved.
+/// Opens configured servers on the machine holding the document.
 fn servers_for(
     servers: &mut Servers,
     root: &Location,
     language: Option<pm_text::Language>,
 ) -> Vec<Arc<Client>> {
     language
-        .filter(|_| root.host.is_local())
         .map(|language| servers.open(root, language))
         .unwrap_or_default()
 }
@@ -1529,7 +1533,7 @@ impl Files {
     }
 
     /// Logs of all configured server slots over a worktree.
-    pub fn server_logs_over(&self, root: &Path) -> Vec<(&'static str, PathBuf)> {
+    pub fn server_logs_over(&self, root: &Location) -> Vec<(&'static str, PathBuf)> {
         self.servers.logs_over(root)
     }
 
@@ -1539,22 +1543,26 @@ impl Files {
         missing
             .into_iter()
             .filter(|server| {
-                self.open.values().any(|entry| {
-                    let document = entry.document.borrow();
-                    document.buffer().language().is_some_and(|language| {
-                        (!document.is_served()
-                            || (pm_text::program::installed_with_recipe(
-                                server.command,
-                                server.install,
-                            )
-                            .is_none()
-                                && pm_text::program::managed_fallback(server.command).is_some()))
-                            && self
-                                .servers
-                                .installable(language)
-                                .is_some_and(|first| first.command == server.command)
+                self.open
+                    .values()
+                    .filter(|entry| entry.root.host.is_local())
+                    .any(|entry| {
+                        let document = entry.document.borrow();
+                        document.buffer().language().is_some_and(|language| {
+                            (!document.is_served()
+                                || (pm_text::program::installed_with_recipe(
+                                    server.command,
+                                    server.install,
+                                )
+                                .is_none()
+                                    && pm_text::program::managed_fallback(server.command)
+                                        .is_some()))
+                                && self
+                                    .servers
+                                    .installable(language)
+                                    .is_some_and(|first| first.command == server.command)
+                        })
                     })
-                })
             })
             .collect()
     }
@@ -1596,15 +1604,31 @@ impl Files {
         let documents = self
             .open
             .values()
-            .filter(|entry| entry.root.host.is_local())
             .filter_map(|entry| {
                 Some((
-                    entry.root.to_path_buf(),
+                    entry.root.clone(),
                     entry.document.borrow().buffer().language()?,
                 ))
             })
             .collect::<Vec<_>>();
         self.servers.reconcile(&documents);
+        self.refresh();
+    }
+
+    /// Replaces ended language servers on a reconnected host without rereading buffers.
+    pub fn reconnect_host(&mut self, host: &pm_host::Host) {
+        let roots = self
+            .open
+            .values()
+            .filter(|entry| &entry.root.host == host)
+            .map(|entry| entry.root.clone())
+            .collect::<std::collections::HashSet<_>>();
+        for root in roots {
+            self.servers.close(&root);
+        }
+        for entry in self.open.values().filter(|entry| &entry.root.host == host) {
+            entry.document.borrow_mut().set_servers(Vec::new());
+        }
         self.refresh();
     }
 
@@ -1641,11 +1665,18 @@ impl Files {
         }
         self.open.values().any(|entry| {
             let document = entry.document.borrow();
-            document.is_served()
-                && document
-                    .buffer()
-                    .language()
-                    .is_some_and(|language| self.servers.uses(language, command))
+            document.buffer().language().is_some_and(|language| {
+                self.servers.uses(language, command)
+                    && (document.is_served()
+                        || self
+                            .servers
+                            .states(&entry.root, language)
+                            .iter()
+                            .any(|state| {
+                                state.command == command
+                                    && state.state == pm_text::ServerState::Starting
+                            }))
+            })
         })
     }
 
@@ -1703,7 +1734,7 @@ impl Files {
     }
 
     /// Every language server running over the worktree at `root`.
-    pub fn servers_over(&self, root: &Path) -> Vec<Arc<Client>> {
+    pub fn servers_over(&self, root: &Location) -> Vec<Arc<Client>> {
         self.servers.over(root)
     }
 
@@ -2012,10 +2043,9 @@ impl Files {
         let documents = self
             .open
             .values()
-            .filter(|entry| entry.root.host.is_local())
             .filter_map(|entry| {
                 Some((
-                    entry.root.path.clone(),
+                    entry.root.clone(),
                     entry.document.borrow().buffer().language()?.name(),
                 ))
             })
@@ -2025,18 +2055,30 @@ impl Files {
 
     /// Closes every file and server of `scope` over its worktree roots.
     pub fn close_scope(&mut self, scope: Scope, roots: &[PathBuf]) {
+        let owned = self
+            .open
+            .values()
+            .filter(|entry| entry.scope == Some(scope))
+            .map(|entry| entry.root.clone())
+            .collect::<std::collections::HashSet<_>>();
         self.open.retain(|_, entry| entry.scope != Some(scope));
-        for root in roots {
-            self.servers.close(root);
+        for root in owned {
+            if roots.contains(&root.path) && !self.open.values().any(|entry| entry.root == root) {
+                self.servers.close(&root);
+            }
         }
     }
 
-    /// Closes every file of `project` and ends servers over all its roots.
+    /// Closes every file of `project` and ends its unshared language servers.
     pub fn close_project(&mut self, project: ProjectId, roots: &[PathBuf]) {
-        self.open
-            .retain(|_, entry| !entry.scope.is_some_and(|scope| scope.project() == project));
-        for root in roots {
-            self.servers.close(root);
+        let scopes = self
+            .open
+            .values()
+            .filter_map(|entry| entry.scope)
+            .filter(|scope| scope.project() == project)
+            .collect::<BTreeSet<_>>();
+        for scope in scopes {
+            self.close_scope(scope, roots);
         }
     }
 

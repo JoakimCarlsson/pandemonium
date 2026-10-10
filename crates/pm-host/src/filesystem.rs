@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 pub struct Metadata {
     /// The byte length.
     length: u64,
+    /// The last modification time, when supported by the filesystem.
+    modified: Option<std::time::SystemTime>,
     /// The entry kind.
     kind: FileType,
     /// Whether an executable bit is set.
@@ -20,6 +22,10 @@ impl Metadata {
     /// The length in bytes.
     pub fn len(&self) -> u64 {
         self.length
+    }
+    /// The last modification time reported by the owning filesystem.
+    pub fn modified(&self) -> Option<std::time::SystemTime> {
+        self.modified
     }
     /// Whether the entry is empty.
     pub fn is_empty(&self) -> bool {
@@ -48,6 +54,7 @@ impl Metadata {
         let executable = false;
         Self {
             length: metadata.len(),
+            modified: metadata.modified().ok(),
             kind: FileType {
                 directory: metadata.is_dir(),
                 file: metadata.is_file(),
@@ -332,22 +339,23 @@ fn symlink(target: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// User toolchain directories searched beside the inherited executable path.
+const TOOL_DIRECTORIES: &[&str] = &[
+    ".cargo/bin",
+    ".grok/bin",
+    ".local/bin",
+    "go/bin",
+    ".bun/bin",
+    ".deno/bin",
+    ".npm-global/bin",
+    "AppData/Roaming/npm",
+    ".volta/bin",
+    ".local/share/fnm/aliases/default/bin",
+];
 /// Locates a program on the path and in customary tool directories.
 pub(crate) fn which(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let home = std::env::home_dir();
-    let extra = [
-        ".cargo/bin",
-        ".grok/bin",
-        ".local/bin",
-        "go/bin",
-        ".bun/bin",
-        ".deno/bin",
-        ".npm-global/bin",
-        "AppData/Roaming/npm",
-        ".volta/bin",
-        ".local/share/fnm/aliases/default/bin",
-    ];
     #[cfg(windows)]
     let names = std::env::var("PATHEXT")
         .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
@@ -358,7 +366,7 @@ pub(crate) fn which(program: &str) -> Option<PathBuf> {
     let names = [program.to_owned()];
     std::env::split_paths(&path)
         .chain(
-            extra
+            TOOL_DIRECTORIES
                 .iter()
                 .filter_map(|directory| Some(home.as_ref()?.join(directory))),
         )
@@ -367,7 +375,12 @@ pub(crate) fn which(program: &str) -> Option<PathBuf> {
             PathBuf::from("/opt/homebrew/bin"),
         ])
         .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
-        .find(|path| path.is_file())
+        .find(|path| {
+            path.metadata().is_ok_and(|metadata| {
+                let metadata = Metadata::local(metadata);
+                metadata.is_file() && metadata.executable_or_windows()
+            })
+        })
 }
 
 /// Finds repository roots for the shared ignore rules, without domain types.
@@ -396,4 +409,73 @@ pub(crate) fn repositories(root: &Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// Replaces a complete remote upload atomically while retaining file permissions.
+pub(crate) fn replace(
+    path: &Path,
+    receive: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    let path = if path.exists() {
+        std::fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("The file has no parent directory"))?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_nanos();
+    let staging = parent.join(format!(
+        ".pandemonium-save-{}-{nonce:x}",
+        std::process::id()
+    ));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)?;
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            file.set_permissions(metadata.permissions())?;
+        }
+        receive(&mut file)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&staging, &path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(staging);
+    }
+    result
+}
+
+impl Metadata {
+    /// Whether a regular file can be executed on this endpoint platform.
+    fn executable_or_windows(&self) -> bool {
+        cfg!(windows) || self.executable
+    }
+}
+
+/// The endpoint's executable path with installed toolchains available to child programs.
+pub(crate) fn executable_path(program: &str) -> std::ffi::OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let beside = Path::new(program)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty());
+    let directories = beside
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(std::env::split_paths(&inherited))
+        .chain(
+            TOOL_DIRECTORIES
+                .iter()
+                .filter_map(|directory| Some(std::env::home_dir()?.join(directory))),
+        )
+        .chain([
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+        ]);
+    std::env::join_paths(directories).unwrap_or(inherited)
 }
