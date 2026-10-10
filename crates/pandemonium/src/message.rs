@@ -37,6 +37,8 @@ pub enum ProjectSearchOption {
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+    /// Acts on tests in their originating project and worktree.
+    Test(Scope, crate::testing::Command),
     /// Applies an explicit notebook toolbar or cell operation.
     Notebook(FileId, crate::notebook::Action),
     /// Selects source text in a notebook cell.

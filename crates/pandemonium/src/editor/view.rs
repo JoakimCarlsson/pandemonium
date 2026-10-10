@@ -207,6 +207,8 @@ pub struct BufferView<M> {
     breakpoints: Vec<Breakpoint>,
     /// The line a paused program stands on in this file, if it does.
     stopped: Option<usize>,
+    /// Current revision coverage by zero-based line and whether it was hit.
+    coverage: Vec<(usize, bool)>,
     /// What a press or a drag on the minimap sends, given the line it is on.
     on_minimap: Option<Arc<dyn Fn(usize) -> M>>,
     /// What a press of the secondary button over the pane sends.
@@ -252,6 +254,7 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         on_breakpoint_menu: None,
         breakpoints: Vec::new(),
         stopped: None,
+        coverage: Vec::new(),
         on_scroll: None,
         on_minimap: None,
         on_menu: None,
@@ -414,6 +417,12 @@ impl<M> BufferView<M> {
     /// Returns this pane opening a breakpoint menu on a secondary press.
     pub fn on_breakpoint_menu(mut self, on_menu: impl Fn(Position) -> M + 'static) -> Self {
         self.on_breakpoint_menu = Some(Arc::new(on_menu));
+        self
+    }
+
+    /// Returns this pane marking covered and uncovered source lines of the current revision.
+    pub fn coverage(mut self, lines: Vec<(usize, bool)>) -> Self {
+        self.coverage = lines;
         self
     }
 
@@ -623,6 +632,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
         if !self.plain && self.display.current_line {
             self.paint_current_line(&painting, cx);
         }
+        self.paint_coverage(&painting, cx);
         self.paint_stopped(&painting, cx);
         self.paint_conflict_backgrounds(&painting, &conflicts, cx);
         self.paint_search(&painting, cx);
@@ -715,6 +725,36 @@ impl<M> BufferView<M> {
                 .text
                 .alpha(painting.theme.emphasis.current_line),
         ));
+    }
+
+    /// Marks executable lines in the gutter and washes uncovered source lines.
+    fn paint_coverage(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let layout = painting.layout;
+        for (line, covered) in &self.coverage {
+            let Some(top) = painting.top_of(*line) else {
+                continue;
+            };
+            let color = if *covered {
+                painting.theme.colors.success
+            } else {
+                painting.theme.colors.danger
+            };
+            cx.quad(Quad::filled(
+                Rect::from_xywh(layout.bounds.left(), top, 3.0, layout.cell.height),
+                color,
+            ));
+            if !covered {
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(
+                        layout.bounds.left() + layout.gutter,
+                        top,
+                        layout.bounds.size.width - layout.gutter,
+                        layout.cell.height,
+                    ),
+                    color.alpha(0.08),
+                ));
+            }
+        }
     }
 
     /// Washes the line a paused program stands on.

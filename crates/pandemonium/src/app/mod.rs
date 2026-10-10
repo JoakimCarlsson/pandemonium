@@ -53,6 +53,7 @@ mod session;
 mod settings;
 mod tasks;
 mod terminal;
+mod testing;
 mod tools;
 mod tree;
 mod views;
@@ -396,6 +397,8 @@ pub struct App {
     notebooks: crate::notebook::Notebooks,
     /// The file followed and symbols shown by each worktree's outline.
     outlines: crate::outline::Store,
+    /// Test discoveries, retained runs and coverage keyed by worktree.
+    testing: crate::testing::Store,
     /// Each worktree's changes as excerpts, for the panes editing them.
     excerpts: BTreeMap<Scope, crate::excerpts::OpenExcerpts>,
     /// Each worktree's search pane state.
@@ -874,6 +877,7 @@ impl App {
             renders: crate::markdown::Renders::default(),
             notebooks: crate::notebook::Notebooks::default(),
             outlines: crate::outline::Store::default(),
+            testing: crate::testing::Store::default(),
             excerpts: BTreeMap::new(),
             searches: BTreeMap::new(),
             project_search_field: None,
@@ -1348,6 +1352,10 @@ impl App {
                 ui.select_all_text();
             }
             self.dismiss_menu();
+            self.request_redraw();
+            return;
+        }
+        if self.apply_testing(message) {
             self.request_redraw();
             return;
         }
@@ -1907,6 +1915,9 @@ impl App {
             self.trail.close_project(id);
             self.terminals.close(id);
             self.tasks.forget(id);
+            self.testing
+                .worktrees
+                .retain(|scope, _| scope.project() != id);
             let scopes = self
                 .checks
                 .worktrees
@@ -2984,6 +2995,7 @@ impl ApplicationHandler<Wake> for App {
                 let pumped = self.terminals.pump();
                 let tasks_pumped = self.tasks.pump();
                 self.hear_finished_tasks();
+                self.maintain_tests();
                 let logged_in = self.follow_logins() | self.follow_authentication();
                 if pumped | tasks_pumped | self.follow_errands() | logged_in {
                     self.hear_failed_shells();
@@ -3183,6 +3195,7 @@ impl ApplicationHandler<Wake> for App {
         self.restore_layouts(&saved);
         let shells = std::mem::take(&mut self.shells);
         self.restore_shells(&shells);
+        self.maintain_tests();
 
         self.ui = Some(Ui::new(self.theme()));
         self.list = Some(DrawList::new(Size::zero()));

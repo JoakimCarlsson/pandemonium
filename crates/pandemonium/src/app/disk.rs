@@ -55,12 +55,26 @@ impl App {
         if repository {
             self.reread_changes();
         }
+        self.maintain_tests();
         any
     }
 
     /// Brings the tree, the documents, the servers and the review of `scope`,
     /// whose worktree sits at `root`, up to what `disk` says happened.
     fn follow_disk(&mut self, scope: Scope, root: &Location, disk: &Disk) {
+        if (disk.repository
+            || disk.touched.iter().any(|touch| {
+                !touch.ignored
+                    && (touch
+                        .path
+                        .extension()
+                        .is_some_and(|extension| extension == "py")
+                        || touch.path.ends_with(".pandemonium/tests.json"))
+            }))
+            && let Some(tree) = self.testing.worktrees.get_mut(&scope)
+        {
+            tree.changed();
+        }
         let tree_changed = self.files.get(&scope).is_some_and(|tree| {
             disk.touched
                 .iter()

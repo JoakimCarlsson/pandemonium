@@ -41,6 +41,7 @@ mod settings;
 mod shell_path;
 mod tasks;
 mod terminal;
+mod testing;
 mod theme;
 mod tree;
 mod workspace;

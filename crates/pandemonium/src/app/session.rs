@@ -290,6 +290,7 @@ impl App {
         self.drop_tabs(&|held| held == scope);
         self.terminals.stop_all(scope);
         self.tasks.forget_scope(scope);
+        self.testing.worktrees.remove(&scope);
         self.checks.forget(scope);
         self.advance_checks();
         self.pending_debug.retain(|_, (held, _)| *held != scope);
