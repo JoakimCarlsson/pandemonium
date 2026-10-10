@@ -75,11 +75,9 @@ impl CheckpointWork {
         let roots = pm_core::repositories(root);
         let number = roots
             .iter()
-            .flat_map(pm_core::checkpoints)
-            .map(|turn| turn.turn)
+            .map(pm_core::next_checkpoint_number)
             .max()
-            .unwrap_or(0)
-            + 1;
+            .unwrap_or(1);
         let mut back = CheckpointBack {
             work: self.clone(),
             said: Ok(if roots.is_empty() {
@@ -266,11 +264,6 @@ impl App {
                 let scope = talk.scope();
                 if self.checkpointing.starting.contains(&talk.id())
                     || self.checkpointing.rewinding.contains(&scope)
-                    || self
-                        .checkpointing
-                        .active
-                        .values()
-                        .any(|(active, _, _)| *active == scope)
                 {
                     return None;
                 }
@@ -278,13 +271,6 @@ impl App {
             })
             .collect::<Vec<_>>();
         for (talk, scope, prompt) in pending {
-            if self.checkpointing.starting.iter().any(|id| {
-                self.agents
-                    .get(*id)
-                    .is_some_and(|talk| talk.scope() == scope)
-            }) {
-                continue;
-            }
             self.checkpointing.starting.insert(talk);
             self.checkpoint_later(scope, CheckpointWork::Begin(talk, prompt));
         }

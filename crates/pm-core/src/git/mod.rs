@@ -36,8 +36,8 @@ pub use changes::{Change, ChangeKind, changes};
 pub use checkpoint::{
     CHECKPOINT_HEAD, Checkpoint, CheckpointStep, begin_checkpoint, begin_checkpoint_number,
     between, checkpoint, checkpoint_at, checkpoint_step, checkpoint_steps, checkpoint_turn,
-    checkpoints, end_checkpoint, hunk_step, hunk_steps, rewind, rewind_number, rewind_paths,
-    take_rewind_context,
+    checkpoints, end_checkpoint, hunk_step, hunk_steps, next_checkpoint_number, rewind,
+    rewind_number, rewind_paths, take_rewind_context,
 };
 pub use clone::{clone, named};
 pub use commit::{Commit, amend, cherry_pick, commit, history, last_message};

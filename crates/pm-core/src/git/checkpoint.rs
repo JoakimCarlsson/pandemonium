@@ -92,16 +92,31 @@ pub fn checkpoint_turn(root: impl Into<Location>, turn: u64, commit: &str) -> Sa
     )
 }
 
+/// Returns the next turn number, including baselines of turns still in progress.
+pub fn next_checkpoint_number(root: impl Into<Location>) -> u64 {
+    let root = root.into();
+    answer(
+        &root,
+        [
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/worktree/pandemonium/starts/",
+            "refs/worktree/pandemonium/turns/",
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|name| name.rsplit('/').next()?.parse::<u64>().ok())
+    .max()
+    .unwrap_or(0)
+        + 1
+}
+
 /// Captures the first baseline and reader edits before an agent starts writing.
 pub fn begin_checkpoint(root: impl Into<Location>) -> Result<u64, String> {
     let root = root.into();
     let root = &root;
-    let turn = checkpoints(root)
-        .iter()
-        .map(|turn| turn.turn)
-        .max()
-        .unwrap_or(0)
-        + 1;
+    let turn = next_checkpoint_number(root);
     begin_checkpoint_number(root, turn)
 }
 
@@ -363,12 +378,7 @@ pub fn rewind_paths(
 pub fn rewind(root: impl Into<Location>, to: &str) -> Said {
     let root = root.into();
     let root = &root;
-    let turn = checkpoints(root)
-        .iter()
-        .map(|turn| turn.turn)
-        .max()
-        .unwrap_or(0)
-        + 1;
+    let turn = next_checkpoint_number(root);
     rewind_number(root, to, turn)
 }
 
