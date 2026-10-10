@@ -8,6 +8,7 @@ license.workspace = true
 pm-host.workspace = true
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 base64 = "0.23.1"
+getrandom = "0.3"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 mermaid-svg = "0.7.0"
 pm-acp.workspace = true
@@ -19,12 +20,14 @@ pm-ui.workspace = true
 pm-vim.workspace = true
 pm-vt.workspace = true
 pollster = "1.0.1"
-pulldown-cmark = { version = "0.13.4", default-features = false }
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_norway = "0.9.42"
+similar = "3.2.0"
+toml = "1.1.6"
 winit = "0.30.13"
 
 [build-dependencies]

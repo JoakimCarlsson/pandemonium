@@ -520,3 +520,6 @@ bindings:
       f8: debug.step_over
       f7: debug.step_into
       shift+f8: debug.step_out
+  - when: "pane.kind == agent || pane.kind == prompt"
+    keys:
+      ctrl+o: agent::ToggleDetails

@@ -69,7 +69,7 @@ impl App {
                 let id = self.control_talk_id(id)?;
                 let talk = self
                     .agents
-                    .get(id)
+                    .get_mut(id)
                     .ok_or_else(|| "agent unavailable".to_owned())?;
                 if !talk.is_busy() {
                     return Err("agent has no running turn".to_owned());
@@ -157,7 +157,7 @@ impl App {
         }
         .ok_or_else(|| "worktree unavailable".to_owned())?;
         let before = self.agents.iter().map(Talk::id).collect::<Vec<_>>();
-        self.open_agent(project, session, &root, agent);
+        self.open_agent(project, session, &root, agent, None, false);
         let opened = self
             .agents
             .iter()
@@ -505,11 +505,12 @@ impl App {
         if !talk.history().iter().any(|entry| entry.id == saved) {
             return Err("saved conversation unavailable".to_owned());
         }
-        let (scope, agent) = (talk.scope(), talk.agent());
         self.open_agent_history(id, saved);
         let opened = self
             .agents
-            .find_saved(scope, agent, saved)
+            .get(id)
+            .filter(|talk| talk.resumable().as_deref() == Some(saved))
+            .map(Talk::id)
             .ok_or_else(|| "saved conversation could not load".to_owned())?;
         Ok(json!({ "id": opened.number() }))
     }

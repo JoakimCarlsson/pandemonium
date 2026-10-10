@@ -5,33 +5,32 @@
 //! is running are the window's, and they are here. Every command a session
 //! answers to goes through [`App::agent_command`].
 
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use pm_acp::{About, Agent, Knob, Method, Setting, Way};
 use pm_core::Scope;
 use pm_gfx::{Point, Renderer, Size};
 use pm_text::Position;
-use pm_ui::{Axis, MenuItem, ResizeEvent, ResizePhase};
+use pm_ui::{Axis, Div, MenuItem, ResizeEvent, ResizePhase, Theme};
 use winit::window::UserAttentionType;
 
-use crate::agent::{Spot, Standing, Talk, TalkId, Tally};
-use crate::app::places::Place;
+use crate::agent::{Standing, Talk, TalkId, Tally, knob_rows};
+use crate::app::places::{Place, linked_file};
 use crate::app::{App, Writing};
 use crate::config::{AgentOptions, KnobValue};
 use crate::desktop;
+use crate::keymap::Action;
 use crate::message::Message;
 use crate::panel::PanelView;
 use crate::panes::Item;
-use crate::picker::{Choice, Kind, Row};
+use crate::picker::{Choice, Kind, Picker, Row};
 use crate::terminal::ShellId;
 use crate::workspace::{MenuTarget, TabMenu};
 
 /// How far above the status bar its agent menu stops.
 const MENU_GAP: f32 = 4.0;
 
-/// The interval between scroll steps while a selection is held past a pane edge.
-const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
+pub(super) use pm_ui::Grain;
 
 /// A transcript selection captured against its conversation for one press.
 #[derive(Clone, Copy)]
@@ -39,21 +38,18 @@ pub(super) struct SelectionDrag {
     /// The conversation in which the press began.
     session: TalkId,
     /// The conversation position picked at the press, preserved across scrolling.
-    anchor: Spot,
-    /// The latest pointer position, used against each newly painted frame.
-    pointer: Point,
-    /// When the next automatic scroll step may run.
-    next_scroll: Instant,
+    gesture: pm_ui::SelectionDrag,
 }
 
 impl App {
     /// Opens the menu of the agents standing as `standing` does, rising from
-    /// the top of the status bar above the count that was clicked.
+    /// the top of the status bar above the left edge of the count that was
+    /// clicked.
     pub(super) fn open_agents_menu(&mut self, standing: Standing) {
         let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
         let bar = window.height - self.theme().size.bar;
-        self.menu = self.pointer.map(|pointer| TabMenu {
-            at: Point::new(pointer.x, bar - MENU_GAP),
+        self.menu = self.opener().map(|control| TabMenu {
+            at: Point::new(control.left(), bar - MENU_GAP),
             target: MenuTarget::Agents(standing),
         });
         self.request_redraw();
@@ -77,6 +73,7 @@ impl App {
         let scope = talk.scope();
         [
             Some(talk.agent().name.to_owned()),
+            talk.profile_name().map(str::to_owned),
             self.open
                 .get(scope.project())
                 .map(|project| project.name().to_owned()),
@@ -92,13 +89,56 @@ impl App {
         .join(" · ")
     }
 
+    /// Copies the current source of one agent reply and marks its confirmation icon.
+    fn copy_agent_reply(&mut self, session: TalkId, block: usize, formatted: bool) {
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        let Some(crate::agent::Block::Said(pm_acp::Voice::Agent, source)) =
+            talk.transcript().blocks().get(block)
+        else {
+            return;
+        };
+        if formatted {
+            desktop::copy_html(crate::markdown::render_html(source), source.clone());
+        } else {
+            desktop::copy(source.clone());
+        }
+        talk.mark_reply_copied(block);
+    }
+
     /// Carries out the commands an agent session answers to.
     ///
     /// The answer says whether the message was one of them, so that the
     /// window can go on trying the rest.
     pub(super) fn agent_command(&mut self, message: Message) -> bool {
         match message {
+            Message::DiffAgentTurn(talk, turn) => self.diff_agent_turn(talk, turn),
+            Message::RewindAgentContext(talk, block) => {
+                self.agents.rewind(talk, block);
+            }
+            Message::RewindAgentTurn(talk, turn) => self.ask_rewind_agent(talk, turn),
+            Message::RequestRewind(scope, turn) => self.plan_rewind(scope, turn),
+            Message::ConfirmRewind(scope, turn) => self.confirm_rewind(scope, turn),
+            Message::ShowCheckpointStep(scope, prefix) => self.show_checkpoint_step(scope, prefix),
             Message::NewAgentSession => self.open_picker(Kind::Agents),
+            Message::StartAgent(agent) => {
+                if agent.startable() {
+                    self.start_agent(agent);
+                }
+            }
+            Message::ForkAgent(source) => self.fork_agent(source, None),
+            Message::ForkAgentReply(source, block) => self.fork_agent(source, Some(block)),
+            Message::ShowAgentAccounts(session) => self.show_agent_accounts(session),
+            Message::ManageAccountProfiles(agent) => {
+                self.open_picker(Kind::Accounts(self.scope(), agent));
+            }
+            Message::ManageAgentServers => {
+                self.open_settings();
+                self.settings
+                    .show_section(crate::settings::SettingsSection::AgentServers);
+                self.load_agent_registry();
+            }
             Message::WriteAgentPrompt(session, phase, anchor, head) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.clear_selection();
@@ -111,10 +151,52 @@ impl App {
             Message::ScrollAgent(session, event, step) => {
                 self.drag_agent_scrollbar(session, event, step);
             }
+            Message::ScrollAgentCommands(session, event, step) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.drag_commands(event, step);
+                }
+            }
             Message::SendPrompt(session) => self.send_prompt(session),
             Message::AnswerAgent(session, ask, place) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.answer(ask, place);
+                }
+            }
+            Message::TypeAnswer(session, ticket, place) => {
+                self.type_answer(session, ticket, place);
+            }
+            Message::DenyAgent(session, ask) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    talk.deny(ask);
+                }
+            }
+            Message::WriteAnswer(session, ticket, place, phase, anchor, head) => {
+                self.point_in(Writing::Answer(session, ticket, place), phase, anchor, head);
+            }
+            Message::SendAnswer(session, ticket) => self.send_answer(session, ticket),
+            Message::ChooseAnswer(session, ticket, place, option) => {
+                self.choose_answer(session, ticket, place, option);
+            }
+            Message::ShowAnswerPage(session, ticket, page) => {
+                if let Some(form) = self.answer_form(session, ticket) {
+                    form.show_page(page);
+                }
+            }
+            Message::FoldAnswer(session, ticket) => {
+                if let Some(form) = self.answer_form(session, ticket) {
+                    form.fold();
+                }
+            }
+            Message::CancelAnswer(session, ticket) => {
+                self.dismiss_answer(session, ticket, pm_acp::Reply::Cancel);
+            }
+            Message::OpenAnswerLink(session, ticket) => self.open_answer_link(session, ticket),
+            Message::ToggleAgentCard(session, place) => {
+                if let Some(talk) = self.agents.get_mut(session) {
+                    let id = talk.drawn_cards().borrow().get(place).cloned();
+                    if let Some(id) = id {
+                        talk.toggle_card(&id);
+                    }
                 }
             }
             Message::ToggleAgentDetails(session, block) => {
@@ -138,7 +220,40 @@ impl App {
             }
             Message::ShowAgentModes(session) => self.show_agent_modes(session),
             Message::CycleAgentMode(session) => self.cycle_agent_mode(session),
+            Message::ShowAgentMcp(session) => self.open_menu(MenuTarget::AgentMcp(session)),
+            Message::ManageMcpServers => {
+                self.open_settings();
+                self.settings
+                    .show_section(crate::settings::SettingsSection::McpServers);
+                self.load_mcp_registry();
+            }
+            Message::ShowAgentTextMenu(session, reply) => {
+                self.open_menu(MenuTarget::AgentText(session, reply));
+            }
+            Message::CopyAgentReply(session, block, formatted) => {
+                self.copy_agent_reply(
+                    session,
+                    block,
+                    formatted.unwrap_or(self.pointer_modifiers.shift_key()),
+                );
+            }
+            Message::CopyAgentText(session) => {
+                self.copy_agent_selection(session);
+            }
+            Message::SelectAllAgentText(session) => self.select_all_agent_text(session),
+            Message::ReconnectAgent(session) => self.reconnect_agent(session),
+            Message::LogOutAgent(session) => self.log_out_agent(session),
+            Message::ShowAgentDeletions(session) => self.show_agent_deletions(session),
             Message::PressKnob(session, place) => self.press_knob(session, place),
+            Message::SetAgentKnob(session, place, pick) => self.set_knob_at(session, place, pick),
+            Message::DragAgentPrompt(session, event, step) => {
+                self.drag_prompt_scrollbar(session, event, step)
+            }
+            Message::FlipAgentKnob(session, place) => {
+                if let Some(knob) = self.knob_at(session, place) {
+                    self.toggle_agent_knob(session, &knob.id);
+                }
+            }
             Message::StartAgentCommand(session) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.start_command();
@@ -153,7 +268,7 @@ impl App {
             }
             Message::ShowAgentHistory(session) => self.show_agent_history(session),
             Message::StopAgentTurn(session) => {
-                if let Some(talk) = self.agents.get(session) {
+                if let Some(talk) = self.agents.get_mut(session) {
                     talk.cancel();
                 }
             }
@@ -191,30 +306,97 @@ impl App {
             .collect()
     }
 
-    /// Opens a searchable list of this agent's saved sessions.
+    /// Opens this agent's saved sessions in a dropdown beside the history control.
     pub(super) fn show_agent_history(&mut self, session: TalkId) {
         let Some(talk) = self.agents.get_mut(session).filter(|talk| talk.can_list()) else {
             return;
         };
         talk.list_history();
-        let rows = self.agent_history_rows(session);
-        self.open_picker_with(Kind::AgentHistory(session), rows, String::new());
+        let rows = self.agent_history_rows(session, false);
+        self.open_agent_choices(Kind::AgentHistory(session), rows);
+    }
+
+    /// Opens a searchable list of this agent's saved sessions, to have one forgotten.
+    pub(super) fn show_agent_deletions(&mut self, session: TalkId) {
+        let Some(talk) = self
+            .agents
+            .get_mut(session)
+            .filter(|talk| talk.can_list() && talk.can_delete())
+        else {
+            self.notices
+                .trouble("This agent cannot forget saved sessions", None);
+            return;
+        };
+        talk.list_history();
+        let rows = self.agent_history_rows(session, true);
+        self.open_picker_with(Kind::AgentDelete(session), rows, String::new());
+    }
+
+    /// Has the agent of `session` forget the saved conversation `saved`.
+    pub(super) fn delete_agent_history(&mut self, session: TalkId, saved: &str) {
+        if let Some(talk) = self.agents.get(session) {
+            talk.delete_saved(saved);
+        }
+    }
+
+    /// Opens a native conversation fork in the source's existing filesystem scope.
+    fn fork_agent(&mut self, source: TalkId, block: Option<usize>) {
+        let Some(destination) = self.agents.fork(source, block) else {
+            self.notices
+                .trouble("This conversation cannot be forked natively", None);
+            return;
+        };
+        let Some(scope) = self.agents.get(destination).map(Talk::scope) else {
+            return;
+        };
+        self.show_item(
+            self.panes.focus(),
+            scope,
+            Item::Agent(scope, destination),
+            false,
+        );
+        self.focus_prompt(destination);
+    }
+
+    /// Starts the agent of `session` again and carries on its conversation.
+    pub(super) fn reconnect_agent(&mut self, session: TalkId) {
+        let running = self
+            .agents
+            .get(session)
+            .is_some_and(|talk| talk.is_running());
+        if running || !self.agents.reconnect(session) {
+            self.notices
+                .trouble("This agent has no conversation to reconnect to", None);
+        }
+    }
+
+    /// Logs the agent of `session` out, where it can be.
+    pub(super) fn log_out_agent(&mut self, session: TalkId) {
+        match self.agents.get(session) {
+            Some(talk) if talk.can_logout() => talk.logout(),
+            _ => self
+                .notices
+                .trouble("This agent cannot be logged out from here", None),
+        }
     }
 
     /// Refreshes the open history picker as the agent returns its pages.
     pub(super) fn refresh_agent_history(&mut self) {
-        let Some(Kind::AgentHistory(session)) = self.picker.as_ref().map(|picker| picker.kind())
-        else {
-            return;
+        let (session, deleting) = match self.picker.as_ref().map(|picker| picker.kind()) {
+            Some(Kind::AgentHistory(session)) => (session, false),
+            Some(Kind::AgentDelete(session)) => (session, true),
+            _ => return,
         };
-        let rows = self.agent_history_rows(session);
+        let rows = self.agent_history_rows(session, deleting);
         if let Some(picker) = self.picker.as_mut() {
             picker.refill_preserving_selection(rows);
         }
     }
 
     /// Builds history choices from the saved sessions the agent has listed.
-    pub(super) fn agent_history_rows(&self, session: TalkId) -> Vec<Row> {
+    ///
+    /// The rows forget the session they name when `deleting`, and open it otherwise.
+    pub(super) fn agent_history_rows(&self, session: TalkId, deleting: bool) -> Vec<Row> {
         let Some(talk) = self.agents.get(session) else {
             return Vec::new();
         };
@@ -228,7 +410,10 @@ impl App {
                     .updated_at
                     .as_deref()
                     .map_or_else(|| saved.id.clone(), |at| format!("{at} · {}", saved.id)),
-                choice: Choice::AgentHistory(session, saved.id.clone()),
+                choice: match deleting {
+                    true => Choice::AgentDelete(session, saved.id.clone()),
+                    false => Choice::AgentHistory(session, saved.id.clone()),
+                },
                 enabled: true,
             })
             .collect::<Vec<_>>();
@@ -249,40 +434,29 @@ impl App {
         rows
     }
 
-    /// Loads a saved conversation into a tab of the same worktree.
+    /// Loads a saved conversation into the chat tab that opened history.
     pub(super) fn open_agent_history(&mut self, source: TalkId, saved: &str) {
         let Some(talk) = self.agents.get(source) else {
             return;
         };
-        let (scope, agent, root) = (talk.scope(), talk.agent(), talk.root().to_path_buf());
+        if talk.resumable().as_deref() == Some(saved) {
+            self.focus_prompt(source);
+            return;
+        }
+        let env = talk.env().to_vec();
         let title = talk
             .history()
             .iter()
             .find(|listed| listed.id == saved)
             .and_then(|listed| listed.title.clone())
             .unwrap_or_default();
-        if let Some(existing) = self.agents.find_saved(scope, agent, saved) {
-            self.show_item(
-                self.panes.focus(),
-                scope,
-                Item::Agent(scope, existing),
-                false,
-            );
-            self.focus_prompt(existing);
+        if !self.agents.load(source, &env, saved) {
             return;
         }
-        let env = self.worktree_env(scope);
-        let Some(opened) =
-            self.agents
-                .load(scope.project(), scope.session(), &root, &env, agent, saved)
-        else {
-            return;
-        };
-        if let Some(talk) = self.agents.get_mut(opened) {
+        if let Some(talk) = self.agents.get_mut(source) {
             talk.entitle(&title);
         }
-        self.show_item(self.panes.focus(), scope, Item::Agent(scope, opened), false);
-        self.focus_prompt(opened);
+        self.focus_prompt(source);
     }
 
     /// Asks which mode to put `session` into.
@@ -357,9 +531,48 @@ impl App {
         self.open_agent_choices(Kind::Knob, rows);
     }
 
+    /// What an agent control's open choices are headed with and set beside:
+    /// the title over them, the keys that step through modes, and the knobs
+    /// set in place under them.
+    pub(super) fn agent_choice_parts(&self, theme: &Theme, picker: &Picker) -> AgentChoiceParts {
+        let (session, shown) = match picker.rows().next().map(|row| &row.choice) {
+            Some(Choice::Knob(session, knob, _)) => (Some(*session), Some(knob.as_str())),
+            Some(Choice::Mode(session, _)) => (Some(*session), None),
+            _ => (None, None),
+        };
+        let talk = session.and_then(|session| self.agents.get(session));
+        let knob = shown.and_then(|id| {
+            talk.and_then(|talk| talk.knobs().into_iter().find(|knob| knob.id == id))
+        });
+        let modes = picker.kind() == Kind::Modes
+            || knob.as_ref().is_some_and(|knob| knob.about == About::Mode);
+        let title = match &knob {
+            _ if matches!(picker.kind(), Kind::AgentHistory(_)) => "History".to_owned(),
+            _ if picker.kind() == Kind::Agents => "Select an agent".to_owned(),
+            Some(knob) if knob.about == About::Model => "Select a model".to_owned(),
+            Some(knob) if !modes => knob.name.clone(),
+            _ => "Modes".to_owned(),
+        };
+        AgentChoiceParts {
+            title,
+            keys: modes
+                .then(|| self.keys_for(Action::CycleAgentMode, &self.context()))
+                .flatten(),
+            knobs: talk.map_or_else(Vec::new, |talk| knob_rows(theme, talk, shown)),
+        }
+    }
+
+    /// Whether `picker` uses the dropdown for an agent control's choices.
+    pub(super) fn is_agent_dropdown(&self, picker: &Picker) -> bool {
+        matches!(
+            picker.kind(),
+            Kind::Modes | Kind::Knob | Kind::AgentHistory(_)
+        ) || (picker.kind() == Kind::Agents && self.agent_picker_at.is_some())
+    }
+
     /// Opens an agent control's choices beside the control that was pressed.
     fn open_agent_choices(&mut self, kind: Kind, rows: Vec<Row>) {
-        self.agent_picker_at = self.pointer;
+        self.agent_picker_at = self.opener();
         self.open_picker_with(kind, rows, String::new());
         if let Some(picker) = self.picker.as_mut() {
             let current = picker
@@ -368,6 +581,39 @@ impl App {
             if let Some(place) = current {
                 picker.select(place);
             }
+        }
+    }
+
+    /// Scrolls `session`'s prompt as its scrollbar is dragged, from the row
+    /// it showed when the drag began.
+    fn drag_prompt_scrollbar(&mut self, session: TalkId, event: ResizeEvent, step: f32) {
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
+        let prompt = talk.prompt();
+        let base = match event.phase {
+            ResizePhase::Started => prompt.rows_above(),
+            _ => self
+                .prompt_scroll_origin
+                .unwrap_or_else(|| prompt.rows_above()),
+        };
+        self.prompt_scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        let reached = (base as f32 + event.delta(Axis::Vertical) * step).round();
+        prompt.scroll_to_row(reached.max(0.0) as usize);
+    }
+
+    /// Sets the knob in `place` of `session`'s to the value in place `pick`.
+    fn set_knob_at(&mut self, session: TalkId, place: usize, pick: usize) {
+        let Some(knob) = self.knob_at(session, place) else {
+            return;
+        };
+        if let Setting::Picked { picks, .. } = knob.setting
+            && let Some(pick) = picks.get(pick)
+        {
+            self.set_knob(session, &knob.id, &pick.id);
         }
     }
 
@@ -475,7 +721,7 @@ impl App {
         }
     }
 
-    /// Starts `agent` where the window is pointed, and opens its pane.
+    /// Offers configured accounts before starting `agent` where the window is pointed.
     ///
     /// Where that is depends on what the reader has picked: the worktree of
     /// the session in hand, or the project's own checkout when they are in
@@ -485,10 +731,15 @@ impl App {
         let Some(project) = self.open.active() else {
             return;
         };
-        let (project, checkout) = (project.id(), project.root().to_path_buf());
-        let session = self.selected_session();
-        let root = self.session_root().unwrap_or(checkout);
-        self.open_agent(project, session, &root, agent);
+        let scope = match self.selected_session() {
+            Some(session) => pm_core::Scope::of(project.id(), session),
+            None => pm_core::Scope::checkout(project.id()),
+        };
+        if self.accounts.profiles(agent).next().is_some() {
+            self.open_picker(Kind::Accounts(Some(scope), agent));
+        } else {
+            self.start_account(Some(scope), agent, None);
+        }
     }
 
     /// Starts `agent` in `root` for `project`, and opens the pane it is read in.
@@ -502,20 +753,40 @@ impl App {
         session: Option<pm_core::SessionId>,
         root: &std::path::Path,
         agent: Agent,
-    ) {
+        profile: Option<&crate::config::Profile>,
+        login: bool,
+    ) -> Option<TalkId> {
         if self.refuse_remote(pm_core::Scope::checkout(project), "Agents") {
-            return;
+            return None;
         }
         let scope = match session {
             Some(session) => pm_core::Scope::of(project, session),
             None => pm_core::Scope::checkout(project),
         };
-        let env = self.worktree_env(scope);
-        let Some(talk) = self.agents.start(project, session, root, &env, agent) else {
-            return;
+        let mut env = self.worktree_env(scope);
+        if let Some(profile) = profile {
+            let environment = profile.environment(agent)?;
+            env.push(environment);
+        }
+        let started = match login {
+            true => self
+                .agents
+                .authenticate(project, session, root, &env, agent),
+            false => self.agents.start(project, session, root, &env, agent),
         };
+        let Some(talk) = started else {
+            self.notices.trouble("The agent could not start", None);
+            return None;
+        };
+        if let Some(opened) = self.agents.get_mut(talk) {
+            opened.set_profile(profile.cloned());
+        }
+        if login || profile.is_some() {
+            self.account_logins.insert(talk);
+        }
         self.show_item(self.panes.focus(), scope, Item::Agent(scope, talk), false);
         self.focus_prompt(talk);
+        Some(talk)
     }
 
     /// Gets out of one thing the focused prompt is in the middle of.
@@ -534,7 +805,7 @@ impl App {
         {
             return true;
         }
-        match self.agents.get(session).filter(|talk| talk.is_busy()) {
+        match self.agents.get_mut(session).filter(|talk| talk.is_busy()) {
             Some(talk) => talk.cancel(),
             None => self.writing = None,
         }
@@ -542,13 +813,13 @@ impl App {
     }
 
     /// Stops the turn in the agent pane that has the keyboard.
-    pub(super) fn cancel_busy_agent(&self) -> bool {
+    pub(super) fn cancel_busy_agent(&mut self) -> bool {
         let session = match self.writing {
-            Some(Writing::Prompt(session)) => Some(session),
             _ if self.editor_focused => self.active_tab().and_then(Item::session),
+            Some(Writing::Prompt(session)) => Some(session),
             _ => None,
         };
-        let Some(talk) = session.and_then(|session| self.agents.get(session)) else {
+        let Some(talk) = session.and_then(|session| self.agents.get_mut(session)) else {
             return false;
         };
         if !talk.is_busy() {
@@ -701,8 +972,23 @@ impl App {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         arguments.extend(args.iter().cloned());
-        let mut environment = talk.env().to_vec();
+        let mut environment = command
+            .get_envs()
+            .filter_map(|(name, value)| {
+                Some((
+                    name.to_string_lossy().into_owned(),
+                    value?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        environment.extend(talk.env().iter().cloned());
         environment.extend(env.iter().cloned());
+        if let Some(profile) = talk.profile() {
+            let Some(selected) = profile.environment(talk.agent()) else {
+                return;
+            };
+            environment.push(selected);
+        }
 
         let started = self
             .terminals
@@ -785,6 +1071,12 @@ impl App {
             }
             return;
         }
+        if self.open_session_reference(&link) {
+            return;
+        }
+        let Some(talk) = self.agents.get(session) else {
+            return;
+        };
         match linked_file(talk.root(), &link) {
             Some((path, line)) => {
                 let place = Place {
@@ -812,6 +1104,10 @@ impl App {
         head: Point,
     ) {
         if phase == ResizePhase::Started {
+            if let Some(ui) = self.ui.as_mut() {
+                ui.clear_text_selection();
+            }
+            self.agents.clear_selections();
             self.agent_selection_drag = None;
             let Some(talk) = self.agents.get_mut(session) else {
                 return;
@@ -819,20 +1115,22 @@ impl App {
             let Some(anchor) = talk.spot_at(anchor) else {
                 return;
             };
-            self.agent_words = self.agent_clicks.press(anchor) == 2;
-            if !self.agent_words {
+            self.agent_grain = match self.agent_clicks.press(anchor) {
+                2 => Grain::Word,
+                3 => Grain::Paragraph,
+                _ => Grain::Character,
+            };
+            if self.agent_grain == Grain::Character {
                 talk.clear_selection();
             }
             self.agent_selection_drag = Some(SelectionDrag {
                 session,
-                anchor,
-                pointer: head,
-                next_scroll: Instant::now(),
+                gesture: pm_ui::SelectionDrag::new(anchor, head),
             });
         } else if let Some(drag) = self.agent_selection_drag.as_mut()
             && drag.session == session
         {
-            drag.pointer = head;
+            drag.gesture.pointer = head;
         } else {
             return;
         }
@@ -855,21 +1153,19 @@ impl App {
             return false;
         };
         let view = talk.view().get();
-        let pointer = Point::new(
-            drag.pointer.x,
-            drag.pointer
-                .y
-                .clamp(view.top(), view.bottom().max(view.top())),
-        );
+        let pointer = drag.gesture.head_point(view);
         let Some(head) = talk.spot_at(pointer) else {
             return false;
         };
-        if drag.anchor != head {
+        if drag.gesture.anchor != head {
             self.agent_clicks.clear();
         }
-        let (anchor, head) = match self.agent_words {
-            true => crate::agent::words_between(&theme, talk, drag.anchor, head),
-            false => (drag.anchor, head),
+        let (anchor, head) = match self.agent_grain {
+            Grain::Character => (drag.gesture.anchor, head),
+            Grain::Word => crate::agent::words_between(&theme, talk, drag.gesture.anchor, head),
+            Grain::Paragraph => {
+                crate::agent::lines_between(&theme, talk, drag.gesture.anchor, head)
+            }
         };
         let before = talk.selection();
         talk.select(anchor, head);
@@ -885,20 +1181,13 @@ impl App {
         let talk = self.agents.get(drag.session)?;
         let view = talk.view().get();
         let end = (talk.drawn_height().get() - view.size.height).max(0.0);
-        let distance = if drag.pointer.y < view.top() && talk.scroll() > 0.0 {
-            drag.pointer.y - view.top()
-        } else if drag.pointer.y > view.bottom() && talk.scroll() < end {
-            drag.pointer.y - view.bottom()
-        } else {
-            return None;
-        };
-        Some(distance.signum() * (distance.abs() * 0.25).clamp(4.0, 40.0))
+        drag.gesture.scroll_step(view, talk.scroll(), end)
     }
 
     /// When a held selection outside the conversation next needs a scroll step.
     pub(super) fn next_agent_selection_scroll(&self) -> Option<Instant> {
         self.agent_selection_scroll_step()?;
-        Some(self.agent_selection_drag?.next_scroll)
+        Some(self.agent_selection_drag?.gesture.next_scroll)
     }
 
     /// Scrolls toward off-screen text while a selection is held beyond a pane edge.
@@ -910,10 +1199,9 @@ impl App {
             return false;
         };
         let now = Instant::now();
-        if now < drag.next_scroll {
+        if !drag.gesture.scroll_due(now) {
             return false;
         }
-        drag.next_scroll = now + SELECTION_SCROLL_INTERVAL;
         let Some(talk) = self.agents.get_mut(drag.session) else {
             return false;
         };
@@ -926,10 +1214,16 @@ impl App {
     /// Puts what the reader picked out of the focused agent's transcript on
     /// the clipboard, saying whether there was anything to put there.
     pub(super) fn copy_agent_text(&self) -> bool {
-        let Some(talk) = self
-            .focused_talk()
-            .and_then(|session| self.agents.get(session))
-        else {
+        match self.focused_talk() {
+            Some(session) => self.copy_agent_selection(session),
+            None => false,
+        }
+    }
+
+    /// Puts what the reader picked out of `session`'s transcript on the
+    /// clipboard, saying whether there was anything to put there.
+    pub(super) fn copy_agent_selection(&self, session: TalkId) -> bool {
+        let Some(talk) = self.agents.get(session) else {
             return false;
         };
         let Some(text) = crate::agent::selected_text(&self.theme(), talk) else {
@@ -937,6 +1231,17 @@ impl App {
         };
         desktop::copy(text);
         true
+    }
+
+    /// Picks out the whole of `session`'s transcript.
+    pub(super) fn select_all_agent_text(&mut self, session: TalkId) {
+        let theme = self.theme();
+        let Some(talk) = self.agents.get_mut(session) else {
+            return;
+        };
+        if let Some((first, last)) = crate::agent::everything(&theme, talk) {
+            talk.select(first, last);
+        }
     }
 
     /// The session the pointer is over, or the one the focused pane shows.
@@ -965,6 +1270,14 @@ impl App {
         let Some(talk) = self.agents.get(session) else {
             return true;
         };
+        if !talk.offered().is_empty()
+            && self
+                .pointer
+                .is_some_and(|pointer| talk.command_view().get().contains(pointer))
+        {
+            talk.scroll_commands(-pixels);
+            return true;
+        }
         let (drawn, view) = (talk.drawn_height().get(), talk.view().get().size);
         let end = match drawn > 0.0 && view.height > 0.0 {
             true => drawn - view.height,
@@ -1062,6 +1375,7 @@ impl App {
     /// A conversation behind another tab is left where it is until a pane
     /// shows it again, which is when a frame is drawn and this is asked.
     pub(super) fn follow_agents(&mut self) {
+        self.hear_checkpoint_moments();
         for session in self.shown_agents() {
             if self
                 .agents
@@ -1114,55 +1428,6 @@ fn detail(description: Option<&str>, current: bool) -> String {
     }
 }
 
-/// The file in the worktree at `root` that `link` names, and the line in it
-/// counted from nought, where it names a file that is there.
-///
-/// The link is the agent's to write, so a file it names outside the worktree
-/// — by an absolute path, or by climbing out through `..` or a link — is not
-/// opened: the conversation is about the worktree it was started in.
-///
-/// A line is read from the `#L12` an address in a browser would carry, or
-/// from the `:12` or `:12:4` a compiler writes after a path.
-fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
-    let path = match link.split_once("://") {
-        Some(("file", path)) => path,
-        Some(_) => return None,
-        None => link,
-    };
-    let (path, line) = match path.split_once("#L") {
-        Some((path, line)) => (
-            path,
-            line.split('-').next().and_then(|line| line.parse().ok()),
-        ),
-        None => after_colons(path),
-    };
-    let path = root.join(path.replace("%20", " "));
-    let resolved = path.canonicalize().ok()?;
-    let inside = root
-        .canonicalize()
-        .is_ok_and(|root| resolved.starts_with(root));
-    (inside && resolved.is_file()).then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
-}
-
-/// `path` without the `:line` or `:line:column` written after it, and the
-/// line, where one was.
-fn after_colons(path: &str) -> (&str, Option<usize>) {
-    match numbered(path) {
-        Some((rest, last)) => match numbered(rest) {
-            Some((file, line)) => (file, line.parse().ok()),
-            None => (rest, last.parse().ok()),
-        },
-        None => (path, None),
-    }
-}
-
-/// `path` split before the number written after its last colon, where a
-/// number is what follows it.
-fn numbered(path: &str) -> Option<(&str, &str)> {
-    path.rsplit_once(':')
-        .filter(|(_, number)| number.parse::<usize>().is_ok())
-}
-
 /// Sends remembered values that the newly opened conversation still offers.
 fn apply_remembered_options(talk: &Talk, options: &AgentOptions) {
     let knobs = talk.knobs();
@@ -1207,4 +1472,15 @@ fn apply_remembered_knob(talk: &Talk, knob: &Knob, options: &AgentOptions) {
         }
         _ => {}
     }
+}
+
+/// What an agent control's open choices are drawn with beside the rows
+/// themselves.
+pub(super) struct AgentChoiceParts {
+    /// What is written over the choices.
+    pub title: String,
+    /// The keys that step through the choices, when they are modes.
+    pub keys: Option<String>,
+    /// The knobs set in place under the choices.
+    pub knobs: Vec<Div<Message>>,
 }

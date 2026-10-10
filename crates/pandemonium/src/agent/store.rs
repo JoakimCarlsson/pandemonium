@@ -23,16 +23,21 @@ use base64::Engine;
 use pm_gfx::Image;
 
 use crate::agent::pane::Wrapped;
-use crate::agent::transcript::Transcript;
+use crate::agent::transcript::{Block, Transcript};
 use crate::image::{Decodes, read_file};
 use crate::input::Input;
 use pm_acp::{
-    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Method, Mode, Notify,
-    Request, Session, Setting, Stop, Usage, Voice,
+    About, Agent, Answer, Ask, Attachment, Command, Event, History, Knob, Limits, Method, Mode,
+    Notify, Reply, Request, Session, Setting, Status, Stop, ToolCall, Usage, Voice, Weight,
 };
+
+use crate::agent::form::Form;
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_gfx::Point;
-use pm_ui::{Bounds, Placements};
+use pm_ui::{Axis, Bounds, Placements, ResizeEvent, ResizePhase, Scrolled, Selection, Spot};
+
+/// Issues a caller-bound editor MCP server before its ACP process is started.
+pub type McpFactory = Arc<dyn Fn(TalkId) -> Result<pm_acp::McpServer, String> + Send + Sync>;
 
 /// A conversation's identity for as long as it is running.
 ///
@@ -49,19 +54,6 @@ impl TalkId {
     }
 }
 
-/// A place in the text of the conversation: a row of the pane, and how many
-/// characters into that row.
-///
-/// Rows are counted from the top of the whole conversation rather than of
-/// the view, so what is picked out stays put as the pane scrolls.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Spot {
-    /// Which row, from the first.
-    pub row: usize,
-    /// How many characters into it.
-    pub column: usize,
-}
-
 /// How a conversation is doing, as a reader deciding where to look reads it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Standing {
@@ -75,6 +67,17 @@ pub enum Standing {
     Done,
     /// It is doing nothing and waiting on nobody.
     Idle,
+}
+
+/// Something the agent is waiting on the reader for, by the ticket it is under.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Pending {
+    /// A permission request.
+    Ask(u64),
+    /// A question.
+    Form(u64),
+    /// A choice of how to log in.
+    Login,
 }
 
 /// How many of the window's conversations stand each way.
@@ -94,6 +97,30 @@ pub struct Tally {
 
 /// One conversation: what is running, what has been said, what it is owed.
 pub struct Talk {
+    /// MCP servers bound only to this editor conversation.
+    mcp: Vec<pm_acp::McpServer>,
+    /// Follow-ups held in the ACP prompt queue until their checkpoint can be prepared.
+    queued_messages: usize,
+    /// Persisted native conversation ancestry, after the fork succeeds.
+    fork: Option<pm_core::ConversationFork>,
+    /// The source provider identity until the fork opens successfully.
+    fork_source: Option<String>,
+    /// The native message selected for a pending fork.
+    fork_message: Option<String>,
+    /// The prompt awaiting its filesystem baseline.
+    pub(crate) pending_prompt: Option<(String, Vec<Attachment>)>,
+    /// Completed file-changing calls already reported in this turn.
+    finished_calls: BTreeSet<String>,
+    /// Active file-changing tool ids for conservative overlap attribution.
+    active_calls: BTreeSet<String>,
+    /// Calls whose execution overlapped another file-changing call.
+    overlapping: BTreeSet<String>,
+    /// The filesystem turn number attached to each reader block.
+    pub(crate) checkpoint_turns: BTreeMap<usize, u64>,
+    /// Retained conversation history to send with the first prompt after a context rewind.
+    context: Option<String>,
+    /// Context correction to prepend after a filesystem rewind.
+    pub(crate) rewind_note: Option<String>,
     /// Which session this is.
     id: TalkId,
     /// The project whose worktree it is working in.
@@ -102,6 +129,8 @@ pub struct Talk {
     session: Option<SessionId>,
     /// The conversation itself, as the protocol carries it.
     conversation: Session,
+    /// The selected account, retained across login, history and reconnect.
+    profile: Option<crate::config::Profile>,
     /// What the worktree adds to the environment the agent was started in,
     /// kept so that it is started the same way again after a login.
     env: Vec<(String, String)>,
@@ -110,6 +139,8 @@ pub struct Talk {
     logins: Vec<Method>,
     /// Everything said so far.
     transcript: Transcript,
+    /// Running shells and subagents reported by this conversation.
+    background: BTreeMap<String, String>,
     /// The buffer the next prompt is written in.
     ///
     /// A prompt is several lines as often as it is one, so it is written in
@@ -128,6 +159,11 @@ pub struct Talk {
     clipboard_files: Vec<PathBuf>,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
+    /// The row of the permission request or the login in front that the
+    /// keyboard is on.
+    cursor: usize,
+    /// The questions the agent has put to the reader, oldest first.
+    forms: Vec<Form>,
     /// The commands the agent has said it takes, as it last said them.
     commands: Vec<Command>,
     /// Skills installed for this agent, invoked with a dollar sign.
@@ -165,6 +201,9 @@ pub struct Talk {
     /// How much of the model's context the conversation fills, where the
     /// agent says.
     usage: Option<Usage>,
+    /// How much of the plan's rate limits is used, where the agent has a
+    /// source for them.
+    limits: Option<Limits>,
     /// How far down the conversation the pane is scrolled, in logical pixels.
     scroll: f32,
     /// Where the conversation was last drawn, which is how much of it a
@@ -175,9 +214,19 @@ pub struct Talk {
     /// How wide the pane was when it last wrapped the conversation, which is
     /// what its rows, and so the places in them, were counted against.
     drawn_width: Rc<Cell<f32>>,
+    /// How far the list of offered commands is scrolled.
+    command_scroll: Scrolled,
+    /// Where the list of offered commands was last drawn.
+    command_view: Bounds,
+    /// The list's offset when its scrollbar drag began.
+    command_drag_origin: Option<f32>,
+    /// The selected row and list length the list was last scrolled to show.
+    command_revealed: Cell<Option<(usize, usize)>>,
     /// Where each link the pane last drew leads, in the order it drew them,
     /// which is how a press on one names it.
     drawn_links: Rc<RefCell<Vec<String>>>,
+    /// Tool identities registered by visible card headers.
+    drawn_cards: RefCell<Vec<String>>,
     /// Where each run of text the pane last drew came out, keyed by its
     /// place in `drawn_spots`.
     drawn_text: Placements,
@@ -185,11 +234,18 @@ pub struct Talk {
     drawn_spots: Rc<RefCell<Vec<Spot>>>,
     /// What the reader has picked out of the conversation: where the drag
     /// began, and where it has got to.
-    selection: Option<(Spot, Spot)>,
+    selection: Selection,
+    /// Copied replies and when their confirmation icons expire.
+    copied_replies: BTreeMap<usize, Instant>,
     /// Whether the pane follows the end of the conversation as it grows.
     following: bool,
     /// The tool and thought blocks the reader has opened.
     expanded_details: BTreeSet<usize>,
+    /// Tool cards whose complete output and children are visible.
+    expanded_cards: BTreeSet<String>,
+    /// Tool cards opened once because they failed, so a reader who closes
+    /// one again is not overruled by the next word about it.
+    opened_failures: BTreeSet<String>,
     /// The last lines each terminal the agent started has written, by the
     /// name the agent knows it by, for the tool calls that show one.
     terminals: BTreeMap<String, String>,
@@ -211,6 +267,28 @@ pub struct Offered {
 }
 
 impl Talk {
+    /// The immutable account metadata retained with this conversation.
+    pub fn profile(&self) -> Option<&crate::config::Profile> {
+        self.profile.as_ref()
+    }
+
+    /// The label of the separate account this conversation runs as.
+    pub fn profile_name(&self) -> Option<&str> {
+        self.profile.as_ref().map(crate::config::Profile::name)
+    }
+
+    /// The provider organisation, workspace or team UUID selected for this session.
+    pub fn organisation(&self) -> Option<&str> {
+        self.profile
+            .as_ref()
+            .and_then(crate::config::Profile::organisation)
+    }
+
+    /// Records the account selected before this conversation was started.
+    pub fn set_profile(&mut self, profile: Option<crate::config::Profile>) {
+        self.profile = profile;
+    }
+
     /// Which session this is.
     pub fn id(&self) -> TalkId {
         self.id
@@ -234,6 +312,54 @@ impl Talk {
         self.conversation.root()
     }
 
+    /// Whether an idle native whole-session fork is available.
+    pub fn can_fork(&self) -> bool {
+        self.ready && !self.busy && self.context.is_none() && self.conversation.can_fork()
+    }
+
+    /// Whether this reply has a native identity and can start a separate conversation.
+    pub fn can_fork_reply(&self, block: usize) -> bool {
+        self.can_fork()
+            && self.conversation.can_fork_at()
+            && matches!(
+                self.transcript.blocks().get(block),
+                Some(Block::Said(Voice::Agent, _))
+            )
+            && self.transcript.message_id(block).is_some()
+    }
+
+    /// Whether saving this tab cannot turn an unfinished fork into a fresh session.
+    pub fn persistable(&self) -> bool {
+        self.fork_source.is_none()
+    }
+
+    /// Whether conversation context can be rewound without interrupting a turn.
+    pub fn can_rewind(&self) -> bool {
+        self.ready && !self.busy
+    }
+
+    /// Retained history awaiting the first prompt in a rewound conversation.
+    pub fn rewind_context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    /// Restores retained history and the editable prompt after reopening a rewound tab.
+    pub fn restore_context(&mut self, context: String, prompt: &str) {
+        self.context = Some(context);
+        self.prompt.set(prompt);
+        self.transcript.note("Conversation context rewound. Earlier messages will accompany your next prompt; files are unchanged.");
+    }
+
+    /// The durable relationship of this native conversation fork.
+    pub fn fork_metadata(&self) -> Option<&pm_core::ConversationFork> {
+        self.fork.as_ref()
+    }
+
+    /// Restores native ancestry alongside the destination identity.
+    pub fn set_fork_metadata(&mut self, fork: Option<pm_core::ConversationFork>) {
+        self.fork = fork;
+    }
+
     /// Whether this agent can list and load saved conversations.
     pub fn can_list(&self) -> bool {
         self.conversation.can_list()
@@ -245,6 +371,31 @@ impl Talk {
         self.history_error = None;
         self.listing = true;
         self.conversation.list_sessions();
+    }
+
+    /// The tool servers the agent was opened with, and which it could not be given.
+    pub fn mcp_servers(&self) -> Vec<pm_acp::Offered> {
+        self.conversation.mcp_servers()
+    }
+
+    /// Whether the agent can forget a saved conversation.
+    pub fn can_delete(&self) -> bool {
+        self.conversation.can_delete()
+    }
+
+    /// Asks the agent to forget the saved conversation `id`.
+    pub fn delete_saved(&self, id: &str) {
+        self.conversation.delete_session(id);
+    }
+
+    /// Whether the agent can be logged out.
+    pub fn can_logout(&self) -> bool {
+        self.conversation.can_logout()
+    }
+
+    /// Logs the agent out.
+    pub fn logout(&self) {
+        self.conversation.logout();
     }
 
     /// The saved conversations this agent has returned so far.
@@ -265,6 +416,15 @@ impl Talk {
     /// What the agent calls this conversation, once it has opened one.
     pub fn resumable(&self) -> Option<String> {
         self.conversation.id()
+    }
+
+    /// Reconnects to the saved identity, requiring an exact destination for forks.
+    fn reconnection(&self) -> Option<pm_acp::Conversation> {
+        let conversation = self.resumable()?;
+        Some(match self.fork.is_some() {
+            true => pm_acp::Conversation::ReconnectExact(conversation),
+            false => pm_acp::Conversation::Reconnect(conversation),
+        })
     }
 
     /// Everything said so far.
@@ -298,15 +458,9 @@ impl Talk {
         self.conversation.can_image()
     }
 
-    /// Adds a chosen file to the next prompt, decoding its preview away from
-    /// the window when it is a picture.
-    pub fn attach_file(&mut self, path: PathBuf) {
-        self.attach_path(path.clone(), Attachment::File(path));
-    }
-
-    /// Adds a clipboard file as image bytes when the agent accepts its format,
+    /// Adds a chosen, pasted or dropped file as image bytes when the agent accepts its format,
     /// or as a link to the original file otherwise.
-    pub fn attach_pasted_file(&mut self, path: PathBuf) {
+    pub fn attach_file(&mut self, path: PathBuf) {
         let mime_type = path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -687,6 +841,11 @@ impl Talk {
         self.busy
     }
 
+    /// Whether the prompt is held back and has not gone to the agent yet.
+    pub fn is_sending(&self) -> bool {
+        self.pending_prompt.is_some()
+    }
+
     /// How long the current turn has been running.
     pub fn working_for(&self) -> Option<Duration> {
         self.busy_since.map(|since| since.elapsed())
@@ -714,6 +873,12 @@ impl Talk {
     /// agent says.
     pub fn usage(&self) -> Option<&Usage> {
         self.usage.as_ref()
+    }
+
+    /// How much of the plan's rate limits is used, where the agent has a
+    /// source for them.
+    pub fn limits(&self) -> Option<&Limits> {
+        self.limits.as_ref()
     }
 
     /// The modes the agent takes, in the order it offered them.
@@ -753,6 +918,11 @@ impl Talk {
         self.conversation.knobs()
     }
 
+    /// Whether advertised model or mode changes are still awaiting adapter confirmation.
+    pub fn is_configuring(&self) -> bool {
+        self.conversation.is_configuring()
+    }
+
     /// The knob `id` names.
     pub fn knob(&self, id: &str) -> Option<Knob> {
         self.knobs().into_iter().find(|knob| knob.id == id)
@@ -788,8 +958,8 @@ impl Talk {
     pub fn standing(&self) -> Standing {
         match (
             self.is_running(),
-            self.asks.is_empty(),
-            self.busy,
+            self.asks.is_empty() && self.forms.is_empty(),
+            self.busy || !self.background.is_empty(),
             self.unseen,
         ) {
             (false, ..) => Standing::Stopped,
@@ -798,6 +968,11 @@ impl Talk {
             (_, _, _, true) => Standing::Done,
             _ => Standing::Idle,
         }
+    }
+
+    /// Running work that can continue after the current turn.
+    pub fn background(&self) -> &BTreeMap<String, String> {
+        &self.background
     }
 
     /// Marks what the conversation has done as read.
@@ -827,6 +1002,57 @@ impl Talk {
         self.drawn_width.clone()
     }
 
+    /// How far the list of offered commands is scrolled, shared with the pane drawing it.
+    pub fn command_scroll(&self) -> Scrolled {
+        self.command_scroll.clone()
+    }
+
+    /// Where the list of offered commands was last drawn, shared with the pane drawing it.
+    pub fn command_view(&self) -> Bounds {
+        self.command_view.clone()
+    }
+
+    /// Scrolls the list of offered commands so the selected row of `rows`
+    /// rows, each `row` pixels tall, is in view through `shown` pixels.
+    ///
+    /// It moves only when the selection or the list has changed since it
+    /// last moved, so a wheel turned over the list is not undone by the
+    /// next frame.
+    pub fn reveal_chosen(&self, rows: usize, row: f32, shown: f32) {
+        let chosen = self.chosen();
+        if self.command_revealed.replace(Some((chosen, rows))) == Some((chosen, rows)) {
+            return;
+        }
+        let mut scroll = self.command_scroll.get();
+        let top = chosen as f32 * row;
+        let wanted = scroll.offset().clamp((top + row - shown).min(top), top);
+        scroll.set_extents(pm_gfx::Size::new(0.0, shown), rows as f32 * row);
+        scroll.by(scroll.offset() - wanted);
+        self.command_scroll.set(scroll);
+    }
+
+    /// Scrolls the list of offered commands by `pixels`, positive being towards the top.
+    pub fn scroll_commands(&self, pixels: f32) {
+        let mut scroll = self.command_scroll.get();
+        scroll.by(pixels);
+        self.command_scroll.set(scroll);
+    }
+
+    /// Scrolls the list of offered commands by a drag on its scrollbar,
+    /// `step` pixels of the list to a pixel of travel.
+    pub fn drag_commands(&mut self, event: ResizeEvent, step: f32) {
+        let offset = self.command_scroll.get().offset();
+        let base = match event.phase {
+            ResizePhase::Started => offset,
+            _ => self.command_drag_origin.unwrap_or(offset),
+        };
+        self.command_drag_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        self.scroll_commands(offset - base - event.delta(Axis::Vertical) * step);
+    }
+
     /// Where the links the pane last drew lead, shared with the pane
     /// drawing them.
     pub fn drawn_links(&self) -> Rc<RefCell<Vec<String>>> {
@@ -853,30 +1079,36 @@ impl Talk {
     /// The place in the conversation's text nearest `point`, as the pane
     /// last drew it.
     pub fn spot_at(&self, point: Point) -> Option<Spot> {
-        let placements = self.drawn_text.borrow();
-        let placed = pm_ui::nearest(&placements, point)?;
-        let start = *self.drawn_spots.borrow().get(placed.key)?;
-        Some(Spot {
-            row: start.row,
-            column: start.column + placed.caret_at(point.x),
-        })
+        pm_ui::spot_at(&self.drawn_text.borrow(), &self.drawn_spots.borrow(), point)
     }
 
     /// What the reader has picked out of the conversation, first place
     /// first, when it is anything at all.
     pub fn selection(&self) -> Option<(Spot, Spot)> {
-        let (anchor, head) = self.selection?;
-        (anchor != head).then(|| (anchor.min(head), anchor.max(head)))
+        self.selection.range()
+    }
+
+    /// Marks `block` as copied for one second.
+    pub fn mark_reply_copied(&mut self, block: usize) {
+        self.copied_replies
+            .insert(block, Instant::now() + Duration::from_secs(1));
+    }
+
+    /// Whether `block` still shows the copy confirmation.
+    pub fn reply_copied(&self, block: usize) -> bool {
+        self.copied_replies
+            .get(&block)
+            .is_some_and(|until| *until > Instant::now())
     }
 
     /// Picks out the text from `anchor` to `head`.
     pub fn select(&mut self, anchor: Spot, head: Spot) {
-        self.selection = Some((anchor, head));
+        self.selection.select(anchor, head);
     }
 
     /// Lets go of what was picked out of the conversation.
     pub fn clear_selection(&mut self) {
-        self.selection = None;
+        self.selection.clear();
     }
 
     /// Scrolls the pane `pixels` down, or up when negative, no further than
@@ -908,11 +1140,64 @@ impl Talk {
 
     /// Opens or closes the details starting at `block`.
     pub fn toggle_details(&mut self, block: usize) {
-        self.selection = None;
+        self.selection.clear();
         if !self.expanded_details.insert(block) {
             self.expanded_details.remove(&block);
         }
         self.shown_revision += 1;
+    }
+
+    /// The identities registered by visible tool-card controls.
+    pub fn drawn_cards(&self) -> &RefCell<Vec<String>> {
+        &self.drawn_cards
+    }
+
+    /// Whether a tool card shows its entire output and children.
+    pub fn card_expanded(&self, id: &str) -> bool {
+        self.expanded_cards.contains(id)
+    }
+
+    /// Toggles a single tool card without changing its group.
+    pub fn toggle_card(&mut self, id: &str) {
+        self.selection.clear();
+        if !self.expanded_cards.insert(id.to_owned()) {
+            self.expanded_cards.remove(id);
+        }
+        self.shown_revision += 1;
+    }
+
+    /// Expands every group, thought and card, or collapses all open details.
+    pub fn toggle_all_details(&mut self) {
+        let mut groups = BTreeSet::new();
+        let mut cards = BTreeSet::new();
+        for (at, block) in self.transcript.blocks().iter().enumerate() {
+            match block {
+                Block::Said(Voice::Thought, _) => {
+                    groups.insert(at);
+                }
+                Block::Ran(call) => {
+                    if at == 0 || !matches!(self.transcript.blocks()[at - 1], Block::Ran(_)) {
+                        groups.insert(at);
+                    }
+                    self.collect_cards(call, &mut cards);
+                }
+                _ => {}
+            }
+        }
+        let collapse =
+            groups.is_subset(&self.expanded_details) && cards.is_subset(&self.expanded_cards);
+        self.expanded_details = if collapse { BTreeSet::new() } else { groups };
+        self.expanded_cards = if collapse { BTreeSet::new() } else { cards };
+        self.selection.clear();
+        self.shown_revision += 1;
+    }
+
+    /// Collects the identities of a card and every nested descendant.
+    fn collect_cards(&self, call: &ToolCall, cards: &mut BTreeSet<String>) {
+        cards.insert(call.id.clone());
+        for child in self.transcript.children(&call.id) {
+            self.collect_cards(child, cards);
+        }
     }
 
     /// Counts the changes to what the pane shows that the transcript does
@@ -932,6 +1217,9 @@ impl Talk {
     /// echoes it: an agent is not obliged to say back what it was told, and
     /// a reader who has pressed Enter should see what they sent.
     pub fn send(&mut self) {
+        if self.busy || !self.logins.is_empty() {
+            return;
+        }
         let text = self.prompt.value().trim().to_owned();
         if text.is_empty() && self.attachments.is_empty() {
             return;
@@ -992,6 +1280,9 @@ impl Talk {
 
     /// Sends text and prepared attachments without changing the desktop draft.
     pub fn send_text_with_attachments(&mut self, text: &str, attachments: Vec<Attachment>) {
+        if self.busy || !self.logins.is_empty() {
+            return;
+        }
         if text.trim().is_empty() && attachments.is_empty() {
             return;
         }
@@ -1012,21 +1303,142 @@ impl Talk {
         self.deliver(text, attachments);
     }
 
+    /// Queues a bounded follow-up through the normal prompt and checkpoint seam.
+    pub fn message(&mut self, text: &str, limit: usize) -> Result<bool, String> {
+        if !self.is_running() || !self.ready {
+            return Err(
+                "The target agent is not ready; open its pane to reconnect or log in".to_owned(),
+            );
+        }
+        if self.busy {
+            self.conversation.queue_prompt(text, limit)?;
+            self.queued_messages += 1;
+            self.transcript
+                .note("A delegated follow-up is queued after this turn.");
+            Ok(true)
+        } else {
+            self.send_text(text);
+            Ok(false)
+        }
+    }
+
+    /// Clears queued follow-ups when cancellation or failure prevents delivery.
+    fn clear_messages(&mut self) {
+        self.conversation.clear_prompts();
+        if self.queued_messages > 0 {
+            self.queued_messages = 0;
+            self.transcript
+                .note("Queued delegated messages were discarded; send them again after recovery.");
+        }
+    }
+
     /// Hands `text` and its `attachments` to the agent, and has the
     /// conversation wait on the turn that follows.
     fn deliver(&mut self, text: &str, attachments: Vec<Attachment>) {
-        self.conversation.prompt(text, attachments);
+        self.pending_prompt = Some((text.to_owned(), attachments));
+        self.finished_calls.clear();
+        self.active_calls.clear();
+        self.overlapping.clear();
+        (self.notify)();
         self.chosen = 0;
         self.dismissed = false;
         self.busy = true;
-        self.busy_since = Some(Instant::now());
+        self.busy_since = None;
         self.unseen = false;
         self.following = true;
     }
 
+    /// Whether filesystem-changing tools are still running at a snapshot boundary.
+    pub(crate) fn has_active_file_tools(&self) -> bool {
+        !self.active_calls.is_empty()
+    }
+
+    /// Delivers the pending prompt only after its baseline has been captured.
+    pub(crate) fn checkpoint_ready(&mut self, turn: u64) {
+        if let Some(block) = self
+            .transcript
+            .blocks()
+            .iter()
+            .rposition(|block| matches!(block, Block::Said(Voice::Reader, _)))
+        {
+            if turn > 0 {
+                self.checkpoint_turns.insert(block, turn);
+            }
+            self.shown_revision += 1;
+        }
+        if let Some((mut text, attachments)) = self.pending_prompt.take() {
+            if let Some(note) = self.rewind_note.take() {
+                text = format!("{note}\n{text}");
+            }
+            if let Some(context) = self.context.take() {
+                text = format!("{context}{text}");
+            }
+            self.busy_since = Some(Instant::now());
+            self.conversation.prompt(&text, attachments);
+        }
+    }
+
+    /// Cancels delivery when a filesystem baseline could not be captured.
+    pub(crate) fn checkpoint_failed(&mut self) {
+        self.clear_messages();
+        if let Some((text, attachments)) = self.pending_prompt.take() {
+            if self.prompt.value().is_empty() {
+                self.prompt.set(&text);
+            }
+            self.attachment_previews
+                .extend(std::iter::repeat_n(None, attachments.len()));
+            self.attachments.extend(attachments);
+        }
+        self.busy = false;
+        self.busy_since = None;
+        self.transcript
+            .note("Prompt was not sent because its checkpoint failed.");
+    }
+
+    /// Expands the enclosing group and call before calculating its transcript offset.
+    pub(crate) fn expand_checkpoint_tool(&mut self, id: &str) {
+        if let Some(block) = self
+            .transcript
+            .blocks()
+            .iter()
+            .position(|block| matches!(block, Block::Ran(call) if call.id == id))
+        {
+            let start = self.transcript.blocks()[..block]
+                .iter()
+                .rposition(|block| !matches!(block, Block::Ran(_)))
+                .map_or(0, |block| block + 1);
+            self.expanded_details.insert(start);
+            self.expanded_cards.insert(id.to_owned());
+            self.shown_revision += 1;
+        }
+    }
+
+    /// Reveals a tool call without continuing to follow the transcript tail.
+    pub(crate) fn reveal_tool(&mut self, id: &str, offset: f32) {
+        self.expand_checkpoint_tool(id);
+        self.following = false;
+        self.scroll = offset.max(0.0);
+    }
+
+    /// Records a filesystem rewind without claiming to rewind provider context.
+    pub(crate) fn rewound(&mut self, turn: u64) {
+        let note = format!("Worktree rewound to the end of turn {turn}");
+        self.transcript.note(&note);
+        self.rewind_note = Some(format!(
+            "{note}. Your conversation context has not been rewound."
+        ));
+    }
+
     /// Stops the turn that is running.
-    pub fn cancel(&self) {
-        self.conversation.cancel();
+    pub fn cancel(&mut self) {
+        self.clear_messages();
+        if self.pending_prompt.take().is_some() {
+            self.busy = false;
+            self.busy_since = None;
+            self.transcript.note("Stopped before sending the prompt.");
+        } else {
+            self.conversation.cancel();
+        }
     }
 
     /// Answers the permission request `ask` with the choice in `place`.
@@ -1038,17 +1450,127 @@ impl Talk {
             return;
         };
         let waiting = self.asks.remove(at);
+        self.cursor = 0;
         match waiting.choices.get(place) {
             Some(choice) => self.conversation.allow(ask, &choice.id),
             None => self.conversation.refuse(ask),
         }
     }
 
+    /// What is waiting on the reader in front of everything else: the
+    /// oldest permission request, then the oldest question, then a login.
+    pub fn pending(&self) -> Option<Pending> {
+        if let Some(ask) = self.asks.first() {
+            return Some(Pending::Ask(ask.id));
+        }
+        if let Some(form) = self.forms.first() {
+            return Some(Pending::Form(form.id()));
+        }
+        (!self.logins.is_empty()).then_some(Pending::Login)
+    }
+
+    /// The row of the card in front that the keyboard is on.
+    pub fn pending_cursor(&self) -> usize {
+        match self.pending() {
+            Some(Pending::Form(_)) => self.forms.first().map_or(0, Form::cursor),
+            Some(Pending::Ask(_) | Pending::Login) => self.cursor,
+            None => 0,
+        }
+    }
+
+    /// Moves the keyboard `by` rows through the card in front, round from
+    /// the last to the first.
+    pub fn step_pending(&mut self, by: isize) {
+        let count = match self.pending() {
+            Some(Pending::Form(_)) => {
+                if let Some(form) = self.forms.first_mut() {
+                    form.step(by);
+                }
+                return;
+            }
+            Some(Pending::Ask(_)) => self.asks.first().map_or(0, |ask| ask.choices.len()),
+            Some(Pending::Login) => self.logins.len(),
+            None => return,
+        };
+        self.cursor = (self.cursor as isize + by).rem_euclid(count.max(1) as isize) as usize;
+    }
+
+    /// Refuses the permission request `ask`, this once where the agent offers
+    /// that, and by the protocol's own refusal where it offers no way to.
+    pub fn deny(&mut self, ask: u64) {
+        let Some(waiting) = self.asks.iter().find(|waiting| waiting.id == ask) else {
+            return;
+        };
+        let place = [Weight::RejectOnce, Weight::RejectAlways]
+            .iter()
+            .find_map(|weight| {
+                waiting
+                    .choices
+                    .iter()
+                    .position(|choice| choice.kind == *weight)
+            })
+            .unwrap_or(usize::MAX);
+        self.answer(ask, place);
+    }
+
+    /// The questions waiting on the reader.
+    pub fn forms(&self) -> &[Form] {
+        &self.forms
+    }
+
+    /// The form waiting under `ticket`, to be filled in.
+    pub fn form_mut(&mut self, ticket: u64) -> Option<&mut Form> {
+        self.forms.iter_mut().find(|form| form.id() == ticket)
+    }
+
+    /// Answers the question waiting under `ticket` with `reply`, and takes it off the list.
+    ///
+    /// A question is answered once: the agent is waiting on one reply and gets one.
+    pub fn reply(&mut self, ticket: u64, reply: &Reply) {
+        let Some(at) = self.forms.iter().position(|form| form.id() == ticket) else {
+            return;
+        };
+        self.forms.remove(at);
+        self.conversation.reply(ticket, reply);
+    }
+
     /// Takes in one thing the agent said.
     fn take(&mut self, event: Event) {
         match event {
+            Event::PromptReady(message) => {
+                self.queued_messages = self.queued_messages.saturating_sub(1);
+                self.send_text(&message);
+            }
             Event::Ready => {
                 self.ready = true;
+                if self
+                    .mcp_servers()
+                    .iter()
+                    .any(|server| server.name == "pandemonium-sessions" && !server.given)
+                {
+                    self.transcript.note("Editor session orchestration is unsupported: this adapter does not advertise MCP HTTP support. Choose an HTTP-capable adapter to delegate sessions.");
+                }
+                if let Some(source) = self.fork_source.take() {
+                    self.fork = self
+                        .resumable()
+                        .map(|destination| pm_core::ConversationFork {
+                            agent: self.agent().id.to_owned(),
+                            source,
+                            message_id: self.fork_message.take(),
+                            destination,
+                            shared_root: self.root().to_path_buf(),
+                        });
+                    let history = if self
+                        .fork
+                        .as_ref()
+                        .is_some_and(|fork| fork.message_id.is_some())
+                    {
+                        "Native conversation fork through the selected reply."
+                    } else {
+                        "Native whole-session fork."
+                    };
+                    self.transcript.note(format!("{history} Files are shared with the source; no filesystem snapshot or rewind was applied."));
+                }
                 self.logins.clear();
             }
             Event::Listed(page, more) => {
@@ -1059,7 +1581,18 @@ impl Talk {
                 self.history_error = Some(error);
                 self.listing = false;
             }
-            Event::Login(methods) => {
+            Event::Login(mut methods) => {
+                self.ready = false;
+                self.busy = false;
+                self.busy_since = None;
+                self.clear_messages();
+                self.pending_prompt = None;
+                self.transcript.finish_thought();
+                if self.profile.is_some() && self.agent().id == "claude-code" {
+                    methods.retain(|method| {
+                        matches!(method.id.as_str(), "claude-ai-login" | "claude-login")
+                    });
+                }
                 let note = match methods.is_empty() {
                     true => format!(
                         "{} needs logging in, and offers no way the editor can do it.",
@@ -1069,26 +1602,72 @@ impl Talk {
                 };
                 self.transcript.note(note);
                 self.logins = methods;
+                self.cursor = 0;
             }
-            Event::Said(voice, text) => self.transcript.say(voice, &text),
-            Event::Ran(call) => self.transcript.ran(call),
+            Event::Said(voice, text, message) => {
+                self.transcript.say_identified(voice, &text, message)
+            }
+            Event::Ran(call) => {
+                if call.subagent {
+                    if call.is_running() {
+                        self.background.insert(
+                            format!("agent:{}", call.id),
+                            format!(
+                                "Subagent · {}",
+                                call.argument.as_deref().unwrap_or(&call.title)
+                            ),
+                        );
+                    } else {
+                        self.background.remove(&format!("agent:{}", call.id));
+                    }
+                }
+                if call.status == Status::Failed && self.opened_failures.insert(call.id.clone()) {
+                    self.expanded_cards.insert(call.id.clone());
+                }
+                self.transcript.ran(call);
+            }
+            Event::Background(shell) => {
+                if shell.running {
+                    self.background.insert(
+                        format!("shell:{}", shell.id),
+                        format!("Shell · {}", shell.label),
+                    );
+                } else {
+                    self.background.remove(&format!("shell:{}", shell.id));
+                }
+            }
             Event::Planned(steps) => self.transcript.planned(steps),
             Event::Offers(commands) => self.commands = commands,
             Event::Mode(mode) => self.mode = Some(mode),
             Event::Knobs(_) => {}
             Event::Titled(title) => self.title = Some(title).filter(|title| !title.is_empty()),
             Event::Used(usage) => self.usage = Some(usage),
-            Event::Asked(ask) => self.asks.push(ask),
+            Event::Limited(limits) => self.limits = Some(limits),
+            Event::Asked(ask) => {
+                if self.asks.is_empty() {
+                    self.cursor = 0;
+                }
+                self.asks.push(ask);
+            }
+            Event::Elicited(elicitation) => self.forms.push(Form::new(elicitation)),
+            Event::Concluded(id) => self
+                .forms
+                .retain(|form| form.link().is_none_or(|link| link.id != id)),
             Event::Requested(..) => {}
             Event::Stopped(stop) => {
+                self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
                 self.unseen = stop != Stop::Cancelled;
                 if stop != Stop::EndTurn {
+                    self.clear_messages();
                     self.transcript.note(note(stop));
                 }
             }
             Event::Failed(trouble) => {
+                self.clear_messages();
+                self.pending_prompt = None;
+                self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
                 self.unseen = true;
@@ -1111,7 +1690,26 @@ impl Talk {
                         .any(|command| command.name.eq_ignore_ascii_case("compact"));
                 self.transcript.failure(message, compact);
             }
+            Event::Fresh => self
+                .transcript
+                .note("The agent could not carry on the old conversation, so this one is new."),
+            Event::LoggedOut => {
+                self.background.clear();
+                self.ready = false;
+                self.remember_on_ready = true;
+                self.busy = false;
+                self.busy_since = None;
+                self.fork = None;
+                self.fork_source = None;
+                self.fork_message = None;
+                self.transcript.note("Logged out.");
+            }
+            Event::Deleted(id) => self.history.retain(|saved| saved.id != id),
             Event::Ended => {
+                self.background.clear();
+                self.clear_messages();
+                self.pending_prompt = None;
+                self.transcript.finish_thought();
                 self.busy = false;
                 self.busy_since = None;
                 self.ready = false;
@@ -1242,17 +1840,31 @@ fn mentioned(root: &Path, text: &str) -> Vec<PathBuf> {
 }
 
 /// Finds skills Codex can invoke from the user's and worktree's skill folders.
-fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
+fn installed_skills(root: &Path, agent: Agent, environment: &[(String, String)]) -> Vec<Command> {
     if agent.id != "codex" {
         return Vec::new();
     }
     let mut folders = Vec::new();
     if let Some(home) = env::home_dir() {
-        folders.push(home.join(".codex/skills"));
         folders.push(home.join(".agents/skills"));
     }
-    if let Some(home) = env::var_os("CODEX_HOME") {
-        folders.push(std::path::PathBuf::from(home).join("skills"));
+    let home = environment
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "CODEX_HOME")
+        .map(|(_, value)| PathBuf::from(value))
+        .or_else(|| {
+            agent
+                .env
+                .iter()
+                .rev()
+                .find(|(key, _)| *key == "CODEX_HOME")
+                .map(|(_, value)| PathBuf::from(value))
+        })
+        .or_else(|| env::var_os("CODEX_HOME").map(PathBuf::from))
+        .or_else(|| Some(env::home_dir()?.join(".codex")));
+    if let Some(home) = home {
+        folders.push(home.join("skills"));
     }
     folders.push(root.join(".codex/skills"));
     folders.push(root.join(".agents/skills"));
@@ -1295,15 +1907,23 @@ fn installed_skills(root: &Path, agent: Agent) -> Vec<Command> {
 enum Opening<'a> {
     /// Start a new conversation.
     New,
+    /// Fork a native conversation, optionally through a selected provider message.
+    Fork(&'a str, Option<&'a str>),
+    /// Restore an exact identity without falling back to a new conversation.
+    Strict(&'a str),
+    /// Offer login before opening a new conversation.
+    Login,
     /// Restore a saved pane, falling back to a fresh conversation.
     Restore(&'a str),
-    /// Load a chosen saved conversation exactly.
-    Exact(&'a str),
+    /// Load a chosen saved conversation exactly into an existing chat.
+    Exact(TalkId, &'a str),
 }
 
 /// Every agent session the window is running.
 #[derive(Default)]
 pub struct Talks {
+    /// The editor-owned server factory, bound to a freshly allocated conversation id.
+    mcp: Option<McpFactory>,
     /// The sessions, by the id each was handed.
     talks: BTreeMap<TalkId, Talk>,
     /// The id the next session started will be given.
@@ -1322,9 +1942,16 @@ pub struct Talks {
     /// The file and terminal requests the agents have raised and the window
     /// has not yet taken, with the ticket each is answered under.
     requests: Vec<(TalkId, u64, Request)>,
+    /// Filesystem boundaries to capture in protocol order.
+    pub(crate) checkpoint_moments: Vec<(TalkId, Option<pm_acp::ToolCall>)>,
 }
 
 impl Talks {
+    /// Offers each new conversation a separately authenticated editor server.
+    pub fn set_mcp(&mut self, factory: McpFactory) {
+        self.mcp = Some(factory);
+    }
+
     /// Wakes the window through `notify` whenever an agent says something.
     pub fn set_notify(&mut self, notify: Notify) {
         self.notify = Some(notify);
@@ -1342,6 +1969,18 @@ impl Talks {
         self.open(project, session, root, env, agent, Opening::New)
     }
 
+    /// Starts the provider's login before opening a conversation in this worktree.
+    pub fn authenticate(
+        &mut self,
+        project: ProjectId,
+        session: Option<SessionId>,
+        root: &Path,
+        env: &[(String, String)],
+        agent: Agent,
+    ) -> Option<TalkId> {
+        self.open(project, session, root, env, agent, Opening::Login)
+    }
+
     /// Takes the conversation `resume` names up again, in a session of its own.
     pub fn resume(
         &mut self,
@@ -1355,17 +1994,82 @@ impl Talks {
         self.open(project, session, root, env, agent, Opening::Restore(resume))
     }
 
-    /// Loads a saved conversation without substituting a new one if it fails.
-    pub fn load(
+    /// Forks an idle native conversation, retaining its project, files and account.
+    pub fn fork(&mut self, source: TalkId, block: Option<usize>) -> Option<TalkId> {
+        let talk = self.get(source).filter(|talk| talk.can_fork())?;
+        let message = match block {
+            Some(block) if talk.can_fork_reply(block) => {
+                Some(talk.transcript.message_id(block)?.to_owned())
+            }
+            Some(_) => return None,
+            None => None,
+        };
+        let (project, session, root, env, agent, provider, profile) = (
+            talk.project,
+            talk.session,
+            talk.root().to_path_buf(),
+            talk.env.clone(),
+            talk.agent(),
+            talk.resumable()?,
+            talk.profile.clone(),
+        );
+        let id = self.open(
+            project,
+            session,
+            &root,
+            &env,
+            agent,
+            Opening::Fork(&provider, message.as_deref()),
+        )?;
+        self.get_mut(id)?.set_profile(profile);
+        Some(id)
+    }
+
+    /// Restores a fork's exact destination without substituting a fresh conversation.
+    pub fn restore_fork(
         &mut self,
-        project: ProjectId,
-        session: Option<SessionId>,
+        scope: Scope,
         root: &Path,
         env: &[(String, String)],
         agent: Agent,
-        saved: &str,
+        destination: &str,
     ) -> Option<TalkId> {
-        self.open(project, session, root, env, agent, Opening::Exact(saved))
+        self.open(
+            scope.project(),
+            scope.session(),
+            root,
+            env,
+            agent,
+            Opening::Strict(destination),
+        )
+    }
+
+    /// Loads a saved conversation into `id`, keeping its existing chat tab.
+    pub fn load(&mut self, id: TalkId, env: &[(String, String)], saved: &str) -> bool {
+        let Some(talk) = self.talks.get(&id) else {
+            return false;
+        };
+        let (project, session, root, agent) = (
+            talk.project,
+            talk.session,
+            talk.root().to_path_buf(),
+            talk.agent(),
+        );
+        let profile = talk.profile.clone();
+        let loaded = self
+            .open(
+                project,
+                session,
+                &root,
+                env,
+                agent,
+                Opening::Exact(id, saved),
+            )
+            .is_some();
+        if loaded && let Some(talk) = self.talks.get_mut(&id) {
+            talk.profile = profile;
+        }
+        loaded
     }
 
     /// Opens an agent conversation with the requested load behavior.
@@ -1379,12 +2083,38 @@ impl Talks {
         opening: Opening<'_>,
     ) -> Option<TalkId> {
         let notify = self.notify.clone()?;
-        let remember_on_ready = matches!(opening, Opening::New);
-        let started = match opening {
-            Opening::Exact(saved) => Session::load(agent, root, env, saved, notify.clone()),
-            Opening::Restore(saved) => Session::resume(agent, root, env, saved, notify.clone()),
-            Opening::New => Session::start(agent, root, env, notify.clone()),
+        let remember_on_ready = matches!(opening, Opening::New | Opening::Login);
+        let id = match opening {
+            Opening::Exact(id, _) => id,
+            _ => {
+                let id = self.next;
+                self.next = TalkId(id.0 + 1);
+                id
+            }
         };
+        let mcp = match self.talks.get(&id) {
+            Some(talk) => talk.mcp.clone(),
+            None => match self.mcp.as_ref().map(|factory| factory(id)).transpose() {
+                Ok(server) => server.into_iter().collect::<Vec<_>>(),
+                Err(error) => {
+                    eprintln!("Could not authenticate editor MCP tools: {error}");
+                    return None;
+                }
+            },
+        };
+        let requested = match opening {
+            Opening::Fork(source, None) => pm_acp::Conversation::Fork(source.to_owned()),
+            Opening::Fork(source, Some(message)) => {
+                pm_acp::Conversation::ForkAt(source.to_owned(), message.to_owned())
+            }
+            Opening::Strict(saved) | Opening::Exact(_, saved) => {
+                pm_acp::Conversation::Load(saved.to_owned())
+            }
+            Opening::Restore(saved) => pm_acp::Conversation::Restore(saved.to_owned()),
+            Opening::New => pm_acp::Conversation::New,
+            Opening::Login => pm_acp::Conversation::Login,
+        };
+        let started = configured_session(agent, root, env, requested, mcp.clone(), notify.clone());
         let conversation = match started {
             Ok(conversation) => conversation,
             Err(error) => {
@@ -1397,18 +2127,36 @@ impl Talks {
             }
         };
 
-        let id = self.next;
-        self.next = TalkId(id.0 + 1);
         self.talks.insert(
             id,
             Talk {
+                mcp,
+                queued_messages: 0,
+                fork: None,
+                fork_source: match opening {
+                    Opening::Fork(source, _) => Some(source.to_owned()),
+                    _ => None,
+                },
+                fork_message: match opening {
+                    Opening::Fork(_, message) => message.map(str::to_owned),
+                    _ => None,
+                },
+                pending_prompt: None,
+                finished_calls: BTreeSet::new(),
+                active_calls: BTreeSet::new(),
+                overlapping: BTreeSet::new(),
+                checkpoint_turns: BTreeMap::new(),
+                rewind_note: None,
+                context: None,
                 id,
                 project,
                 session,
                 conversation,
+                profile: None,
                 env: env.to_vec(),
                 logins: Vec::new(),
                 transcript: Transcript::default(),
+                background: BTreeMap::new(),
                 prompt: Input::many_lines("Prompt"),
                 attachments: Vec::new(),
                 attachment_previews: Vec::new(),
@@ -1416,8 +2164,10 @@ impl Talks {
                 next_preview: 0,
                 clipboard_files: Vec::new(),
                 asks: Vec::new(),
+                cursor: 0,
+                forms: Vec::new(),
                 commands: Vec::new(),
-                skills: installed_skills(root, agent),
+                skills: installed_skills(root, agent, env),
                 history: Vec::new(),
                 listing: false,
                 history_error: None,
@@ -1433,16 +2183,25 @@ impl Talks {
                 mode: None,
                 title: None,
                 usage: None,
+                limits: None,
                 scroll: 0.0,
                 view: Bounds::default(),
                 drawn_height: Rc::default(),
                 drawn_width: Rc::default(),
+                command_scroll: Scrolled::default(),
+                command_view: Bounds::default(),
+                command_drag_origin: None,
+                command_revealed: Cell::default(),
                 drawn_links: Rc::default(),
+                drawn_cards: RefCell::default(),
                 drawn_text: Rc::default(),
                 drawn_spots: Rc::default(),
-                selection: None,
+                selection: Selection::default(),
+                copied_replies: BTreeMap::new(),
                 following: true,
                 expanded_details: BTreeSet::new(),
+                expanded_cards: BTreeSet::new(),
+                opened_failures: BTreeSet::new(),
                 shown_revision: 0,
                 wrapped: RefCell::default(),
                 terminals: BTreeMap::new(),
@@ -1451,8 +2210,68 @@ impl Talks {
         Some(id)
     }
 
-    /// Starts the agent of the conversation `id` names again, in a new
-    /// conversation, answering whether it started.
+    /// Replaces an idle conversation with retained context before the selected reader prompt.
+    pub fn rewind(&mut self, id: TalkId, at: usize) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        if !talk.can_rewind() {
+            return false;
+        }
+        let Some(Block::Said(Voice::Reader, prompt)) = talk.transcript.blocks().get(at) else {
+            return false;
+        };
+        let prompt = prompt.clone();
+        let context = talk.transcript.context_before(at);
+        let conversation = match configured_session(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            pm_acp::Conversation::New,
+            talk.mcp.clone(),
+            notify,
+        ) {
+            Ok(conversation) => conversation,
+            Err(error) => {
+                talk.transcript
+                    .note(format!("Could not rewind conversation context: {error}"));
+                return false;
+            }
+        };
+        talk.clear_messages();
+        talk.conversation = conversation;
+        talk.fork = None;
+        talk.fork_source = None;
+        talk.fork_message = None;
+        talk.ready = false;
+        talk.remember_on_ready = true;
+        talk.mode = None;
+        talk.usage = None;
+        talk.commands.clear();
+        talk.logins.clear();
+        talk.asks.clear();
+        talk.forms.clear();
+        talk.background.clear();
+        talk.terminals.clear();
+        talk.checkpoint_turns.retain(|block, _| *block < at);
+        talk.transcript.rewind(at);
+        talk.restore_context(context, &prompt);
+        talk.attachments.clear();
+        talk.attachment_previews.clear();
+        talk.clear_selection();
+        talk.copied_replies.clear();
+        talk.expanded_details.clear();
+        talk.expanded_cards.clear();
+        talk.opened_failures.clear();
+        talk.shown_revision += 1;
+        talk.following = true;
+        true
+    }
+
+    /// Starts the agent after terminal login, retaining an existing conversation.
     ///
     /// This is what follows a login the agent had the reader do outside it:
     /// the agent reads what the login left behind only when it starts.
@@ -1463,8 +2282,17 @@ impl Talks {
         let Some(talk) = self.talks.get_mut(&id) else {
             return false;
         };
-        match Session::start(talk.agent(), talk.root(), &talk.env, notify) {
+        let requested = talk.reconnection().unwrap_or(pm_acp::Conversation::New);
+        match configured_session(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            requested,
+            talk.mcp.clone(),
+            notify,
+        ) {
             Ok(conversation) => {
+                talk.skills = installed_skills(talk.root(), talk.agent(), &talk.env);
                 talk.conversation = conversation;
                 talk.ready = false;
                 talk.remember_on_ready = true;
@@ -1472,7 +2300,52 @@ impl Talks {
                 talk.busy_since = None;
                 talk.logins.clear();
                 talk.asks.clear();
+                talk.forms.clear();
                 talk.transcript.note("Logged in. Starting the agent again…");
+                true
+            }
+            Err(error) => {
+                talk.transcript
+                    .note(format!("The agent would not start again: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Starts the agent of the conversation `id` names again and carries on
+    /// the conversation it was in, answering whether it started.
+    ///
+    /// The transcript stays as it is: the agent is asked to resume rather
+    /// than to replay. An agent that has not said anything yet has no
+    /// conversation to carry on and is not started again.
+    pub fn reconnect(&mut self, id: TalkId) -> bool {
+        let Some(notify) = self.notify.clone() else {
+            return false;
+        };
+        let Some(talk) = self.talks.get_mut(&id) else {
+            return false;
+        };
+        let Some(requested) = talk.reconnection() else {
+            return false;
+        };
+        let restored = configured_session(
+            talk.agent(),
+            talk.root(),
+            &talk.env,
+            requested,
+            talk.mcp.clone(),
+            notify,
+        );
+        match restored {
+            Ok(session) => {
+                talk.skills = installed_skills(talk.root(), talk.agent(), &talk.env);
+                talk.conversation = session;
+                talk.ready = false;
+                talk.busy = false;
+                talk.busy_since = None;
+                talk.asks.clear();
+                talk.forms.clear();
+                talk.transcript.note("Reconnecting to the agent…");
                 true
             }
             Err(error) => {
@@ -1499,9 +2372,35 @@ impl Talks {
             .map(Talk::id)
     }
 
+    /// Clears transcript selections when another reading surface takes focus.
+    pub fn clear_selections(&mut self) {
+        for talk in self.talks.values_mut() {
+            talk.clear_selection();
+        }
+    }
+
     /// Every conversation in the window, across all its projects.
     pub fn iter(&self) -> impl Iterator<Item = &Talk> {
         self.talks.values()
+    }
+
+    /// The next deadline at which a reply's copy confirmation disappears.
+    pub fn next_copy_expiry(&self) -> Option<Instant> {
+        self.talks
+            .values()
+            .flat_map(|talk| talk.copied_replies.values().copied())
+            .min()
+    }
+
+    /// Clears expired copy confirmations and reports whether any changed.
+    pub fn expire_copied_replies(&mut self, now: Instant) -> bool {
+        let mut expired = false;
+        for talk in self.talks.values_mut() {
+            let before = talk.copied_replies.len();
+            talk.copied_replies.retain(|_, until| *until > now);
+            expired |= talk.copied_replies.len() != before;
+        }
+        expired
     }
 
     /// The conversation `id` names.
@@ -1512,16 +2411,6 @@ impl Talks {
     /// The conversation `id` names, to act on.
     pub fn get_mut(&mut self, id: TalkId) -> Option<&mut Talk> {
         self.talks.get_mut(&id)
-    }
-
-    /// Finds a conversation already open for this agent, worktree and saved id.
-    pub fn find_saved(&self, scope: Scope, agent: Agent, saved: &str) -> Option<TalkId> {
-        self.talks.values().find_map(|talk| {
-            (talk.scope() == scope
-                && talk.agent() == agent
-                && talk.resumable().as_deref() == Some(saved))
-            .then_some(talk.id())
-        })
     }
 
     /// Ends every session but the ones `held` names.
@@ -1604,6 +2493,40 @@ impl Talks {
                 if matches!(event, Event::Stopped(Stop::EndTurn)) {
                     self.turns.push(talk.scope());
                 }
+                if talk.is_busy()
+                    && matches!(
+                        event,
+                        Event::Stopped(_) | Event::Failed(_) | Event::Login(_) | Event::Ended
+                    )
+                {
+                    self.checkpoint_moments.push((talk.id, None));
+                }
+                if let Event::Ran(call) = &event {
+                    let writes = matches!(
+                        call.kind,
+                        pm_acp::Kind::Edit
+                            | pm_acp::Kind::Delete
+                            | pm_acp::Kind::Move
+                            | pm_acp::Kind::Execute
+                            | pm_acp::Kind::Other
+                    );
+                    if writes && talk.is_busy() {
+                        if !matches!(call.status, Status::Done | Status::Failed) {
+                            talk.active_calls.insert(call.id.clone());
+                            if talk.active_calls.len() > 1 {
+                                talk.overlapping.extend(talk.active_calls.iter().cloned());
+                            }
+                        } else if talk.finished_calls.insert(call.id.clone()) {
+                            talk.active_calls.remove(&call.id);
+                            let mut call = call.clone();
+                            if talk.overlapping.contains(&call.id) {
+                                call.id.clear();
+                                call.title = "Overlapping tool activity".to_owned();
+                            }
+                            self.checkpoint_moments.push((talk.id, Some(call)));
+                        }
+                    }
+                }
                 talk.take(event);
                 changed = true;
             }
@@ -1651,4 +2574,17 @@ fn ended(session: &Session) -> String {
         true => "The agent has stopped.".to_owned(),
         false => format!("The agent has stopped: {last}"),
     }
+}
+
+/// Prepares the selected account's global setup before every ACP process launch.
+fn configured_session(
+    agent: Agent,
+    root: &Path,
+    environment: &[(String, String)],
+    conversation: pm_acp::Conversation,
+    servers: Vec<pm_acp::McpServer>,
+    notify: Notify,
+) -> std::io::Result<Session> {
+    crate::config::prepare_account(agent, environment)?;
+    Session::configured(agent, root, environment, conversation, servers, notify)
 }

@@ -10,7 +10,7 @@ use pm_ui::{Div, Styled, Theme, h_flex, text, v_flex};
 
 use crate::input::text_view;
 use crate::message::Message;
-use crate::review::comment::{Comment, CommentId, Composing, Side, State};
+use crate::review::comment::{Anchor, Comment, CommentId, Composing, Side, State};
 use crate::review::pane::worded;
 
 /// How many characters of a comment's body are drawn before it wraps.
@@ -44,10 +44,10 @@ impl Delivery {
     }
 }
 
-/// How many rows the box a comment is written in takes up, its buttons
-/// included.
+/// How many rows the box a comment is written in takes up, including its
+/// line range and buttons.
 pub const fn composer_rows() -> usize {
-    COMPOSER_TEXT_ROWS + 1
+    COMPOSER_TEXT_ROWS + 2
 }
 
 /// The lines a comment's body is drawn as, wrapped where it is long.
@@ -82,8 +82,7 @@ pub fn block_rows(comment: &Comment) -> usize {
 }
 
 /// Where a comment is, in words.
-fn placed(comment: &Comment) -> String {
-    let anchor = &comment.anchor;
+fn placed(anchor: &Anchor) -> String {
     let lines = match anchor.first == anchor.last {
         true => format!("line {}", anchor.first),
         false => format!("lines {}-{}", anchor.first, anchor.last),
@@ -144,7 +143,7 @@ pub fn comment_block(
         .overflow_hidden()
         .child(text(label).text_xs().font_semibold().color(color))
         .child(
-            text(placed(comment))
+            text(placed(&comment.anchor))
                 .text_xs()
                 .font_mono()
                 .color(theme.colors.text_subtle),
@@ -214,6 +213,7 @@ pub fn composer_block(
     solid: bool,
 ) -> Div<Message> {
     let editing = composing.editing.is_some();
+    let range = format!("Commenting on {}", placed(&composing.anchor));
     let lines = COMPOSER_TEXT_ROWS as f32 * unit / theme.size.control;
     let text_box = text_view(
         theme,
@@ -262,6 +262,13 @@ pub fn composer_block(
                 .border_side(pm_ui::Side::Left, EDGE, theme.colors.accent)
                 .px(1.5)
                 .overflow_hidden()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .h_px(unit)
+                        .items_center()
+                        .child(text(range).text_xs().color(theme.colors.accent)),
+                )
                 .child(text_box)
                 .child(footer),
         )

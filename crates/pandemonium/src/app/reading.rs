@@ -26,6 +26,8 @@ use crate::review::{Done, Reading, Work};
 
 /// What one piece of work away from the window came back with.
 enum Back {
+    /// A serialized checkpoint operation and its refreshed durable turn list.
+    Checkpointed(Scope, Box<super::checkpoint::CheckpointBack>),
     /// A worktree's review, read whole.
     Review(Scope, Reading),
     /// How far every session has drifted.
@@ -40,6 +42,8 @@ enum Back {
     Changes(Changes),
     /// A session's worktrees, cut or refused.
     Cut(Result<Cutting, StartError>),
+    /// A caller-bound delegated worktree creation.
+    Delegated(u64, Result<Cutting, StartError>),
     /// A session taken off disk, or why it could not be.
     Finished(SessionId, Result<(), StartError>),
     /// What git said once it had changed a project's branch.
@@ -70,6 +74,8 @@ pub(super) struct Readings {
     again: BTreeSet<Scope>,
     /// The work waiting for its worktree, in the order it was asked for.
     queued: BTreeMap<Scope, VecDeque<Work>>,
+    /// Checkpoint operations sharing the worktree serialization seam.
+    pub(super) checkpoints: BTreeMap<Scope, VecDeque<super::checkpoint::CheckpointWork>>,
     /// The worktrees git is doing something to now.
     working: BTreeSet<Scope>,
     /// The worktrees whose excerpts' last commit is being read now.
@@ -93,6 +99,11 @@ pub(super) struct Readings {
 }
 
 impl App {
+    /// Whether a session is reserved for asynchronous worktree teardown.
+    pub(super) fn session_finishing(&self, session: SessionId) -> bool {
+        self.readings.finishing.contains(&session)
+    }
+
     /// Asks git again what `scope`'s worktree holds, and shows it once git
     /// has answered.
     pub(super) fn reread_review_later(&mut self, scope: Scope) {
@@ -164,8 +175,21 @@ impl App {
 
     /// Starts the next piece of work waiting for `scope`, unless git is
     /// busy with that worktree already.
-    fn work_next(&mut self, scope: Scope) {
+    pub(super) fn work_next(&mut self, scope: Scope) {
         if self.readings.reading.contains(&scope) || self.readings.working.contains(&scope) {
+            return;
+        }
+        if let Some(work) = self
+            .readings
+            .checkpoints
+            .get_mut(&scope)
+            .and_then(VecDeque::pop_front)
+        {
+            let Some(root) = self.root_of(scope) else {
+                return;
+            };
+            self.readings.working.insert(scope);
+            self.spawn_read(move || Back::Checkpointed(scope, Box::new(work.run(&root))));
             return;
         }
         let Some(work) = self
@@ -184,9 +208,14 @@ impl App {
     /// Whether work is waiting for `scope`'s worktree.
     fn has_queued(&self, scope: Scope) -> bool {
         self.readings
-            .queued
+            .checkpoints
             .get(&scope)
             .is_some_and(|queued| !queued.is_empty())
+            || self
+                .readings
+                .queued
+                .get(&scope)
+                .is_some_and(|queued| !queued.is_empty())
     }
 
     /// Asks git again how far every session has drifted, and shows it once
@@ -272,6 +301,7 @@ impl App {
         base: &str,
         chosen: &[PathBuf],
         under: &std::path::Path,
+        delegation: Option<u64>,
     ) {
         let cut = self.sessions.cut_later(
             project,
@@ -281,7 +311,10 @@ impl App {
             under,
             &self.preferences.bootstrap,
         );
-        self.spawn_read(move || Back::Cut(cut()));
+        self.spawn_read(move || match delegation {
+            Some(ticket) => Back::Delegated(ticket, cut()),
+            None => Back::Cut(cut()),
+        });
     }
 
     /// Takes `session`'s worktrees off disk, and everything reading them out
@@ -340,6 +373,16 @@ impl App {
         let any = !done.is_empty();
         for back in done {
             match back {
+                Back::Checkpointed(scope, back) => {
+                    self.readings.working.remove(&scope);
+                    self.take_checkpointed(scope, *back);
+                    if self.has_queued(scope) {
+                        self.work_next(scope);
+                    } else {
+                        self.reread_review_later(scope);
+                    }
+                    self.hear_checkpoint_moments();
+                }
                 Back::Review(scope, reading) => self.take_review(scope, reading),
                 Back::Drift(drifts) => self.take_drift(drifts),
                 Back::Worked(scope, done) => self.take_worked(scope, done),
@@ -358,6 +401,7 @@ impl App {
                     }
                 }
                 Back::Cut(cut) => self.take_cut(cut),
+                Back::Delegated(ticket, cut) => self.take_delegated_cut(ticket, cut),
                 Back::Finished(session, finished) => self.take_finished(session, finished),
                 Back::Branched(project, said) => self.branch_changed(project, said),
                 Back::Bases(project, bases) => self.take_bases(project, bases),
@@ -369,6 +413,9 @@ impl App {
     /// Puts `reading` into `scope`'s review and everything drawn from it.
     fn take_review(&mut self, scope: Scope, reading: Reading) {
         self.readings.reading.remove(&scope);
+        if let Some(review) = self.reviews.get_mut(&scope) {
+            review.checkpoint_scope = Some(scope);
+        }
         if self
             .reviews
             .get_mut(&scope)
@@ -396,8 +443,8 @@ impl App {
         for trouble in done.troubles() {
             self.notices.trouble(
                 trouble,
-                Some(crate::message::Message::SetSidebarView(
-                    crate::workspace::SidebarView::Changes,
+                Some(crate::message::Message::ShowTool(
+                    crate::panes::Tool::Changes,
                 )),
             );
         }
@@ -476,6 +523,7 @@ impl App {
     /// it could not be taken off.
     fn take_finished(&mut self, session: SessionId, finished: Result<(), StartError>) {
         self.readings.finishing.remove(&session);
+        self.delegation_removed(session, &finished);
         match finished {
             Ok(()) => self.forget_session(session),
             Err(trouble) => self.say_trouble("The session could not be finished", &trouble),

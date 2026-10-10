@@ -6,7 +6,10 @@
 //! box is and what its gestures mean; everything else about it is here.
 
 use pm_text::Position;
-use pm_ui::{Div, MenuItem, ResizePhase, Styled, Theme, h_flex, menu_entry, menu_separator};
+use pm_ui::{
+    Div, IntoElement, MenuItem, ResizeEvent, ResizePhase, Styled, Theme, h_flex, menu_entry,
+    menu_separator,
+};
 
 use crate::keymap::Action;
 
@@ -72,6 +75,45 @@ pub fn text_view<M: Clone + 'static>(
     on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
     on_menu: M,
 ) -> Div<M> {
+    boxed(
+        theme,
+        lines,
+        plain_view(text, focused)
+            .caret(focused && solid)
+            .on_select(on_point)
+            .on_menu(on_menu),
+    )
+}
+
+/// Builds the box `input` is written in, one line tall, with `placeholder`
+/// standing in it while it is empty; it is drawn exactly as [`input_view`]
+/// draws one.
+pub fn hinted_input_view<M: Clone + 'static>(
+    theme: &Theme,
+    input: &Input,
+    focused: bool,
+    solid: bool,
+    placeholder: &str,
+    on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
+    on_menu: M,
+) -> Div<M> {
+    boxed(
+        theme,
+        1.0,
+        plain_view(input.text(), focused)
+            .caret(focused && solid)
+            .placeholder(placeholder)
+            .on_select(on_point)
+            .on_menu(on_menu),
+    )
+}
+
+/// The border every box of text is drawn in, `lines` tall, round `view`.
+fn boxed<M: Clone + 'static>(
+    theme: &Theme,
+    lines: f32,
+    view: impl IntoElement<M> + 'static,
+) -> Div<M> {
     h_flex()
         .w_full()
         .h_px(theme.size.control * lines)
@@ -81,10 +123,30 @@ pub fn text_view<M: Clone + 'static>(
         .rounded(theme.radius.md)
         .bg(theme.colors.background)
         .border_1(theme.colors.border)
-        .child(
-            plain_view(text, focused)
-                .caret(focused && solid)
-                .on_select(on_point)
-                .on_menu(on_menu),
-        )
+        .child(view)
+}
+
+/// Builds `input` with no box of its own, for a card that draws the box
+/// around it and the controls beneath it, and that says how tall it is;
+/// `placeholder` stands in the empty box to say what it is for, and
+/// `on_scroll` is sent as its scrollbar is dragged, with the rows one
+/// pixel of the drag is worth.
+pub fn bare_input_view<M: Clone + 'static>(
+    input: &Input,
+    focused: bool,
+    solid: bool,
+    placeholder: &str,
+    on_point: impl Fn(ResizePhase, Position, Position) -> M + 'static,
+    on_scroll: impl Fn(ResizeEvent, f32) -> M + 'static,
+    on_menu: M,
+) -> Div<M> {
+    h_flex().w_full().overflow_hidden().child(
+        plain_view(input.text(), focused)
+            .caret(focused && solid)
+            .placeholder(placeholder)
+            .rail()
+            .on_select(on_point)
+            .on_scroll(move |_, event, step| on_scroll(event, step))
+            .on_menu(on_menu),
+    )
 }

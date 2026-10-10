@@ -5,7 +5,7 @@
 //! file being open: going back to where a definition was asked for, and
 //! opening again the tab that was closed last.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pm_core::{ProjectId, Scope};
 use pm_text::Position;
@@ -90,4 +90,53 @@ fn trim(places: &mut Vec<Place>) {
     if places.len() > DEPTH {
         places.drain(..places.len() - DEPTH);
     }
+}
+
+/// The file in the worktree at `root` that `link` names, and the line in it
+/// counted from nought, where it names a file that is there.
+///
+/// The link is the agent's to write, so a file it names outside the worktree
+/// — by an absolute path, or by climbing out through `..` or a link — is not
+/// opened: the conversation is about the worktree it was started in.
+///
+/// A line is read from the `#L12` an address in a browser would carry, or
+/// from the `:12` or `:12:4` a compiler writes after a path.
+pub(super) fn linked_file(root: &Path, link: &str) -> Option<(PathBuf, usize)> {
+    let path = match link.split_once("://") {
+        Some(("file", path)) => path,
+        Some(_) => return None,
+        None => link,
+    };
+    let (path, line) = match path.split_once("#L") {
+        Some((path, line)) => (
+            path,
+            line.split('-').next().and_then(|line| line.parse().ok()),
+        ),
+        None => after_colons(path),
+    };
+    let path = root.join(path.replace("%20", " "));
+    let resolved = path.canonicalize().ok()?;
+    let inside = root
+        .canonicalize()
+        .is_ok_and(|root| resolved.starts_with(root));
+    (inside && resolved.is_file()).then(|| (path, line.unwrap_or(1_usize).saturating_sub(1)))
+}
+
+/// `path` without the `:line` or `:line:column` written after it, and the
+/// line, where one was.
+fn after_colons(path: &str) -> (&str, Option<usize>) {
+    match numbered(path) {
+        Some((rest, last)) => match numbered(rest) {
+            Some((file, line)) => (file, line.parse().ok()),
+            None => (rest, last.parse().ok()),
+        },
+        None => (path, None),
+    }
+}
+
+/// `path` split before the number written after its last colon, where a
+/// number is what follows it.
+fn numbered(path: &str) -> Option<(&str, &str)> {
+    path.rsplit_once(':')
+        .filter(|(_, number)| number.parse::<usize>().is_ok())
 }

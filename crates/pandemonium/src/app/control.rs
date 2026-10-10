@@ -389,7 +389,7 @@ impl App {
                     None => self.open.get(project).map(Project::root).map(|root| root.path.clone()),
                 }.ok_or_else(|| "worktree unavailable".to_owned())?;
                 let before = self.agents.iter().count();
-                self.open_agent(project, session, &root, agent);
+                self.open_agent(project, session, &root, agent, None, false);
                 if self.agents.iter().count() == before { Err("agent could not start".to_owned()) } else { Ok("Agent started".to_owned()) }
             }
             ["show", index] => {

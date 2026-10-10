@@ -21,6 +21,7 @@ mod picture;
 mod placed;
 mod resize;
 mod scroll;
+mod selection;
 mod split;
 mod style;
 mod text;
@@ -36,12 +37,15 @@ pub use element::{
 pub use glyphs::Glyphs;
 pub use icons::{Icon, IconName, IconSize, LayoutIcon, LayoutIconButton, icon, layout_icon_button};
 pub use measured::{Bounds, Measured, measured};
-pub use overlay::{Beside, Overlay, beside, overlay, overlay_above};
+pub use overlay::{Above, Beside, Overlay, above, beside, overlay, overlay_above};
 pub use paragraph::{Paragraph, paragraph};
 pub use picture::{Picture, picture};
 pub use placed::{Placed, Placements, nearest};
 pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
 pub use scroll::{Scroll, ScrollArea, Scrolled, scroll_area};
+pub use selection::{
+    Grain, Selection, SelectionContent, SelectionDrag, SelectionRow, Spot, spot_at,
+};
 pub use split::{Split, split};
 pub use style::{Align, Axis, Edges, Justify, Length, STEP, Side, Style, Styled, space};
 pub use text::{Text, text};
@@ -51,10 +55,10 @@ pub use theme::{
 };
 pub use ui::{PointerCursor, Ui};
 pub use widgets::{
-    Button, ButtonVariant, Field, MenuItem, SCROLLBAR_GUTTER, Scrollbar, Switch, Tab, ThemePreview,
-    ToggleState, button, checkbox, field, icon_badge, icon_button, kbd, menu, menu_entry,
-    menu_separator, menu_submenu, rule, scrollbar, section, switch, switch_field, tab, tab_bar,
-    theme_gallery, theme_preview, tinted_icon_button, toggle_grid, toggle_row, turning_icon_button,
-    view_tab,
+    Button, ButtonVariant, MenuItem, NotificationControl, SCROLLBAR_GUTTER, Scrollbar, Switch, Tab,
+    ThemePreview, ToggleState, button, checkbox, icon_badge, icon_button, kbd, menu, menu_entry,
+    menu_separator, menu_submenu, notification_control, rule, scrollbar, section, switch,
+    switch_field, tab, tab_bar, theme_gallery, theme_preview, tinted_icon_button, toggle_grid,
+    toggle_row, turning_icon_button, view_tab,
 };
 pub use zoom::{MAX_ZOOM, Zoom, ZoomArea, Zoomed, zoom_area};

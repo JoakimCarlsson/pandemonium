@@ -8,11 +8,11 @@
 
 mod button;
 mod checkbox;
-mod field;
 mod icon_badge;
 mod icon_button;
 mod kbd;
 mod menu;
+mod notification_control;
 mod rule;
 mod scrollbar;
 mod section;
@@ -28,11 +28,11 @@ mod view_tab;
 
 pub use button::{Button, ButtonVariant, button};
 pub use checkbox::{ToggleState, checkbox};
-pub use field::{Field, field};
 pub use icon_badge::icon_badge;
 pub use icon_button::{icon_button, tinted_icon_button, turning_icon_button};
 pub use kbd::kbd;
 pub use menu::{MenuItem, menu, menu_entry, menu_separator, menu_submenu};
+pub use notification_control::{NotificationControl, notification_control};
 pub use rule::rule;
 pub use scrollbar::{SCROLLBAR_GUTTER, Scrollbar, scrollbar};
 pub use section::section;
@@ -44,3 +44,6 @@ pub use theme_preview::{ThemePreview, theme_preview};
 pub use toggle_grid::toggle_grid;
 pub use toggle_row::toggle_row;
 pub use view_tab::view_tab;
+
+/// Shared scrollbar painting for scrollable containers.
+pub(crate) use scrollbar::{OnScroll, paint_scrollbar};

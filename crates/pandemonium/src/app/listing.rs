@@ -97,7 +97,7 @@ enum Found {
     /// The search of this generation has read everything it was going to.
     Searched(u64),
     /// Rows asked of git for a picker of this kind, in this opening.
-    Rows(u64, Kind, Vec<Row>),
+    Rows(u64, Kind, Vec<Row>, bool),
 }
 
 /// What the pickers have running away from the window, and what came back.
@@ -220,15 +220,26 @@ impl App {
         kind: Kind,
         ask: impl FnOnce() -> Vec<Row> + Send + 'static,
     ) {
+        self.ask_git_updates_later(kind, move |publish| publish(ask(), true));
+    }
+
+    /// Publishes successive background Git results for the current picker,
+    /// marking the final update when the background operation has finished.
+    pub(super) fn ask_git_updates_later(
+        &self,
+        kind: Kind,
+        ask: impl FnOnce(&dyn Fn(Vec<Row>, bool)) + Send + 'static,
+    ) {
         let opening = self.listings.opening;
         let found = self.listings.found.clone();
         let wake = self.waker(Wake::Listing);
         std::thread::spawn(move || {
-            let rows = ask();
-            if let Ok(mut found) = found.lock() {
-                found.push(Found::Rows(opening, kind, rows));
-            }
-            wake();
+            ask(&|rows, finished| {
+                if let Ok(mut found) = found.lock() {
+                    found.push(Found::Rows(opening, kind, rows, finished));
+                }
+                wake();
+            });
         });
     }
 
@@ -246,7 +257,9 @@ impl App {
             changed |= match found {
                 Found::Matches(generation, rows) => self.show_matches(generation, rows),
                 Found::Searched(generation) => self.show_matches(generation, Vec::new()),
-                Found::Rows(opening, kind, rows) => self.show_asked(opening, kind, rows),
+                Found::Rows(opening, kind, rows, finished) => {
+                    self.show_asked(opening, kind, rows, finished)
+                }
             };
         }
         changed | self.take_project_searches()
@@ -318,7 +331,7 @@ impl App {
 
     /// Fills the picker with the rows git answered for a picker of `kind`,
     /// when that picker is still the one open.
-    fn show_asked(&mut self, opening: u64, kind: Kind, rows: Vec<Row>) -> bool {
+    fn show_asked(&mut self, opening: u64, kind: Kind, rows: Vec<Row>, finished: bool) -> bool {
         if opening != self.listings.opening {
             return false;
         }
@@ -326,6 +339,9 @@ impl App {
             return false;
         };
         picker.refill_preserving_selection(rows);
+        if kind == Kind::Branches && finished {
+            self.branch_refresh_at = Some(Instant::now() + super::picker::BRANCH_REFRESH);
+        }
         true
     }
 }

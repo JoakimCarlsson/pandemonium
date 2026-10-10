@@ -10,6 +10,8 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+use crate::panes::Tool;
+
 /// Where a cursor is sent, moving it or selecting as it goes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Travel {
@@ -299,6 +301,8 @@ pub enum Action {
     ShowChanges,
     /// Open those changes for review, in a pane.
     OpenReview,
+    /// Compare any two persisted worktree turns.
+    CompareTurns,
     /// Open those changes as excerpts of their files, edited in one pane.
     EditChanges,
     /// Open the focused markdown file rendered, in a pane beside it.
@@ -317,8 +321,16 @@ pub enum Action {
     ChangeAgentMode,
     /// Put it into the mode after the one it is in.
     CycleAgentMode,
+    /// Expands or collapses every detail in the focused agent transcript.
+    ToggleAgentDetails,
     /// Choose which model that agent is to talk to.
     ChangeAgentModel,
+    /// Start the agent in hand again and carry on the conversation it was in.
+    ReconnectAgent,
+    /// Log the agent in hand out.
+    LogOutAgent,
+    /// Choose a saved conversation of the agent in hand to have it forget.
+    DeleteAgentSession,
     /// Put what the list of changes is acting on into the index.
     StageSelectedChanges,
     /// Take what it is acting on back out of the index.
@@ -353,6 +365,14 @@ pub enum Action {
     CollapseFiles,
     /// Open the settings screen.
     OpenSettings,
+    /// Restore the default arrangement while retaining open tabs.
+    ResetWindowLayout,
+    /// Show a registered workspace tool in its pane.
+    ShowTool(Tool),
+    /// Open language discovery and server configuration.
+    OpenLanguages,
+    /// Choose language support from the extension catalogue.
+    InstallLanguageExtension,
     /// Open the settings screen at its keymap.
     OpenKeymap,
     /// Show the primary sidebar, or hide it.
@@ -406,6 +426,16 @@ pub enum Action {
 /// The order is the order a palette lists them in, which is why related
 /// commands sit together rather than alphabetically.
 const CATALOGUE: &[(Action, &str, &str)] = &[
+    (
+        Action::ResetWindowLayout,
+        "window.reset_layout",
+        "Reset Window Layout",
+    ),
+    (
+        Action::ToggleAgentDetails,
+        "agent::ToggleDetails",
+        "Toggle Agent Details",
+    ),
     (Action::ShowCommands, "palette.commands", "Show Commands"),
     (
         Action::InstallLanguageServer,
@@ -414,6 +444,37 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     ),
     (Action::ShowFiles, "palette.files", "Go to File"),
     (Action::ShowProjects, "palette.projects", "Go to Project"),
+    (
+        Action::ShowTool(Tool::Projects),
+        "pane.projects",
+        "Open Projects Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Files),
+        "pane.files",
+        "Open Files Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Changes),
+        "pane.changes",
+        "Open Changes Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Terminal),
+        "pane.terminal",
+        "Open Terminal Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Problems),
+        "pane.problems",
+        "Open Problems Pane",
+    ),
+    (
+        Action::ShowTool(Tool::Debug),
+        "pane.debug",
+        "Open Debug Console Pane",
+    ),
+    (Action::ShowTool(Tool::Chat), "pane.chat", "Open Chat Pane"),
     (Action::ShowSessions, "palette.sessions", "Go to Session"),
     (Action::ShowSymbols, "palette.symbols", "Go to Symbol"),
     (Action::ShowOutline, "view.outline", "Show Outline"),
@@ -835,6 +896,11 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     ),
     (Action::RevertChange, "git.revert_change", "Revert Change"),
     (Action::ShowChanges, "git.changes", "Show Source Control"),
+    (
+        Action::CompareTurns,
+        "agent.compare_turns",
+        "Compare Turns…",
+    ),
     (Action::OpenReview, "git.review", "Review Changes"),
     (Action::EditChanges, "git.edit_changes", "Edit Changes"),
     (
@@ -864,6 +930,13 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::ChangeAgentModel,
         "agent.model",
         "Change Agent Model",
+    ),
+    (Action::ReconnectAgent, "agent.reconnect", "Reconnect Agent"),
+    (Action::LogOutAgent, "agent.logout", "Log Out of Agent"),
+    (
+        Action::DeleteAgentSession,
+        "agent.delete_session",
+        "Delete Saved Agent Session",
     ),
     (Action::StageSelectedChanges, "git.stage", "Stage Changes"),
     (
@@ -910,11 +983,21 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         "Collapse Folders in File Tree",
     ),
     (Action::OpenSettings, "window.settings", "Open Settings"),
+    (
+        Action::OpenLanguages,
+        "window.languages",
+        "Manage Languages",
+    ),
+    (
+        Action::InstallLanguageExtension,
+        "language.install_extension",
+        "Install Language Support…",
+    ),
     (Action::OpenKeymap, "window.keymap", "Open Keymap"),
     (
         Action::ToggleSidebar,
         "window.toggle_sidebar",
-        "Toggle Sidebar",
+        "Toggle Projects Pane",
     ),
     (
         Action::TogglePanel,
@@ -924,7 +1007,7 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
     (
         Action::ToggleSecondarySidebar,
         "window.toggle_secondary_sidebar",
-        "Toggle Secondary Sidebar",
+        "Toggle Files Pane",
     ),
     (
         Action::ToggleFullscreen,

@@ -72,6 +72,7 @@ impl Sessions {
         let id = self.next;
         self.next = id.next();
         self.open.push(Session {
+            delegation: None,
             id,
             project: cutting.project,
             name: cutting.name,
@@ -172,6 +173,7 @@ impl Sessions {
             let id = self.next;
             self.next = id.next();
             self.open.push(Session {
+                delegation: found.delegation,
                 id,
                 project: found.project,
                 name: found.name,
@@ -181,6 +183,27 @@ impl Sessions {
                 port: found.port,
             });
         }
+    }
+
+    /// Persists a delegated session's parent before exposing it to its caller.
+    pub fn delegated(
+        &mut self,
+        id: SessionId,
+        delegation: super::Delegation,
+    ) -> Result<(), String> {
+        let session = self
+            .open
+            .iter_mut()
+            .find(|session| session.id == id)
+            .ok_or("The delegated session disappeared")?;
+        let text = serde_json::to_string(&delegation).map_err(|error| error.to_string())?;
+        let first = session
+            .cuts
+            .first()
+            .ok_or("The delegated session has no worktree")?;
+        git::remember_delegation(&first.root, &text)?;
+        session.delegation = Some(delegation);
+        Ok(())
     }
 
     /// The session `id` names, while the window still holds it.
@@ -265,6 +288,8 @@ pub struct Cutting {
 /// A session already on disk that the window did not hold when it looked.
 #[derive(Debug)]
 pub struct Found {
+    /// Persisted parent of a delegated worktree.
+    delegation: Option<super::Delegation>,
     /// The project whose repositories it was cut from.
     project: ProjectId,
     /// What it was called when it was cut.
@@ -313,13 +338,9 @@ fn cut(
     if planned.is_empty() {
         return Err(StartError::NothingChosen);
     }
-    let root = placement::place(under, project.name(), name);
-
-    pm_host::Host::local()
-        .fs()
-        .create_dir_all(&root)
-        .map_err(|error| StartError::Place {
-            path: root.clone(),
+    let root =
+        placement::reserve(under, project.name(), name).map_err(|error| StartError::Place {
+            path: under.to_path_buf(),
             trouble: error.to_string(),
         })?;
     let mut cuts = Vec::new();
@@ -411,6 +432,8 @@ fn find(project: &Project, under: &Path, held: &[PathBuf]) -> Vec<Found> {
         .map(|(root, cuts)| {
             let first = &cuts[0].root;
             Found {
+                delegation: git::remembered_delegation(first)
+                    .and_then(|text| serde_json::from_str(&text).ok()),
                 project: project.id(),
                 name: git::remembered_name(first).unwrap_or_else(|| named(&root)),
                 port: git::remembered_port(first),

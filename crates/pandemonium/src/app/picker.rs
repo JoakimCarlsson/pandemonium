@@ -23,6 +23,9 @@ const SPIN_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 /// How often a running agent's activity mark advances.
 const AGENT_FRAME: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// How often an open branch picker fetches and prunes remote branches.
+pub(super) const BRANCH_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
 impl App {
     /// Opens the picker of `kind`, gathering what it offers.
     ///
@@ -46,6 +49,7 @@ impl App {
             Kind::WorkspaceSymbols => self.ask_typed_symbols(),
             Kind::Search => self.search_later(&seeded),
             Kind::Branches => self.ask_branches(),
+            Kind::CloneSources => self.ask_github_owners(),
             Kind::FetchRemotes => self.ask_remotes(true),
             Kind::PushRemotes => self.ask_remotes(false),
             _ => {}
@@ -134,7 +138,7 @@ impl App {
         }
         if picker.kind() == Kind::WorkspaceSymbols {
             let query = Kind::WorkspaceSymbols
-                .query(picker.field().value())
+                .query(&picker.field().value())
                 .to_owned();
             return self.ask_workspace_symbols(query);
         }
@@ -155,6 +159,9 @@ impl App {
         let chosen = picker.chosen().cloned();
         let place = picker.selected();
 
+        if matches!(kind, Kind::CloneSources | Kind::CloneRepositories) && chosen.is_none() {
+            return;
+        }
         self.picker = None;
         self.leave_listings();
         match (kind, chosen) {
@@ -165,9 +172,13 @@ impl App {
                 self.set_breakpoint_field(kind, typed)
             }
             (Kind::RenameTerminal(id), _) => self.rename_terminal(id, &typed),
+            (Kind::ProjectGroup(group, project), _) => {
+                self.save_project_group(group, project, &typed)
+            }
             (Kind::Watch, _) => self.save_watch(typed),
             (Kind::NewBranch, _) => self.create_branch(&typed),
             (Kind::StashMessage, _) => self.change_by(|review| review.stash_push(typed)),
+            (Kind::NewAccount(scope, agent), _) => self.create_account(scope, agent, &typed),
             (Kind::NewSession, _) => self.start_session(&typed),
             (Kind::SessionRepositories, Some(Choice::SessionRepository(root))) => {
                 self.toggle_session_repository(root, typed, place);
@@ -179,6 +190,7 @@ impl App {
             (Kind::PortVariable, _) => self.set_worktree_port(&typed),
             (Kind::ThemeColor(token), _) => self.set_theme_color(token, &typed),
             (Kind::ThemeName, _) => self.save_theme(&typed),
+            (Kind::LanguageFormatter(name), _) => self.set_external_formatter(name, &typed),
             (Kind::KeymapName, _) => self.save_keymap(&typed),
             (_, Some(choice)) => self.take(choice),
             (_, None) => {}
@@ -196,7 +208,18 @@ impl App {
     /// Carries out what one row of the picker stood for.
     fn take(&mut self, choice: Choice) {
         match choice {
+            Choice::CloneUrl => self.open_picker(Kind::CloneUrl),
+            Choice::CloneSources => self.open_picker(Kind::CloneSources),
+            Choice::GithubOwner(login, organization) => {
+                self.open_github_repositories(pm_core::GithubOwner {
+                    login,
+                    organization,
+                });
+            }
+            Choice::CloneRepository(url) => self.clone_project(&url),
+            Choice::Checkpoint(scope, from, turn) => self.choose_turn(scope, from, turn),
             Choice::Act(action) => self.act(action),
+            Choice::InstallLanguageExtension(index) => self.install_language_extension(index),
             Choice::InstallLanguageServer(command) => self.start_server_install(command, true),
             Choice::Open(scope, path) => {
                 self.jump_to(&Place {
@@ -217,14 +240,28 @@ impl App {
                 self.store();
             }
             Choice::Agent(agent) => self.start_agent(agent),
+            Choice::Account(scope, agent, id) => self.start_account(scope, agent, id.as_deref()),
+            Choice::AccountLogin(scope, agent, id) => {
+                self.authenticate_account(scope, agent, id.as_deref())
+            }
+            Choice::AccountLogins(scope, agent) => {
+                self.open_picker(Kind::AccountLogin(scope, agent))
+            }
+            Choice::NewAccount(scope, agent) => self.open_picker(Kind::NewAccount(scope, agent)),
+            Choice::AccountRemoval(scope, agent) => {
+                self.open_picker(Kind::RemoveAccount(scope, agent))
+            }
+            Choice::RemoveAccount(scope, agent, id) => self.remove_account(scope, agent, &id),
             Choice::Session(session, _) => self.select_session(session),
             Choice::Task(scope, task) => {
                 self.run_task(scope, &task, crate::tasks::Shown::Front);
             }
             Choice::AgentHistory(session, saved) => self.open_agent_history(session, &saved),
+            Choice::AgentDelete(session, saved) => self.delete_agent_history(session, &saved),
             Choice::Mode(session, mode) => self.set_agent_mode(session, &mode),
             Choice::Knob(session, knob, value) => self.set_knob(session, &knob, &value),
             Choice::Font(slot, family) => self.set_font(slot, family),
+            Choice::SettingsLanguage(name) => self.select_settings_language(name),
             Choice::Debug(scope, scenario) => self.start_debugging(scope, *scenario),
             Choice::Process(pid) => self.choose_attach_process(pid),
             Choice::SessionRepository(_) => {}
@@ -285,15 +322,51 @@ impl App {
     ///
     /// The lists that take time to gather open empty, or with what has been
     /// gathered so far, and are filled as the rest arrives.
-    fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
+    pub(super) fn rows_for(&mut self, kind: Kind) -> Vec<Row> {
         match kind {
+            Kind::CloneSources => crate::app::github::source_rows(),
+            Kind::CloneRepositories => Vec::new(),
+            Kind::Turns => Vec::new(),
             Kind::Commands => self.command_rows(),
             Kind::LanguageServers => self.language_server_rows(),
+            Kind::LanguageExtensions => {
+                if !self.languages.requested {
+                    self.refresh_language_catalogue();
+                }
+                self.languages
+                    .catalogue
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| Row {
+                        section: None,
+                        label: format!("{} {} · {}", entry.name, entry.version, entry.publisher),
+                        detail: format!(
+                            "{} · {} · Platforms: {} · Requires: {}",
+                            entry.description,
+                            entry.source,
+                            entry.platforms.join(", "),
+                            if entry.prerequisites.is_empty() {
+                                "No external tools".into()
+                            } else {
+                                entry.prerequisites.join(", ")
+                            }
+                        ),
+                        choice: Choice::InstallLanguageExtension(index),
+                        enabled: !self.languages.busy
+                            && (entry.platforms.is_empty()
+                                || entry.platforms.contains(&pm_text::install::platform())),
+                    })
+                    .collect()
+            }
             Kind::Files | Kind::WorkspaceSymbols => self.listed_file_rows(),
             Kind::Projects => self.project_rows(),
             Kind::Problems => self.problem_rows(),
             Kind::Agents => self.agent_rows(),
-            Kind::AgentHistory(session) => self.agent_history_rows(session),
+            Kind::Accounts(scope, agent) => self.account_rows(scope, agent, false),
+            Kind::AccountLogin(scope, agent) => self.account_login_rows(scope, agent),
+            Kind::RemoveAccount(scope, agent) => self.account_rows(scope, agent, true),
+            Kind::AgentHistory(session) => self.agent_history_rows(session, false),
+            Kind::AgentDelete(session) => self.agent_history_rows(session, true),
             Kind::Debug => self.debug_rows(),
             Kind::Processes => self.process_rows(),
             Kind::AttachAdapters => self.attach_adapter_rows(),
@@ -329,9 +402,12 @@ impl App {
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),
-            Kind::Knob | Kind::References | Kind::Calls | Kind::ServerLogs | Kind::Font(_) => {
-                Vec::new()
-            }
+            Kind::Knob
+            | Kind::References
+            | Kind::Calls
+            | Kind::ServerLogs
+            | Kind::SettingsLanguage
+            | Kind::Font(_) => Vec::new(),
             Kind::Branches
             | Kind::FetchRemotes
             | Kind::PushRemotes
@@ -340,12 +416,14 @@ impl App {
             | Kind::Line
             | Kind::Rename
             | Kind::RenameTerminal(_)
+            | Kind::ProjectGroup(..)
             | Kind::BreakpointCondition
             | Kind::BreakpointHits
             | Kind::BreakpointLog
             | Kind::Watch
             | Kind::NewBranch
             | Kind::StashMessage
+            | Kind::NewAccount(..)
             | Kind::NewSession
             | Kind::RemoteProject
             | Kind::CloneUrl
@@ -354,6 +432,7 @@ impl App {
             | Kind::PortVariable
             | Kind::ThemeColor(_)
             | Kind::ThemeName
+            | Kind::LanguageFormatter(_)
             | Kind::KeymapName => Vec::new(),
         }
     }
@@ -382,7 +461,9 @@ impl App {
     fn language_server_rows(&self) -> Vec<Row> {
         let commands = pm_text::Language::all()
             .iter()
-            .flat_map(|language| language.servers())
+            .flat_map(|language| {
+                crate::settings::languages::servers(*language, &self.language_servers)
+            })
             .filter(|server| server.install.is_some())
             .map(|server| server.command)
             .collect::<std::collections::BTreeSet<_>>();
@@ -391,7 +472,12 @@ impl App {
             .map(|command| Row {
                 section: None,
                 label: command.to_owned(),
-                detail: if pm_text::program::installed(command).is_some() {
+                detail: if pm_text::program::installed_with_recipe(
+                    command,
+                    self.configured_server_recipe(command),
+                )
+                .is_some()
+                {
                     "Installed"
                 } else {
                     "Not installed"
@@ -428,17 +514,41 @@ impl App {
     }
 
     /// Asks git away from the window for every branch of the active
-    /// project's active repository, for the branch picker.
-    fn ask_branches(&self) {
+    /// project's active repository, then fetches and prunes its remote branches.
+    fn ask_branches(&mut self) {
+        self.branch_refresh_at = None;
         let Some(id) = self.open.active().map(pm_core::Project::id) else {
             return;
         };
         let Some(root) = self.repository_root(self.git_scope(id)) else {
             return;
         };
-        self.ask_git_later(Kind::Branches, move || {
-            branch_rows(id, pm_core::branches(&root))
+        self.ask_git_updates_later(Kind::Branches, move |publish| {
+            publish(branch_rows(id, pm_core::branches(&root)), false);
+            let _ = pm_core::fetch(&root);
+            publish(branch_rows(id, pm_core::branches(&root)), true);
         });
+    }
+
+    /// Fetches fresh branches when the open branch picker's refresh is due.
+    pub(super) fn refresh_branches(&mut self) {
+        if self
+            .next_branch_refresh()
+            .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            self.ask_branches();
+        }
+    }
+
+    /// The next refresh deadline while the branch picker is visible.
+    pub(super) fn next_branch_refresh(&self) -> Option<std::time::Instant> {
+        self.branch_refresh_at.filter(|_| {
+            !self.window_occluded
+                && self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.kind() == Kind::Branches)
+        })
     }
 
     /// Asks git away from the window for every configured remote of the
@@ -508,8 +618,7 @@ impl App {
         }
         self.reread_review_later(scope);
         if !changed {
-            self.secondary_sidebar_view = crate::workspace::SidebarView::Changes;
-            self.secondary_sidebar_open = true;
+            self.show_tool(crate::panes::Tool::Changes);
             return;
         }
 
@@ -552,7 +661,14 @@ impl App {
     /// When a spinner next turns, while a remote is being waited on or a
     /// refresh control is turning.
     pub(super) fn next_spin(&self) -> Option<std::time::Instant> {
-        let turning = self.remote_operation.is_some()
+        let turning = self.active_file_id().is_some_and(|file| {
+            self.editor.server_states(file).iter().any(|status| {
+                matches!(
+                    status.state,
+                    pm_text::ServerState::Starting | pm_text::ServerState::Indexing
+                )
+            })
+        }) || self.remote_operation.is_some()
             || self
                 .reviews
                 .values()

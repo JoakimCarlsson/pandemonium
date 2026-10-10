@@ -27,21 +27,38 @@ where
     S: AsRef<OsStr>,
 {
     let root = root.into();
-    let output = root
-        .host
-        .command("git")
-        .args(arguments)
-        .current_dir(&root)
-        .output()
-        .map_err(|error| error.to_string())?;
+    execute(root.host.command("git").args(arguments).current_dir(&root))
+}
 
-    match output.status.success() {
-        true => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
-        false => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            Err(format!("{stdout}{stderr}").trim().to_owned())
-        }
+/// Runs git against a private index without consulting the reader's index.
+pub fn git_with_index<I, S>(root: impl Into<Location>, index: &Path, arguments: I) -> Said
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let root = root.into();
+    execute(
+        root.host
+            .command("git")
+            .args(arguments)
+            .current_dir(&root)
+            .env("GIT_INDEX_FILE", index),
+    )
+}
+
+/// Collects one git command's answer and preserves its diagnostic on failure.
+fn execute(command: &mut pm_host::Command) -> Said {
+    let output = command.output().map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .trim()
+        .to_owned())
     }
 }
 

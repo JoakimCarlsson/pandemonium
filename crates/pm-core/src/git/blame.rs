@@ -39,15 +39,28 @@ pub struct Blame {
 /// is what to say about the nth line. A file git will not blame — one that
 /// is not tracked, or a git that is not there — comes back empty.
 pub fn blame(root: impl Into<Location>, path: &Path) -> Vec<Blame> {
+    blame_revision(root, path, None)
+}
+
+/// Blames the file as stored at a checkpoint or other revision.
+pub fn blame_at(root: impl Into<Location>, path: &Path, revision: &str) -> Vec<Blame> {
+    blame_revision(root, path, Some(revision))
+}
+
+/// Reads porcelain blame for either the worktree or an explicit revision.
+fn blame_revision(root: impl Into<Location>, path: &Path, revision: Option<&str>) -> Vec<Blame> {
     let root = root.into();
     let root = holding(&root, path);
     let Ok(relative) = path.strip_prefix(&root) else {
         return Vec::new();
     };
-    let Ok(output) = root
-        .host
-        .command("git")
-        .args(["blame", "--porcelain", "--"])
+    let mut command = root.host.command("git");
+    command.args(["blame", "--porcelain"]);
+    if let Some(revision) = revision {
+        command.arg(revision);
+    }
+    let Ok(output) = command
+        .arg("--")
         .arg(relative)
         .current_dir(&root)
         .stderr(Stdio::null())
@@ -58,7 +71,6 @@ pub fn blame(root: impl Into<Location>, path: &Path) -> Vec<Blame> {
     if !output.status.success() {
         return Vec::new();
     }
-
     read(&String::from_utf8_lossy(&output.stdout))
 }
 

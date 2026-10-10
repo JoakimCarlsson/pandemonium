@@ -19,10 +19,8 @@ pub(super) struct Authentication {
     host: Host,
     /// A directory to open, or none for a reconnect.
     path: Option<PathBuf>,
-    /// Whether the bottom panel was showing before authentication.
-    panel_open: bool,
-    /// The previous bottom panel view.
-    panel_view: PanelView,
+    /// Whether a terminal pane was visible before authentication.
+    terminal_visible: bool,
 }
 
 /// A remote handshake completed away from the window thread.
@@ -97,8 +95,7 @@ impl App {
             shell: Rc::new(RefCell::new(shell)),
             host,
             path,
-            panel_open: self.bottom_panel_open,
-            panel_view: self.panel_view,
+            terminal_visible: self.showing_terminals(),
         });
         self.show_panel(PanelView::Terminal);
         self.terminal_focused = true;
@@ -120,8 +117,11 @@ impl App {
         let said = shell.text();
         drop(shell);
         let auth = self.authentication.take().unwrap();
-        self.bottom_panel_open = auth.panel_open;
-        self.panel_view = auth.panel_view;
+        if !auth.terminal_visible
+            && let Some(pane) = self.tool_pane(crate::panes::Tool::Terminal)
+        {
+            self.close_item(pane, self.tool_item(crate::panes::Tool::Terminal));
+        }
         self.terminal_focused = false;
         match code {
             Some(0) => self.dial_remote(auth.host, auth.path),

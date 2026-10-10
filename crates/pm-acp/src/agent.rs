@@ -6,6 +6,7 @@
 //! command and nothing else.
 
 use pm_host::Command;
+use std::env;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -27,6 +28,38 @@ pub struct Agent {
     pub env: &'static [(&'static str, &'static str)],
     /// Where the program comes from when it is not installed.
     pub source: Source,
+}
+
+impl Agent {
+    /// An agent the reader runs from `program` with `arguments`, in the
+    /// environment `env` adds to, called `name` and known as `id`.
+    ///
+    /// Nothing is fetched for it and nowhere is named to install it from.
+    /// What is given is kept for as long as the editor runs, which is how
+    /// the shipped agents are held too, so a session that still has one is
+    /// never left without it.
+    #[must_use]
+    pub fn custom(
+        id: String,
+        name: String,
+        program: String,
+        arguments: Vec<String>,
+        env: Vec<(String, String)>,
+    ) -> Self {
+        let keep = |value: String| -> &'static str { value.leak() };
+        Self {
+            id: keep(id),
+            name: keep(name),
+            program: keep(program),
+            arguments: arguments.into_iter().map(keep).collect::<Vec<_>>().leak(),
+            env: env
+                .into_iter()
+                .map(|(name, value)| (keep(name), keep(value)))
+                .collect::<Vec<_>>()
+                .leak(),
+            source: Source::Command,
+        }
+    }
 }
 
 /// Where an agent's program comes from when the reader does not have it.
@@ -197,7 +230,62 @@ impl Agent {
     }
 }
 
-/// Finds the program on the local execution machine.
-fn installed(program: &str) -> Option<PathBuf> {
-    pm_host::Host::local().which(program)
+/// The directories a program is looked for in besides the path.
+///
+/// A window started from a desktop session inherits the path that session
+/// was given, which is not the one a shell has: npm, bun and cargo each put
+/// their programs somewhere that only a shell profile ever hears about, and
+/// an agent with an installer of its own may keep a directory of its own. An
+/// agent the reader has installed is the one the editor runs, whether or not
+/// the session was told where it lives.
+const TOOL_DIRECTORIES: [&str; 8] = [
+    ".local/bin",
+    ".grok/bin",
+    ".bun/bin",
+    ".deno/bin",
+    ".npm-global/bin",
+    "AppData/Roaming/npm",
+    ".volta/bin",
+    ".cargo/bin",
+];
+
+/// Where `program` is installed, on the path or in the usual places beside it.
+pub(crate) fn installed(program: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH").unwrap_or_default();
+    let home = env::home_dir();
+    let names = file_names(program);
+
+    env::split_paths(&path)
+        .chain(
+            TOOL_DIRECTORIES
+                .iter()
+                .filter_map(|directory| Some(home.as_ref()?.join(directory))),
+        )
+        .chain([
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+        ])
+        .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
+        .find(|candidate| candidate.is_file())
+}
+
+/// The file names `program` is installed under on this platform.
+#[cfg(not(windows))]
+fn file_names(program: &str) -> Vec<String> {
+    vec![program.to_owned()]
+}
+
+/// The file names `program` is installed under on this platform.
+///
+/// Windows runs a program by its extension, and `PATHEXT` lists the ones it
+/// runs. The bare name is left out: npm installs a shell script beside each
+/// `.cmd`, which Windows cannot start.
+#[cfg(windows)]
+fn file_names(program: &str) -> Vec<String> {
+    env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned())
+        .split(';')
+        .filter(|extension| !extension.is_empty())
+        .map(|extension| format!("{program}{extension}"))
+        .collect()
 }

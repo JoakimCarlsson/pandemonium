@@ -19,7 +19,7 @@ use crate::agent::Pasted;
 use crate::app::{App, Pasting, Writing};
 use crate::desktop;
 use crate::editor::{self, Completions};
-use crate::field::{self, Typed};
+use crate::input::{self, Typed};
 use crate::keymap::{self, Action, Context, Resolution, keys};
 use crate::message::Message;
 use crate::terminal;
@@ -56,6 +56,14 @@ impl App {
             .pointer
             .and_then(|pointer| self.geometry.pane_at(pointer))
             .unwrap_or_else(|| self.panes.focus());
+        if self.settings_open {
+            return self
+                .settings
+                .scroll()
+                .get()
+                .viewport_height()
+                .max(WHEEL_STEP);
+        }
         self.geometry
             .pane_size(pane)
             .map(|size| size.height)
@@ -87,8 +95,11 @@ impl App {
         let palette = self.picker.is_some();
         let project_search = matches!(self.active_tab(), Some(crate::panes::Item::Search(_)))
             && self.project_search_field.is_some();
-        let field = palette || self.search_focused || project_search || self.tree_edit.is_some();
-        let editing = self.focused_file().is_some()
+        let outline = matches!(self.active_tab(), Some(crate::panes::Item::Outline(_)));
+        let field =
+            palette || self.search_focused || project_search || self.tree_edit.is_some() || outline;
+        let editing = !self.settings_open
+            && self.focused_file().is_some()
             && self.writing.is_none()
             && !self.search_focused
             && !project_search
@@ -148,30 +159,62 @@ impl App {
     /// terminal, then modal editing, then the window's own chords, then the
     /// search bar, then the text itself. Only a key nothing wanted becomes focus movement.
     /// A binding being recorded in the keymap screen comes before all of them.
+    /// Enter belongs to a focused agent prompt before other pane controls,
+    /// except while a picker is open: the picker has the keyboard then.
     pub(super) fn key_pressed(&mut self, event: &KeyEvent) {
         self.blink.restart();
+        if self.picker.is_none()
+            && matches!(self.writing, Some(Writing::LanguageServerField(_)))
+            && matches!(
+                event.logical_key,
+                Key::Named(NamedKey::Tab | NamedKey::PageDown | NamedKey::PageUp)
+            )
+            && self.send_to_input(event)
+        {
+            return self.request_redraw();
+        }
         if self.record_key(event) {
             return self.request_redraw();
         }
         if self.send_to_prompt(event) {
             return self.request_redraw();
         }
-        if self.paste_agent_prompt(event) {
+        if self.picker.is_none()
+            && matches!(self.writing, Some(Writing::Prompt(_)))
+            && event.logical_key == Key::Named(NamedKey::Enter)
+            && self.send_to_input(event)
+        {
             return self.request_redraw();
         }
-        if self.is_copy(event) && self.copy_agent_text() {
+        if !self.settings_open && self.send_to_notification(event) {
+            return self.request_redraw();
+        }
+        if self.resolve_input_edit(event) {
+            return self.request_redraw();
+        }
+        if self.settings_open {
+            self.settings_key_pressed(event);
+            return self.request_redraw();
+        }
+        if self.picker.is_none() && self.paste_agent_prompt(event) {
+            return self.request_redraw();
+        }
+        if self.is_copy(event) && self.copy_reading_text() {
+            return self.request_redraw();
+        }
+        if self.send_to_pending(event) {
+            return self.request_redraw();
+        }
+        if self.send_to_picker(event) || self.picker_swallows(event) {
             return self.request_redraw();
         }
         if event.logical_key == Key::Named(NamedKey::Escape) && self.cancel_busy_agent() {
             return self.request_redraw();
         }
-        if self.send_to_picker(event) {
-            return self.request_redraw();
-        }
         if self.send_to_outline(event) {
             return self.request_redraw();
         }
-        if self.send_to_tree_edit(&event.logical_key.as_ref()) {
+        if self.send_to_tree_edit(event) {
             return self.request_redraw();
         }
         if self.send_to_tree(&event.logical_key.as_ref()) {
@@ -217,6 +260,70 @@ impl App {
         self.navigate(event);
     }
 
+    /// Resolves modified editing shortcuts before modal lists can swallow them.
+    fn resolve_input_edit(&mut self, event: &KeyEvent) -> bool {
+        if self.typed_into().is_none()
+            || !(self.modifiers.control_key()
+                || self.modifiers.super_key()
+                || self.modifiers.alt_key())
+        {
+            return false;
+        }
+        let Some(chord) = keymap::chord(event, self.modifiers) else {
+            return false;
+        };
+        let Resolution::Act(action) = self.resolver.preview(chord, &self.context()) else {
+            return false;
+        };
+        if !input::Input::handles(action) {
+            return false;
+        }
+        self.resolver.press(chord, &self.context());
+        self.act_on_field(action)
+    }
+
+    /// Routes keyboard input within preferences, keeping workspace commands behind the modal.
+    fn settings_key_pressed(&mut self, event: &KeyEvent) {
+        if self.menu.is_some() && event.logical_key == Key::Named(NamedKey::Escape) {
+            self.menu = None;
+            return;
+        }
+        if self.send_to_picker(event) {
+            return;
+        }
+        if event.logical_key == Key::Named(NamedKey::Escape) {
+            self.close_settings();
+            return;
+        }
+        if let Some(chord) = keymap::chord(event, self.modifiers) {
+            match self.resolver.press(chord, &self.context()) {
+                Resolution::Act(Action::Copy) if self.copy_reading_text() => return,
+                Resolution::Act(action) => {
+                    if self.act_on_field(action) {
+                        return;
+                    }
+                }
+                Resolution::Pending => return,
+                _ => {}
+            }
+        }
+        if self.send_to_input(event) {
+            return;
+        }
+        if event.logical_key == Key::Named(NamedKey::Tab) {
+            let window = self
+                .renderer
+                .as_ref()
+                .map_or(pm_gfx::Size::zero(), pm_gfx::Renderer::size);
+            let bounds = self.settings_bounds(window);
+            if let Some(ui) = self.ui.as_mut() {
+                ui.focus_within(bounds, self.modifiers.shift_key());
+            }
+            return;
+        }
+        self.navigate(event);
+    }
+
     /// Sends a keypress to the question the window is asking, if it is asking.
     ///
     /// The question is modal, so it answers before anything else does and
@@ -255,6 +362,13 @@ impl App {
         }
     }
 
+    /// Whether an open picker keeps a key the picker itself did not act on.
+    ///
+    /// The picker is modal: only the window's own chords may pass it.
+    fn picker_swallows(&self, event: &KeyEvent) -> bool {
+        self.picker.is_some() && !self.is_window_chord_over_text(&event.logical_key.as_ref())
+    }
+
     /// Sends a keypress to the list the window is asking a choice from.
     fn send_to_picker(&mut self, event: &KeyEvent) -> bool {
         if self.picker.is_none() || self.is_window_chord_over_text(&event.logical_key.as_ref()) {
@@ -288,12 +402,12 @@ impl App {
             Key::Named(NamedKey::ArrowDown) => self.step_picker(1),
             Key::Named(NamedKey::PageUp) => self.step_picker(-(PICKER_PAGE)),
             Key::Named(NamedKey::PageDown) => self.step_picker(PICKER_PAGE),
-            key => {
+            _ => {
                 let Some(picker) = self.picker.as_mut() else {
                     return false;
                 };
                 let mut taken = false;
-                picker.edit(|field| taken = field.press(&key, modifiers) == Typed::Taken);
+                picker.edit(|field| taken = field.press(event, modifiers) == Typed::Taken);
                 if taken {
                     self.refilter_picker();
                 }
@@ -330,8 +444,13 @@ impl App {
             Key::Named(NamedKey::ArrowDown) => 1,
             Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
                 let place = self.completions.as_ref().map_or(0, Completions::selected);
-                self.take_completion(place);
+                let over = matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Enter))
+                    && self.modifiers.shift_key();
+                self.take_completion(place, over);
                 return true;
+            }
+            Key::Character(typed) if !self.modifiers.control_key() && !self.modifiers.alt_key() => {
+                return self.commit_completion(typed);
             }
             _ => return false,
         };
@@ -340,6 +459,31 @@ impl App {
         }
         self.resolve_completion();
         true
+    }
+
+    /// Takes the selected completion when `typed` is one of its commit
+    /// characters, saying whether the keypress was used up by it.
+    ///
+    /// The character goes on into the buffer after the completion, except an
+    /// opening parenthesis after a call, which the completion has written.
+    fn commit_completion(&mut self, typed: &str) -> bool {
+        let Some(typed) = typed.chars().next() else {
+            return false;
+        };
+        let Some(place) = self
+            .completions
+            .as_ref()
+            .and_then(|completions| completions.committed_by(typed))
+        else {
+            return false;
+        };
+        let called = self
+            .completions
+            .as_ref()
+            .and_then(|completions| completions.at_place(place))
+            .is_some_and(|(_, item)| item.kind.callable());
+        self.take_completion(place, false);
+        called && typed == '('
     }
 
     /// Sends a keypress to the snippet being filled in, if the focused file
@@ -379,15 +523,22 @@ impl App {
 
     /// Pastes clipboard files, image data or text into the focused agent prompt.
     fn paste_agent_prompt(&mut self, event: &KeyEvent) -> bool {
-        let Some(Writing::Prompt(session)) = self.writing else {
-            return false;
-        };
-        if !self.modifiers.super_key() && !self.modifiers.control_key() {
+        if (!self.modifiers.super_key() && !self.modifiers.control_key())
+            || self.modifiers.alt_key()
+        {
             return false;
         }
         if !matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("v")) {
             return false;
         }
+        self.paste_prompt()
+    }
+
+    /// Reads clipboard attachments or text for the focused prompt away from the window.
+    pub(super) fn paste_prompt(&mut self) -> bool {
+        let Some(Writing::Prompt(session)) = self.writing else {
+            return false;
+        };
         let Some(talk) = self.agents.get(session) else {
             return false;
         };
@@ -429,7 +580,7 @@ impl App {
             match pasting {
                 Pasting::Files(files) => {
                     for path in files {
-                        talk.attach_pasted_file(path);
+                        talk.attach_file(path);
                     }
                 }
                 Pasting::Image(pasted) => talk.attach_pasted(pasted),
@@ -469,6 +620,33 @@ impl App {
             return true;
         }
 
+        if let Writing::FormField(field) = writing
+            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
+        {
+            self.step_form_field(field, self.modifiers.shift_key());
+            return true;
+        }
+
+        if matches!(writing, Writing::LanguageServerField(_))
+            && matches!(
+                event.logical_key,
+                Key::Named(NamedKey::PageDown | NamedKey::PageUp)
+            )
+        {
+            self.navigate(event);
+            return true;
+        }
+        if let Writing::LanguageServerField(index) = writing
+            && matches!(event.logical_key, Key::Named(NamedKey::Tab))
+        {
+            let next = if self.modifiers.shift_key() {
+                (index + 2) % 3
+            } else {
+                (index + 1) % 3
+            };
+            self.write_in(Writing::LanguageServerField(next));
+            return true;
+        }
         let modifiers = self.modifiers;
         if self
             .with_written(|input| input.submits(&event.logical_key, modifiers))
@@ -487,12 +665,20 @@ impl App {
         if typed == Typed::Ignored {
             return false;
         }
-        if let Writing::Prompt(session) = writing
+        self.input_retyped();
+        true
+    }
+
+    /// Updates dependent suggestions after the focused input's text changes.
+    pub(super) fn input_retyped(&mut self) {
+        if let Some(Writing::Prompt(session)) = self.writing
             && let Some(talk) = self.agents.get_mut(session)
         {
             talk.retyped();
         }
-        true
+        if self.writing == Some(Writing::McpSearch) {
+            self.search_mcp_registry();
+        }
     }
 
     /// Takes a key the list of commands a slash narrowed to wanted.
@@ -503,6 +689,7 @@ impl App {
         match event.logical_key.as_ref() {
             Key::Named(NamedKey::ArrowUp) => self.step_command(session, -1),
             Key::Named(NamedKey::ArrowDown) => self.step_command(session, 1),
+            Key::Named(NamedKey::Enter) if self.modifiers.shift_key() => false,
             Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
                 if let Some(talk) = self.agents.get_mut(session) {
                     talk.take_chosen();
@@ -533,7 +720,12 @@ impl App {
         match writing {
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
+            Writing::Answer(session, ticket, _) => self.send_answer(session, ticket),
             Writing::Comment(_) => self.apply(Message::SaveComment),
+            Writing::McpSearch => self.search_mcp_registry(),
+            Writing::AgentSearch => {}
+            Writing::LanguageServerField(_) => self.save_language_server(),
+            Writing::FormField(_) => self.save_server_form(),
             Writing::Console(scope) => {
                 if let Some(debugger) = self.debuggers.get_mut(scope) {
                     debugger.evaluate();
@@ -609,11 +801,11 @@ impl App {
                     search.focus(next);
                 });
             }
-            key => {
+            _ => {
                 let mut taken = false;
                 file.borrow_mut().search_with(|search, buffer| {
                     search.edit_field(
-                        |field| taken = field.press(&key, modifiers) == Typed::Taken,
+                        |field| taken = field.press(event, modifiers) == Typed::Taken,
                         buffer,
                     );
                 });
@@ -648,7 +840,7 @@ impl App {
                 self.project_search_field = None;
                 true
             }
-            key => {
+            _ => {
                 let Some(search) = self.searches.get_mut(&scope) else {
                     return false;
                 };
@@ -657,7 +849,7 @@ impl App {
                     crate::editor::SearchField::Replacement => &mut search.replacement,
                 };
                 let before = field.value().to_owned();
-                let taken = field.press(&key, self.modifiers) == Typed::Taken;
+                let taken = field.press(event, self.modifiers) == Typed::Taken;
                 if before != field.value() && which == crate::editor::SearchField::Query {
                     self.run_project_search(scope);
                 }
@@ -755,7 +947,7 @@ impl App {
     /// On macOS the command key with Left, Right or Backspace edits the line
     /// the same way, and stays the box's too.
     pub(super) fn is_window_chord_over_text(&self, key: &Key<&str>) -> bool {
-        if field::command_line(key, self.modifiers) {
+        if input::command_line(key, self.modifiers) {
             return false;
         }
         let selects = matches!(
@@ -770,6 +962,50 @@ impl App {
             )
         );
         self.modifiers.super_key() || (self.is_window_chord() && !selects)
+    }
+
+    /// Gives F6, Tab, activation and Escape to explicitly focused notification controls.
+    fn send_to_notification(&mut self, event: &KeyEvent) -> bool {
+        if self.picker.is_some()
+            || self.prompt.is_some()
+            || self.notices.shown_installation().is_none()
+        {
+            return false;
+        }
+        let Some(ui) = self.ui.as_mut() else {
+            return false;
+        };
+        let focused = matches!(ui.activate_focused(), Some(Message::ActOnNotification(..)));
+        let notification = |message: &Message| matches!(message, Message::ActOnNotification(..));
+        match event.logical_key {
+            Key::Named(NamedKey::F6) if focused => ui.clear_focus(),
+            Key::Named(NamedKey::F6) => {
+                ui.clear_focus();
+                ui.focus_matching(notification, false);
+            }
+            Key::Named(NamedKey::Tab) if focused => {
+                ui.focus_matching(notification, self.modifiers.shift_key());
+            }
+            Key::Named(NamedKey::Enter | NamedKey::Space) if focused => {
+                let message = ui.activate_focused();
+                self.handle(message);
+            }
+            Key::Named(NamedKey::Escape) if focused => ui.clear_focus(),
+            Key::Named(NamedKey::PageDown | NamedKey::PageUp) if focused => {
+                if let Some((card, _, _)) = self.notices.shown_installation() {
+                    let mut scroll = card.scroll.get();
+                    let amount = scroll.viewport_height();
+                    scroll.by(if event.logical_key == Key::Named(NamedKey::PageUp) {
+                        amount
+                    } else {
+                        -amount
+                    });
+                    card.scroll.set(scroll);
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// Moves focus, activates what has it, or scrolls the page.
@@ -809,6 +1045,14 @@ impl App {
     /// presses that reach here with nothing to open are presses with no menu
     /// over them.
     pub(super) fn secondary_pressed(&mut self) {
+        if self
+            .ui
+            .as_ref()
+            .is_some_and(pm_ui::Ui::selected_text_under_pointer)
+        {
+            self.open_menu(crate::workspace::MenuTarget::ReadingText);
+            return;
+        }
         match self.ui.as_ref().and_then(|ui| ui.secondary_pressed()) {
             Some(message) => self.apply(message),
             None => {
@@ -827,7 +1071,7 @@ impl App {
     /// list open over the screen takes the window's attention first, and the
     /// buttons do nothing while it is up, as the keys they stand in for do.
     pub(super) fn travelled(&mut self, back: bool) {
-        if !self.onboarded || self.picker.is_some() {
+        if !self.onboarded || self.picker.is_some() || self.settings_open {
             return;
         }
         let action = if back {
@@ -855,7 +1099,9 @@ impl App {
         self.pointer = Some(position);
         if moved {
             self.forget_hint(position);
-            self.resting = Some((std::time::Instant::now(), position));
+            if !self.ui.as_ref().is_some_and(pm_ui::Ui::selecting_text) {
+                self.resting = Some((std::time::Instant::now(), position));
+            }
         }
         self.follow_pointer(position);
         let message = self.ui.as_mut().and_then(|ui| ui.pointer_moved(position));
@@ -979,24 +1225,33 @@ impl App {
             return;
         }
 
-        if state == ElementState::Pressed {
+        if state == ElementState::Pressed && !self.settings_open {
+            self.pointer_modifiers = self.modifiers;
             if !self
                 .pointer
                 .is_some_and(|pointer| self.presses_tree_edit(pointer))
             {
                 self.commit_tree_edit();
             }
-            self.release_pane_focus();
-            if let Some(pane) = self
-                .pointer
-                .and_then(|pointer| self.geometry.pane_at(pointer))
-                && self
-                    .panes
-                    .pane(pane)
-                    .and_then(|pane| pane.active(self.scope()))
-                    .is_some_and(|item| item.session().is_some())
-            {
-                self.focus_pane(pane);
+            let over_notification =
+                self.notices
+                    .shown_installation()
+                    .is_some_and(|(card, _, _)| {
+                        self.pointer
+                            .is_some_and(|pointer| card.bounds.get().contains(pointer))
+                    });
+            if self.menu.is_none() && !over_notification {
+                self.release_pane_focus();
+                if let Some(pane) = self
+                    .pointer
+                    .and_then(|pointer| self.geometry.pane_at(pointer))
+                {
+                    self.focus_pane(pane);
+                }
+                self.agents.clear_selections();
+                if let Some(ui) = self.ui.as_mut() {
+                    ui.clear_text_selection();
+                }
             }
             self.blink.restart();
         }
@@ -1007,18 +1262,33 @@ impl App {
             (None, _) => None,
         };
         if state == ElementState::Released
-            && self.picker.as_ref().is_some_and(|picker| {
-                matches!(
-                    picker.kind(),
-                    crate::picker::Kind::Modes | crate::picker::Kind::Knob
+            && self
+                .picker
+                .as_ref()
+                .is_some_and(|picker| self.is_agent_dropdown(picker))
+            && !matches!(
+                message,
+                Some(
+                    Message::ChoosePicker(_)
+                        | Message::SetAgentKnob(..)
+                        | Message::FlipAgentKnob(..)
                 )
-            })
-            && !matches!(message, Some(Message::ChoosePicker(_)))
+            )
         {
             self.dismiss_picker();
         }
+        if self.ui.as_ref().is_some_and(pm_ui::Ui::selecting_text) {
+            self.editor_focused = false;
+            self.resting = None;
+            self.agents.clear_selections();
+        }
         self.update_pointer_cursor();
+        self.trigger = match state {
+            ElementState::Released => self.ui.as_ref().and_then(pm_ui::Ui::clicked_bounds),
+            ElementState::Pressed => None,
+        };
         self.handle(message);
+        self.trigger = None;
         if state == ElementState::Released {
             self.agent_selection_drag = None;
             self.release_drag();
@@ -1030,7 +1300,21 @@ impl App {
     /// A focused terminal scrolls its own scrollback instead: the page behind
     /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
+        if self.scroll_settings(delta) {
+            return self.request_redraw();
+        }
         let text = self.theme().text;
+        if let Some((card, _, _)) = self.notices.shown_installation()
+            && self
+                .pointer
+                .is_some_and(|pointer| card.bounds.get().contains(pointer))
+        {
+            let mut scroll = card.scroll.get();
+            scroll.by(delta);
+            card.scroll.set(scroll);
+            self.request_redraw();
+            return;
+        }
         if let Some(hint) = self
             .hint
             .as_ref()
@@ -1040,8 +1324,7 @@ impl App {
             self.request_redraw();
             return;
         }
-        if self.secondary_sidebar_open
-            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes
+        if self.tool_visible(crate::panes::Tool::Changes)
             && self.history_graph_open
             && self
                 .pointer
@@ -1082,10 +1365,6 @@ impl App {
             return;
         }
         if self.scroll_problems(delta) {
-            self.request_redraw();
-            return;
-        }
-        if self.scroll_settings(delta) {
             self.request_redraw();
             return;
         }
@@ -1154,8 +1433,7 @@ impl App {
     /// Whether a commit message box is on screen: in the sidebar listing the
     /// changes, or in the review pane under the pointer.
     fn commit_showing(&self) -> bool {
-        let listing = self.secondary_sidebar_open
-            && self.secondary_sidebar_view == crate::workspace::SidebarView::Changes;
+        let listing = self.tool_visible(crate::panes::Tool::Changes);
         let reviewing = self.scope().is_some_and(|scope| {
             self.pointer
                 .and_then(|at| self.geometry.pane_at(at))

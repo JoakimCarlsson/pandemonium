@@ -39,6 +39,9 @@ const BLOCK_ALPHA: f32 = 0.6;
 /// Thickness of the line under a diagnostic.
 const SQUIGGLE_WIDTH: f32 = 1.5;
 
+/// Thickness of the line under a name that can be assigned to again.
+const MUTABLE_UNDERLINE: f32 = 1.0;
+
 /// Thickness of the line under a name the link key has turned into one.
 const LINK_WIDTH: f32 = 1.0;
 
@@ -225,6 +228,11 @@ pub struct BufferView<M> {
     /// what surrounds a file belongs around it: it has no line numbers to
     /// give, nothing to fold, nothing to blame and nowhere to scroll to.
     plain: bool,
+    /// What is shown in the quiet colour while there is no text at all.
+    placeholder: Option<String>,
+    /// Whether a plain view keeps a scrollbar down its side for when its
+    /// rows outgrow it.
+    rail: bool,
     /// Which of the things drawn around the text it draws.
     display: Display,
     /// How the pane is sized within its parent.
@@ -253,6 +261,8 @@ pub fn buffer_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
         caret: true,
         prediction_visible: true,
         plain: false,
+        placeholder: None,
+        rail: false,
         display: Display::default(),
         style: Style::default(),
     }
@@ -269,6 +279,20 @@ pub fn plain_view<M>(file: OpenFile, focused: bool) -> BufferView<M> {
 }
 
 impl<M> BufferView<M> {
+    /// Draws the placeholder where the first line would begin, while the
+    /// buffer holds nothing.
+    fn paint_placeholder(&self, painting: &Painting<'_>, cx: &mut PaintContext<'_, '_, M>) {
+        let Some(placeholder) = self.placeholder.as_deref() else {
+            return;
+        };
+        if placeholder.is_empty() || painting.buffer.len_chars() > 0 {
+            return;
+        }
+        let run = cx.shape(placeholder, painting.font);
+        let origin = Point::new(painting.layout.text_left(), painting.layout.top_at(0));
+        cx.text(origin, run, painting.theme.colors.text_subtle);
+    }
+
     /// Washes the current and incoming parts of each conflict in distinct colours.
     fn paint_conflict_backgrounds(
         &self,
@@ -459,6 +483,19 @@ impl<M> BufferView<M> {
         self
     }
 
+    /// Returns this plain view with a scrollbar down its side, counted in
+    /// the rows its text wraps to, shown while they outgrow it.
+    pub fn rail(mut self) -> Self {
+        self.rail = true;
+        self
+    }
+
+    /// Returns this view showing `placeholder` while its buffer is empty.
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = Some(placeholder.into());
+        self
+    }
+
     /// Returns this view with inline predictions shown or hidden.
     pub fn prediction_visible(mut self, visible: bool) -> Self {
         self.prediction_visible = visible;
@@ -510,12 +547,16 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             true => MINIMAP_WIDTH,
             false => 0.0,
         };
+        let rail = match self.plain && self.rail {
+            true => SCROLLBAR_WIDTH + SCROLLBAR_PADDING * 2.0,
+            false => 0.0,
+        };
         let sizing = TextLayout {
             bounds,
             cell,
             gutter,
             blame,
-            minimap,
+            minimap: minimap + rail,
             first: document.scroll(),
             offset: document.offset(),
             column: document.column(),
@@ -596,6 +637,7 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             self.paint_wrap_guide(&painting, cx);
         }
 
+        self.paint_placeholder(&painting, cx);
         let mut glyphs = Glyphs::default();
         for line in painting.drawn.clone() {
             self.paint_line(line, &painting, &mut glyphs, cx);
@@ -628,9 +670,13 @@ impl<M: Clone + 'static> Element<M> for BufferView<M> {
             let lit = cx.input().is_over(strip.area);
             strip.paint(document.buffer_mut(), &changes, view, lit, &theme, cx);
         }
+        let wrapped = (rail > 0.0).then(|| (document.total_rows(), document.rows_above()));
         drop(document);
 
         self.select_region(layout, cx);
+        if let Some((total, at)) = wrapped {
+            self.paint_rail(layout, total, at, &theme, cx);
+        }
         self.conflict_regions(layout, &action_regions, cx);
         if !self.plain {
             self.gutter_region(layout, cx);
@@ -991,12 +1037,35 @@ impl<M> BufferView<M> {
             if x > layout.bounds.right() {
                 break;
             }
-            let color = match painting.highlights.at(line, index) {
+            let mut color = match painting.highlights.at(line, index) {
                 Some(highlight) => tint(highlight, painting.theme),
                 None => painting.theme.colors.text,
             };
+            if self.display.bracket_colors
+                && let Some(depth) = painting.highlights.bracket_depth(line, index)
+            {
+                color = bracket_color(painting.theme, depth);
+            }
+            let at = Position::new(line, index);
+            if painting.diagnostics.iter().any(|diagnostic| {
+                diagnostic.unnecessary
+                    && (diagnostic.range.start..diagnostic.range.end).contains(&at)
+            }) {
+                color = color.alpha(painting.theme.emphasis.dim);
+            }
             let run = glyphs.shape(ch, painting.font, cx);
             cx.text(Point::new(x, top), run, color);
+            if painting.highlights.is_mutable(line, index) {
+                cx.quad(Quad::filled(
+                    Rect::from_xywh(
+                        x,
+                        top + layout.cell.height - MUTABLE_UNDERLINE * 2.0,
+                        layout.cell.width * width as f32,
+                        MUTABLE_UNDERLINE,
+                    ),
+                    color,
+                ));
+            }
         }
 
         if row.is_last() {
@@ -1417,6 +1486,9 @@ impl<M> BufferView<M> {
         painting: &Painting<'_>,
         cx: &mut PaintContext<'_, '_, M>,
     ) {
+        if diagnostic.unnecessary && diagnostic.severity == Severity::Hint {
+            return;
+        }
         let layout = painting.layout;
         let Some(columns) = diagnostic.columns(line, painting.buffer.line_len(line)) else {
             return;
@@ -1669,6 +1741,31 @@ impl<M: Clone + 'static> BufferView<M> {
             Arc::new(move |event| on_minimap(strip.line_at(event.current.y))),
             None,
         );
+    }
+
+    /// Draws a plain view's scrollbar, in the `total` rows its text wraps to
+    /// with `at` of them above the view, while there are more than it shows.
+    fn paint_rail(
+        &mut self,
+        layout: TextLayout,
+        total: usize,
+        at: usize,
+        theme: &Theme,
+        cx: &mut PaintContext<'_, '_, M>,
+    ) {
+        let bounds = layout.bounds;
+        let showing = layout.rows();
+        if total <= showing {
+            return;
+        }
+        let track = Rect::from_xywh(
+            bounds.right() - SCROLLBAR_PADDING - SCROLLBAR_WIDTH,
+            bounds.top() + SCROLLBAR_PADDING,
+            SCROLLBAR_WIDTH,
+            (bounds.size.height - SCROLLBAR_PADDING * 2.0).max(0.0),
+        );
+        let reach = Reach { total, showing, at };
+        self.paint_thumb(ScrollAxis::Vertical, track, reach, theme, cx);
     }
 
     /// Draws the scrollbars, and takes the drags on them the caller asked for.
@@ -2012,6 +2109,16 @@ fn conflicts_of(file: &OpenFile, buffer: &Buffer) -> Rc<[Conflict]> {
         }
         conflicts
     })
+}
+
+/// The colour of a bracket inside `depth` pairs, which goes round three
+/// colours of the theme as the pairs nest.
+fn bracket_color(theme: &Theme, depth: usize) -> Rgba {
+    [
+        theme.syntax.type_name,
+        theme.syntax.keyword,
+        theme.syntax.function,
+    ][depth % 3]
 }
 
 /// The colour `highlight` is drawn in.

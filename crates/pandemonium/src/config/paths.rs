@@ -31,6 +31,14 @@ const WORKTREES_DIRECTORY: &str = "worktrees";
 /// The directory editor-managed language servers live in.
 const SERVERS_DIRECTORY: &str = "servers";
 
+/// The directory agents downloaded from the registry live in, inside the editor's home.
+const AGENTS_DIRECTORY: &str = "agents";
+
+/// The directory agents downloaded from the registry are unpacked in.
+pub fn agents() -> Option<PathBuf> {
+    home().map(|home| home.join(AGENTS_DIRECTORY))
+}
+
 /// The directory language servers' logs are written in.
 const LOGS_DIRECTORY: &str = "logs";
 
@@ -133,4 +141,9 @@ pub fn servers() -> Option<PathBuf> {
 /// The directory language servers' logs are written in.
 pub fn logs() -> Option<PathBuf> {
     home().map(|home| home.join(LOGS_DIRECTORY))
+}
+
+/// The directory pasted images are kept in while agents need their file links.
+pub fn clipboard() -> Option<PathBuf> {
+    home().map(|home| home.join("clipboard"))
 }

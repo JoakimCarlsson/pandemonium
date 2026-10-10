@@ -13,6 +13,7 @@ mod folds;
 mod memo;
 mod motion;
 mod snippet;
+mod tags;
 
 use pm_host::Location;
 use std::io;
@@ -28,8 +29,8 @@ use crate::hint::Hint;
 use crate::history::History;
 use crate::indent::Indent;
 use crate::language::Language;
-use crate::lsp::{Lens, Symbol};
-use crate::syntax::{Highlight, Highlights, Syntax};
+use crate::lsp::{Lens, Semantic, Symbol};
+use crate::syntax::{Highlights, Syntax};
 
 use self::memo::Memo;
 
@@ -50,6 +51,8 @@ pub struct Buffer {
     /// How the reader indents a file that does not say, which is also how
     /// wide a tab character is drawn.
     habit: Indent,
+    /// How the reader says this file is indented, over what its lines show.
+    forced: Option<Indent>,
     /// What is selected, and where the cursor is.
     selection: Selection,
     /// The other cursors, when the reader has asked for more than one.
@@ -68,9 +71,12 @@ pub struct Buffer {
     hints: Vec<Hint>,
     /// What a language server makes of every name in the file, in the order
     /// the names appear.
-    semantics: Vec<(Range<Position>, Highlight)>,
+    semantics: Vec<Semantic>,
     /// How many lines past its first the longest of those names runs on.
     semantic_reach: usize,
+    /// Where the other tag of the element the cursor is in the name of is,
+    /// kept in step with the text while its name is being changed.
+    twin: Option<Range<Position>>,
     /// Where the symbol at the cursor is used, and the version it was found in.
     uses: (i32, Vec<Range<Position>>),
     /// The notes a server puts above the file's declarations.
@@ -114,6 +120,7 @@ impl Buffer {
         Self {
             indent: Indent::of(&text, Indent::default()),
             habit: Indent::default(),
+            forced: None,
             path,
             host: pm_host::Host::local(),
             text,
@@ -129,6 +136,7 @@ impl Buffer {
             hints: Vec::new(),
             semantics: Vec::new(),
             semantic_reach: 0,
+            twin: None,
             uses: (-1, Vec::new()),
             lenses: Vec::new(),
             memo: Memo::default(),
@@ -155,6 +163,19 @@ impl Buffer {
         )
     }
 
+    /// Reidentifies this open buffer after extension languages change.
+    pub fn reload_language(&mut self) {
+        self.language = Language::of(&self.path);
+        self.syntax = self.language.and_then(Syntax::new);
+        if let Some(syntax) = self.syntax.as_mut() {
+            syntax.parse(&self.text);
+        }
+        self.diagnostics.clear();
+        self.set_semantics(Vec::new());
+        self.set_hints(Vec::new());
+        self.set_lenses(Vec::new());
+    }
+
     /// The language it is written in, when the editor knows the extension.
     pub fn language(&self) -> Option<Language> {
         self.language
@@ -162,7 +183,13 @@ impl Buffer {
 
     /// How the file is indented.
     pub fn indent(&self) -> Indent {
-        self.indent
+        self.forced.unwrap_or(self.indent)
+    }
+
+    /// Indents the file the way `indent` says whatever its lines show, or
+    /// goes back to judging by them when there is none.
+    pub fn force_indent(&mut self, indent: Option<Indent>) {
+        self.forced = indent;
     }
 
     /// Indents the way `habit` says wherever the file does not, and draws a
@@ -174,7 +201,7 @@ impl Buffer {
 
     /// How wide a tab character is drawn, in characters.
     pub fn tab_width(&self) -> usize {
-        self.habit.width.max(1)
+        self.forced.unwrap_or(self.habit).width.max(1)
     }
 
     /// Whether the text differs from what is on disk.
@@ -408,13 +435,13 @@ impl Buffer {
     }
 
     /// Replaces what a language server makes of the names in this file.
-    pub fn set_semantics(&mut self, semantics: Vec<(Range<Position>, Highlight)>) {
+    pub fn set_semantics(&mut self, semantics: Vec<Semantic>) {
         self.semantics = semantics;
-        self.semantics.sort_by_key(|(span, _)| span.start);
+        self.semantics.sort_by_key(|(span, ..)| span.start);
         self.semantic_reach = self
             .semantics
             .iter()
-            .map(|(span, _)| span.end.line.saturating_sub(span.start.line))
+            .map(|(span, ..)| span.end.line.saturating_sub(span.start.line))
             .max()
             .unwrap_or(0);
         self.memo.forget_highlights();
@@ -432,17 +459,17 @@ impl Buffer {
             Some(syntax) => syntax.highlights(&self.text, lines.clone()),
             None => Highlights::default(),
         };
-        let first = self.semantics.partition_point(|(span, _)| {
+        let first = self.semantics.partition_point(|(span, ..)| {
             span.start.line < lines.start.saturating_sub(self.semantic_reach)
         });
         let last = self
             .semantics
-            .partition_point(|(span, _)| span.start.line < lines.end);
-        for (span, highlight) in &self.semantics[first..last.max(first)] {
+            .partition_point(|(span, ..)| span.start.line < lines.end);
+        for (span, highlight, mutable) in &self.semantics[first..last.max(first)] {
             if span.end.line < lines.start || span.start.line >= lines.end {
                 continue;
             }
-            highlights.repaint(span.clone(), *highlight);
+            highlights.repaint(span.clone(), *highlight, *mutable);
         }
         highlights
     }

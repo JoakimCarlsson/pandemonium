@@ -12,8 +12,8 @@ use pm_ui::Axis;
 use crate::app::App;
 use crate::app::places::Place;
 use crate::desktop;
-use crate::editor::{self, Completions, Document, Edit, SearchField};
-use crate::keymap::{Action, Travel};
+use crate::editor::{self, Completions, Document, SearchField};
+use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::{Item, PaneId, SplitDirection};
 use crate::picker::Kind;
@@ -27,6 +27,12 @@ const ZOOM_RANGE: (f32, f32) = (0.5, 3.0);
 impl App {
     /// Carries `action` out.
     pub(super) fn act(&mut self, action: Action) {
+        if self.act_on_field(action) {
+            return self.request_redraw();
+        }
+        if action == Action::Copy && self.copy_reading_text() {
+            return self.request_redraw();
+        }
         if self.act_on_terminal(action) {
             return self.request_redraw();
         }
@@ -47,6 +53,8 @@ impl App {
             Action::AcceptPredictionWord => self.accept_prediction(true),
             Action::DismissPrediction => self.dismiss_prediction(),
             Action::ShowCommands => self.open_picker(Kind::Commands),
+            Action::ShowTool(tool) => return self.apply(Message::ShowTool(tool)),
+            Action::ResetWindowLayout => return self.apply(Message::ResetWindowLayout),
             Action::InstallLanguageServer => self.open_picker(Kind::LanguageServers),
             Action::RenameTerminal => {
                 if let Some(id) = self
@@ -65,14 +73,25 @@ impl App {
             Action::ToggleServerTrace => self.toggle_server_trace(),
             Action::SwitchBranch => self.open_picker(Kind::Branches),
             Action::CreateBranch => self.open_picker(Kind::NewBranch),
+            Action::OpenLanguages => {
+                self.open_settings();
+                self.settings.show(crate::settings::SettingsPage::Languages);
+            }
+            Action::InstallLanguageExtension => self.open_picker(Kind::LanguageExtensions),
             Action::OpenSettings => return self.apply(Message::OpenSettings),
             Action::OpenKeymap => {
                 self.open_settings();
                 self.settings.show(crate::settings::SettingsPage::Keymap);
             }
-            Action::ToggleSidebar => return self.apply(Message::TogglePrimarySidebar),
-            Action::TogglePanel => return self.apply(Message::ToggleBottomPanel),
-            Action::ToggleSecondarySidebar => return self.apply(Message::ToggleSecondarySidebar),
+            Action::ToggleSidebar => {
+                return self.apply(Message::ToggleTool(crate::panes::Tool::Projects));
+            }
+            Action::TogglePanel => {
+                return self.apply(Message::ToggleTool(crate::panes::Tool::Terminal));
+            }
+            Action::ToggleSecondarySidebar => {
+                return self.apply(Message::ToggleTool(crate::panes::Tool::Files));
+            }
             Action::CloseWindow => return self.apply(Message::CloseWindow),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
             Action::OpenRemoteProject => self.open_picker(Kind::RemoteProject),
@@ -153,14 +172,13 @@ impl App {
                 self.editor_focused = false;
             }
             Action::ShowChanges => {
-                return self.apply(Message::SetSidebarView(
-                    crate::workspace::SidebarView::Changes,
-                ));
+                return self.apply(Message::ShowTool(crate::panes::Tool::Changes));
             }
             Action::FocusFiles => self.reveal_in_tree(),
             Action::NewFile => return self.apply(Message::NewTreeFile),
             Action::NewFolder => return self.apply(Message::NewTreeFolder),
             Action::CollapseFiles => return self.apply(Message::CollapseTree),
+            Action::CompareTurns => self.compare_turns(),
             Action::OpenReview => return self.apply(Message::OpenReview),
             Action::EditChanges | Action::ReviewSession => {
                 return self.apply(Message::OpenExcerpts);
@@ -180,6 +198,13 @@ impl App {
                     return self.apply(Message::ShowAgentModes(session));
                 }
             }
+            Action::ToggleAgentDetails => {
+                if let Some(session) = self.focused_talk()
+                    && let Some(talk) = self.agents.get_mut(session)
+                {
+                    talk.toggle_all_details();
+                }
+            }
             Action::CycleAgentMode => {
                 if let Some(session) = self.focused_talk() {
                     return self.apply(Message::CycleAgentMode(session));
@@ -190,6 +215,21 @@ impl App {
                     && let Some(place) = self.knob_about(session, pm_acp::About::Model)
                 {
                     return self.apply(Message::PressKnob(session, place));
+                }
+            }
+            Action::ReconnectAgent => {
+                if let Some(session) = self.focused_talk() {
+                    return self.apply(Message::ReconnectAgent(session));
+                }
+            }
+            Action::LogOutAgent => {
+                if let Some(session) = self.focused_talk() {
+                    return self.apply(Message::LogOutAgent(session));
+                }
+            }
+            Action::DeleteAgentSession => {
+                if let Some(session) = self.focused_talk() {
+                    return self.apply(Message::ShowAgentDeletions(session));
                 }
             }
             Action::StageSelectedChanges => return self.apply(Message::StageSelection),
@@ -260,67 +300,58 @@ impl App {
         window.set_fullscreen(filling);
     }
 
-    /// Routes clipboard editing to the single-line field that has the
-    /// keyboard, saying whether one did.
-    fn act_on_field(&mut self, action: Action) -> bool {
-        match action {
-            Action::Cut | Action::Copy | Action::Paste | Action::SelectAll => {}
-            _ => return false,
+    /// Routes editing actions to the shared input that has the keyboard.
+    pub(super) fn act_on_field(&mut self, action: Action) -> bool {
+        if !crate::input::Input::handles(action) {
+            return false;
+        }
+        if action == Action::Paste && self.picker.is_none() && self.paste_prompt() {
+            return true;
         }
         let picker = self.picker.is_some();
         let mut copied = None;
         let mut changed = false;
-        if !self.edit_focused_field(|field| match action {
-            Action::SelectAll => field.select_all(),
-            Action::Copy => copied = field.selected_text().map(str::to_owned),
-            Action::Cut => {
-                copied = field.cut_selection();
-                changed = copied.is_some();
-            }
-            Action::Paste => {
-                if let Some(text) = desktop::paste() {
-                    field.paste(&text);
-                    changed = true;
+        if !self.edit_focused_field(|input| {
+            let before = input.value();
+            match action {
+                Action::Copy => copied = input.selected_text(),
+                Action::Cut => copied = input.cut_selection(),
+                Action::Paste => {
+                    if let Some(text) = desktop::paste() {
+                        input.paste(&text);
+                    }
+                }
+                _ => {
+                    input.act(action);
                 }
             }
-            _ => {}
+            changed = before != input.value();
         }) {
             return false;
         }
         if let Some(text) = copied {
             desktop::copy(text);
         }
-        if changed && picker {
-            if let Some(picker) = self.picker.as_mut() {
-                picker.filter();
+        if changed {
+            if picker {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.filter();
+                }
+                self.refilter_picker();
+            } else {
+                self.input_retyped();
             }
-            self.refilter_picker();
         }
         true
     }
 
     /// Carries out a command that acts on the file the focused pane shows.
     fn act_on_buffer(&mut self, action: Action) {
-        if self.act_on_field(action) {
+        if let Some(edit) = editor::action_edit(action, self.page_rows()) {
+            self.apply_edit(edit);
             return;
         }
         match action {
-            Action::Move(travel) | Action::Select(travel) => {
-                let motion = editor::motion(travel, self.page_rows());
-                self.apply_edit(Edit::Move(motion, matches!(action, Action::Select(_))));
-            }
-            Action::Newline => self.apply_edit(Edit::Newline),
-            Action::Backspace => self.apply_edit(Edit::Backspace),
-            Action::Delete => self.apply_edit(Edit::Delete),
-            Action::DeleteWordLeft => self.apply_edit(Edit::DeleteWordLeft),
-            Action::DeleteWordRight => self.apply_edit(Edit::DeleteWordRight),
-            Action::DeleteToLineStart => {
-                self.apply_edit(Edit::DeleteTo(editor::motion(Travel::LineStart, 0)));
-            }
-            Action::DeleteToLineEnd => {
-                self.apply_edit(Edit::DeleteTo(editor::motion(Travel::LineEnd, 0)));
-            }
-            Action::Tab => self.apply_edit(Edit::Indent),
             Action::Undo => self.edit_active(|buffer| {
                 buffer.undo();
             }),
@@ -443,8 +474,9 @@ impl App {
             .active_file()
             .is_some_and(|document| document.borrow().is_served());
         if served {
-            return self.begin_save(self.preferences.format_on_save);
+            return self.begin_save(self.active_language_settings().format_on_save);
         }
+        self.format_locally(true);
         self.save_active();
     }
 
@@ -499,7 +531,10 @@ impl App {
 
     /// The worktree the file `id` names was opened from.
     pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<pm_host::Location> {
-        self.root_of(self.editor.scope_of(id)?)
+        match self.editor.scope_of(id) {
+            Some(scope) => self.root_of(scope),
+            None => self.editor.path(id)?.parent().map(pm_host::Location::local),
+        }
     }
 
     /// Puts what the pointer is carrying down where the cursor is.
@@ -513,6 +548,14 @@ impl App {
 
     /// Dismisses whatever is open on top, innermost first.
     fn cancel(&mut self) {
+        if matches!(
+            self.writing,
+            Some(crate::app::Writing::LanguageServerField(_))
+        ) {
+            self.writing = None;
+            self.languages.editor = None;
+            return;
+        }
         if self.dismiss_prompt() {
             return;
         }
@@ -614,7 +657,7 @@ impl App {
         let replacement = finder.replacement(
             &document.buffer().line_text(found.start.line),
             found.start.column..found.end.column,
-            document.search().replacement().value(),
+            &document.search().replacement().value(),
         );
         document.edit(|buffer| buffer.replace(found, &replacement));
         document.search_with(|search, buffer| search.refresh(buffer));
@@ -639,7 +682,7 @@ impl App {
                 let replacement = finder.replacement(
                     &document.buffer().line_text(range.start.line),
                     range.start.column..range.end.column,
-                    document.search().replacement().value(),
+                    &document.search().replacement().value(),
                 );
                 (range, replacement)
             })
@@ -866,27 +909,36 @@ impl App {
         true
     }
 
-    /// Puts the `place`-th completion offered into the buffer.
-    pub(super) fn take_completion(&mut self, place: usize) {
+    /// Puts the `place`-th completion offered into the buffer, over the rest
+    /// of the word the cursor is in when `over` is set and the server named
+    /// a span for it.
+    pub(super) fn take_completion(&mut self, place: usize, over: bool) {
         let Some(completions) = self.completions.as_ref() else {
             return;
         };
         let Some((client, item)) = completions
             .at_place(place)
-            .map(|(client, item)| (client.clone(), item.clone()))
+            .map(|(client, item)| (client.cloned(), item.clone()))
         else {
             return;
         };
         let start = completions.start();
         let waiting = completions.is_asked(&item.handle);
-        let callable = matches!(item.kind, "function" | "method" | "constructor");
+        let callable = item.kind.callable();
         let mut show_signature = false;
         self.completions = None;
+        self.recent_completions.remember(&item);
         self.dismiss_prediction();
         self.edit_active(|buffer| {
             buffer.grouped(|buffer| {
                 let head = buffer.selection().head;
-                let base = buffer.complete(start..head, &item.insert, item.extra.clone());
+                let end = item.replace.as_ref().filter(|_| over).map_or(head, |span| {
+                    match span.end.line == head.line {
+                        true => span.end.max(head),
+                        false => head,
+                    }
+                });
+                let base = buffer.complete(start..end, &item.insert, item.extra.clone());
                 if !item.stops.is_empty() {
                     buffer.begin_snippet(base, item.stops.clone());
                 }
@@ -914,7 +966,9 @@ impl App {
                 }
             });
         });
-        self.await_taken_completion(client, item, start, waiting);
+        if let Some(client) = client {
+            self.await_taken_completion(client, item, start, waiting);
+        }
         if show_signature {
             self.ask(pm_text::Request::Signature);
         }
@@ -944,7 +998,11 @@ impl App {
                 typed,
             )));
         } else if typed == '.' || typed.is_alphanumeric() || typed == '_' {
-            self.ask(pm_text::Request::Completions(pm_text::Trigger::Invoked));
+            if self.active_file_has_servers() {
+                self.ask(pm_text::Request::Completions(pm_text::Trigger::Invoked));
+            } else {
+                self.offer_words();
+            }
         }
     }
 
@@ -983,9 +1041,9 @@ impl App {
     }
 
     /// Sends later keystrokes to `field` of the focused pane's search bar.
-    pub(super) fn focus_search(&mut self, field: SearchField, caret: usize) {
+    pub(super) fn focus_search(&mut self, field: SearchField) {
         self.search_focused = true;
-        self.with_document(|document| document.search_with(|search, _| search.place(field, caret)));
+        self.with_document(|document| document.search_with(|search, _| search.focus(field)));
     }
 
     /// Puts the cursor at the head of the selection, for a motion of its own.

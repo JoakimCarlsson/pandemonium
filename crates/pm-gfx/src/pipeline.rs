@@ -101,49 +101,73 @@ impl ImageInstance {
     ];
 }
 
-/// A vertex buffer that grows to fit whatever the frame holds.
+/// Vertex buffers split at instance boundaries to respect the device's size limit.
 pub(crate) struct InstanceBuffer {
-    /// Debug label carried onto every reallocation.
+    /// Debug label carried onto every allocation.
     label: &'static str,
-    /// The buffer currently allocated, or none before the first upload.
-    buffer: Option<wgpu::Buffer>,
-    /// Size of that buffer in bytes.
-    capacity: usize,
+    /// Reusable buffers, one per uploaded chunk.
+    buffers: Vec<wgpu::Buffer>,
+    /// Maximum number of instances in each chunk.
+    chunk_len: usize,
 }
 
 impl InstanceBuffer {
-    /// Creates an empty buffer that will be labelled `label`.
+    /// Creates empty buffers that will be labelled `label`.
     pub(crate) fn new(label: &'static str) -> Self {
         Self {
             label,
-            buffer: None,
-            capacity: 0,
+            buffers: Vec::new(),
+            chunk_len: 1,
         }
     }
 
-    /// Uploads `data`, reallocating when it no longer fits.
-    pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) {
-        if data.is_empty() {
-            return;
+    /// Uploads instances in chunks bounded by the device's maximum buffer size.
+    pub(crate) fn upload<T: bytemuck::Pod>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        instances: &[T],
+    ) {
+        let limit = device.limits().max_buffer_size;
+        self.chunk_len = (limit / std::mem::size_of::<T>() as u64) as usize;
+        let chunks = instances.len().div_ceil(self.chunk_len);
+        self.buffers.truncate(chunks);
+        for (index, chunk) in instances.chunks(self.chunk_len).enumerate() {
+            let data = bytemuck::cast_slice(chunk);
+            if self
+                .buffers
+                .get(index)
+                .is_none_or(|buffer| buffer.size() < data.len() as u64)
+            {
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(self.label),
+                    size: (data.len() as u64).next_power_of_two().min(limit),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                if index < self.buffers.len() {
+                    self.buffers[index] = buffer;
+                } else {
+                    self.buffers.push(buffer);
+                }
+            }
+            queue.write_buffer(&self.buffers[index], 0, data);
         }
-
-        if self.capacity < data.len() {
-            self.capacity = data.len().next_power_of_two();
-            self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(self.label),
-                size: self.capacity as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-        }
-
-        let buffer = self.buffer.as_ref().expect("buffer allocated above");
-        queue.write_buffer(buffer, 0, data);
     }
 
-    /// The allocated buffer, once something has been uploaded.
-    pub(crate) fn buffer(&self) -> Option<&wgpu::Buffer> {
-        self.buffer.as_ref()
+    /// Visits the buffers intersecting a global instance range, with local draw ranges.
+    pub(crate) fn slices(
+        &self,
+        range: std::ops::Range<u32>,
+    ) -> impl Iterator<Item = (&wgpu::Buffer, std::ops::Range<u32>, usize)> {
+        let chunk_len = self.chunk_len;
+        let start = range.start as usize;
+        let end = range.end as usize;
+        (start / chunk_len..end.div_ceil(chunk_len)).filter_map(move |index| {
+            let base = index * chunk_len;
+            let local = (start.saturating_sub(base)) as u32..(end - base).min(chunk_len) as u32;
+            self.buffers.get(index).map(|buffer| (buffer, local, base))
+        })
     }
 }
 

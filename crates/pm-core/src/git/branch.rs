@@ -108,13 +108,40 @@ pub fn branches(root: impl Into<Location>) -> Vec<Branch> {
     branches
 }
 
-/// Checks out the local branch called `name` in the worktree at `root`.
+/// Checks out `name` in the worktree at `root`.
+///
+/// A remote-tracking branch creates a local branch that follows it, or
+/// checks out the existing local branch of that name without resetting it.
 pub fn switch_branch(root: impl Into<Location>, name: &str) -> Said {
     let root = root.into();
     if name.trim().is_empty() {
         return Err("a branch needs a name".to_owned());
     }
-    git(&root, ["switch", name])
+    if branch_exists(&root, &format!("refs/heads/{name}"))
+        || !branch_exists(&root, &format!("refs/remotes/{name}"))
+    {
+        return git(&root, ["switch", "--", name]);
+    }
+
+    let local = remotes(&root)
+        .iter()
+        .filter_map(|remote| {
+            name.strip_prefix(&format!("{remote}/"))
+                .map(|local| (remote.len(), local))
+        })
+        .max_by_key(|(length, _)| *length)
+        .map(|(_, local)| local)
+        .ok_or_else(|| format!("no configured remote owns branch '{name}'"))?;
+    if branch_exists(&root, &format!("refs/heads/{local}")) {
+        git(&root, ["switch", "--", local])
+    } else {
+        git(&root, ["switch", "--track", "-c", local, "--", name])
+    }
+}
+
+/// Whether an exact branch reference exists in the repository at `root`.
+fn branch_exists(root: &Location, reference: &str) -> bool {
+    answer(root, ["show-ref", "--verify", "--quiet", reference]).is_some()
 }
 
 /// Creates and checks out a local branch called `name` at the current commit.

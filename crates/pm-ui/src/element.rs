@@ -6,7 +6,12 @@
 //! shaping cache behind [`LayoutContext::measure`], which is why rebuilding is
 //! cheap enough to do at the refresh rate.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
+
+use crate::selection::{SelectionFrame, SelectionRegistry, SelectionSurface};
+use crate::{Placed, SelectionRow, Spot};
 
 use pm_gfx::{
     DrawList, FontStyle, Image, Point, Quad, Rect, Rgba, ShapedRun, Size, Svg, TextSystem,
@@ -14,6 +19,9 @@ use pm_gfx::{
 
 use crate::style::Style;
 use crate::theme::Theme;
+
+/// How wide a tooltip grows before its text wraps, in logical pixels.
+const TOOLTIP_WIDTH: f32 = 360.0;
 
 /// What the pointer and keyboard are doing, as of the last event.
 #[derive(Clone, Copy, Debug, Default)]
@@ -116,6 +124,12 @@ pub struct PaintContext<'a, 'b, M> {
     regions: &'a mut Vec<Region<M>>,
     /// The last hovered element that asked for a tooltip.
     tooltip: Option<(Rect, String)>,
+    /// Reading surfaces shared with the input router.
+    pub(crate) selections: Rc<RefCell<SelectionRegistry>>,
+    /// The selectable area currently being painted.
+    pub(crate) selection: Option<Rc<RefCell<SelectionSurface>>>,
+    /// Visible text targets from this frame.
+    pub(crate) selection_frames: Vec<SelectionFrame>,
 }
 
 impl<'a, 'b, M> PaintContext<'a, 'b, M> {
@@ -134,6 +148,9 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
             focused,
             regions,
             tooltip: None,
+            selections: Rc::new(RefCell::new(SelectionRegistry::default())),
+            selection: None,
+            selection_frames: Vec::new(),
         }
     }
 
@@ -162,17 +179,23 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
         self.tooltip = Some((bounds, text));
     }
 
-    /// Paints the tooltip over the completed element tree.
-    pub fn paint_tooltip(&mut self) {
-        let Some((bounds, text)) = self.tooltip.take() else {
-            return;
-        };
+    /// Takes the tooltip the hovered element asked for this frame, if any.
+    pub fn take_tooltip(&mut self) -> Option<(Rect, String)> {
+        self.tooltip.take()
+    }
+
+    /// Paints `text` as a tooltip over `bounds`, above the completed element tree.
+    pub fn paint_tooltip(&mut self, bounds: Rect, text: &str) {
         let theme = *self.layout.theme;
         let font = theme.text.sm;
-        let size = self.measure(&text, font);
+        let lines = self.wrap(text, font, TOOLTIP_WIDTH);
+        let widest = lines
+            .iter()
+            .map(|line| self.measure(line, font).width)
+            .fold(0.0, f32::max);
         let padding = 6.0;
-        let width = size.width + padding * 2.0;
-        let height = size.height + padding;
+        let width = widest + padding * 2.0;
+        let height = lines.len() as f32 * font.line_height + padding;
         let viewport = self.viewport();
         let left = bounds
             .left()
@@ -186,13 +209,129 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
                 .corner_radius(theme.radius.sm)
                 .border(1.0, theme.colors.border),
         );
-        let run = self.shape(&text, font);
-        self.text(
-            Point::new(left + padding, top + padding * 0.5),
-            run,
-            theme.colors.text,
-        );
+        for (row, line) in lines.iter().enumerate() {
+            let run = self.shape(line, font);
+            self.text(
+                Point::new(
+                    left + padding,
+                    top + padding * 0.5 + row as f32 * font.line_height,
+                ),
+                run,
+                theme.colors.text,
+            );
+        }
         self.pop_layer();
+    }
+
+    /// Breaks `text` into lines no wider than `width` in `font`, between words.
+    ///
+    /// A word wider than `width` on its own is given a line of its own rather
+    /// than broken.
+    fn wrap(&mut self, text: &str, font: FontStyle, width: f32) -> Vec<String> {
+        let mut lines = Vec::new();
+        for paragraph in text.lines() {
+            let mut line = String::new();
+            for word in paragraph.split_whitespace() {
+                let longer = match line.is_empty() {
+                    true => word.to_owned(),
+                    false => format!("{line} {word}"),
+                };
+                if !line.is_empty() && self.measure(&longer, font).width > width {
+                    lines.push(std::mem::replace(&mut line, word.to_owned()));
+                } else {
+                    line = longer;
+                }
+            }
+            lines.push(line);
+        }
+        lines
+    }
+
+    /// Adds a logical row, keeping a paragraph's source positions across wrapping.
+    pub(crate) fn selection_row(
+        &mut self,
+        content: String,
+        bounds: Rect,
+        separator: Option<&'static str>,
+    ) -> Option<usize> {
+        let surface = self.selection.as_ref()?;
+        let mut surface = surface.borrow_mut();
+        let separator = separator.unwrap_or_else(|| match surface.last_bounds {
+            Some(last)
+                if bounds.top() < last.bottom()
+                    && bounds.bottom() > last.top()
+                    && (bounds.left() - last.right()).abs() <= 1.0 =>
+            {
+                ""
+            }
+            Some(last) if bounds.top() < last.bottom() && bounds.bottom() > last.top() => " ",
+            _ => "\n",
+        });
+        let row = surface.rows.len();
+        surface.rows.push(SelectionRow {
+            text: content,
+            lead: 0,
+            separator,
+        });
+        surface.last_bounds = Some(bounds);
+        Some(row)
+    }
+
+    /// Records one placed run and washes its selected character boundaries.
+    pub(crate) fn selectable_run(
+        &mut self,
+        content: &str,
+        origin: Point,
+        run: &ShapedRun,
+        start: Option<Spot>,
+    ) {
+        let Some(surface) = self.selection.clone() else {
+            return;
+        };
+        let bounds = Rect::from_xywh(origin.x, origin.y, run.width, run.height);
+        let start = match start {
+            Some(start) => start,
+            None => {
+                let Some(row) = self.selection_row(content.to_owned(), bounds, None) else {
+                    return;
+                };
+                Spot { row, column: 0 }
+            }
+        };
+        let carets = run
+            .carets(content)
+            .into_iter()
+            .map(|caret| origin.x + caret)
+            .collect::<Vec<_>>();
+        let selected = {
+            let mut state = surface.borrow_mut();
+            let key = state.starts.len();
+            state.starts.push(start);
+            state.placements.push(Placed {
+                key,
+                bounds,
+                carets: carets.clone(),
+            });
+            state
+                .focused
+                .then(|| state.selection.picked(start, content.chars().count()))
+                .flatten()
+        };
+        if let Some(selected) = selected {
+            let left = carets[selected.start];
+            let right = carets[selected.end];
+            let theme = self.theme();
+            self.quad(Quad::filled(
+                Rect::from_xywh(left, origin.y, right - left, run.height),
+                theme.colors.selection.alpha(theme.emphasis.selection),
+            ));
+        }
+        let visible = bounds.intersect(surface.borrow().bounds);
+        self.selection_frames.push(SelectionFrame {
+            bounds: visible,
+            surface,
+            regions: self.regions.len(),
+        });
     }
 
     /// Draws a shaped run with its line box starting at `origin`.
@@ -287,16 +426,26 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
             secondary: on_secondary,
         });
 
-        Interaction {
-            hovered: self.input.is_over(bounds),
-            pressed: self.input.is_pressing(bounds),
-            focused: self.focused == Some(index),
-        }
+        self.interaction(bounds, index)
     }
 
     /// The window this frame is being drawn for.
     pub fn viewport(&self) -> Rect {
         self.list.viewport()
+    }
+
+    /// How the pointer and focus stand toward the region at `index`, over the
+    /// part of `bounds` the current clip leaves in sight.
+    ///
+    /// A row scrolled out of a list is still painted, only clipped away, and
+    /// must not count as hovered by a pointer resting on what lies under it.
+    fn interaction(&self, bounds: Rect, index: usize) -> Interaction {
+        let seen = bounds.intersect(self.list.clip());
+        Interaction {
+            hovered: self.input.is_over(seen),
+            pressed: self.input.is_pressing(seen),
+            focused: self.focused == Some(index),
+        }
     }
 
     /// Registers `bounds` as an edge dragged along `axis` by `on_resize`.
@@ -337,11 +486,7 @@ impl<'a, 'b, M> PaintContext<'a, 'b, M> {
             secondary: on_secondary,
         });
 
-        Interaction {
-            hovered: self.input.is_over(bounds),
-            pressed: self.input.is_pressing(bounds),
-            focused: self.focused == Some(index),
-        }
+        self.interaction(bounds, index)
     }
 }
 

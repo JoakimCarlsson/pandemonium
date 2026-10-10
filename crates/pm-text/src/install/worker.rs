@@ -2,10 +2,8 @@
 
 use pm_host::Command;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-
-use sha2::{Digest, Sha256};
 
 use super::{Build, Recipe};
 use crate::program;
@@ -20,13 +18,22 @@ pub fn platform() -> String {
 /// The partial directory is removed on every failure and becomes the version
 /// directory only after the executable and checksum have been verified.
 pub fn install(servers: &Path, command: &str, recipe: Recipe) -> Result<PathBuf, String> {
+    if command.is_empty()
+        || command.contains(['/', '\\'])
+        || [".", ".."].contains(&command)
+        || recipe.version().contains(['/', '\\'])
+        || [".", ".."].contains(&recipe.version())
+    {
+        return Err("Managed server names and versions cannot contain paths.".into());
+    }
     let parent = servers.join(command);
-    let version = parent.join(recipe.version());
+    let directory_name = recipe.directory_name();
+    let version = parent.join(&directory_name);
     if let Some(executable) = program::managed_in(&version) {
         return Ok(executable);
     }
     fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
-    let partial = parent.join(format!("{}.partial", recipe.version()));
+    let partial = parent.join(format!("{directory_name}.partial"));
     if partial.exists() {
         fs::remove_dir_all(&partial).map_err(|error| error.to_string())?;
     }
@@ -120,7 +127,7 @@ fn install_into(directory: &Path, command: &str, recipe: Recipe) -> Result<PathB
             if cfg!(windows) {
                 fs::write(
                     &wrapper,
-                    "@echo off\r\n\"%~dp0venv\\Scripts\\python.exe\" -m pylsp %*\r\n",
+                    format!("@echo off\r\n\"%~dp0venv\\Scripts\\{command}.exe\" %*\r\n"),
                 )
                 .map_err(|error| error.to_string())?;
             } else {
@@ -154,34 +161,14 @@ fn install_release(
         .find(|build| build.platform == platform)
         .ok_or_else(|| format!("{command} has no release for {platform}."))?;
     let url = build.url.replace("{version}", version);
-    let mut response = ureq::get(&url).call().map_err(|error| error.to_string())?;
-    let mut bytes = Vec::new();
-    response
-        .body_mut()
-        .as_reader()
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    let digest = Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    if digest != build.sha256 {
-        return Err(format!(
-            "{command} checksum mismatch: expected {}, got {digest}.",
-            build.sha256
-        ));
-    }
+    let bytes = super::download_checked(&url, build.sha256)?;
     if url.ends_with(".tar.gz") {
         let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes.as_slice()));
         archive
             .unpack(directory)
             .map_err(|error| error.to_string())?;
     } else if url.ends_with(".zip") {
-        let cursor = io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(cursor).map_err(|error| error.to_string())?;
-        archive
-            .extract(directory)
-            .map_err(|error| error.to_string())?;
+        super::unpack_zip(&bytes, directory)?;
     } else {
         let target = directory.join(if cfg!(windows) {
             format!("{command}.exe")

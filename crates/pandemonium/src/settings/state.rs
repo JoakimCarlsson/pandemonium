@@ -5,7 +5,7 @@
 //! more than one section lists them as its children. Choosing a page shows
 //! every section of it; choosing a section shows that section alone.
 
-use pm_ui::{Appearance, Scroll, Scrolled};
+use pm_ui::{Appearance, Axis, ResizeEvent, ResizePhase, Scroll, Scrolled};
 
 use crate::config::Preference;
 use crate::keymap::{Action, Chord, Sequence};
@@ -21,22 +21,28 @@ pub enum SettingsPage {
     Appearance,
     /// How text is edited, drawn and written down.
     Editor,
+    /// Installed languages, extension discovery and server configuration.
+    Languages,
     /// The keymap the editor starts from, modal editing, and every binding.
     Keymap,
     /// How a terminal is drawn and how much it remembers.
     Terminal,
     /// How a session's worktree is made and treated.
     Sessions,
+    /// What agents are started with.
+    Agents,
 }
 
 impl SettingsPage {
     /// Every page, in the order the sidebar lists them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Appearance,
         Self::Editor,
+        Self::Languages,
         Self::Keymap,
         Self::Terminal,
         Self::Sessions,
+        Self::Agents,
     ];
 
     /// What the sidebar and the page's heading call it.
@@ -44,9 +50,11 @@ impl SettingsPage {
         match self {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
+            Self::Languages => "Languages",
             Self::Keymap => "Keymap",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
+            Self::Agents => "Agents",
         }
     }
 
@@ -66,16 +74,22 @@ impl SettingsPage {
                 SettingsSection::Display,
                 SettingsSection::Saving,
             ],
+            Self::Languages => &[
+                SettingsSection::Languages,
+                SettingsSection::LanguageSettings,
+            ],
             Self::Keymap => &[SettingsSection::Keymap, SettingsSection::Keybindings],
             Self::Terminal => &[SettingsSection::Terminal],
             Self::Sessions => &[SettingsSection::Sessions],
+            Self::Agents => &[SettingsSection::AgentServers, SettingsSection::McpServers],
         }
     }
 
     /// Whether the sidebar lists the page's sections under it: a page of
-    /// one section is that section, and has nothing to list.
+    /// one section is that section, and has nothing to list, unless it is a
+    /// page that more sections are still to join.
     pub const fn has_sections(self) -> bool {
-        self.sections().len() > 1
+        self.sections().len() > 1 || matches!(self, Self::Agents)
     }
 }
 
@@ -83,6 +97,10 @@ impl SettingsPage {
 /// child in the sidebar that shows the section alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsSection {
+    /// Language extensions to find, install and remove.
+    Languages,
+    /// How files of one language are indented, saved and served.
+    LanguageSettings,
     /// The theme mode and family.
     Theme,
     /// Every colour of the theme, repaintable one at a time, and the
@@ -110,12 +128,18 @@ pub enum SettingsSection {
     Terminal,
     /// Whether a session's worktree is trusted, and what a new one is given.
     Sessions,
+    /// The agents the editor can start, and the ones the reader added.
+    AgentServers,
+    /// The tool servers every agent is started with.
+    McpServers,
 }
 
 impl SettingsSection {
     /// What the section's heading and its entry in the sidebar call it.
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Languages => "Extensions",
+            Self::LanguageSettings => "Language Settings",
             Self::Theme => "Theme",
             Self::ThemeColors => "Theme Colors",
             Self::Fonts => "Fonts",
@@ -129,6 +153,8 @@ impl SettingsSection {
             Self::Keybindings => "Keybindings",
             Self::Terminal => "Terminal",
             Self::Sessions => "Sessions",
+            Self::AgentServers => "Agent Servers",
+            Self::McpServers => "MCP Servers",
         }
     }
 
@@ -158,12 +184,17 @@ impl SettingsSection {
                 Preference::BufferLineHeight,
             ],
             Self::Cursor => &[Preference::CursorShape, Preference::CursorBlink],
-            Self::Indentation => &[Preference::TabSize, Preference::HardTabs],
+            Self::Indentation => &[
+                Preference::TabSize,
+                Preference::LineLength,
+                Preference::HardTabs,
+            ],
             Self::Gutter => &[Preference::LineNumbers, Preference::RelativeLineNumbers],
             Self::Highlighting => &[
                 Preference::CurrentLine,
                 Preference::Occurrences,
                 Preference::IndentGuides,
+                Preference::BracketColors,
                 Preference::WrapGuide,
             ],
             Self::Display => &[
@@ -179,6 +210,8 @@ impl SettingsSection {
             ],
             Self::Saving => &[
                 Preference::FormatOnSave,
+                Preference::OrganizeImportsOnSave,
+                Preference::FixOnSave,
                 Preference::TrimWhitespace,
                 Preference::FinalNewline,
                 Preference::InstallLanguageServers,
@@ -198,6 +231,7 @@ impl SettingsSection {
                 Preference::WorktreeCopy,
                 Preference::WorktreePort,
             ],
+            Self::AgentServers | Self::McpServers | Self::Languages | Self::LanguageSettings => &[],
         }
     }
 }
@@ -247,10 +281,20 @@ pub struct Settings {
     view: SettingsView,
     /// How far down it the pane is scrolled.
     scroll: Scrolled,
+    /// Scroll offset at the start of the current thumb drag.
+    scroll_origin: Option<f32>,
     /// The pages the sidebar has opened out to list their sections.
     expanded: Vec<SettingsPage>,
     /// The binding being recorded, while one is.
     recording: Option<Recording>,
+    /// Whether the list of installed MCP servers is open.
+    installed_open: bool,
+    /// Whether the list of MCP servers on offer is open.
+    available_open: bool,
+    /// Whether the list of installed agents is open.
+    agents_installed_open: bool,
+    /// Whether the list of agents on offer is open.
+    agents_available_open: bool,
 }
 
 /// The chords pressed so far for an action being bound.
@@ -282,8 +326,13 @@ impl Default for Settings {
         Self {
             view: SettingsView::Page(page),
             scroll: Scrolled::default(),
+            scroll_origin: None,
             expanded: vec![page],
             recording: None,
+            installed_open: true,
+            available_open: true,
+            agents_installed_open: true,
+            agents_available_open: true,
         }
     }
 }
@@ -322,6 +371,51 @@ impl Settings {
             }
             None => self.expanded.push(page),
         }
+    }
+
+    /// Whether the list of installed MCP servers is open.
+    pub fn installed_open(&self) -> bool {
+        self.installed_open
+    }
+
+    /// Whether the list of MCP servers on offer is open.
+    pub fn available_open(&self) -> bool {
+        self.available_open
+    }
+
+    /// Whether the list of installed agents is open.
+    pub fn agents_installed_open(&self) -> bool {
+        self.agents_installed_open
+    }
+
+    /// Whether the list of agents on offer is open.
+    pub fn agents_available_open(&self) -> bool {
+        self.agents_available_open
+    }
+
+    /// Opens the list of installed agents, or folds it.
+    pub fn toggle_agents_installed(&mut self) {
+        self.agents_installed_open = !self.agents_installed_open;
+    }
+
+    /// Opens the list of agents on offer, or folds it.
+    pub fn toggle_agents_available(&mut self) {
+        self.agents_available_open = !self.agents_available_open;
+    }
+
+    /// Opens the list of installed MCP servers, or folds it.
+    pub fn toggle_installed(&mut self) {
+        self.installed_open = !self.installed_open;
+    }
+
+    /// Opens the list of installed MCP servers, if it was folded away.
+    pub fn open_installed(&mut self) {
+        self.installed_open = true;
+    }
+
+    /// Opens the list of MCP servers on offer, or folds it.
+    pub fn toggle_available(&mut self) {
+        self.available_open = !self.available_open;
     }
 
     /// The binding being recorded, while one is.
@@ -364,6 +458,21 @@ impl Settings {
     pub fn scroll_by(&mut self, delta: f32) {
         let mut scroll = self.scroll.get();
         scroll.by(delta);
+        self.scroll.set(scroll);
+    }
+
+    /// Moves the viewport with a thumb drag measured from its initial offset.
+    pub fn drag_scroll(&mut self, event: ResizeEvent, step: f32) {
+        let mut scroll = self.scroll.get();
+        let base = match event.phase {
+            ResizePhase::Started => scroll.offset(),
+            _ => self.scroll_origin.unwrap_or(scroll.offset()),
+        };
+        self.scroll_origin = match event.phase {
+            ResizePhase::Ended => None,
+            _ => Some(base),
+        };
+        scroll.by(scroll.offset() - base - event.delta(Axis::Vertical) * step);
         self.scroll.set(scroll);
     }
 

@@ -43,6 +43,8 @@ pub enum IconName {
     ArrowUp,
     /// All of what the control is on.
     Check,
+    /// Copy what the control is on.
+    Copy,
     /// Close what the control is on.
     Close,
     /// Open the remaining actions for the control.
@@ -101,6 +103,8 @@ pub enum IconName {
     Settings,
     /// A terminal.
     Terminal,
+    /// An informational notification.
+    Info,
     /// Something the editor wants looked at.
     Warning,
     /// A program being debugged.
@@ -119,12 +123,67 @@ pub enum IconName {
     Stop,
     /// Starting it over.
     Restart,
+    /// what a type can do.
+    Box,
+    /// a function.
+    SquareFunction,
+    /// a field of a record.
+    SquareDot,
+    /// a name that holds a value.
+    Variable,
+    /// a class.
+    Component,
+    /// an interface or a trait.
+    Plug,
+    /// a module or a namespace.
+    Package,
+    /// a property of an object.
+    Wrench,
+    /// an enumeration.
+    List,
+    /// one variant of an enumeration.
+    CircleDot,
+    /// a reserved word.
+    KeyRound,
+    /// text with places to fill in.
+    FileCode,
+    /// a value that does not change.
+    Hash,
+    /// a struct.
+    Blocks,
+    /// an event.
+    Zap,
+    /// an operator.
+    Percent,
+    /// a parameter of a generic type.
+    Type,
+    /// a kind of thing with no icon of its own.
+    Circle,
+    /// a colour.
+    Palette,
+    /// a unit of measure.
+    Ruler,
+    /// Lines of text.
+    Text,
+    /// A command named with a slash.
+    SquareSlash,
+    /// A stop to be asked first.
+    Hand,
+    /// Code, written or edited.
+    Code,
+    /// A plan written out before anything is done.
+    ScrollText,
+    /// An account or profile.
+    CircleUser,
+    /// What was done before, to go back to.
+    History,
 }
 
 impl IconName {
     /// The artwork this icon is drawn from.
     pub fn svg(self) -> Svg {
         match self {
+            Self::CircleUser => Svg::new("circle_user", include_icon!("circle_user")),
             Self::LoadCircle => Svg::new("load_circle", include_icon!("load_circle")),
             Self::ChevronRight => Svg::new("chevron_right", include_icon!("chevron_right")),
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),
@@ -133,6 +192,7 @@ impl IconName {
             Self::ArrowLeft => Svg::new("arrow_left", include_icon!("arrow_left")),
             Self::ArrowRight => Svg::new("arrow_right", include_icon!("arrow_right")),
             Self::ArrowUp => Svg::new("arrow_up", include_icon!("arrow_up")),
+            Self::Copy => Svg::new("copy", include_icon!("copy")),
             Self::Check => Svg::new("check", include_icon!("check")),
             Self::Close => Svg::new("close", include_icon!("close")),
             Self::More => Svg::new("more", include_icon!("more")),
@@ -163,6 +223,7 @@ impl IconName {
             Self::Search => Svg::new("search", include_icon!("search")),
             Self::Settings => Svg::new("settings", include_icon!("settings")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
+            Self::Info => Svg::new("info", include_icon!("info")),
             Self::Warning => Svg::new("warning", include_icon!("warning")),
             Self::Debug => Svg::new("debug", include_icon!("debug")),
             Self::DebugContinue => Svg::new("debug_continue", include_icon!("debug_continue")),
@@ -172,6 +233,32 @@ impl IconName {
             Self::DebugStepOut => Svg::new("debug_step_out", include_icon!("debug_step_out")),
             Self::Stop => Svg::new("stop", include_icon!("stop")),
             Self::Restart => Svg::new("rotate_cw", include_icon!("rotate_cw")),
+            Self::SquareFunction => Svg::new("square_function", include_icon!("square_function")),
+            Self::Box => Svg::new("box", include_icon!("box")),
+            Self::SquareDot => Svg::new("square_dot", include_icon!("square_dot")),
+            Self::Variable => Svg::new("variable", include_icon!("variable")),
+            Self::Component => Svg::new("component", include_icon!("component")),
+            Self::Plug => Svg::new("plug", include_icon!("plug")),
+            Self::List => Svg::new("list", include_icon!("list")),
+            Self::CircleDot => Svg::new("circle_dot", include_icon!("circle_dot")),
+            Self::FileCode => Svg::new("file_code", include_icon!("file_code")),
+            Self::Hash => Svg::new("hash", include_icon!("hash")),
+            Self::Blocks => Svg::new("blocks", include_icon!("blocks")),
+            Self::Percent => Svg::new("percent", include_icon!("percent")),
+            Self::Type => Svg::new("type", include_icon!("type")),
+            Self::Palette => Svg::new("palette", include_icon!("palette")),
+            Self::Text => Svg::new("text", include_icon!("text")),
+            Self::Ruler => Svg::new("ruler", include_icon!("ruler")),
+            Self::Package => Svg::new("package", include_icon!("package")),
+            Self::Wrench => Svg::new("wrench", include_icon!("wrench")),
+            Self::KeyRound => Svg::new("key_round", include_icon!("key_round")),
+            Self::Zap => Svg::new("zap", include_icon!("zap")),
+            Self::Circle => Svg::new("circle", include_icon!("circle")),
+            Self::SquareSlash => Svg::new("square_slash", include_icon!("square_slash")),
+            Self::Hand => Svg::new("hand", include_icon!("hand")),
+            Self::Code => Svg::new("code", include_icon!("code")),
+            Self::ScrollText => Svg::new("scroll_text", include_icon!("scroll_text")),
+            Self::History => Svg::new("history", include_icon!("history")),
         }
     }
 }

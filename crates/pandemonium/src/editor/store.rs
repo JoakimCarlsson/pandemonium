@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 use pm_core::{Blame, Change, ProjectId, Scope};
 use pm_gfx::Point;
 use pm_text::{
-    Buffer, Client, Highlight, Hint, Indent, Lens, Position, Prediction, Predictor, Request,
-    Server, Servers, Ticket, server_predictor,
+    Buffer, Client, Hint, Indent, Lens, Position, Prediction, Predictor, Request, Semantic, Server,
+    Servers, Ticket, server_predictor,
 };
 
 /// A stable key for a server while the document holds its client.
@@ -31,7 +31,7 @@ fn server_key(client: &Arc<Client>) -> usize {
 const ANNOTATION_RETRY: Duration = Duration::from_millis(150);
 
 /// One server's semantic spans.
-type SemanticSpans = Vec<(std::ops::Range<Position>, Highlight)>;
+type SemanticSpans = Vec<Semantic>;
 
 /// One server's request progress for one annotation kind.
 #[derive(Default)]
@@ -127,6 +127,8 @@ pub struct FileEntry {
 pub struct Habits {
     /// How a file that does not say is indented, and how wide a tab is.
     pub indent: Indent,
+    /// Whether `indent` is what the reader says the file is indented by, over what its lines show.
+    pub indent_fixed: bool,
     /// Whether the space at the ends of lines goes when a file is saved.
     pub trim_whitespace: bool,
     /// Whether a saved file always ends in a line break.
@@ -447,6 +449,34 @@ impl Document {
             .unwrap_or(Segment::whole(row.line))
     }
 
+    /// How many rows the whole text comes to, as wide as the pane last drew
+    /// it, or one a line before it has been drawn at all.
+    pub fn total_rows(&self) -> usize {
+        let lines = 0..self.buffer.line_count();
+        match self.layout.bounds.size.width > 0.0 {
+            true => lines
+                .filter(|line| !self.is_folded(*line))
+                .map(|line| self.row_count(line))
+                .sum(),
+            false => lines.count(),
+        }
+    }
+
+    /// Shows the text from the row `rows` into it down, counted in the rows
+    /// it wraps to.
+    pub fn scroll_to_wrapped(&mut self, rows: usize) {
+        self.scroll_to_row(self.row_after(Row::default(), rows as isize));
+    }
+
+    /// How many rows of the text are above the first one the pane shows.
+    pub fn rows_above(&self) -> usize {
+        (0..self.scroll)
+            .filter(|line| !self.is_folded(*line))
+            .map(|line| self.row_count(line))
+            .sum::<usize>()
+            + self.part
+    }
+
     /// How many rows `line` is drawn on.
     fn row_count(&self, line: usize) -> usize {
         match self.wraps {
@@ -597,7 +627,7 @@ impl Document {
         &mut self,
         client: &Arc<Client>,
         version: i32,
-        spans: Option<Vec<(std::ops::Range<Position>, Highlight)>>,
+        spans: Option<SemanticSpans>,
     ) -> bool {
         let entry = self.named.entry(server_key(client)).or_default();
         if !entry
@@ -945,6 +975,11 @@ impl Document {
             return false;
         }
         self.dismiss_prediction();
+        for server in &self.servers {
+            if !servers.iter().any(|new| Arc::ptr_eq(server, new)) {
+                server.did_close(self.buffer.path());
+            }
+        }
         for server in &servers {
             if !self.servers.iter().any(|old| Arc::ptr_eq(old, server))
                 && let Some(language) = self.buffer.language()
@@ -1200,7 +1235,19 @@ impl Document {
         let version = self.buffer.version();
         let at = self.buffer.selection().head;
         let shown = self.prediction.take();
-        let result = edit(&mut self.buffer, &mut self.modal);
+        let linked = self.buffer.in_linked_tag();
+        let result = match linked {
+            true => {
+                let (buffer, modal) = (&mut self.buffer, &mut self.modal);
+                let mut result = None;
+                buffer.grouped(|buffer| {
+                    result = Some(edit(buffer, modal));
+                    buffer.mirror_tag_name();
+                });
+                result.expect("grouped runs its change")
+            }
+            false => edit(&mut self.buffer, &mut self.modal),
+        };
         if version == self.buffer.version() {
             self.prediction = shown.filter(|item| item.range.start == self.buffer.selection().head);
             if at != self.buffer.selection().head {
@@ -1237,9 +1284,6 @@ impl Document {
 
     /// Brings the search and the servers up to the text as it now stands.
     fn changed(&mut self) {
-        self.buffer.set_hints(Vec::new());
-        self.buffer.set_lenses(Vec::new());
-        self.buffer.set_semantics(Vec::new());
         for (_, hints) in self.hinted.values_mut() {
             hints.clear();
         }
@@ -1348,10 +1392,10 @@ fn named_servers(servers: &BTreeMap<String, Vec<Server>>) -> HashMap<&'static st
         .collect()
 }
 
-/// One open file: the worktree it belongs to and the document itself.
+/// One open file: its optional worktree and the document itself.
 struct Entry {
-    /// The worktree the file was opened from.
-    scope: Scope,
+    /// The worktree the file was opened from, or none for a loose file.
+    scope: Option<Scope>,
     /// The worktree root that owns this file's language servers.
     root: Location,
     /// The document, shared with whichever panes are drawing it.
@@ -1369,6 +1413,8 @@ pub struct Files {
     servers: Servers,
     /// How the reader writes the files.
     habits: Habits,
+    /// How the reader writes the files of a language that differs, by the language's name.
+    by_language: BTreeMap<String, Habits>,
     /// What the index holds for each of them, read away from the window.
     baselines: Baselines,
     /// File errors waiting to be shown by the window.
@@ -1454,6 +1500,27 @@ impl Files {
         self.servers.set_added(named_servers(added));
     }
 
+    /// The configured servers for a file, including missing and failed slots.
+    pub fn server_states(&self, file: FileId) -> Vec<pm_text::ServerStatus> {
+        let Some(entry) = self.open.get(&file) else {
+            return Vec::new();
+        };
+        let language = entry.document.borrow().buffer().language();
+        language
+            .map(|language| self.servers.states(&entry.root, language))
+            .unwrap_or_default()
+    }
+
+    /// Takes terminal server failures for notices.
+    pub fn take_server_failures(&mut self) -> Vec<pm_text::ServerStatus> {
+        self.servers.take_failures()
+    }
+
+    /// Logs of all configured server slots over a worktree.
+    pub fn server_logs_over(&self, root: &Path) -> Vec<(&'static str, PathBuf)> {
+        self.servers.logs_over(root)
+    }
+
     /// The first installable absent server for each unserved open language.
     pub fn take_missing_servers(&mut self) -> Vec<Server> {
         let missing = self.servers.take_missing();
@@ -1463,7 +1530,13 @@ impl Files {
                 self.open.values().any(|entry| {
                     let document = entry.document.borrow();
                     document.buffer().language().is_some_and(|language| {
-                        !document.is_served()
+                        (!document.is_served()
+                            || (pm_text::program::installed_with_recipe(
+                                server.command,
+                                server.install,
+                            )
+                            .is_none()
+                                && pm_text::program::managed_fallback(server.command).is_some()))
                             && self
                                 .servers
                                 .installable(language)
@@ -1474,6 +1547,11 @@ impl Files {
             .collect()
     }
 
+    /// Installable programs that started servers run in turn but lack.
+    pub fn take_missing_tools(&mut self) -> Vec<&'static pm_text::program::Need> {
+        self.servers.take_missing_tools()
+    }
+
     /// The first installable configured server for `language`.
     pub fn installable_server(&self, language: pm_text::Language) -> Option<Server> {
         self.servers.installable(language)
@@ -1482,6 +1560,40 @@ impl Files {
     /// What the servers for `language` need that the editor cannot install.
     pub fn server_needs(&self, language: pm_text::Language) -> Option<&'static str> {
         self.servers.needs(language)
+    }
+
+    /// Reidentifies open files and reconciles servers after extension changes.
+    pub fn reload_languages(&mut self) {
+        for entry in self.open.values() {
+            let mut document = entry.document.borrow_mut();
+            let previous = document.buffer.language();
+            let current = pm_text::Language::of(document.buffer.path());
+            if previous.is_some_and(pm_text::Language::is_wasm)
+                || current.is_some_and(pm_text::Language::is_wasm)
+                || previous.map(pm_text::Language::name) != current.map(pm_text::Language::name)
+            {
+                document.set_servers(Vec::new());
+                document.buffer.reload_language();
+            }
+        }
+        self.reconcile_servers();
+    }
+
+    /// Stops obsolete server slots and attaches configured servers to every open file.
+    pub fn reconcile_servers(&mut self) {
+        let documents = self
+            .open
+            .values()
+            .filter(|entry| entry.root.host.is_local())
+            .filter_map(|entry| {
+                Some((
+                    entry.root.to_path_buf(),
+                    entry.document.borrow().buffer().language()?,
+                ))
+            })
+            .collect::<Vec<_>>();
+        self.servers.reconcile(&documents);
+        self.refresh();
     }
 
     /// Starts installed servers again for every open document of `language`.
@@ -1526,18 +1638,26 @@ impl Files {
     }
 
     /// Writes files the way `habits` say from now on, the open ones
-    /// included.
-    pub fn set_habits(&mut self, habits: Habits) {
-        if habits.indent != self.habits.indent {
-            for entry in self.open.values() {
-                entry
-                    .document
-                    .borrow_mut()
-                    .buffer_mut()
-                    .set_habit(habits.indent);
-            }
-        }
+    /// included, except the files of a language in `by_language`, which are
+    /// written the way it says.
+    pub fn set_habits(&mut self, habits: Habits, by_language: BTreeMap<String, Habits>) {
         self.habits = habits;
+        self.by_language = by_language;
+        for entry in self.open.values() {
+            let mut document = entry.document.borrow_mut();
+            let habits = self.habits_of(document.buffer().language());
+            let buffer = document.buffer_mut();
+            buffer.set_habit(habits.indent);
+            buffer.force_indent(habits.indent_fixed.then_some(habits.indent));
+        }
+    }
+
+    /// How files in `language` are written.
+    fn habits_of(&self, language: Option<pm_text::Language>) -> Habits {
+        language
+            .and_then(|language| self.by_language.get(language.name()))
+            .copied()
+            .unwrap_or(self.habits)
     }
 
     /// Takes every hint out of the open files, and forgets they were asked
@@ -1594,15 +1714,7 @@ impl Files {
             return Some(id);
         }
 
-        let mut buffer = match Buffer::open(root.at(path)) {
-            Ok(buffer) => buffer,
-            Err(error) => {
-                self.troubles
-                    .push(format!("Could not open {}: {error}", path.display()));
-                return None;
-            }
-        };
-        buffer.set_habit(self.habits.indent);
+        let buffer = self.prepared_buffer(root.at(path))?;
         let servers = buffer
             .language()
             .filter(|_| root.host.is_local())
@@ -1614,7 +1726,7 @@ impl Files {
         self.open.insert(
             id,
             Entry {
-                scope,
+                scope: Some(scope),
                 root: root.clone(),
                 document: Rc::new(RefCell::new(Document::new(buffer, preview, servers, None))),
             },
@@ -1623,12 +1735,56 @@ impl Files {
         Some(id)
     }
 
+    /// Opens a standalone file without attaching its folder to a project.
+    pub fn open_loose(&mut self, path: &Path) -> Option<FileId> {
+        if let Some(id) = self
+            .open
+            .iter()
+            .find(|(_, entry)| {
+                entry.scope.is_none() && entry.document.borrow().buffer().path() == path
+            })
+            .map(|(id, _)| *id)
+        {
+            self.keep(id);
+            return Some(id);
+        }
+        let buffer = self.prepared_buffer(path)?;
+        let id = self.next;
+        self.next = FileId(id.0 + 1);
+        self.open.insert(
+            id,
+            Entry {
+                scope: None,
+                root: Location::local(path.parent()?),
+                document: Rc::new(RefCell::new(Document::new(buffer, false, Vec::new(), None))),
+            },
+        );
+        Some(id)
+    }
+
+    /// Reads a file with the editor's indentation preferences applied.
+    fn prepared_buffer(&mut self, location: impl Into<Location>) -> Option<Buffer> {
+        let location = location.into();
+        let mut buffer = match Buffer::open(&location) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                self.troubles
+                    .push(format!("Could not open {}: {error}", location.display()));
+                return None;
+            }
+        };
+        let habits = self.habits_of(buffer.language());
+        buffer.set_habit(habits.indent);
+        buffer.force_indent(habits.indent_fixed.then_some(habits.indent));
+        Some(buffer)
+    }
+
     /// The file `path` is open as in `scope`, if it is open at all.
     fn find(&self, scope: Scope, path: &Path) -> Option<FileId> {
         self.open
             .iter()
             .find(|(_, entry)| {
-                entry.scope == scope && entry.document.borrow().buffer().path() == path
+                entry.scope == Some(scope) && entry.document.borrow().buffer().path() == path
             })
             .map(|(id, _)| *id)
     }
@@ -1642,7 +1798,7 @@ impl Files {
     pub fn search_snapshots(&self, scope: Scope) -> HashMap<PathBuf, String> {
         self.open
             .values()
-            .filter(|entry| entry.scope == scope)
+            .filter(|entry| entry.scope == Some(scope))
             .map(|entry| {
                 let document = entry.document.borrow();
                 (
@@ -1660,7 +1816,7 @@ impl Files {
 
     /// The worktree the file `id` names was opened from.
     pub fn scope_of(&self, id: FileId) -> Option<Scope> {
-        self.open.get(&id).map(|entry| entry.scope)
+        self.open.get(&id).and_then(|entry| entry.scope)
     }
 
     /// The file `id` names as a bar of tabs presents it.
@@ -1708,10 +1864,15 @@ impl Files {
     /// and writing the file is the moment that becomes possible.
     pub fn save(&mut self, id: FileId, root: &Location) {
         if let Some(entry) = self.open.get(&id) {
-            if let Err(error) = entry.document.borrow_mut().save(self.habits) {
+            let mut document = entry.document.borrow_mut();
+            let habits = self.habits_of(document.buffer().language());
+            if let Err(error) = document.save(habits) {
                 self.troubles.push(error);
             }
-            self.ask_baseline(id, root);
+            drop(document);
+            if entry.scope.is_some() {
+                self.ask_baseline(id, root);
+            }
         }
     }
 
@@ -1733,8 +1894,10 @@ impl Files {
                     buffer.commit();
                 });
             }
+            let indent = self.habits_of(document.buffer().language()).indent;
             if let Err(error) = document.save(Habits {
-                indent: self.habits.indent,
+                indent,
+                indent_fixed: false,
                 trim_whitespace: false,
                 final_newline: false,
             }) {
@@ -1754,13 +1917,15 @@ impl Files {
             .map(|(id, entry)| (*id, entry.scope))
             .collect::<Vec<_>>();
         for (id, scope) in dirty {
-            match root(scope) {
+            match scope.and_then(root) {
                 Some(root) => self.save(id, &root),
                 None => {
-                    if let Some(entry) = self.open.get(&id)
-                        && let Err(error) = entry.document.borrow_mut().save(self.habits)
-                    {
-                        self.troubles.push(error);
+                    if let Some(entry) = self.open.get(&id) {
+                        let mut document = entry.document.borrow_mut();
+                        let habits = self.habits_of(document.buffer().language());
+                        if let Err(error) = document.save(habits) {
+                            self.troubles.push(error);
+                        }
                     }
                 }
             }
@@ -1770,7 +1935,8 @@ impl Files {
     /// Whether `project` has an open document whose edits are not on disk.
     pub fn project_is_dirty(&self, project: ProjectId) -> bool {
         self.open.values().any(|entry| {
-            entry.scope.project() == project && entry.document.borrow().buffer().is_dirty()
+            entry.scope.is_some_and(|scope| scope.project() == project)
+                && entry.document.borrow().buffer().is_dirty()
         })
     }
 
@@ -1799,7 +1965,7 @@ impl Files {
         let clean = self
             .open
             .iter()
-            .filter(|(_, entry)| entry.scope == scope)
+            .filter(|(_, entry)| entry.scope == Some(scope))
             .filter(|(_, entry)| {
                 let document = entry.document.borrow();
                 !document.buffer().is_dirty() && wanted(document.buffer().path())
@@ -1850,7 +2016,7 @@ impl Files {
 
     /// Closes every file and server of `scope` over its worktree roots.
     pub fn close_scope(&mut self, scope: Scope, roots: &[PathBuf]) {
-        self.open.retain(|_, entry| entry.scope != scope);
+        self.open.retain(|_, entry| entry.scope != Some(scope));
         for root in roots {
             self.servers.close(root);
         }
@@ -1859,7 +2025,7 @@ impl Files {
     /// Closes every file of `project` and ends servers over all its roots.
     pub fn close_project(&mut self, project: ProjectId, roots: &[PathBuf]) {
         self.open
-            .retain(|_, entry| entry.scope.project() != project);
+            .retain(|_, entry| !entry.scope.is_some_and(|scope| scope.project() == project));
         for root in roots {
             self.servers.close(root);
         }

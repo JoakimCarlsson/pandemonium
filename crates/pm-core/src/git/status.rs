@@ -8,7 +8,7 @@
 
 use pm_host::Location;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::git::head::Head;
@@ -150,6 +150,8 @@ pub struct Status {
     changed: Vec<Changed>,
     /// The one status to draw each path with, directories included.
     marks: HashMap<PathBuf, FileStatus>,
+    /// The files and directories git ignores, with directory contents implied.
+    ignored: HashSet<PathBuf>,
 }
 
 impl Default for Status {
@@ -159,6 +161,7 @@ impl Default for Status {
             head: Head::default(),
             changed: Vec::new(),
             marks: HashMap::new(),
+            ignored: HashSet::new(),
         }
     }
 }
@@ -180,6 +183,7 @@ impl Status {
                 "--branch",
                 "-z",
                 "--untracked-files=all",
+                "--ignored=matching",
             ],
         ) else {
             return Self::default();
@@ -198,6 +202,11 @@ impl Status {
                 }
                 Some('u') => status.take(read_conflicted(&root, entry)),
                 Some('?') => status.take(read_untracked(&root, entry)),
+                Some('!') => {
+                    if let Some(path) = entry.get(2..) {
+                        status.ignored.insert(root.join(path));
+                    }
+                }
                 _ => {}
             }
         }
@@ -220,6 +229,11 @@ impl Status {
     /// What git makes of `path`, if it makes anything of it.
     pub fn mark(&self, path: &Path) -> Option<FileStatus> {
         self.marks.get(path).copied()
+    }
+
+    /// Whether git ignores `path` itself or a directory containing it.
+    pub fn is_ignored(&self, path: &Path) -> bool {
+        path.ancestors().any(|path| self.ignored.contains(path))
     }
 
     /// Takes in one file, if the line it was read from was one.

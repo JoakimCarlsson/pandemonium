@@ -20,15 +20,15 @@
 //! old side set beside the new so a line and what became of it are read
 //! across rather than down.
 
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use pm_core::{Changed, Hunk, Line, LineKind};
 use pm_gfx::Rgba;
 use pm_text::Highlight;
 use pm_ui::{
-    Div, IconName, IconSize, Side, Styled, Theme, checkbox, h_flex, icon, icon_button, measured,
-    text, turning_icon_button, v_flex,
+    Div, Font, IconName, IconSize, Paragraph, Side, Styled, TextSize, Theme, checkbox, h_flex,
+    icon, icon_button, measured, paragraph, text, turning_icon_button, v_flex,
 };
 
 use crate::config::Preference;
@@ -38,9 +38,7 @@ use crate::review::action::{primary_face, primary_message};
 use crate::review::comment::{Anchor, Comment, Composing, Side as CommentSide};
 use crate::review::commit_editor;
 use crate::review::gutter::revealing;
-use crate::review::remark::{
-    Delivery, block_rows, comment_block, composer_block, composer_rows, pending_bar,
-};
+use crate::review::remark::{Delivery, comment_block, composer_block, pending_bar};
 use crate::review::sidebar::{staged_state, status_color};
 use crate::review::store::{ChangeId, Patch, Review};
 
@@ -50,6 +48,13 @@ use crate::review::store::{ChangeId, Patch, Review};
 /// not a thousand rows of layout: what is built is the part the reader is
 /// looking at and enough beyond it to fill any pane.
 const DRAWN: usize = 400;
+
+/// Maximum characters shown for one wrapped diff row, with an ellipsis for the rest.
+///
+/// Keeping a generous visible prefix
+/// prevents generated files with megabyte-long lines from blocking layout.
+/// The patch retains the complete line for staging and opening in the editor.
+const LINE_PREVIEW_CHARS: usize = 4096;
 
 /// How wide the column of line numbers is drawn.
 const NUMBERS: f32 = 76.0;
@@ -101,7 +106,7 @@ pub fn review_pane(
                 .when(empty, |pane| {
                     pane.child(nothing(theme, "No uncommitted changes"))
                 })
-                .children(drawn(theme, review, None, split, remarking)),
+                .child(drawn(theme, review, None, split, remarking)),
         ))
         .when(!empty, |pane| {
             pane.child(commit_bar(theme, review, typing, solid))
@@ -164,7 +169,7 @@ pub fn change_pane(
         })
         .child(measured(
             review.area(Some(id)),
-            v_flex().w_full().flex_1().overflow_hidden().children(drawn(
+            v_flex().w_full().flex_1().overflow_hidden().child(drawn(
                 theme,
                 review,
                 Some(id),
@@ -181,21 +186,32 @@ fn drawn(
     shown: Option<ChangeId>,
     split: bool,
     remarking: Remarking,
-) -> Vec<Div<Message>> {
+) -> super::scroll::DiffViewport {
+    let scroll = review.diff_scroll(shown);
     let rows = rows(review, shown, split);
     let first = review.scroll(shown).min(rows.len().saturating_sub(1));
-    let picked = review.comments().picked();
-    rows.into_iter()
+    if scroll.row() != first {
+        scroll.to(first);
+    }
+    let picked = review
+        .comments()
+        .picked()
+        .or_else(|| review.comments().composing().map(|draft| draft.anchor));
+    let visible = rows
+        .into_iter()
+        .enumerate()
         .skip(first)
         .take(DRAWN)
-        .map(|row| {
+        .map(|(at, row)| {
             let outlined = shown.is_none() && !matches!(row, Row::FileGap | Row::FileEnd);
-            self::row(theme, review, row, (shown, &picked), remarking).when(outlined, |row| {
-                row.border_side(Side::Left, 1.0, theme.colors.border)
-                    .border_side(Side::Right, 1.0, theme.colors.border)
-            })
-        })
-        .collect()
+            let row =
+                self::row(theme, review, row, (shown, &picked), remarking).when(outlined, |row| {
+                    row.border_side(Side::Left, 1.0, theme.colors.border)
+                        .border_side(Side::Right, 1.0, theme.colors.border)
+                });
+            scroll.measured(at, row)
+        });
+    scroll.viewport(v_flex().w_full().children(visible))
 }
 
 /// Where in the review the file `id` names begins.
@@ -721,7 +737,6 @@ fn row(
             let spot = Spot::of(review, shown, index, path, staged, picked);
             h_flex()
                 .w_full()
-                .h_px(theme.size.row)
                 .items_stretch()
                 .overflow_hidden()
                 .child(half(theme, review, path, staged, old, false, &spot))
@@ -775,7 +790,6 @@ fn compare_heading(theme: &Theme, at: usize, total: usize) -> Div<Message> {
 fn compare_pair(theme: &Theme, current: Option<&str>, incoming: Option<&str>) -> Div<Message> {
     h_flex()
         .w_full()
-        .h_px(theme.size.row)
         .items_stretch()
         .child(compare_half(theme, current, true))
         .child(v_flex().w_px(1.0).bg(theme.colors.border))
@@ -791,14 +805,10 @@ fn compare_half(theme: &Theme, line: Option<&str>, current: bool) -> Div<Message
     h_flex()
         .flex_1()
         .px(1.5)
-        .items_center()
+        .items_start()
         .overflow_hidden()
         .bg(color.alpha(theme.emphasis.change))
-        .child(
-            text(line.unwrap_or_default().to_owned())
-                .text_sm()
-                .font_mono(),
-        )
+        .child(shaded(theme, line.unwrap_or_default(), &[]))
 }
 
 /// Builds the heading of one file: its path, its counts and its controls.
@@ -955,6 +965,13 @@ fn heading_row(
                 .font_mono()
                 .color(theme.colors.text_muted),
         )
+        .when_some(
+            review
+                .change(index)
+                .and_then(|changed| review.patch(&changed.path))
+                .and_then(|patch| patch.attribution.get(&(staged, at))),
+            |row, step| row.child(provenance(theme, review.checkpoint_scope, step)),
+        )
         .child(h_flex().flex_1())
         .when(hunk_anchor(review, index, staged, hunk).is_some(), |row| {
             row.child(worded(
@@ -993,7 +1010,7 @@ fn range_of(hunk: &Hunk) -> String {
 
 /// What the number column of a row of a hunk needs to be a way to comment:
 /// which change the row is of, which sides of it can be commented on, and
-/// the lines a gesture is sweeping over now.
+/// the lines being selected or commented on.
 struct Spot {
     /// Which file the pane is of, when it is of one alone.
     shown: Option<ChangeId>,
@@ -1005,7 +1022,7 @@ struct Spot {
     new: bool,
     /// Whether a comment is waiting for a line to be put on.
     moving: bool,
-    /// The lines a gesture is sweeping over, when it is in this file.
+    /// The selected or drafted lines, when they are in this file.
     picked: Option<Anchor>,
 }
 
@@ -1041,7 +1058,7 @@ impl Spot {
         }
     }
 
-    /// Whether a gesture is sweeping over `number` on `side`.
+    /// Whether `number` on `side` is selected or being commented on.
     fn sweeps(&self, side: CommentSide, number: usize) -> bool {
         self.picked.as_ref().is_some_and(|picked| {
             picked.side == side && (picked.first..=picked.last).contains(&number)
@@ -1094,7 +1111,6 @@ fn line_row(
     shade: Option<&[Option<Highlight>]>,
     spot: &Spot,
 ) -> Div<Message> {
-    let (gutter, wash) = washes(theme, Some(line.kind));
     let side = match line.kind {
         LineKind::Removed => CommentSide::Old,
         LineKind::Added | LineKind::Context => CommentSide::New,
@@ -1105,20 +1121,12 @@ fn line_row(
     }
     .filter(|_| spot.allows(side));
     let swept = number_here.is_some_and(|number| spot.sweeps(side, number));
-    let gutter = match swept {
-        true => Some(
-            theme
-                .colors
-                .accent
-                .alpha(theme.emphasis.change * GUTTER_DEPTH),
-        ),
-        false => gutter,
-    };
+    let (gutter, wash) = comment_washes(theme, Some(line.kind), swept);
     let numbers = h_flex()
         .w_px(NUMBERS)
         .px(0.5)
         .gap(0.5)
-        .items_center()
+        .items_start()
         .justify_end()
         .when_some(gutter, Div::bg)
         .child(number(theme, line.old))
@@ -1130,7 +1138,6 @@ fn line_row(
 
     h_flex()
         .w_full()
-        .h_px(theme.size.row)
         .items_stretch()
         .overflow_hidden()
         .when_some(wash, Div::bg)
@@ -1155,7 +1162,6 @@ fn half(
     new: bool,
     spot: &Spot,
 ) -> Div<Message> {
-    let (gutter, wash) = washes(theme, line.map(|line| line.kind));
     let number = line.and_then(|line| match new {
         true => line.new,
         false => line.old,
@@ -1167,27 +1173,21 @@ fn half(
     };
     let commenting = number.filter(|_| spot.allows(side));
     let swept = commenting.is_some_and(|number| spot.sweeps(side, number));
-    let gutter = match swept {
-        true => Some(
-            theme
-                .colors
-                .accent
-                .alpha(theme.emphasis.change * GUTTER_DEPTH),
-        ),
-        false => gutter,
-    };
+    let (gutter, wash) = comment_washes(theme, line.map(|line| line.kind), swept);
     let numbers = h_flex()
         .w_px(SIDE_NUMBER)
         .px(0.5)
-        .items_center()
+        .items_start()
         .justify_end()
         .when_some(gutter, Div::bg)
         .when_some(number, |slot, number| {
             slot.child(
-                text(number.to_string())
-                    .text_xs()
-                    .font_mono()
-                    .color(theme.colors.text_subtle),
+                h_flex().h_px(theme.size.row).items_center().child(
+                    text(number.to_string())
+                        .text_xs()
+                        .font_mono()
+                        .color(theme.colors.text_subtle),
+                ),
             )
         });
     let column = match commenting {
@@ -1204,8 +1204,23 @@ fn half(
         .child(marked(theme, line))
         .child(match line {
             Some(line) => shaded(theme, &line.text, shade.unwrap_or_default()),
-            None => h_flex().child(text(" ").text_sm().font_mono()),
+            None => shaded(theme, " ", &[]),
         })
+}
+
+/// Highlights the full selected comment range, retaining the diff wash elsewhere.
+fn comment_washes(
+    theme: &Theme,
+    kind: Option<LineKind>,
+    selected: bool,
+) -> (Option<Rgba>, Option<Rgba>) {
+    match selected {
+        true => (
+            Some(theme.colors.accent.alpha(theme.emphasis.selection)),
+            Some(theme.colors.selection.alpha(theme.emphasis.selection)),
+        ),
+        false => washes(theme, kind),
+    }
 }
 
 /// The washes a line of `kind` is drawn on: the deeper one of its gutter,
@@ -1237,21 +1252,27 @@ fn marked(theme: &Theme, line: Option<&Line>) -> Div<Message> {
         _ => " ",
     };
 
-    h_flex().w_px(MARK).items_center().justify_center().child(
-        text(mark)
-            .text_sm()
-            .font_mono()
-            .color(theme.colors.text_muted),
-    )
+    h_flex()
+        .w_px(MARK)
+        .h_px(theme.size.row)
+        .items_center()
+        .justify_center()
+        .child(
+            text(mark)
+                .text_sm()
+                .font_mono()
+                .color(theme.colors.text_muted),
+        )
 }
 
 /// Builds `said` as runs of one colour each, as `shade` colours it.
 ///
 /// A character `shade` says nothing about is drawn in the body colour, the
 /// way the editor draws one its grammar says nothing about.
-fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message> {
+fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Paragraph<Message> {
     let mut runs: Vec<(Option<Highlight>, String)> = Vec::new();
-    for (column, ch) in said.chars().enumerate() {
+    let mut characters = said.chars();
+    for (column, ch) in characters.by_ref().take(LINE_PREVIEW_CHARS).enumerate() {
         let highlight = shade.get(column).copied().flatten();
         match runs.last_mut() {
             Some((last, run)) if *last == highlight => run.push(ch),
@@ -1259,18 +1280,31 @@ fn shaded(theme: &Theme, said: &str, shade: &[Option<Highlight>]) -> Div<Message
         }
     }
 
-    h_flex()
-        .items_center()
-        .children(runs.into_iter().map(|(highlight, run)| {
-            let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
-            text(run).text_sm().font_mono().color(color)
-        }))
+    if characters.next().is_some() {
+        runs.push((None, "…".to_owned()));
+    }
+
+    let font = Font::new(TextSize::Sm).mono().leading(theme.size.row);
+    let mut content = paragraph()
+        .break_long_words()
+        .preserve_whitespace()
+        .flex_1();
+    if runs.is_empty() {
+        content = content.span(" ", font, theme.colors.text);
+    }
+    for (highlight, run) in runs {
+        let color = highlight.map_or(theme.colors.text, |highlight| tint(highlight, theme));
+        content = content.span(run, font, color);
+    }
+    content
 }
 
 /// Builds one of a line's numbers, or the blank where it has none.
 fn number(theme: &Theme, line: Option<usize>) -> Div<Message> {
     h_flex()
         .w_px(NUMBERS / 2.0 - 6.0)
+        .h_px(theme.size.row)
+        .items_center()
         .justify_end()
         .when_some(line, |slot, line| {
             slot.child(
@@ -1329,22 +1363,6 @@ pub fn hunk_anchor(
     }
 }
 
-/// How tall `row` is drawn.
-///
-/// Rows have no height of their own to ask for once they are drawn, so the
-/// heights are written down here beside the rows: a gesture that ends
-/// somewhere down the pane is turned into a line by adding them up.
-fn height(theme: &Theme, row: &Row<'_>) -> f32 {
-    match row {
-        Row::FileGap => FILE_GAP,
-        Row::FileEnd => 1.0,
-        Row::File(..) => theme.size.field,
-        Row::Comment(comment) => block_rows(comment) as f32 * theme.size.row,
-        Row::Composer(_) => composer_rows() as f32 * theme.size.row,
-        _ => theme.size.row,
-    }
-}
-
 /// The line, counted on `side` in the `index`-th change, that `row` is.
 fn numbered(row: &Row<'_>, index: usize, side: CommentSide) -> Option<usize> {
     let of = |line: &Line| match side {
@@ -1368,7 +1386,7 @@ fn numbered(row: &Row<'_>, index: usize, side: CommentSide) -> Option<usize> {
 /// comment, a heading, the space past the end — is taken to be at the line
 /// nearest to it.
 pub fn line_at(
-    theme: &Theme,
+    _theme: &Theme,
     review: &Review,
     (shown, split): (Option<ChangeId>, bool),
     (index, side): (usize, CommentSide),
@@ -1376,16 +1394,7 @@ pub fn line_at(
 ) -> Option<usize> {
     let rows = rows(review, shown, split);
     let first = review.scroll(shown).min(rows.len().saturating_sub(1));
-    let mut top = review.area(shown).get().top();
-    let mut reached = rows.len().saturating_sub(1);
-    for (at, row) in rows.iter().enumerate().skip(first) {
-        let bottom = top + height(theme, row);
-        if y < bottom {
-            reached = at;
-            break;
-        }
-        top = bottom;
-    }
+    let reached = review.diff_scroll(shown).at(y).unwrap_or(first);
     (0..rows.len()).find_map(|distance| {
         let below = rows
             .get(reached + distance)
@@ -1396,4 +1405,215 @@ pub fn line_at(
             .and_then(|row| numbered(row, index, side));
         below.or(above)
     })
+}
+
+/// The immutable content and scrolling of a persisted turn comparison pane.
+#[derive(Default)]
+pub(crate) struct TurnDiff {
+    /// Files, hunks and their optional conservative provenance.
+    pub(crate) files: BTreeMap<PathBuf, Vec<(Hunk, Option<pm_core::CheckpointStep>)>>,
+    /// The first visible row.
+    pub(crate) scroll: super::scroll::DiffScroll,
+}
+
+/// A compact, stable identifier for a checkpoint heading's transcript target.
+pub fn step_prefix(step: &pm_core::CheckpointStep) -> u64 {
+    u64::from_str_radix(step.commit.get(..16).unwrap_or_default(), 16).unwrap_or_default()
+}
+
+/// Draws a provenance label and enables navigation only for an identified call.
+fn provenance(
+    theme: &Theme,
+    scope: Option<pm_core::Scope>,
+    step: &pm_core::CheckpointStep,
+) -> Div<Message> {
+    h_flex()
+        .items_center()
+        .child(
+            text(format!("{} · turn {}", step.title, step.turn))
+                .text_xs()
+                .color(theme.colors.text_muted),
+        )
+        .when_some(scope.filter(|_| step.tool.is_some()), |label, scope| {
+            label.on_click(Message::ShowCheckpointStep(scope, step_prefix(step)))
+        })
+}
+
+/// Builds a read-only turn comparison with the review's hunk and line primitives.
+pub(crate) fn turns_pane(
+    theme: &Theme,
+    scope: pm_core::Scope,
+    span: crate::panes::TurnSpan,
+    diff: &TurnDiff,
+    split: bool,
+) -> Div<Message> {
+    let rows = turn_rows(diff, split);
+    let empty = rows.is_empty();
+    let first = diff.scroll.row().min(rows.len().saturating_sub(1));
+    if diff.scroll.row() != first {
+        diff.scroll.to(first);
+    }
+    let visible = rows
+        .into_iter()
+        .enumerate()
+        .skip(first)
+        .take(DRAWN)
+        .map(|(at, row)| diff.scroll.measured(at, turn_row(theme, scope, row)));
+    v_flex()
+        .w_full()
+        .h_full()
+        .overflow_hidden()
+        .bg(theme.colors.background)
+        .child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap(1)
+                .child(text(format!("Turn {} → {}", span.from, span.to)).text_sm())
+                .child(layout_toggle(theme, split))
+                .child(worded(
+                    theme,
+                    "Rewind to first turn",
+                    true,
+                    Message::RequestRewind(scope, span.from),
+                ))
+                .child(worded(
+                    theme,
+                    "Rewind to second turn",
+                    true,
+                    Message::RequestRewind(scope, span.to),
+                )),
+        )
+        .child(
+            v_flex()
+                .w_full()
+                .flex_1()
+                .overflow_hidden()
+                .when(empty, |pane| {
+                    pane.child(nothing(theme, "No changes between these turns"))
+                })
+                .child(diff.scroll.viewport(v_flex().w_full().children(visible))),
+        )
+}
+
+/// One lightweight row of a turn comparison, laid out only when visible.
+enum TurnRow<'a> {
+    /// A changed file's heading.
+    File(&'a Path),
+    /// A binary or metadata-only file change.
+    Metadata,
+    /// A hunk's ranges and conservative provenance.
+    Heading(&'a Hunk, Option<&'a pm_core::CheckpointStep>),
+    /// A unified diff line.
+    Line(&'a Line),
+    /// The old and new lines in a split comparison.
+    Pair(Option<&'a Line>, Option<&'a Line>),
+}
+
+/// Lists comparison rows without constructing off-screen UI elements.
+fn turn_rows(diff: &TurnDiff, split: bool) -> Vec<TurnRow<'_>> {
+    let mut rows = Vec::new();
+    for (path, hunks) in &diff.files {
+        rows.push(TurnRow::File(path));
+        if hunks.is_empty() {
+            rows.push(TurnRow::Metadata);
+        }
+        for (hunk, step) in hunks {
+            rows.push(TurnRow::Heading(hunk, step.as_ref()));
+            if split {
+                rows.extend(
+                    paired(0, path, false, hunk)
+                        .into_iter()
+                        .filter_map(|row| match row {
+                            Row::Pair(_, _, _, old, new) => Some(TurnRow::Pair(old, new)),
+                            _ => None,
+                        }),
+                );
+            } else {
+                rows.extend(hunk.lines.iter().map(TurnRow::Line));
+            }
+        }
+    }
+    rows
+}
+
+impl TurnDiff {
+    /// Counts rows in the currently selected diff layout.
+    pub(crate) fn row_count(&self, split: bool) -> usize {
+        turn_rows(self, split).len()
+    }
+}
+
+/// Draws one visible turn row with the review's existing line and hunk primitives.
+fn turn_row(theme: &Theme, scope: pm_core::Scope, row: TurnRow<'_>) -> Div<Message> {
+    match row {
+        TurnRow::File(path) => h_flex().h_px(theme.size.row).child(
+            text(path.display().to_string())
+                .text_sm()
+                .font_mono()
+                .color(theme.colors.text),
+        ),
+        TurnRow::Metadata => h_flex()
+            .h_px(theme.size.row)
+            .child(text("Binary content or file metadata changed").text_xs()),
+        TurnRow::Heading(hunk, step) => h_flex()
+            .w_full()
+            .h_px(theme.size.row)
+            .items_center()
+            .gap(1)
+            .bg(theme.colors.accent.alpha(theme.emphasis.change))
+            .child(text(range_of(hunk)).text_xs().font_mono())
+            .child(text(hunk.heading.clone()).text_xs())
+            .when_some(step, |row, step| {
+                row.child(provenance(theme, Some(scope), step))
+            }),
+        TurnRow::Line(line) => line_row(
+            theme,
+            line,
+            None,
+            &Spot {
+                shown: None,
+                index: 0,
+                old: false,
+                new: false,
+                moving: false,
+                picked: None,
+            },
+        ),
+        TurnRow::Pair(old, new) => readonly_pair(theme, old, new),
+    }
+}
+
+/// Draws one read-only split row using the review's numbers, marks and text styles.
+fn readonly_pair(theme: &Theme, old: Option<&Line>, new: Option<&Line>) -> Div<Message> {
+    h_flex()
+        .w_full()
+        .items_stretch()
+        .child(readonly_half(theme, old, false))
+        .child(readonly_half(theme, new, true))
+}
+
+/// Draws one half of a checkpoint row with the review's line washes.
+fn readonly_half(theme: &Theme, line: Option<&Line>, new: bool) -> Div<Message> {
+    let (gutter, wash) = washes(theme, line.map(|line| line.kind));
+    h_flex()
+        .flex_1()
+        .overflow_hidden()
+        .when_some(wash, Div::bg)
+        .child(
+            h_flex()
+                .w_px(SIDE_NUMBER)
+                .justify_end()
+                .when_some(gutter, Div::bg)
+                .child(number(
+                    theme,
+                    line.and_then(|line| if new { line.new } else { line.old }),
+                )),
+        )
+        .child(marked(theme, line))
+        .child(shaded(
+            theme,
+            line.map_or(" ", |line| line.text.as_str()),
+            &[],
+        ))
 }

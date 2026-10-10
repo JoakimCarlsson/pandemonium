@@ -1,9 +1,4 @@
-//! What the window does about the bottom panel: which view is in front, and
-//! what the views it does not keep elsewhere are filled with.
-//!
-//! Every caller that brings a view up — a shell being started, a program
-//! being debugged, a click on the status bar — goes through
-//! [`App::show_panel`].
+//! Worktree tool commands and the diagnostics and debugger views they draw.
 
 use pm_ui::{Div, Theme};
 
@@ -11,22 +6,20 @@ use crate::app::places::Place;
 use crate::app::{App, Writing};
 use crate::message::Message;
 use crate::panel::{PanelView, Problem, ProblemFile};
+use crate::panes::Tool;
 
 impl App {
-    /// Opens the bottom panel with `view` in front.
+    /// Brings the registered tool for `view` forward in its pane.
     ///
     /// The keyboard goes to the shell when the view is the terminal's, and
     /// is left where it was otherwise.
     pub(super) fn show_panel(&mut self, view: PanelView) {
-        self.bottom_panel_open = true;
-        self.panel_view = view;
-        self.terminal_focused = view == PanelView::Terminal;
-        self.store();
+        self.show_tool(Tool::from(view));
     }
 
-    /// Whether the bottom panel is open on the worktree's shells.
+    /// Whether a pane is showing the worktree's shells.
     pub(super) fn showing_terminals(&self) -> bool {
-        self.bottom_panel_open && self.panel_view == PanelView::Terminal
+        self.tool_visible(Tool::Terminal)
     }
 
     /// Starts again the shells the last launch had running, in the worktrees
@@ -52,22 +45,22 @@ impl App {
         }
     }
 
-    /// Whether the bottom panel is open on the debugger.
+    /// Whether a pane is showing the debugger.
     pub(super) fn showing_debugger(&self) -> bool {
-        self.bottom_panel_open && self.panel_view == PanelView::Debug
+        self.tool_visible(Tool::Debug)
     }
 
-    /// Carries out the messages the bottom panel's bar and views send.
+    /// Carries out commands sent by worktree tool views.
     pub(super) fn panel_command(&mut self, message: Message) -> bool {
         match message {
             Message::ShowPanelView(view) => self.show_panel(view),
             Message::TogglePanelView(view) => {
-                if self.bottom_panel_open && self.panel_view == view {
-                    self.bottom_panel_open = false;
-                    self.terminal_focused = false;
-                    self.store();
-                } else {
-                    self.show_panel(view);
+                let tool = Tool::from(view);
+                match self.tool_pane(tool) {
+                    Some(pane) if self.tool_visible(tool) => {
+                        self.close_item(pane, self.tool_item(tool))
+                    }
+                    _ => self.show_tool(tool),
                 }
             }
             Message::OpenProblem(file, position) => {
@@ -156,8 +149,7 @@ impl App {
     /// Scrolls the list of problems by `delta` logical pixels when the
     /// pointer is over it, answering whether it was.
     pub(super) fn scroll_problems(&mut self, delta: f32) -> bool {
-        let over = self.bottom_panel_open
-            && self.panel_view == PanelView::Problems
+        let over = self.tool_visible(Tool::Problems)
             && self
                 .pointer
                 .is_some_and(|pointer| self.problems_area.get().contains(pointer));

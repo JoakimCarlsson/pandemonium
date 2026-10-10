@@ -4,6 +4,8 @@
 //! directory under the pointer, or the one holding the file under it, and
 //! the tree marks that directory while they are over it. They are always
 //! copied in; what was carried stays where it was.
+//! Over chat panes, files attach to the next prompt. Elsewhere they open
+//! in the pane under the pointer.
 
 use std::path::PathBuf;
 
@@ -25,17 +27,18 @@ impl App {
         }
     }
 
-    /// Follows files carried in from outside, and copies them into the tree
-    /// when they are let go over it.
+    /// Opens files carried onto panes, or copies them into the file tree.
     pub(super) fn arrive(&mut self, arrival: Arrival) {
         match arrival {
             Arrival::Hovering(at) => self.arriving = self.arrival_directory(at),
             Arrival::Left => self.arriving = None,
             Arrival::Dropped { at, paths } => {
-                let directory = self.arrival_directory(at).or(self.arriving.take());
+                let directory = self.arrival_directory(at);
                 self.arriving = None;
                 if let Some(directory) = directory {
                     self.move_entries(&paths, &directory, true);
+                } else {
+                    self.open_arrivals(at, paths);
                 }
             }
         }
@@ -45,15 +48,50 @@ impl App {
     /// The directory files carried in at `at` would land in.
     ///
     /// Where the platform does not say where they are, the pointer's last
-    /// place stands in for it, and failing that the worktree the tree shows.
+    /// place stands in for it.
     fn arrival_directory(&self, at: Option<Point>) -> Option<PathBuf> {
-        match at.or(self.pointer) {
-            Some(point) => self.directory_under(point),
-            None => self
-                .tree_showing()
-                .then(|| self.scope().and_then(|scope| self.files.get(&scope)))
-                .flatten()
-                .map(|tree| tree.root().to_path_buf()),
+        at.or(self.pointer)
+            .and_then(|point| self.directory_under(point))
+    }
+
+    /// Opens dropped files in their worktrees or as window-wide loose files.
+    fn open_arrivals(&mut self, at: Option<Point>, paths: Vec<PathBuf>) {
+        let pane = at
+            .or(self.pointer)
+            .and_then(|point| self.geometry.pane_at(point))
+            .unwrap_or_else(|| self.panes.focus());
+        let session = self
+            .panes
+            .pane(pane)
+            .and_then(|pane| pane.active(self.scope()))
+            .and_then(crate::panes::Item::session);
+        for path in paths {
+            let path = match path.canonicalize() {
+                Ok(path) => path,
+                Err(trouble) => {
+                    self.say_trouble("The dropped path could not be opened", &trouble);
+                    continue;
+                }
+            };
+            if !path.is_file() {
+                continue;
+            }
+            if let Some(talk) = session.and_then(|session| self.agents.get_mut(session)) {
+                talk.attach_file(path);
+                continue;
+            }
+            if self.worktree_holding(&path).is_some() {
+                self.open_tree_file(&path, pane, false);
+            } else if let Some(file) = self.editor.open_loose(&path) {
+                self.show_file(pane, file, false);
+            } else {
+                self.notices
+                    .trouble(format!("Could not read {}", path.display()), None);
+            }
+        }
+        if let Some(session) = session {
+            self.panes.set_focus(pane);
+            self.focus_prompt(session);
         }
     }
 }

@@ -6,14 +6,16 @@
 //! and the stores those items point into are where the things themselves
 //! live.
 
+mod arrangement;
 mod item;
 mod saved;
+mod tool;
 mod tree;
 mod view;
 
-pub use item::Item;
-pub use saved::{Saved, SavedKind, SavedTab};
+pub use arrangement::Arrangement;
+pub use item::{Item, Role, TurnSpan};
+pub use saved::{Saved, SavedAxis, SavedKind, SavedLayout, SavedNode, SavedTab};
+pub use tool::Tool;
 pub use tree::{Pane, PaneId, PaneTree, SplitDirection, SplitId};
-pub use view::{
-    Content, Contents, Shortcut, TabEntry, pane_menu, pane_tree, tab_menu, unsaved_menu,
-};
+pub use view::{Content, Contents, Shortcut, TabEntry, pane_tree, tab_menu, unsaved_menu};

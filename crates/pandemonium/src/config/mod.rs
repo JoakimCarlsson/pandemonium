@@ -10,34 +10,46 @@
 //! or outdated file is a first launch, and a write that cannot land leaves the
 //! running editor alone.
 
-mod extensions;
+mod account_history;
+mod account_identity;
+mod account_settings;
+mod account_setup;
+mod accounts;
+pub mod extensions;
 mod fonts;
 mod keymap;
+pub mod languages;
+mod orchestration;
 mod overrides;
 mod paths;
 mod preferences;
+pub mod recipe;
 mod stored;
+
 mod theme;
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::panes::Saved;
+use crate::panes::SavedLayout;
 use crate::terminal::SavedShell;
 use crate::workspace::Layout;
 use stored::Stored;
 
+pub use account_setup::prepare as prepare_account;
+pub use accounts::{Accounts, Profile};
 pub use fonts::FontSlot;
 pub use overrides::ThemeOverrides;
 pub use paths::{
-    home, keymaps as keymaps_directory, logs, servers, settings as settings_file,
-    themes as themes_directory, worktrees,
+    agents as agents_directory, clipboard, home, keymaps as keymaps_directory, logs, servers,
+    settings as settings_file, themes as themes_directory, worktrees,
 };
 pub use preferences::{
     AgentOptions, EditPredictions, InstallLanguageServers, KnobValue, Preference, Preferences,
     Step, ThemeMode, VimBinding, WorktreePaths,
 };
+pub use stored::StoredServer;
 
 /// The window's own size and state, as a launch leaves it.
 #[derive(Clone, Copy, Debug)]
@@ -70,12 +82,14 @@ pub struct Restored {
     pub onboarded: bool,
     /// The roots of the projects the window had open.
     pub projects: Vec<PathBuf>,
+    /// Named groups and their remembered project membership.
+    pub project_groups: Vec<crate::project_groups::ProjectGroup>,
     /// The root of the project the window was pointed at.
     pub active: Option<PathBuf>,
     /// Which regions the window showed, and how large they were.
     pub layout: Layout,
-    /// How the window was divided into panes, and what was open in them.
-    pub panes: Saved,
+    /// How each project divided the window into panes, and what was open in them.
+    pub layouts: Vec<SavedLayout>,
     /// The shells the window had running, and what they were called.
     pub shells: Vec<SavedShell>,
     /// The size and state of the window itself.
@@ -84,6 +98,10 @@ pub struct Restored {
     pub language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
     pub agent_servers: Vec<pm_acp::Agent>,
+    /// Named agent accounts and recorded platform isolation checks.
+    pub accounts: Accounts,
+    /// The tool servers every agent is opened with.
+    pub mcp_servers: Vec<pm_acp::McpServer>,
 }
 
 /// The servers a reader configured for one language.
@@ -102,6 +120,7 @@ pub enum ServerList {
 /// there are: a launch that read the preferences first could not find a
 /// theme it had not loaded yet.
 pub fn load() -> Restored {
+    extensions::recover();
     extensions::reload();
     install_themes();
     install_keymaps();
@@ -109,8 +128,9 @@ pub fn load() -> Restored {
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_norway::from_str::<Stored>(&text).ok())
         .map(Stored::into_restored)
-        .unwrap_or_default();
+        .unwrap_or_else(|| Stored::default().into_restored());
     pm_acp::install(restored.agent_servers.clone());
+    pm_acp::install_mcp(restored.mcp_servers.clone());
     restored
 }
 
@@ -248,3 +268,5 @@ pub fn save(restored: &Restored) {
     }
     let _ = fs::write(path, text);
 }
+
+pub use orchestration::Orchestration;

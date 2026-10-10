@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::adapter::Connect;
+use crate::cargo;
 use crate::scenario::{Request, Scenario};
 use crate::state::{
     Breakpoint, Category, Event, Frame, Line, Placed, Scope, Sent, Standing, State, Thread,
@@ -116,6 +117,7 @@ impl Session {
             notify: notify.clone(),
             request: scenario.request,
             arguments: scenario.arguments(),
+            root: root.to_path_buf(),
         };
 
         if let Some(stderr) = stderr {
@@ -432,6 +434,8 @@ struct Reader {
     request: Request,
     /// What it is launched or attached with.
     arguments: Value,
+    /// The worktree it is being debugged in.
+    root: PathBuf,
 }
 
 impl Reader {
@@ -502,7 +506,7 @@ impl Reader {
         match sent {
             Sent::Initialize => {
                 lock(&self.state).capabilities = body;
-                self.ask(self.request.command(), self.arguments.clone(), Sent::Launch);
+                self.begin();
             }
             Sent::Breakpoints(path) => {
                 let requested = {
@@ -598,6 +602,25 @@ impl Reader {
             }
             Sent::Launch | Sent::Exceptions | Sent::Resume | Sent::Disconnect => {}
         }
+    }
+
+    /// Sends the launch or attach request, having first built the program
+    /// where the scenario asks cargo to.
+    ///
+    /// A build that fails ends the session the way a refused launch does, with
+    /// cargo's complaint in the console.
+    fn begin(&self) {
+        let mut arguments = self.arguments.clone();
+        if let Some(config) = arguments.as_object_mut()
+            && let Err(complaint) = cargo::resolve(config, &self.root)
+        {
+            let mut state = lock(&self.state);
+            state.say(Category::Error, &complaint);
+            state.events.push(Event::StartRefused(complaint));
+            state.end();
+            return;
+        }
+        self.ask(self.request.command(), arguments, Sent::Launch);
     }
 
     /// Writes down why the adapter refused a request.

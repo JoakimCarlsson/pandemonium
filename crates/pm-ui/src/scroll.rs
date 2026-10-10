@@ -16,7 +16,10 @@ use std::rc::Rc;
 use pm_gfx::{Point, Rect, Size};
 
 use crate::element::{Element, IntoElement, LayoutContext, PaintContext};
+use crate::resize::ResizeEvent;
 use crate::style::{Style, Styled};
+use crate::widgets::{OnScroll, SCROLLBAR_GUTTER, paint_scrollbar};
+use std::sync::Arc;
 
 /// The scroll offset of one area, and the extents it is clamped against.
 #[derive(Clone, Copy, Debug, Default)]
@@ -69,6 +72,21 @@ impl Scroll {
         self.clamp();
     }
 
+    /// How far down the content the viewport begins.
+    pub fn offset(&self) -> f32 {
+        self.offset
+    }
+
+    /// Height of the whole content from the last frame.
+    pub fn content_height(&self) -> f32 {
+        self.content_height
+    }
+
+    /// Height of the visible content area from the last frame.
+    pub fn viewport_height(&self) -> f32 {
+        self.viewport.height
+    }
+
     /// The space to lay the content out in: as tall as the offset reaches.
     pub fn content_space(&self) -> Size {
         Size::new(self.viewport.width, self.viewport.height + self.offset)
@@ -101,6 +119,12 @@ pub struct ScrollArea<M> {
     style: Style,
     /// What is scrolled.
     child: Box<dyn Element<M>>,
+    /// Optional visible thumb and its drag handler.
+    on_scroll: Option<OnScroll<M>>,
+    /// Whether overflowing content leaves room for the visible scrollbar.
+    scrollbar_gutter: bool,
+    /// Whether placed text in this area can be selected.
+    selectable: bool,
 }
 
 /// `child`, scrolled by `scroll` inside whatever room the area is given.
@@ -109,6 +133,29 @@ pub fn scroll_area<M>(scroll: Scrolled, child: impl IntoElement<M>) -> ScrollAre
         scroll,
         style: Style::default(),
         child: child.into_element(),
+        on_scroll: None,
+        scrollbar_gutter: false,
+        selectable: false,
+    }
+}
+
+impl<M> ScrollArea<M> {
+    /// Enables pointer selection and copying of the area’s placed text.
+    pub fn selectable(mut self) -> Self {
+        self.selectable = true;
+        self
+    }
+
+    /// Shows a scrollbar when content overflows, reporting thumb drags to the caller.
+    pub fn with_scrollbar(mut self, on_scroll: impl Fn(ResizeEvent, f32) -> M + 'static) -> Self {
+        self.on_scroll = Some(Arc::new(on_scroll));
+        self
+    }
+
+    /// Reserves room beside the content only while its scrollbar is visible.
+    pub fn reserve_scrollbar_gutter(mut self) -> Self {
+        self.scrollbar_gutter = true;
+        self
     }
 }
 
@@ -119,7 +166,7 @@ impl<M> Styled for ScrollArea<M> {
     }
 }
 
-impl<M> Element<M> for ScrollArea<M> {
+impl<M: 'static> Element<M> for ScrollArea<M> {
     /// How the area is sized in its parent.
     fn layout_style(&self) -> Style {
         self.style
@@ -132,23 +179,54 @@ impl<M> Element<M> for ScrollArea<M> {
 
     /// Paints the child at the scrolled offset, clipped to the area.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
-        let content = self.child.measure(bounds.size, &mut cx.layout);
+        let mut available = bounds.size;
+        let mut content = self.child.measure(available, &mut cx.layout);
+        if self.scrollbar_gutter && self.on_scroll.is_some() && content.height > bounds.size.height
+        {
+            available.width = (available.width - SCROLLBAR_GUTTER).max(0.0);
+            content = self.child.measure(available, &mut cx.layout);
+        }
         let mut scroll = self.scroll.get();
         scroll.set_extents(bounds.size, content.height);
         self.scroll.set(scroll);
 
+        let previous = cx.selection.take();
+        if self.selectable {
+            let surface = cx.selections.borrow_mut().surface(&self.scroll);
+            {
+                let mut state = surface.borrow_mut();
+                state.bounds = bounds;
+                state.visible = true;
+                state.rows.clear();
+                state.placements.clear();
+                state.starts.clear();
+                state.last_bounds = None;
+            }
+            cx.selection = Some(surface);
+            cx.clickable(bounds, None, None);
+        }
         let first = cx.region_count();
         cx.push_clip(bounds);
         self.child.paint(
             Rect::from_xywh(
                 bounds.left(),
                 bounds.top() + scroll.origin().y,
-                bounds.size.width,
+                available.width,
                 content.height.max(bounds.size.height),
             ),
             cx,
         );
+        cx.selection = previous;
         cx.pop_clip();
         cx.clip_regions(first, bounds);
+        if let Some(on_scroll) = &self.on_scroll {
+            paint_scrollbar(
+                bounds,
+                content.height,
+                scroll.offset(),
+                on_scroll.clone(),
+                cx,
+            );
+        }
     }
 }

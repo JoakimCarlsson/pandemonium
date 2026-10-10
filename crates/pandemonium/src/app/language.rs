@@ -108,12 +108,16 @@ impl App {
                 continue;
             }
             match self.preferences.install_language_servers {
-                crate::config::InstallLanguageServers::Ask => self.notices.trouble(
-                    format!("{} is not installed. Install it?", server.command),
-                    Some(crate::message::Message::InstallLanguageServer(
+                crate::config::InstallLanguageServers::Ask => {
+                    let language = self.server_install_language(server.command);
+                    let name = language.unwrap_or("configured");
+                    self.notices.installation(
                         server.command,
-                    )),
-                ),
+                        language,
+                        crate::notice::InstallationStage::Offer,
+                        format!("The {name} language server {} is not installed. Would you like to install it?", server.command),
+                    );
+                }
                 crate::config::InstallLanguageServers::Always => {
                     self.start_server_install(server.command, false);
                 }
@@ -121,6 +125,59 @@ impl App {
             }
             self.request_redraw();
         }
+        self.offer_missing_tools();
+    }
+
+    /// Offers each installable program a started server lacks once per
+    /// launch, explaining what is lost when installing is turned off.
+    fn offer_missing_tools(&mut self) {
+        for need in self.editor.take_missing_tools() {
+            if !self.offered_servers.insert(need.program) {
+                continue;
+            }
+            match self.preferences.install_language_servers {
+                crate::config::InstallLanguageServers::Ask => {
+                    self.notices.installation(
+                        need.program,
+                        self.server_install_language(need.program),
+                        crate::notice::InstallationStage::Offer,
+                        format!(
+                            "{} runs {}, which is not installed: {}. Would you like to install it?",
+                            need.server, need.program, need.loss
+                        ),
+                    );
+                }
+                crate::config::InstallLanguageServers::Always => {
+                    self.start_server_install(need.program, false);
+                }
+                crate::config::InstallLanguageServers::Never => {
+                    self.notices.trouble(
+                        format!("{}: {}", need.server, need.explanation()),
+                        Some(crate::message::Message::OpenServerLog),
+                    );
+                }
+            }
+            self.request_redraw();
+        }
+    }
+
+    /// Finds an open language requesting this server, or a server that runs
+    /// this program in turn, before consulting the catalogue.
+    fn server_install_language(&self, command: &str) -> Option<&'static str> {
+        let uses = |language: &pm_text::Language| {
+            crate::settings::languages::servers(*language, &self.language_servers)
+                .iter()
+                .any(|server| {
+                    server.command == command
+                        || pm_text::program::needs(server.command)
+                            .any(|need| need.program == command)
+                })
+        };
+        self.active_file()
+            .and_then(|file| file.borrow().buffer().language())
+            .filter(uses)
+            .or_else(|| pm_text::Language::all().into_iter().find(uses))
+            .map(pm_text::Language::name)
     }
 
     /// Starts one pinned install away from the window thread.
@@ -128,20 +185,27 @@ impl App {
         if self.installing_servers.contains_key(command) {
             return;
         }
-        let Some(recipe) = pm_text::install::recipe(command) else {
+        let Some(recipe) = self.configured_server_recipe(command) else {
             return;
         };
         let Some(directory) = crate::config::servers() else {
-            self.notices.trouble(
+            self.notices.installation(
+                command,
+                self.server_install_language(command),
+                crate::notice::InstallationStage::Failed,
                 format!("Installing {command} needs an editor home directory."),
-                None,
             );
             return;
         };
         if manual {
             self.offered_servers.insert(command);
         }
-        let notice = self.notices.progress(format!("Installing {command}…"));
+        let notice = self.notices.installation(
+            command,
+            self.server_install_language(command),
+            crate::notice::InstallationStage::Progress,
+            format!("Installing {command}…"),
+        );
         self.installing_servers.insert(command, notice);
         let results = self.installed_servers.clone();
         let wake = self.waker(crate::app::Wake::Install);
@@ -157,26 +221,41 @@ impl App {
     pub(super) fn finish_server_installs(&mut self) {
         let finished = std::mem::take(&mut *self.installed_servers.lock().unwrap());
         for (command, result) in finished {
-            if let Some(notice) = self.installing_servers.remove(command) {
-                self.notices.dismiss(notice);
-            }
+            self.installing_servers.remove(command);
             match result {
                 Ok(()) => {
-                    let started = self.editor.reopen_command(command);
-                    if started
+                    let tool = pm_text::program::needed_by(command).next().is_some();
+                    let started = pm_text::program::needed_by(command)
+                        .fold(self.editor.reopen_command(command), |started, server| {
+                            self.editor.reopen_command(server) || started
+                        });
+                    if (started || tool)
                         && let Some(directory) = crate::config::servers()
-                        && let Some(recipe) = pm_text::install::recipe(command)
+                        && let Some(recipe) = self.configured_server_recipe(command)
                     {
-                        pm_text::install::prune_older(&directory, command, recipe.version());
+                        pm_text::install::prune_older(
+                            &directory,
+                            command,
+                            &recipe.directory_name(),
+                        );
                     }
-                    if let Some(recipe) = pm_text::install::recipe(command) {
-                        self.notices
-                            .done(format!("Installed {command} {}", recipe.version()), None);
+                    if let Some(recipe) = self.configured_server_recipe(command) {
+                        self.notices.installation(
+                            command,
+                            self.server_install_language(command),
+                            crate::notice::InstallationStage::Done,
+                            format!("Installed {command} {}", recipe.version()),
+                        );
                     }
                 }
-                Err(error) => self
-                    .notices
-                    .trouble(format!("Could not install {command}: {error}"), None),
+                Err(error) => {
+                    self.notices.installation(
+                        command,
+                        self.server_install_language(command),
+                        crate::notice::InstallationStage::Failed,
+                        format!("Could not install {command}: {error}"),
+                    );
+                }
             }
         }
         self.request_redraw();
@@ -189,26 +268,25 @@ impl App {
     /// several offers them to choose between. The log opens at its end, which
     /// is where a server that has just misbehaved says why.
     pub(super) fn open_server_log(&mut self) {
-        let clients = match self.active_file() {
-            Some(document) => document.borrow().servers(),
+        let logs = match self.active_file_id() {
+            Some(file) => self
+                .editor
+                .server_states(file)
+                .into_iter()
+                .filter_map(|status| Some((status.command, status.log?)))
+                .collect::<Vec<_>>(),
             None => self
                 .scope()
                 .and_then(|scope| self.root_of(scope))
-                .map(|root| self.editor.servers_over(&root))
+                .map(|root| self.editor.server_logs_over(&root))
                 .unwrap_or_default(),
         };
-        let logs = clients
-            .iter()
-            .filter_map(|client| Some((client.name(), client.log_path()?.to_path_buf())))
-            .collect::<Vec<_>>();
         match logs.as_slice() {
             [] => self
                 .notices
-                .trouble("No language server is running for this file.", None),
+                .trouble("No language server log is available for this file.", None),
             [(_, path)] => {
-                if let Some(place) = self.place_of(path, log_end(path)) {
-                    self.jump_to(&place);
-                }
+                self.open_server_log_at(path);
             }
             _ => {
                 let rows = logs
@@ -229,15 +307,44 @@ impl App {
         }
     }
 
+    /// Opens a retained server log at its last line.
+    pub(super) fn open_server_log_at(&mut self, path: &std::path::Path) {
+        if let Some(place) = self.place_of(path, log_end(path)) {
+            self.jump_to(&place);
+        }
+    }
+
     /// Puts up what the servers asked to be shown that went wrong, each
     /// leading to the log of the server that said it.
     pub(super) fn hear_server_troubles(&mut self) {
+        self.hear_server_failures();
         for client in self.editor.clients() {
             for trouble in client.take_troubles() {
                 self.notices.trouble(
                     format!("{}: {trouble}", client.name()),
                     Some(crate::message::Message::OpenServerLog),
                 );
+            }
+        }
+    }
+
+    /// Reports each abandoned server with an action targeting its retained log.
+    pub(super) fn hear_server_failures(&mut self) {
+        for failed in self.editor.take_server_failures() {
+            if let Some(notice) = failed.failure_notice() {
+                let action = failed.log.map(|path| {
+                    let index = self
+                        .server_failure_logs
+                        .iter()
+                        .position(|stored| stored == &path)
+                        .unwrap_or_else(|| {
+                            self.server_failure_logs.push(path);
+                            self.server_failure_logs.len() - 1
+                        });
+                    crate::message::Message::OpenServerLogAt(index)
+                });
+                self.notices.trouble(notice, action);
+                self.request_redraw();
             }
         }
     }
@@ -277,6 +384,9 @@ impl App {
     }
     /// Carries out a command the language server behind the file answers.
     pub(super) fn act_on_language(&mut self, action: Action) {
+        if action == Action::Format && self.format_locally(false) {
+            return;
+        }
         let request = match action {
             Action::GoToDefinition => Request::Definition,
             Action::GoToTypeDefinition => Request::TypeDefinition,
@@ -551,7 +661,10 @@ impl App {
             if offered
                 && matches!(
                     request,
-                    Request::Format | Request::FormatSelection | Request::WillSave
+                    Request::Format
+                        | Request::FormatSelection
+                        | Request::WillSave
+                        | Request::SourceActions(_)
                 )
             {
                 break;
@@ -585,7 +698,14 @@ impl App {
             let document = document.borrow();
             let buffer = document.buffer();
             let selected = buffer.selection();
-            let selection = if selected.anchor == selected.head {
+            let whole = Position::default()
+                ..Position::new(
+                    buffer.line_count().saturating_sub(1),
+                    buffer.line_len(buffer.line_count().saturating_sub(1)),
+                );
+            let selection = if matches!(request, Request::SourceActions(_)) {
+                whole
+            } else if selected.anchor == selected.head {
                 Position::new(at.line, 0)..Position::new(at.line, buffer.line_len(at.line))
             } else if selected.anchor < selected.head {
                 selected.anchor..selected.head
@@ -626,7 +746,7 @@ impl App {
             return;
         };
         let query = Kind::WorkspaceSymbols
-            .query(picker.field().value())
+            .query(&picker.field().value())
             .to_owned();
         self.workspace_files = picker.rows().cloned().collect();
         self.workspace_symbols = (None, Vec::new());
@@ -969,7 +1089,7 @@ impl App {
     /// The question is asked again only when the pointer reaches another
     /// name, so sliding along one costs nothing after the first answer.
     pub(super) fn follow_pointer(&mut self, point: pm_gfx::Point) {
-        if !self.modifiers.control_key() {
+        if self.settings_open || !self.modifiers.control_key() {
             return self.drop_link();
         }
         let Some((file, word)) = self.word_under(point) else {
@@ -1030,6 +1150,9 @@ impl App {
     /// away at the first pixel of that would never be read at all. So does
     /// a panel the pointer has moved onto, so that it can be scrolled.
     pub(super) fn forget_hint(&mut self, point: pm_gfx::Point) {
+        if self.ui.as_ref().is_some_and(pm_ui::Ui::selecting_text) {
+            return;
+        }
         let Some(hint) = self.hint.as_ref() else {
             return;
         };
@@ -1136,7 +1259,7 @@ impl App {
             && (matches!(answer, Answer::Edits(_) | Answer::Changes(_))
                 || matches!(pending.request, Request::CodeActions | Request::Signature))
         {
-            if self.saving && matches!(pending.request, Request::Format | Request::WillSave) {
+            if self.saving && Self::is_save_step(&pending.request) {
                 self.finish_save();
             }
             return;
@@ -1183,7 +1306,7 @@ impl App {
             Answer::Locations(found) if pending.request == Request::References => {
                 self.show_references(found);
             }
-            Answer::Locations(found) => self.go_to_first(&found),
+            Answer::Locations(found) => self.follow_definition(pending, found),
             Answer::Hover(text) => {
                 if let Some(hint) = self.hint.as_mut() {
                     hint.said = Some(text);
@@ -1223,7 +1346,7 @@ impl App {
             Answer::Completions { items, incomplete } => {
                 self.show_completions(pending, items, incomplete);
             }
-            Answer::Resolved(item) => self.take_resolved(pending, item),
+            Answer::Resolved(item) => self.take_resolved(pending, *item),
             Answer::CodeActions(actions) => self.show_code_actions(pending, actions),
             Answer::Edits(files) => {
                 self.apply_edits(files);
@@ -1336,7 +1459,7 @@ impl App {
     /// written, then the writing. Each server is asked after the previous
     /// answer has been applied to the document.
     fn save_once_formatted(&mut self, pending: &Pending) {
-        if !matches!(pending.request, Request::Format | Request::WillSave) {
+        if !Self::is_save_step(&pending.request) {
             return;
         }
         if self.ask_next_edit_server(pending) {
@@ -1346,9 +1469,17 @@ impl App {
             return;
         }
         match pending.request {
-            Request::Format => self.ask_before_save(pending.file),
-            _ => self.finish_save(),
+            Request::WillSave => self.finish_save(),
+            _ => self.next_save_step(pending.file),
         }
+    }
+
+    /// Whether `request` is one of the questions a save asks the servers.
+    fn is_save_step(request: &Request) -> bool {
+        matches!(
+            request,
+            Request::Format | Request::WillSave | Request::SourceActions(_)
+        )
     }
 
     /// Asks the next capable server about the document left by the last one.
@@ -1384,15 +1515,48 @@ impl App {
 
     /// Starts a save the servers behind the focused file take part in.
     ///
-    /// A save with no server to wait on is written at once.
+    /// A save with no server to wait on is written at once. Otherwise the
+    /// servers are asked, in order, to organize the imports and make their
+    /// own fixes when those are wanted, then to lay the file out when that
+    /// is, and last what they would change before it is written.
     pub(super) fn begin_save(&mut self, format: bool) {
         let Some(file) = self.active_file_id() else {
             return;
         };
         self.saving = true;
-        if format {
-            self.ask(Request::Format);
-            if self.awaits(file, &Request::Format) {
+        self.formatting = format;
+        let settings = self.active_language_settings();
+        let format =
+            format && settings.formatter == crate::config::languages::Formatter::LanguageServer;
+        self.save_steps = [
+            (
+                settings.organize_imports_on_save,
+                Request::SourceActions("source.organizeImports".to_owned()),
+            ),
+            (
+                settings.fix_on_save,
+                Request::SourceActions("source.fixAll".to_owned()),
+            ),
+            (format, Request::Format),
+        ]
+        .into_iter()
+        .filter_map(|(wanted, request)| wanted.then_some(request))
+        .collect();
+        self.next_save_step(file);
+    }
+
+    /// Asks the next question a save has for the servers, skipping the ones
+    /// no server answers, and goes on to what they would change before the
+    /// file is written when there are none left.
+    fn next_save_step(&mut self, file: FileId) {
+        let at = self
+            .editor
+            .get(file)
+            .map(|document| document.borrow().buffer().selection().head)
+            .unwrap_or_default();
+        while let Some(request) = self.save_steps.pop_front() {
+            self.ask_about(file, at, request.clone());
+            if self.awaits(file, &request) {
                 return;
             }
         }
@@ -1415,6 +1579,9 @@ impl App {
     /// Writes the file a save was waiting on the servers for.
     fn finish_save(&mut self) {
         self.saving = false;
+        if self.formatting {
+            self.format_locally(true);
+        }
         self.save_active();
     }
 
@@ -1538,6 +1705,28 @@ impl App {
         self.jump_to(&place);
     }
 
+    /// Goes where a definition, declaration or implementation lies.
+    ///
+    /// A name asked about at its own definition has nowhere to go, so what
+    /// is wanted of it is where it is used, as in VS Code. Several places
+    /// are listed to choose from rather than the first being taken.
+    fn follow_definition(&mut self, pending: &Pending, found: Vec<Location>) {
+        let path = self.editor.path(pending.file);
+        let at_definition = found.iter().any(|location| {
+            Some(&location.path) == path.as_ref()
+                && location.range.start <= pending.at
+                && pending.at <= location.range.end
+        });
+        if at_definition {
+            self.ask_about(pending.file, pending.at, Request::References);
+            return;
+        }
+        match found.len() {
+            0 | 1 => self.go_to_first(&found),
+            _ => self.show_references(found),
+        }
+    }
+
     /// Opens the picker over everywhere a symbol is used.
     fn show_references(&mut self, found: Vec<Location>) {
         let rows = found
@@ -1571,7 +1760,13 @@ impl App {
         items: Vec<pm_text::Completion>,
         incomplete: bool,
     ) {
-        if items.is_empty() || self.active_file_id() != Some(pending.file) {
+        if self.active_file_id() != Some(pending.file) {
+            return;
+        }
+        if items.is_empty() {
+            if self.completions.is_none() {
+                self.offer_words();
+            }
             return;
         }
         let Some(document) = self.editor.get(pending.file) else {
@@ -1594,7 +1789,7 @@ impl App {
             .as_ref()
             .is_none_or(|list| list.start() != word.start)
         {
-            let mut list = Completions::new(word.start, point);
+            let mut list = Completions::new(word.start, point, self.recent_completions.clone());
             list.narrow(&typed);
             self.completions = Some(list);
         }
@@ -1605,6 +1800,60 @@ impl App {
             self.completions = None;
         }
         self.resolve_completion();
+    }
+
+    /// Whether any language server is behind the focused file.
+    pub(super) fn active_file_has_servers(&self) -> bool {
+        self.active_file()
+            .is_some_and(|document| !document.borrow().servers().is_empty())
+    }
+
+    /// Offers the words of the focused file as what could be written where
+    /// the cursor is, for a word of at least two characters begun there.
+    ///
+    /// A server that has nothing to say leaves the reader with what the file
+    /// itself already says, the way an editor without a server would.
+    pub(super) fn offer_words(&mut self) {
+        let Some(document) = self.active_file() else {
+            return;
+        };
+        let document = document.borrow();
+        let buffer = document.buffer();
+        let head = buffer.selection().head;
+        let word = buffer.word_at(head);
+        if head.line != word.start.line || head.column - word.start.column.min(head.column) < 2 {
+            return;
+        }
+        let typed = buffer.text_in(word.start..head);
+        let mut seen = std::collections::HashSet::new();
+        let words = (0..buffer.line_count())
+            .flat_map(|line| {
+                buffer
+                    .line_text(line)
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .filter(|word| word.chars().count() > 1)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|word| *word != typed && seen.insert(word.clone()))
+            .map(|word| pm_text::Completion::word(&word))
+            .collect::<Vec<_>>();
+        let under = document.layout().cell.height;
+        let at = document.point_of(word.start);
+        drop(document);
+        if words.is_empty() {
+            return;
+        }
+        let mut list = Completions::new(
+            word.start,
+            pm_gfx::Point::new(at.x, at.y + under),
+            self.recent_completions.clone(),
+        );
+        list.narrow(&typed);
+        list.offer_words(words);
+        if !list.is_empty() {
+            self.completions = Some(list);
+        }
     }
 
     /// Whether a server behind the focused file completes after `typed`.
@@ -1707,12 +1956,11 @@ impl App {
             return;
         };
         let start = completions.start();
-        let Some((client, handle)) = completions.unasked() else {
-            return;
-        };
-        let request = Request::ResolveCompletion(handle);
-        if client.offers(&request, &path) {
-            self.ask_of(client, file, start, request, Purpose::Act);
+        for (client, handle) in completions.unasked() {
+            let request = Request::ResolveCompletion(handle);
+            if client.offers(&request, &path) {
+                self.ask_of(client, file, start, request, Purpose::Act);
+            }
         }
     }
 
@@ -1723,7 +1971,7 @@ impl App {
             return;
         };
         if let Some(completions) = self.completions.as_mut() {
-            completions.fill(handle, item);
+            completions.fill(item.clone());
             return;
         }
         let Some(taken) = self.taken_completion.take_if(|taken| {

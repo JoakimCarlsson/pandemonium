@@ -12,8 +12,6 @@ use pm_ui::{
     kbd, measured, menu_entry, menu_separator, split, tab, tab_bar, text, v_flex,
 };
 
-use pm_core::Scope;
-
 use crate::editor::{Breakpoint, Crumbs, Display, OpenFile, buffer_view, crumb_bar, search_bar};
 use crate::excerpts::{OpenExcerpts, excerpts_view};
 use crate::message::Message;
@@ -43,6 +41,8 @@ pub struct TabEntry {
     pub preview: bool,
     /// Whether its pane keeps it through a change of project.
     pub pinned: bool,
+    /// How the session it holds is doing, when it holds one.
+    pub standing: Option<crate::agent::Standing>,
 }
 
 /// What a pane draws beneath its bar of tabs.
@@ -109,20 +109,17 @@ pub struct Shortcut {
     pub keys: String,
 }
 
-/// Builds the tree of panes `scope` draws, `focused` when the window's own
-/// focus is.
+/// Builds the tree of panes, `focused` when the window's own focus is.
 pub fn pane_tree(
     theme: &Theme,
     tree: &PaneTree,
-    scope: Option<Scope>,
     focused: bool,
     contents: &dyn Fn(&Pane) -> Contents,
 ) -> Box<dyn Element<Message>> {
-    let divided = tree.drawn(scope).len() > 1;
+    let divided = tree.panes().len() > 1;
     let drawing = Drawing {
         theme,
         tree,
-        scope,
         focused,
         divided,
         contents,
@@ -136,8 +133,6 @@ struct Drawing<'a> {
     theme: &'a Theme,
     /// The tree being drawn.
     tree: &'a PaneTree,
-    /// The worktree the window is showing.
-    scope: Option<Scope>,
     /// Whether the window's own focus is on the panes.
     focused: bool,
     /// Whether more than one pane is drawn.
@@ -147,9 +142,7 @@ struct Drawing<'a> {
 }
 
 impl Drawing<'_> {
-    /// Builds one node: a split of the children `scope` draws, or the pane
-    /// at a leaf. A split drawing one child is no division, so that child is
-    /// drawn in its place.
+    /// Builds one node: a split of its children, or the pane at a leaf.
     fn node(&self, node: &Node) -> Box<dyn Element<Message>> {
         match node {
             Node::Pane(pane) => Box::new(pane_view(
@@ -160,10 +153,7 @@ impl Drawing<'_> {
                 self.divided,
             )),
             Node::Split(node) => {
-                let drawn = node.drawn(self.scope);
-                if let [only] = drawn[..] {
-                    return self.node(&node.children()[only]);
-                }
+                let drawn = 0..node.children().len();
                 let id = node.id();
                 let mut element = split(node.axis()).on_resize(move |index, event, scale| {
                     Message::ResizeSplit(id, index, event, scale)
@@ -200,7 +190,7 @@ fn pane_view(
         .tabs
         .into_iter()
         .zip(contents.tab_bounds)
-        .map(|(held, bounds)| pane_tab(id, &held, active == Some(held.item), bounds))
+        .map(|(held, bounds)| pane_tab(theme, id, &held, active == Some(held.item), bounds))
         .collect::<Vec<_>>();
     let empty = matches!(contents.content, Content::Empty);
     let shortcuts = contents.shortcuts;
@@ -235,13 +225,13 @@ fn pane_view(
         .when(divided && focused && tabs.is_empty(), |pane| {
             pane.border_1(theme.colors.border_focused)
         })
-        .when(!tabs.is_empty(), |view| {
+        .when(divided || !tabs.is_empty(), |view| {
             view.child(measured(
                 contents.bar,
                 tab_bar(
                     theme,
                     tabs,
-                    pane_actions(theme, id, divided, previewable),
+                    pane_controls(theme, id, divided, previewable),
                     focused,
                 ),
             ))
@@ -317,7 +307,13 @@ fn built(content: Content) -> Option<Box<dyn Element<Message>>> {
 }
 
 /// Builds one tab of a pane: what it holds, and the drag that carries it.
-fn pane_tab(pane: PaneId, held: &TabEntry, active: bool, bounds: Bounds) -> Tab<Message> {
+fn pane_tab(
+    theme: &Theme,
+    pane: PaneId,
+    held: &TabEntry,
+    active: bool,
+    bounds: Bounds,
+) -> Tab<Message> {
     let item = held.item;
 
     tab(
@@ -331,26 +327,27 @@ fn pane_tab(pane: PaneId, held: &TabEntry, active: bool, bounds: Bounds) -> Tab<
     .dirty(held.dirty)
     .preview(held.preview)
     .pinned(held.pinned, Message::TogglePin(pane, item))
+    .signal(
+        held.standing
+            .map(|standing| crate::agent::standing_color(theme, standing)),
+    )
     .on_drag(bounds, move |event| Message::DragTab(pane, item, event))
 }
 
 /// Builds the pane's own controls, at the end of its bar of tabs.
-fn pane_actions(theme: &Theme, id: PaneId, divided: bool, previewable: bool) -> Div<Message> {
+fn pane_controls(theme: &Theme, id: PaneId, divided: bool, previewable: bool) -> Div<Message> {
     h_flex()
         .h_full()
-        .px(1.5)
+        .when(previewable || divided, |controls| controls.px(1.5))
         .gap(1)
         .items_center()
-        .when(previewable, |actions| {
-            actions.child(
+        .when(previewable, |controls| {
+            controls.child(
                 icon_button(theme, IconName::Eye, Message::PreviewFile(id)).tooltip("Open Preview"),
             )
         })
-        .child(
-            icon_button(theme, IconName::Split, Message::ShowPaneMenu(id)).tooltip("Pane Actions"),
-        )
-        .when(divided, |actions| {
-            actions.child(
+        .when(divided, |controls| {
+            controls.child(
                 icon_button(theme, IconName::Close, Message::ClosePane(id)).tooltip("Close Pane"),
             )
         })
@@ -407,24 +404,6 @@ fn shortcut_row(theme: &Theme, shortcut: &Shortcut) -> Div<Message> {
                 .text_sm()
                 .color(theme.colors.text_muted),
         )
-}
-
-/// The ways one pane can be divided, and what else can be done to it.
-///
-/// The four directions are the whole menu, as they are in Zed: splitting is
-/// the one thing a pane does to itself, and closing is the one thing that
-/// undoes it.
-pub fn pane_menu(id: PaneId, divided: bool) -> Vec<MenuItem<Message>> {
-    let mut items = SplitDirection::ALL
-        .into_iter()
-        .map(|direction| menu_entry(direction.label(), Some(Message::SplitPane(id, direction))))
-        .collect::<Vec<_>>();
-    items.push(menu_separator());
-    items.push(menu_entry(
-        "Close Pane",
-        divided.then_some(Message::ClosePane(id)),
-    ));
-    items
 }
 
 /// What can be done about a file being closed with changes that are not saved.

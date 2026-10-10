@@ -5,6 +5,7 @@
 mod agent;
 mod app;
 mod arrival;
+mod build_info;
 mod config;
 mod control;
 mod debug;
@@ -12,13 +13,8 @@ mod desktop;
 mod editor;
 mod emblem;
 mod excerpts;
-mod field;
 mod health;
 mod image;
-#[allow(
-    dead_code,
-    reason = "a box of text is offered whole — one line or many — before every box in the window has been moved onto it"
-)]
 mod input;
 #[allow(
     dead_code,
@@ -29,11 +25,14 @@ mod keymap;
 mod markdown;
 mod message;
 mod notice;
+mod notification;
 mod onboarding;
+mod orchestration;
 mod outline;
 mod panel;
 mod panes;
 mod picker;
+mod project_groups;
 mod prompt;
 mod release;
 mod review;
@@ -53,7 +52,7 @@ use app::{App, Wake};
 /// or prints the version and leaves when asked for it with `--version`.
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--version") {
-        println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
+        println!("{}", build_info::description());
         return;
     }
     if std::env::args().nth(1).as_deref() == Some("control") {

@@ -14,7 +14,7 @@ use pm_text::Position;
 
 use crate::agent::TalkId;
 use crate::config::FontSlot;
-use crate::field::Field;
+use crate::input::Input;
 use crate::keymap::Action;
 use crate::terminal::ShellId;
 
@@ -32,8 +32,16 @@ const SHOWN: usize = 200;
 pub enum Kind {
     /// Every command the window can carry out.
     Commands,
+    /// Persisted turn comparison endpoints.
+    Turns,
     /// Every server the editor can install.
     LanguageServers,
+    /// Language packages offered by the maintained catalogue.
+    LanguageExtensions,
+    /// The language the Language Settings section shows.
+    SettingsLanguage,
+    /// The command line a language's files are piped through, by language name.
+    LanguageFormatter(&'static str),
     /// Every file of the worktree the window is pointed at.
     Files,
     /// The projects the window holds open.
@@ -71,17 +79,33 @@ pub enum Kind {
     Rename,
     /// What to call the terminal, which is a prompt too.
     RenameTerminal(ShellId),
+    /// Create or rename a project group, optionally grouping one project.
+    ProjectGroup(Option<usize>, Option<pm_core::ProjectId>),
     /// The name of a local branch to create and check out.
     NewBranch,
     /// The agents the editor can start in the active project's worktree.
     Agents,
+    /// Separate accounts for an agent in a fixed worktree.
+    Accounts(Option<Scope>, pm_acp::Agent),
+    /// The label for a new account.
+    NewAccount(Option<Scope>, pm_acp::Agent),
+    /// Accounts whose provider sign-in should run again.
+    AccountLogin(Option<Scope>, pm_acp::Agent),
+    /// Account metadata to remove.
+    RemoveAccount(Option<Scope>, pm_acp::Agent),
     /// Saved conversations offered by the focused agent.
     AgentHistory(TalkId),
+    /// Saved conversations offered by the focused agent, to have one forgotten.
+    AgentDelete(TalkId),
     /// What to call the session about to be cut.
     NewSession,
     /// Which repositories of the active project the session about to be cut
     /// works in.
     SessionRepositories,
+    /// Accounts and organizations available for cloning through GitHub.
+    CloneSources,
+    /// Repositories belonging to the selected GitHub account.
+    CloneRepositories,
     /// The URL of a repository to clone and open.
     CloneUrl,
     /// An SSH alias and absolute project directory.
@@ -126,8 +150,14 @@ impl Kind {
     /// What the field says while nothing has been typed into it.
     pub fn placeholder(self) -> &'static str {
         match self {
+            Self::Turns => "Choose a turn to compare…",
             Self::Commands => "Run a command",
             Self::LanguageServers => "Install Language Server…",
+            Self::LanguageExtensions => "Install Language Support…",
+            Self::SettingsLanguage => "Choose a language",
+            Self::LanguageFormatter(_) => {
+                "Command that reads the file on stdin, e.g. prettier --stdin-filepath {path}"
+            }
             Self::Files => "Search files by name, > for commands, # for symbols",
             Self::Sessions => "Go to a session",
             Self::Projects => "Go to a project",
@@ -146,10 +176,13 @@ impl Kind {
             Self::Line => "Go to line",
             Self::Rename => "New name",
             Self::RenameTerminal(_) => "What the terminal is called",
+            Self::ProjectGroup(..) => "Group name",
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
             Self::RemoteProject => "host:/absolute/path",
+            Self::CloneSources => "Choose a GitHub account or clone from a URL…",
+            Self::CloneRepositories => "Search repositories to clone…",
             Self::CloneUrl => "The repository to clone",
             Self::LinkedPath => "Path to link into new worktrees",
             Self::CopiedPath => "Path to copy into new worktrees",
@@ -158,8 +191,13 @@ impl Kind {
             Self::ThemeColor(_) => "#rrggbb, or #rrggbbaa",
             Self::ThemeName => "What the theme is called",
             Self::KeymapName => "What the keymap is called",
+            Self::Accounts(..) => "Choose an account or organisation",
+            Self::NewAccount(..) => "Account profile name, such as Work or Personal",
+            Self::AccountLogin(..) => "Sign in to an account or organisation",
+            Self::RemoveAccount(..) => "Remove an account profile",
             Self::Agents => "Start an agent in this worktree",
             Self::AgentHistory(_) => "Search agent history",
+            Self::AgentDelete(_) => "Choose a saved session to delete",
             Self::Modes => "Put this agent into a mode",
             Self::Knob => "Set this to one of what it takes",
             Self::Debug => "Debug this worktree as",
@@ -177,13 +215,15 @@ impl Kind {
     pub fn is_prompt(self) -> bool {
         matches!(
             self,
-            Self::Line
+            Self::NewAccount(..)
+                | Self::Line
                 | Self::BreakpointCondition
                 | Self::BreakpointHits
                 | Self::BreakpointLog
                 | Self::Watch
                 | Self::Rename
                 | Self::RenameTerminal(_)
+                | Self::ProjectGroup(..)
                 | Self::NewBranch
                 | Self::StashMessage
                 | Self::NewSession
@@ -194,6 +234,7 @@ impl Kind {
                 | Self::PortVariable
                 | Self::ThemeColor(_)
                 | Self::ThemeName
+                | Self::LanguageFormatter(_)
                 | Self::KeymapName
         )
     }
@@ -238,12 +279,18 @@ impl Kind {
 /// What choosing one row does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Choice {
+    /// Choose the next endpoint of a persisted comparison.
+    Checkpoint(Scope, Option<u64>, u64),
     /// Points at an existing session worktree.
     Session(SessionId, crate::health::Health),
     /// Carry out this command.
     Act(Action),
     /// Install this language server.
     InstallLanguageServer(&'static str),
+    /// Show the settings of this language.
+    SettingsLanguage(&'static str),
+    /// Install this language package after reviewing its catalogue metadata.
+    InstallLanguageExtension(usize),
     /// Open this file of this worktree.
     Open(Scope, PathBuf),
     /// Open this file of this worktree and go to this place in it.
@@ -260,8 +307,22 @@ pub enum Choice {
     PushRemote(ProjectId, String),
     /// Start this agent in the active project's worktree.
     Agent(pm_acp::Agent),
+    /// Start an agent with the selected account, or its existing default login.
+    Account(Option<Scope>, pm_acp::Agent, Option<String>),
+    /// Run provider sign-in for a profile or the shared default account.
+    AccountLogin(Option<Scope>, pm_acp::Agent, Option<String>),
+    /// Offer account profiles to sign in to again.
+    AccountLogins(Option<Scope>, pm_acp::Agent),
+    /// Name a new account for this agent.
+    NewAccount(Option<Scope>, pm_acp::Agent),
+    /// List account profiles to remove.
+    AccountRemoval(Option<Scope>, pm_acp::Agent),
+    /// Remove one profile from the offered list.
+    RemoveAccount(Option<Scope>, pm_acp::Agent, String),
     /// Open a saved conversation from the named running agent.
     AgentHistory(TalkId, String),
+    /// Have the named running agent forget a saved conversation.
+    AgentDelete(TalkId, String),
     /// Put this session into the mode this names.
     Mode(TalkId, String),
     /// Set this session's knob to the value this names.
@@ -276,6 +337,14 @@ pub enum Choice {
     Task(Scope, Box<pm_core::Task>),
     /// Tick or untick this repository for the session about to be cut.
     SessionRepository(PathBuf),
+    /// Enter a repository URL to clone.
+    CloneUrl,
+    /// Return to the GitHub account and organization list.
+    CloneSources,
+    /// Browse the repositories of this GitHub account.
+    GithubOwner(String, bool),
+    /// Clone and open the repository at this address.
+    CloneRepository(String),
     /// Cut the session about to be cut, of the repositories ticked.
     StartSession,
 }
@@ -300,7 +369,7 @@ pub struct Picker {
     /// What it is picking.
     kind: Kind,
     /// What has been typed into it.
-    field: Field,
+    field: Input,
     /// Everything it was given to offer.
     rows: Vec<Row>,
     /// Which of them the query leaves, best match first.
@@ -321,7 +390,7 @@ impl Picker {
     pub fn new(kind: Kind, rows: Vec<Row>, seeded: &str) -> Self {
         let mut picker = Self {
             kind,
-            field: Field::filled(seeded),
+            field: Input::filled(seeded),
             rows,
             matched: Vec::new(),
             candidates: Vec::new(),
@@ -338,19 +407,23 @@ impl Picker {
     }
 
     /// What has been typed into it.
-    pub fn field(&self) -> &Field {
+    pub fn field(&self) -> &Input {
         &self.field
     }
 
     /// What has been typed into it, to be typed into.
-    pub fn field_mut(&mut self) -> &mut Field {
+    pub fn field_mut(&mut self) -> &mut Input {
         &mut self.field
     }
 
-    /// Puts the field through `edit` and narrows the rows to what is left.
-    pub fn edit(&mut self, edit: impl FnOnce(&mut Field)) {
+    /// Puts the field through `edit` and narrows the rows to what is left,
+    /// leaving the selection where it is when the text did not change.
+    pub fn edit(&mut self, edit: impl FnOnce(&mut Input)) {
+        let before = self.field.value().to_owned();
         edit(&mut self.field);
-        self.filter();
+        if self.field.value() != before {
+            self.filter();
+        }
     }
 
     /// Which list what has been typed asks for instead of this one, when it
@@ -466,7 +539,8 @@ impl Picker {
 
     /// Narrows the rows to the ones the query matches, best match first.
     pub fn filter(&mut self) {
-        let query = self.kind.query(self.field.value());
+        let value = self.field.value();
+        let query = self.kind.query(&value);
         let limit = self.limit();
         if self.kind.is_prompt() || self.kind.is_queried() || query.is_empty() {
             self.narrowed_by = None;
@@ -509,7 +583,10 @@ impl Picker {
     /// How many rows the picker keeps after filtering.
     fn limit(&self) -> usize {
         match self.kind {
-            Kind::AgentHistory(_) => usize::MAX,
+            Kind::AgentHistory(_)
+            | Kind::AgentDelete(_)
+            | Kind::CloneSources
+            | Kind::CloneRepositories => usize::MAX,
             _ => SHOWN,
         }
     }

@@ -5,10 +5,12 @@
 //! same panel with nothing under the field. What fills the list is the
 //! window's; how it reads is here.
 
-use pm_ui::{Div, Styled, Theme, field, h_flex, rule, space, text, v_flex};
+use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, kbd, rule, space, text, v_flex};
 
+use crate::agent::mode_icon;
+use crate::input::hinted_input_view;
 use crate::message::Message;
-use crate::picker::state::{Kind, Picker};
+use crate::picker::state::{Choice, Kind, Picker, Row};
 
 /// How wide the panel is drawn, and the command center that opens it.
 pub const WIDTH: f32 = 600.0;
@@ -16,7 +18,16 @@ pub const WIDTH: f32 = 600.0;
 /// Width of the branch popover attached to the status bar.
 const BRANCH_WIDTH: f32 = 360.0;
 /// Width of agent control choices beside their control.
-const AGENT_WIDTH: f32 = 280.0;
+const AGENT_WIDTH: f32 = 340.0;
+
+/// Height of one knob set in place under an agent control's choices.
+const KNOB_HEIGHT: f32 = 34.0;
+
+/// Height of the title over an agent control's choices.
+const HEADING_HEIGHT: f32 = 32.0;
+
+/// Most choices an agent control shows at once.
+const AGENT_VISIBLE: usize = 8;
 
 /// How far from the top of the window it hangs: over the command center in
 /// the title bar, the way the field it stands for is drawn there.
@@ -42,16 +53,13 @@ const HINT_HEIGHT: f32 = 32.0;
 pub fn width(kind: Kind) -> f32 {
     match kind {
         Kind::Branches | Kind::NewBranch => BRANCH_WIDTH,
-        Kind::Modes | Kind::Knob => AGENT_WIDTH,
+        Kind::Agents | Kind::Modes | Kind::Knob | Kind::AgentHistory(_) => AGENT_WIDTH,
         _ => WIDTH,
     }
 }
 
 /// Height occupied by the visible portion of `picker`.
 pub fn height(theme: &Theme, picker: &Picker) -> f32 {
-    if matches!(picker.kind(), Kind::Modes | Kind::Knob) {
-        return picker.shown_count().clamp(1, VISIBLE) as f32 * ROW_HEIGHT + 8.0;
-    }
     if picker.kind() == Kind::Branches {
         let shown = picker.shown().take(BRANCH_VISIBLE).collect::<Vec<_>>();
         let sections = shown
@@ -105,16 +113,6 @@ fn visible_rows(kind: Kind) -> usize {
 pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Message> {
     let prompt = picker.kind().is_prompt();
 
-    if matches!(picker.kind(), Kind::Modes | Kind::Knob) {
-        return v_flex()
-            .w_px(width)
-            .overflow_hidden()
-            .bg(theme.colors.surface)
-            .border_1(theme.colors.border)
-            .rounded(theme.radius.lg)
-            .child(rows(theme, picker));
-    }
-
     if picker.kind() == Kind::Branches {
         return v_flex()
             .w_px(width)
@@ -126,13 +124,18 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
             .child(rows(theme, picker))
             .child(rule(theme))
             .child(
-                field(picker.field().value(), picker.field().caret(), solid)
-                    .selection(picker.field().selection())
-                    .placeholder(picker.kind().placeholder())
-                    .w_full()
-                    .px(2)
-                    .py(1.5)
-                    .on_press(Message::PlacePicker),
+                hinted_input_view(
+                    theme,
+                    picker.field(),
+                    true,
+                    solid,
+                    picker.kind().placeholder(),
+                    Message::WritePicker,
+                    Message::ShowInputMenu,
+                )
+                .h_px(FIELD_HEIGHT)
+                .px(2)
+                .py(1.5),
             );
     }
 
@@ -144,18 +147,188 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
         .border_1(theme.colors.border)
         .rounded(theme.radius.lg)
         .child(
-            field(picker.field().value(), picker.field().caret(), solid)
-                .selection(picker.field().selection())
-                .placeholder(picker.kind().placeholder())
-                .w_full()
-                .px(2)
-                .py(1.5)
-                .on_press(Message::PlacePicker),
+            hinted_input_view(
+                theme,
+                picker.field(),
+                true,
+                solid,
+                picker.kind().placeholder(),
+                Message::WritePicker,
+                Message::ShowInputMenu,
+            )
+            .h_px(FIELD_HEIGHT)
+            .px(2)
+            .py(1.5),
         )
         .when(!prompt, |panel| {
             panel.child(rule(theme)).child(rows(theme, picker))
         })
         .when(prompt, |panel| panel.child(hint(theme, picker.kind())))
+}
+
+/// Height of an agent control's choices with `knobs` knobs set beneath them.
+pub fn agent_height(theme: &Theme, picker: &Picker, knobs: usize) -> f32 {
+    let rows = agent_shown(picker)
+        .iter()
+        .map(|(_, row)| agent_row_height(theme, row))
+        .sum::<f32>();
+    let beneath = match knobs {
+        0 => 0.0,
+        knobs => 1.0 + space(1.0) + knobs as f32 * KNOB_HEIGHT,
+    };
+    HEADING_HEIGHT + rows + space(0.5) + beneath + 2.0
+}
+
+/// Builds an agent control's choices: `title` over them with `keys` that
+/// step through them, a row of name and description for each, the current
+/// one checked, and `knobs` set in place beneath them.
+pub fn agent_choices(
+    theme: &Theme,
+    picker: &Picker,
+    width: f32,
+    title: &str,
+    keys: Option<String>,
+    knobs: Vec<Div<Message>>,
+) -> Div<Message> {
+    let modes = picker.kind() == Kind::Modes;
+    let rows = agent_shown(picker)
+        .into_iter()
+        .map(|(place, row)| agent_row(theme, place, row, place == picker.selected(), modes))
+        .collect::<Vec<_>>();
+    let set = !knobs.is_empty();
+
+    v_flex()
+        .w_px(width)
+        .items_stretch()
+        .overflow_hidden()
+        .bg(theme.colors.surface)
+        .border_1(theme.colors.border)
+        .rounded(theme.radius.lg)
+        .child(
+            h_flex()
+                .w_full()
+                .h_px(HEADING_HEIGHT)
+                .px(1.5)
+                .gap(0.5)
+                .items_center()
+                .child(
+                    text(title.to_owned())
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                )
+                .child(h_flex().flex_1())
+                .when_some(keys, |heading, keys| {
+                    heading
+                        .child(kbd(theme, keys))
+                        .child(text("to switch").text_xs().color(theme.colors.text_subtle))
+                }),
+        )
+        .child(
+            v_flex()
+                .w_full()
+                .px(0.5)
+                .pb(0.5)
+                .items_stretch()
+                .children(rows),
+        )
+        .when(set, |panel| {
+            panel.child(rule(theme)).child(
+                v_flex()
+                    .w_full()
+                    .px(1.5)
+                    .py(0.5)
+                    .items_stretch()
+                    .children(knobs.into_iter().map(|knob| {
+                        h_flex()
+                            .w_full()
+                            .h_px(KNOB_HEIGHT)
+                            .items_center()
+                            .child(knob)
+                    })),
+            )
+        })
+}
+
+/// The choices an agent control shows: a window of them around the selected one.
+fn agent_shown(picker: &Picker) -> Vec<(usize, &Row)> {
+    let first = picker.selected().saturating_sub(AGENT_VISIBLE - 1);
+    picker.shown().skip(first).take(AGENT_VISIBLE).collect()
+}
+
+/// What one agent choice says under its name, and whether it is the current one.
+///
+/// The rows carry the current choice as a lead on their detail, the way a
+/// wider picker shows it in words; here it is a check instead.
+fn described(row: &Row) -> (bool, &str) {
+    match row.detail.strip_prefix("current") {
+        Some(rest) => (true, rest.trim_start_matches(" · ")),
+        None => (false, row.detail.as_str()),
+    }
+}
+
+/// Height of one agent choice: its name, and its description when it has one.
+fn agent_row_height(theme: &Theme, row: &Row) -> f32 {
+    let description = match described(row).1.is_empty() {
+        true => 0.0,
+        false => theme.text.xs.line_height,
+    };
+    theme.text.sm.line_height + description + space(1.0)
+}
+
+/// Builds one agent choice, lit while it is selected and checked while it is
+/// current, with its mode's icon before it when it is a mode.
+fn agent_row(theme: &Theme, place: usize, row: &Row, selected: bool, modes: bool) -> Div<Message> {
+    let (current, description) = described(row);
+    let mode = match &row.choice {
+        Choice::Mode(_, id) if modes => mode_icon(id),
+        _ => None,
+    };
+
+    h_flex()
+        .w_full()
+        .h_px(agent_row_height(theme, row))
+        .px(1)
+        .gap(1)
+        .items_center()
+        .rounded(theme.radius.md)
+        .when(selected, |line| line.bg(theme.colors.surface_selected))
+        .hover_bg(theme.colors.surface_hover)
+        .on_click(Message::ChoosePicker(place))
+        .when(modes, |line| {
+            line.child(
+                h_flex()
+                    .size_px(16.0)
+                    .items_center()
+                    .justify_center()
+                    .when_some(mode, |slot, name| {
+                        slot.child(
+                            icon(name)
+                                .size(IconSize::Medium)
+                                .color(theme.colors.text_muted),
+                        )
+                    }),
+            )
+        })
+        .child(
+            v_flex()
+                .flex_1()
+                .overflow_hidden()
+                .child(text(row.label.clone()).text_sm().color(theme.colors.text))
+                .when(!description.is_empty(), |line| {
+                    line.child(
+                        text(description.to_owned())
+                            .text_xs()
+                            .color(theme.colors.text_subtle),
+                    )
+                }),
+        )
+        .when(current, |line| {
+            line.child(
+                icon(IconName::Check)
+                    .size(IconSize::Medium)
+                    .color(theme.colors.text),
+            )
+        })
 }
 
 /// Builds the list of what the query leaves.
@@ -192,7 +365,8 @@ fn rows(theme: &Theme, picker: &Picker) -> Div<Message> {
 
 /// Builds grouped local and remote branches, plus the branch being typed.
 fn branch_rows(theme: &Theme, picker: &Picker) -> Div<Message> {
-    let query = picker.field().value().trim();
+    let value = picker.field().value();
+    let query = value.trim();
     let base = picker
         .rows()
         .find_map(|row| row.label.strip_prefix("✓  "))
@@ -319,8 +493,10 @@ fn row(
 /// Builds the line under a prompt saying what it will do with what is typed.
 fn hint(theme: &Theme, kind: Kind) -> Div<Message> {
     let label = match kind {
+        Kind::CloneUrl => "Clone into a folder you choose, then open the project",
         Kind::Line => "Enter a line number, or a line and column",
         Kind::Rename => "Enter the new name, everywhere the symbol is used",
+        Kind::ProjectGroup(..) => "Organise projects under a named, collapsible heading",
         Kind::BreakpointCondition | Kind::BreakpointHits => {
             "Passed to the adapter as typed, e.g. 5 or >= 5"
         }
@@ -333,6 +509,9 @@ fn hint(theme: &Theme, kind: Kind) -> Div<Message> {
         Kind::ThemeColor(_) => "Leave it as it is to keep the colour the theme gives it",
         Kind::ThemeName => "Written to the editor's home, and drawn in from now on",
         Kind::KeymapName => "Written to the editor's home, and pressed from now on",
+        Kind::LanguageFormatter(_) => {
+            "Runs in the file's folder; {path} stands for the file's path"
+        }
         _ => "This cannot be undone",
     };
 

@@ -72,6 +72,7 @@ pub fn rendered_pane(
         .bg(theme.colors.background)
         .child(
             scroll_area(scroll, v_flex().w_full().child(column))
+                .selectable()
                 .w_full()
                 .flex_1(),
         )
@@ -145,7 +146,7 @@ impl Page<'_> {
     }
 
     /// Builds the runs of a passage as one paragraph wrapped to the column.
-    fn prose(&self, runs: &[Run], font: Font, color: Rgba) -> Paragraph {
+    fn prose(&self, runs: &[Run], font: Font, color: Rgba) -> Paragraph<Message> {
         let theme = self.theme;
         runs.iter().fold(paragraph().w_full(), |paragraph, run| {
             let Emphasis {
@@ -167,7 +168,7 @@ impl Page<'_> {
                 (_, true) => theme.colors.text_subtle,
                 _ => color,
             };
-            match (code, link) {
+            let paragraph = match (code, link) {
                 (true, _) => paragraph.marked(
                     run.text.clone(),
                     face.mono().size(TextSize::Sm),
@@ -176,6 +177,13 @@ impl Page<'_> {
                 ),
                 (false, true) => paragraph.underlined(run.text.clone(), face, color),
                 (false, false) => paragraph.span(run.text.clone(), face, color),
+            };
+            match run.target.as_deref() {
+                Some(target) => paragraph.on_span_click(Message::FollowRenderedLink(
+                    self.file,
+                    self.renders.link(self.file, target),
+                )),
+                None => paragraph,
             }
         })
     }
@@ -351,13 +359,16 @@ impl Page<'_> {
                     .w_full()
                     .items_stretch()
                     .when(heading, |row| row.bg(theme.colors.surface))
-                    .children(row.iter().map(|cell| {
+                    .children(row.iter().enumerate().map(|(cell_index, cell)| {
                         v_flex()
                             .flex_1()
                             .px(1)
                             .py(0.5)
                             .border_1(theme.colors.border_variant)
-                            .child(self.prose(cell, font, theme.colors.text))
+                            .child(
+                                self.prose(cell, font, theme.colors.text)
+                                    .copy_separator(if cell_index == 0 { "\n" } else { "\t" }),
+                            )
                     }))
             }))
     }

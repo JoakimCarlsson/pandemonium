@@ -67,6 +67,8 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    /// The physical size the swapchain was last configured to present.
+    configured_size: (u32, u32),
     scale: f32,
     text: TextSystem,
     atlas: GlyphAtlas,
@@ -288,6 +290,7 @@ impl Renderer {
             surface,
             device,
             queue,
+            configured_size: (config.width, config.height),
             config,
             scale,
             text: TextSystem::new(),
@@ -321,26 +324,39 @@ impl Renderer {
         )
     }
 
-    /// Reconfigures the surface for a new physical size and scale factor.
+    /// Records the latest physical size and scale factor for the next frame.
+    ///
+    /// Resize events can arrive faster than frames are presented. Updating
+    /// the logical size immediately keeps layout current while deferring
+    /// swapchain recreation until a frame needs the final physical size.
     pub fn resize(&mut self, width: u32, height: u32, scale: f32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.scale = scale.max(f32::EPSILON);
-        self.surface.configure(&self.device, &self.config);
     }
 
-    /// Draws one frame of `list` and presents it.
+    /// Recreates the swapchain at the latest requested physical size.
+    fn configure_surface(&mut self) {
+        self.surface.configure(&self.device, &self.config);
+        self.configured_size = (self.config.width, self.config.height);
+    }
+
+    /// Draws one frame of `list` and presents it, notifying the window through
+    /// `before_present` immediately before submitting the frame to the display.
     ///
     /// A surface that timed out or is hidden skips the frame and is asked
     /// again on the next one; only a surface that is outdated or lost is
-    /// configured again.
-    pub fn render(&mut self, list: &DrawList) {
+    /// configured again, along with a changed physical size.
+    pub fn render(&mut self, list: &DrawList, before_present: impl FnOnce()) {
         self.text.end_frame();
+        if self.configured_size != (self.config.width, self.config.height) {
+            self.configure_surface();
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
+                self.configure_surface();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Timeout
@@ -373,24 +389,15 @@ impl Renderer {
         glyphs.group(layers);
         images.group(layers);
 
-        self.quad_instances.upload(
-            &self.device,
-            &self.queue,
-            bytemuck::cast_slice(&quads.grouped),
-        );
-        self.glyph_instances.upload(
-            &self.device,
-            &self.queue,
-            bytemuck::cast_slice(&glyphs.grouped),
-        );
+        self.quad_instances
+            .upload(&self.device, &self.queue, &quads.grouped);
+        self.glyph_instances
+            .upload(&self.device, &self.queue, &glyphs.grouped);
         self.image_upload.clear();
         self.image_upload
             .extend(images.grouped.iter().map(|(instance, _)| *instance));
-        self.image_instances.upload(
-            &self.device,
-            &self.queue,
-            bytemuck::cast_slice(&self.image_upload),
-        );
+        self.image_instances
+            .upload(&self.device, &self.queue, &self.image_upload);
 
         let view = frame
             .texture
@@ -419,39 +426,40 @@ impl Renderer {
 
             pass.set_bind_group(0, &self.viewport_group, &[]);
             for layer in list.layers() {
-                if let Some(buffer) = self.quad_instances.buffer()
-                    && let Some(range) = quads.layer(layer)
-                {
+                if let Some(range) = quads.layer(layer) {
                     pass.set_pipeline(&self.quad_pipeline);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..6, range);
-                }
-                if let Some(buffer) = self.image_instances.buffer()
-                    && let Some(range) = images.layer(layer)
-                {
-                    pass.set_pipeline(&self.image_pipeline);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    for index in range {
-                        let (_, picture) = images.grouped[index as usize];
-                        let Some(group) = self.textures.group(picture) else {
-                            continue;
-                        };
-                        pass.set_bind_group(1, group, &[]);
-                        pass.draw(0..6, index..index + 1);
+                    for (buffer, local, _) in self.quad_instances.slices(range) {
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..6, local);
                     }
                 }
-                if let Some(buffer) = self.glyph_instances.buffer()
-                    && let Some(range) = glyphs.layer(layer)
-                {
+                if let Some(range) = images.layer(layer) {
+                    pass.set_pipeline(&self.image_pipeline);
+                    for (buffer, local, base) in self.image_instances.slices(range) {
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        for index in local {
+                            let (_, picture) = images.grouped[base + index as usize];
+                            let Some(group) = self.textures.group(picture) else {
+                                continue;
+                            };
+                            pass.set_bind_group(1, group, &[]);
+                            pass.draw(0..6, index..index + 1);
+                        }
+                    }
+                }
+                if let Some(range) = glyphs.layer(layer) {
                     pass.set_pipeline(&self.glyph_pipeline);
                     pass.set_bind_group(1, self.atlas.group(), &[]);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..6, range);
+                    for (buffer, local, _) in self.glyph_instances.slices(range) {
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..6, local);
+                    }
                 }
             }
         }
 
         self.queue.submit(Some(encoder.finish()));
+        before_present();
         self.queue.present(frame);
 
         self.quads = quads;
@@ -517,13 +525,22 @@ impl Renderer {
                     continue;
                 };
 
+                let origin = [
+                    physical.x as f32 + slot.left as f32,
+                    physical.y as f32 - slot.top as f32,
+                ];
+                if origin[0] >= clip[2]
+                    || origin[1] >= clip[3]
+                    || origin[0] + slot.width as f32 <= clip[0]
+                    || origin[1] + slot.height as f32 <= clip[1]
+                {
+                    continue;
+                }
+
                 batch.push(
                     *layer,
                     GlyphInstance {
-                        origin: [
-                            (physical.x + slot.left) as f32,
-                            (physical.y - slot.top) as f32,
-                        ],
+                        origin,
                         size: [slot.width as f32, slot.height as f32],
                         uv_origin: [slot.x as f32 / atlas_size, slot.y as f32 / atlas_size],
                         uv_size: [
@@ -609,10 +626,10 @@ impl Renderer {
     /// Converts a logical clip rectangle to the physical bounds shaders test.
     fn clip(&self, clip: Rect) -> [f32; 4] {
         [
-            clip.left() * self.scale,
-            clip.top() * self.scale,
-            clip.right() * self.scale,
-            clip.bottom() * self.scale,
+            (clip.left() * self.scale).max(0.0),
+            (clip.top() * self.scale).max(0.0),
+            (clip.right() * self.scale).min(self.config.width as f32),
+            (clip.bottom() * self.scale).min(self.config.height as f32),
         ]
     }
 }

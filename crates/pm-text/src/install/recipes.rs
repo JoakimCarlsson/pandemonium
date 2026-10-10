@@ -1,4 +1,5 @@
-//! Pinned recipes for every server the editor can install.
+//! Pinned recipes for every server the editor can install, and for the
+//! tools those servers run in turn.
 
 use super::{Build, Recipe};
 
@@ -37,6 +38,38 @@ pub const fn recipe(command: &str) -> Option<Recipe> {
                     platform: "windows-aarch64",
                     url: "https://github.com/rust-lang/rust-analyzer/releases/download/{version}/rust-analyzer-aarch64-pc-windows-msvc.zip",
                     sha256: "f63c7fc9a00a7e863b21b5e0b77cda7ff61aaa9f6f83b0affa5bbb525be7c43c",
+                },
+            ],
+        });
+    }
+    if same(command, "wgsl-analyzer") {
+        return Some(Recipe::Release {
+            version: "2026-09-30",
+            builds: &[
+                Build {
+                    platform: "linux-x86_64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-x86_64-unknown-linux-gnu.gz",
+                    sha256: "4635d9d804c9609dc7639632c14d9b6cf888b21f3c95d41c1dc55a33dc76f98e",
+                },
+                Build {
+                    platform: "linux-aarch64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-aarch64-unknown-linux-gnu.gz",
+                    sha256: "e5cb5b27f4b754a945e0b4c34a75f09690edda8fe99eeaa671550afeee671b07",
+                },
+                Build {
+                    platform: "macos-aarch64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-aarch64-apple-darwin.gz",
+                    sha256: "82b3703d885a82e91dcaf950974590a0b9b9202080a60fd7cc5ad7872bad8053",
+                },
+                Build {
+                    platform: "windows-x86_64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-x86_64-pc-windows-msvc.zip",
+                    sha256: "f9b9c0621149fcf989907787daeab9212035a42af45d4511b6ec50834a7e6b05",
+                },
+                Build {
+                    platform: "windows-aarch64",
+                    url: "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/{version}/wgsl-analyzer-aarch64-pc-windows-msvc.zip",
+                    sha256: "eb5d5dc97329315dd6dbe63ea1093fb068f938a312a9ccaa834bf416e916d004",
                 },
             ],
         });
@@ -253,11 +286,48 @@ pub const fn recipe(command: &str) -> Option<Recipe> {
             ],
         });
     }
+    if same(command, "shellcheck") {
+        return Some(Recipe::Release {
+            version: "v0.11.0",
+            builds: &[
+                Build {
+                    platform: "linux-x86_64",
+                    url: "https://github.com/koalaman/shellcheck/releases/download/{version}/shellcheck-{version}.linux.x86_64.tar.gz",
+                    sha256: "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+                },
+                Build {
+                    platform: "linux-aarch64",
+                    url: "https://github.com/koalaman/shellcheck/releases/download/{version}/shellcheck-{version}.linux.aarch64.tar.gz",
+                    sha256: "68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc",
+                },
+                Build {
+                    platform: "linux-riscv64",
+                    url: "https://github.com/koalaman/shellcheck/releases/download/{version}/shellcheck-{version}.linux.riscv64.tar.gz",
+                    sha256: "a70e86454e9ae1a328aeafe62629d04ffea93b99138bfe1203083e2621b5ca4f",
+                },
+                Build {
+                    platform: "macos-x86_64",
+                    url: "https://github.com/koalaman/shellcheck/releases/download/{version}/shellcheck-{version}.darwin.x86_64.tar.gz",
+                    sha256: "c2c15e08df0e8fbc374c335b230a7ee958c313fa5714817a59aa59f1aa594f51",
+                },
+                Build {
+                    platform: "macos-aarch64",
+                    url: "https://github.com/koalaman/shellcheck/releases/download/{version}/shellcheck-{version}.darwin.aarch64.tar.gz",
+                    sha256: "339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f",
+                },
+                Build {
+                    platform: "windows-x86_64",
+                    url: "https://github.com/koalaman/shellcheck/releases/download/{version}/shellcheck-{version}.zip",
+                    sha256: "8a4e35ab0b331c85d73567b12f2a444df187f483e5079ceffa6bda1faa2e740e",
+                },
+            ],
+        });
+    }
     if same(command, "typescript-language-server") {
         return Some(Recipe::Npm {
             package: "typescript-language-server",
             version: "6.0.1",
-            extra: &["typescript@7.0.2"],
+            extra: &["typescript@6.0.3"],
         });
     }
     if same(command, "basedpyright-langserver") {

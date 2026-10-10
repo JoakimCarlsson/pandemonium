@@ -15,14 +15,13 @@ use crate::config::{FontSlot, InstallLanguageServers, Preference, Step, ThemeMod
 use crate::editor::{CursorShape, FileId, ScrollAxis, SearchField};
 use crate::keymap::Action;
 use crate::markdown::DiagramZoom;
-use crate::notice::NoticeId;
+use crate::notice::{NoticeId, NotificationAction};
 use crate::panel::PanelView;
-use crate::panes::{Item, PaneId, SplitDirection, SplitId};
+use crate::panes::{Item, PaneId, SplitDirection, SplitId, Tool};
 use crate::review::comment::{CommentId, Side as CommentSide};
 use crate::review::{ChangeId, ConflictAction, Group, RepositoryAction};
-use crate::settings::{SettingsPage, SettingsSection};
+use crate::settings::{FormField, SettingsPage, SettingsSection};
 use crate::terminal::ShellId;
-use crate::workspace::SidebarView;
 
 /// A matching option on a project search pane.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -38,6 +37,25 @@ pub enum ProjectSearchOption {
 /// One thing the window can be told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+    /// Opens the changes made during one reader prompt.
+    DiffAgentTurn(TalkId, u64),
+    /// Rewinds conversation context before a reader message and restores its prompt.
+    RewindAgentContext(TalkId, usize),
+    /// Offers a filesystem rewind before one reader prompt.
+    RewindAgentTurn(TalkId, u64),
+    /// Executes an explicitly confirmed filesystem rewind.
+    ConfirmRewind(Scope, u64),
+    /// Counts files and offers confirmation for a saved target.
+    RequestRewind(Scope, u64),
+    /// Scrolls the transcript to the call identified by a checkpoint commit prefix.
+    ShowCheckpointStep(Scope, u64),
+
+    /// Copies the focused reading surface’s selected text.
+    CopyText,
+    /// Follows a link in a rendered document.
+    FollowRenderedLink(FileId, usize),
+    /// Selects all placed text in the focused reading surface.
+    SelectAllText,
     /// Draw in this theme mode.
     SetThemeMode(ThemeMode),
     /// Draw in this theme family, by index into `pm_ui::families`.
@@ -52,6 +70,54 @@ pub enum Message {
     SaveKeymap,
     /// Read the keymaps in the editor's home in again.
     ReloadKeymaps,
+    /// Drag the settings page's visible scroll thumb.
+    ScrollSettings(ResizeEvent, f32),
+    /// Ask which language the Language Settings section shows.
+    PickSettingsLanguage,
+    /// Flip this switch for the language being set.
+    ToggleLanguageSetting(crate::config::languages::LanguageSetting),
+    /// Move this number one step for the language being set.
+    StepLanguageSetting(crate::config::languages::LanguageSetting, Step),
+    /// Put this setting of the language being set back to the shared preference.
+    ResetLanguageSetting(crate::config::languages::LanguageSetting),
+    /// Put every setting of the language being set back.
+    ResetLanguageSettings,
+    /// Lay the language being set out with this kind of formatter.
+    SetLanguageFormatter(crate::config::languages::FormatterKind),
+    /// Ask for the command line the language being set is piped through.
+    AskLanguageFormatter,
+    /// Open a form for a new server of the language being set.
+    AddLanguageServer,
+    /// Open a form for this server of the language being set.
+    EditLanguageServer(usize),
+    /// Remove this server of the language being set.
+    RemoveLanguageServer(usize),
+    /// Put the servers of the language being set back to the ones it names.
+    ResetLanguageServers,
+    /// Save the server form.
+    SaveLanguageServer,
+    /// Close the server form.
+    CancelLanguageServer,
+    /// Give a box of the server form the keyboard.
+    FocusLanguageServerField(usize),
+    /// Edit a box of the server form.
+    WriteLanguageServerField(usize, ResizePhase, Position, Position),
+    /// Open the source of an offered or installed language package.
+    OpenLanguageSource(usize, bool),
+    /// Retrieve the maintained language extension catalogue.
+    RefreshLanguageCatalogue,
+    /// Install or update the catalogue entry at this position.
+    InstallLanguageExtension(usize),
+    /// Import a local extension directory through the platform picker.
+    ImportLanguageExtension,
+    /// Install the remembered import at this position again from its folder.
+    ReinstallLanguageExtension(usize),
+    /// Remove an installed language extension.
+    RemoveLanguageExtension(usize),
+    /// Open or fold the group of built-in languages.
+    ToggleBuiltinLanguages,
+    /// Choose which extensions the list shows.
+    SetLanguageFilter(crate::settings::languages::Filter),
     /// Read installed extensions again.
     ReloadExtensions,
     /// Turn this preference, which is a switch, on or off.
@@ -68,6 +134,8 @@ pub enum Message {
     InstallLanguageServer(&'static str),
     /// Open the log of a language server behind the focused file.
     OpenServerLog,
+    /// Open the log of a particular server, even after focus changes.
+    OpenServerLogAt(usize),
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.
@@ -91,8 +159,66 @@ pub enum Message {
     Finish,
     /// Open the settings pane, or bring it forward where it is open.
     OpenSettings,
+    /// Close the window preferences modal and return to the workspace.
+    CloseSettings,
+    /// Copies the running version and source commit to the system clipboard.
+    CopyVersion,
     /// Open the repository the editor is published from.
     OpenRepository,
+    /// Put the caret of the agent search box where a press landed, selecting to it.
+    WriteAgentSearch(ResizePhase, Position, Position),
+    /// Install the registry's agent in this place of the list on offer.
+    InstallAgent(usize),
+    /// Open or fold the list of installed agents.
+    ToggleAgentsInstalled,
+    /// Open or fold the list of agents on offer.
+    ToggleAgentsAvailable,
+    /// Start describing an agent to run beside the shipped ones.
+    AddAgentServer,
+    /// Describe the agent the reader added in this place of the list again.
+    EditAgentServer(usize),
+    /// Take the agent the reader added in this place of the list away.
+    RemoveAgentServer(usize),
+    /// Open the menu of what can be done to the agent the reader added in this place.
+    ShowAgentServerMenu(usize),
+    /// Start describing a tool server to add to every agent.
+    AddMcpServer,
+    /// Put the caret of this box of the tool server form where a press landed, selecting to it.
+    WriteFormField(FormField, ResizePhase, Position, Position),
+    /// Add an empty variable to the tool server form.
+    AddFormVariable,
+    /// Add the variable the registry lists in this place to the tool server form.
+    SuggestFormVariable(usize),
+    /// Take this variable out of the tool server form.
+    RemoveFormVariable(usize),
+    /// Write the tool server form down.
+    SaveServerForm,
+    /// Let go of the tool server form.
+    CancelServerForm,
+    /// Switch the tool server in this place of the list on or off.
+    ToggleMcpServer(usize),
+    /// Put the configuration of the tool server in this place on the clipboard.
+    CopyMcpConfiguration(usize),
+    /// Open the page describing the tool server in this place.
+    OpenMcpWebsite(usize),
+    /// Show the file the tool servers are written to.
+    RevealSettingsFile,
+    /// Open the menu of what can be done to the tool server in this place.
+    ShowMcpServerMenu(usize),
+    /// Install the registry's server in this place of the list on offer.
+    InstallMcpServer(usize),
+    /// Open or fold the list of installed MCP servers.
+    ToggleMcpInstalled,
+    /// Open or fold the list of MCP servers on offer.
+    ToggleMcpAvailable,
+    /// Open the page that says what MCP servers are.
+    OpenMcpDocs,
+    /// Put the caret of the MCP search box where a press landed, selecting to it.
+    WriteMcpSearch(ResizePhase, Position, Position),
+    /// Describe the tool server in this place of the list again.
+    EditMcpServer(usize),
+    /// Take the tool server in this place of the list away.
+    RemoveMcpServer(usize),
     /// Show this page of the settings pane, from its top.
     ShowSettingsPage(SettingsPage),
     /// Show the page of the settings pane this section is on, scrolled to it.
@@ -109,6 +235,18 @@ pub enum Message {
     CloseProject(ProjectId),
     /// Open the menu of things that can be done to this project.
     ProjectMenu(ProjectId),
+    /// Name a new project group, optionally placing a project in it.
+    NewProjectGroup(Option<ProjectId>),
+    /// Name an existing project group.
+    RenameProjectGroup(usize),
+    /// Remove a group while keeping its projects open.
+    RemoveProjectGroup(usize),
+    /// Fold or unfold a project group.
+    ToggleProjectGroup(usize),
+    /// Open the actions for a project group.
+    ProjectGroupMenu(usize),
+    /// Move a project to a group, or leave it ungrouped.
+    AssignProjectGroup(ProjectId, Option<usize>),
     /// Press, drag or let go of this project's row in the projects sidebar.
     DragProject(ProjectId, ResizeEvent),
     /// Cut a session of the active project from the branch it has out.
@@ -129,18 +267,14 @@ pub enum Message {
     FinishSession(SessionId),
     /// Finish this session, having been told to.
     EndSession(SessionId),
-    /// Resize the sessions sidebar.
-    ResizeSidebar(ResizeEvent),
     /// Minimize the application window.
     MinimizeWindow,
     /// Toggle whether the application window is maximized.
     ToggleMaximizedWindow,
     /// Close the application window.
     CloseWindow,
-    /// Toggle the primary sidebar.
-    TogglePrimarySidebar,
-    /// Toggle the bottom panel.
-    ToggleBottomPanel,
+    /// Close a registered tool, or reopen it when it is closed.
+    ToggleTool(Tool),
     /// Bring this view of the bottom panel to the front, opening the panel.
     ShowPanelView(PanelView),
     /// Close the bottom panel when this view is in front of it, and bring
@@ -166,20 +300,14 @@ pub enum Message {
     RenameTerminal(ShellId),
     /// Drag the terminal's scrollbar, so many lines to a pixel of travel.
     ScrollTerminal(ResizeEvent, f32),
-    /// Toggle the secondary sidebar.
-    ToggleSecondarySidebar,
-    /// Resize the bottom panel.
-    ResizeBottomPanel(ResizeEvent),
-    /// Resize the secondary sidebar.
-    ResizeSecondarySidebar(ResizeEvent),
     /// Resize the Source Control graph.
     ResizeHistoryGraph(ResizeEvent),
-    /// Resize the box agents' prompts are written in.
-    ResizeAgentPrompt(ResizeEvent),
     /// Show or hide the Source Control graph.
     ToggleHistoryGraph,
     /// Expand or collapse the Source Control changes section.
     ToggleChangesSection,
+    /// Drag the Source Control changes list's scroll thumb.
+    ScrollChanges(ResizeEvent, f32),
     /// Show the available Source Control commit actions.
     ShowCommitMenu,
     /// Show the Source Control action menu.
@@ -196,16 +324,12 @@ pub enum Message {
     DiscardAndClose(PaneId, FileId),
     /// Send later keystrokes to this pane.
     FocusPane(PaneId),
-    /// Divide this pane that way, showing the same file in both halves.
-    SplitPane(PaneId, SplitDirection),
     /// Divide this pane that way, showing this tab's contents in the new half.
     SplitItem(PaneId, Item, SplitDirection),
     /// Open a rendered view or editable source beside this pane's file.
     PreviewFile(PaneId),
     /// Open the outline for the file named by a tab's context menu.
     OpenOutline(PaneId, FileId),
-    /// Open the menu of things that can be done to this pane.
-    ShowPaneMenu(PaneId),
     /// Carry this pane's tab across the window, and let go of it somewhere.
     DragTab(PaneId, Item, ResizeEvent),
     /// Close this pane, giving what it held back to its neighbour.
@@ -234,8 +358,8 @@ pub enum Message {
     OutlineSelect(Scope, usize),
     /// Expand or collapse one symbol in the worktree's outline.
     OutlineToggle(Scope, usize),
-    /// Give the outline filter its caret at this character.
-    OutlineFilterFocus(Scope, usize),
+    /// Select text in the outline filter and give it the keyboard.
+    WriteOutlineFilter(Scope, ResizePhase, Position, Position),
     /// Select every line a drag down this pane's gutter reaches.
     SelectLines(PaneId, Position, Position),
     /// Open the menu of things that can be done to the text in this pane.
@@ -266,10 +390,10 @@ pub enum Message {
     WriteDebugConsole(ResizePhase, Position, Position),
     /// Give this pane the keyboard, then carry out this command in it.
     PaneAction(PaneId, Action),
-    /// Send later keystrokes to this field of this pane's search bar.
-    FocusSearch(PaneId, SearchField, usize),
-    /// Focuses one field of a worktree search pane.
-    FocusProjectSearch(PaneId, SearchField, usize),
+    /// Select text in a field of this pane's search bar.
+    WriteSearch(PaneId, SearchField, ResizePhase, Position, Position),
+    /// Select text in a field of a worktree search pane.
+    WriteProjectSearch(PaneId, SearchField, ResizePhase, Position, Position),
     /// Flips a matching option in a worktree search pane.
     ToggleProjectSearch(PaneId, ProjectSearchOption),
     /// Confirms replacing all matches across multiple files.
@@ -284,8 +408,8 @@ pub enum Message {
     ToggleSearchReplace(PaneId),
     /// Close this pane's search bar.
     CloseSearch(PaneId),
-    /// Put the caret this many characters into the picker's field.
-    PlacePicker(usize),
+    /// Select text in the picker's input.
+    WritePicker(ResizePhase, Position, Position),
     /// Take the row the picker is showing in this place.
     ChoosePicker(usize),
     /// Take the completion the list is showing in this place.
@@ -320,8 +444,8 @@ pub enum Message {
     NewTreeFolder,
     /// Start typing a new name for the row the tree's keyboard is on.
     RenameTreeEntry,
-    /// Put the caret of the name being typed into the tree this far in.
-    PlaceTreeEdit(usize),
+    /// Select text in the name being typed into the tree.
+    WriteTreeEdit(ResizePhase, Position, Position),
     /// Ask whether what the tree is acting on should go to the trash.
     TrashTreeEntries,
     /// Ask whether what the tree is acting on should come off the disk.
@@ -382,8 +506,12 @@ pub enum Message {
     CloseOtherTerminals(ShellId),
     /// End every shell of the project.
     CloseAllTerminals,
-    /// Show this in the sidebar that lists the worktree.
-    SetSidebarView(SidebarView),
+    /// Show a registered workspace tool wherever its tab lives.
+    ShowTool(Tool),
+    /// Show the menu of workspace tools.
+    ShowToolsMenu,
+    /// Restore the default pane arrangement without closing live tabs.
+    ResetWindowLayout,
     /// Open the active project's changes for review, in a pane.
     OpenReview,
     /// Open the active worktree's changes as excerpts of their files, to be
@@ -540,6 +668,14 @@ pub enum Message {
     ConfirmAbortMerge,
     /// Ask which agent to start in the active project's worktree.
     NewAgentSession,
+    /// Starts the chosen agent in the active worktree.
+    StartAgent(pm_acp::Agent),
+    /// Opens settings for the agents offered by the chat launcher.
+    ManageAgentServers,
+    /// Opens account profile management for this agent, independent of a project.
+    ManageAccountProfiles(pm_acp::Agent),
+    /// Chooses an account for a new conversation in this conversation's worktree.
+    ShowAgentAccounts(TalkId),
     /// Put the prompt's cursor where a press landed, selecting to it.
     ///
     /// A press in the prompt is also what gives it the keyboard, so this is
@@ -550,6 +686,29 @@ pub enum Message {
     SendPrompt(TalkId),
     /// Answer this session's permission request with the choice in this place.
     AnswerAgent(TalkId, u64, usize),
+    /// Refuse this session's permission request under this ticket.
+    DenyAgent(TalkId, u64),
+    /// Give the keyboard to the box the field in this place of the form the
+    /// agent put under this ticket is written in, picking it where it is the
+    /// reader's own answer to a choice.
+    TypeAnswer(TalkId, u64, usize),
+    /// Put the caret of the box the field in this place of the form the
+    /// agent put under this ticket is written in where a press landed,
+    /// selecting to it.
+    WriteAnswer(TalkId, u64, usize, ResizePhase, Position, Position),
+    /// Send the form the agent put under this ticket, filled in as it is.
+    SendAnswer(TalkId, u64),
+    /// Choose the alternative in the last place, of the field in the place
+    /// before it, of the form the agent put under this ticket.
+    ChooseAnswer(TalkId, u64, usize, usize),
+    /// Show the page in this place of the form the agent put under this ticket.
+    ShowAnswerPage(TalkId, u64, usize),
+    /// Fold the form the agent put under this ticket down to its tabs, or open it again.
+    FoldAnswer(TalkId, u64),
+    /// Walk away from the question the agent put under this ticket.
+    CancelAnswer(TalkId, u64),
+    /// Open the page the agent sent the reader to under this ticket.
+    OpenAnswerLink(TalkId, u64),
     /// Log this session's agent in by the way it offered in this place.
     LogInAgent(TalkId, usize),
     /// Pick out this session's transcript from where a press landed to where
@@ -558,8 +717,13 @@ pub enum Message {
     /// Drag this session's scrollbar, so many pixels of the conversation to
     /// a pixel of travel.
     ScrollAgent(TalkId, ResizeEvent, f32),
+    /// Drag the scrollbar of this session's offered commands, so many pixels
+    /// of the list to a pixel of travel.
+    ScrollAgentCommands(TalkId, ResizeEvent, f32),
     /// Open or close tool or thinking details in this session's transcript.
     ToggleAgentDetails(TalkId, usize),
+    /// Toggles the full output and descendants of one tool call.
+    ToggleAgentCard(TalkId, usize),
     /// Follow the link this session's pane drew in this place: open the
     /// file it names, or the address in the browser.
     FollowAgentLink(TalkId, usize),
@@ -573,8 +737,39 @@ pub enum Message {
     ShowAgentModes(TalkId),
     /// Put this session into the mode after the one it is in.
     CycleAgentMode(TalkId),
+    /// Open the list of MCP servers this session's agent was given.
+    ShowAgentMcp(TalkId),
+    /// Open the settings page where MCP servers are managed.
+    ManageMcpServers,
+    /// Open the menu of what can be done to the text of this session's transcript.
+    ShowAgentTextMenu(TalkId, Option<usize>),
+    /// Copy a reply, choosing formatting explicitly or from the modifiers at the press.
+    CopyAgentReply(TalkId, usize, Option<bool>),
+    /// Copy what is picked out of this session's transcript.
+    CopyAgentText(TalkId),
+    /// Pick out the whole of this session's transcript.
+    SelectAllAgentText(TalkId),
+    /// Start this session's agent again, carrying on the conversation it was in.
+    ReconnectAgent(TalkId),
+    /// Fork the whole native conversation while sharing its current files.
+    ForkAgent(TalkId),
+    /// Branch through a native reply into a separate chat tab.
+    ForkAgentReply(TalkId, usize),
+    /// Log this session's agent out.
+    LogOutAgent(TalkId),
+    /// List this session's saved conversations to choose one to forget.
+    ShowAgentDeletions(TalkId),
     /// Act on the knob in this place: ask which value, or flip the switch.
     PressKnob(TalkId, usize),
+    /// Set the knob in this place to the value in that place, from inside the
+    /// choices it is shown among, which stay open.
+    SetAgentKnob(TalkId, usize, usize),
+    /// Drag the scrollbar of this session's prompt, with the rows one pixel
+    /// of the drag is worth.
+    DragAgentPrompt(TalkId, ResizeEvent, f32),
+    /// Flip the switch in this place, from inside the choices it is shown
+    /// among, which stay open.
+    FlipAgentKnob(TalkId, usize),
     /// Start naming one of this session's commands, in its prompt.
     StartAgentCommand(TalkId),
     /// Start naming a locally installed skill in this session's prompt.
@@ -587,6 +782,10 @@ pub enum Message {
     ShowAgent(TalkId),
     /// Go to what this notice is about, and let go of it.
     FollowNotice(NoticeId),
+    /// Activate an explicit installation notification control.
+    ActOnNotification(NoticeId, NotificationAction),
+    /// Scroll a notification message through its shared viewport.
+    ScrollNotification(NoticeId, ResizeEvent, f32),
     /// Let go of this notice without going anywhere.
     DismissNotice(NoticeId),
     /// Open the menu of things that can be done to the box being written in.

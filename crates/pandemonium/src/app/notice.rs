@@ -8,7 +8,6 @@ use crate::app::{App, RemoteOperation};
 use crate::message::Message;
 use crate::panel::PanelView;
 use crate::terminal::Exited;
-use crate::workspace::SidebarView;
 
 impl App {
     /// Carries out the messages a notice sends.
@@ -17,6 +16,50 @@ impl App {
     /// window can go on trying the rest.
     pub(super) fn notice_command(&mut self, message: Message) -> bool {
         match message {
+            Message::ScrollNotification(id, event, step) => {
+                self.notices.scroll_installation(id, event, step)
+            }
+            Message::ActOnNotification(id, action) => {
+                use crate::notice::{InstallationStage, NotificationAction};
+                let Some(card) = self.notices.installation_at(id).cloned() else {
+                    return true;
+                };
+                match action {
+                    NotificationAction::Install => {
+                        if matches!(
+                            card.stage,
+                            InstallationStage::Offer | InstallationStage::Failed
+                        ) {
+                            self.start_server_install(card.command, true);
+                        }
+                    }
+                    NotificationAction::LanguageSettings => {
+                        if let Some(language) = card.language {
+                            self.select_settings_language(language);
+                        }
+                        self.settings
+                            .show_section(crate::settings::SettingsSection::LanguageSettings);
+                        self.open_settings();
+                    }
+                    NotificationAction::Preference => {
+                        self.settings
+                            .show_section(crate::settings::SettingsSection::Saving);
+                        self.open_settings();
+                    }
+                    NotificationAction::Close => self.notices.dismiss_installation(id),
+                    NotificationAction::Previous => self.notices.step_installation(true),
+                    NotificationAction::Next => self.notices.step_installation(false),
+                }
+                if matches!(
+                    action,
+                    NotificationAction::Close
+                        | NotificationAction::LanguageSettings
+                        | NotificationAction::Preference
+                ) && let Some(ui) = self.ui.as_mut()
+                {
+                    ui.clear_focus();
+                }
+            }
             Message::FollowNotice(id) => {
                 if let Some(action) = self.notices.dismiss(id) {
                     self.apply(action);
@@ -56,7 +99,7 @@ impl App {
 
     /// Says how a remote operation in `scope` came out.
     pub(super) fn hear_remote(&mut self, scope: Scope, kind: RemoteOperation, said: &Said) {
-        let changes = Some(Message::SetSidebarView(SidebarView::Changes));
+        let changes = Some(Message::ShowTool(crate::panes::Tool::Changes));
         let place = self.worktree_name(scope);
         match said {
             Ok(_) => self

@@ -313,3 +313,28 @@ fn read(root: impl Into<Location>, key: &str) -> Option<String> {
         false => Some(value.to_owned()),
     }
 }
+
+/// Writes durable session ancestry beside worktree memory, reporting storage failures.
+pub(crate) fn remember_delegation(root: &Path, text: &str) -> Result<(), String> {
+    let file = memory(root)
+        .ok_or("The session has no git memory directory")?
+        .with_file_name("pandemonium.delegation.json");
+    let pending = file.with_extension("pending");
+    let result = std::fs::write(&pending, format!("{text}\n"))
+        .and_then(|()| {
+            std::fs::File::options()
+                .write(true)
+                .open(&pending)?
+                .sync_all()
+        })
+        .and_then(|()| std::fs::rename(&pending, &file));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&pending);
+    }
+    result.map_err(|error| error.to_string())
+}
+
+/// Reads durable session ancestry beside worktree memory.
+pub(crate) fn remembered_delegation(root: &Path) -> Option<String> {
+    std::fs::read_to_string(memory(root)?.with_file_name("pandemonium.delegation.json")).ok()
+}

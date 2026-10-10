@@ -481,3 +481,6 @@ bindings:
       primary+enter: search.replace_match
       primary+shift+enter: search.replace_in_file
       primary+alt+enter: search.replace_all
+  - when: "pane.kind == agent || pane.kind == prompt"
+    keys:
+      ctrl+o: agent::ToggleDetails

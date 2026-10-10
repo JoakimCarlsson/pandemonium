@@ -100,6 +100,10 @@ impl Command {
     pub fn get_args(&self) -> std::process::CommandArgs<'_> {
         self.local.get_args()
     }
+    /// The environment overrides named by the builder.
+    pub fn get_envs(&self) -> std::process::CommandEnvs<'_> {
+        self.local.get_envs()
+    }
     /// Appends one argument.
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
         self.local.arg(&arg);

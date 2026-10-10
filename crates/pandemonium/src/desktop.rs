@@ -40,6 +40,24 @@ pub fn copy(text: String) {
     });
 }
 
+/// Puts an HTML fragment and its plain-text alternative on the system clipboard.
+pub fn copy_html(html: String, alt_text: String) {
+    std::thread::spawn(move || {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return;
+        };
+        #[cfg(target_os = "linux")]
+        {
+            use arboard::SetExtLinux;
+            let _ = clipboard.set().wait().html(html, Some(alt_text));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = clipboard.set().html(html, Some(alt_text));
+        }
+    });
+}
+
 /// Shows `path` in the desktop's file manager.
 pub fn reveal(path: &Path) {
     let target = if path.is_dir() {
@@ -139,7 +157,7 @@ pub fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
 
 /// Keeps a pasted PNG readable by an agent that accepts file links.
 pub fn save_pasted_image(png: &[u8]) -> Option<std::path::PathBuf> {
-    let directory = std::env::temp_dir().join("pandemonium");
+    let directory = crate::config::clipboard()?;
     std::fs::create_dir_all(&directory).ok()?;
     let sequence = NEXT_PASTED_IMAGE.fetch_add(1, Ordering::Relaxed);
     let path = directory.join(format!("pasted-{}-{sequence}.png", std::process::id()));

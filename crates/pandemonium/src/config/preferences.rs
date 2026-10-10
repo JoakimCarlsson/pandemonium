@@ -36,8 +36,11 @@ const LINE_HEIGHTS: RangeInclusive<f32> = 1.0..=2.5;
 /// How many lines of scrollback a terminal can be asked to keep.
 const SCROLLBACKS: RangeInclusive<f32> = 1_000.0..=100_000.0;
 
+/// The range of prose widths, stepped by twenty columns.
+pub(super) const LINE_LENGTHS: RangeInclusive<f32> = 20.0..=240.0;
+
 /// How wide a step of indentation can be.
-const TAB_SIZES: RangeInclusive<f32> = 1.0..=16.0;
+pub(super) const TAB_SIZES: RangeInclusive<f32> = 1.0..=16.0;
 
 /// How far the wheel can be made to scroll, against its usual distance.
 const SENSITIVITIES: RangeInclusive<f32> = 0.25..=4.0;
@@ -138,6 +141,8 @@ pub enum Preference {
     VimClipboard,
     /// How wide a step of indentation is where a file does not say.
     TabSize,
+    /// The column prose is wrapped to.
+    LineLength,
     /// Whether a step of indentation is a tab where a file does not say.
     HardTabs,
     /// Whether the gutter numbers the lines.
@@ -150,6 +155,8 @@ pub enum Preference {
     Occurrences,
     /// Whether a line is drawn at every step of indentation.
     IndentGuides,
+    /// Whether brackets are coloured by how many pairs they are inside.
+    BracketColors,
     /// Whether the lines the view is inside stay pinned above it.
     StickyScroll,
     /// Whether the scrollbars are drawn.
@@ -177,6 +184,11 @@ pub enum Preference {
     ScrollSensitivity,
     /// Whether a file is laid out by its formatter when it is saved.
     FormatOnSave,
+    /// Whether a file's imports are put in order when it is saved.
+    OrganizeImportsOnSave,
+    /// Whether the fixes a server can make on their own are made when a file
+    /// is saved.
+    FixOnSave,
     /// Whether the space at the ends of lines goes when a file is saved.
     TrimWhitespace,
     /// Whether a saved file always ends in a line break.
@@ -273,6 +285,8 @@ impl Default for EditPredictions {
 /// Everything the reader decides about how the editor draws and behaves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
+    /// Limits and explicit project grants for editor-owned session tools.
+    pub orchestration: super::Orchestration,
     /// The last options chosen for each agent CLI, by agent id.
     pub agent_options: BTreeMap<String, AgentOptions>,
     /// Which theme the editor draws in.
@@ -295,6 +309,8 @@ pub struct Preferences {
     pub vim_bindings: Vec<VimBinding>,
     /// How wide a step of indentation is where a file does not say.
     pub tab_size: usize,
+    /// The column prose is wrapped to.
+    pub line_length: usize,
     /// Whether a step of indentation is a tab where a file does not say.
     pub hard_tabs: bool,
     /// What a pane of text draws around and over its text.
@@ -313,6 +329,11 @@ pub struct Preferences {
     pub scroll_sensitivity: f32,
     /// Whether a file is laid out the way its formatter would when it is saved.
     pub format_on_save: bool,
+    /// Whether a file's imports are put in order when it is saved.
+    pub organize_imports_on_save: bool,
+    /// Whether the fixes a server can make on their own are made when a file
+    /// is saved.
+    pub fix_on_save: bool,
     /// Whether the space at the ends of lines goes when a file is saved.
     pub trim_whitespace: bool,
     /// Whether a saved file always ends in a line break.
@@ -329,12 +350,15 @@ pub struct Preferences {
     pub install_language_servers: InstallLanguageServers,
     /// What a session's fresh worktree is given, git having left it out.
     pub bootstrap: Bootstrap,
+    /// What each language overrides, by the language's own name.
+    pub languages: BTreeMap<String, crate::config::languages::LanguageOverrides>,
 }
 
 impl Default for Preferences {
     /// The preferences a first launch starts from.
     fn default() -> Self {
         Self {
+            orchestration: super::Orchestration::default(),
             agent_options: BTreeMap::new(),
             theme_mode: ThemeMode::System,
             theme_family: DEFAULT_FAMILY,
@@ -346,6 +370,7 @@ impl Default for Preferences {
             vim_clipboard: pm_vim::ClipboardUse::default(),
             vim_bindings: Vec::new(),
             tab_size: Indent::default().width,
+            line_length: 80,
             hard_tabs: false,
             display: Display::default(),
             split_diff: false,
@@ -355,6 +380,8 @@ impl Default for Preferences {
             cursor_blink: true,
             scroll_sensitivity: 1.0,
             format_on_save: false,
+            organize_imports_on_save: false,
+            fix_on_save: false,
             trim_whitespace: false,
             final_newline: false,
             terminal_scrollback: pm_vt::SCROLLBACK,
@@ -363,6 +390,7 @@ impl Default for Preferences {
             health_retries: 3,
             install_language_servers: InstallLanguageServers::Ask,
             bootstrap: Bootstrap::default(),
+            languages: BTreeMap::new(),
         }
     }
 }
@@ -399,6 +427,7 @@ flags! {
     CurrentLine => display.current_line,
     Occurrences => display.occurrences,
     IndentGuides => display.indent_guides,
+    BracketColors => display.bracket_colors,
     StickyScroll => display.sticky_scroll,
     Scrollbars => display.scrollbars,
     Minimap => display.minimap,
@@ -409,6 +438,8 @@ flags! {
     EditPredictions => edit_predictions.enabled,
     CursorBlink => cursor_blink,
     FormatOnSave => format_on_save,
+    OrganizeImportsOnSave => organize_imports_on_save,
+    FixOnSave => fix_on_save,
     TrimWhitespace => trim_whitespace,
     FinalNewline => final_newline,
     TrustWorktrees => trust_worktrees,
@@ -446,12 +477,14 @@ fields! {
     VimMode => vim_mode,
     VimClipboard => vim_clipboard,
     TabSize => tab_size,
+    LineLength => line_length,
     HardTabs => hard_tabs,
     LineNumbers => display.line_numbers,
     RelativeLineNumbers => display.relative_line_numbers,
     CurrentLine => display.current_line,
     Occurrences => display.occurrences,
     IndentGuides => display.indent_guides,
+    BracketColors => display.bracket_colors,
     StickyScroll => display.sticky_scroll,
     Scrollbars => display.scrollbars,
     Minimap => display.minimap,
@@ -465,6 +498,8 @@ fields! {
     CursorBlink => cursor_blink,
     ScrollSensitivity => scroll_sensitivity,
     FormatOnSave => format_on_save,
+    OrganizeImportsOnSave => organize_imports_on_save,
+    FixOnSave => fix_on_save,
     TrimWhitespace => trim_whitespace,
     FinalNewline => final_newline,
     TerminalFontSize => fonts.terminal_size,
@@ -544,6 +579,10 @@ impl Preferences {
             Preference::TabSize => {
                 self.tab_size = stepped(self.tab_size as f32, step, 1.0, TAB_SIZES) as usize;
             }
+            Preference::LineLength => {
+                self.line_length =
+                    stepped(self.line_length as f32, step, 20.0, LINE_LENGTHS) as usize;
+            }
             Preference::ScrollSensitivity => {
                 self.scroll_sensitivity =
                     stepped(self.scroll_sensitivity, step, 0.25, SENSITIVITIES);
@@ -565,17 +604,10 @@ impl Preferences {
             Preference::TerminalScrollback => format!("{}", self.terminal_scrollback),
             Preference::HealthRetries => self.health_retries.to_string(),
             Preference::TabSize => format!("{}", self.tab_size),
+            Preference::LineLength => self.line_length.to_string(),
             Preference::ScrollSensitivity => format!("{:.2}×", self.scroll_sensitivity),
             _ => return None,
         })
-    }
-
-    /// How a file that does not say is indented, and how wide a tab is.
-    pub fn indent(&self) -> Indent {
-        Indent {
-            width: self.tab_size,
-            tabs: self.hard_tabs,
-        }
     }
 
     /// Adds `typed` to the `list` of paths a new worktree is given.
@@ -664,7 +696,7 @@ impl Preferences {
 
 /// `value` moved one `by` in the direction of `step`, on the grid `by`
 /// divides the range into and within the range.
-fn stepped(value: f32, step: Step, by: f32, range: RangeInclusive<f32>) -> f32 {
+pub(super) fn stepped(value: f32, step: Step, by: f32, range: RangeInclusive<f32>) -> f32 {
     let moved = match step {
         Step::Down => value - by,
         Step::Up => value + by,

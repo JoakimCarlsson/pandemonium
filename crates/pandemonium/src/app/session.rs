@@ -216,7 +216,7 @@ impl App {
             return;
         };
 
-        self.cut_session_later(&project, &name, &base, &chosen, &under);
+        self.cut_session_later(&project, &name, &base, &chosen, &under, None);
     }
 
     /// Points the window at `session`, bringing its agent forward if it has one.
@@ -319,6 +319,7 @@ impl App {
         if self.session == Some(session) {
             self.select_checkout();
         }
+        self.store();
     }
 
     /// Points the window back at the active project's own checkout.
@@ -338,7 +339,9 @@ impl App {
     /// back to a worktree finds it as it was left, expanded folders and all.
     pub(super) fn point_at(&mut self, scope: Scope) {
         self.open.activate(scope.project());
+        self.sync_layout();
         self.session = scope.session();
+        self.panes.inherit(scope);
 
         let Some(root) = self.root_of(scope) else {
             return;
@@ -391,12 +394,6 @@ impl App {
         self.preferences.bootstrap.env(port)
     }
 
-    /// The worktree an agent started now would work in, if a session's.
-    pub(super) fn session_root(&self) -> Option<std::path::PathBuf> {
-        let session = self.sessions.get(self.selected_session()?)?;
-        Some(session.root().to_path_buf())
-    }
-
     /// Every open project and the sessions hanging under it, for the sidebar.
     pub(super) fn sidebar_projects(&self) -> Vec<SidebarProject> {
         let theme = self.theme();
@@ -408,8 +405,6 @@ impl App {
             .map(|project| SidebarProject {
                 project: project.id(),
                 at_checkout: scope == Some(Scope::checkout(project.id())),
-                health: self.checks.health(Scope::checkout(project.id())),
-                health_detail: self.checks.detail(Scope::checkout(project.id())),
                 sessions: self
                     .sessions
                     .of(project.id())
@@ -418,19 +413,11 @@ impl App {
                         SidebarSession {
                             id: session.id(),
                             name: session.name().to_owned(),
+                            parent: session.delegation().map(|parent| parent.name.clone()),
+                            depth: session.delegation().map_or(0, |parent| parent.depth),
                             added: summary.added,
                             removed: summary.removed,
                             status_color: self.session_color(&theme, session.id()),
-                            health: self.checks.health(Scope::of(project.id(), session.id())),
-                            health_detail: self
-                                .checks
-                                .detail(Scope::of(project.id(), session.id())),
-                            errors: self
-                                .editor
-                                .servers_over(session.root())
-                                .iter()
-                                .map(|server| server.errors())
-                                .sum(),
                             pending: self
                                 .reviews
                                 .get(&Scope::of(project.id(), session.id()))

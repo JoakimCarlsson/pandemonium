@@ -12,16 +12,17 @@ use std::path::{Path, PathBuf};
 use pm_core::{EntryId, Scope, ops};
 use pm_gfx::Point;
 use pm_ui::{ResizeEvent, ResizePhase, Scrolled};
+use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
 use crate::app::App;
 use crate::desktop;
-use crate::field::Typed;
+use crate::input::Typed;
 use crate::message::Message;
-use crate::panes::{Item, PaneId, SplitDirection};
+use crate::panes::{Item, PaneId, SplitDirection, Tool};
 use crate::prompt::{Answer, Prompt};
 use crate::tree::{Clipboard, Edit, EditKind, EntryDrag, Selection};
-use crate::workspace::{MenuTarget, SidebarView};
+use crate::workspace::MenuTarget;
 
 /// How many rows a page key moves the tree's keyboard.
 const TREE_PAGE: isize = 10;
@@ -59,11 +60,9 @@ impl App {
             Message::NewTreeFile => self.start_tree_edit(EditKind::NewFile),
             Message::NewTreeFolder => self.start_tree_edit(EditKind::NewFolder),
             Message::RenameTreeEntry => self.start_tree_edit(EditKind::Rename),
-            Message::PlaceTreeEdit(caret) => {
+            Message::WriteTreeEdit(phase, anchor, head) => {
                 self.tree_focused = true;
-                if let Some(edit) = self.tree_edit.as_mut() {
-                    edit.field_mut().place(caret);
-                }
+                self.point_focused_input(phase, anchor, head);
             }
             Message::TrashTreeEntries => self.ask_to_remove(true),
             Message::DeleteTreeEntries => self.ask_to_remove(false),
@@ -182,6 +181,9 @@ impl App {
 
     /// Gives the keyboard to the tree, taking it from everything else.
     fn focus_tree(&mut self) {
+        if let Some(pane) = self.tool_pane(Tool::Files) {
+            self.focus_pane(pane);
+        }
         self.release_pane_focus();
         self.tree_focused = true;
     }
@@ -353,7 +355,7 @@ impl App {
 
     /// Whether the sidebar beside the panes is showing the tree.
     pub(super) fn tree_showing(&self) -> bool {
-        self.secondary_sidebar_open && self.secondary_sidebar_view == SidebarView::Files
+        self.tool_visible(Tool::Files)
     }
 
     /// Lets go of the selection, for a press on the space below the rows.
@@ -425,8 +427,7 @@ impl App {
                 tree.expand(edit.at());
             }
         }
-        self.secondary_sidebar_open = true;
-        self.secondary_sidebar_view = SidebarView::Files;
+        self.show_tool(Tool::Files);
         let revealed = match kind {
             EditKind::Rename => edit.at().to_path_buf(),
             _ => edit.at().join("_"),
@@ -773,7 +774,7 @@ impl App {
     ///
     /// Reaching another file this way is a jump like any other, so where the
     /// pane was is taken down on the trail and going back returns to it.
-    fn open_tree_file(&mut self, path: &Path, pane: PaneId, preview: bool) {
+    pub(super) fn open_tree_file(&mut self, path: &Path, pane: PaneId, preview: bool) {
         let Some((scope, root)) = self.worktree_holding(path) else {
             return;
         };
@@ -841,7 +842,6 @@ impl App {
         }
         let items = moving.iter().map(|(item, _)| *item).collect::<Vec<_>>();
         self.panes.retain(|item| !items.contains(&item));
-        self.panes.close_empty();
         self.sweep();
         for (_, path) in moving {
             let moved = to.join(path.strip_prefix(from).unwrap_or(Path::new("")));
@@ -871,7 +871,6 @@ impl App {
             return;
         }
         self.panes.retain(|item| !gone.contains(&item));
-        self.panes.close_empty();
         self.sweep();
         self.store();
     }
@@ -932,11 +931,10 @@ impl App {
 
     /// Shows the file the focused pane holds in the tree, and gives it the keyboard.
     pub(super) fn reveal_in_tree(&mut self) {
-        self.secondary_sidebar_open = true;
-        self.secondary_sidebar_view = SidebarView::Files;
         let shown = self
             .active_file_id()
             .and_then(|file| self.editor.path(file));
+        self.show_tool(Tool::Files);
         if let Some(path) = shown {
             if let Some(tree) = self.scope().and_then(|scope| self.files.get_mut(&scope)) {
                 tree.reveal(&path);
@@ -1015,8 +1013,9 @@ impl App {
     ///
     /// Enter takes the name and Escape gives it up; every other key is the
     /// field's, apart from the window's own chords.
-    pub(super) fn send_to_tree_edit(&mut self, key: &Key<&str>) -> bool {
-        if self.tree_edit.is_none() || self.is_window_chord_over_text(key) {
+    pub(super) fn send_to_tree_edit(&mut self, event: &KeyEvent) -> bool {
+        let key = event.logical_key.as_ref();
+        if self.tree_edit.is_none() || self.is_window_chord_over_text(&key) {
             return false;
         }
         let modifiers = self.modifiers;
@@ -1033,9 +1032,9 @@ impl App {
             Key::Named(NamedKey::Escape) => {
                 self.cancel_tree_edit();
             }
-            key => {
+            _ => {
                 if let Some(edit) = self.tree_edit.as_mut()
-                    && edit.field_mut().press(key, modifiers) == Typed::Ignored
+                    && edit.field_mut().press(event, modifiers) == Typed::Ignored
                 {
                     return !self.primary_held();
                 }
@@ -1256,13 +1255,7 @@ impl App {
     }
 
     /// The worktree the window is holding that `path` lives in.
-    fn worktree_holding(&self, path: &Path) -> Option<(Scope, pm_host::Location)> {
-        if let Some(scope) = self.scope()
-            && let Some(root) = self.root_of(scope)
-            && path.starts_with(&root)
-        {
-            return Some((scope, root));
-        }
+    pub(super) fn worktree_holding(&self, path: &Path) -> Option<(Scope, pm_host::Location)> {
         self.worktrees()
             .into_iter()
             .filter(|(_, root)| path.starts_with(root))

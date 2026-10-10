@@ -5,8 +5,12 @@
 //! implements none of them — every frame is `pm-ui` elements built from that
 //! model, submitted to `pm-gfx` as one draw list.
 
+mod accounts;
 mod agent;
+mod agents;
+mod answer;
 mod arrival;
+mod checkpoint;
 mod clicks;
 mod client;
 mod commands;
@@ -17,17 +21,26 @@ mod dialog;
 mod disk;
 mod drag;
 mod excerpts;
+mod form;
+mod formatter;
+mod github;
+mod groups;
 mod health;
 mod input;
 mod language;
+mod languages;
+mod layouts;
 mod listing;
+mod mcp;
 mod modal;
 mod notice;
 mod operations;
+mod orchestration;
 mod outline;
 mod panel;
 mod panes;
 mod picker;
+mod placement;
 mod places;
 mod predict;
 mod reading;
@@ -39,6 +52,7 @@ mod session;
 mod settings;
 mod tasks;
 mod terminal;
+mod tools;
 mod tree;
 mod views;
 
@@ -76,15 +90,12 @@ use crate::keymap::Resolver;
 use crate::message::Message;
 use crate::notice::Notices;
 use crate::onboarding;
-use crate::panel::{Panel, PanelView};
-use crate::panes::{Item, PaneTree, Saved};
+use crate::panel::PanelView;
+use crate::panes::{Item, PaneTree};
 use crate::review::Review;
 use crate::settings::Settings;
 use crate::terminal::{Shell, Terminals};
-use crate::workspace::{
-    self, BOTTOM_PANEL_RANGE, Layout, MenuTarget, PRIMARY_SIDEBAR_RANGE, Panes,
-    SECONDARY_SIDEBAR_RANGE, SidebarView, TabMenu,
-};
+use crate::workspace::{self, Layout, MenuTarget, Panes, TabMenu};
 
 /// The blames that have come back from the threads that asked for them.
 type Blamed = Arc<Mutex<Vec<(editor::FileId, Vec<pm_core::Blame>)>>>;
@@ -103,10 +114,21 @@ pub(super) enum Writing {
     Commit,
     /// The prompt of one agent session.
     Prompt(crate::agent::TalkId),
+    /// The box one field of a form an agent session asked to have filled in
+    /// is written in: the session, the form's ticket and the field's place.
+    Answer(crate::agent::TalkId, u64, usize),
     /// The console of the program one worktree is debugging.
     Console(Scope),
     /// The box a review comment is being written in, in one worktree.
     Comment(Scope),
+    /// The box the MCP servers on the settings page are searched with.
+    McpSearch,
+    /// The box the agents on the settings page are searched with.
+    AgentSearch,
+    /// One box of the form a language server is described in.
+    LanguageServerField(usize),
+    /// One box of the form a tool server is described in.
+    FormField(crate::settings::FormField),
 }
 
 /// What the window is woken up for from outside the event loop.
@@ -150,6 +172,10 @@ pub enum Wake {
     Arrival,
     /// A command from a local control client is waiting.
     Control,
+    /// A caller-bound editor MCP invocation is waiting.
+    Orchestration,
+    /// The MCP registry has answered a search.
+    Registry,
 }
 
 /// The remote operation currently running for the active project.
@@ -199,6 +225,8 @@ impl RemoteOperation {
 
 /// The conductor window, the GPU resources bound to it and what it is showing.
 pub struct App {
+    /// Authenticated session orchestration and pending child creations.
+    orchestration: orchestration::Orchestration,
     /// The platform window, once the event loop has opened one.
     window: Option<Arc<Window>>,
     /// Whether that window has the keyboard, which is whether the reader is
@@ -226,6 +254,8 @@ pub struct App {
     vim: pm_vim::Vim,
     /// The modifiers held down right now.
     modifiers: ModifiersState,
+    /// The modifiers held when the primary pointer button was pressed.
+    pointer_modifiers: ModifiersState,
     /// Last pointer position in logical window coordinates.
     pointer: Option<Point>,
     /// Time of the last press on empty title-bar space.
@@ -247,6 +277,21 @@ pub struct App {
     session_name: String,
     /// The repositories ticked for that session.
     session_picks: BTreeSet<PathBuf>,
+    /// The field of an agent's form that the prompt or list on screen is editing.
+    /// The form the tool server being added or edited is described in.
+    server_form: Option<crate::settings::ServerForm>,
+    /// The box the MCP servers are searched with.
+    mcp_search: crate::input::Input,
+    /// The box the agents are searched with.
+    agent_search: crate::input::Input,
+    /// Language catalogue, search and current server form.
+    languages: crate::settings::languages::Languages,
+    /// What the agent registry last offered.
+    agent_registry: agents::SharedAgentRegistry,
+    /// The agents being downloaded, with the notice saying so.
+    agent_downloads: Vec<(String, crate::notice::NoticeId)>,
+    /// What the MCP registry last offered.
+    mcp_registry: mcp::SharedRegistry,
     /// The branches the open project menu offers to cut a session from.
     session_bases: Vec<String>,
     /// Whether that menu is showing them.
@@ -288,6 +333,8 @@ pub struct App {
     /// When the settings file was last written, as its language servers were
     /// last read from it.
     settings_seen: Option<std::time::SystemTime>,
+    /// Whether the window preferences modal is open.
+    settings_open: bool,
     /// What was cut or copied out of the file tree.
     tree_clipboard: Option<crate::tree::Clipboard>,
     /// The moves, copies and removals in the tree that have finished and
@@ -304,6 +351,8 @@ pub struct App {
     project_drag: Option<reorder::ProjectDrag>,
     /// Where the projects sidebar's rows came out in the last frame.
     project_list: pm_ui::Bounds,
+    /// Named groups shown in the Projects pane.
+    project_groups: Vec<crate::project_groups::ProjectGroup>,
     /// Whether keystrokes go to the file tree.
     tree_focused: bool,
     /// Where the file tree's rows came out in the last frame.
@@ -312,30 +361,14 @@ pub struct App {
     tree_area: pm_ui::Bounds,
     /// Where the name being typed into the file tree came out.
     tree_field: pm_ui::Bounds,
-    /// Current width and drag state of the sessions sidebar.
-    sidebar: ResizeState,
-    /// Current height and drag state of the bottom panel.
-    bottom_panel: ResizeState,
     /// Current height and drag state of the Source Control graph.
     history_graph: ResizeState,
-    /// Current height and drag state of the box agents' prompts are written in.
-    prompt_box: ResizeState,
-    /// Current width and drag state of the secondary sidebar.
-    secondary_sidebar: ResizeState,
-    /// Whether the primary sidebar is visible.
-    primary_sidebar_open: bool,
-    /// Whether the bottom panel is visible.
-    bottom_panel_open: bool,
-    /// Which of the bottom panel's views is in front.
-    panel_view: PanelView,
     /// How far the bottom panel's list of problems is scrolled.
     problems_scroll: pm_ui::Scrolled,
+    /// Scroll position of the chat conversation list.
+    chat_scroll: pm_ui::Scrolled,
     /// Where the bottom panel's list of problems came out last frame.
     problems_area: pm_ui::Bounds,
-    /// Whether the secondary sidebar is visible.
-    secondary_sidebar_open: bool,
-    /// Which of the worktree's two lists that sidebar is showing.
-    secondary_sidebar_view: SidebarView,
     /// Whether the Source Control graph is visible.
     history_graph_open: bool,
     /// Whether the Source Control changes section is expanded.
@@ -364,10 +397,22 @@ pub struct App {
     language_servers: BTreeMap<String, ServerList>,
     /// The agents the reader added, beside the ones the editor ships.
     agent_servers: Vec<pm_acp::Agent>,
+    /// Named accounts, accessed and changed through config.
+    accounts: config::Accounts,
+    /// Account conversations awaiting their first provider login choice.
+    account_logins: BTreeSet<crate::agent::TalkId>,
+    /// The tool servers every agent is opened with.
+    mcp_servers: Vec<pm_acp::McpServer>,
     /// How the window is divided into panes, and which of them has the keyboard.
     panes: PaneTree,
+    /// The pane last used for each role, so tools open files beside their own tab.
+    recent: placement::Recent,
+    /// The pane trees of the projects that are not on screen.
+    shelf: layouts::Shelf,
+    /// The project whose pane tree is on screen.
+    layout_of: Option<pm_core::ProjectId>,
     /// The panes the last launch left, until the window is ready to open them.
-    saved: Saved,
+    saved: Vec<crate::panes::SavedLayout>,
     /// The shells the last launch had running, until they are started again.
     shells: Vec<crate::terminal::SavedShell>,
     /// Where those panes and their tabs came out in the last frame.
@@ -384,10 +429,14 @@ pub struct App {
     trail: Trail,
     /// The list the window is asking the reader to choose from, if it is.
     picker: Option<crate::picker::Picker>,
-    /// Pointer position of the status-bar branch control anchoring its popover.
-    branch_picker_at: Option<Point>,
-    /// Pointer position of the agent control anchoring its choices.
-    agent_picker_at: Option<Point>,
+    /// The status-bar branch control anchoring its popover.
+    branch_picker_at: Option<Rect>,
+    /// When the open branch picker should next fetch and prune its remotes.
+    branch_refresh_at: Option<Instant>,
+    /// The agent control anchoring its choices.
+    agent_picker_at: Option<Rect>,
+    /// The control whose click is being handled, for what it opens to sit against.
+    trigger: Option<Rect>,
     /// Bounds of the Source Control commit split button from the last frame.
     commit_bounds: pm_ui::Bounds,
     /// Bounds of the title bar's command center from the last frame.
@@ -416,6 +465,8 @@ pub struct App {
     git_results: Arc<Mutex<Vec<(Scope, pm_core::Said)>>>,
     /// What git is being asked about the worktrees away from the window.
     readings: reading::Readings,
+    /// Persisted checkpoint views and pending agent baselines.
+    checkpointing: checkpoint::Checkpointing,
     /// What the pickers have gathering away from the window.
     listings: listing::Listings,
     /// The repositories a clone has finished with, and where they landed.
@@ -424,6 +475,8 @@ pub struct App {
     prompt: Option<crate::prompt::Prompt>,
     /// What could be written where the cursor is, while the list is up.
     completions: Option<crate::editor::Completions>,
+    /// Which completions the reader has taken, newest last.
+    recent_completions: crate::editor::Recent,
     /// A completion put in before its server had filled it in, waiting for
     /// the edits that come with it.
     taken_completion: Option<crate::app::language::TakenCompletion>,
@@ -441,6 +494,10 @@ pub struct App {
     asked: Vec<language::Pending>,
     /// Whether the servers being waited on were asked by a save.
     saving: bool,
+    /// Whether the save under way lays the file out with its language's own program.
+    formatting: bool,
+    /// What a save in progress still has to ask the servers, in order.
+    save_steps: std::collections::VecDeque<pm_text::Request>,
     /// The query the servers were last asked for workspace symbols, and the
     /// rows their answers have come to so far.
     workspace_symbols: (Option<String>, Vec<crate::picker::Row>),
@@ -475,7 +532,7 @@ pub struct App {
     /// The last press on an agent's transcript, for selecting a word.
     agent_clicks: Clicks<crate::agent::Spot>,
     /// Whether the drag over an agent's transcript grows by whole words.
-    agent_words: bool,
+    agent_grain: agent::Grain,
     /// The transcript anchor and pointer held by the current selection gesture.
     agent_selection_drag: Option<agent::SelectionDrag>,
     /// The last press on a row of the file tree, for keeping a file open.
@@ -508,7 +565,9 @@ pub struct App {
     notices: Notices,
     /// Servers already offered or tried this launch.
     offered_servers: BTreeSet<&'static str>,
-    /// Running installs and their status-bar notices.
+    /// Persistent log targets carried by server failure notice actions.
+    server_failure_logs: Vec<PathBuf>,
+    /// Running installs and their notification identities.
     installing_servers: BTreeMap<&'static str, crate::notice::NoticeId>,
     /// Results delivered by installer worker threads.
     installed_servers: InstalledServers,
@@ -526,6 +585,8 @@ pub struct App {
     terminal_scroll_origin: Option<usize>,
     /// How far down the editor was scrolled when a scrollbar drag began.
     editor_scroll_origin: Option<usize>,
+    /// The row an agent's prompt showed first when a drag on its scrollbar began.
+    prompt_scroll_origin: Option<usize>,
     /// How far down the conversation was scrolled when a scrollbar drag began.
     agent_scroll_origin: Option<f32>,
     /// Whether a release newer than this build has been published.
@@ -545,8 +606,14 @@ pub struct App {
     pending: Pending,
 }
 
+/// Logical pixels of the window a panel always leaves free, so its sash stays within reach.
+const REACHABLE_MARGIN: f32 = 48.0;
+
+/// How far a dropdown stands off the control that opened it.
+const DROPDOWN_GAP: f32 = 4.0;
+
 /// How many kinds of [`Wake`] there are.
-const WAKES: usize = Wake::Control as usize + 1;
+const WAKES: usize = Wake::Registry as usize + 1;
 
 /// One flag per kind of [`Wake`], set while one is on its way.
 type Pending = Arc<[AtomicBool; WAKES]>;
@@ -610,6 +677,7 @@ impl App {
         }
         self.editor.set_language_servers(&replace);
         self.editor.add_language_servers(&add);
+        self.editor.reconcile_servers();
     }
 
     /// Reads the language servers the settings file names again when it has
@@ -684,7 +752,7 @@ impl App {
         }
 
         let layout = restored.layout;
-        let saved = restored.panes;
+        let saved = restored.layouts;
         let shells = restored.shells;
 
         let files = open
@@ -709,6 +777,7 @@ impl App {
             notices.trouble(error, None);
         }
         Self {
+            orchestration: orchestration::Orchestration::default(),
             window: None,
             window_focused: true,
             window_occluded: false,
@@ -721,6 +790,7 @@ impl App {
             resolver: Resolver::default(),
             vim: pm_vim::Vim::default(),
             modifiers: ModifiersState::default(),
+            pointer_modifiers: ModifiersState::default(),
             pointer: None,
             last_titlebar_click: None,
             scroll: Scroll::default(),
@@ -731,6 +801,13 @@ impl App {
             session_base: None,
             session_name: String::new(),
             session_picks: BTreeSet::new(),
+            server_form: None,
+            mcp_search: crate::input::Input::one_line("Search MCP servers"),
+            agent_search: crate::input::Input::one_line("Search agents"),
+            languages: Default::default(),
+            agent_registry: agents::SharedAgentRegistry::default(),
+            agent_downloads: Vec::new(),
+            mcp_registry: mcp::SharedRegistry::default(),
             session_bases: Vec::new(),
             showing_bases: false,
             open,
@@ -750,6 +827,7 @@ impl App {
             moving: None,
             selection_ranges: None,
             settings_seen: None,
+            settings_open: false,
             tree_clipboard: None,
             shifted: Arc::default(),
             entry_drag: None,
@@ -757,42 +835,19 @@ impl App {
             arriving: None,
             project_drag: None,
             project_list: drag::unmeasured(),
+            project_groups: restored.project_groups,
             tree_focused: false,
             tree_rows: drag::unmeasured(),
             tree_area: drag::unmeasured(),
             tree_field: drag::unmeasured(),
-            sidebar: ResizeState::new(
-                layout.primary_sidebar_width,
-                PRIMARY_SIDEBAR_RANGE.0,
-                PRIMARY_SIDEBAR_RANGE.1,
-            ),
-            bottom_panel: ResizeState::new(
-                layout.bottom_panel_height,
-                BOTTOM_PANEL_RANGE.0,
-                BOTTOM_PANEL_RANGE.1,
-            ),
             history_graph: ResizeState::new(
                 layout.history_graph_height,
                 workspace::HISTORY_GRAPH_RANGE.0,
                 workspace::HISTORY_GRAPH_RANGE.1,
             ),
-            prompt_box: ResizeState::new(
-                layout.prompt_height,
-                workspace::PROMPT_RANGE.0,
-                workspace::PROMPT_RANGE.1,
-            ),
-            secondary_sidebar: ResizeState::new(
-                layout.secondary_sidebar_width,
-                SECONDARY_SIDEBAR_RANGE.0,
-                SECONDARY_SIDEBAR_RANGE.1,
-            ),
-            primary_sidebar_open: layout.primary_sidebar_open,
-            bottom_panel_open: layout.bottom_panel_open,
-            panel_view: PanelView::default(),
             problems_scroll: pm_ui::Scrolled::default(),
+            chat_scroll: pm_ui::Scrolled::default(),
             problems_area: pm_ui::Bounds::default(),
-            secondary_sidebar_open: layout.secondary_sidebar_open,
-            secondary_sidebar_view: layout.secondary_sidebar_view,
             history_graph_open: layout.history_graph_open,
             changes_section_open: layout.changes_section_open,
             writing: None,
@@ -807,7 +862,13 @@ impl App {
             project_search_field: None,
             language_servers: restored.language_servers,
             agent_servers: restored.agent_servers,
+            accounts: restored.accounts,
+            account_logins: BTreeSet::new(),
+            mcp_servers: restored.mcp_servers,
             panes: PaneTree::default(),
+            shelf: layouts::Shelf::new(),
+            layout_of: None,
+            recent: placement::Recent::new(),
             saved,
             shells,
             geometry: Geometry::default(),
@@ -818,7 +879,9 @@ impl App {
             trail: Trail::default(),
             picker: None,
             branch_picker_at: None,
+            branch_refresh_at: None,
             agent_picker_at: None,
+            trigger: None,
             commit_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             command_center_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
             history_refs_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
@@ -833,10 +896,12 @@ impl App {
             spun: std::time::Instant::now(),
             git_results: Arc::new(Mutex::new(Vec::new())),
             readings: reading::Readings::default(),
+            checkpointing: checkpoint::Checkpointing::default(),
             listings: listing::Listings::default(),
             cloned: Arc::new(Mutex::new(Vec::new())),
             prompt: None,
             completions: None,
+            recent_completions: crate::editor::Recent::default(),
             taken_completion: None,
             hint: None,
             link: None,
@@ -845,6 +910,8 @@ impl App {
             code_actions: Vec::new(),
             asked: Vec::new(),
             saving: false,
+            formatting: false,
+            save_steps: std::collections::VecDeque::new(),
             workspace_symbols: (None, Vec::new()),
             workspace_files: Vec::new(),
             closing: None,
@@ -855,7 +922,7 @@ impl App {
             screen_clicks: Clicks::default(),
             screen_unit: pm_vt::Unit::Cell,
             agent_clicks: Clicks::default(),
-            agent_words: false,
+            agent_grain: agent::Grain::Character,
             agent_selection_drag: None,
             tree_clicks: Clicks::default(),
             tab_clicks: Clicks::default(),
@@ -872,6 +939,7 @@ impl App {
             control_images: BTreeMap::new(),
             notices,
             offered_servers: BTreeSet::new(),
+            server_failure_logs: Vec::new(),
             installing_servers: BTreeMap::new(),
             installed_servers: Arc::new(Mutex::new(Vec::new())),
             debuggers: crate::debug::Debuggers::default(),
@@ -881,6 +949,7 @@ impl App {
             terminal_focused: false,
             terminal_scroll_origin: None,
             editor_scroll_origin: None,
+            prompt_scroll_origin: None,
             agent_scroll_origin: None,
             update_available: false,
             released: Arc::new(Mutex::new(false)),
@@ -915,7 +984,9 @@ impl App {
             return;
         };
         if self.showing_terminals() && self.terminals.count(scope) == 0 {
-            self.bottom_panel_open = false;
+            if let Some(pane) = self.tool_pane(crate::panes::Tool::Terminal) {
+                self.close_item(pane, self.tool_item(crate::panes::Tool::Terminal));
+            }
             self.terminal_focused = false;
         }
     }
@@ -941,7 +1012,16 @@ impl App {
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
             Some(Writing::Comment(_)) => return Some("comment"),
+            Some(Writing::McpSearch | Writing::AgentSearch) => {
+                return Some("search");
+            }
+            Some(Writing::FormField(_) | Writing::LanguageServerField(_) | Writing::Answer(..)) => {
+                return Some("field");
+            }
             None => {}
+        }
+        if self.settings_open {
+            return Some("settings");
         }
         match (self.editor_focused, self.terminal_focused) {
             (true, _) if showing(|item| item.review().is_some()) => Some("review"),
@@ -949,7 +1029,6 @@ impl App {
             (true, _) if showing(|item| matches!(item, Item::Search(_))) => Some("search"),
             (true, _) if showing(|item| item.change().is_some()) => Some("diff"),
             (true, _) if showing(|item| item.session().is_some()) => Some("agent"),
-            (true, _) if showing(crate::panes::Item::is_window_wide) => Some("settings"),
             (true, _) => Some("file"),
             (_, true) => Some("terminal"),
             _ => None,
@@ -958,7 +1037,9 @@ impl App {
 
     /// The file keystrokes are going to, if the pane is focused.
     pub(super) fn focused_file(&self) -> Option<editor::OpenFile> {
-        self.editor_focused.then(|| self.active_file()).flatten()
+        (self.editor_focused && !self.settings_open)
+            .then(|| self.active_file())
+            .flatten()
     }
 
     /// Places the cursor where a press landed, or selects to where it reached.
@@ -1233,6 +1314,21 @@ impl App {
         if let Some(control) = &self.control {
             control.changed();
         }
+        self.sync_layout();
+        if message == Message::CopyText {
+            self.copy_reading_text();
+            self.dismiss_menu();
+            self.request_redraw();
+            return;
+        }
+        if message == Message::SelectAllText {
+            if let Some(ui) = self.ui.as_mut() {
+                ui.select_all_text();
+            }
+            self.dismiss_menu();
+            self.request_redraw();
+            return;
+        }
         if self.apply_outline(message) {
             self.request_redraw();
             return;
@@ -1287,12 +1383,11 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::ShowPaneMenu(pane) = message {
-            self.open_menu(MenuTarget::Pane(pane));
-            return;
-        }
         if let Message::ShowTerminalMenu(id) = message {
             self.open_menu(MenuTarget::Terminal(id));
+            return;
+        }
+        if self.group_command(message) {
             return;
         }
         if let Message::ProjectMenu(id) = message {
@@ -1351,6 +1446,10 @@ impl App {
             return;
         }
         self.menu = None;
+        if self.tool_command(message) {
+            self.request_redraw();
+            return;
+        }
         if self.tree_command(message) {
             return;
         }
@@ -1365,37 +1464,12 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::ResizeSidebar(event) = message {
-            self.sidebar
-                .resize(event, Axis::Horizontal, ResizeEdge::End);
-            self.store_settled(event);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ResizeBottomPanel(event) = message {
-            self.bottom_panel
-                .resize(event, Axis::Vertical, ResizeEdge::Start);
-            self.store_settled(event);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ResizeSecondarySidebar(event) = message {
-            self.secondary_sidebar
-                .resize(event, Axis::Horizontal, ResizeEdge::Start);
-            self.store_settled(event);
-            self.request_redraw();
-            return;
-        }
         if let Message::ResizeHistoryGraph(event) = message {
-            self.history_graph
+            self.fit_panels();
+            let snapped = self
+                .history_graph
                 .resize(event, Axis::Vertical, ResizeEdge::Start);
-            self.store_settled(event);
-            self.request_redraw();
-            return;
-        }
-        if let Message::ResizeAgentPrompt(event) = message {
-            self.prompt_box
-                .resize(event, Axis::Vertical, ResizeEdge::Start);
+            self.history_graph_open = !snapped;
             self.store_settled(event);
             self.request_redraw();
             return;
@@ -1406,21 +1480,15 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::ScrollChanges(event, step) = message {
+            if let Some(review) = self.review_mut() {
+                review.drag_list_scroll(event, step);
+            }
+            self.request_redraw();
+            return;
+        }
         if message == Message::ToggleChangesSection {
             self.changes_section_open = !self.changes_section_open;
-            self.store();
-            self.request_redraw();
-            return;
-        }
-        if message == Message::TogglePrimarySidebar {
-            self.primary_sidebar_open = !self.primary_sidebar_open;
-            self.store();
-            self.request_redraw();
-            return;
-        }
-        if message == Message::ToggleBottomPanel {
-            self.bottom_panel_open = !self.bottom_panel_open;
-            self.terminal_focused = self.showing_terminals();
             self.store();
             self.request_redraw();
             return;
@@ -1477,11 +1545,6 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::SplitPane(pane, direction) = message {
-            self.split_pane(pane, None, direction);
-            self.request_redraw();
-            return;
-        }
         if let Message::SplitItem(pane, item, direction) = message {
             self.split_pane(pane, Some(item), direction);
             self.request_redraw();
@@ -1499,14 +1562,8 @@ impl App {
         }
         if let Message::ResizeSplit(split, divider, event, scale) = message {
             if let Some(axis) = self.panes.split_axis(split) {
-                let scope = self.scope();
-                self.panes.resize(
-                    split,
-                    divider,
-                    event.delta(axis) * scale,
-                    event.phase,
-                    scope,
-                );
+                self.panes
+                    .resize(split, divider, event.delta(axis) * scale, event.phase);
             }
             self.store_settled(event);
             self.request_redraw();
@@ -1577,10 +1634,8 @@ impl App {
             self.open_editor_menu(pane);
             return;
         }
-        if let Message::PlacePicker(caret) = message {
-            if let Some(picker) = self.picker.as_mut() {
-                picker.edit(|field| field.place(caret));
-            }
+        if let Message::WritePicker(phase, anchor, head) = message {
+            self.point_focused_input(phase, anchor, head);
             self.request_redraw();
             return;
         }
@@ -1590,7 +1645,7 @@ impl App {
             return;
         }
         if let Message::ChooseCompletion(place) = message {
-            self.take_completion(place);
+            self.take_completion(place, false);
             self.request_redraw();
             return;
         }
@@ -1609,22 +1664,20 @@ impl App {
             self.focus_pane(pane);
             return self.act(action);
         }
-        if let Message::FocusSearch(pane, field, caret) = message {
+        if let Message::WriteSearch(pane, field, phase, anchor, head) = message {
             self.focus_pane(pane);
-            self.focus_search(field, caret);
+            self.focus_search(field);
+            self.point_focused_input(phase, anchor, head);
             self.request_redraw();
             return;
         }
-        if let Message::FocusProjectSearch(pane, field, caret) = message {
+        if let Message::WriteProjectSearch(pane, field, phase, anchor, head) = message {
             self.focus_pane(pane);
             if let Some(Item::Search(scope)) = self.active_tab()
-                && let Some(search) = self.searches.get_mut(&scope)
+                && self.searches.contains_key(&scope)
             {
-                match field {
-                    editor::SearchField::Query => search.query.place(caret),
-                    editor::SearchField::Replacement => search.replacement.place(caret),
-                }
                 self.project_search_field = Some(field);
+                self.point_focused_input(phase, anchor, head);
             }
             self.request_redraw();
             return;
@@ -1708,15 +1761,9 @@ impl App {
             self.request_redraw();
             return;
         }
-        if let Message::SetSidebarView(view) = message {
-            self.secondary_sidebar_view = view;
-            self.secondary_sidebar_open = true;
-            self.store();
-            self.request_redraw();
-            return;
-        }
+
         if message == Message::ShowStatusBranches {
-            self.branch_picker_at = self.pointer;
+            self.branch_picker_at = self.opener();
             self.open_picker(crate::picker::Kind::Branches);
             self.request_redraw();
             return;
@@ -1784,6 +1831,12 @@ impl App {
             self.start_server_install(command, true);
             return;
         }
+        if let Message::OpenServerLogAt(path) = message {
+            if let Some(path) = self.server_failure_logs.get(path).cloned() {
+                self.open_server_log_at(&path);
+            }
+            return self.request_redraw();
+        }
         if message == Message::OpenServerLog {
             self.open_server_log();
             return self.request_redraw();
@@ -1796,18 +1849,13 @@ impl App {
             self.request_redraw();
             return;
         }
-        if message == Message::ToggleSecondarySidebar {
-            self.secondary_sidebar_open = !self.secondary_sidebar_open;
-            self.store();
-            self.request_redraw();
-            return;
-        }
+
         if message == Message::OpenProject {
             self.ask_project();
             return;
         }
         if message == Message::CloneProject {
-            self.open_picker(crate::picker::Kind::CloneUrl);
+            self.open_picker(crate::picker::Kind::CloneSources);
             self.request_redraw();
             return;
         }
@@ -1849,7 +1897,8 @@ impl App {
             self.debuggers.forget(|scope| scope.project() == id);
             self.agents.close_project(id);
             self.sessions.close_project(id);
-            self.drop_project_tabs(id);
+            self.forget_layout(id);
+            self.sync_layout();
             self.store();
             self.request_redraw();
             return;
@@ -1882,11 +1931,22 @@ impl App {
         }
         if let Message::ShowSettingsSection(section) = message {
             self.settings.show_section(section);
+            if section == crate::settings::SettingsSection::McpServers {
+                self.load_mcp_registry();
+            }
+            if section == crate::settings::SettingsSection::AgentServers {
+                self.load_agent_registry();
+            }
             self.request_redraw();
             return;
         }
         if let Message::ToggleSettingsPage(page) = message {
             self.settings.toggle(page);
+            self.request_redraw();
+            return;
+        }
+        if message == Message::CloseSettings {
+            self.close_settings();
             self.request_redraw();
             return;
         }
@@ -2104,18 +2164,35 @@ impl App {
         self.work_here(work);
     }
 
-    /// Opens the menu for `target` where the pointer is.
+    /// Opens the menu for `target` against the control that was clicked for
+    /// it, or where the pointer is when it was asked for any other way.
     ///
-    /// The menu is placed rather than anchored: the pointer is the one place
-    /// every tab, however narrow and however far along the bar, agrees on.
+    /// A dropdown always opens in the same place beside its control, wherever
+    /// on the control the click landed; a context menu has no control to sit
+    /// against, so it opens under the pointer.
     fn open_menu(&mut self, target: MenuTarget) {
         if target == MenuTarget::SourceControl {
             self.stash_available = self
                 .review()
                 .is_some_and(|review| !review.stashes().is_empty());
         }
-        self.menu = self.pointer.map(|at| TabMenu { at, target });
+        let above = matches!(target, MenuTarget::Agents(_) | MenuTarget::AgentMcp(_));
+        let at = match (self.trigger, above) {
+            (Some(control), false) => {
+                Some(Point::new(control.left(), control.bottom() + DROPDOWN_GAP))
+            }
+            (Some(control), true) => Some(Point::new(control.left(), control.top() - DROPDOWN_GAP)),
+            (None, _) => self.pointer,
+        };
+        self.menu = at.map(|at| TabMenu { at, target });
         self.request_redraw();
+    }
+
+    /// The control whose click is being handled, or a point at the pointer
+    /// when nothing was clicked.
+    fn opener(&self) -> Option<Rect> {
+        self.trigger
+            .or_else(|| self.pointer.map(|pointer| Rect::new(pointer, Size::zero())))
     }
 
     /// Asks `question`, which nothing else answers until it is answered.
@@ -2290,32 +2367,41 @@ impl App {
             preferences: self.preferences.clone(),
             onboarded: self.onboarded,
             projects: self.open.roots(),
+            project_groups: self.project_groups.clone(),
             active: self.open.active().map(|project| project.root().stored()),
             layout: self.layout(),
-            panes: self.saved_panes(),
+            layouts: self.saved_layouts(),
             shells: self.terminals.saved(&self.worktrees()),
             window: self.window_state,
             language_servers: self.language_servers.clone(),
             agent_servers: self.agent_servers.clone(),
+            accounts: self.accounts.clone(),
+            mcp_servers: self.mcp_servers.clone(),
         }
     }
 
     /// Which regions are showing right now, and how large they are.
     fn layout(&self) -> Layout {
         Layout {
-            primary_sidebar_open: self.primary_sidebar_open,
-            primary_sidebar_width: self.sidebar.extent(),
-            bottom_panel_open: self.bottom_panel_open,
-            bottom_panel_height: self.bottom_panel.extent(),
-            secondary_sidebar_open: self.secondary_sidebar_open,
-            secondary_sidebar_width: self.secondary_sidebar.extent(),
-            secondary_sidebar_view: self.secondary_sidebar_view,
             history_graph_height: self.history_graph.extent(),
             history_graph_open: self.history_graph_open,
             changes_section_open: self.changes_section_open,
             history_all: self.history_all,
-            prompt_height: self.prompt_box.extent(),
         }
+    }
+
+    /// Keeps every resizable panel small enough that its sash stays inside the window.
+    ///
+    /// A panel may be dragged as large as the window allows, and no larger:
+    /// past that its edge is out of reach and it can no longer be grabbed.
+    fn fit_panels(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let scale = window.scale_factor() as f32;
+        let size = window.inner_size();
+        let height = size.height as f32 / scale;
+        self.history_graph.fit(height - REACHABLE_MARGIN);
     }
 
     /// Takes down the window's size, keeping the size it un-maximizes to.
@@ -2358,6 +2444,15 @@ impl App {
                 .debuggers
                 .get_mut(scope)
                 .map(crate::debug::Debugger::console_mut),
+            Writing::McpSearch => Some(&mut self.mcp_search),
+            Writing::AgentSearch => Some(&mut self.agent_search),
+            Writing::LanguageServerField(index) => {
+                self.languages.editor.as_mut()?.fields.get_mut(index)
+            }
+            Writing::FormField(field) => self.server_form.as_mut()?.input_mut(field),
+            Writing::Answer(session, ticket, place) => {
+                self.answer_form(session, ticket)?.text_box_mut(place)
+            }
             Writing::Comment(_) => None,
         }
     }
@@ -2398,27 +2493,12 @@ impl App {
         head: Position,
     ) {
         self.write_in(writing);
-        let pressed = phase == ResizePhase::Started;
-        let still = anchor == head;
-        if pressed {
-            self.text_extends = self.extends_text();
-        }
-        if still && !pressed {
-            return;
-        }
-        let extend = self.text_extends;
-        let presses = match (still, extend) {
-            (true, false) => self.text_clicks.press(anchor),
-            _ => {
-                self.text_clicks.clear();
-                0
-            }
-        };
-        self.with_written(|input| input.point(phase, anchor, head, presses, extend));
+        self.point_focused_input(phase, anchor, head);
     }
 
     /// Writes the window's preferences, projects and layout down.
     fn store(&mut self) {
+        self.sync_layout();
         self.remember_window();
         config::save(&self.state());
     }
@@ -2460,12 +2540,32 @@ impl App {
         let mut overlays = Vec::new();
 
         let window = self.renderer.as_ref().map_or(Size::zero(), Renderer::size);
+        if self.settings_open {
+            overlays.push(self.settings_overlay(theme, window));
+        }
+
+        if let Some((card, position, count)) = self.notices.shown_installation() {
+            let width = 460.0_f32.min((window.width - 24.0).max(1.0));
+            overlays.push(workspace::Overlaid {
+                at: Point::new(
+                    window.width - width - 12.0,
+                    window.height - theme.size.bar - 12.0,
+                ),
+                content: Box::new(crate::notification::installation(
+                    theme,
+                    card,
+                    position,
+                    count,
+                    width,
+                    (window.height - theme.size.bar - theme.size.titlebar - 24.0).max(1.0),
+                )),
+                backdrop: None,
+                above: true,
+            });
+        }
 
         if let Some(picker) = self.picker.as_ref() {
-            let agent_choices = matches!(
-                picker.kind(),
-                crate::picker::Kind::Modes | crate::picker::Kind::Knob
-            );
+            let agent_choices = self.is_agent_dropdown(picker);
             let branch_anchor = self.branch_picker_at.filter(|_| {
                 matches!(
                     picker.kind(),
@@ -2473,16 +2573,30 @@ impl App {
                 )
             });
             let anchor = match agent_choices {
-                true => self.agent_picker_at.map(|anchor| (anchor.x, anchor)),
-                false => branch_anchor.map(|anchor| (anchor.x - 24.0, anchor)),
+                true => self.agent_picker_at,
+                false => branch_anchor,
             };
+            let agent = agent_choices.then(|| self.agent_choice_parts(theme, picker));
             let (point, width) = match anchor {
-                Some((left, anchor)) => {
+                Some(anchor) => {
                     let width = crate::picker::width(picker.kind());
-                    let height = crate::picker::height(theme, picker);
+                    let height = match &agent {
+                        Some(parts) => {
+                            crate::picker::agent_height(theme, picker, parts.knobs.len())
+                        }
+                        None => crate::picker::height(theme, picker),
+                    };
+                    let top = match picker.kind() {
+                        crate::picker::Kind::AgentHistory(_) => {
+                            (anchor.bottom() + 8.0).min((window.height - height - 8.0).max(8.0))
+                        }
+                        _ => (anchor.top() - height - 8.0).max(8.0),
+                    };
                     let point = Point::new(
-                        left.clamp(8.0, (window.width - width - 8.0).max(8.0)),
-                        (anchor.y - height - 8.0).max(8.0),
+                        anchor
+                            .left()
+                            .clamp(8.0, (window.width - width - 8.0).max(8.0)),
+                        top,
                     );
                     (point, width)
                 }
@@ -2490,12 +2604,22 @@ impl App {
             };
             overlays.push(workspace::Overlaid {
                 at: point,
-                content: Box::new(crate::picker::picker(
-                    theme,
-                    picker,
-                    width,
-                    self.caret_solid(),
-                )),
+                content: match agent {
+                    Some(parts) => Box::new(crate::picker::agent_choices(
+                        theme,
+                        picker,
+                        width,
+                        &parts.title,
+                        parts.keys,
+                        parts.knobs,
+                    )),
+                    None => Box::new(crate::picker::picker(
+                        theme,
+                        picker,
+                        width,
+                        self.caret_solid(),
+                    )),
+                },
                 backdrop: (!agent_choices).then_some(Message::DismissPopup),
                 above: false,
             });
@@ -2610,34 +2734,16 @@ impl App {
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
         self.report_file_errors();
+        self.sync_layout();
         self.refresh_health_diagnostics();
         self.see_shown_agents();
         self.follow_agents();
         self.settle_excerpts();
         self.refresh_annotations();
-        let shell = self
-            .showing_terminals()
-            .then(|| self.active_shell())
-            .flatten();
-        let shells = self
-            .scope()
-            .map(|scope| self.terminals.list(scope))
-            .unwrap_or_default();
+        if self.showing_terminals() {
+            self.active_shell();
+        }
         let theme = self.theme();
-        let panel = Panel {
-            view: self.panel_view,
-            shell,
-            shells,
-            focused: self.terminal_focused,
-            linking: self.modifiers.control_key(),
-            problems: match self.bottom_panel_open {
-                true => self.problems(),
-                false => Vec::new(),
-            },
-            problems_scroll: self.problems_scroll.clone(),
-            problems_area: self.problems_area.clone(),
-            debug: self.debug_in_panel(&theme),
-        };
         let showing = self.active_file();
         let drop = self
             .drop_highlight()
@@ -2647,48 +2753,22 @@ impl App {
             })
             .or_else(|| self.project_caret());
         let carried = self.carried_tab().or_else(|| self.carried_entries());
-        let tree_scroll = self.tree_scroll();
-        let layout = self.layout();
         let editor = self.pane_view(&theme);
         let menu = self.menu_items();
         let overlays = self.overlays(&theme);
         let scope = self.scope();
         let sidebar = self.sidebar_projects();
-        let caret = self.caret_solid();
-        let files = workspace::Worktree {
-            listing: scope.and_then(|scope| self.files.get(&scope)).map(|tree| {
-                crate::tree::Listing {
-                    tree,
-                    review: scope.and_then(|scope| self.reviews.get(&scope)),
-                    selection: scope.and_then(|scope| self.selections.get(&scope)),
-                    edit: self.tree_edit.as_ref(),
-                    clipboard: self.tree_clipboard.as_ref(),
-                    dropping: self
-                        .entry_drag
-                        .as_ref()
-                        .filter(|drag| drag.is_carried())
-                        .and_then(|drag| drag.target.as_deref())
-                        .or(self.arriving.as_deref()),
-                    focused: self.tree_focused,
-                    caret,
-                    scroll: tree_scroll,
-                    rows: self.tree_rows.clone(),
-                    area: self.tree_area.clone(),
-                    field: self.tree_field.clone(),
-                }
-            }),
-            review: scope.and_then(|scope| self.reviews.get(&scope)),
-            committing: self.writing == Some(Writing::Commit),
-            caret,
-            commit_bounds: self.commit_bounds.clone(),
-            history_refs_bounds: self.history_refs_bounds.clone(),
-            history_graph_bounds: self.history_graph_bounds.clone(),
-            changes_area: self.changes_area.clone(),
-            history_all: self.history_all,
-            history_graph_height: layout.history_graph_height,
-            history_graph_open: layout.history_graph_open,
-            changes_section_open: layout.changes_section_open,
-        };
+        let review = scope.and_then(|scope| self.reviews.get(&scope));
+        let shells = self
+            .scope()
+            .map_or(0, |scope| self.terminals.list(scope).len());
+        let terminal_visible = self.showing_terminals();
+        let server = self.active_file_id().and_then(|file| {
+            self.editor
+                .server_states(file)
+                .into_iter()
+                .max_by_key(|status| status.state.severity())
+        });
         let activity = self
             .active_file_id()
             .and_then(|file| self.server_activity(file));
@@ -2719,10 +2799,8 @@ impl App {
                 workspace::ProjectList {
                     open: &self.open,
                     sessions: &sidebar,
-                    bounds: self.project_list.clone(),
                 },
-                files,
-                layout,
+                review,
                 self.command_center_bounds.clone(),
                 Panes {
                     editor,
@@ -2730,7 +2808,8 @@ impl App {
                     showing,
                     drop,
                     carried,
-                    panel,
+                    shells,
+                    terminal_visible,
                     agents: self
                         .open
                         .active()
@@ -2738,6 +2817,11 @@ impl App {
                     tally: self.agents.tally(),
                     notice: self.notices.shown(),
                     activity,
+                    server,
+                    server_turn: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0.0, |time| time.subsec_millis() as f32 / 1000.0)
+                        * std::f32::consts::TAU,
                     menu,
                     overlays,
                 },
@@ -2755,9 +2839,18 @@ impl App {
         );
         self.scroll.set_content_height(painted.height);
 
-        renderer.render(list);
+        renderer.render(list, || {
+            if let Some(window) = self.window.as_ref() {
+                window.pre_present_notify();
+            }
+        });
         self.update_pointer_cursor();
-        if self.refresh_agent_selection() {
+        if self
+            .ui
+            .as_mut()
+            .is_some_and(pm_ui::Ui::refresh_text_selection)
+            | self.refresh_agent_selection()
+        {
             self.request_redraw();
         }
     }
@@ -2771,13 +2864,23 @@ impl ApplicationHandler<Wake> for App {
     /// holding still, a caret blinking and a remote being waited on are the
     /// things it has to notice by the clock.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.autoscroll_agent_selection() {
+        if (self.window_focused
+            && !self.window_occluded
+            && self
+                .ui
+                .as_mut()
+                .is_some_and(pm_ui::Ui::autoscroll_text_selection))
+            | self.autoscroll_agent_selection()
+        {
             self.request_redraw();
         }
         self.offer_missing_servers();
+        self.hear_server_failures();
+        self.refresh_branches();
         if self.settle_moving() {
             self.request_redraw();
         }
+        let copied_expired = self.agents.expire_copied_replies(Instant::now());
         let expired = self.notices.expire(Instant::now());
         let seen = !self.window_occluded;
         let next_annotation = self.next_annotation().filter(|_| seen);
@@ -2787,7 +2890,17 @@ impl ApplicationHandler<Wake> for App {
             self.ask_prediction();
         }
         let annotation_due = next_annotation.is_some_and(|at| at <= Instant::now());
-        if (self.rested() || self.blinked() || (seen && self.spun()) || expired || annotation_due)
+        if (self.rested()
+            || self.blinked()
+            || (seen && self.spun())
+            || expired
+            || copied_expired
+            || annotation_due
+            || self
+                .ui
+                .as_ref()
+                .and_then(pm_ui::Ui::next_tooltip)
+                .is_some_and(|due| due <= Instant::now()))
             && seen
         {
             self.request_redraw();
@@ -2797,10 +2910,17 @@ impl ApplicationHandler<Wake> for App {
             self.next_blink(),
             self.next_spin().filter(|_| seen),
             self.notices.next_expiry(),
+            self.agents.next_copy_expiry().filter(|_| seen),
             next_annotation,
             self.next_prediction().filter(|_| seen),
             self.next_move(),
+            self.next_branch_refresh(),
             self.next_agent_selection_scroll().filter(|_| seen),
+            self.ui.as_ref().and_then(pm_ui::Ui::next_tooltip),
+            self.ui
+                .as_ref()
+                .and_then(pm_ui::Ui::next_text_selection_scroll)
+                .filter(|_| seen && self.window_focused),
         ]
         .into_iter()
         .flatten()
@@ -2820,6 +2940,7 @@ impl ApplicationHandler<Wake> for App {
             control.changed();
         }
         match event {
+            Wake::Orchestration => self.serve_orchestration(),
             Wake::Terminal => {
                 let pumped = self.terminals.pump();
                 let tasks_pumped = self.tasks.pump();
@@ -2833,7 +2954,10 @@ impl ApplicationHandler<Wake> for App {
             }
             Wake::Agent => {
                 let before = self.agents.tally();
-                if self.agents.pump() {
+                let pumped = self.agents.pump();
+                self.hear_checkpoint_moments();
+                if pumped {
+                    self.start_account_logins();
                     self.apply_agent_options();
                     self.serve_agents();
                     self.refresh_agent_history();
@@ -2844,11 +2968,15 @@ impl ApplicationHandler<Wake> for App {
                     self.hear_health_turns();
                     self.request_redraw();
                 }
+                self.finish_delegations();
                 if self.agents.take_renamed() {
                     self.store();
                 }
             }
-            Wake::Install => self.finish_server_installs(),
+            Wake::Install => {
+                self.finish_server_installs();
+                self.finish_language_operations();
+            }
             Wake::Language => {
                 self.hear_server_troubles();
                 if self.settle_moving() {
@@ -2935,6 +3063,10 @@ impl ApplicationHandler<Wake> for App {
             }
             Wake::Arrival => self.take_arrivals(),
             Wake::Control => self.take_control(),
+            Wake::Registry => {
+                self.take_agent_downloads();
+                self.request_redraw();
+            }
         }
     }
 
@@ -2993,6 +3125,7 @@ impl ApplicationHandler<Wake> for App {
 
         self.terminals.set_notify(self.waker(Wake::Terminal));
         self.agents.set_notify(self.waker(Wake::Agent));
+        self.start_orchestration();
         self.debuggers.set_notify(self.waker(Wake::Debug));
         self.editor.set_notify(self.waker(Wake::Language));
         if let Some(directory) = config::servers() {
@@ -3007,7 +3140,7 @@ impl ApplicationHandler<Wake> for App {
         self.reread_changes_now();
 
         let saved = std::mem::take(&mut self.saved);
-        self.restore_panes(&saved);
+        self.restore_layouts(&saved);
         let shells = std::mem::take(&mut self.shells);
         self.restore_shells(&shells);
 
@@ -3033,6 +3166,7 @@ impl ApplicationHandler<Wake> for App {
                     renderer.resize(size.width, size.height, scale);
                 }
                 self.remember_window();
+                self.fit_panels();
                 self.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {

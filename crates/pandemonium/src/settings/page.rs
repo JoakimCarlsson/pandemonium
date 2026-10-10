@@ -73,6 +73,8 @@ const LIT_BORDER_ALPHA: f32 = 0.4;
 
 /// What the settings pane is drawn from.
 pub struct SettingsPane<'a> {
+    /// Language catalogue and server configuration.
+    pub languages: crate::settings::languages::LanguagesPage<'a>,
     /// Which page is open, and how far down it.
     pub settings: &'a Settings,
     /// The preferences the pane edits.
@@ -81,25 +83,55 @@ pub struct SettingsPane<'a> {
     pub keymap: &'a Keymap,
     /// The file the preferences are written to, when there is one.
     pub file: Option<PathBuf>,
+    /// What the MCP Servers page is drawn from.
+    pub mcp: crate::settings::mcp::McpPage<'a>,
+    /// What the Agent Servers page is drawn from.
+    pub agents: crate::settings::agent_list::AgentList<'a>,
 }
 
 /// Builds the settings pane in `theme`.
 pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<Message>> {
     let settings = pane.settings;
     let view = settings.view();
-    let alone = view.sections().len() == 1;
-    let sections = view
-        .sections()
-        .iter()
-        .map(|section| {
-            let rows = section_rows(theme, pane, *section);
-            match alone {
-                true => self::rows(theme, rows),
-                false => self::section(theme, section.label(), rows),
-            }
-        })
-        .collect::<Vec<_>>();
+    let alone = view.sections().len() == 1 && !view.page().has_sections();
+    let alone = alone || matches!(view, SettingsView::Section(_));
+    let sections = match view {
+        SettingsView::Page(SettingsPage::Agents) => {
+            vec![crate::settings::agents::overview(
+                theme,
+                &pane.mcp,
+                &pane.agents,
+            )]
+        }
+        _ => view
+            .sections()
+            .iter()
+            .map(|section| {
+                let rows = section_rows(theme, pane, *section);
+                match alone {
+                    true => self::rows(theme, rows),
+                    false => self::section(theme, section.label(), rows),
+                }
+            })
+            .collect::<Vec<_>>(),
+    };
 
+    let content = scroll_area(
+        settings.scroll(),
+        v_flex()
+            .w_full()
+            .max_w_px(PAGE_WIDTH)
+            .mx_auto()
+            .px(8)
+            .py(6)
+            .gap(8)
+            .child(heading(theme, view, pane.file.as_ref()))
+            .children(sections),
+    )
+    .selectable()
+    .with_scrollbar(Message::ScrollSettings)
+    .flex_1()
+    .h_full();
     Box::new(
         h_flex()
             .w_full()
@@ -107,22 +139,7 @@ pub fn settings_pane(theme: &Theme, pane: &SettingsPane<'_>) -> Box<dyn Element<
             .items_stretch()
             .child(sidebar(theme, pane.preferences, settings))
             .child(v_flex().w_px(1.0).h_full().bg(theme.colors.border_variant))
-            .child(
-                scroll_area(
-                    settings.scroll(),
-                    v_flex()
-                        .w_full()
-                        .max_w_px(PAGE_WIDTH)
-                        .mx_auto()
-                        .px(8)
-                        .py(6)
-                        .gap(8)
-                        .child(heading(theme, view, pane.file.as_ref()))
-                        .children(sections),
-                )
-                .flex_1()
-                .h_full(),
-            ),
+            .child(content),
     )
 }
 
@@ -159,6 +176,22 @@ fn sidebar(theme: &Theme, preferences: &Preferences, settings: &Settings) -> Div
             ),
         )
         .children(entries)
+        .child(v_flex().flex_1())
+        .child(
+            h_flex()
+                .w_full()
+                .py(2)
+                .items_center()
+                .rounded(theme.radius.sm)
+                .hover_bg(theme.colors.surface_hover)
+                .tooltip("Copy version")
+                .on_click(Message::CopyVersion)
+                .child(
+                    text(crate::build_info::description())
+                        .text_xs()
+                        .color(theme.colors.text_subtle),
+                ),
+        )
 }
 
 /// One page in the sidebar: the chevron that opens its sections out or
@@ -401,6 +434,11 @@ fn section_rows(
                 "Tab Size",
                 "How wide a step of indentation and a tab are, where a file does not say",
             ),
+            stepper(
+                Preference::LineLength,
+                "Line Length",
+                "The column Markdown formatting and prose wrapping use",
+            ),
             toggle(
                 Preference::HardTabs,
                 "Hard Tabs",
@@ -429,6 +467,11 @@ fn section_rows(
                 Preference::Occurrences,
                 "Occurrences",
                 "Wash every other place the word at the cursor appears",
+            ),
+            toggle(
+                Preference::BracketColors,
+                "Bracket Pair Colors",
+                "Colour brackets by how many pairs they are inside",
             ),
             toggle(
                 Preference::IndentGuides,
@@ -506,6 +549,16 @@ fn section_rows(
                 "Lay a file out the way its formatter would every time it is written",
             ),
             toggle(
+                Preference::OrganizeImportsOnSave,
+                "Organize Imports on Save",
+                "Have the language server put a file's imports in order every time it is written",
+            ),
+            toggle(
+                Preference::FixOnSave,
+                "Fix on Save",
+                "Have the language server make the fixes it can make on its own every time a file is written",
+            ),
+            toggle(
                 Preference::TrimWhitespace,
                 "Remove Trailing Whitespace",
                 "Take the spaces and tabs off the ends of lines when a file is saved",
@@ -546,7 +599,18 @@ fn section_rows(
                 button("Reload", Message::ReloadExtensions).outlined(),
             ),
         ],
+        SettingsSection::Languages => vec![crate::settings::languages::language_page(
+            theme,
+            &pane.languages,
+        )],
+        SettingsSection::LanguageSettings => {
+            crate::settings::language_settings::language_settings_rows(theme, &pane.languages)
+        }
         SettingsSection::Keybindings => keybinding_rows(theme, pane),
+        SettingsSection::AgentServers => {
+            vec![crate::settings::agent_list::agent_list(theme, &pane.agents)]
+        }
+        SettingsSection::McpServers => vec![crate::settings::mcp::mcp_page(theme, &pane.mcp)],
         SettingsSection::Terminal => vec![
             stepper(
                 Preference::TerminalFontSize,
@@ -874,6 +938,7 @@ fn path_list(theme: &Theme, preferences: &Preferences, list: WorktreePaths) -> D
                 .rounded(theme.radius.md)
                 .hover_bg(theme.colors.surface_hover)
                 .active_bg(theme.colors.surface_active)
+                .selection_disabled()
                 .on_click(Message::AddWorktreePath(list))
                 .child(
                     icon(IconName::Plus)
@@ -994,7 +1059,7 @@ fn font_row(
 }
 
 /// A row that does something once rather than setting a preference.
-fn action(
+pub(super) fn action(
     theme: &Theme,
     title: &str,
     description: &str,
@@ -1171,4 +1236,36 @@ fn install_language_servers(preferences: &Preferences) -> Div<Message> {
         }),
         selected,
     )
+}
+
+/// Builds the large preferences card with a persistent close control.
+pub fn settings_modal(
+    theme: &Theme,
+    content: Box<dyn Element<Message>>,
+    size: pm_gfx::Size,
+) -> Div<Message> {
+    v_flex()
+        .block_pointer()
+        .w_px(size.width)
+        .h_px(size.height)
+        .overflow_hidden()
+        .rounded(theme.radius.lg)
+        .bg(theme.colors.background)
+        .border_1(theme.colors.border_focused)
+        .child(
+            h_flex()
+                .w_full()
+                .h_px(48.0)
+                .px(4)
+                .items_center()
+                .justify_between()
+                .child(text("Settings").text_lg().color(theme.colors.text))
+                .child(
+                    h_flex()
+                        .tooltip("Close Settings (Esc)")
+                        .child(button("×", Message::CloseSettings).ghost()),
+                ),
+        )
+        .child(rule(theme))
+        .child(v_flex().w_full().flex_1().overflow_hidden().child(content))
 }

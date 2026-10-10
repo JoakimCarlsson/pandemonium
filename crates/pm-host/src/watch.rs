@@ -379,6 +379,10 @@ fn gather(event: notify::Result<Event>, batch: &mut Vec<(PathBuf, Touch)>) {
     let Ok(event) = event else {
         return;
     };
+    if event.need_rescan() {
+        batch.extend(event.paths.iter().flat_map(|path| listed_again(path)));
+        return;
+    }
     match event.kind {
         EventKind::Access(_) => {}
         EventKind::Create(_) => batch.extend(event.paths.into_iter().map(created)),
@@ -402,6 +406,23 @@ fn gather(event: notify::Result<Event>, batch: &mut Vec<(PathBuf, Touch)>) {
         }
         _ => batch.extend(event.paths.into_iter().map(|path| (path, Touch::Changed))),
     }
+}
+
+/// What a backend that lost track of `directory` leaves the window to assume.
+///
+/// FSEvents folds a burst of writes into one notice that something under a
+/// directory changed, without saying what. The directory and each name in it
+/// are reported as made, so a tree listing it reads it again; what the disk
+/// says about each of them is settled afterwards, like any other notice.
+fn listed_again(directory: &Path) -> Vec<(PathBuf, Touch)> {
+    let entries = std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| created(entry.path()));
+    std::iter::once(created(directory.to_path_buf()))
+        .chain(entries)
+        .collect()
 }
 
 /// `path`, as a path that was made.

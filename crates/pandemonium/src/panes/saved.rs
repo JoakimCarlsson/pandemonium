@@ -11,14 +11,28 @@ use std::path::PathBuf;
 use pm_ui::Axis;
 use serde::{Deserialize, Serialize};
 
+use crate::panes::Tool;
+
 /// The whole division of the window, and which pane had the keyboard.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Saved {
+    /// Layout schema version, distinguishing pane tools from legacy sidebars.
+    pub version: u32,
     /// Which pane had the keyboard, counted in the order they are drawn.
     pub focus: usize,
     /// The division itself.
     pub root: SavedNode,
+}
+
+/// One project's division of the window, written down beside the project's root.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SavedLayout {
+    /// The root of the project this division belongs to.
+    pub project: PathBuf,
+    /// The division and what was open in it.
+    pub panes: Saved,
 }
 
 /// One node of the written-down tree: a pane, or a division of nodes.
@@ -55,6 +69,8 @@ impl Default for SavedNode {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SavedKind {
+    /// A workspace tool whose position belongs to the window.
+    Tool,
     /// A file of the worktree.
     #[default]
     File,
@@ -70,11 +86,13 @@ pub enum SavedKind {
     Search,
     /// The worktree's changes, gathered for review.
     Review,
+    /// A persisted comparison of worktree turns.
+    Turns,
     /// The diff of one file of the worktree.
     Change,
     /// An agent session over the worktree.
     Agent,
-    /// The settings pane, which is the window's rather than a worktree's.
+    /// A legacy settings tab, skipped now that preferences open in a modal.
     Settings,
 }
 
@@ -115,8 +133,13 @@ impl From<SavedAxis> for Axis {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SavedTab {
+    /// The endpoints for a persisted turn comparison.
+    pub turns: Option<crate::panes::TurnSpan>,
     /// Which kind of thing it held.
     pub kind: SavedKind,
+    /// The registered tool held by a tool tab.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<Tool>,
     /// The worktree it was opened from.
     pub project: PathBuf,
     /// The session worktree it was open in, for a tab that held an agent.
@@ -130,8 +153,17 @@ pub struct SavedTab {
     pub path: PathBuf,
     /// Which agent was running, for a tab that held a session.
     pub agent: String,
+    /// The separate account selected for this agent, without any credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::config::Profile>,
     /// What that agent called the conversation, so it can be taken up again.
     pub session: String,
+    /// Retained history and editable prompt before the first turn after a context rewind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<(String, String)>,
+    /// Native whole-session fork ancestry, independent of filesystem checkpoints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork: Option<pm_core::ConversationFork>,
     /// The title the agent gave that conversation, drawn until it gives one
     /// again after being taken up.
     pub title: String,

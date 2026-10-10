@@ -27,6 +27,10 @@ pub struct Div<M> {
     tooltip: Option<String>,
     /// What the last measurement found, for painting to reuse.
     measured: Option<Measurement>,
+    /// Whether children belong to a control rather than selectable prose.
+    selection_disabled: bool,
+    /// Whether empty space intercepts pointer presses intended for content underneath.
+    blocks_pointer: bool,
 }
 
 /// What one measurement of a container found: the room its children were
@@ -80,6 +84,8 @@ pub fn div<M>() -> Div<M> {
         drag_cursor: PointerCursor::Pointer,
         tooltip: None,
         measured: None,
+        selection_disabled: false,
+        blocks_pointer: false,
     }
 }
 
@@ -108,6 +114,18 @@ impl<M> Div<M> {
     {
         self.children
             .extend(children.into_iter().map(IntoElement::into_element));
+        self
+    }
+
+    /// Keeps text inside a control out of its surrounding reading selection.
+    pub fn selection_disabled(mut self) -> Self {
+        self.selection_disabled = true;
+        self
+    }
+
+    /// Blocks pointer presses on empty space while leaving child controls interactive.
+    pub fn block_pointer(mut self) -> Self {
+        self.blocks_pointer = true;
         self
     }
 
@@ -316,7 +334,11 @@ impl<M: Clone> Element<M> for Div<M> {
         let content = self.content_offer(available);
         let children = self.measure_children(content, cx);
         let mut sizes = children.clone();
-        self.settle_cross(&mut sizes, content, !self.style.fit_width);
+        let mut measured_content = content;
+        if self.style.axis == Axis::Horizontal && self.style.height == Length::Auto {
+            measured_content.height = children.iter().map(|size| size.height).fold(0.0, f32::max);
+        }
+        self.settle_cross(&mut sizes, measured_content, !self.style.fit_width);
         let axis = self.style.axis;
 
         let gaps = self.style.gap * sizes.len().saturating_sub(1) as f32;
@@ -358,6 +380,9 @@ impl<M: Clone> Element<M> for Div<M> {
     /// was measured, and measured again only when the bounds it was given
     /// could change their answer.
     fn paint(&mut self, bounds: Rect, cx: &mut PaintContext<'_, '_, M>) {
+        if self.blocks_pointer {
+            cx.clickable(bounds, None, None);
+        }
         let interaction = match (
             self.on_drag.clone(),
             self.on_click.clone(),
@@ -366,7 +391,7 @@ impl<M: Clone> Element<M> for Div<M> {
             (Some(on_drag), _, on_secondary) => {
                 cx.draggable(bounds, self.drag_cursor, on_drag, on_secondary)
             }
-            (None, None, None) => Interaction::default(),
+            (None, None, None) if self.tooltip.is_none() => Interaction::default(),
             (None, on_click, on_secondary) => cx.clickable(bounds, on_click, on_secondary),
         };
 
@@ -417,6 +442,12 @@ impl<M: Clone> Element<M> for Div<M> {
             _ => 0.0,
         };
 
+        let previous = if self.selection_disabled {
+            cx.selection.take()
+        } else {
+            None
+        };
+        let selection_first = cx.selection_frames.len();
         for (child, size) in self.children.iter_mut().zip(sizes) {
             let room = axis.cross_of(content.size) - axis.cross_of(size);
             let cross = if child.layout_style().center_horizontally {
@@ -441,7 +472,13 @@ impl<M: Clone> Element<M> for Div<M> {
             main += axis.main_of(size) + gap + spread;
         }
 
+        if self.selection_disabled {
+            cx.selection = previous;
+        }
         if self.style.overflow_hidden {
+            for frame in cx.selection_frames.iter_mut().skip(selection_first) {
+                frame.bounds = frame.bounds.intersect(bounds);
+            }
             cx.pop_clip();
         }
     }

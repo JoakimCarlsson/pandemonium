@@ -20,8 +20,8 @@ use crate::editor::{Display, FileEntry, FileId, OpenFile};
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::{
-    self, Content, Contents, Item, PaneId, Saved, SavedKind, SavedTab, Shortcut, SplitDirection,
-    TabEntry,
+    self, Content, Contents, Item, PaneId, PaneTree, Role, Saved, SavedKind, SavedTab, Shortcut,
+    SplitDirection, TabEntry, Tool,
 };
 use crate::workspace::{MenuTarget, TabMenu};
 
@@ -124,6 +124,10 @@ impl App {
     /// Gives the keyboard to `pane`, taking it from the terminal.
     pub(super) fn focus_pane(&mut self, pane: PaneId) {
         if pane != self.panes.focus() {
+            if let Some(ui) = self.ui.as_mut() {
+                ui.clear_text_selection();
+            }
+            self.agents.clear_selections();
             self.dismiss_prediction();
         }
         self.panes.set_focus(pane);
@@ -132,6 +136,26 @@ impl App {
         self.terminal_focused = false;
         self.changes_focused = false;
         self.tree_focused = false;
+        match self.active_tab() {
+            Some(Item::Tool(Tool::Files)) => {
+                self.editor_focused = false;
+                self.tree_focused = true;
+            }
+            Some(Item::Tool(Tool::Changes)) => {
+                self.editor_focused = false;
+                self.changes_focused = true;
+            }
+            Some(item @ (Item::Tool(Tool::Terminal) | Item::WorktreeTool(_, Tool::Terminal))) => {
+                self.editor_focused = false;
+                self.terminal_focused = true;
+                self.remember_role(pane, Some(item));
+            }
+            Some(item @ (Item::Tool(Tool::Chat) | Item::WorktreeTool(_, Tool::Chat))) => {
+                self.remember_role(pane, Some(item));
+            }
+            Some(Item::Tool(_) | Item::WorktreeTool(..)) => {}
+            front => self.remember_role(pane, front),
+        }
     }
 
     /// Remembers the active file after focus or a tab changes.
@@ -148,20 +172,38 @@ impl App {
     /// than twenty — and it is the pane's tab, not the window's, so a file
     /// previewed on the right leaves the pane on the left as it was.
     pub(super) fn show_file(&mut self, pane: PaneId, file: FileId, preview: bool) {
-        let Some(scope) = self.editor.scope_of(file) else {
-            return;
-        };
-        self.show_item(pane, scope, Item::File(file), preview);
+        self.show_item(pane, self.editor.scope_of(file), Item::File(file), preview);
     }
 
     /// Shows `item` of `scope` in `pane`, opening a tab for it if need be.
-    pub(super) fn show_item(&mut self, pane: PaneId, scope: Scope, item: Item, preview: bool) {
+    pub(super) fn show_item(
+        &mut self,
+        pane: PaneId,
+        scope: impl Into<Option<Scope>>,
+        item: Item,
+        preview: bool,
+    ) {
+        let scope = scope.into();
+        let switched = scope.is_some_and(|scope| Some(scope.project()) != self.layout_of);
+        if let Some(scope) = scope {
+            self.point_at(scope);
+        }
+        let pane = match switched {
+            true => self.panes.focus(),
+            false => pane,
+        };
+        let pane = self.pane_for(pane, item.role());
+        if let Some(ui) = self.ui.as_mut() {
+            ui.clear_text_selection();
+        }
+        self.agents.clear_selections();
         if preview {
             self.close_previews(pane, item);
         }
-        self.point_at(scope);
+        let showing = self.scope();
         if let Some(pane) = self.panes.pane_mut(pane) {
             pane.open(scope, item);
+            pane.activate(showing, item);
         }
         self.focus_pane(pane);
         self.sweep();
@@ -195,10 +237,12 @@ impl App {
             Item::Rendered(_)
             | Item::Outline(_)
             | Item::Review(_)
+            | Item::Turns(..)
             | Item::Excerpts(_)
             | Item::Search(_)
             | Item::Agent(..)
-            | Item::Settings => false,
+            | Item::Tool(_)
+            | Item::WorktreeTool(..) => false,
         }
     }
 
@@ -234,7 +278,8 @@ impl App {
     ///
     /// Without a file of its own the new pane shows what the old one was
     /// showing, which is what splitting a pane is for: the same file, twice,
-    /// at two places in it. A pane showing nothing is not split at all: the
+    /// at two places in it. A tool moves to the new pane instead of opening
+    /// a second instance. A pane showing nothing is not split at all: the
     /// pane it would open could show nothing either, and two empty panes
     /// divide the window for nothing.
     pub(super) fn split_pane(
@@ -253,13 +298,16 @@ impl App {
         if let Some(fresh) = self.panes.pane_mut(fresh) {
             fresh.open(scope, item);
         }
-        self.editor_focused = true;
-        self.terminal_focused = false;
-        self.follow_focused_file();
+        if matches!(item, Item::Tool(_) | Item::WorktreeTool(..))
+            && let Some(source) = self.panes.pane_mut(pane)
+        {
+            source.close(item);
+        }
+        self.focus_pane(fresh);
         self.store();
     }
 
-    /// Closes `pane`, leaving the window as it was when it has only the one.
+    /// Closes the visible tabs of `pane`, preserving other worktrees and the last pane.
     pub(super) fn close_pane(&mut self, pane: PaneId) {
         if let Some(search) = self
             .tabs_of(pane)
@@ -269,11 +317,16 @@ impl App {
             self.close_item(pane, search);
             return;
         }
-        if self.panes.close(pane) {
-            self.editor_focused = true;
-            self.terminal_focused = false;
+        let visible = self.tabs_of(pane);
+        let has_hidden = self
+            .panes
+            .pane(pane)
+            .is_some_and(|pane| pane.items().any(|item| !visible.contains(&item)));
+        if has_hidden {
+            self.close_tabs(pane, |pane| pane.retain(|item| !visible.contains(&item)));
+        } else if self.panes.close(pane) {
+            self.focus_pane(self.panes.focus());
             self.sweep();
-            self.follow_focused_file();
             self.store();
         }
     }
@@ -291,13 +344,15 @@ impl App {
         match item {
             Item::File(file) | Item::Rendered(file) => self.editor.scope_of(file),
             Item::Image(image) => self.images.scope_of(image),
-            Item::Review(scope)
+            Item::Turns(scope, _)
+            | Item::Review(scope)
             | Item::Outline(scope)
             | Item::Change(scope, _)
             | Item::Excerpts(scope)
             | Item::Search(scope)
             | Item::Agent(scope, _) => Some(scope),
-            Item::Settings => None,
+            Item::WorktreeTool(scope, _) => Some(scope),
+            Item::Tool(_) => None,
         }
     }
 
@@ -428,23 +483,24 @@ impl App {
     /// The picker first, then a name being typed into the tree. The search
     /// bar lives in the open document, so it is reached through
     /// [`Self::edit_focused_field`].
-    pub(super) fn focused_field_mut(&mut self) -> Option<&mut crate::field::Field> {
+    pub(super) fn focused_field_mut(&mut self) -> Option<&mut crate::input::Input> {
         if let Some(picker) = self.picker.as_mut() {
             return Some(picker.field_mut());
         }
         self.tree_edit.as_mut().map(|edit| edit.field_mut())
     }
 
-    /// Puts `edit` through the single-line field that has the keyboard, if
-    /// one does.
+    /// Puts `edit` through the shared input that has the keyboard, if one does.
     ///
-    /// The picker first, then a name being typed into the tree, then the
-    /// search bar's query or replacement. This is the one place that says
-    /// which field has the keyboard.
+    /// The picker comes first, followed by a composing input, a tree rename,
+    /// search fields and the outline filter. All editing uses this seam.
     pub(super) fn edit_focused_field(
         &mut self,
-        edit: impl FnOnce(&mut crate::field::Field),
+        edit: impl FnOnce(&mut crate::input::Input),
     ) -> bool {
+        if self.picker.is_none() && self.writing.is_some() {
+            return self.with_written(edit).is_some();
+        }
         if let Some(field) = self.focused_field_mut() {
             edit(field);
             return true;
@@ -472,7 +528,37 @@ impl App {
                 .search_with(|search, buffer| search.edit_field(edit, buffer));
             return true;
         }
+        if let Some(Item::Outline(scope)) = self.active_tab()
+            && let Some(file) = self.outlines.followed(scope)
+        {
+            let state = self.outlines.get_mut(file);
+            edit(&mut state.filter);
+            state.scroll = 0;
+            return true;
+        }
         false
+    }
+
+    /// Routes pointer selection through the shared input with click counting and Shift extension.
+    pub(super) fn point_focused_input(
+        &mut self,
+        phase: ResizePhase,
+        anchor: pm_text::Position,
+        head: pm_text::Position,
+    ) {
+        if phase == ResizePhase::Started {
+            self.text_extends = self.extends_text();
+        }
+        let extend = self.text_extends;
+        let presses = if anchor == head && !extend && phase == ResizePhase::Started {
+            self.text_clicks.press(anchor)
+        } else {
+            if anchor != head || extend {
+                self.text_clicks.clear();
+            }
+            0
+        };
+        self.edit_focused_field(|input| input.point(phase, anchor, head, presses, extend));
     }
 
     /// The buffer being typed into that is not a pane's file, if there is one.
@@ -481,28 +567,75 @@ impl App {
     /// prompt is a buffer too, and a command that edits text means whichever
     /// of them has the keyboard, not the file behind it.
     pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
+        if let Some(picker) = self.picker.as_ref() {
+            return Some(picker.field().text());
+        }
+        if self.writing.is_none() {
+            if let Some(edit) = self.tree_edit.as_ref() {
+                return Some(edit.field().text());
+            }
+            if let Some(Item::Search(scope)) = self.active_tab()
+                && let Some(which) = self.project_search_field
+                && let Some(search) = self.searches.get(&scope)
+            {
+                return Some(match which {
+                    crate::editor::SearchField::Query => search.query.text(),
+                    crate::editor::SearchField::Replacement => search.replacement.text(),
+                });
+            }
+            if self.search_focused {
+                let file = self.active_file()?;
+                let file = file.borrow();
+                return Some(match file.search().field() {
+                    crate::editor::SearchField::Query => file.search().query().text(),
+                    crate::editor::SearchField::Replacement => file.search().replacement().text(),
+                });
+            }
+            if let Some(Item::Outline(scope)) = self.active_tab()
+                && let Some(file) = self.outlines.followed(scope)
+            {
+                return Some(self.outlines.get(file)?.filter.text());
+            }
+        }
         match self.writing? {
             crate::app::Writing::Commit => Some(self.review()?.message()?.text()),
             crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
             crate::app::Writing::Console(scope) => {
                 Some(self.debuggers.get(scope)?.console().text())
             }
+            crate::app::Writing::McpSearch => Some(self.mcp_search.text()),
+            crate::app::Writing::AgentSearch => Some(self.agent_search.text()),
+            crate::app::Writing::LanguageServerField(index) => {
+                Some(self.languages.editor.as_ref()?.fields.get(index)?.text())
+            }
+            crate::app::Writing::FormField(field) => {
+                Some(self.server_form.as_ref()?.input(field)?.text())
+            }
+            crate::app::Writing::Answer(session, ticket, place) => Some(
+                self.agents
+                    .get(session)?
+                    .forms()
+                    .iter()
+                    .find(|form| form.id() == ticket)?
+                    .text_box(place)?
+                    .text(),
+            ),
             crate::app::Writing::Comment(scope) => {
                 Some(self.reviews.get(&scope)?.comments().composing()?.text)
             }
         }
     }
 
-    /// Changes the tabs of `pane` and closes whatever that left with nothing.
+    /// Closes tabs in `pane`, preserving its space when the last tab leaves.
     pub(super) fn close_tabs(&mut self, pane: PaneId, close: impl FnOnce(&mut panes::Pane)) {
         let before = self.panes.held();
         if let Some(pane) = self.panes.pane_mut(pane) {
             close(pane);
         }
-        self.panes.close_empty();
         self.remember_closed(&before);
         self.sweep();
-        self.follow_focused_file();
+        self.focus_pane(self.panes.focus());
+        self.store();
     }
 
     /// Takes down every file that was held before and is not held now.
@@ -512,6 +645,9 @@ impl App {
     /// difference between what was open and what is open says it.
     fn remember_closed(&mut self, before: &BTreeSet<Item>) {
         let held = self.panes.held();
+        self.checkpointing
+            .diffs
+            .retain(|(scope, span), _| held.contains(&Item::Turns(*scope, *span)));
         let gone = before
             .iter()
             .filter(|item| !held.contains(item))
@@ -535,25 +671,69 @@ impl App {
     ///
     /// A pane names its files by where they live rather than by the id this
     /// run gave them, which is the only thing the next launch can act on.
-    pub(super) fn saved_panes(&self) -> Saved {
-        self.panes.save(&|item| {
-            if item == Item::Settings {
+    pub(super) fn saved_panes(&self, tree: &PaneTree, scope: Option<Scope>) -> Saved {
+        tree.save(scope, &|item| {
+            if let Item::Tool(tool) | Item::WorktreeTool(_, tool) = item {
                 return Some(SavedTab {
-                    kind: SavedKind::Settings,
+                    kind: SavedKind::Tool,
+                    tool: Some(tool),
+                    project: self
+                        .scope_of(item)
+                        .and_then(|scope| self.open.get(scope.project()))
+                        .map(|project| project.root().stored())
+                        .unwrap_or_default(),
+                    worktree: self
+                        .scope_of(item)
+                        .and_then(|scope| self.root_of(scope))
+                        .map(|root| root.stored())
+                        .unwrap_or_default(),
                     ..SavedTab::default()
                 });
             }
-            let scope = self.scope_of(item)?;
+            let Some(scope) = self.scope_of(item) else {
+                let file = item.file()?;
+                let document = self.editor.get(file)?;
+                let document = document.borrow();
+                let head = document.buffer().selection().head;
+                return Some(SavedTab {
+                    kind: SavedKind::File,
+                    path: document.buffer().path().to_path_buf(),
+                    scroll: document.scroll(),
+                    line: head.line,
+                    column: head.column,
+                    ..SavedTab::default()
+                });
+            };
             let project = self.open.get(scope.project())?.root().stored();
             let worktree = self.root_of(scope)?.stored();
             if let Some(talk) = item.session().and_then(|talk| self.agents.get(talk)) {
+                if !talk.persistable() {
+                    return None;
+                }
                 return Some(SavedTab {
                     kind: SavedKind::Agent,
                     project,
                     worktree,
                     agent: talk.agent().id.to_owned(),
-                    session: talk.resumable().unwrap_or_default(),
+                    account: talk.profile().cloned(),
+                    session: talk
+                        .resumable()
+                        .or_else(|| talk.fork_metadata().map(|fork| fork.destination.clone()))
+                        .unwrap_or_default(),
+                    fork: talk.fork_metadata().cloned(),
+                    context: talk
+                        .rewind_context()
+                        .map(|context| (context.to_owned(), talk.prompt().value().to_owned())),
                     title: talk.title().unwrap_or_default().to_owned(),
+                    ..SavedTab::default()
+                });
+            }
+            if let Item::Turns(_, span) = item {
+                return Some(SavedTab {
+                    kind: SavedKind::Turns,
+                    project,
+                    worktree,
+                    turns: Some(span),
                     ..SavedTab::default()
                 });
             }
@@ -645,33 +825,82 @@ impl App {
     /// A file whose project is no longer open, or which is no longer on
     /// disk, is left behind: the window comes back as much like itself as
     /// what is still there allows.
-    pub(super) fn restore_panes(&mut self, saved: &Saved) {
+    pub(super) fn restore_panes(&mut self, saved: &Saved, owner: pm_core::ProjectId) {
         let projects = self
             .open
             .iter()
             .map(|project| (project.root().clone(), project.id()))
             .collect::<Vec<_>>();
+        let mut comparisons = Vec::new();
+        let restoring_scope = Some(Scope::checkout(owner));
         let editor = &mut self.editor;
         let images = &mut self.images;
         let excerpts = &mut self.excerpts;
         let searches = &mut self.searches;
         let reviews = &mut self.reviews;
         let agents = &mut self.agents;
+        let notices = &mut self.notices;
         let sessions = &self.sessions;
         let bootstrap = &self.preferences.bootstrap;
         let mut followed_outlines = Vec::new();
+        let mut tools = BTreeSet::new();
         self.panes = crate::panes::PaneTree::restored(saved, &mut |tab| {
+            if tab.kind == SavedKind::Tool {
+                let tool = tab.tool?;
+                let scope = if tab.project.as_os_str().is_empty() {
+                    restoring_scope
+                } else {
+                    let (_, project) = projects
+                        .iter()
+                        .find(|(root, _)| root.stored() == tab.project)?;
+                    if *project != owner {
+                        return None;
+                    }
+                    Some(
+                        match sessions
+                            .of(*project)
+                            .find(|session| session.root() == tab.worktree)
+                        {
+                            Some(session) => Scope::of(*project, session.id()),
+                            None => Scope::checkout(*project),
+                        },
+                    )
+                };
+                let item = Item::tool(tool, scope);
+                let scope = if item.is_window_wide() { None } else { scope };
+                return tools.insert(item).then_some((scope, item));
+            }
             if tab.kind == SavedKind::Settings {
-                return Some((None, Item::Settings));
+                return None;
+            }
+            if tab.kind == SavedKind::File && tab.project.as_os_str().is_empty() {
+                let file = editor.open_loose(&tab.path)?;
+                if let Some(document) = editor.get(file) {
+                    document
+                        .borrow_mut()
+                        .restore(tab.line, tab.column, tab.scroll);
+                }
+                return Some((None, Item::File(file)));
             }
             let (checkout, project) = projects
                 .iter()
                 .find(|(root, _)| root.stored() == tab.project)
                 .cloned()?;
+            if project != owner {
+                return None;
+            }
             let held = sessions
                 .of(project)
                 .find(|session| session.root() == tab.worktree);
-            let env = bootstrap.env(held.and_then(pm_core::Session::port));
+            if tab.kind == SavedKind::Agent
+                && !tab.worktree.as_os_str().is_empty()
+                && tab.worktree != checkout.stored()
+                && held.is_none()
+            {
+                notices.trouble(format!("Cannot restore agent: session worktree {} is missing. Reopen its project and refresh sessions.", tab.worktree.display()), None);
+                return None;
+            }
+            let mut env = bootstrap.env(held.and_then(pm_core::Session::port));
             let session = held.map(pm_core::Session::id);
             let scope = match session {
                 Some(session) => Scope::of(project, session),
@@ -687,14 +916,44 @@ impl App {
                     return None;
                 }
                 let agent = pm_acp::Agent::named(&tab.agent)?;
+                if let Some(profile) = &tab.account {
+                    if !crate::config::Accounts::supports(agent) {
+                        return None;
+                    }
+                    env.push(profile.environment(agent)?);
+                }
+                if let Some(fork) = &tab.fork
+                    && (fork.agent != tab.agent
+                        || fork.destination != tab.session
+                        || fork.destination == fork.source
+                        || fork.destination.is_empty())
+                {
+                    return None;
+                }
                 let talk = match tab.session.is_empty() {
                     true => agents.start(project, session, &root, &env, agent)?,
+                    false if tab.fork.is_some() => {
+                        agents.restore_fork(scope, &root, &env, agent, &tab.session)?
+                    }
                     false => agents.resume(project, session, &root, &env, agent, &tab.session)?,
                 };
                 if let Some(opened) = agents.get_mut(talk) {
+                    opened.set_fork_metadata(tab.fork.clone());
+                    if let Some((context, prompt)) = &tab.context {
+                        opened.restore_context(context.clone(), prompt);
+                    }
                     opened.entitle(&tab.title);
+                    opened.set_profile(tab.account.clone());
                 }
                 return Some((Some(scope), Item::Agent(scope, talk)));
+            }
+            if tab.kind == SavedKind::Turns {
+                if let Some(span) = tab.turns {
+                    comparisons.push((scope, span));
+
+                    return Some((Some(scope), Item::Turns(scope, span)));
+                }
+                return None;
             }
             if tab.kind == SavedKind::Review {
                 return Some((Some(scope), Item::Review(scope)));
@@ -743,6 +1002,17 @@ impl App {
             }
             Some((Some(scope), Item::File(file)))
         });
+        for (scope, span) in comparisons {
+            self.read_turn_diff(scope, span);
+        }
+        self.recent.clear();
+        if let Some(documents) = self.panes.panes().into_iter().find(|id| {
+            self.panes
+                .pane(*id)
+                .is_some_and(|pane| pane.serves(Scope::checkout(owner), Role::Editor))
+        }) {
+            self.recent.insert(Role::Editor, documents);
+        }
         for (scope, path) in followed_outlines {
             let Some(file) = self.editor.opened(scope, &path) else {
                 continue;
@@ -767,13 +1037,18 @@ impl App {
         }
         self.refresh_excerpts();
         self.sweep();
+        self.focus_pane(self.panes.focus());
+        if super::settings::settings_was_open(&saved.root) {
+            self.open_settings();
+        }
+        self.shelve_restored(owner);
     }
 
     /// Opens what the reviews in the panes show, then closes every file no
     /// pane is holding open any more.
     pub(super) fn sweep(&mut self) {
         self.open_reviewed_files();
-        let held = self.panes.held();
+        let held = self.held_everywhere();
         self.excerpts
             .retain(|scope, _| held.contains(&Item::Excerpts(*scope)));
         self.searches
@@ -831,11 +1106,6 @@ impl App {
         }
     }
 
-    /// Takes the files of `project` out of every pane that was showing them.
-    pub(super) fn drop_project_tabs(&mut self, project: pm_core::ProjectId) {
-        self.drop_tabs(&|scope| scope.project() == project);
-    }
-
     /// Closes every tab of the worktrees `leaving` names, wherever they are.
     pub(super) fn drop_tabs(&mut self, leaving: &dyn Fn(Scope) -> bool) {
         let gone = self
@@ -845,7 +1115,6 @@ impl App {
             .filter(|item| self.scope_of(*item).is_some_and(leaving))
             .collect::<BTreeSet<_>>();
         self.panes.retain(|item| !gone.contains(&item));
-        self.panes.close_empty();
     }
 
     /// Carries a tab, or lets go of it where the pointer has reached.
@@ -904,10 +1173,12 @@ impl App {
                 Item::Rendered(_)
                 | Item::Outline(_)
                 | Item::Review(_)
+                | Item::Turns(..)
                 | Item::Excerpts(_)
                 | Item::Search(_)
                 | Item::Agent(..)
-                | Item::Settings => {}
+                | Item::Tool(_)
+                | Item::WorktreeTool(..) => {}
             }
         }
         self.activate_tab(pane, item);
@@ -930,6 +1201,10 @@ impl App {
     /// so the place left behind goes on the trail: going back returns to the
     /// tab that was in front, at the line it was left at.
     pub(super) fn activate_tab(&mut self, pane: PaneId, item: Item) {
+        if let Some(ui) = self.ui.as_mut() {
+            ui.clear_text_selection();
+        }
+        self.agents.clear_selections();
         self.dismiss_prediction();
         if self
             .scope()
@@ -950,8 +1225,8 @@ impl App {
     /// Lets go of a carried tab where the pointer has reached.
     ///
     /// The tab moves rather than copies: it leaves the pane it came from,
-    /// the way dragging a tab does everywhere, and the pane it leaves empty
-    /// gives its room back to its neighbours.
+    /// the way dragging a tab does everywhere. Moving its last tab removes
+    /// the source pane unless it still holds another worktree's tabs.
     fn drop_tab(&mut self, drag: TabDrag) {
         let Some((target, place)) = drag.target else {
             return;
@@ -985,7 +1260,6 @@ impl App {
                 None => pane.append(tab, scope),
             }
         }
-        self.panes.close_empty();
         self.focus_pane(landed);
         self.sweep();
         self.store();
@@ -1024,6 +1298,15 @@ impl App {
     /// is only where the name, the icon and the marks are read from.
     pub(super) fn tab_entry(&self, item: Item) -> Option<TabEntry> {
         match item {
+            Item::Tool(tool) | Item::WorktreeTool(_, tool) => Some(TabEntry {
+                item,
+                name: tool.label().to_owned(),
+                icon: tool.icon(),
+                dirty: false,
+                preview: false,
+                pinned: false,
+                standing: None,
+            }),
             Item::File(file) => {
                 let FileEntry {
                     name,
@@ -1037,6 +1320,7 @@ impl App {
                     dirty,
                     preview,
                     pinned: false,
+                    standing: None,
                 })
             }
             Item::Image(image) => Some(TabEntry {
@@ -1046,6 +1330,7 @@ impl App {
                 dirty: false,
                 preview: self.images.is_preview(image),
                 pinned: false,
+                standing: None,
             }),
             Item::Rendered(file) => Some(TabEntry {
                 item,
@@ -1054,6 +1339,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Outline(scope) => Some(TabEntry {
                 item,
@@ -1069,6 +1355,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Excerpts(scope) => Some(TabEntry {
                 item,
@@ -1080,6 +1367,7 @@ impl App {
                 dirty: self.excerpts_dirty(scope),
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Search(scope) => Some(TabEntry {
                 item,
@@ -1088,6 +1376,16 @@ impl App {
                 dirty: self.is_dirty(Item::Search(scope)),
                 preview: false,
                 pinned: false,
+                standing: None,
+            }),
+            Item::Turns(_, span) => Some(TabEntry {
+                item,
+                name: format!("Turns {} → {}", span.from, span.to),
+                icon: IconName::GitCompare,
+                dirty: false,
+                preview: false,
+                pinned: false,
+                standing: None,
             }),
             Item::Review(scope) => Some(TabEntry {
                 item,
@@ -1099,6 +1397,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Agent(_, session) => {
                 let talk = self.agents.get(session)?;
@@ -1111,16 +1410,9 @@ impl App {
                     dirty: false,
                     preview: false,
                     pinned: false,
+                    standing: Some(talk.standing()),
                 })
             }
-            Item::Settings => Some(TabEntry {
-                item,
-                name: "Settings".to_owned(),
-                icon: IconName::Settings,
-                dirty: false,
-                preview: false,
-                pinned: false,
-            }),
             Item::Change(project, change) => {
                 let review = self.reviews.get(&project)?;
                 let path = review.path_of(change)?;
@@ -1135,6 +1427,7 @@ impl App {
                     dirty: false,
                     preview: review.is_preview(change),
                     pinned: false,
+                    standing: None,
                 })
             }
         }
@@ -1146,11 +1439,11 @@ impl App {
     /// the cells they report their bounds in, so what the window hit-tests a
     /// drop against is exactly what the last frame drew.
     pub(super) fn pane_view(&mut self, theme: &Theme) -> Box<dyn Element<Message>> {
+        self.tree_scroll();
         let mut drawn = Vec::new();
         let mut drawn_tabs = Vec::new();
         let mut cells = Vec::new();
-        self.panes.keep_focus_drawn(self.scope());
-        for pane in self.panes.drawn(self.scope()) {
+        for pane in self.panes.panes() {
             drawn.push(pane);
             for item in self.tabs_of(pane) {
                 drawn_tabs.push((pane, item));
@@ -1177,66 +1470,74 @@ impl App {
         let display = self.preferences.display;
         let shortcuts = self.empty_pane_shortcuts();
         let cells = drawn.into_iter().zip(cells).collect::<Vec<_>>();
-        panes::pane_tree(theme, &self.panes, scope, self.editor_focused, &|pane| {
-            let (bounds, bar, tab_bounds) = cells
-                .iter()
-                .find(|(id, _)| *id == pane.id())
-                .map(|(_, cells)| cells.clone())
-                .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
-            let active = pane.active(scope);
-            let file = active.and_then(Item::file);
-            let display = self.display_of(file, display);
-            let conflicted = file.is_some_and(|file| {
-                let Some(scope) = self.editor.scope_of(file) else {
-                    return false;
-                };
-                let Some(document) = self.editor.get(file) else {
-                    return false;
-                };
-                self.reviews
-                    .get(&scope)
-                    .and_then(|review| review.mark(document.borrow().buffer().path()))
-                    == Some(FileStatus::Conflicted)
-            });
-            Contents {
-                tabs: pane
-                    .tabs(scope)
-                    .into_iter()
-                    .filter_map(|item| {
-                        let mut entry = self.tab_entry(item)?;
-                        entry.pinned = pane.is_pinned(item);
-                        Some(entry)
-                    })
-                    .collect(),
-                active,
-                content: self.shown(theme, pane.id(), active, bounds.get().size.width),
-                conflicted,
-                bounds,
-                bar,
-                tab_bounds,
-                link: link
-                    .clone()
-                    .filter(|(open, _)| file == Some(*open))
-                    .map(|(_, span)| span),
-                hovered: talked_about
-                    .clone()
-                    .filter(|(open, _)| file == Some(*open))
-                    .map(|(_, span)| span),
-                found: self.found_in(file),
-                breakpoints: file
-                    .map(|file| self.breakpoints_of(file))
-                    .unwrap_or_default(),
-                stopped: file.and_then(|file| self.stopped_in(file)),
-                caret,
-                prediction_visible: self.preferences.edit_predictions.enabled
-                    && self.completions.is_none(),
-                display,
-                crumbs: file
-                    .filter(|_| display.breadcrumbs)
-                    .and_then(|file| self.crumbs_of(file)),
-                shortcuts: shortcuts.clone(),
-            }
-        })
+        panes::pane_tree(
+            theme,
+            &self.panes,
+            self.editor_focused
+                || self.tree_focused
+                || self.changes_focused
+                || self.terminal_focused,
+            &|pane| {
+                let (bounds, bar, tab_bounds) = cells
+                    .iter()
+                    .find(|(id, _)| *id == pane.id())
+                    .map(|(_, cells)| cells.clone())
+                    .unwrap_or_else(|| (unmeasured(), unmeasured(), Vec::new()));
+                let active = pane.active(scope);
+                let file = active.and_then(Item::file);
+                let display = self.display_of(file, display);
+                let conflicted = file.is_some_and(|file| {
+                    let Some(scope) = self.editor.scope_of(file) else {
+                        return false;
+                    };
+                    let Some(document) = self.editor.get(file) else {
+                        return false;
+                    };
+                    self.reviews
+                        .get(&scope)
+                        .and_then(|review| review.mark(document.borrow().buffer().path()))
+                        == Some(FileStatus::Conflicted)
+                });
+                Contents {
+                    tabs: pane
+                        .tabs(scope)
+                        .into_iter()
+                        .filter_map(|item| {
+                            let mut entry = self.tab_entry(item)?;
+                            entry.pinned = pane.is_pinned(item);
+                            Some(entry)
+                        })
+                        .collect(),
+                    active,
+                    content: self.shown(theme, pane.id(), active, bounds.get().size.width),
+                    conflicted,
+                    bounds,
+                    bar,
+                    tab_bounds,
+                    link: link
+                        .clone()
+                        .filter(|(open, _)| file == Some(*open))
+                        .map(|(_, span)| span),
+                    hovered: talked_about
+                        .clone()
+                        .filter(|(open, _)| file == Some(*open))
+                        .map(|(_, span)| span),
+                    found: self.found_in(file),
+                    breakpoints: file
+                        .map(|file| self.breakpoints_of(file))
+                        .unwrap_or_default(),
+                    stopped: file.and_then(|file| self.stopped_in(file)),
+                    caret,
+                    prediction_visible: self.preferences.edit_predictions.enabled
+                        && self.completions.is_none(),
+                    display,
+                    crumbs: file
+                        .filter(|_| display.breadcrumbs)
+                        .and_then(|file| self.crumbs_of(file)),
+                    shortcuts: shortcuts.clone(),
+                }
+            },
+        )
     }
 
     /// The commands an empty pane offers, each with the keys it answers to
@@ -1296,8 +1597,21 @@ impl App {
     /// What a pane showing `item` draws beneath its bar of tabs.
     fn shown(&self, theme: &Theme, pane: PaneId, item: Option<Item>, width: f32) -> Content {
         match item {
+            Some(Item::Tool(tool) | Item::WorktreeTool(_, tool)) => {
+                Content::Built(Box::new(self.tool_content(theme, tool, width)))
+            }
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),
+                None => Content::Empty,
+            },
+            Some(Item::Turns(scope, span)) => match self.checkpointing.diffs.get(&(scope, span)) {
+                Some(diff) => Content::Built(Box::new(crate::review::turns_pane(
+                    theme,
+                    scope,
+                    span,
+                    diff,
+                    self.preferences.split_diff,
+                ))),
                 None => Content::Empty,
             },
             Some(Item::Review(project)) => match self.reviews.get(&project) {
@@ -1316,8 +1630,15 @@ impl App {
                     theme,
                     talk,
                     self.writing == Some(crate::app::Writing::Prompt(session)),
+                    match self.writing {
+                        Some(crate::app::Writing::Answer(answered, ticket, place))
+                            if answered == session =>
+                        {
+                            Some((ticket, place))
+                        }
+                        _ => None,
+                    },
                     self.caret_solid(),
-                    self.prompt_box.extent(),
                     width,
                 ))),
                 None => Content::Empty,
@@ -1375,7 +1696,6 @@ impl App {
                 Content::Built(self.project_search_content(theme, pane, scope))
             }
             Some(Item::Search(_)) => Content::Empty,
-            Some(Item::Settings) => self.settings_content(theme),
             None => Content::Empty,
         }
     }
@@ -1400,12 +1720,31 @@ impl App {
                     .collect::<Vec<_>>();
                 panes::tab_menu(pane, &tabs, item)
             }
-            MenuTarget::Pane(pane) => panes::pane_menu(pane, self.panes.is_split()),
-            MenuTarget::Project(project) => crate::workspace::project_menu_items(
-                self.open.get(project)?,
-                &self.session_bases,
-                self.showing_bases,
-            ),
+            MenuTarget::Tools => {
+                let mut items = self.tool_menu();
+                items.push(pm_ui::menu_separator());
+                items.push(pm_ui::menu_entry(
+                    "Reset Window Layout",
+                    Some(Message::ResetWindowLayout),
+                ));
+                items
+            }
+            MenuTarget::Project(project) => {
+                let mut items = crate::workspace::project_menu_items(
+                    self.open.get(project)?,
+                    &self.session_bases,
+                    self.showing_bases,
+                );
+                items.extend(self.project_group_items(project));
+                items
+            }
+            MenuTarget::ProjectGroup(index) => {
+                self.project_groups.get(index)?;
+                vec![
+                    pm_ui::menu_entry("Rename Group…", Some(Message::RenameProjectGroup(index))),
+                    pm_ui::menu_entry("Remove Group", Some(Message::RemoveProjectGroup(index))),
+                ]
+            }
             MenuTarget::Projects => crate::workspace::add_project_items(),
             MenuTarget::Session(session) => {
                 let held = self.sessions.get(session)?;
@@ -1471,6 +1810,88 @@ impl App {
                     ),
                 ]
             }
+            MenuTarget::AgentServer(index) => vec![
+                pm_ui::menu_entry("Edit…", Some(Message::EditAgentServer(index))),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Remove", Some(Message::RemoveAgentServer(index))),
+            ],
+            MenuTarget::McpServer(index) => {
+                let server = self.mcp_servers.get(index)?;
+                let toggle = match server.enabled {
+                    true => "Disable",
+                    false => "Enable",
+                };
+                let website =
+                    (!server.website.is_empty()).then_some(Message::OpenMcpWebsite(index));
+                vec![
+                    pm_ui::menu_entry(toggle, Some(Message::ToggleMcpServer(index))),
+                    pm_ui::menu_entry("Edit…", Some(Message::EditMcpServer(index))),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry(
+                        "Copy Configuration (JSON)",
+                        Some(Message::CopyMcpConfiguration(index)),
+                    ),
+                    pm_ui::menu_entry("Show Settings File", Some(Message::RevealSettingsFile)),
+                    pm_ui::menu_entry("Open Website", website),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Uninstall", Some(Message::RemoveMcpServer(index))),
+                ]
+            }
+            MenuTarget::AgentMcp(session) => {
+                let servers = self
+                    .agents
+                    .get(session)
+                    .map(|talk| talk.mcp_servers())
+                    .unwrap_or_default();
+                let heading = match servers.is_empty() {
+                    true => "No MCP servers are set up",
+                    false => "Given to this agent when it started",
+                };
+                std::iter::once(pm_ui::menu_entry(heading, None))
+                    .chain(servers.iter().map(|server| {
+                        let note = match server.given {
+                            true => "",
+                            false => " · not supported by this agent",
+                        };
+                        pm_ui::menu_entry(format!("{} · {}{note}", server.name, server.kind), None)
+                    }))
+                    .chain([
+                        pm_ui::menu_separator(),
+                        pm_ui::menu_entry("Manage MCP Servers…", Some(Message::ManageMcpServers)),
+                    ])
+                    .collect()
+            }
+            MenuTarget::AgentText(session, reply) => {
+                let selected = self
+                    .agents
+                    .get(session)
+                    .is_some_and(|talk| talk.selection().is_some());
+                let mut entries = Vec::new();
+                if let Some(block) = reply {
+                    entries.extend([
+                        pm_ui::menu_entry(
+                            "Copy Reply",
+                            Some(Message::CopyAgentReply(session, block, Some(false))),
+                        ),
+                        pm_ui::menu_entry(
+                            "Copy Reply Formatted",
+                            Some(Message::CopyAgentReply(session, block, Some(true))),
+                        ),
+                        pm_ui::menu_separator(),
+                    ]);
+                }
+                entries.extend([
+                    pm_ui::menu_entry("Copy", selected.then_some(Message::CopyAgentText(session))),
+                    pm_ui::menu_separator(),
+                    pm_ui::menu_entry("Select All", Some(Message::SelectAllAgentText(session))),
+                ]);
+                entries
+            }
+            MenuTarget::ReadingText => vec![
+                pm_ui::menu_entry("Copy", Some(Message::CopyText)),
+                pm_ui::menu_separator(),
+                pm_ui::menu_entry("Select All", Some(Message::SelectAllText)),
+            ],
             MenuTarget::Input => {
                 let selected = self
                     .typed_into()

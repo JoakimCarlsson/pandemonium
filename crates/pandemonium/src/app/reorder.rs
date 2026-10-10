@@ -1,43 +1,49 @@
-//! Carrying a project's row up or down the projects sidebar to reorder them.
-//!
-//! The row is picked up by the same press that would have activated it, and
-//! only travel tells the two apart: a press that goes nowhere activates the
-//! project, and one that travels puts it in the gap between two others. The
-//! rows are all one height, so the gaps are read off the list's bounds and
-//! how many rows each project draws, rather than off every row's own.
+//! Carrying project rows through the visible, grouped Projects reading.
 
 use pm_core::ProjectId;
 use pm_gfx::{Point, Rect};
 use pm_ui::{ResizeEvent, ResizePhase};
 
 use crate::app::App;
+use crate::project_groups::{self, ProjectRow};
 
 /// How far a press may travel and still have been a click on the row.
 const SLIP: f32 = 4.0;
 
-/// How thick the line marking where a carried project would land is drawn.
+/// Thickness of the line marking where a carried project would land.
 const CARET: f32 = 2.0;
 
-/// A project's row under the pointer, and the gap letting go would put it in.
+/// A destination within the visible project reading.
+#[derive(Clone, Copy, Debug)]
+struct ProjectLanding {
+    /// Gap in the underlying open-project order.
+    gap: usize,
+    /// Group receiving the project, or the ungrouped reading.
+    group: Option<usize>,
+    /// Vertical position of the insertion caret.
+    top: f32,
+}
+
+/// A project's row under the pointer and its destination.
 #[derive(Clone, Copy, Debug)]
 pub struct ProjectDrag {
     /// The project whose row was pressed.
     pub project: ProjectId,
-    /// How far the pointer has travelled since the press.
+    /// Maximum travel since the press began.
     pub travelled: f32,
-    /// The gap it would land in, counted before the project at that place.
-    pub gap: usize,
+    /// The visible destination, absent outside the project list.
+    landing: Option<ProjectLanding>,
 }
 
 impl ProjectDrag {
-    /// Whether the pointer has gone far enough to have carried the row.
+    /// Whether the pointer has travelled far enough to carry the row.
     pub fn is_carried(&self) -> bool {
         self.travelled > SLIP
     }
 }
 
 impl App {
-    /// Answers a press, a drag or a release on the row of project `id`.
+    /// Activates a pressed project, or moves a carried one within or between groups.
     pub(super) fn drag_project(&mut self, id: ProjectId, event: ResizeEvent) {
         let travelled = (event.current.x - event.start.x).hypot(event.current.y - event.start.y);
         let drag = ProjectDrag {
@@ -46,72 +52,114 @@ impl App {
                 (ResizePhase::Started, _) | (_, None) => travelled,
                 (_, Some(drag)) => drag.travelled.max(travelled),
             },
-            gap: self.project_gap_at(event.current),
+            landing: self.project_gap_at(event.current),
         };
-
         if event.phase != ResizePhase::Ended {
             self.project_drag = Some(drag);
             return;
         }
         self.project_drag = None;
-        match drag.is_carried() {
-            true => {
-                self.open.move_to(drag.project, drag.gap);
-                self.store();
+        if drag.is_carried() {
+            if let Some(landing) = drag.landing {
+                self.open.move_to(drag.project, landing.gap);
+                self.assign_project_group(drag.project, landing.group);
             }
-            false => self.activate_project(drag.project),
+        } else {
+            self.activate_project(drag.project);
         }
     }
 
-    /// Makes `id` the active project, pointed at its own checkout.
+    /// Activates a project's own checkout through the shared scope seam.
     pub(super) fn activate_project(&mut self, id: ProjectId) {
         self.open.activate(id);
         self.select_checkout();
         self.store();
     }
 
-    /// The line across the sidebar where the carried project would land.
-    ///
-    /// Nothing is drawn while the gap either side of the project itself is
-    /// the one under the pointer, because letting go there moves nothing.
+    /// The insertion caret, excluding destinations that leave order and membership unchanged.
     pub(super) fn project_caret(&self) -> Option<Rect> {
         let drag = self.project_drag.filter(ProjectDrag::is_carried)?;
+        let landing = drag.landing?;
         let from = self
             .open
             .iter()
             .position(|project| project.id() == drag.project)?;
-        if drag.gap == from || drag.gap == from + 1 {
+        let project = self.open.get(drag.project)?;
+        let group = project_groups::membership(&self.project_groups, &project.root().stored());
+        if group == landing.group && (landing.gap == from || landing.gap == from + 1) {
             return None;
         }
         let list = self.project_list.get();
-        let top = list.top() + self.project_heights().take(drag.gap).sum::<f32>();
         Some(Rect::from_xywh(
             list.left(),
-            top - CARET / 2.0,
+            landing.top - CARET / 2.0,
             list.size.width,
             CARET,
         ))
     }
 
-    /// The gap between projects nearest `point`, down the sidebar's rows.
-    fn project_gap_at(&self, point: Point) -> usize {
-        let mut top = self.project_list.get().top();
-        let mut gap = 0;
-        for height in self.project_heights() {
-            if point.y < top + height / 2.0 {
-                break;
-            }
-            top += height;
-            gap += 1;
-        }
-        gap
+    /// Visible rows and their bounds, including headings and expanded sessions.
+    fn project_slots(&self) -> Vec<(ProjectRow, Rect)> {
+        let list = self.project_list.get();
+        let mut top = list.top();
+        let row_height = self.theme().size.row;
+        project_groups::rows(&self.open, &self.project_groups)
+            .into_iter()
+            .map(|row| {
+                let count = match row {
+                    ProjectRow::Heading(_) => 1,
+                    ProjectRow::Project(id, _) => 1 + self.sessions.of(id).count(),
+                };
+                let height = row_height * count as f32;
+                let bounds = Rect::from_xywh(list.left(), top, list.size.width, height);
+                top += height;
+                (row, bounds)
+            })
+            .collect()
     }
 
-    /// How tall each open project's rows are drawn: its own and its sessions'.
-    fn project_heights(&self) -> impl Iterator<Item = f32> + '_ {
-        let row = self.theme().size.row;
-        self.open
-            .iter()
-            .map(move |project| (1 + self.sessions.of(project.id()).count()) as f32 * row)
+    /// Resolves a pointer to the gap and group represented by its visible row.
+    fn project_gap_at(&self, point: Point) -> Option<ProjectLanding> {
+        let list = self.project_list.get();
+        if point.x < list.left()
+            || point.x > list.right()
+            || point.y < list.top()
+            || point.y > list.bottom()
+        {
+            return None;
+        }
+        let mut last = None;
+        for (row, bounds) in self.project_slots() {
+            let landing = match row {
+                ProjectRow::Heading(group) => ProjectLanding {
+                    gap: self
+                        .open
+                        .iter()
+                        .position(|project| {
+                            project_groups::membership(
+                                &self.project_groups,
+                                &project.root().stored(),
+                            ) == group
+                        })
+                        .unwrap_or(self.open.iter().count()),
+                    group,
+                    top: bounds.bottom(),
+                },
+                ProjectRow::Project(id, group) => {
+                    let index = self.open.iter().position(|project| project.id() == id)?;
+                    let after = point.y >= bounds.top() + bounds.size.height / 2.0;
+                    ProjectLanding {
+                        gap: index + usize::from(after),
+                        group,
+                        top: if after { bounds.bottom() } else { bounds.top() },
+                    }
+                }
+            };
+            if point.y <= bounds.bottom() {
+                return Some(landing);
+            }
+            last = Some(landing);
+        }
+        last
     }
 }

@@ -11,12 +11,21 @@
 //! What the agent says arrives a fragment at a time; [`Transcript`] is where
 //! those fragments become the conversation as it now stands.
 
+mod chat;
+mod form;
 mod pane;
 mod store;
 mod transcript;
 
+pub use chat::chat_pane;
+pub use form::{Form, FormRow};
 pub use pane::{
-    RESULT_LINES, agent_pane, content_height, selected_text, standing_color, words_between,
+    agent_pane, content_height, everything, knob_rows, lines_between, mode_icon, pending_messages,
+    selected_text, standing_color, words_between,
 };
-pub use store::{Pasted, Spot, Standing, Talk, TalkId, Talks, Tally};
+pub use store::{McpFactory, Pasted, Pending, Standing, Talk, TalkId, Talks, Tally};
 pub use transcript::Block;
+
+pub use pm_ui::Spot;
+
+pub(crate) use pane::tool_offset;
