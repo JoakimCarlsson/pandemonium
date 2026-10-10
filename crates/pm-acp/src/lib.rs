@@ -15,6 +15,7 @@ mod agent;
 mod agent_registry;
 mod attachment;
 mod elicitation;
+mod launch;
 mod limits;
 mod mcp;
 mod process;

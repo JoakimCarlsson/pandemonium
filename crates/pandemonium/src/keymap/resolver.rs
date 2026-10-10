@@ -64,15 +64,28 @@ impl Resolver {
         let mut pressed = std::mem::take(&mut self.pending);
         pressed.push(chord);
 
-        let Some(binding) = self.keymap.candidates(&pressed, context).last() else {
+        let resolution = self.resolve(&pressed, context);
+        if resolution == Resolution::Pending {
+            self.pending = pressed;
+        }
+        resolution
+    }
+
+    /// Resolves a chord without consuming the pending sequence.
+    pub fn preview(&self, chord: Chord, context: &Context) -> Resolution {
+        let mut pressed = self.pending.clone();
+        pressed.push(chord);
+        self.resolve(&pressed, context)
+    }
+
+    /// Resolves a complete pressed sequence against the active keymap.
+    fn resolve(&self, pressed: &[Chord], context: &Context) -> Resolution {
+        let Some(binding) = self.keymap.candidates(pressed, context).last() else {
             return Resolution::None;
         };
-
         if binding.sequence.len() > pressed.len() {
-            self.pending = pressed;
             return Resolution::Pending;
         }
-
         match binding.action {
             Some(action) => Resolution::Act(action),
             None => Resolution::None,

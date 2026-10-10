@@ -334,7 +334,11 @@ impl<M: Clone> Element<M> for Div<M> {
         let content = self.content_offer(available);
         let children = self.measure_children(content, cx);
         let mut sizes = children.clone();
-        self.settle_cross(&mut sizes, content, !self.style.fit_width);
+        let mut measured_content = content;
+        if self.style.axis == Axis::Horizontal && self.style.height == Length::Auto {
+            measured_content.height = children.iter().map(|size| size.height).fold(0.0, f32::max);
+        }
+        self.settle_cross(&mut sizes, measured_content, !self.style.fit_width);
         let axis = self.style.axis;
 
         let gaps = self.style.gap * sizes.len().saturating_sub(1) as f32;

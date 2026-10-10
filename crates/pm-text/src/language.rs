@@ -550,6 +550,19 @@ const TYPESCRIPT: Language = Language {
     line_comment: Some("//"),
 };
 
+/// WGSL: the WESL grammar, which parses WGSL as its subset, its highlights and
+/// wgsl-analyzer.
+const WGSL: Language = Language {
+    name: "WGSL",
+    language_id: "wgsl",
+    grammar: GrammarSource::Builtin(tree_sitter_wesl::LANGUAGE),
+    extensions: &["wgsl", "wesl"],
+    file_names: &[],
+    highlights: &[tree_sitter_wesl::HIGHLIGHTS_QUERY],
+    servers: &[plain("wgsl-analyzer")],
+    line_comment: Some("//"),
+};
+
 /// YAML: the grammar, its highlights and yaml-language-server.
 const YAML: Language = Language {
     name: "YAML",
@@ -565,7 +578,7 @@ const YAML: Language = Language {
 /// Every language the editor knows, in the order they are written down.
 const KNOWN: &[Language] = &[
     BASH, C, CPP, CSHARP, CSS, DOCKERFILE, GO, HTML, JAVA, JAVASCRIPT, JSX, JSON, JSONC, KOTLIN,
-    LUA, MARKDOWN, PHP, PYTHON, RUBY, RUST, SQL, TOML, TSX, TYPESCRIPT, YAML,
+    LUA, MARKDOWN, PHP, PYTHON, RUBY, RUST, SQL, TOML, TSX, TYPESCRIPT, WGSL, YAML,
 ];
 
 impl Debug for Language {

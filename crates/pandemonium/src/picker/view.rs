@@ -5,11 +5,10 @@
 //! same panel with nothing under the field. What fills the list is the
 //! window's; how it reads is here.
 
-use pm_ui::{
-    Div, IconName, IconSize, Styled, Theme, field, h_flex, icon, kbd, rule, space, text, v_flex,
-};
+use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, kbd, rule, space, text, v_flex};
 
 use crate::agent::mode_icon;
+use crate::input::hinted_input_view;
 use crate::message::Message;
 use crate::picker::state::{Choice, Kind, Picker, Row};
 
@@ -125,13 +124,18 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
             .child(rows(theme, picker))
             .child(rule(theme))
             .child(
-                field(picker.field().value(), picker.field().caret(), solid)
-                    .selection(picker.field().selection())
-                    .placeholder(picker.kind().placeholder())
-                    .w_full()
-                    .px(2)
-                    .py(1.5)
-                    .on_press(Message::PlacePicker),
+                hinted_input_view(
+                    theme,
+                    picker.field(),
+                    true,
+                    solid,
+                    picker.kind().placeholder(),
+                    Message::WritePicker,
+                    Message::ShowInputMenu,
+                )
+                .h_px(FIELD_HEIGHT)
+                .px(2)
+                .py(1.5),
             );
     }
 
@@ -143,13 +147,18 @@ pub fn picker(theme: &Theme, picker: &Picker, width: f32, solid: bool) -> Div<Me
         .border_1(theme.colors.border)
         .rounded(theme.radius.lg)
         .child(
-            field(picker.field().value(), picker.field().caret(), solid)
-                .selection(picker.field().selection())
-                .placeholder(picker.kind().placeholder())
-                .w_full()
-                .px(2)
-                .py(1.5)
-                .on_press(Message::PlacePicker),
+            hinted_input_view(
+                theme,
+                picker.field(),
+                true,
+                solid,
+                picker.kind().placeholder(),
+                Message::WritePicker,
+                Message::ShowInputMenu,
+            )
+            .h_px(FIELD_HEIGHT)
+            .px(2)
+            .py(1.5),
         )
         .when(!prompt, |panel| {
             panel.child(rule(theme)).child(rows(theme, picker))
@@ -356,7 +365,8 @@ fn rows(theme: &Theme, picker: &Picker) -> Div<Message> {
 
 /// Builds grouped local and remote branches, plus the branch being typed.
 fn branch_rows(theme: &Theme, picker: &Picker) -> Div<Message> {
-    let query = picker.field().value().trim();
+    let value = picker.field().value();
+    let query = value.trim();
     let base = picker
         .rows()
         .find_map(|row| row.label.strip_prefix("✓  "))

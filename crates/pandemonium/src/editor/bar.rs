@@ -5,9 +5,10 @@
 //! opened over, and every control on it resolves to the same [`Action`] a
 //! keybinding would — so Find Next is one command however it was asked for.
 
-use pm_ui::{Div, Styled, Theme, field, h_flex, text, v_flex};
+use pm_ui::{Div, Styled, Theme, h_flex, text, v_flex};
 
 use crate::editor::search::{Search, SearchField};
+use crate::input::hinted_input_view;
 use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::PaneId;
@@ -52,26 +53,24 @@ fn query_row(theme: &Theme, pane: PaneId, search: &Search, solid: bool) -> Div<M
             Message::ToggleSearchReplace(pane),
         ))
         .child(
-            field(
-                search.query().value(),
-                search.query().caret(),
-                focused && solid,
+            hinted_input_view(
+                theme,
+                search.query(),
+                focused,
+                solid,
+                "Find (one line at a time)",
+                move |phase, anchor, head| {
+                    Message::WriteSearch(pane, SearchField::Query, phase, anchor, head)
+                },
+                Message::ShowInputMenu,
             )
-            .selection(search.query().selection())
-            .placeholder("Find (one line at a time)")
-            .font_mono()
             .flex_1()
             .h_px(ROW_HEIGHT - 6.0)
-            .px(1)
-            .py(0.5)
-            .rounded(theme.radius.md)
-            .bg(theme.colors.background)
             .border_1(if focused {
                 theme.colors.border_focused
             } else {
                 theme.colors.border
-            })
-            .on_press(move |caret| Message::FocusSearch(pane, SearchField::Query, caret)),
+            }),
         )
         .child(toggle(
             theme,
@@ -108,26 +107,24 @@ fn replacement_row(theme: &Theme, pane: PaneId, search: &Search, solid: bool) ->
         .items_center()
         .child(v_flex().w_px(ROW_HEIGHT))
         .child(
-            field(
-                search.replacement().value(),
-                search.replacement().caret(),
-                focused && solid,
+            hinted_input_view(
+                theme,
+                search.replacement(),
+                focused,
+                solid,
+                "Replace",
+                move |phase, anchor, head| {
+                    Message::WriteSearch(pane, SearchField::Replacement, phase, anchor, head)
+                },
+                Message::ShowInputMenu,
             )
-            .selection(search.replacement().selection())
-            .placeholder("Replace")
-            .font_mono()
             .flex_1()
             .h_px(ROW_HEIGHT - 6.0)
-            .px(1)
-            .py(0.5)
-            .rounded(theme.radius.md)
-            .bg(theme.colors.background)
             .border_1(if focused {
                 theme.colors.border_focused
             } else {
                 theme.colors.border
-            })
-            .on_press(move |caret| Message::FocusSearch(pane, SearchField::Replacement, caret)),
+            }),
         )
         .child(command(theme, pane, "Replace", Action::ReplaceMatch))
         .child(command(theme, pane, "All", Action::ReplaceAll))

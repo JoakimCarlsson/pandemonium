@@ -6,6 +6,8 @@
 //! here decides what a change is — that is git's — and nothing else in the
 //! window writes to the index.
 
+use pm_host::Location;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -25,6 +27,13 @@ use crate::review::{
     ChangeId, Delivery, Group, Remarking, RepositoryAction, Review, Work, hunk_anchor, line_at,
 };
 
+/// The most changed files one review opens documents over at once.
+///
+/// Each one is opened in every server of its language and asked for its
+/// semantic tokens, so a worktree whose untracked output briefly lists
+/// thousands of files must not open them all.
+const REVIEW_OPENED_LIMIT: usize = 32;
+
 impl App {
     /// The review of the project the window is pointed at.
     pub(super) fn review(&self) -> Option<&Review> {
@@ -33,11 +42,8 @@ impl App {
 
     /// Where the active repository of `scope`'s review sits: the one a branch
     /// is switched in, and a fetch, a pull or a push is made from.
-    pub(super) fn repository_root(&self, scope: Scope) -> Option<PathBuf> {
-        self.reviews
-            .get(&scope)?
-            .active_root()
-            .map(std::path::Path::to_path_buf)
+    pub(super) fn repository_root(&self, scope: Scope) -> Option<Location> {
+        self.reviews.get(&scope)?.active_root().cloned()
     }
 
     /// The worktree of `project` a branch or remote command is carried out in:
@@ -82,14 +88,16 @@ impl App {
             .collect()
     }
 
-    /// The changed files of `scope`'s review that are on disk to be opened.
+    /// The changed files of `scope`'s review that are on disk to be opened:
+    /// the first [`REVIEW_OPENED_LIMIT`] of those whose lines are showing.
     fn reviewed_paths(&self, scope: Scope) -> Vec<PathBuf> {
         self.reviews.get(&scope).map_or_else(Vec::new, |review| {
             review
                 .changed()
                 .iter()
                 .map(|changed| changed.path.clone())
-                .filter(|path| path.is_file())
+                .filter(|path| !review.is_collapsed(path) && path.is_file())
+                .take(REVIEW_OPENED_LIMIT)
                 .collect()
         })
     }
@@ -138,11 +146,7 @@ impl App {
     /// Opens every changed file of `scope`'s review, and asks their servers
     /// what the names in them are.
     fn open_files_reviewed_in(&mut self, scope: Scope) {
-        let Some(root) = self
-            .reviews
-            .get(&scope)
-            .map(|review| review.root().to_path_buf())
-        else {
+        let Some(root) = self.reviews.get(&scope).map(|review| review.root().clone()) else {
             return;
         };
         for path in self.reviewed_paths(scope) {
@@ -582,7 +586,7 @@ impl App {
         let Some(path) = self.changed_path(index) else {
             return;
         };
-        let root = self.review().map(|review| review.root().to_path_buf());
+        let root = self.review().map(|review| review.root().clone());
         let written = match root.filter(|_| relative) {
             Some(root) => path
                 .strip_prefix(&root)
@@ -618,10 +622,7 @@ impl App {
     }
 
     /// Where the `index`-th change is, and the line it first differs at.
-    fn changed_at(
-        &self,
-        index: usize,
-    ) -> Option<(Scope, std::path::PathBuf, std::path::PathBuf, usize)> {
+    fn changed_at(&self, index: usize) -> Option<(Scope, Location, std::path::PathBuf, usize)> {
         let scope = self.scope()?;
         let review = self.reviews.get(&scope)?;
         let changed = review.change(index)?;
@@ -641,7 +642,7 @@ impl App {
             .unwrap_or(1);
         Some((
             scope,
-            review.root().to_path_buf(),
+            review.root().clone(),
             changed.path.clone(),
             first.saturating_sub(1),
         ))
@@ -740,7 +741,10 @@ impl App {
                     .map(|line| buffer.line_text(line))
                     .collect()
             }
-            None => std::fs::read_to_string(path)
+            None => self
+                .root_of(scope)
+                .and_then(|root| root.host.fs().read_to_string(path).ok())
+                .ok_or(())
                 .map(|text| text.lines().map(str::to_owned).collect())
                 .unwrap_or_default(),
         }
@@ -1117,7 +1121,7 @@ impl App {
             return;
         };
         let comments = review.comments().clone();
-        let root = review.root().to_path_buf();
+        let root = review.root().clone();
         for path in comments.paths() {
             let Some(document) = self
                 .editor

@@ -123,7 +123,11 @@ impl App {
             Message::ShowCheckpointStep(scope, prefix) => self.show_checkpoint_step(scope, prefix),
             Message::NewAgentSession => self.open_picker(Kind::Agents),
             Message::StartAgent(agent) => {
-                if agent.startable() {
+                if self
+                    .scope()
+                    .and_then(|scope| self.root_of(scope))
+                    .is_some_and(|root| agent.startable_on(&root.host))
+                {
                     self.start_agent(agent);
                 }
             }
@@ -298,7 +302,10 @@ impl App {
                     false => agent.source.hint(),
                 },
                 choice: Choice::Agent(agent),
-                enabled: agent.startable(),
+                enabled: self
+                    .scope()
+                    .and_then(|scope| self.root_of(scope))
+                    .is_some_and(|root| agent.startable_on(&root.host)),
             })
             .collect()
     }
@@ -641,7 +648,7 @@ impl App {
     }
 
     /// Toggles a reader-selected switch and remembers its new value.
-    fn toggle_agent_knob(&mut self, session: TalkId, knob: &str) {
+    pub(super) fn toggle_agent_knob(&mut self, session: TalkId, knob: &str) {
         let Some(talk) = self.agents.get(session) else {
             return;
         };
@@ -748,7 +755,7 @@ impl App {
         &mut self,
         project: pm_core::ProjectId,
         session: Option<pm_core::SessionId>,
-        root: &std::path::Path,
+        root: &pm_host::Location,
         agent: Agent,
         profile: Option<&crate::config::Profile>,
         login: bool,
@@ -759,7 +766,7 @@ impl App {
         };
         let mut env = self.worktree_env(scope);
         if let Some(profile) = profile {
-            let environment = profile.environment(agent)?;
+            let environment = profile.environment_on(agent, &root.host)?;
             env.push(environment);
         }
         let started = match login {
@@ -958,8 +965,8 @@ impl App {
             return;
         };
         let scope = talk.scope();
-        let root = talk.root().to_path_buf();
-        let command = talk.agent().command();
+        let root = talk.root().clone();
+        let command = talk.agent().command_on(&root.host);
         let program = command.get_program().to_string_lossy().into_owned();
         let mut arguments = command
             .get_args()
@@ -978,7 +985,7 @@ impl App {
         environment.extend(talk.env().iter().cloned());
         environment.extend(env.iter().cloned());
         if let Some(profile) = talk.profile() {
-            let Some(selected) = profile.environment(talk.agent()) else {
+            let Some(selected) = profile.environment_on(talk.agent(), &root.host) else {
                 return;
             };
             environment.push(selected);

@@ -14,6 +14,8 @@ mod checkpoint;
 mod clicks;
 mod client;
 mod commands;
+mod control;
+mod control_agent;
 mod debug;
 mod dialog;
 mod disk;
@@ -31,6 +33,7 @@ mod layouts;
 mod listing;
 mod mcp;
 mod modal;
+mod notebook;
 mod notice;
 mod operations;
 mod orchestration;
@@ -42,6 +45,7 @@ mod placement;
 mod places;
 mod predict;
 mod reading;
+mod remote;
 mod reorder;
 mod review;
 mod search;
@@ -108,6 +112,8 @@ type InstalledServers = Arc<Mutex<Vec<(&'static str, Result<(), String>)>>>;
 /// can both be true, and there is no such state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Writing {
+    /// The source input of one stable notebook cell.
+    Notebook(editor::FileId, pm_core::notebook::CellId),
     /// The commit message of the active project's review.
     Commit,
     /// The prompt of one agent session.
@@ -164,10 +170,16 @@ pub enum Wake {
     Picture,
     /// Something has been read off the clipboard into a prompt.
     Paste,
+    /// A remote machine handshake finished.
+    Remote,
     /// Files have been carried onto the window from outside it.
     Arrival,
+    /// A command from a local control client is waiting.
+    Control,
     /// A caller-bound editor MCP invocation is waiting.
     Orchestration,
+    /// A notebook kernel has returned discovery or execution events.
+    Notebook,
     /// The MCP registry has answered a search.
     Registry,
 }
@@ -292,6 +304,16 @@ pub struct App {
     showing_bases: bool,
     /// The projects this window holds open.
     open: Projects,
+    /// Shared machine connections for the window.
+    hosts: pm_host::Hosts,
+    /// The same-user socket used by remote control clients.
+    control: Option<crate::control::Server>,
+    /// The SSH login terminal while a connection is authenticating.
+    authentication: Option<remote::Authentication>,
+    /// The remote directory whose browser request is current.
+    remote_browse: Option<pm_host::Location>,
+    /// Remote handshakes completed away from the window.
+    remote_back: Arc<Mutex<Vec<remote::RemoteBack>>>,
     /// One file tree per worktree, so each keeps what it has expanded.
     files: BTreeMap<Scope, FileTree>,
     /// What each of those worktrees has changed, and what git said about it.
@@ -371,6 +393,8 @@ pub struct App {
     images: crate::image::Images,
     /// What the markdown the panes are rendering keeps between frames.
     renders: crate::markdown::Renders,
+    /// Notebook inputs, output images and worktree-scoped kernel bridges.
+    notebooks: crate::notebook::Notebooks,
     /// The file followed and symbols shown by each worktree's outline.
     outlines: crate::outline::Store,
     /// Test discoveries, retained runs and coverage keyed by worktree.
@@ -419,6 +443,8 @@ pub struct App {
     picker: Option<crate::picker::Picker>,
     /// The status-bar branch control anchoring its popover.
     branch_picker_at: Option<Rect>,
+    /// When the open branch picker should next fetch and prune its remotes.
+    branch_refresh_at: Option<Instant>,
     /// The agent control anchoring its choices.
     agent_picker_at: Option<Rect>,
     /// The control whose click is being handled, for what it opens to sit against.
@@ -545,6 +571,8 @@ pub struct App {
     /// The logins running in terminals, as the conversation each is for and
     /// the worktree and shell it runs as.
     logins: Vec<(crate::agent::TalkId, Scope, crate::terminal::ShellId)>,
+    /// Image chunks uploaded by control clients for pending ACP prompts.
+    control_images: BTreeMap<(crate::agent::TalkId, u64), control_agent::ControlImage>,
     /// What the reader is being told about in the status bar.
     notices: Notices,
     /// Servers already offered or tried this launch.
@@ -713,12 +741,26 @@ impl App {
     pub fn restored(proxy: EventLoopProxy<Wake>) -> Self {
         let restored = config::load();
         let mut open = Projects::new();
+        let mut hosts = pm_host::Hosts::default();
+        let mut remote_errors = Vec::new();
         for root in &restored.projects {
-            let _ = open.find_or_open(root);
+            match hosts.restore(root) {
+                Ok(location) => {
+                    let _ = open.find_or_open(location);
+                }
+                Err(error) => {
+                    remote_errors.push(error.to_string());
+                    if let Ok(location) = hosts.location(root) {
+                        let _ = open.find_or_open(location);
+                    }
+                }
+            }
         }
         open.activate_first();
-        if let Some(active) = restored.active.as_ref() {
-            let _ = open.find_or_open(active);
+        if let Some(active) = restored.active.as_ref()
+            && let Ok(location) = hosts.location(active)
+        {
+            let _ = open.find_or_open(location);
         }
 
         let layout = restored.layout;
@@ -730,9 +772,25 @@ impl App {
             .map(|project| (Scope::checkout(project.id()), FileTree::new(project.root())))
             .collect();
         let pending: Pending = Arc::new(std::array::from_fn(|_| AtomicBool::new(false)));
+        for project in open.iter() {
+            project
+                .root()
+                .host
+                .set_notify(waker_through(&proxy, &pending, Wake::Remote));
+        }
         crate::image::wake_with(waker_through(&proxy, &pending, Wake::Picture));
 
         let mut notices = Notices::default();
+        let control = match crate::control::Server::start(proxy.clone()) {
+            Ok(server) => Some(server),
+            Err(error) => {
+                notices.trouble(format!("Phone control unavailable: {error}"), None);
+                None
+            }
+        };
+        for error in remote_errors {
+            notices.trouble(error, None);
+        }
         for error in config::take_extension_errors() {
             notices.trouble(error, None);
         }
@@ -771,6 +829,11 @@ impl App {
             session_bases: Vec::new(),
             showing_bases: false,
             open,
+            hosts,
+            control,
+            authentication: None,
+            remote_browse: None,
+            remote_back: Arc::default(),
             files,
             reviews: BTreeMap::new(),
             watchers: BTreeMap::new(),
@@ -812,6 +875,7 @@ impl App {
             editor: Files::default(),
             images: crate::image::Images::default(),
             renders: crate::markdown::Renders::default(),
+            notebooks: crate::notebook::Notebooks::default(),
             outlines: crate::outline::Store::default(),
             testing: crate::testing::Store::default(),
             excerpts: BTreeMap::new(),
@@ -836,6 +900,7 @@ impl App {
             trail: Trail::default(),
             picker: None,
             branch_picker_at: None,
+            branch_refresh_at: None,
             agent_picker_at: None,
             trigger: None,
             commit_bounds: Rc::new(Cell::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0))),
@@ -892,6 +957,7 @@ impl App {
             task_errors: std::collections::BTreeSet::new(),
             errands: client::Errands::default(),
             logins: Vec::new(),
+            control_images: BTreeMap::new(),
             notices,
             offered_servers: BTreeSet::new(),
             server_failure_logs: Vec::new(),
@@ -921,6 +987,9 @@ impl App {
     /// the file tree lists, and it is started the first time its pane is
     /// drawn rather than when the project is opened.
     fn active_shell(&mut self) -> Option<Shell> {
+        if let Some(auth) = &self.authentication {
+            return Some(auth.shell.clone());
+        }
         let scope = self.scope()?;
         let root = self.root_of(scope)?;
         let env = self.worktree_env(scope);
@@ -929,6 +998,9 @@ impl App {
 
     /// Closes the panel once the worktree's last shell has exited.
     fn close_empty_panel(&mut self) {
+        if self.authentication.is_some() {
+            return;
+        }
         let Some(scope) = self.scope() else {
             return;
         };
@@ -960,6 +1032,7 @@ impl App {
             Some(Writing::Prompt(_)) => return Some("prompt"),
             Some(Writing::Console(_)) => return Some("console"),
             Some(Writing::Commit) => return Some("commit"),
+            Some(Writing::Notebook(..)) => return Some("field"),
             Some(Writing::Comment(_)) => return Some("comment"),
             Some(Writing::McpSearch | Writing::AgentSearch) => {
                 return Some("search");
@@ -986,9 +1059,13 @@ impl App {
 
     /// The file keystrokes are going to, if the pane is focused.
     pub(super) fn focused_file(&self) -> Option<editor::OpenFile> {
-        (self.editor_focused && !self.settings_open)
-            .then(|| self.active_file())
-            .flatten()
+        (self.editor_focused
+            && !self.settings_open
+            && !self
+                .active_file_id()
+                .is_some_and(|file| self.notebook_visible(file)))
+        .then(|| self.active_file())
+        .flatten()
     }
 
     /// Places the cursor where a press landed, or selects to where it reached.
@@ -1230,6 +1307,9 @@ impl App {
         if !self.terminal_focused || !self.showing_terminals() || self.picker.is_some() {
             return None;
         }
+        if let Some(auth) = &self.authentication {
+            return Some(auth.shell.clone());
+        }
         self.terminals.active(self.scope()?)
     }
 
@@ -1257,6 +1337,9 @@ impl App {
 
     /// Folds a message in, writes the preferences down and redraws.
     fn apply(&mut self, message: Message) {
+        if let Some(control) = &self.control {
+            control.changed();
+        }
         self.sync_layout();
         if message == Message::CopyText {
             self.copy_reading_text();
@@ -1400,6 +1483,9 @@ impl App {
         if self.tree_command(message) {
             return;
         }
+        if self.notebook_command(message) {
+            return;
+        }
         if self.diagram_command(message) {
             return;
         }
@@ -1424,6 +1510,13 @@ impl App {
         if message == Message::ToggleHistoryGraph {
             self.history_graph_open = !self.history_graph_open;
             self.store();
+            self.request_redraw();
+            return;
+        }
+        if let Message::ScrollChanges(event, step) = message {
+            if let Some(review) = self.review_mut() {
+                review.drag_list_scroll(event, step);
+            }
             self.request_redraw();
             return;
         }
@@ -1574,10 +1667,8 @@ impl App {
             self.open_editor_menu(pane);
             return;
         }
-        if let Message::PlacePicker(caret) = message {
-            if let Some(picker) = self.picker.as_mut() {
-                picker.edit(|field| field.place(caret));
-            }
+        if let Message::WritePicker(phase, anchor, head) = message {
+            self.point_focused_input(phase, anchor, head);
             self.request_redraw();
             return;
         }
@@ -1606,22 +1697,20 @@ impl App {
             self.focus_pane(pane);
             return self.act(action);
         }
-        if let Message::FocusSearch(pane, field, caret) = message {
+        if let Message::WriteSearch(pane, field, phase, anchor, head) = message {
             self.focus_pane(pane);
-            self.focus_search(field, caret);
+            self.focus_search(field);
+            self.point_focused_input(phase, anchor, head);
             self.request_redraw();
             return;
         }
-        if let Message::FocusProjectSearch(pane, field, caret) = message {
+        if let Message::WriteProjectSearch(pane, field, phase, anchor, head) = message {
             self.focus_pane(pane);
             if let Some(Item::Search(scope)) = self.active_tab()
-                && let Some(search) = self.searches.get_mut(&scope)
+                && self.searches.contains_key(&scope)
             {
-                match field {
-                    editor::SearchField::Query => search.query.place(caret),
-                    editor::SearchField::Replacement => search.replacement.place(caret),
-                }
                 self.project_search_field = Some(field);
+                self.point_focused_input(phase, anchor, head);
             }
             self.request_redraw();
             return;
@@ -1729,12 +1818,12 @@ impl App {
             return;
         }
         if message == Message::SyncBranch {
-            self.remote_operation(RemoteOperation::Sync, pm_core::sync);
+            self.remote_operation(RemoteOperation::Sync, |root| pm_core::sync(root));
             self.request_redraw();
             return;
         }
         if message == Message::Fetch {
-            self.remote_operation(RemoteOperation::Fetch, pm_core::fetch);
+            self.remote_operation(RemoteOperation::Fetch, |root| pm_core::fetch(root));
             self.request_redraw();
             return;
         }
@@ -1749,7 +1838,7 @@ impl App {
             return;
         }
         if message == Message::ForcePush {
-            self.remote_operation(RemoteOperation::Push, pm_core::force_push);
+            self.remote_operation(RemoteOperation::Push, |root| pm_core::force_push(root));
             self.request_redraw();
             return;
         }
@@ -1815,6 +1904,7 @@ impl App {
                         .chain(session.roots())
                         .map(|root| root.to_path_buf())
                 }));
+                self.notebooks.forget(|scope| scope.project() == id);
                 self.editor.close_project(id, &roots);
                 self.images.close_project(id);
             }
@@ -2087,6 +2177,10 @@ impl App {
                         if let Some(review) = self.review_mut() {
                             review.toggle(index);
                         }
+                        if let Some(scope) = self.scope() {
+                            self.open_reviewed_files_of(scope);
+                            self.repaint_reviews();
+                        }
                     }
                 }
             }
@@ -2239,7 +2333,10 @@ impl App {
             return;
         };
         let env = self.worktree_env(scope);
-        self.terminals.start(scope, &directory, &env);
+        let Some(root) = self.root_of(scope) else {
+            return;
+        };
+        self.terminals.start(scope, &root.at(directory), &env);
         self.show_panel(PanelView::Terminal);
         self.terminal_focused = true;
         self.editor_focused = false;
@@ -2312,10 +2409,7 @@ impl App {
             onboarded: self.onboarded,
             projects: self.open.roots(),
             project_groups: self.project_groups.clone(),
-            active: self
-                .open
-                .active()
-                .map(|project| project.root().to_path_buf()),
+            active: self.open.active().map(|project| project.root().stored()),
             layout: self.layout(),
             layouts: self.saved_layouts(),
             shells: self.terminals.saved(&self.worktrees()),
@@ -2382,6 +2476,9 @@ impl App {
     /// The box of text that has the keyboard, to write in.
     pub(super) fn written_in(&mut self) -> Option<&mut crate::input::Input> {
         match self.writing? {
+            Writing::Notebook(file, cell) => {
+                self.notebooks.open.get_mut(&file)?.inputs.get_mut(&cell)
+            }
             Writing::Commit => self.review_mut()?.message_mut(),
             Writing::Prompt(session) => self
                 .agents
@@ -2416,7 +2513,12 @@ impl App {
         if let Some(Writing::Comment(scope)) = self.writing {
             return self.reviews.get(&scope)?.comments().write(write);
         }
-        self.written_in().map(write)
+        let writing = self.writing;
+        let result = self.written_in().map(write);
+        if let Some(Writing::Notebook(file, _)) = writing {
+            self.sync_notebook(file);
+        }
+        result
     }
 
     /// Gives the keyboard to `writing`, taking it from whatever had it.
@@ -2440,23 +2542,7 @@ impl App {
         head: Position,
     ) {
         self.write_in(writing);
-        let pressed = phase == ResizePhase::Started;
-        let still = anchor == head;
-        if pressed {
-            self.text_extends = self.extends_text();
-        }
-        if still && !pressed {
-            return;
-        }
-        let extend = self.text_extends;
-        let presses = match (still, extend) {
-            (true, false) => self.text_clicks.press(anchor),
-            _ => {
-                self.text_clicks.clear();
-                0
-            }
-        };
-        self.with_written(|input| input.point(phase, anchor, head, presses, extend));
+        self.point_focused_input(phase, anchor, head);
     }
 
     /// Writes the window's preferences, projects and layout down.
@@ -2696,7 +2782,9 @@ impl App {
 
     /// Builds the frame and hands it to the renderer.
     fn draw(&mut self) {
+        self.report_file_errors();
         self.sync_layout();
+        self.sync_notebooks();
         self.refresh_health_diagnostics();
         self.see_shown_agents();
         self.follow_agents();
@@ -2838,6 +2926,7 @@ impl ApplicationHandler<Wake> for App {
         }
         self.offer_missing_servers();
         self.hear_server_failures();
+        self.refresh_branches();
         if self.settle_moving() {
             self.request_redraw();
         }
@@ -2875,6 +2964,7 @@ impl ApplicationHandler<Wake> for App {
             next_annotation,
             self.next_prediction().filter(|_| seen),
             self.next_move(),
+            self.next_branch_refresh(),
             self.next_agent_selection_scroll().filter(|_| seen),
             self.ui.as_ref().and_then(pm_ui::Ui::next_tooltip),
             self.ui
@@ -2894,6 +2984,11 @@ impl ApplicationHandler<Wake> for App {
     /// Applies what the shells have written and draws the result.
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         self.pending[event as usize].store(false, Ordering::Release);
+        if event != Wake::Control
+            && let Some(control) = &self.control
+        {
+            control.changed();
+        }
         match event {
             Wake::Orchestration => self.serve_orchestration(),
             Wake::Terminal => {
@@ -2901,7 +2996,7 @@ impl ApplicationHandler<Wake> for App {
                 let tasks_pumped = self.tasks.pump();
                 self.hear_finished_tasks();
                 self.maintain_tests();
-                let logged_in = self.follow_logins();
+                let logged_in = self.follow_logins() | self.follow_authentication();
                 if pumped | tasks_pumped | self.follow_errands() | logged_in {
                     self.hear_failed_shells();
                     self.close_empty_panel();
@@ -2971,7 +3066,8 @@ impl ApplicationHandler<Wake> for App {
                 self.request_redraw();
             }
             Wake::Disk => {
-                if self.take_disk() {
+                self.take_disk();
+                {
                     self.request_redraw();
                 }
             }
@@ -2997,6 +3093,7 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             Wake::Picture => self.request_redraw(),
+            Wake::Notebook => self.take_notebook_events(),
             Wake::Shifted => {
                 if self.take_shifted() {
                     self.request_redraw();
@@ -3012,7 +3109,12 @@ impl ApplicationHandler<Wake> for App {
                     self.request_redraw();
                 }
             }
+            Wake::Remote => {
+                self.take_remote();
+                self.request_redraw();
+            }
             Wake::Arrival => self.take_arrivals(),
+            Wake::Control => self.take_control(),
             Wake::Registry => {
                 self.take_agent_downloads();
                 self.request_redraw();

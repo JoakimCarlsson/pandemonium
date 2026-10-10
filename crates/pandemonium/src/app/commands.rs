@@ -12,8 +12,8 @@ use pm_ui::Axis;
 use crate::app::App;
 use crate::app::places::Place;
 use crate::desktop;
-use crate::editor::{self, Completions, Document, Edit, SearchField};
-use crate::keymap::{Action, Travel};
+use crate::editor::{self, Completions, Document, SearchField};
+use crate::keymap::Action;
 use crate::message::Message;
 use crate::panes::{Item, PaneId, SplitDirection};
 use crate::picker::Kind;
@@ -27,6 +27,9 @@ const ZOOM_RANGE: (f32, f32) = (0.5, 3.0);
 impl App {
     /// Carries `action` out.
     pub(super) fn act(&mut self, action: Action) {
+        if self.act_on_field(action) {
+            return self.request_redraw();
+        }
         if action == Action::Copy && self.copy_reading_text() {
             return self.request_redraw();
         }
@@ -91,6 +94,8 @@ impl App {
             }
             Action::CloseWindow => return self.apply(Message::CloseWindow),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
+            Action::OpenRemoteProject => self.open_picker(Kind::RemoteHosts),
+            Action::ReconnectProject => self.reconnect_project(),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::NewSession => return self.apply(Message::NewSession),
             Action::RemoveProject => {
@@ -295,67 +300,58 @@ impl App {
         window.set_fullscreen(filling);
     }
 
-    /// Routes clipboard editing to the single-line field that has the
-    /// keyboard, saying whether one did.
+    /// Routes editing actions to the shared input that has the keyboard.
     pub(super) fn act_on_field(&mut self, action: Action) -> bool {
-        match action {
-            Action::Cut | Action::Copy | Action::Paste | Action::SelectAll => {}
-            _ => return false,
+        if !crate::input::Input::handles(action) {
+            return false;
+        }
+        if action == Action::Paste && self.picker.is_none() && self.paste_prompt() {
+            return true;
         }
         let picker = self.picker.is_some();
         let mut copied = None;
         let mut changed = false;
-        if !self.edit_focused_field(|field| match action {
-            Action::SelectAll => field.select_all(),
-            Action::Copy => copied = field.selected_text().map(str::to_owned),
-            Action::Cut => {
-                copied = field.cut_selection();
-                changed = copied.is_some();
-            }
-            Action::Paste => {
-                if let Some(text) = desktop::paste() {
-                    field.paste(&text);
-                    changed = true;
+        if !self.edit_focused_field(|input| {
+            let before = input.value();
+            match action {
+                Action::Copy => copied = input.selected_text(),
+                Action::Cut => copied = input.cut_selection(),
+                Action::Paste => {
+                    if let Some(text) = desktop::paste() {
+                        input.paste(&text);
+                    }
+                }
+                _ => {
+                    input.act(action);
                 }
             }
-            _ => {}
+            changed = before != input.value();
         }) {
             return false;
         }
         if let Some(text) = copied {
             desktop::copy(text);
         }
-        if changed && picker {
-            if let Some(picker) = self.picker.as_mut() {
-                picker.filter();
+        if changed {
+            if picker {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.filter();
+                }
+                self.refilter_picker();
+            } else {
+                self.input_retyped();
             }
-            self.refilter_picker();
         }
         true
     }
 
     /// Carries out a command that acts on the file the focused pane shows.
     fn act_on_buffer(&mut self, action: Action) {
-        if self.act_on_field(action) {
+        if let Some(edit) = editor::action_edit(action, self.page_rows()) {
+            self.apply_edit(edit);
             return;
         }
         match action {
-            Action::Move(travel) | Action::Select(travel) => {
-                let motion = editor::motion(travel, self.page_rows());
-                self.apply_edit(Edit::Move(motion, matches!(action, Action::Select(_))));
-            }
-            Action::Newline => self.apply_edit(Edit::Newline),
-            Action::Backspace => self.apply_edit(Edit::Backspace),
-            Action::Delete => self.apply_edit(Edit::Delete),
-            Action::DeleteWordLeft => self.apply_edit(Edit::DeleteWordLeft),
-            Action::DeleteWordRight => self.apply_edit(Edit::DeleteWordRight),
-            Action::DeleteToLineStart => {
-                self.apply_edit(Edit::DeleteTo(editor::motion(Travel::LineStart, 0)));
-            }
-            Action::DeleteToLineEnd => {
-                self.apply_edit(Edit::DeleteTo(editor::motion(Travel::LineEnd, 0)));
-            }
-            Action::Tab => self.apply_edit(Edit::Indent),
             Action::Undo => self.edit_active(|buffer| {
                 buffer.undo();
             }),
@@ -474,13 +470,19 @@ impl App {
     /// when the answers land. Only the first step is taken here, or the
     /// writing would ask again and never settle.
     fn save_or_format(&mut self) {
+        if self
+            .active_file_id()
+            .is_some_and(|file| self.notebook_visible(file))
+        {
+            return self.save_active();
+        }
         let served = self
             .active_file()
             .is_some_and(|document| document.borrow().is_served());
         if served {
             return self.begin_save(self.active_language_settings().format_on_save);
         }
-        self.format_locally(true);
+        self.format_without_server(true);
         self.save_active();
     }
 
@@ -503,6 +505,7 @@ impl App {
 
     /// Writes the file the focused pane is showing to disk.
     pub(super) fn save_active(&mut self) {
+        self.sync_notebooks();
         let Some(file) = self.active_file_id() else {
             return;
         };
@@ -510,12 +513,14 @@ impl App {
             return;
         };
         self.editor.save(file, &root);
+        self.report_file_errors();
         self.reread_changes();
         self.follow_server_settings();
     }
 
     /// Writes every changed file to disk, each into its own worktree.
     fn save_all(&mut self) {
+        self.sync_notebooks();
         let roots = self
             .scopes()
             .into_iter()
@@ -527,19 +532,16 @@ impl App {
                 .find(|(held, _)| *held == scope)
                 .map(|(_, root)| root.clone())
         });
+        self.report_file_errors();
         self.reread_changes();
         self.follow_server_settings();
     }
 
     /// The worktree the file `id` names was opened from.
-    pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<std::path::PathBuf> {
+    pub(super) fn worktree_of(&self, id: crate::editor::FileId) -> Option<pm_host::Location> {
         match self.editor.scope_of(id) {
             Some(scope) => self.root_of(scope),
-            None => self
-                .editor
-                .path(id)?
-                .parent()
-                .map(std::path::Path::to_path_buf),
+            None => self.editor.path(id)?.parent().map(pm_host::Location::local),
         }
     }
 
@@ -663,7 +665,7 @@ impl App {
         let replacement = finder.replacement(
             &document.buffer().line_text(found.start.line),
             found.start.column..found.end.column,
-            document.search().replacement().value(),
+            &document.search().replacement().value(),
         );
         document.edit(|buffer| buffer.replace(found, &replacement));
         document.search_with(|search, buffer| search.refresh(buffer));
@@ -688,7 +690,7 @@ impl App {
                 let replacement = finder.replacement(
                     &document.buffer().line_text(range.start.line),
                     range.start.column..range.end.column,
-                    document.search().replacement().value(),
+                    &document.search().replacement().value(),
                 );
                 (range, replacement)
             })
@@ -1047,9 +1049,9 @@ impl App {
     }
 
     /// Sends later keystrokes to `field` of the focused pane's search bar.
-    pub(super) fn focus_search(&mut self, field: SearchField, caret: usize) {
+    pub(super) fn focus_search(&mut self, field: SearchField) {
         self.search_focused = true;
-        self.with_document(|document| document.search_with(|search, _| search.place(field, caret)));
+        self.with_document(|document| document.search_with(|search, _| search.focus(field)));
     }
 
     /// Puts the cursor at the head of the selection, for a motion of its own.

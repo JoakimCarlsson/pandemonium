@@ -19,7 +19,7 @@ use crate::agent::Pasted;
 use crate::app::{App, Pasting, Writing};
 use crate::desktop;
 use crate::editor::{self, Completions};
-use crate::field::{self, Typed};
+use crate::input::{self, Typed};
 use crate::keymap::{self, Action, Context, Resolution, keys};
 use crate::message::Message;
 use crate::terminal;
@@ -95,7 +95,9 @@ impl App {
         let palette = self.picker.is_some();
         let project_search = matches!(self.active_tab(), Some(crate::panes::Item::Search(_)))
             && self.project_search_field.is_some();
-        let field = palette || self.search_focused || project_search || self.tree_edit.is_some();
+        let outline = matches!(self.active_tab(), Some(crate::panes::Item::Outline(_)));
+        let field =
+            palette || self.search_focused || project_search || self.tree_edit.is_some() || outline;
         let editing = !self.settings_open
             && self.focused_file().is_some()
             && self.writing.is_none()
@@ -187,6 +189,9 @@ impl App {
         if !self.settings_open && self.send_to_notification(event) {
             return self.request_redraw();
         }
+        if self.resolve_input_edit(event) {
+            return self.request_redraw();
+        }
         if self.settings_open {
             self.settings_key_pressed(event);
             return self.request_redraw();
@@ -209,7 +214,7 @@ impl App {
         if self.send_to_outline(event) {
             return self.request_redraw();
         }
-        if self.send_to_tree_edit(&event.logical_key.as_ref()) {
+        if self.send_to_tree_edit(event) {
             return self.request_redraw();
         }
         if self.send_to_tree(&event.logical_key.as_ref()) {
@@ -255,6 +260,28 @@ impl App {
         self.navigate(event);
     }
 
+    /// Resolves modified editing shortcuts before modal lists can swallow them.
+    fn resolve_input_edit(&mut self, event: &KeyEvent) -> bool {
+        if self.typed_into().is_none()
+            || !(self.modifiers.control_key()
+                || self.modifiers.super_key()
+                || self.modifiers.alt_key())
+        {
+            return false;
+        }
+        let Some(chord) = keymap::chord(event, self.modifiers) else {
+            return false;
+        };
+        let Resolution::Act(action) = self.resolver.preview(chord, &self.context()) else {
+            return false;
+        };
+        if !input::Input::handles(action) {
+            return false;
+        }
+        self.resolver.press(chord, &self.context());
+        self.act_on_field(action)
+    }
+
     /// Routes keyboard input within preferences, keeping workspace commands behind the modal.
     fn settings_key_pressed(&mut self, event: &KeyEvent) {
         if self.menu.is_some() && event.logical_key == Key::Named(NamedKey::Escape) {
@@ -271,13 +298,12 @@ impl App {
         if let Some(chord) = keymap::chord(event, self.modifiers) {
             match self.resolver.press(chord, &self.context()) {
                 Resolution::Act(Action::Copy) if self.copy_reading_text() => return,
-                Resolution::Act(
-                    action @ (Action::Copy | Action::Cut | Action::Paste | Action::SelectAll),
-                ) => {
-                    self.act_on_field(action);
-                    return;
+                Resolution::Act(action) => {
+                    if self.act_on_field(action) {
+                        return;
+                    }
                 }
-                Resolution::Act(Action::OpenSettings) | Resolution::Pending => return,
+                Resolution::Pending => return,
                 _ => {}
             }
         }
@@ -376,12 +402,12 @@ impl App {
             Key::Named(NamedKey::ArrowDown) => self.step_picker(1),
             Key::Named(NamedKey::PageUp) => self.step_picker(-(PICKER_PAGE)),
             Key::Named(NamedKey::PageDown) => self.step_picker(PICKER_PAGE),
-            key => {
+            _ => {
                 let Some(picker) = self.picker.as_mut() else {
                     return false;
                 };
                 let mut taken = false;
-                picker.edit(|field| taken = field.press(&key, modifiers) == Typed::Taken);
+                picker.edit(|field| taken = field.press(event, modifiers) == Typed::Taken);
                 if taken {
                     self.refilter_picker();
                 }
@@ -497,15 +523,22 @@ impl App {
 
     /// Pastes clipboard files, image data or text into the focused agent prompt.
     fn paste_agent_prompt(&mut self, event: &KeyEvent) -> bool {
-        let Some(Writing::Prompt(session)) = self.writing else {
-            return false;
-        };
-        if !self.modifiers.super_key() && !self.modifiers.control_key() {
+        if (!self.modifiers.super_key() && !self.modifiers.control_key())
+            || self.modifiers.alt_key()
+        {
             return false;
         }
         if !matches!(&event.logical_key, Key::Character(key) if key.eq_ignore_ascii_case("v")) {
             return false;
         }
+        self.paste_prompt()
+    }
+
+    /// Reads clipboard attachments or text for the focused prompt away from the window.
+    pub(super) fn paste_prompt(&mut self) -> bool {
+        let Some(Writing::Prompt(session)) = self.writing else {
+            return false;
+        };
         let Some(talk) = self.agents.get(session) else {
             return false;
         };
@@ -547,7 +580,7 @@ impl App {
             match pasting {
                 Pasting::Files(files) => {
                     for path in files {
-                        talk.attach_pasted_file(path);
+                        talk.attach_file(path);
                     }
                 }
                 Pasting::Image(pasted) => talk.attach_pasted(pasted),
@@ -632,15 +665,20 @@ impl App {
         if typed == Typed::Ignored {
             return false;
         }
-        if let Writing::Prompt(session) = writing
+        self.input_retyped();
+        true
+    }
+
+    /// Updates dependent suggestions after the focused input's text changes.
+    pub(super) fn input_retyped(&mut self) {
+        if let Some(Writing::Prompt(session)) = self.writing
             && let Some(talk) = self.agents.get_mut(session)
         {
             talk.retyped();
         }
-        if writing == Writing::McpSearch {
+        if self.writing == Some(Writing::McpSearch) {
             self.search_mcp_registry();
         }
-        true
     }
 
     /// Takes a key the list of commands a slash narrowed to wanted.
@@ -680,6 +718,9 @@ impl App {
     /// Does what finishing the box that has the keyboard means.
     fn submit_writing(&mut self, writing: Writing) {
         match writing {
+            Writing::Notebook(file, cell) => {
+                self.notebook_command(Message::Notebook(file, crate::notebook::Action::Run(cell)));
+            }
             Writing::Commit => self.apply(Message::Commit),
             Writing::Prompt(session) => self.apply(Message::SendPrompt(session)),
             Writing::Answer(session, ticket, _) => self.send_answer(session, ticket),
@@ -763,11 +804,11 @@ impl App {
                     search.focus(next);
                 });
             }
-            key => {
+            _ => {
                 let mut taken = false;
                 file.borrow_mut().search_with(|search, buffer| {
                     search.edit_field(
-                        |field| taken = field.press(&key, modifiers) == Typed::Taken,
+                        |field| taken = field.press(event, modifiers) == Typed::Taken,
                         buffer,
                     );
                 });
@@ -802,7 +843,7 @@ impl App {
                 self.project_search_field = None;
                 true
             }
-            key => {
+            _ => {
                 let Some(search) = self.searches.get_mut(&scope) else {
                     return false;
                 };
@@ -811,7 +852,7 @@ impl App {
                     crate::editor::SearchField::Replacement => &mut search.replacement,
                 };
                 let before = field.value().to_owned();
-                let taken = field.press(&key, self.modifiers) == Typed::Taken;
+                let taken = field.press(event, self.modifiers) == Typed::Taken;
                 if before != field.value() && which == crate::editor::SearchField::Query {
                     self.run_project_search(scope);
                 }
@@ -909,7 +950,7 @@ impl App {
     /// On macOS the command key with Left, Right or Backspace edits the line
     /// the same way, and stays the box's too.
     pub(super) fn is_window_chord_over_text(&self, key: &Key<&str>) -> bool {
-        if field::command_line(key, self.modifiers) {
+        if input::command_line(key, self.modifiers) {
             return false;
         }
         let selects = matches!(
@@ -1344,7 +1385,7 @@ impl App {
             self.request_redraw();
             return;
         }
-        if self.scroll_rendered(delta) {
+        if self.scroll_notebook(delta) || self.scroll_rendered(delta) {
             self.request_redraw();
             return;
         }

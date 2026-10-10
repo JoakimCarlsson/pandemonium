@@ -92,8 +92,8 @@ impl App {
             .and_then(Session::delegation)
             .map_or(1, |delegation| delegation.depth.saturating_add(1));
         let parent = Delegation {
-            project: own_project.root().to_path_buf(),
-            parent: source.root().to_path_buf(),
+            project: own_project.root().stored(),
+            parent: source.root().stored(),
             conversation: source.resumable(),
             name: source
                 .scope()
@@ -149,7 +149,11 @@ impl App {
                     .as_str()
                     .ok_or("agent must be an advertised id string")?,
             )
-            .filter(|agent| agent.startable())
+            .filter(|agent| {
+                self.open
+                    .get(project)
+                    .is_some_and(|project| agent.startable_on(&project.root().host))
+            })
             .ok_or("The selected agent is not advertised or cannot be started")?,
             None => source.agent(),
         };
@@ -246,7 +250,7 @@ impl App {
         let Some(root) = self
             .sessions
             .get(started.id)
-            .map(|session| session.root().to_path_buf())
+            .map(|session| session.root().clone())
         else {
             return;
         };

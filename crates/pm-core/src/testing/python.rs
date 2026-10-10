@@ -1,6 +1,7 @@
 //! Python unittest discovery and execution plans handed to the task seam.
 
 use crate::{Task, TaskSource};
+use pm_host::Location;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -44,14 +45,18 @@ impl Default for Python {
 
 impl Python {
     /// Reads optional project configuration and validates its worktree-relative directories.
-    pub fn read(root: &Path) -> Result<Self, String> {
+    pub fn read(root: &Location) -> Result<Self, String> {
         let file = root.join(".pandemonium/tests.json");
-        let adapter: Self = match std::fs::read_to_string(file) {
+        let adapter: Self = match root.host.fs().read_to_string(file) {
             Ok(text) => serde_json::from_str(&text).map_err(|error| error.to_string())?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(error) => return Err(error.to_string()),
         };
-        let resolved_root = root.canonicalize().map_err(|error| error.to_string())?;
+        let resolved_root = root
+            .host
+            .fs()
+            .canonicalize(&root.path)
+            .map_err(|error| error.to_string())?;
         for path in [&adapter.start, &adapter.top] {
             if path.is_absolute()
                 || path
@@ -61,10 +66,11 @@ impl Python {
                 return Err("Test directories must be inside their worktree".into());
             }
             let directory = root
-                .join(path)
-                .canonicalize()
+                .host
+                .fs()
+                .canonicalize(root.join(path))
                 .map_err(|error| error.to_string())?;
-            if !directory.is_dir() || !directory.starts_with(&resolved_root) {
+            if !root.host.fs().is_dir(&directory) || !directory.starts_with(&resolved_root) {
                 return Err("Test directories must resolve inside their worktree".into());
             }
         }
@@ -74,17 +80,29 @@ impl Python {
     /// Writes a unique run plan and returns a command for the existing task runner.
     pub fn task(
         &self,
-        directory: &Path,
+        directory: &Location,
         selection: Option<Selection>,
         coverage: bool,
     ) -> Result<Task, String> {
-        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        directory
+            .host
+            .fs()
+            .create_dir_all(&directory.path)
+            .map_err(|error| error.to_string())?;
         let script = directory.join("runner.py");
-        std::fs::write(&script, include_str!("bridge.py")).map_err(|error| error.to_string())?;
+        directory
+            .host
+            .fs()
+            .write(&script, include_str!("bridge.py"))
+            .map_err(|error| error.to_string())?;
         let plan = directory.join("plan.json");
         let value =
             serde_json::json!({ "adapter": self, "selection": selection, "coverage": coverage });
-        std::fs::write(&plan, value.to_string()).map_err(|error| error.to_string())?;
+        directory
+            .host
+            .fs()
+            .write(&plan, value.to_string())
+            .map_err(|error| error.to_string())?;
         Ok(Task {
             label: if selection.is_none() {
                 "Tests: discover"

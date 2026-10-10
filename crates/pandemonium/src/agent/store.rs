@@ -12,9 +12,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
-use std::fs;
-use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -47,6 +44,13 @@ pub type McpFactory = Arc<dyn Fn(TalkId) -> Result<pm_acp::McpServer, String> + 
 /// knowing which project it belongs to.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TalkId(u64);
+
+impl TalkId {
+    /// The conversation identity within this running editor window.
+    pub fn number(self) -> u64 {
+        self.0
+    }
+}
 
 /// How a conversation is doing, as a reader deciding where to look reads it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -151,6 +155,8 @@ pub struct Talk {
     next_preview: u64,
     /// Pasted images saved as files for agents without image prompt support.
     clipboard_files: Vec<PathBuf>,
+    /// Desktop attachments copied to private storage on an SSH host.
+    remote_files: Vec<pm_host::Location>,
     /// The permission requests waiting on the reader, oldest first.
     asks: Vec<Ask>,
     /// The row of the permission request or the login in front that the
@@ -302,7 +308,7 @@ impl Talk {
     }
 
     /// The worktree the agent is working in.
-    pub fn root(&self) -> &Path {
+    pub fn root(&self) -> &pm_host::Location {
         self.conversation.root()
     }
 
@@ -452,15 +458,9 @@ impl Talk {
         self.conversation.can_image()
     }
 
-    /// Adds a chosen file to the next prompt, decoding its preview away from
-    /// the window when it is a picture.
-    pub fn attach_file(&mut self, path: PathBuf) {
-        self.attach_path(path.clone(), Attachment::File(path));
-    }
-
-    /// Adds a clipboard file as image bytes when the agent accepts its format,
+    /// Adds a chosen, pasted or dropped file as image bytes when the agent accepts its format,
     /// or as a link to the original file otherwise.
-    pub fn attach_pasted_file(&mut self, path: PathBuf) {
+    pub fn attach_file(&mut self, path: PathBuf) {
         let mime_type = path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -473,7 +473,13 @@ impl Talk {
             });
         let image = mime_type
             .filter(|_| self.conversation.can_image())
-            .and_then(|mime_type| fs::read(&path).ok().map(|bytes| (mime_type, bytes)));
+            .and_then(|mime_type| {
+                pm_host::Host::local()
+                    .fs()
+                    .read(&path)
+                    .ok()
+                    .map(|bytes| (mime_type, bytes))
+            });
         let attachment = match image {
             Some((mime_type, bytes)) => Attachment::Image {
                 data: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -483,9 +489,61 @@ impl Talk {
                     |name| name.to_string_lossy().into_owned(),
                 )),
             },
-            None => Attachment::File(path.clone()),
+            None => {
+                let Some(location) = self.copy_attachment(&path) else {
+                    return;
+                };
+                Attachment::File(location)
+            }
         };
         self.attach_path(path, attachment);
+    }
+
+    /// Copies desktop files to the agent's machine and retains them until the talk closes.
+    fn copy_attachment(&mut self, path: &std::path::Path) -> Option<pm_host::Location> {
+        if self.root().host.is_local() {
+            return Some(pm_host::Location::local(path));
+        }
+        let result = (|| -> std::io::Result<pm_host::Location> {
+            let host = self.root().host.clone();
+            let home = host
+                .home()
+                .ok_or_else(|| std::io::Error::other("The SSH host has no home directory"))?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(std::io::Error::other)?
+                .as_nanos();
+            let directory = home
+                .join(".pandemonium/attachments")
+                .join(format!("{}-{stamp:x}", std::process::id()));
+            let bytes = std::fs::read(path)?;
+            host.fs().create_dir_all(&directory)?;
+            let location = pm_host::Location::new(
+                host,
+                directory.join(
+                    path.file_name()
+                        .ok_or_else(|| std::io::Error::other("The attachment has no filename"))?,
+                ),
+            );
+            if let Err(error) = location.host.fs().write(&location, bytes) {
+                let _ = location.host.fs().remove_dir_all(&directory);
+                return Err(error);
+            }
+            Ok(location)
+        })();
+        match result {
+            Ok(location) => {
+                self.remote_files.push(location.clone());
+                Some(location)
+            }
+            Err(error) => {
+                self.transcript.failure(
+                    format!("Could not attach {}: {error}", path.display()),
+                    false,
+                );
+                None
+            }
+        }
     }
 
     /// Adds a file-backed attachment and starts its preview when it is a picture.
@@ -501,13 +559,22 @@ impl Talk {
 
     /// Adds an image pasted and made ready away from the window.
     pub fn attach_pasted(&mut self, pasted: Pasted) {
+        self.clipboard_files.extend(pasted.saved);
+        let attachment = match pasted.attachment {
+            Attachment::File(location) => {
+                let Some(location) = self.copy_attachment(&location.path) else {
+                    return;
+                };
+                Attachment::File(location)
+            }
+            attachment => attachment,
+        };
         let key = self.preview_key();
         if let Some(preview) = pasted.preview {
             self.previews.put(key, preview);
         }
         self.attachment_previews.push(Some(key));
-        self.attachments.push(pasted.attachment);
-        self.clipboard_files.extend(pasted.saved);
+        self.attachments.push(attachment);
     }
 
     /// The key the next attached picture is kept under.
@@ -739,7 +806,7 @@ impl Talk {
         let mut mentionable = self.mentionable.lock().ok()?;
         if mentionable.files.is_none() && !mentionable.listing {
             mentionable.listing = true;
-            let root = self.root().to_path_buf();
+            let root = self.root().clone();
             let shared = self.mentionable.clone();
             let notify = self.notify.clone();
             std::thread::spawn(move || {
@@ -1246,9 +1313,9 @@ impl Talk {
         for path in mentioned(self.root(), &text) {
             if !attachments
                 .iter()
-                .any(|attached| matches!(attached, Attachment::File(file) if *file == path))
+                .any(|attached| matches!(attached, Attachment::File(file) if *file == self.root().at(&path)))
             {
-                attachments.push(Attachment::File(path));
+                attachments.push(Attachment::File(self.root().at(path)));
             }
         }
         for preview in previews.into_iter().flatten() {
@@ -1263,15 +1330,41 @@ impl Talk {
     /// It is a turn like any other: it is put in the transcript as the
     /// reader's, and the conversation follows what comes back.
     pub fn send_text(&mut self, text: &str) {
+        self.send_text_with_files(text.trim(), Vec::new());
+    }
+
+    /// Sends text and worktree files without changing the desktop prompt draft.
+    pub fn send_text_with_files(&mut self, text: &str, files: Vec<PathBuf>) {
+        let attachments = files
+            .into_iter()
+            .map(|path| Attachment::File(self.root().at(path)))
+            .collect::<Vec<_>>();
+        self.send_text_with_attachments(text, attachments);
+    }
+
+    /// Sends text and prepared attachments without changing the desktop draft.
+    pub fn send_text_with_attachments(&mut self, text: &str, attachments: Vec<Attachment>) {
         if self.busy || !self.logins.is_empty() {
             return;
         }
-        let text = text.trim();
-        if text.is_empty() {
+        if text.trim().is_empty() && attachments.is_empty() {
             return;
         }
-        self.transcript.say(Voice::Reader, text);
-        self.deliver(text, Vec::new());
+        let labels = attachments
+            .iter()
+            .map(Attachment::label)
+            .map(|label| format!("[{label}]"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let shown = if labels.is_empty() {
+            text.to_owned()
+        } else if text.is_empty() {
+            labels
+        } else {
+            format!("{text}\n{labels}")
+        };
+        self.transcript.say(Voice::Reader, &shown);
+        self.deliver(text, attachments);
     }
 
     /// Queues a bounded follow-up through the normal prompt and checkpoint seam.
@@ -1529,7 +1622,7 @@ impl Talk {
                             source,
                             message_id: self.fork_message.take(),
                             destination,
-                            shared_root: self.root().to_path_buf(),
+                            shared_root: self.root().stored(),
                         });
                     let history = if self
                         .fork
@@ -1747,7 +1840,10 @@ impl Pasted {
             ),
             false => {
                 let path = crate::desktop::save_pasted_image(&png)?;
-                (Attachment::File(path.clone()), Some(path))
+                (
+                    Attachment::File(pm_host::Location::local(path.clone())),
+                    Some(path),
+                )
             }
         };
         Some(Self {
@@ -1759,10 +1855,18 @@ impl Pasted {
 }
 
 impl Drop for Talk {
-    /// Removes pasted images kept for an agent without image prompt support.
+    /// Removes temporary desktop images and remote attachment copies.
     fn drop(&mut self) {
+        let files = std::mem::take(&mut self.remote_files);
+        std::thread::spawn(move || {
+            for file in files {
+                if let Some(directory) = file.parent() {
+                    let _ = file.host.fs().remove_dir_all(directory);
+                }
+            }
+        });
         for path in &self.clipboard_files {
-            let _ = fs::remove_file(path);
+            let _ = pm_host::Host::local().fs().remove_file(path);
         }
     }
 }
@@ -1790,8 +1894,8 @@ fn mentioning(typed: &str) -> Option<&str> {
 /// A mention is an at sign and a path from the root, and only one naming a
 /// file that is there, inside the worktree, is taken: an address in an
 /// email is an at sign too.
-fn mentioned(root: &Path, text: &str) -> Vec<PathBuf> {
-    let Ok(inside) = root.canonicalize() else {
+fn mentioned(root: &pm_host::Location, text: &str) -> Vec<PathBuf> {
+    let Ok(inside) = root.host.fs().canonicalize(root) else {
         return Vec::new();
     };
     let mut found = Vec::new();
@@ -1800,9 +1904,9 @@ fn mentioned(root: &Path, text: &str) -> Vec<PathBuf> {
             continue;
         };
         let path = root.join(named.trim_end_matches(AFTER_MENTION));
-        let there = path
-            .canonicalize()
-            .is_ok_and(|resolved| resolved.starts_with(&inside) && resolved.is_file());
+        let there = root.host.fs().canonicalize(&path).is_ok_and(|resolved| {
+            resolved.starts_with(&inside) && root.host.fs().is_file(&resolved)
+        });
         if there && !found.contains(&path) {
             found.push(path);
         }
@@ -1811,12 +1915,16 @@ fn mentioned(root: &Path, text: &str) -> Vec<PathBuf> {
 }
 
 /// Finds skills Codex can invoke from the user's and worktree's skill folders.
-fn installed_skills(root: &Path, agent: Agent, environment: &[(String, String)]) -> Vec<Command> {
+fn installed_skills(
+    root: &pm_host::Location,
+    agent: Agent,
+    environment: &[(String, String)],
+) -> Vec<Command> {
     if agent.id != "codex" {
         return Vec::new();
     }
     let mut folders = Vec::new();
-    if let Some(home) = env::home_dir() {
+    if let Some(home) = root.host.home() {
         folders.push(home.join(".agents/skills"));
     }
     let home = environment
@@ -1832,8 +1940,8 @@ fn installed_skills(root: &Path, agent: Agent, environment: &[(String, String)])
                 .find(|(key, _)| *key == "CODEX_HOME")
                 .map(|(_, value)| PathBuf::from(value))
         })
-        .or_else(|| env::var_os("CODEX_HOME").map(PathBuf::from))
-        .or_else(|| Some(env::home_dir()?.join(".codex")));
+        .or_else(|| root.host.environment("CODEX_HOME").map(PathBuf::from))
+        .or_else(|| Some(root.host.home()?.join(".codex")));
     if let Some(home) = home {
         folders.push(home.join("skills"));
     }
@@ -1841,12 +1949,12 @@ fn installed_skills(root: &Path, agent: Agent, environment: &[(String, String)])
     folders.push(root.join(".agents/skills"));
     let mut found = BTreeMap::new();
     for folder in folders {
-        let Ok(entries) = fs::read_dir(folder) else {
+        let Ok(entries) = root.host.fs().read_dir(folder) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path().join("SKILL.md");
-            let Ok(contents) = fs::read_to_string(path) else {
+            let Ok(contents) = root.host.fs().read_to_string(path) else {
                 continue;
             };
             let name = contents
@@ -1933,7 +2041,7 @@ impl Talks {
         &mut self,
         project: ProjectId,
         session: Option<SessionId>,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         agent: Agent,
     ) -> Option<TalkId> {
@@ -1945,7 +2053,7 @@ impl Talks {
         &mut self,
         project: ProjectId,
         session: Option<SessionId>,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         agent: Agent,
     ) -> Option<TalkId> {
@@ -1957,7 +2065,7 @@ impl Talks {
         &mut self,
         project: ProjectId,
         session: Option<SessionId>,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         agent: Agent,
         resume: &str,
@@ -1978,7 +2086,7 @@ impl Talks {
         let (project, session, root, env, agent, provider, profile) = (
             talk.project,
             talk.session,
-            talk.root().to_path_buf(),
+            talk.root().clone(),
             talk.env.clone(),
             talk.agent(),
             talk.resumable()?,
@@ -2000,7 +2108,7 @@ impl Talks {
     pub fn restore_fork(
         &mut self,
         scope: Scope,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         agent: Agent,
         destination: &str,
@@ -2023,7 +2131,7 @@ impl Talks {
         let (project, session, root, agent) = (
             talk.project,
             talk.session,
-            talk.root().to_path_buf(),
+            talk.root().clone(),
             talk.agent(),
         );
         let profile = talk.profile.clone();
@@ -2048,7 +2156,7 @@ impl Talks {
         &mut self,
         project: ProjectId,
         session: Option<SessionId>,
-        root: &Path,
+        root: &pm_host::Location,
         env: &[(String, String)],
         agent: Agent,
         opening: Opening<'_>,
@@ -2134,6 +2242,7 @@ impl Talks {
                 previews: Decodes::default(),
                 next_preview: 0,
                 clipboard_files: Vec::new(),
+                remote_files: Vec::new(),
                 asks: Vec::new(),
                 cursor: 0,
                 forms: Vec::new(),
@@ -2550,12 +2659,35 @@ fn ended(session: &Session) -> String {
 /// Prepares the selected account's global setup before every ACP process launch.
 fn configured_session(
     agent: Agent,
-    root: &Path,
+    root: &pm_host::Location,
     environment: &[(String, String)],
     conversation: pm_acp::Conversation,
     servers: Vec<pm_acp::McpServer>,
     notify: Notify,
 ) -> std::io::Result<Session> {
-    crate::config::prepare_account(agent, environment)?;
-    Session::configured(agent, root, environment, conversation, servers, notify)
+    if root.host.is_local() {
+        crate::config::prepare_account(agent, environment)?;
+    }
+    let mut servers = servers;
+    let mut tunnels = Vec::new();
+    if !root.host.is_local() {
+        for server in &mut servers {
+            let pm_acp::Reach::Http { url, .. } = &mut server.reach else {
+                continue;
+            };
+            let Some(address) = url.strip_prefix("http://127.0.0.1:") else {
+                continue;
+            };
+            let (port, path) = address.split_once('/').unwrap_or((address, ""));
+            let port = port.parse().map_err(std::io::Error::other)?;
+            let tunnel = root.host.forward_local(port)?;
+            *url = format!("http://127.0.0.1:{}/{}", tunnel.port(), path);
+            tunnels.push(tunnel);
+        }
+    }
+    let mut session = Session::configured(agent, root, environment, conversation, servers, notify)?;
+    for tunnel in tunnels {
+        session.keep_tunnel(tunnel);
+    }
+    Ok(session)
 }

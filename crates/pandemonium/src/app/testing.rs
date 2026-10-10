@@ -9,6 +9,7 @@ use pm_core::{
     Scope,
     testing::{Case, Coverage, Python, Selection, SourceRevision, Status},
 };
+use pm_host::Location;
 use pm_text::Position;
 use pm_ui::{Div, Theme};
 
@@ -103,10 +104,13 @@ impl App {
     }
 
     /// Allocates journals under the user's cache, never in a temporary RAM filesystem.
-    fn test_directory(&mut self) -> Result<std::path::PathBuf, String> {
-        let cache = std::env::var_os("XDG_CACHE_HOME")
+    fn test_directory(&mut self, root: &Location) -> Result<Location, String> {
+        let cache = root
+            .host
+            .environment("XDG_CACHE_HOME")
+            .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
-            .or_else(|| std::env::home_dir().map(|home| home.join(".cache")))
+            .or_else(|| root.host.home().map(|home| home.join(".cache")))
             .ok_or("No user cache directory")?;
         let path = cache.join("pandemonium/tests").join(format!(
             "{}-{}-{}",
@@ -118,22 +122,22 @@ impl App {
                 .as_nanos()
         ));
         self.testing.next += 1;
-        Ok(path)
+        Ok(root.at(path))
     }
 
     /// Builds a framework task plan and removes partial artifacts on planning errors.
     fn plan_tests(
         &mut self,
-        root: &std::path::Path,
+        root: &Location,
         selection: Option<Selection>,
         coverage: bool,
-    ) -> Result<(std::path::PathBuf, pm_core::Task), String> {
+    ) -> Result<(Location, pm_core::Task), String> {
         let adapter = Python::read(root)?;
-        let directory = self.test_directory()?;
+        let directory = self.test_directory(root)?;
         match adapter.task(&directory, selection, coverage) {
             Ok(task) => Ok((directory, task)),
             Err(error) => {
-                let _ = std::fs::remove_dir_all(directory);
+                let _ = directory.host.fs().remove_dir_all(&directory.path);
                 Err(error)
             }
         }
@@ -163,7 +167,7 @@ impl App {
                     tree.refresh = false;
                     tree.error.clear();
                 } else {
-                    let _ = std::fs::remove_dir_all(directory);
+                    let _ = directory.host.fs().remove_dir_all(&directory.path);
                     self.testing.worktrees.get_mut(&scope).unwrap().refresh = false;
                 }
             }
@@ -240,7 +244,7 @@ impl App {
                         output: String::new(),
                     });
                 } else {
-                    let _ = std::fs::remove_dir_all(directory);
+                    let _ = directory.host.fs().remove_dir_all(&directory.path);
                 }
             }
             Err(error) => self.testing.worktrees.get_mut(&scope).unwrap().error = error,
@@ -259,7 +263,11 @@ impl App {
             {
                 let pending = tree.discovery.take().unwrap();
                 if outcome == Outcome::Succeeded {
-                    match std::fs::read_to_string(pending.directory.join("discovery.json"))
+                    match pending
+                        .directory
+                        .host
+                        .fs()
+                        .read_to_string(pending.directory.join("discovery.json"))
                         .map_err(|error| error.to_string())
                         .and_then(|text| {
                             serde_json::from_str::<Vec<Case>>(&text)
@@ -285,7 +293,11 @@ impl App {
                         self.tasks.tail(pending.task, 200)
                     );
                 }
-                let _ = std::fs::remove_dir_all(pending.directory);
+                let _ = pending
+                    .directory
+                    .host
+                    .fs()
+                    .remove_dir_all(&pending.directory.path);
             }
             for run in &mut tree.runs {
                 if run.outcome.is_some() {
@@ -303,7 +315,7 @@ impl App {
                 }
                 if run.outcome.is_some() && run.coverage {
                     let report = run.directory.join("coverage.lcov");
-                    if report.is_file() {
+                    if run.directory.host.fs().is_file(&report) {
                         coverage = Some((
                             report,
                             run.epoch,
@@ -426,10 +438,13 @@ impl App {
         if self.test_coverage_stale(scope) {
             return Vec::new();
         }
+        let Some(root) = self.root_of(scope) else {
+            return Vec::new();
+        };
         let Some(path) = self
             .editor
             .path(file)
-            .and_then(|path| path.canonicalize().ok())
+            .and_then(|path| root.host.fs().canonicalize(path).ok())
         else {
             return Vec::new();
         };

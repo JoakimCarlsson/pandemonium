@@ -41,6 +41,8 @@ pub struct TabEntry {
     pub preview: bool,
     /// Whether its pane keeps it through a change of project.
     pub pinned: bool,
+    /// How the session it holds is doing, when it holds one.
+    pub standing: Option<crate::agent::Standing>,
 }
 
 /// What a pane draws beneath its bar of tabs.
@@ -190,7 +192,7 @@ fn pane_view(
         .tabs
         .into_iter()
         .zip(contents.tab_bounds)
-        .map(|(held, bounds)| pane_tab(id, &held, active == Some(held.item), bounds))
+        .map(|(held, bounds)| pane_tab(theme, id, &held, active == Some(held.item), bounds))
         .collect::<Vec<_>>();
     let empty = matches!(contents.content, Content::Empty);
     let shortcuts = contents.shortcuts;
@@ -207,6 +209,10 @@ fn pane_view(
         Content::File(file) => Some(file.clone()),
         _ => None,
     };
+    let notebook_json = showing
+        .as_ref()
+        .filter(|file| crate::notebook::Notebooks::is_notebook(file.borrow().buffer().path()))
+        .and_then(|_| active.and_then(Item::file));
     let conflict_file = active.and_then(Item::file).filter(|_| contents.conflicted);
     let excerpted = match &contents.content {
         Content::Excerpts(excerpts, remarking) => Some((excerpts.clone(), *remarking)),
@@ -236,6 +242,15 @@ fn pane_view(
                     focused,
                 ),
             ))
+        })
+        .when_some(notebook_json, |view, file| {
+            view.child(
+                pm_ui::button(
+                    "Notebook View",
+                    Message::Notebook(file, crate::notebook::Action::Json),
+                )
+                .ghost(),
+            )
         })
         .when_some(
             contents.crumbs.filter(|_| showing.is_some()),
@@ -309,7 +324,13 @@ fn built(content: Content) -> Option<Box<dyn Element<Message>>> {
 }
 
 /// Builds one tab of a pane: what it holds, and the drag that carries it.
-fn pane_tab(pane: PaneId, held: &TabEntry, active: bool, bounds: Bounds) -> Tab<Message> {
+fn pane_tab(
+    theme: &Theme,
+    pane: PaneId,
+    held: &TabEntry,
+    active: bool,
+    bounds: Bounds,
+) -> Tab<Message> {
     let item = held.item;
 
     tab(
@@ -323,6 +344,10 @@ fn pane_tab(pane: PaneId, held: &TabEntry, active: bool, bounds: Bounds) -> Tab<
     .dirty(held.dirty)
     .preview(held.preview)
     .pinned(held.pinned, Message::TogglePin(pane, item))
+    .signal(
+        held.standing
+            .map(|standing| crate::agent::standing_color(theme, standing)),
+    )
     .on_drag(bounds, move |event| Message::DragTab(pane, item, event))
 }
 

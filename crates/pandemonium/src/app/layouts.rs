@@ -69,7 +69,7 @@ impl App {
             let owner = self
                 .open
                 .iter()
-                .find(|project| project.root() == layout.project)
+                .find(|project| project.root().stored() == layout.project)
                 .map(pm_core::Project::id);
             if let Some(owner) = owner {
                 self.restore_panes(&layout.panes, owner);
@@ -133,7 +133,7 @@ impl App {
                 false => Some(Scope::checkout(project.id())),
             };
             layouts.push(crate::panes::SavedLayout {
-                project: project.root().to_path_buf(),
+                project: project.root().stored(),
                 panes: self.saved_panes(panes, scope),
             });
         }

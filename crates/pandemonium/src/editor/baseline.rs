@@ -6,6 +6,8 @@
 //! asked for in turn and wakes the window with it; the document marks where
 //! it differs once it arrives.
 
+use pm_host::Location;
+
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -19,7 +21,7 @@ struct Ask {
     /// Which of that document's askings it answers.
     asked: u64,
     /// The worktree the file is in.
-    root: PathBuf,
+    root: Location,
     /// The file itself.
     path: PathBuf,
 }
@@ -57,12 +59,12 @@ impl Baselines {
     /// Asks for the baseline of `file`, at `path` in the worktree at `root`,
     /// as its `asked`-th asking; answers whether the thread took it, which it
     /// does not before it has been started.
-    pub(super) fn ask(&self, file: FileId, asked: u64, root: &Path, path: &Path) -> bool {
+    pub(super) fn ask(&self, file: FileId, asked: u64, root: &Location, path: &Path) -> bool {
         self.asks.as_ref().is_some_and(|asks| {
             asks.send(Ask {
                 file,
                 asked,
-                root: root.to_path_buf(),
+                root: root.clone(),
                 path: path.to_path_buf(),
             })
             .is_ok()

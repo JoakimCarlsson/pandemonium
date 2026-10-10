@@ -1,7 +1,6 @@
 //! Merge state and completion in ordinary and linked worktrees.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pm_core::{Operation, Status, abort_merge, commit};
@@ -63,7 +62,8 @@ impl Drop for Fixture {
 
 /// Runs a successful git command in `root`.
 fn git(root: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = pm_host::Host::local()
+        .command("git")
         .args(args)
         .current_dir(root)
         .output()
@@ -78,7 +78,8 @@ fn git(root: &Path, args: &[&str]) -> String {
 
 /// Starts the expected conflicting merge.
 fn start_merge(root: &Path) {
-    let output = Command::new("git")
+    let output = pm_host::Host::local()
+        .command("git")
         .args(["merge", "other"])
         .current_dir(root)
         .output()

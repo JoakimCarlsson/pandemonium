@@ -3,8 +3,8 @@
 use crate::tasks::{Outcome, RunId};
 use pm_core::Scope;
 use pm_core::testing::{Case, Coverage, SourceRevision, Status};
+use pm_host::Location;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A test explorer command, with indices resolved in its originating scope.
@@ -43,7 +43,7 @@ pub struct TestRun {
     /// Task identity for cancellation and terminal output.
     pub task: RunId,
     /// Unique journal directory.
-    pub directory: PathBuf,
+    pub directory: Location,
     /// Cases and their results for this run only.
     pub cases: Vec<Case>,
     /// Saved source revision captured before the task started.
@@ -61,8 +61,12 @@ pub struct TestRun {
 impl TestRun {
     /// Applies complete journal records and preserves the active case's interrupted output.
     pub fn read(&mut self) {
-        let text =
-            std::fs::read_to_string(self.directory.join("results.jsonl")).unwrap_or_default();
+        let text = self
+            .directory
+            .host
+            .fs()
+            .read_to_string(self.directory.join("results.jsonl"))
+            .unwrap_or_default();
         for line in text.lines() {
             let Ok(case) = serde_json::from_str::<Case>(line) else {
                 continue;
@@ -78,7 +82,11 @@ impl TestRun {
                 if matches!(case.status, Status::Queued | Status::Running) {
                     if case.status == Status::Running {
                         case.output.push_str(
-                            &std::fs::read_to_string(self.directory.join("active-output.txt"))
+                            &self
+                                .directory
+                                .host
+                                .fs()
+                                .read_to_string(self.directory.join("active-output.txt"))
                                 .unwrap_or_default(),
                         );
                         case.duration = SystemTime::now()
@@ -106,7 +114,7 @@ pub struct Pending {
     /// Existing task runner identity.
     pub task: RunId,
     /// Destination of discovery output.
-    pub directory: PathBuf,
+    pub directory: Location,
     /// Source epoch before discovery.
     pub epoch: u64,
 }
@@ -184,10 +192,14 @@ impl Drop for Worktree {
     /// Removes private journals after tasks are stopped and the worktree leaves the window.
     fn drop(&mut self) {
         if let Some(discovery) = &self.discovery {
-            let _ = std::fs::remove_dir_all(&discovery.directory);
+            let _ = discovery
+                .directory
+                .host
+                .fs()
+                .remove_dir_all(&discovery.directory.path);
         }
         for run in &self.runs {
-            let _ = std::fs::remove_dir_all(&run.directory);
+            let _ = run.directory.host.fs().remove_dir_all(&run.directory.path);
         }
     }
 }

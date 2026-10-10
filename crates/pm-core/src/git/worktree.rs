@@ -10,6 +10,8 @@
 //! every worktree of a repository shares it, and a second session would
 //! overwrite what the first had written down.
 
+use pm_host::Location;
+
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -70,9 +72,10 @@ impl Summary {
 /// The head is left detached on purpose: a session starts as a place to work,
 /// and the branch it ends up on is named when there is something to name it
 /// after rather than before the agent has written a line.
-pub fn add_worktree(root: &Path, path: &Path, base: &str) -> Said {
+pub fn add_worktree(root: impl Into<Location>, path: &Path, base: &str) -> Said {
+    let root = root.into();
     git(
-        root,
+        &root,
         [
             OsStr::new("worktree"),
             OsStr::new("add"),
@@ -92,13 +95,14 @@ pub fn add_worktree(root: &Path, path: &Path, base: &str) -> Said {
 /// A worktree already taken away outside the editor, its directory deleted
 /// or git no longer listing it, counts as removed: git is only told to
 /// forget the stale entry it may still hold.
-pub fn remove_worktree(root: &Path, path: &Path) -> Said {
-    if !is_linked(root, path) {
-        let _ = answer(root, ["worktree", "prune"]);
+pub fn remove_worktree(root: impl Into<Location>, path: &Path) -> Said {
+    let root = root.into();
+    if !is_linked(&root, path) {
+        let _ = answer(&root, ["worktree", "prune"]);
         return Ok(String::new());
     }
     let removed = git(
-        root,
+        &root,
         [
             OsStr::new("worktree"),
             OsStr::new("remove"),
@@ -106,7 +110,7 @@ pub fn remove_worktree(root: &Path, path: &Path) -> Said {
             path.as_os_str(),
         ],
     );
-    let _ = answer(root, ["worktree", "prune"]);
+    let _ = answer(&root, ["worktree", "prune"]);
     removed.map(|_| String::new())
 }
 
@@ -114,15 +118,16 @@ pub fn remove_worktree(root: &Path, path: &Path) -> Said {
 ///
 /// The repository's own checkout is left out: it is the project, not a
 /// session, and it is the one worktree the window already knows about.
-pub fn worktrees(root: &Path) -> Vec<PathBuf> {
-    let Some(listed) = answer(root, ["worktree", "list", "--porcelain"]) else {
+pub fn worktrees(root: impl Into<Location>) -> Vec<PathBuf> {
+    let root = root.into();
+    let Some(listed) = answer(&root, ["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
     listed
         .lines()
         .filter_map(|line| line.strip_prefix(WORKTREE_LINE))
         .map(PathBuf::from)
-        .filter(|path| path != root)
+        .filter(|path| path != &root.path)
         .collect()
 }
 
@@ -131,18 +136,21 @@ pub fn worktrees(root: &Path) -> Vec<PathBuf> {
 ///
 /// Both sides are compared as the filesystem resolves them, since git lists
 /// a worktree by its real path and a session may hold it by a linked one.
-fn is_linked(root: &Path, path: &Path) -> bool {
-    let Ok(path) = path.canonicalize() else {
+fn is_linked(root: impl Into<Location>, path: &Path) -> bool {
+    let root = root.into();
+    let fs = root.host.fs();
+    let Ok(path) = fs.canonicalize(path) else {
         return false;
     };
-    worktrees(root)
+    worktrees(&root)
         .iter()
-        .any(|listed| listed.canonicalize().is_ok_and(|listed| listed == path))
+        .any(|listed| fs.canonicalize(listed).is_ok_and(|listed| listed == path))
 }
 
 /// The commit `revision` names in the repository at `root`, shortened.
-pub fn commit_of(root: &Path, revision: &str) -> Option<String> {
-    let commit = answer(root, ["rev-parse", revision])?;
+pub fn commit_of(root: impl Into<Location>, revision: &str) -> Option<String> {
+    let root = root.into();
+    let commit = answer(&root, ["rev-parse", revision])?;
     let commit = commit.trim();
     match commit.is_empty() {
         true => None,
@@ -155,8 +163,9 @@ pub fn commit_of(root: &Path, revision: &str) -> Option<String> {
 /// Committed and uncommitted work count alike, because a reader glancing at a
 /// session wants to know how much of it there is, not how much of it the
 /// agent has got round to committing.
-pub fn since(root: &Path, base: &str) -> Summary {
-    let Some(stat) = answer(root, ["diff", "--shortstat", base]) else {
+pub fn since(root: impl Into<Location>, base: &str) -> Summary {
+    let root = root.into();
+    let Some(stat) = answer(&root, ["diff", "--shortstat", base]) else {
         return Summary::default();
     };
     stat.split(',').fold(Summary::default(), |mut drift, part| {
@@ -177,10 +186,11 @@ pub fn since(root: &Path, base: &str) -> Summary {
 ///
 /// Remote-tracking refs reflect the most recent fetch or push; this question
 /// does not contact a remote when the reader opens the finish prompt.
-pub fn work_at_risk(root: &Path) -> WorkAtRisk {
-    let uncommitted_files = answer(root, ["status", "--porcelain", "--untracked-files=all"])
+pub fn work_at_risk(root: impl Into<Location>) -> WorkAtRisk {
+    let root = root.into();
+    let uncommitted_files = answer(&root, ["status", "--porcelain", "--untracked-files=all"])
         .map_or(0, |status| status.lines().count());
-    let unpushed_commits = answer(root, ["rev-list", "--count", "HEAD", "--not", "--remotes"])
+    let unpushed_commits = answer(&root, ["rev-list", "--count", "HEAD", "--not", "--remotes"])
         .and_then(|count| count.trim().parse().ok())
         .unwrap_or(0);
     WorkAtRisk {
@@ -190,9 +200,10 @@ pub fn work_at_risk(root: &Path) -> WorkAtRisk {
 }
 
 /// Writes down what the worktree at `root` was cut from and is called.
-pub fn remember(root: &Path, base: &str, name: &str) {
-    write(root, BASE_KEY, base);
-    write(root, NAME_KEY, name);
+pub fn remember(root: impl Into<Location>, base: &str, name: &str) {
+    let root = root.into();
+    write(&root, BASE_KEY, base);
+    write(&root, NAME_KEY, name);
 }
 
 /// Writes down the port the worktree at `root` was given.
@@ -200,23 +211,27 @@ pub fn remember(root: &Path, base: &str, name: &str) {
 /// The port is the session's for as long as the worktree is, so it is kept
 /// where the rest of what a worktree knows about itself is kept: a launch
 /// that finds the worktree again hands its server the same port.
-pub fn remember_port(root: &Path, port: u16) {
-    write(root, PORT_KEY, &port.to_string());
+pub fn remember_port(root: impl Into<Location>, port: u16) {
+    let root = root.into();
+    write(&root, PORT_KEY, &port.to_string());
 }
 
 /// The port the worktree at `root` was given, as it wrote it down.
-pub fn remembered_port(root: &Path) -> Option<u16> {
-    read(root, PORT_KEY)?.parse().ok()
+pub fn remembered_port(root: impl Into<Location>) -> Option<u16> {
+    let root = root.into();
+    read(&root, PORT_KEY)?.parse().ok()
 }
 
 /// The commit the worktree at `root` was cut from, as it wrote it down.
-pub fn remembered_base(root: &Path) -> Option<String> {
-    read(root, BASE_KEY)
+pub fn remembered_base(root: impl Into<Location>) -> Option<String> {
+    let root = root.into();
+    read(&root, BASE_KEY)
 }
 
 /// What the worktree at `root` is called, as it wrote it down.
-pub fn remembered_name(root: &Path) -> Option<String> {
-    read(root, NAME_KEY)
+pub fn remembered_name(root: impl Into<Location>) -> Option<String> {
+    let root = root.into();
+    read(&root, NAME_KEY)
 }
 
 /// Writes down the review comments of the worktree at `root`, as text the
@@ -224,32 +239,37 @@ pub fn remembered_name(root: &Path) -> Option<String> {
 ///
 /// The file lives beside the worktree's memory, so it goes away with the
 /// worktree. Nothing at all to say removes it rather than leaving it empty.
-pub fn remember_review(root: &Path, text: &str) {
-    let Some(file) = memory(root).map(|memory| memory.with_file_name(REVIEW)) else {
+pub fn remember_review(root: impl Into<Location>, text: &str) {
+    let root = root.into();
+    let Some(file) = memory(&root).map(|memory| memory.with_file_name(REVIEW)) else {
         return;
     };
     match text.is_empty() {
         true => {
-            let _ = std::fs::remove_file(file);
+            let _ = root.host.fs().remove_file(file);
         }
         false => {
-            let _ = std::fs::write(file, text);
+            let _ = root.host.fs().write(file, text);
         }
     }
 }
 
 /// The review comments the worktree at `root` wrote down, as it wrote them.
-pub fn remembered_review(root: &Path) -> Option<String> {
-    let file = memory(root)?.with_file_name(REVIEW);
-    std::fs::read_to_string(file)
+pub fn remembered_review(root: impl Into<Location>) -> Option<String> {
+    let root = root.into();
+    let file = memory(&root)?.with_file_name(REVIEW);
+    root.host
+        .fs()
+        .read_to_string(file)
         .ok()
         .filter(|text| !text.is_empty())
 }
 
 /// The file the worktree at `root` keeps its memory in, inside the git
 /// directory that is its alone.
-fn memory(root: &Path) -> Option<PathBuf> {
-    let directory = answer(root, ["rev-parse", "--absolute-git-dir"])?;
+fn memory(root: impl Into<Location>) -> Option<PathBuf> {
+    let root = root.into();
+    let directory = answer(&root, ["rev-parse", "--absolute-git-dir"])?;
     let directory = directory.trim();
     match directory.is_empty() {
         true => None,
@@ -258,10 +278,11 @@ fn memory(root: &Path) -> Option<PathBuf> {
 }
 
 /// Writes `value` under `key` in the memory of the worktree at `root`.
-fn write(root: &Path, key: &str, value: &str) {
-    if let Some(file) = memory(root) {
+fn write(root: impl Into<Location>, key: &str, value: &str) {
+    let root = root.into();
+    if let Some(file) = memory(&root) {
         let _ = answer(
-            root,
+            &root,
             [
                 OsStr::new("config"),
                 OsStr::new("--file"),
@@ -274,10 +295,11 @@ fn write(root: &Path, key: &str, value: &str) {
 }
 
 /// The value `key` holds in the memory of the worktree at `root`, if any.
-fn read(root: &Path, key: &str) -> Option<String> {
-    let file = memory(root)?;
+fn read(root: impl Into<Location>, key: &str) -> Option<String> {
+    let root = root.into();
+    let file = memory(&root)?;
     let value = answer(
-        root,
+        &root,
         [
             OsStr::new("config"),
             OsStr::new("--file"),

@@ -7,6 +7,8 @@
 //! the screen's, and it is git's own answer rather than ours so that a
 //! renamed, deleted or staged file reads the way git reads it.
 
+use pm_host::Location;
+
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::num::NonZero;
@@ -125,8 +127,9 @@ impl Hunk {
 /// the index holds nothing — comes back with nothing to show rather than as
 /// an error, because a diff with no hunks and a file that cannot be diffed
 /// read the same on the screen.
-pub fn diff(root: &Path, path: &Path, side: Side) -> Vec<Hunk> {
-    let root = holding(root, path);
+pub fn diff(root: impl Into<Location>, path: &Path, side: Side) -> Vec<Hunk> {
+    let root = root.into();
+    let root = holding(&root, path);
     let Some(relative) = within(&root, path) else {
         return Vec::new();
     };
@@ -158,7 +161,8 @@ pub fn diff(root: &Path, path: &Path, side: Side) -> Vec<Hunk> {
 /// is as long as the change is. A file git has never been told about is not
 /// in either comparison and is not here — it has no old side to differ from,
 /// and [`diff`] with [`Side::Untracked`] is what reads one of those.
-pub fn diffs(root: &Path, side: Side) -> HashMap<PathBuf, Vec<Hunk>> {
+pub fn diffs(root: impl Into<Location>, side: Side) -> HashMap<PathBuf, Vec<Hunk>> {
+    let root = root.into();
     let context = format!("-U{CONTEXT}");
     let mut arguments: Vec<&OsStr> = vec![
         OsStr::new("diff"),
@@ -170,7 +174,7 @@ pub fn diffs(root: &Path, side: Side) -> HashMap<PathBuf, Vec<Hunk>> {
         arguments.push(OsStr::new("--cached"));
     }
 
-    let text = written(root, arguments);
+    let text = written(&root, arguments);
     let mut files = HashMap::new();
     for (path, patch) in split(&text) {
         files.insert(root.join(path), read(patch));
@@ -186,13 +190,15 @@ pub fn diffs(root: &Path, side: Side) -> HashMap<PathBuf, Vec<Hunk>> {
 /// the calls are spread over a thread per core rather than made one after
 /// another: a folder of two thousand new files is otherwise two thousand
 /// subprocesses in a row.
-pub fn untracked(root: &Path, paths: &[&Path]) -> Vec<Vec<Hunk>> {
+pub fn untracked(root: impl Into<Location>, paths: &[&Path]) -> Vec<Vec<Hunk>> {
+    let root = root.into();
     let threads = std::thread::available_parallelism().map_or(1, NonZero::get);
     let share = paths.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
         paths
             .chunks(share)
             .map(|chunk| {
+                let root = &root;
                 let compared = scope.spawn(move || {
                     chunk
                         .iter()

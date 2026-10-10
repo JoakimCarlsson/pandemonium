@@ -6,67 +6,68 @@
 //! pasted where the original already is, given a free name beside it the
 //! way a file manager names a duplicate.
 
+use pm_host::Location;
 use std::io;
 use std::path::{Path, PathBuf};
 
 /// Makes an empty file at `path`, and the directories above it.
-pub fn create_file(path: &Path) -> io::Result<()> {
-    refuse_taken(path)?;
+pub fn create_file(path: impl Into<Location>) -> io::Result<()> {
+    let path = path.into();
+    refuse_taken(&path.host, &path)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        path.host.fs().create_dir_all(parent)?;
     }
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map(drop)
+    path.host.fs().create_file(&path)
 }
 
 /// Makes the directory at `path`, and the directories above it.
-pub fn create_dir(path: &Path) -> io::Result<()> {
-    refuse_taken(path)?;
-    std::fs::create_dir_all(path)
+pub fn create_dir(path: impl Into<Location>) -> io::Result<()> {
+    let path = path.into();
+    refuse_taken(&path.host, &path)?;
+    path.host.fs().create_dir_all(path)
 }
 
 /// Renames `from` to `to`, refusing a name that is already taken.
 ///
 /// A rename that only changes the case of a name is let through, since on a
 /// disk that ignores case the new name is "taken" by the file itself.
-pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
-    if from == to {
+pub fn rename(from: impl Into<Location>, to: &Path) -> io::Result<()> {
+    let from = from.into();
+    if from.path == to {
         return Ok(());
     }
     let same_name = from.to_string_lossy().to_lowercase() == to.to_string_lossy().to_lowercase();
     if !same_name {
-        refuse_taken(to)?;
+        refuse_taken(&from.host, to)?;
     }
     if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent)?;
+        from.host.fs().create_dir_all(parent)?;
     }
-    std::fs::rename(from, to)
+    from.host.fs().rename(&from, to)
 }
 
 /// Moves `from` into `directory`, keeping its name, and says where it went.
 ///
 /// A directory cannot be moved into itself or anything under it, and a move
 /// onto a name the directory already holds is refused.
-pub fn move_into(from: &Path, directory: &Path) -> io::Result<PathBuf> {
-    let to = directory.join(name_of(from)?);
-    if to == from {
+pub fn move_into(from: impl Into<Location>, directory: &Path) -> io::Result<PathBuf> {
+    let from = from.into();
+    let to = directory.join(name_of(&from)?);
+    if to == from.path {
         return Ok(to);
     }
-    if directory.starts_with(from) {
+    if directory.starts_with(&from) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "a directory cannot be moved into itself",
         ));
     }
-    refuse_taken(&to)?;
-    match std::fs::rename(from, &to) {
+    refuse_taken(&from.host, &to)?;
+    match from.host.fs().rename(&from, &to) {
         Ok(()) => Ok(to),
         Err(_) => {
-            copy_all(from, &to)?;
-            remove(from)?;
+            copy_all(&from, &to)?;
+            remove(&from)?;
             Ok(to)
         }
     }
@@ -76,29 +77,29 @@ pub fn move_into(from: &Path, directory: &Path) -> io::Result<PathBuf> {
 ///
 /// A name the directory already holds is not overwritten: the copy is given
 /// the first free name of `name copy.ext`, `name copy 2.ext` and so on.
-pub fn copy_into(from: &Path, directory: &Path) -> io::Result<PathBuf> {
-    if directory.starts_with(from) && from.is_dir() {
+pub fn copy_into(from: impl Into<Location>, directory: &Path) -> io::Result<PathBuf> {
+    let from = from.into();
+    if directory.starts_with(&from) && from.host.fs().is_dir(&from) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "a directory cannot be copied into itself",
         ));
     }
-    let to = free_name(directory, &name_of(from)?);
-    copy_all(from, &to)?;
+    let to = free_name(&from.host, directory, &name_of(&from)?);
+    copy_all(&from, &to)?;
     Ok(to)
 }
 
 /// Moves `path` to the desktop's trash, where it can be brought back from.
-pub fn trash(path: &Path) -> io::Result<()> {
-    ::trash::delete(path).map_err(io::Error::other)
+pub fn trash(path: impl Into<Location>) -> io::Result<()> {
+    let path = path.into();
+    path.host.fs().trash(&path)
 }
 
 /// Takes `path` off the disk for good, whatever it holds.
-pub fn remove(path: &Path) -> io::Result<()> {
-    match std::fs::symlink_metadata(path)?.is_dir() {
-        true => std::fs::remove_dir_all(path),
-        false => std::fs::remove_file(path),
-    }
+pub fn remove(path: impl Into<Location>) -> io::Result<()> {
+    let path = path.into();
+    path.host.fs().remove(&path)
 }
 
 /// Whether `name` is one a file can be given: not empty, not a path upward.
@@ -112,9 +113,9 @@ pub fn is_valid_name(name: &str) -> bool {
 }
 
 /// The first name in `directory` built from `name` that nothing holds yet.
-fn free_name(directory: &Path, name: &str) -> PathBuf {
+fn free_name(host: &pm_host::Host, directory: &Path, name: &str) -> PathBuf {
     let plain = directory.join(name);
-    if !exists(&plain) {
+    if !exists(host, &plain) {
         return plain;
     }
     let (stem, extension) = split_extension(name);
@@ -124,7 +125,7 @@ fn free_name(directory: &Path, name: &str) -> PathBuf {
             count => format!("{stem} copy {count}{extension}"),
         })
         .map(|candidate| directory.join(candidate))
-        .find(|candidate| !exists(candidate))
+        .find(|candidate| !exists(host, candidate))
         .unwrap_or(plain)
 }
 
@@ -139,43 +140,31 @@ fn split_extension(name: &str) -> (&str, &str) {
 }
 
 /// Copies `from` to `to`, and everything under it if it is a directory.
-fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
-    let metadata = std::fs::symlink_metadata(from)?;
+fn copy_all(from: &Location, to: &Path) -> io::Result<()> {
+    let metadata = from.host.fs().symlink_metadata(from)?;
     if metadata.file_type().is_symlink() {
-        let target = std::fs::read_link(from)?;
-        return symlink(&target, to);
+        let target = from.host.fs().read_link(from)?;
+        return from.host.fs().symlink(&target, to);
     }
     if !metadata.is_dir() {
-        return std::fs::copy(from, to).map(drop);
+        return from.host.fs().copy(from, to).map(drop);
     }
-    std::fs::create_dir(to)?;
-    for item in std::fs::read_dir(from)? {
+    from.host.fs().create_dir(to)?;
+    for item in from.host.fs().read_dir(from)? {
         let item = item?;
-        copy_all(&item.path(), &to.join(item.file_name()))?;
+        copy_all(&from.at(item.path()), &to.join(item.file_name()))?;
     }
     Ok(())
 }
 
-/// Makes a link at `to` pointing where the copied one did.
-#[cfg(unix)]
-fn symlink(target: &Path, to: &Path) -> io::Result<()> {
-    std::os::unix::fs::symlink(target, to)
-}
-
-/// Copies what the link points at, on a platform without plain links.
-#[cfg(not(unix))]
-fn symlink(target: &Path, to: &Path) -> io::Result<()> {
-    std::fs::copy(target, to).map(drop)
-}
-
 /// Whether anything, even a broken link, is at `path`.
-fn exists(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok()
+fn exists(host: &pm_host::Host, path: &Path) -> bool {
+    host.fs().symlink_metadata(path).is_ok()
 }
 
 /// Refuses `path` when something is already there.
-fn refuse_taken(path: &Path) -> io::Result<()> {
-    match exists(path) {
+fn refuse_taken(host: &pm_host::Host, path: &Path) -> io::Result<()> {
+    match exists(host, path) {
         true => Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             format!("{} already exists", path.display()),

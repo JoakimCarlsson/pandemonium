@@ -221,6 +221,10 @@ pub(super) struct Stored {
     finished: Option<bool>,
     /// The roots of the projects the window had open.
     projects: Option<Vec<PathBuf>>,
+    /// Recent remote folders available from the SSH picker.
+    remote_projects: Option<Vec<PathBuf>>,
+    /// Saved SSH aliases independent of the folders recently opened.
+    remote_hosts: Option<Vec<String>>,
     /// Named project groups and their membership.
     #[serde(skip_serializing_if = "Option::is_none")]
     project_groups: Option<Vec<crate::project_groups::ProjectGroup>>,
@@ -919,6 +923,8 @@ impl Stored {
         let defaults = Preferences::default();
         let bootstrap = self.bootstrap();
         Preferences {
+            remote_projects: self.remote_projects.unwrap_or_default(),
+            remote_hosts: self.remote_hosts.unwrap_or_default(),
             orchestration: self.orchestration,
             agent_options: self.agents.unwrap_or_default(),
             theme_mode: self.theme_mode.unwrap_or(defaults.theme_mode),
@@ -1163,6 +1169,8 @@ impl Stored {
             worktree_port: bootstrap.port.clone(),
             finished: Some(*onboarded),
             projects: Some(projects.clone()),
+            remote_projects: Some(preferences.remote_projects.clone()),
+            remote_hosts: Some(preferences.remote_hosts.clone()),
             project_groups: (!project_groups.is_empty()).then(|| project_groups.clone()),
             active_project: active.clone(),
             panes: None,

@@ -6,7 +6,6 @@
 //! keeps; what is on disk it reads, and [`Watcher`] says when to read again.
 
 mod entry;
-mod ignore;
 pub mod ops;
 mod tree;
 mod walk;

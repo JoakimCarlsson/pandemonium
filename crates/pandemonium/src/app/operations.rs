@@ -22,6 +22,8 @@ const PATIENCE: Duration = Duration::from_secs(1);
 
 /// A move the file tree was asked to make, waiting on the servers.
 pub struct Moving {
+    /// The machine and worktree owning the pending move.
+    root: pm_host::Location,
     /// Where the file or folder is.
     from: PathBuf,
     /// Where it goes.
@@ -38,9 +40,12 @@ impl App {
     /// Asks the servers over `from` what they would change before it moves
     /// to `to`, answering whether any was asked and the move is waiting.
     pub(super) fn ask_before_moving(&mut self, from: &Path, to: &Path) -> bool {
+        let Some(root) = self.tree_root() else {
+            return false;
+        };
         let request = Request::WillRenameFiles(vec![(from.to_path_buf(), to.to_path_buf())]);
         let asked = self
-            .servers_holding(from)
+            .servers_holding(&root.host, from)
             .into_iter()
             .filter(|client| client.offers(&request, from))
             .map(|client| {
@@ -58,6 +63,7 @@ impl App {
             return false;
         }
         self.moving = Some(Moving {
+            root,
             from: from.to_path_buf(),
             to: to.to_path_buf(),
             asked,
@@ -97,9 +103,9 @@ impl App {
             client.forget(*asked);
         }
         for changes in moving.answers {
-            self.apply_changes(changes);
+            self.apply_changes_on(&moving.root.host, changes);
         }
-        self.carry_out_tree_edit(EditKind::Rename, &moving.from, &moving.to);
+        self.carry_out_tree_edit_on(&moving.root, EditKind::Rename, &moving.from, &moving.to);
         true
     }
 
@@ -108,17 +114,17 @@ impl App {
         self.moving.as_ref().map(|moving| moving.until)
     }
 
-    /// Tells the servers that `paths` were made.
-    pub(super) fn tell_servers_made(&self, paths: &[PathBuf]) {
-        for (client, paths) in self.servers_of(paths.iter()) {
+    /// Notifies this machine's language servers about created files.
+    pub(super) fn tell_servers_made_on(&self, host: &pm_host::Host, paths: &[PathBuf]) {
+        for (client, paths) in self.servers_of(host, paths.iter()) {
             client.did_create(&paths.into_iter().cloned().collect::<Vec<_>>());
         }
     }
 
-    /// Tells the servers that files and folders were moved.
-    pub(super) fn tell_servers_moved(&self, moves: &[(PathBuf, PathBuf)]) {
+    /// Notifies this machine's language servers about renamed files.
+    pub(super) fn tell_servers_moved_on(&self, host: &pm_host::Host, moves: &[(PathBuf, PathBuf)]) {
         for client in self
-            .servers_of(moves.iter().map(|(from, _)| from))
+            .servers_of(host, moves.iter().map(|(from, _)| from))
             .into_iter()
             .map(|(client, _)| client)
         {
@@ -126,9 +132,9 @@ impl App {
         }
     }
 
-    /// Tells the servers that `paths` were taken away.
-    pub(super) fn tell_servers_removed(&self, paths: &[PathBuf]) {
-        for (client, paths) in self.servers_of(paths.iter()) {
+    /// Notifies this machine's language servers about deleted files.
+    pub(super) fn tell_servers_removed_on(&self, host: &pm_host::Host, paths: &[PathBuf]) {
+        for (client, paths) in self.servers_of(host, paths.iter()) {
             client.did_delete(&paths.into_iter().cloned().collect::<Vec<_>>());
         }
     }
@@ -137,11 +143,12 @@ impl App {
     /// among them it holds.
     fn servers_of<'a>(
         &self,
+        host: &pm_host::Host,
         paths: impl Iterator<Item = &'a PathBuf>,
     ) -> Vec<(Arc<Client>, Vec<&'a PathBuf>)> {
         let mut found: Vec<(Arc<Client>, Vec<&'a PathBuf>)> = Vec::new();
         for path in paths {
-            for client in self.servers_holding(path) {
+            for client in self.servers_holding(host, path) {
                 match found
                     .iter_mut()
                     .find(|(known, _)| Arc::ptr_eq(known, &client))
@@ -155,11 +162,11 @@ impl App {
     }
 
     /// The servers running over the worktree `path` is in.
-    fn servers_holding(&self, path: &Path) -> Vec<Arc<Client>> {
+    fn servers_holding(&self, host: &pm_host::Host, path: &Path) -> Vec<Arc<Client>> {
         self.scopes()
             .into_iter()
             .filter_map(|scope| self.root_of(scope))
-            .filter(|root| path.starts_with(root))
+            .filter(|root| &root.host == host && path.starts_with(root))
             .max_by_key(|root| root.as_os_str().len())
             .map(|root| self.editor.servers_over(&root))
             .unwrap_or_default()

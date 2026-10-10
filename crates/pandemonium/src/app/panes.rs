@@ -6,8 +6,9 @@
 //! them together lives — and the one place a tab is opened or closed, whether
 //! a keybinding, a tab menu or the file tree asked for it.
 
+use pm_host::Location;
+
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use pm_core::{FileStatus, Scope};
 use pm_gfx::Rect;
@@ -56,21 +57,21 @@ impl App {
     }
 
     /// Where the worktree `scope` names sits on disk.
-    pub(super) fn root_of(&self, scope: Scope) -> Option<PathBuf> {
+    pub(super) fn root_of(&self, scope: Scope) -> Option<Location> {
         match scope.session() {
             Some(session) => self
                 .sessions
                 .get(session)
-                .map(|session| session.root().to_path_buf()),
+                .map(|session| session.root().clone()),
             None => self
                 .open
                 .get(scope.project())
-                .map(|project| project.root().to_path_buf()),
+                .map(|project| project.root().clone()),
         }
     }
 
     /// Every worktree the window is holding, with where it sits on disk.
-    pub(super) fn worktrees(&self) -> Vec<(Scope, PathBuf)> {
+    pub(super) fn worktrees(&self) -> Vec<(Scope, Location)> {
         self.scopes()
             .into_iter()
             .filter_map(|scope| Some((scope, self.root_of(scope)?)))
@@ -361,6 +362,9 @@ impl App {
     /// quietly: the reader is asked which of the two things they meant, and
     /// the file stays open until they say.
     pub(super) fn close_item(&mut self, pane: PaneId, item: Item) {
+        if let Some(file) = item.file() {
+            self.sync_notebook(file);
+        }
         if let Some(file) = item.file().filter(|file| self.editor.is_dirty(*file)) {
             return self.open_menu(crate::workspace::MenuTarget::Unsaved(pane, file));
         }
@@ -470,9 +474,15 @@ impl App {
     pub(super) fn edit_active(&mut self, edit: impl FnOnce(&mut pm_text::Buffer)) {
         if let Some(typed) = self.typed_into() {
             typed.borrow_mut().edit(edit);
+            if let Some(crate::app::Writing::Notebook(file, _)) = self.writing {
+                self.sync_notebook(file);
+            }
             return;
         }
-        if let Some(file) = self.active_file_id() {
+        if let Some(file) = self
+            .active_file_id()
+            .filter(|file| !self.notebook_visible(*file))
+        {
             self.editor.edit(file, edit);
         }
     }
@@ -482,23 +492,24 @@ impl App {
     /// The picker first, then a name being typed into the tree. The search
     /// bar lives in the open document, so it is reached through
     /// [`Self::edit_focused_field`].
-    pub(super) fn focused_field_mut(&mut self) -> Option<&mut crate::field::Field> {
+    pub(super) fn focused_field_mut(&mut self) -> Option<&mut crate::input::Input> {
         if let Some(picker) = self.picker.as_mut() {
             return Some(picker.field_mut());
         }
         self.tree_edit.as_mut().map(|edit| edit.field_mut())
     }
 
-    /// Puts `edit` through the single-line field that has the keyboard, if
-    /// one does.
+    /// Puts `edit` through the shared input that has the keyboard, if one does.
     ///
-    /// The picker first, then a name being typed into the tree, then the
-    /// search bar's query or replacement. This is the one place that says
-    /// which field has the keyboard.
+    /// The picker comes first, followed by a composing input, a tree rename,
+    /// search fields and the outline filter. All editing uses this seam.
     pub(super) fn edit_focused_field(
         &mut self,
-        edit: impl FnOnce(&mut crate::field::Field),
+        edit: impl FnOnce(&mut crate::input::Input),
     ) -> bool {
+        if self.picker.is_none() && self.writing.is_some() {
+            return self.with_written(edit).is_some();
+        }
         if let Some(field) = self.focused_field_mut() {
             edit(field);
             return true;
@@ -526,7 +537,37 @@ impl App {
                 .search_with(|search, buffer| search.edit_field(edit, buffer));
             return true;
         }
+        if let Some(Item::Outline(scope)) = self.active_tab()
+            && let Some(file) = self.outlines.followed(scope)
+        {
+            let state = self.outlines.get_mut(file);
+            edit(&mut state.filter);
+            state.scroll = 0;
+            return true;
+        }
         false
+    }
+
+    /// Routes pointer selection through the shared input with click counting and Shift extension.
+    pub(super) fn point_focused_input(
+        &mut self,
+        phase: ResizePhase,
+        anchor: pm_text::Position,
+        head: pm_text::Position,
+    ) {
+        if phase == ResizePhase::Started {
+            self.text_extends = self.extends_text();
+        }
+        let extend = self.text_extends;
+        let presses = if anchor == head && !extend && phase == ResizePhase::Started {
+            self.text_clicks.press(anchor)
+        } else {
+            if anchor != head || extend {
+                self.text_clicks.clear();
+            }
+            0
+        };
+        self.edit_focused_field(|input| input.point(phase, anchor, head, presses, extend));
     }
 
     /// The buffer being typed into that is not a pane's file, if there is one.
@@ -535,7 +576,40 @@ impl App {
     /// prompt is a buffer too, and a command that edits text means whichever
     /// of them has the keyboard, not the file behind it.
     pub(super) fn typed_into(&self) -> Option<crate::editor::OpenFile> {
+        if let Some(picker) = self.picker.as_ref() {
+            return Some(picker.field().text());
+        }
+        if self.writing.is_none() {
+            if let Some(edit) = self.tree_edit.as_ref() {
+                return Some(edit.field().text());
+            }
+            if let Some(Item::Search(scope)) = self.active_tab()
+                && let Some(which) = self.project_search_field
+                && let Some(search) = self.searches.get(&scope)
+            {
+                return Some(match which {
+                    crate::editor::SearchField::Query => search.query.text(),
+                    crate::editor::SearchField::Replacement => search.replacement.text(),
+                });
+            }
+            if self.search_focused {
+                let file = self.active_file()?;
+                let file = file.borrow();
+                return Some(match file.search().field() {
+                    crate::editor::SearchField::Query => file.search().query().text(),
+                    crate::editor::SearchField::Replacement => file.search().replacement().text(),
+                });
+            }
+            if let Some(Item::Outline(scope)) = self.active_tab()
+                && let Some(file) = self.outlines.followed(scope)
+            {
+                return Some(self.outlines.get(file)?.filter.text());
+            }
+        }
         match self.writing? {
+            crate::app::Writing::Notebook(file, cell) => {
+                Some(self.notebooks.open.get(&file)?.inputs.get(&cell)?.text())
+            }
             crate::app::Writing::Commit => Some(self.review()?.message()?.text()),
             crate::app::Writing::Prompt(session) => Some(self.agents.get(session)?.prompt().text()),
             crate::app::Writing::Console(scope) => {
@@ -618,11 +692,12 @@ impl App {
                     project: self
                         .scope_of(item)
                         .and_then(|scope| self.open.get(scope.project()))
-                        .map(|project| project.root().to_path_buf())
+                        .map(|project| project.root().stored())
                         .unwrap_or_default(),
                     worktree: self
                         .scope_of(item)
                         .and_then(|scope| self.root_of(scope))
+                        .map(|root| root.stored())
                         .unwrap_or_default(),
                     ..SavedTab::default()
                 });
@@ -641,8 +716,8 @@ impl App {
                     ..SavedTab::default()
                 });
             };
-            let project = self.open.get(scope.project())?.root().to_path_buf();
-            let worktree = self.root_of(scope)?;
+            let project = self.open.get(scope.project())?.root().stored();
+            let worktree = self.root_of(scope)?.stored();
             if let Some(talk) = item.session().and_then(|talk| self.agents.get(talk)) {
                 if !talk.persistable() {
                     return None;
@@ -766,7 +841,7 @@ impl App {
         let projects = self
             .open
             .iter()
-            .map(|project| (project.root().to_path_buf(), project.id()))
+            .map(|project| (project.root().clone(), project.id()))
             .collect::<Vec<_>>();
         let mut comparisons = Vec::new();
         let restoring_scope = Some(Scope::checkout(owner));
@@ -787,14 +862,16 @@ impl App {
                 let scope = if tab.project.as_os_str().is_empty() {
                     restoring_scope
                 } else {
-                    let (_, project) = projects.iter().find(|(root, _)| *root == tab.project)?;
+                    let (_, project) = projects
+                        .iter()
+                        .find(|(root, _)| root.stored() == tab.project)?;
                     if *project != owner {
                         return None;
                     }
                     Some(
                         match sessions
                             .of(*project)
-                            .find(|session| session.root() == tab.worktree)
+                            .find(|session| session.root().stored() == tab.worktree)
                         {
                             Some(session) => Scope::of(*project, session.id()),
                             None => Scope::checkout(*project),
@@ -819,17 +896,17 @@ impl App {
             }
             let (checkout, project) = projects
                 .iter()
-                .find(|(root, _)| *root == tab.project)
+                .find(|(root, _)| root.stored() == tab.project)
                 .cloned()?;
             if project != owner {
                 return None;
             }
             let held = sessions
                 .of(project)
-                .find(|session| session.root() == tab.worktree);
+                .find(|session| session.root().stored() == tab.worktree);
             if tab.kind == SavedKind::Agent
                 && !tab.worktree.as_os_str().is_empty()
-                && tab.worktree != checkout
+                && tab.worktree != checkout.stored()
                 && held.is_none()
             {
                 notices.trouble(format!("Cannot restore agent: session worktree {} is missing. Reopen its project and refresh sessions.", tab.worktree.display()), None);
@@ -842,7 +919,7 @@ impl App {
                 None => Scope::checkout(project),
             };
             let root = match session {
-                Some(_) => tab.worktree.clone(),
+                Some(session) => sessions.get(session)?.root().clone(),
                 None => checkout,
             };
 
@@ -852,7 +929,7 @@ impl App {
                     if !crate::config::Accounts::supports(agent) {
                         return None;
                     }
-                    env.push(profile.environment(agent)?);
+                    env.push(profile.environment_on(agent, &root.host)?);
                 }
                 if let Some(fork) = &tab.fork
                     && (fork.agent != tab.agent
@@ -912,7 +989,7 @@ impl App {
                 return Some((Some(scope), Item::Search(scope)));
             }
             if tab.kind == SavedKind::Image {
-                let image = images.open(scope, &tab.path, tab.preview);
+                let image = images.open(scope, &root.at(&tab.path), tab.preview);
                 return Some((Some(scope), Item::Image(image)));
             }
             if tab.kind == SavedKind::Rendered {
@@ -988,7 +1065,7 @@ impl App {
         for search in self.searches.values_mut() {
             search.held.retain(|file| self.editor.is_dirty(*file));
         }
-        let rendered = held
+        let mut rendered = held
             .iter()
             .copied()
             .filter_map(Item::rendered)
@@ -1021,12 +1098,19 @@ impl App {
                 .flat_map(|search| search.held.iter().copied()),
         );
         self.images.retain(&images);
+        rendered.extend(
+            files
+                .iter()
+                .copied()
+                .filter(|file| self.notebooks.open.contains_key(file)),
+        );
         self.renders.retain(&rendered);
         let sessions = held
             .iter()
             .copied()
             .filter_map(Item::session)
             .collect::<BTreeSet<_>>();
+        self.notebooks.retain(&files);
         self.editor.retain(&files);
         self.outlines.retain(|file| files.contains(&file));
         self.agents.retain(&sessions);
@@ -1237,6 +1321,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::File(file) => {
                 let FileEntry {
@@ -1251,6 +1336,7 @@ impl App {
                     dirty,
                     preview,
                     pinned: false,
+                    standing: None,
                 })
             }
             Item::Image(image) => Some(TabEntry {
@@ -1260,6 +1346,7 @@ impl App {
                 dirty: false,
                 preview: self.images.is_preview(image),
                 pinned: false,
+                standing: None,
             }),
             Item::Rendered(file) => Some(TabEntry {
                 item,
@@ -1268,6 +1355,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Outline(scope) => Some(TabEntry {
                 item,
@@ -1283,6 +1371,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Excerpts(scope) => Some(TabEntry {
                 item,
@@ -1294,6 +1383,7 @@ impl App {
                 dirty: self.excerpts_dirty(scope),
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Search(scope) => Some(TabEntry {
                 item,
@@ -1302,6 +1392,7 @@ impl App {
                 dirty: self.is_dirty(Item::Search(scope)),
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Turns(_, span) => Some(TabEntry {
                 item,
@@ -1310,6 +1401,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Review(scope) => Some(TabEntry {
                 item,
@@ -1321,6 +1413,7 @@ impl App {
                 dirty: false,
                 preview: false,
                 pinned: false,
+                standing: None,
             }),
             Item::Agent(_, session) => {
                 let talk = self.agents.get(session)?;
@@ -1333,6 +1426,7 @@ impl App {
                     dirty: false,
                     preview: false,
                     pinned: false,
+                    standing: Some(talk.standing()),
                 })
             }
             Item::Change(project, change) => {
@@ -1349,6 +1443,7 @@ impl App {
                     dirty: false,
                     preview: review.is_preview(change),
                     pinned: false,
+                    standing: None,
                 })
             }
         }
@@ -1521,6 +1616,31 @@ impl App {
         match item {
             Some(Item::Tool(tool) | Item::WorktreeTool(_, tool)) => {
                 Content::Built(Box::new(self.tool_content(theme, tool, width)))
+            }
+            Some(Item::File(file)) if self.notebook_visible(file) => {
+                let entry = &self.notebooks.open[&file];
+                let focused = match self.writing {
+                    Some(crate::app::Writing::Notebook(held, cell))
+                        if held == file && self.panes.focus() == pane =>
+                    {
+                        Some(cell)
+                    }
+                    _ => None,
+                };
+                Content::Built(Box::new(crate::notebook::notebook_pane(
+                    theme,
+                    pane,
+                    file,
+                    entry,
+                    &self.notebooks,
+                    &self.renders,
+                    &self.editor.path(file).unwrap_or_default(),
+                    self.window
+                        .as_ref()
+                        .map_or(1.0, |window| window.scale_factor() as f32),
+                    focused,
+                    self.caret_solid(),
+                )))
             }
             Some(Item::File(file)) => match self.editor.get(file) {
                 Some(document) => Content::File(document),

@@ -96,7 +96,9 @@ Add an adapter module there and re-export its public API from `mod.rs`:
    task IDs, results and coverage under the full project/worktree `Scope` in
    `pandemonium/src/testing/store.rs`. The shared pane consumes normalized data.
 
-The Python reference adapter uses a private task journal under
+The Python reference adapter reads discovery configuration, source revisions and
+coverage through the worktree's host filesystem. It uses a private task journal
+on that host under
 `$XDG_CACHE_HOME/pandemonium/tests` (otherwise `~/.cache/pandemonium/tests`).
 Journals are removed when their worktree leaves the editor or the editor exits;
 no build or task artifacts are placed in `/tmp` or the tested worktree.

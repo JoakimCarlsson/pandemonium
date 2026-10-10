@@ -6,6 +6,8 @@
 //! three things drawn from it: the file tree, the open documents and the
 //! language servers, and git is asked again what it makes of the worktree.
 
+use pm_host::Location;
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -59,7 +61,7 @@ impl App {
 
     /// Brings the tree, the documents, the servers and the review of `scope`,
     /// whose worktree sits at `root`, up to what `disk` says happened.
-    fn follow_disk(&mut self, scope: Scope, root: &std::path::Path, disk: &Disk) {
+    fn follow_disk(&mut self, scope: Scope, root: &Location, disk: &Disk) {
         if (disk.repository
             || disk.touched.iter().any(|touch| {
                 !touch.ignored

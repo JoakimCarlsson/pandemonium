@@ -27,7 +27,9 @@ impl App {
     pub(super) fn restore_shells(&mut self, saved: &[crate::terminal::SavedShell]) {
         let worktrees = self.worktrees();
         for shell in saved {
-            let Some((scope, root)) = worktrees.iter().find(|(_, root)| *root == shell.worktree)
+            let Some((scope, root)) = worktrees
+                .iter()
+                .find(|(_, root)| root.stored() == shell.worktree)
             else {
                 continue;
             };

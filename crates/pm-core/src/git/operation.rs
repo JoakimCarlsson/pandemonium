@@ -1,5 +1,7 @@
 //! In-progress git operations in one worktree.
 
+use pm_host::Location;
+
 use std::path::{Path, PathBuf};
 
 use crate::git::run::{Said, answer, git};
@@ -49,8 +51,9 @@ pub struct CherryPick {
 }
 
 /// Resolves a git control file or directory in `root`, including linked worktrees.
-fn git_path(root: &Path, name: &str) -> Option<PathBuf> {
-    let path = answer(root, ["rev-parse", "--git-path", name])?;
+fn git_path(root: impl Into<Location>, name: &str) -> Option<PathBuf> {
+    let root = root.into();
+    let path = answer(&root, ["rev-parse", "--git-path", name])?;
     let path = Path::new(path.trim());
     Some(if path.is_absolute() {
         path.to_path_buf()
@@ -60,15 +63,19 @@ fn git_path(root: &Path, name: &str) -> Option<PathBuf> {
 }
 
 /// Reads `name` in the worktree's git directory.
-fn git_file(root: &Path, name: &str) -> Option<String> {
-    std::fs::read_to_string(git_path(root, name)?)
+fn git_file(root: impl Into<Location>, name: &str) -> Option<String> {
+    let root = root.into();
+    root.host
+        .fs()
+        .read_to_string(git_path(&root, name)?)
         .ok()
         .map(|value| value.trim().to_owned())
 }
 
 /// Reads the message git prepared, without its instructional comment lines.
-fn prepared_message(root: &Path) -> String {
-    git_file(root, "MERGE_MSG")
+fn prepared_message(root: impl Into<Location>) -> String {
+    let root = root.into();
+    git_file(&root, "MERGE_MSG")
         .unwrap_or_default()
         .lines()
         .filter(|line| !line.starts_with('#'))
@@ -79,12 +86,13 @@ fn prepared_message(root: &Path) -> String {
 }
 
 /// Reads the operation pending in `root`, if any.
-pub fn operation(root: &Path) -> Option<Operation> {
+pub fn operation(root: impl Into<Location>) -> Option<Operation> {
+    let root = root.into();
     for directory in ["rebase-merge", "rebase-apply"] {
-        if git_path(root, directory)?.is_dir() {
-            let read = |name: &str| git_file(root, &format!("{directory}/{name}"));
+        if root.host.fs().is_dir(git_path(&root, directory)?) {
+            let read = |name: &str| git_file(&root, &format!("{directory}/{name}"));
             let onto = read("onto").unwrap_or_default();
-            let onto = answer(root, ["name-rev", "--name-only", &onto])
+            let onto = answer(&root, ["name-rev", "--name-only", &onto])
                 .map(|name| name.trim().to_owned())
                 .filter(|name| !name.is_empty() && name != "undefined")
                 .unwrap_or(onto);
@@ -102,23 +110,23 @@ pub fn operation(root: &Path) -> Option<Operation> {
                     .unwrap_or(0),
                 message: read("message")
                     .or_else(|| {
-                        answer(root, ["log", "-1", "--pretty=%B", "REBASE_HEAD"])
+                        answer(&root, ["log", "-1", "--pretty=%B", "REBASE_HEAD"])
                             .map(|value| value.trim().to_owned())
                     })
                     .unwrap_or_default(),
             }));
         }
     }
-    if let Some(commit) = git_file(root, "CHERRY_PICK_HEAD") {
+    if let Some(commit) = git_file(&root, "CHERRY_PICK_HEAD") {
         return Some(Operation::CherryPick(CherryPick {
             commit,
-            message: prepared_message(root),
+            message: prepared_message(&root),
         }));
     }
-    let incoming = git_file(root, "MERGE_HEAD")?;
+    let incoming = git_file(&root, "MERGE_HEAD")?;
     Some(Operation::Merge(Merge {
         incoming,
-        message: prepared_message(root),
+        message: prepared_message(&root),
     }))
 }
 
@@ -155,15 +163,19 @@ impl Operation {
 }
 
 /// Writes a chosen message and advances the operation in `root`.
-pub fn continue_operation(root: &Path, operation: &Operation) -> Said {
+pub fn continue_operation(root: impl Into<Location>, operation: &Operation) -> Said {
+    let root = root.into();
     match operation {
-        Operation::Merge(merge) => git(root, ["commit", "-m", &merge.message]),
-        Operation::Rebase(_) => git(root, ["-c", "core.editor=true", "rebase", "--continue"]),
+        Operation::Merge(merge) => git(&root, ["commit", "-m", &merge.message]),
+        Operation::Rebase(_) => git(&root, ["-c", "core.editor=true", "rebase", "--continue"]),
         Operation::CherryPick(pick) => {
-            let path = git_path(root, "MERGE_MSG").ok_or("Cannot find MERGE_MSG")?;
-            std::fs::write(path, &pick.message).map_err(|error| error.to_string())?;
+            let path = git_path(&root, "MERGE_MSG").ok_or("Cannot find MERGE_MSG")?;
+            root.host
+                .fs()
+                .write(path, &pick.message)
+                .map_err(|error| error.to_string())?;
             git(
-                root,
+                &root,
                 ["-c", "core.editor=true", "cherry-pick", "--continue"],
             )
         }
@@ -171,24 +183,27 @@ pub fn continue_operation(root: &Path, operation: &Operation) -> Said {
 }
 
 /// Skips the stopped commit in a rebase or cherry-pick.
-pub fn skip_operation(root: &Path, operation: &Operation) -> Said {
+pub fn skip_operation(root: impl Into<Location>, operation: &Operation) -> Said {
+    let root = root.into();
     match operation {
-        Operation::Rebase(_) => git(root, ["rebase", "--skip"]),
-        Operation::CherryPick(_) => git(root, ["cherry-pick", "--skip"]),
+        Operation::Rebase(_) => git(&root, ["rebase", "--skip"]),
+        Operation::CherryPick(_) => git(&root, ["cherry-pick", "--skip"]),
         Operation::Merge(_) => Err("A merge cannot skip a commit".to_owned()),
     }
 }
 
 /// Aborts the operation pending in `root`.
-pub fn abort_operation(root: &Path, operation: &Operation) -> Said {
+pub fn abort_operation(root: impl Into<Location>, operation: &Operation) -> Said {
+    let root = root.into();
     match operation {
-        Operation::Merge(_) => git(root, ["merge", "--abort"]),
-        Operation::Rebase(_) => git(root, ["rebase", "--abort"]),
-        Operation::CherryPick(_) => git(root, ["cherry-pick", "--abort"]),
+        Operation::Merge(_) => git(&root, ["merge", "--abort"]),
+        Operation::Rebase(_) => git(&root, ["rebase", "--abort"]),
+        Operation::CherryPick(_) => git(&root, ["cherry-pick", "--abort"]),
     }
 }
 
 /// Aborts the merge pending in `root`.
-pub fn abort_merge(root: &Path) -> Said {
-    git(root, ["merge", "--abort"])
+pub fn abort_merge(root: impl Into<Location>) -> Said {
+    let root = root.into();
+    git(&root, ["merge", "--abort"])
 }

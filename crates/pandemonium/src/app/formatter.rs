@@ -2,9 +2,10 @@
 
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
+
+use pm_host::{Location, Stdio};
 
 use crate::app::App;
 use crate::config::languages::{Formatter, LanguageSettings};
@@ -15,15 +16,18 @@ const PATIENCE: Duration = Duration::from_secs(10);
 /// What a formatter's command line has in place of the file's path.
 const PATH_WORD: &str = "{path}";
 
-/// Pipes `text` through `line`, run in the directory of `path`, and answers
-/// what the program wrote, or why it did not.
+/// Pipes `text` through `line` on the file's host, in its directory, and
+/// answers what the program wrote, or why it did not.
 ///
 /// A word of the command line that is `{path}` is the file's path, for the
 /// programs that choose a style by the name of what they are given.
-fn pipe_through(line: &str, path: &Path, text: &str) -> Result<String, String> {
+fn pipe_through(line: &str, location: &Location, text: &str) -> Result<String, String> {
+    let path = location.as_path();
     let mut words = pm_acp::command_words(line).into_iter();
     let program = words.next().ok_or("No formatter command is set.")?;
-    let mut child = Command::new(&program)
+    let mut child = location
+        .host
+        .command(&program)
         .args(words.map(|word| match word == PATH_WORD {
             true => path.display().to_string(),
             false => word,
@@ -72,9 +76,9 @@ impl App {
         self.preferences.language(language)
     }
 
-    /// Formats locally when an external command is selected or Markdown has no
-    /// server offering document formatting; returns whether the command was handled.
-    pub(super) fn format_locally(&mut self, on_save: bool) -> bool {
+    /// Runs external formatting on the file's host or reflows Markdown without
+    /// server formatting; returns whether the command was handled.
+    pub(super) fn format_without_server(&mut self, on_save: bool) -> bool {
         let settings = self.active_language_settings();
         if on_save && !settings.format_on_save {
             return true;
@@ -103,11 +107,11 @@ impl App {
                 reflow
             }
             Formatter::External(line) => {
-                let (path, text) = {
+                let (location, text) = {
                     let file = file.borrow();
-                    (file.buffer().path().to_path_buf(), file.buffer().contents())
+                    (file.buffer().location(), file.buffer().contents())
                 };
-                match pipe_through(&line, &path, &text) {
+                match pipe_through(&line, &location, &text) {
                     Ok(laid_out) if laid_out != text => {
                         file.borrow_mut()
                             .edit(|buffer| buffer.set_contents(&laid_out));

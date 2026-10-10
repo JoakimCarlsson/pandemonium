@@ -1,7 +1,7 @@
 //! The serialized seam between agent boundaries, durable turn history and rewind.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use pm_core::{Checkpoint, CheckpointStep, Scope};
 
@@ -71,11 +71,11 @@ pub(super) struct CheckpointBack {
 
 impl CheckpointWork {
     /// Runs one checkpoint operation without holding up the window.
-    pub(super) fn run(self, root: &Path) -> CheckpointBack {
+    pub(super) fn run(self, root: &pm_host::Location) -> CheckpointBack {
         let roots = pm_core::repositories(root);
         let number = roots
             .iter()
-            .flat_map(|root| pm_core::checkpoints(root))
+            .flat_map(pm_core::checkpoints)
             .map(|turn| turn.turn)
             .max()
             .unwrap_or(0)
@@ -129,7 +129,7 @@ impl CheckpointWork {
     }
 
     /// Performs one operation in one repository, preserving scope-wide turn numbering.
-    fn run_in(self, root: &Path, number: u64) -> CheckpointBack {
+    fn run_in(self, root: &pm_host::Location, number: u64) -> CheckpointBack {
         let mut diff = None;
         let mut paths = Vec::new();
         let said = match &self {
@@ -167,7 +167,10 @@ impl CheckpointWork {
                                 (path, hunks)
                             })
                             .collect();
-                        diff = Some(TurnDiff { files, scroll: 0 });
+                        diff = Some(TurnDiff {
+                            files,
+                            ..TurnDiff::default()
+                        });
                         Ok(String::new())
                     }
                     _ => Err("The requested turns have not been checkpointed".to_owned()),
@@ -470,10 +473,7 @@ impl App {
         };
         if let Some(diff) = self.checkpointing.diffs.get_mut(&(scope, span)) {
             let total = diff.row_count(self.preferences.split_diff);
-            diff.scroll = diff
-                .scroll
-                .saturating_add_signed(rows)
-                .min(total.saturating_sub(1));
+            diff.scroll.by(rows, total);
         }
         true
     }

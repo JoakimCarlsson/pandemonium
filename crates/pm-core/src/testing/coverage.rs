@@ -1,5 +1,6 @@
 //! LCOV source summaries tied to the exact bytes present when read.
 
+use pm_host::{Host, Location};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -12,12 +13,17 @@ pub struct CoveredFile {
     pub lines: BTreeMap<usize, u64>,
     /// Source bytes to which this report was attached.
     revision: Vec<u8>,
+    /// Machine holding the covered source revision.
+    host: Host,
 }
 
 impl CoveredFile {
     /// Whether saved source still matches the report's captured revision.
     pub fn current(&self) -> bool {
-        std::fs::read(&self.path).is_ok_and(|bytes| bytes == self.revision)
+        self.host
+            .fs()
+            .read(&self.path)
+            .is_ok_and(|bytes| bytes == self.revision)
     }
 
     /// Number of executable lines hit at least once.
@@ -37,25 +43,33 @@ pub struct Coverage {
 
 impl Coverage {
     /// Imports LCOV, rejecting malformed records and files outside the worktree.
-    pub fn read(root: &Path, report: &Path) -> Result<Self, String> {
-        let root = root.canonicalize().map_err(|error| error.to_string())?;
-        let text = std::fs::read_to_string(report).map_err(|error| error.to_string())?;
+    pub fn read(root: &Location, report: &Path) -> Result<Self, String> {
+        let host = root.host.clone();
+        let root = host
+            .fs()
+            .canonicalize(&root.path)
+            .map_err(|error| error.to_string())?;
+        let text = host
+            .fs()
+            .read_to_string(report)
+            .map_err(|error| error.to_string())?;
         let mut files = BTreeMap::<PathBuf, CoveredFile>::new();
         let mut path = None;
         for line in text.lines() {
             if let Some(source) = line.strip_prefix("SF:") {
-                let source = root
-                    .join(source)
-                    .canonicalize()
+                let source = host
+                    .fs()
+                    .canonicalize(root.join(source))
                     .map_err(|error| error.to_string())?;
                 if !source.starts_with(&root) {
                     return Err("Coverage source is outside this worktree".into());
                 }
-                let revision = std::fs::read(&source).map_err(|error| error.to_string())?;
+                let revision = host.fs().read(&source).map_err(|error| error.to_string())?;
                 files.entry(source.clone()).or_insert(CoveredFile {
                     path: source.clone(),
                     lines: BTreeMap::new(),
                     revision,
+                    host: host.clone(),
                 });
                 path = Some(source);
             } else if let Some(count) = line.strip_prefix("DA:") {
@@ -106,17 +120,17 @@ pub struct SourceRevision {
 
 impl SourceRevision {
     /// Captures source bytes through the shared worktree walk.
-    pub fn capture(root: &Path) -> Self {
+    pub fn capture(root: &Location) -> Self {
         let files = crate::walk(root)
             .into_iter()
             .filter(|path| path.extension().is_some_and(|extension| extension == "py"))
-            .filter_map(|path| Some((path.clone(), std::fs::read(path).ok()?)))
+            .filter_map(|path| Some((path.clone(), root.host.fs().read(path).ok()?)))
             .collect();
         Self { files }
     }
 
     /// Whether the current saved sources are the revision the run started with.
-    pub fn current(&self, root: &Path) -> bool {
+    pub fn current(&self, root: &Location) -> bool {
         self.files == Self::capture(root).files
     }
 }

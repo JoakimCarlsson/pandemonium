@@ -45,6 +45,37 @@ pub fn rendered_pane(
     path: &Path,
     renders: &Renders,
 ) -> Div<Message> {
+    let (content, diagrams) = page_content(theme, blocks, file, scale, path, renders);
+    renders.keep_zooms(file, diagrams);
+    v_flex()
+        .w_full()
+        .h_full()
+        .overflow_hidden()
+        .bg(theme.colors.background)
+        .child(scroll_area(scroll, content).selectable().w_full().flex_1())
+}
+
+/// Builds Markdown blocks inline using the shared document rendering path.
+pub fn markdown_content(
+    theme: &Theme,
+    blocks: &[Block],
+    file: FileId,
+    scale: f32,
+    path: &Path,
+    renders: &Renders,
+) -> Div<Message> {
+    page_content(theme, blocks, file, scale, path, renders).0
+}
+
+/// Builds one page and counts nested diagrams for the existing zoom cache.
+fn page_content(
+    theme: &Theme,
+    blocks: &[Block],
+    file: FileId,
+    scale: f32,
+    path: &Path,
+    renders: &Renders,
+) -> (Div<Message>, usize) {
     let folder = path.parent().unwrap_or(Path::new(""));
     let page = Page {
         theme,
@@ -54,7 +85,7 @@ pub fn rendered_pane(
         renders,
         diagrams: Cell::new(0),
     };
-    let column = v_flex()
+    let content = v_flex()
         .w_full()
         .max_w_px(COLUMN)
         .mx_auto()
@@ -63,19 +94,7 @@ pub fn rendered_pane(
         .gap(1.5)
         .items_stretch()
         .children(blocks.iter().map(|block| page.block(block)));
-    renders.keep_zooms(file, page.diagrams.get());
-
-    v_flex()
-        .w_full()
-        .h_full()
-        .overflow_hidden()
-        .bg(theme.colors.background)
-        .child(
-            scroll_area(scroll, v_flex().w_full().child(column))
-                .selectable()
-                .w_full()
-                .flex_1(),
-        )
+    (content, page.diagrams.get())
 }
 
 /// What every block of one page is drawn against.

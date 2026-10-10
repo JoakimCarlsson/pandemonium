@@ -150,6 +150,33 @@ impl Profile {
             self.directory()?.canonicalize().ok()?.to_str()?.to_owned(),
         ))
     }
+    /// Resolves isolated login storage on the machine running this agent.
+    pub fn environment_on(&self, agent: Agent, host: &pm_host::Host) -> Option<(String, String)> {
+        if host.is_local() {
+            return self.environment(agent);
+        }
+        if self.agent != agent.id || !safe_component(&self.id) || !safe_component(&self.agent) {
+            return None;
+        }
+        let directory = host
+            .home()?
+            .join(".pandemonium/accounts")
+            .join(&self.agent)
+            .join(&self.id);
+        host.fs().create_dir_all(&directory).ok()?;
+        if host.os() != "windows"
+            && !host
+                .command("chmod")
+                .arg("700")
+                .arg(&directory)
+                .status()
+                .ok()?
+                .success()
+        {
+            return None;
+        }
+        Some((variable(agent)?.to_owned(), directory.to_str()?.to_owned()))
+    }
 }
 
 /// Whether a stored identifier is a single safe directory component.

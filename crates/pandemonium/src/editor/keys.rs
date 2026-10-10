@@ -12,7 +12,7 @@ use winit::keyboard::ModifiersState;
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
-use crate::keymap::Travel;
+use crate::keymap::{Action, Travel};
 
 /// One thing a keypress asks of the buffer it lands in.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +63,23 @@ impl Edit {
             Self::Move(motion, extend) => buffer.move_cursor(*motion, *extend),
         }
     }
+}
+
+/// Translates a named editing action into the same edit used by typed input.
+pub fn action_edit(action: Action, rows: usize) -> Option<Edit> {
+    Some(match action {
+        Action::Move(travel) => Edit::Move(motion(travel, rows), false),
+        Action::Select(travel) => Edit::Move(motion(travel, rows), true),
+        Action::Newline => Edit::Newline,
+        Action::Tab => Edit::Indent,
+        Action::Backspace => Edit::Backspace,
+        Action::Delete => Edit::Delete,
+        Action::DeleteWordLeft => Edit::DeleteWordLeft,
+        Action::DeleteWordRight => Edit::DeleteWordRight,
+        Action::DeleteToLineStart => Edit::DeleteTo(Motion::LineStart),
+        Action::DeleteToLineEnd => Edit::DeleteTo(Motion::LineEnd),
+        _ => return None,
+    })
 }
 
 /// The motion `travel` names, a page being `rows` lines.
