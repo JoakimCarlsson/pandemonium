@@ -2,6 +2,7 @@
 
 use std::sync::mpsc;
 
+#[cfg(unix)]
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,9 +13,11 @@ use winit::event_loop::EventLoopProxy;
 use crate::app::Wake;
 
 /// The major version of the editor control wire protocol.
+#[cfg(unix)]
 pub const VERSION: u32 = 1;
 
 /// One versioned request from a control client.
+#[cfg(unix)]
 #[derive(Deserialize, Serialize)]
 pub struct WireRequest {
     /// The wire protocol major version.
@@ -29,6 +32,7 @@ pub struct WireRequest {
 }
 
 /// A machine-readable failure returned to a control client.
+#[cfg(unix)]
 #[derive(Serialize)]
 pub struct WireError {
     /// A stable error category.
@@ -38,6 +42,7 @@ pub struct WireError {
 }
 
 /// One response to one request on the same connection.
+#[cfg(unix)]
 #[derive(Serialize)]
 pub struct WireResponse {
     /// The wire protocol major version.
@@ -53,6 +58,13 @@ pub struct WireResponse {
 }
 
 /// Work for the editor event loop from a control request.
+#[cfg_attr(
+    not(unix),
+    expect(
+        dead_code,
+        reason = "Only the Unix control transport constructs requests."
+    )
+)]
 pub enum Operation {
     /// Run a terminal command through the editor's command seam.
     Execute(String),
@@ -67,6 +79,13 @@ pub enum Operation {
 }
 
 /// A typed ACP operation issued by a remote client.
+#[cfg_attr(
+    not(unix),
+    expect(
+        dead_code,
+        reason = "Only the Unix control transport constructs requests."
+    )
+)]
 pub enum AgentOperation {
     /// List agents this editor can start.
     Catalog,

@@ -63,5 +63,6 @@ jobs:
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           suffix=""
           if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
-          [ "$("target/debug/pandemonium$suffix" --version)" = "pandemonium $version" ]
+          editor_version="$("target/debug/pandemonium$suffix" --version)"
+          [[ "$editor_version" == "pandemonium $version" || "$editor_version" == "pandemonium $version ("*")" ]]
           [ "$("target/debug/pandemonium-server$suffix" --version)" = "pandemonium-server $version" ]
