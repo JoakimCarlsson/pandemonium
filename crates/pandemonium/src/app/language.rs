@@ -384,7 +384,7 @@ impl App {
     }
     /// Carries out a command the language server behind the file answers.
     pub(super) fn act_on_language(&mut self, action: Action) {
-        if action == Action::Format && self.format_locally(false) {
+        if action == Action::Format && self.format_without_server(false) {
             return;
         }
         let request = match action {
@@ -1580,7 +1580,7 @@ impl App {
     fn finish_save(&mut self) {
         self.saving = false;
         if self.formatting {
-            self.format_locally(true);
+            self.format_without_server(true);
         }
         self.save_active();
     }

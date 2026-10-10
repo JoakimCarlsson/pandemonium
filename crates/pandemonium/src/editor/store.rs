@@ -1421,6 +1421,18 @@ pub struct Files {
     troubles: Vec<String>,
 }
 
+/// Opens configured servers for local documents, leaving remote documents unserved.
+fn servers_for(
+    servers: &mut Servers,
+    root: &Location,
+    language: Option<pm_text::Language>,
+) -> Vec<Arc<Client>> {
+    language
+        .filter(|_| root.host.is_local())
+        .map(|language| servers.open(root, language))
+        .unwrap_or_default()
+}
+
 impl Files {
     /// Takes file errors for the window's notices.
     pub fn take_troubles(&mut self) -> Vec<String> {
@@ -1607,7 +1619,7 @@ impl Files {
                 .language()
                 .is_some_and(|open| open.name() == language.name())
             {
-                let servers = self.servers.open(&entry.root, language);
+                let servers = servers_for(&mut self.servers, &entry.root, Some(language));
                 entry.document.borrow_mut().set_servers(servers);
             }
         }
@@ -1715,11 +1727,7 @@ impl Files {
         }
 
         let buffer = self.prepared_buffer(root.at(path))?;
-        let servers = buffer
-            .language()
-            .filter(|_| root.host.is_local())
-            .map(|language| self.servers.open(root, language))
-            .unwrap_or_default();
+        let servers = servers_for(&mut self.servers, root, buffer.language());
 
         let id = self.next;
         self.next = FileId(id.0 + 1);
@@ -2004,6 +2012,7 @@ impl Files {
         let documents = self
             .open
             .values()
+            .filter(|entry| entry.root.host.is_local())
             .filter_map(|entry| {
                 Some((
                     entry.root.path.clone(),
@@ -2044,19 +2053,18 @@ impl Files {
             .filter_map(|client| client.log_path().map(Path::to_path_buf))
             .collect::<Vec<_>>();
         for entry in self.open.values() {
-            let log = grown
-                .iter()
-                .any(|path| entry.document.borrow().buffer().path() == path);
+            let log = entry.root.host.is_local()
+                && grown
+                    .iter()
+                    .any(|path| entry.document.borrow().buffer().path() == path);
             if log && !entry.document.borrow().buffer().is_dirty() {
                 changed |= entry.document.borrow_mut().reread();
             }
         }
         for entry in self.open.values() {
             let language = entry.document.borrow().buffer().language();
-            if let Some(language) = language {
-                let servers = self.servers.open(&entry.root, language);
-                changed |= entry.document.borrow_mut().set_servers(servers);
-            }
+            let servers = servers_for(&mut self.servers, &entry.root, language);
+            changed |= entry.document.borrow_mut().set_servers(servers);
             if fresh {
                 entry.document.borrow_mut().refresh();
             }

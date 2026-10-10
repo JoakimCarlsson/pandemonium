@@ -1254,8 +1254,15 @@ impl App {
             .and_then(|drag| drag.pane)
     }
 
-    /// The worktree the window is holding that `path` lives in.
+    /// The worktree holding `path`, preferring the active scope's host when
+    /// other machines contain the same path.
     pub(super) fn worktree_holding(&self, path: &Path) -> Option<(Scope, pm_host::Location)> {
+        if let Some(scope) = self.scope()
+            && let Some(root) = self.root_of(scope)
+            && path.starts_with(&root)
+        {
+            return Some((scope, root));
+        }
         self.worktrees()
             .into_iter()
             .filter(|(_, root)| path.starts_with(root))

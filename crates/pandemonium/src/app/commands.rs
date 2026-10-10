@@ -476,7 +476,7 @@ impl App {
         if served {
             return self.begin_save(self.active_language_settings().format_on_save);
         }
-        self.format_locally(true);
+        self.format_without_server(true);
         self.save_active();
     }
 
