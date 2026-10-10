@@ -194,6 +194,13 @@ impl Servers {
                     Err(std::sync::mpsc::TryRecvError::Empty) => continue,
                 }
             }
+            if let Some(reason) = running.client.as_ref().and_then(|client| client.refusal()) {
+                if let Some(client) = running.client.take() {
+                    client.shutdown();
+                }
+                running.stopped = Some(ServerState::Failed { reason });
+                running.unreported = true;
+            }
             if running
                 .client
                 .as_ref()
@@ -429,6 +436,10 @@ impl Servers {
     }
 
     /// Drops server slots whose documents or configuration changed.
+    ///
+    /// A slot whose server was given up on is kept when its documents close,
+    /// so that opening one again does not start the same failure over;
+    /// [`Servers::reopen`] or a change to its configuration still does.
     pub fn reconcile(&mut self, documents: &[(HostLocation, Language)]) {
         let wanted = documents
             .iter()
@@ -439,11 +450,12 @@ impl Servers {
             })
             .collect::<HashMap<_, _>>();
         self.running.retain(|key, running| {
-            let keep = wanted.get(key).is_some_and(|server| {
-                running.server.is_none_or(|previous| {
+            let keep = match wanted.get(key) {
+                Some(server) => running.server.is_none_or(|previous| {
                     previous.arguments == server.arguments && previous.options == server.options
-                })
-            });
+                }),
+                None => matches!(running.stopped, Some(ServerState::Failed { .. })),
+            };
             if !keep && let Some(client) = &running.client {
                 client.shutdown();
             }

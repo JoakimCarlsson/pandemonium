@@ -605,10 +605,10 @@ impl App {
         for done in shifted {
             match done {
                 Shifted::Removed(host, removed) => {
+                    self.tell_servers_removed_on(&host, &removed);
                     for path in &removed {
                         self.close_tabs_of_on(&host, path);
                     }
-                    self.tell_servers_removed_on(&host, &removed);
                     self.reread_worktree();
                 }
                 Shifted::Placed {

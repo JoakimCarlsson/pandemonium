@@ -78,7 +78,7 @@ impl Log {
             stderr_finished: Arc::new(AtomicBool::new(true)),
         };
         log.write(&format!(
-            "── {command} starting over {} at {} ──",
+            "── {command} starting in {} at {} ──",
             root.display(),
             now()
         ));
