@@ -26,6 +26,19 @@ pub use delegation::Delegation;
 pub use placement::slug;
 pub use store::{Cutting, Found, Sessions, StartError, Started};
 
+/// Gives a session's worktree an environment of its own to run tools in.
+///
+/// The worktree is always cut on the project's own machine. A provision says
+/// where its tools run instead, and is told the project and the folder so it
+/// can name the environment after both.
+pub trait Provision: Send + Sync {
+    /// Creates and sets up the environment for `folder`, returning where tools run in it.
+    fn isolate(&self, project: &Location, folder: &std::path::Path) -> std::io::Result<Location>;
+
+    /// Where tools run for `folder` when its environment already exists, without starting it.
+    fn locate(&self, project: &Location, folder: &std::path::Path) -> Option<Location>;
+}
+
 use pm_host::Location;
 
 use crate::git::{Summary, WorkAtRisk};

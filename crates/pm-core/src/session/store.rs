@@ -8,7 +8,8 @@ use crate::git::{self, Summary};
 use crate::project::{Project, ProjectId};
 use crate::session::bootstrap::{self, Bootstrap};
 use crate::session::placement;
-use crate::session::{Cut, Session, SessionId};
+use crate::session::{Cut, Provision, Session, SessionId};
+use std::sync::Arc;
 
 /// Every session the window holds, in the order they were started.
 ///
@@ -49,6 +50,7 @@ impl Sessions {
     /// repository and a copy of whatever `wanted` names, so it is handed out
     /// rather than done here, and what it cut is taken up through
     /// [`Sessions::took`].
+    #[allow(clippy::too_many_arguments)]
     pub fn cut_later(
         &self,
         project: &Project,
@@ -57,6 +59,7 @@ impl Sessions {
         chosen: &[PathBuf],
         under: &Path,
         wanted: &Bootstrap,
+        provision: Option<Arc<dyn Provision>>,
     ) -> impl FnOnce() -> Result<Cutting, StartError> + Send + 'static + use<> {
         let project = project.clone();
         let name = name.to_owned();
@@ -65,7 +68,18 @@ impl Sessions {
         let under = under.to_path_buf();
         let wanted = wanted.clone();
         let ports = self.ports();
-        move || cut(&project, &name, &base, &chosen, &under, &wanted, &ports)
+        move || {
+            cut(
+                &project,
+                &name,
+                &base,
+                &chosen,
+                &under,
+                &wanted,
+                &ports,
+                provision.as_deref(),
+            )
+        }
     }
 
     /// Takes up a session [`Sessions::cut_later`] cut, giving it its id.
@@ -174,6 +188,7 @@ impl Sessions {
         &self,
         projects: &[Project],
         under: &Path,
+        provision: Option<Arc<dyn Provision>>,
     ) -> impl FnOnce() -> Vec<Found> + Send + 'static + use<> {
         let projects = projects
             .iter()
@@ -195,7 +210,7 @@ impl Sessions {
         move || {
             projects
                 .iter()
-                .flat_map(|project| find(project, &under, &held))
+                .flat_map(|project| find(project, &under, &held, provision.as_deref()))
                 .collect()
         }
     }
@@ -353,6 +368,7 @@ pub struct Found {
 /// are, and the session is then given an environment of its own, set up before
 /// the session is taken up. Dependency trees are not linked into it: a link
 /// would point at a desktop path the session's environment cannot see.
+#[allow(clippy::too_many_arguments)]
 fn cut(
     project: &Project,
     name: &str,
@@ -361,10 +377,12 @@ fn cut(
     under: &Path,
     wanted: &Bootstrap,
     taken: &[u16],
+    provision: Option<&dyn Provision>,
 ) -> Result<Cutting, StartError> {
-    let Some(native) = project.native() else {
+    let native = project.native();
+    if native.is_none() && provision.is_none() {
         return cut_on(project, name, base, chosen, under, wanted, taken);
-    };
+    }
     let host = &project.root().host;
     let chosen = chosen
         .iter()
@@ -377,8 +395,14 @@ fn cut(
         link: Vec::new(),
         ..wanted.clone()
     };
-    let mut cutting = cut_on(&native, name, base, &chosen, under, &wanted, taken)?;
-    match host.isolate(&cutting.source.path) {
+    let working = native.as_ref().unwrap_or(project);
+    let mut cutting = cut_on(working, name, base, &chosen, under, &wanted, taken)?;
+    let isolated = match (&native, provision) {
+        (Some(_), _) => host.isolate(&cutting.source.path),
+        (None, Some(provision)) => provision.isolate(project.root(), &cutting.source.path),
+        (None, None) => unreachable!(),
+    };
+    match isolated {
         Ok(execution) => {
             cutting.root = execution;
             Ok(cutting)
@@ -497,7 +521,12 @@ fn worktrees_on(project: &Project, local: &Path) -> std::io::Result<Location> {
 }
 
 /// The sessions of `project` under `under` whose folders are none of `held`.
-fn find(original: &Project, under: &Path, held: &[Location]) -> Vec<Found> {
+fn find(
+    original: &Project,
+    under: &Path,
+    held: &[Location],
+    provision: Option<&dyn Provision>,
+) -> Vec<Found> {
     let native = original.native();
     let project = native.as_ref().unwrap_or(original);
     let Ok(under) = worktrees_on(project, under) else {
@@ -539,9 +568,12 @@ fn find(original: &Project, under: &Path, held: &[Location]) -> Vec<Found> {
         .into_iter()
         .filter_map(|(source, cuts)| {
             let first = &cuts[0].root;
-            let root = match &native {
-                Some(_) => original.root().host.locate(&source.path).ok()?,
-                None => source.clone(),
+            let root = match (&native, provision) {
+                (Some(_), _) => original.root().host.locate(&source.path).ok()?,
+                (None, Some(provision)) => provision
+                    .locate(original.root(), &source.path)
+                    .unwrap_or_else(|| source.clone()),
+                (None, None) => source.clone(),
             };
             Some(Found {
                 delegation: git::remembered_delegation(first)

@@ -399,3 +399,66 @@ fn resolve_extensions(wanted: &[String]) -> Vec<Extension> {
         })
         .collect()
 }
+
+/// Gives session worktrees of native projects their own dev container.
+struct Containers {
+    /// The provider.
+    docker: Docker,
+    /// Where progress is reported, shared with the window.
+    back: Arc<std::sync::Mutex<Vec<super::remote::RemoteBack>>>,
+    /// Wakes the window when something was reported.
+    wake: Arc<dyn Fn() + Send + Sync>,
+}
+
+impl pm_core::Provision for Containers {
+    /// Builds, starts and sets up the worktree's container before the session is taken up.
+    fn isolate(&self, project: &Location, folder: &std::path::Path) -> std::io::Result<Location> {
+        let identity = Identity::new(project.path.display().to_string(), folder);
+        let reporting = identity.clone();
+        let back = self.back.clone();
+        let wake = self.wake.clone();
+        let sink: pm_devcontainer::Sink = Arc::new(move |event| {
+            back.lock()
+                .unwrap()
+                .push(super::remote::RemoteBack::Environment(Box::new(
+                    EnvironmentBack::Progress(reporting.clone(), event),
+                )));
+            wake();
+        });
+        let request = Request {
+            identity,
+            source: Location::local(folder),
+            declaration: None,
+        };
+        self.docker
+            .open(&request, Intent::Open, &sink)
+            .map(|environment| environment.workspace().clone())
+            .map_err(|failure| std::io::Error::other(failure.to_string()))
+    }
+
+    /// The worktree's existing container, if this editor made one.
+    fn locate(&self, project: &Location, folder: &std::path::Path) -> Option<Location> {
+        self.docker
+            .locate(&Identity::new(project.path.display().to_string(), folder))
+    }
+}
+
+impl App {
+    /// What gives a session's worktree its own dev container.
+    pub(super) fn provision(&self) -> Arc<dyn pm_core::Provision> {
+        Arc::new(Containers {
+            docker: self.environments.docker.clone(),
+            back: self.remote_back.clone(),
+            wake: self.waker(Wake::Remote),
+        })
+    }
+
+    /// Whether the session being started could run in a dev container: its project is
+    /// on this machine and declares one.
+    pub(super) fn session_could_use_container(&self) -> bool {
+        self.open.active().is_some_and(|project| {
+            let root = project.root();
+            root.host.is_local() && self.environments.docker.declaration(root).is_some()
+        })
+    }
+}

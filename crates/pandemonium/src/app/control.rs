@@ -171,7 +171,7 @@ impl App {
         let mut words = line.split_whitespace();
         let command = words.next().unwrap_or("help");
         match command {
-            "help" => Ok("status | project open PATH | project remote HOST[:/PATH] | project reconnect N | project container open|rebuild|reconnect|stop N | project use N | project close N | session new PROJECT NAME | session use N | session checkout PROJECT | session container open|rebuild|reconnect|stop N | session finish N confirm | file read PROJECT SESSION|checkout PATH | file open PROJECT SESSION|checkout PATH | agent list | agent start PROJECT SESSION|checkout AGENT | agent show N | agent send N PROMPT | agent stop N | agent answer N ASK CHOICE".to_owned()),
+            "help" => Ok("status | project open PATH | project remote HOST[:/PATH] | project reconnect N | project container open|rebuild|reconnect|stop N | project use N | project close N | session new PROJECT NAME | session new-container PROJECT NAME | session use N | session checkout PROJECT | session container open|rebuild|reconnect|stop N | session finish N confirm | file read PROJECT SESSION|checkout PATH | file open PROJECT SESSION|checkout PATH | agent list | agent start PROJECT SESSION|checkout AGENT | agent show N | agent send N PROMPT | agent stop N | agent answer N ASK CHOICE".to_owned()),
             "status" => Ok(self.control_status()),
             "project" => self.control_project(words.collect()),
             "session" => self.control_session(words.collect()),
@@ -349,7 +349,7 @@ impl App {
     /// Applies a worktree session command from the terminal.
     fn control_session(&mut self, words: Vec<&str>) -> Result<String, String> {
         match words.as_slice() {
-            ["new", project, name @ ..] if !name.is_empty() => {
+            [kind @ ("new" | "new-container"), project, name @ ..] if !name.is_empty() => {
                 let id = self.control_project_id(project)?;
                 let opened = self.open.get(id).ok_or_else(|| "project unavailable".to_owned())?;
                 if opened.repositories().is_empty() {
@@ -360,6 +360,7 @@ impl App {
                 self.session_base = None;
                 self.session_name = name.join(" ");
                 self.session_picks = roots;
+                self.session_container = Some(*kind == "new-container");
                 self.cut_session();
                 Ok("Session creation started".to_owned())
             }
@@ -386,7 +387,7 @@ impl App {
                 Ok("Session removal started".to_owned())
             }
             ["finish", _, ..] => Err("finishing removes the worktree; use session finish N confirm".to_owned()),
-            _ => Err("usage: session new PROJECT NAME | session use N | session checkout PROJECT | session container open|rebuild|reconnect|stop N | session finish N confirm".to_owned()),
+            _ => Err("usage: session new PROJECT NAME | session new-container PROJECT NAME | session use N | session checkout PROJECT | session container open|rebuild|reconnect|stop N | session finish N confirm".to_owned()),
         }
     }
 

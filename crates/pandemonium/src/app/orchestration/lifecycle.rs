@@ -207,7 +207,7 @@ impl App {
                 started: Instant::now(),
             },
         );
-        self.cut_session_later(&project, &name, "", &chosen, &under, Some(ticket));
+        self.cut_session_later(&project, &name, "", &chosen, &under, Some(ticket), None);
         let wake = self.waker(Wake::Orchestration);
         std::thread::spawn(move || {
             std::thread::sleep(OPEN_TIMEOUT);

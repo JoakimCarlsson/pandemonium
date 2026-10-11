@@ -284,8 +284,10 @@ impl App {
     fn read_changes(&self) -> impl FnOnce() -> Changes + Send + 'static {
         let repositories = self.open.read_later();
         let projects = self.open.iter().cloned().collect::<Vec<_>>();
-        let sessions =
-            crate::config::worktrees().map(|under| self.sessions.find_later(&projects, &under));
+        let sessions = crate::config::worktrees().map(|under| {
+            self.sessions
+                .find_later(&projects, &under, Some(self.provision()))
+        });
         move || Changes {
             repositories: repositories(),
             sessions: sessions.map(|find| find()).unwrap_or_default(),
@@ -294,6 +296,7 @@ impl App {
 
     /// Cuts a session of `project`, as [`pm_core::Sessions::cut_later`]
     /// says, and points the window at it once it is cut.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn cut_session_later(
         &mut self,
         project: &pm_core::Project,
@@ -302,6 +305,7 @@ impl App {
         chosen: &[PathBuf],
         under: &std::path::Path,
         delegation: Option<u64>,
+        provision: Option<std::sync::Arc<dyn pm_core::Provision>>,
     ) {
         let cut = self.sessions.cut_later(
             project,
@@ -310,6 +314,7 @@ impl App {
             chosen,
             under,
             &self.preferences.bootstrap,
+            provision,
         );
         self.spawn_read(move || match delegation {
             Some(ticket) => Back::Delegated(ticket, cut()),

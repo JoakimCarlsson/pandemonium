@@ -42,6 +42,7 @@ The same operations are available to `pandemonium control`:
 
 ```sh
 pandemonium control project container open|rebuild|reconnect|stop N
+pandemonium control session new-container PROJECT NAME
 pandemonium control session container open|rebuild|reconnect|stop N
 ```
 
@@ -50,15 +51,18 @@ Declarations are read from `.devcontainer/devcontainer.json`, then
 
 ## Agent worktrees
 
-A project opened in its container cuts its sessions on the desktop with the
-desktop's git, so worktree metadata is never written with container paths.
-Each session then gets an environment of its own: a separate container, a
-separate bind mount of only that worktree and its own named volumes, built from
-the worktree's own `.devcontainer/devcontainer.json`. The session is not taken
-up, and no agent starts, until that setup has completed. A failed setup removes
-the new worktree and reports the failure; retry by starting the session again.
-Finishing a session removes its container, volumes, built image and record, and
-nothing else.
+The shortest path: start a session as usual. When the project is on this
+machine and has a `.devcontainer/devcontainer.json`, the new-session flow asks
+**In a dev container** or **On this machine**. The worktree is cut on the
+desktop with the desktop's git, so worktree metadata is never written with
+container paths. Choosing the container gives that worktree an environment of
+its own: a separate container, a bind mount of only that worktree and its own
+named volumes, built from the worktree's own declaration. The session is not
+taken up, and no agent starts, until that setup has completed. A failed setup
+removes the new worktree and reports the failure; retry by starting the session
+again. Finishing a session removes its container, volumes, built image and
+record, and nothing else. A project that was itself reopened in its container
+gives every new session a container without asking.
 
 Stopping or rebuilding one session's environment leaves every other
 environment, and every other worktree's files, alone. Dependency trees that
@@ -257,8 +261,8 @@ make run
    a language server running in the container, debug `app.py`, and start an
    agent installed in the container. `docker top pm-<name>-<id>` lists the
    processes.
-5. **Isolation.** With the container project active, start two sessions and
-   write a different file in each. Each has its own container; `git status`
+5. **Isolation.** On the native project, start two sessions and choose **In a
+   dev container** for each. Write a different file in each. Each has its own container; `git status`
    in both terminals is valid. Stop or rebuild one with **Dev Container: Stop**
    or **Rebuild** while it is focused; the other keeps working.
 6. **Ports.** Run `serve` in a container terminal, then

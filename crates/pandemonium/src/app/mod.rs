@@ -282,6 +282,8 @@ pub struct App {
     session_base: Option<String>,
     /// What the session whose repositories are being picked is called.
     session_name: String,
+    /// Whether the session being started runs in a dev container, once chosen.
+    session_container: Option<bool>,
     /// The repositories ticked for that session.
     session_picks: BTreeSet<PathBuf>,
     /// The field of an agent's form that the prompt or list on screen is editing.
@@ -824,6 +826,7 @@ impl App {
             working: 0,
             session_base: None,
             session_name: String::new(),
+            session_container: None,
             session_picks: BTreeSet::new(),
             server_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),

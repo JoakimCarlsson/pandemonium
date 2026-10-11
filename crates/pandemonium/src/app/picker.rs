@@ -275,6 +275,10 @@ impl App {
             Choice::Process(pid) => self.choose_attach_process(pid),
             Choice::SessionRepository(_) => {}
             Choice::StartSession => self.cut_session(),
+            Choice::SessionPlace(container) => {
+                self.session_container = Some(container);
+                self.cut_session();
+            }
             Choice::Branch(project, branch) => self.switch_branch(project, &branch),
             Choice::Stash(index) => {
                 if let Some(action) = self.stash_action.take() {
@@ -410,6 +414,22 @@ impl App {
                     .collect()
             }),
             Kind::SessionRepositories => self.session_repository_rows(),
+            Kind::SessionPlace => vec![
+                Row {
+                    section: None,
+                    label: "In a dev container".to_owned(),
+                    detail: "Its own container, built from the worktree's .devcontainer".to_owned(),
+                    choice: Choice::SessionPlace(true),
+                    enabled: true,
+                },
+                Row {
+                    section: None,
+                    label: "On this machine".to_owned(),
+                    detail: "No container".to_owned(),
+                    choice: Choice::SessionPlace(false),
+                    enabled: true,
+                },
+            ],
             Kind::Modes => self
                 .focused_talk()
                 .map_or_else(Vec::new, |session| self.mode_rows(session)),

@@ -130,6 +130,12 @@ impl Docker {
         self.shared.records.log(&identity.id())
     }
 
+    /// Where `identity`'s environment is worked in, when this editor already created one for it.
+    pub fn locate(&self, identity: &Identity) -> Option<Location> {
+        self.shared.records.load(&identity.id())?;
+        Some(open::locate(&self.shared, identity))
+    }
+
     /// The environment a machine belongs to, when this editor created or restored it.
     pub fn identity_of(&self, host: &Host) -> Option<Identity> {
         let name = host
