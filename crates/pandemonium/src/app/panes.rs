@@ -1930,7 +1930,13 @@ impl App {
                 entries
             }
             MenuTarget::ReadingText => vec![
-                pm_ui::menu_entry("Copy", Some(Message::CopyText)),
+                pm_ui::menu_entry(
+                    "Copy",
+                    self.ui
+                        .as_ref()
+                        .and_then(pm_ui::Ui::selected_text)
+                        .map(|_| Message::CopyText),
+                ),
                 pm_ui::menu_separator(),
                 pm_ui::menu_entry("Select All", Some(Message::SelectAllText)),
             ],

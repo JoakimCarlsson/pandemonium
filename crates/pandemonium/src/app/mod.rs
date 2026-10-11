@@ -754,12 +754,12 @@ impl App {
         for root in &restored.projects {
             match hosts.restore(root) {
                 Ok(location) => {
-                    let _ = open.find_or_open(location);
+                    let _ = open.find_or_open_folder(location);
                 }
                 Err(error) => {
                     remote_errors.push(error.to_string());
                     if let Ok(location) = hosts.location(root) {
-                        let _ = open.find_or_open(location);
+                        let _ = open.find_or_open_folder(location);
                     }
                 }
             }
@@ -768,7 +768,7 @@ impl App {
         if let Some(active) = restored.active.as_ref()
             && let Ok(location) = hosts.location(active)
         {
-            let _ = open.find_or_open(location);
+            let _ = open.find_or_open_folder(location);
         }
 
         let layout = restored.layout;
