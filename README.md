@@ -73,6 +73,8 @@ projects and agent worktrees that run in containers, see the
 
 You need a recent stable Rust toolchain (edition 2024) and a GPU that wgpu is
 happy with. Agents are fetched with `npx` on first run, so Node helps too.
+`make run` also builds the matching machine server. On Linux it uses the musl
+Rust target, installed through rustup, to run inside older container images.
 
 ```sh
 git clone https://github.com/JoakimCarlsson/pandemonium.git

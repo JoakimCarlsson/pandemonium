@@ -16,8 +16,10 @@ from the binary next to the editor when the container has the same operating
 system and architecture, or installed from the pinned release otherwise. A
 container whose system the server cannot run on is reported by name: the error
 says which operating system or architecture the container reported. A binary
-built on a newer C library than the image has fails the same way, so build on a
-system no newer than your images, or use a release.
+built on a newer C library than the image has fails the same way. On Linux,
+`make run` and `make install` build a statically linked musl server and place it
+beside the editor, so development containers do not need the desktop's glibc
+version. The build installs the matching Rust target through rustup.
 
 ## Using it
 

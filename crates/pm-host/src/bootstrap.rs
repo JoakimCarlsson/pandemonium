@@ -129,14 +129,15 @@ impl Remote {
         let bytes = bytes.to_vec();
         let writing = std::thread::spawn(move || input.write_all(&bytes));
         let output = child.wait_with_output()?;
-        writing
+        let written = writing
             .join()
-            .map_err(|_| io::Error::other("Server upload interrupted"))??;
+            .map_err(|_| io::Error::other("Server upload interrupted"))?;
         if !output.status.success() {
             return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_owned(),
             ));
         }
+        written?;
         Ok(output.stdout)
     }
 }

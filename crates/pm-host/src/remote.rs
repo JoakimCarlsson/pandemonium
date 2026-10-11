@@ -265,7 +265,7 @@ impl Remote {
     fn remedy(&self) -> String {
         match &self.endpoint {
             Some(_) => format!(
-                "Build both binaries with `cargo build --workspace` so the editor can install the matching server into {}.",
+                "Run `make server` for a development build, or reinstall the preview with `make install`, so the editor can upload a matching server into {}.",
                 self.name
             ),
             None => format!(
