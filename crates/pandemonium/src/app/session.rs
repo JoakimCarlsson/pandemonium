@@ -275,9 +275,9 @@ impl App {
         let Some((scope, roots)) = self.sessions.get(session).map(|held| {
             (
                 Scope::of(held.project(), session),
-                std::iter::once(held.root())
+                std::iter::once(held.root().clone())
                     .chain(held.roots())
-                    .map(|root| root.path.clone())
+                    .map(|root| root.path)
                     .collect::<Vec<_>>(),
             )
         }) else {

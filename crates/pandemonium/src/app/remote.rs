@@ -35,6 +35,8 @@ pub(super) enum RemoteBack {
     Failed(String),
     /// A directory listing ready for the remote folder browser.
     Browse(Location, Vec<PathBuf>),
+    /// Progress or an outcome of dev container work.
+    Environment(Box<super::environments::EnvironmentBack>),
 }
 
 impl App {
@@ -83,7 +85,7 @@ impl App {
         else {
             return;
         };
-        if host.is_local() {
+        if host.is_local() || self.reconnect_environment(&host) {
             return;
         }
         if let Err(error) = self.begin_authentication(host, None, false) {
@@ -214,23 +216,8 @@ impl App {
                         Err(error) => self.notices.trouble(error.to_string(), None),
                     }
                 }
-                RemoteBack::Reconnected(host) => {
-                    self.editor.reconnect_host(&host);
-                    let affected = self
-                        .worktrees()
-                        .into_iter()
-                        .filter(|(_, root)| root.host == host)
-                        .map(|(scope, _)| scope)
-                        .collect::<Vec<_>>();
-                    for scope in affected {
-                        self.watchers.remove(&scope);
-                        if let Some(tree) = self.files.get_mut(&scope) {
-                            tree.reload();
-                        }
-                    }
-                    self.watch_worktrees();
-                    self.reread_changes();
-                }
+                RemoteBack::Reconnected(host) => self.reconnected(host),
+                RemoteBack::Environment(back) => self.take_environment(*back),
                 RemoteBack::Failed(error) => self.notices.trouble(error, None),
                 RemoteBack::Browse(root, directories) => {
                     self.remember_host(&root.host);
@@ -279,9 +266,29 @@ impl App {
         }
     }
 
+    /// Refreshes every project and session on a machine that was just reconnected.
+    pub(super) fn reconnected(&mut self, host: Host) {
+        self.editor.reconnect_host(&host);
+        let affected = self
+            .worktrees()
+            .into_iter()
+            .filter(|(_, root)| root.host == host)
+            .map(|(scope, _)| scope)
+            .collect::<Vec<_>>();
+        for scope in affected {
+            self.watchers.remove(&scope);
+            if let Some(tree) = self.files.get_mut(&scope) {
+                tree.reload();
+            }
+        }
+        self.watch_worktrees();
+        self.reread_changes();
+    }
+
     /// Retains successfully authenticated aliases through the preferences seam.
     fn remember_host(&mut self, host: &Host) {
-        if let Some(name) = host.name()
+        if host.is_ssh()
+            && let Some(name) = host.name()
             && !self
                 .preferences
                 .remote_hosts

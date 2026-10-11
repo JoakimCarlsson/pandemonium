@@ -171,7 +171,7 @@ impl App {
         let mut words = line.split_whitespace();
         let command = words.next().unwrap_or("help");
         match command {
-            "help" => Ok("status | project open PATH | project remote HOST[:/PATH] | project reconnect N | project use N | project close N | session new PROJECT NAME | session use N | session checkout PROJECT | session finish N confirm | file read PROJECT SESSION|checkout PATH | file open PROJECT SESSION|checkout PATH | agent list | agent start PROJECT SESSION|checkout AGENT | agent show N | agent send N PROMPT | agent stop N | agent answer N ASK CHOICE".to_owned()),
+            "help" => Ok("status | project open PATH | project remote HOST[:/PATH] | project reconnect N | project container open|rebuild|reconnect|stop N | project use N | project close N | session new PROJECT NAME | session use N | session checkout PROJECT | session container open|rebuild|reconnect|stop N | session finish N confirm | file read PROJECT SESSION|checkout PATH | file open PROJECT SESSION|checkout PATH | agent list | agent start PROJECT SESSION|checkout AGENT | agent show N | agent send N PROMPT | agent stop N | agent answer N ASK CHOICE".to_owned()),
             "status" => Ok(self.control_status()),
             "project" => self.control_project(words.collect()),
             "session" => self.control_session(words.collect()),
@@ -325,6 +325,13 @@ impl App {
                     self.control_project_index(id).unwrap_or_default()
                 ))
             }
+            ["container", action, index] => {
+                let operation = Self::control_environment_operation(action)?;
+                let id = self.control_project_id(index)?;
+                self.point_at(Scope::checkout(id));
+                self.environment_action(operation);
+                Ok("Dev container operation started".to_owned())
+            }
             ["use", index] => {
                 let id = self.control_project_id(index)?;
                 self.point_at(Scope::checkout(id));
@@ -335,7 +342,7 @@ impl App {
                 self.apply(Message::CloseProject(id));
                 Ok("Project closed".to_owned())
             }
-            _ => Err("usage: project open PATH | project remote HOST[:/PATH] | project reconnect N | project use N | project close N".to_owned()),
+            _ => Err("usage: project open PATH | project remote HOST[:/PATH] | project reconnect N | project container open|rebuild|reconnect|stop N | project use N | project close N".to_owned()),
         }
     }
 
@@ -366,13 +373,20 @@ impl App {
                 self.point_at(Scope::checkout(id));
                 Ok("Checkout selected".to_owned())
             }
+            ["container", action, index] => {
+                let operation = Self::control_environment_operation(action)?;
+                let id = self.control_session_id(index)?;
+                self.select_session(id);
+                self.environment_action(operation);
+                Ok("Dev container operation started".to_owned())
+            }
             ["finish", index, "confirm"] => {
                 let id = self.control_session_id(index)?;
                 self.end_session(id);
                 Ok("Session removal started".to_owned())
             }
             ["finish", _, ..] => Err("finishing removes the worktree; use session finish N confirm".to_owned()),
-            _ => Err("usage: session new PROJECT NAME | session use N | session checkout PROJECT | session finish N confirm".to_owned()),
+            _ => Err("usage: session new PROJECT NAME | session use N | session checkout PROJECT | session container open|rebuild|reconnect|stop N | session finish N confirm".to_owned()),
         }
     }
 
@@ -484,6 +498,19 @@ impl App {
             .nth(index)
             .map(Session::id)
             .ok_or_else(|| "session unavailable".to_owned())
+    }
+
+    /// Reads the dev container operation a control command names.
+    fn control_environment_operation(
+        action: &str,
+    ) -> Result<super::environments::Operation, String> {
+        match action {
+            "open" => Ok(super::environments::Operation::Open),
+            "rebuild" => Ok(super::environments::Operation::Rebuild),
+            "reconnect" => Ok(super::environments::Operation::Reconnect),
+            "stop" => Ok(super::environments::Operation::Stop),
+            _ => Err("usage: container open|rebuild|reconnect|stop N".to_owned()),
+        }
     }
 
     /// Resolves the current ACP conversation list index to an identity.

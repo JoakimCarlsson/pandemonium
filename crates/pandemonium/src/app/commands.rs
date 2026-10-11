@@ -96,6 +96,19 @@ impl App {
             Action::ToggleFullscreen => self.toggle_fullscreen(),
             Action::OpenRemoteProject => self.open_picker(Kind::RemoteHosts),
             Action::ReconnectProject => self.reconnect_project(),
+            Action::OpenEnvironment => {
+                self.environment_action(super::environments::Operation::Open)
+            }
+            Action::RebuildEnvironment => {
+                self.environment_action(super::environments::Operation::Rebuild)
+            }
+            Action::ReconnectEnvironment => {
+                self.environment_action(super::environments::Operation::Reconnect)
+            }
+            Action::StopEnvironment => {
+                self.environment_action(super::environments::Operation::Stop)
+            }
+            Action::ShowEnvironmentLog => self.open_environment_log(),
             Action::AddProject => return self.apply(Message::OpenProject),
             Action::NewSession => return self.apply(Message::NewSession),
             Action::RemoveProject => {

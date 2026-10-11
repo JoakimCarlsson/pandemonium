@@ -32,6 +32,12 @@ impl Host {
             .0
             .as_ref()
             .ok_or_else(|| io::Error::other("Local services need no SSH forwarding"))?;
+        if host.endpoint.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Editor services are not forwarded into environments",
+            ));
+        }
         let control = host.control.lock().unwrap().clone().ok_or_else(|| {
             io::Error::other("SSH forwarding needs an authenticated control master")
         })?;

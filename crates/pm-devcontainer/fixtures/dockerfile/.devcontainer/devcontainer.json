@@ -1,0 +1,33 @@
+{
+  // Dockerfile-based fixture: the image is built from .devcontainer/Dockerfile.
+  "name": "pandemonium dockerfile fixture",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "FIXTURE_USER": "dev"
+    }
+  },
+  "containerUser": "dev",
+  "containerEnv": {
+    "PANDEMONIUM_FIXTURE": "dockerfile"
+  },
+  "remoteEnv": {
+    "PANDEMONIUM_REMOTE": "from-remoteEnv-${containerEnv:PANDEMONIUM_FIXTURE}"
+  },
+  "forwardPorts": [8080],
+  "initializeCommand": "mkdir -p .fixture && echo initializeCommand >> .fixture/desktop.log",
+  "onCreateCommand": ".devcontainer/hook.sh onCreateCommand",
+  "updateContentCommand": ["sh", "-c", ".devcontainer/hook.sh updateContentCommand"],
+  "postCreateCommand": {
+    "hook": ".devcontainer/hook.sh postCreateCommand",
+    "tools": "pip install --user --quiet ruff debugpy"
+  },
+  "postStartCommand": ".devcontainer/hook.sh postStartCommand",
+  "postAttachCommand": ".devcontainer/hook.sh postAttachCommand",
+  "customizations": {
+    "pandemonium": {
+      "extensions": []
+    }
+  },
+}

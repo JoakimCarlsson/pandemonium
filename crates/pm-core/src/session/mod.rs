@@ -68,7 +68,14 @@ pub struct Session {
     /// What the reader called it, which is what a row says.
     name: String,
     /// The folder the agent works in: the one worktree, or the folder of them.
+    ///
+    /// This is where tools run. It is the folder where the worktrees were cut
+    /// unless the project lives in an environment, and then the same files as
+    /// that environment sees them.
     root: Location,
+    /// The folder the worktrees were cut in, which is where the session is
+    /// found again and finished from.
+    source: Location,
     /// The worktree cut of each repository, the outermost first.
     cuts: Vec<Cut>,
     /// The local port this session serves on, where one was free.
@@ -114,9 +121,19 @@ impl Session {
         &self.root
     }
 
-    /// The root of every worktree cut for this session.
-    pub fn roots(&self) -> impl Iterator<Item = &Location> {
-        self.cuts.iter().map(|cut| &cut.root)
+    /// The root of every worktree cut for this session, as tools see it.
+    pub fn roots(&self) -> impl Iterator<Item = Location> + '_ {
+        self.cuts
+            .iter()
+            .map(|cut| match cut.root.path.strip_prefix(&self.source.path) {
+                Ok(within) if self.root != self.source => self.root.at(self.root.join(within)),
+                _ => cut.root.clone(),
+            })
+    }
+
+    /// The folder the worktrees were cut in.
+    pub fn source(&self) -> &Location {
+        &self.source
     }
 
     /// The commit it was cut from, or the first of them for a session cut

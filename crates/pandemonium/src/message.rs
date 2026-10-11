@@ -151,6 +151,8 @@ pub enum Message {
     OpenServerLog,
     /// Open the log of a particular server, even after focus changes.
     OpenServerLogAt(usize),
+    /// Open the log of the latest dev container operation.
+    OpenEnvironmentLog,
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.

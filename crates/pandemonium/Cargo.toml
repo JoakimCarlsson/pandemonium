@@ -14,6 +14,7 @@ mermaid-svg = "0.7.0"
 pm-acp.workspace = true
 pm-core.workspace = true
 pm-dap.workspace = true
+pm-devcontainer.workspace = true
 pm-gfx.workspace = true
 pm-text.workspace = true
 pm-ui.workspace = true

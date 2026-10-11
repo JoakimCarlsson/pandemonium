@@ -2,7 +2,7 @@
 
 use crate::command::{ArcProcess, Process, Spec};
 use crate::wire::{self, Frame, Reply, Request};
-use crate::{Child, CommandBuilder, Pty, PtyChild, PtyControl, Stdio, Watcher};
+use crate::{Child, CommandBuilder, Endpoint, Pty, PtyChild, PtyControl, Stdio, Watcher};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -22,8 +22,10 @@ const QUEUED: usize = 512;
 
 /// A stable remote identity whose connection may be replaced explicitly.
 pub(crate) struct Remote {
-    /// The system SSH alias.
+    /// The system SSH alias, or the endpoint's own name.
     pub name: String,
+    /// The launcher standing in for SSH, when this machine is not an SSH host.
+    pub(crate) endpoint: Option<Arc<dyn Endpoint>>,
     /// The current connection generation.
     connection: Mutex<Option<Arc<Connection>>>,
     /// The private SSH multiplex socket used for interactive authentication.
@@ -53,8 +55,19 @@ impl Remote {
                 "invalid SSH host",
             ));
         }
-        Ok(Self {
-            name: name.to_owned(),
+        Ok(Self::unlaunched(name.to_owned(), None))
+    }
+
+    /// A machine whose endpoint is started by `endpoint` instead of SSH.
+    pub fn launched(endpoint: Arc<dyn Endpoint>) -> Self {
+        Self::unlaunched(endpoint.name(), Some(endpoint))
+    }
+
+    /// The shared initial state of every machine.
+    fn unlaunched(name: String, endpoint: Option<Arc<dyn Endpoint>>) -> Self {
+        Self {
+            name,
+            endpoint,
             connection: Mutex::new(None),
             control: Mutex::new(None),
             information: Mutex::new(Value::Null),
@@ -62,7 +75,7 @@ impl Remote {
             connecting: AtomicBool::new(false),
             dialing: Mutex::new(()),
             notify: Arc::new(Mutex::new(None)),
-        })
+        }
     }
     /// Reserves one private SSH master socket shared by every project on this host.
     fn reserve_control(&self) -> io::Result<std::path::PathBuf> {
@@ -84,6 +97,9 @@ impl Remote {
 
     /// Builds the local SSH login terminal, preserving system SSH configuration.
     pub fn authentication(&self) -> io::Result<CommandBuilder> {
+        if self.endpoint.is_some() {
+            return Err(io::Error::other("Environments need no SSH login"));
+        }
         self.connecting.store(true, Ordering::Release);
         let socket = self.reserve_control()?;
         let mut command = CommandBuilder::new("ssh");
@@ -105,7 +121,7 @@ impl Remote {
     pub fn connect(&self) -> io::Result<()> {
         let _dialing = self.dialing.lock().unwrap();
         self.connecting.store(true, Ordering::Release);
-        let result = match self.try_connect() {
+        let result = self.prepared().and_then(|()| match self.try_connect() {
             Ok(()) => Ok(()),
             Err(original) => self
                 .install_server()
@@ -113,7 +129,7 @@ impl Remote {
                     io::Error::other(format!("{original} Server setup failed: {error}"))
                 })
                 .and_then(|()| self.try_connect()),
-        };
+        });
         self.connecting.store(false, Ordering::Release);
         if let Some(notify) = self.notify.lock().unwrap().clone() {
             notify();
@@ -121,10 +137,18 @@ impl Remote {
         result
     }
 
-    /// Starts SSH and requires the endpoint's package and transport versions.
-    fn try_connect(&self) -> io::Result<()> {
-        if let Some(connection) = self.connection.lock().unwrap().take() {
-            connection.close();
+    /// Readies an endpoint-launched machine so that a launch has somewhere to go.
+    fn prepared(&self) -> io::Result<()> {
+        match &self.endpoint {
+            Some(endpoint) => endpoint.prepare(),
+            None => Ok(()),
+        }
+    }
+
+    /// The local command that starts the machine's endpoint on its standard pipes.
+    fn launcher(&self) -> io::Result<std::process::Command> {
+        if let Some(endpoint) = &self.endpoint {
+            return endpoint.shell(&crate::bootstrap::server_script());
         }
         if self.control.lock().unwrap().is_none() {
             self.reserve_control()?;
@@ -149,9 +173,19 @@ impl Remote {
                 "ControlPersist=60",
             ]);
         }
-        let mut child = command
+        command
             .arg(&self.name)
-            .arg(crate::bootstrap::server_command())
+            .arg(crate::bootstrap::server_command());
+        Ok(command)
+    }
+
+    /// Starts SSH and requires the endpoint's package and transport versions.
+    fn try_connect(&self) -> io::Result<()> {
+        if let Some(connection) = self.connection.lock().unwrap().take() {
+            connection.close();
+        }
+        let mut command = self.launcher()?;
+        let mut child = command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -210,16 +244,35 @@ impl Remote {
             let detail = connection.errors.lock().unwrap().clone();
             connection.close();
             return Err(io::Error::other(format!(
-                "pandemonium-server {} is needed on {}, found {found} (transport {protocol:?}, need {}). Build with `cargo build -p pm-server --release`, then `scp target/release/pandemonium-server {}:.local/bin/pandemonium-server` (create ~/.local/bin and put it on the remote PATH). {detail}",
+                "pandemonium-server {} is needed on {}, found {found} (transport {protocol:?}, need {}). {} {detail}",
                 env!("CARGO_PKG_VERSION"),
                 self.name,
                 crate::wire::PROTOCOL,
-                self.name
+                self.remedy()
             )));
         }
         *self.information.lock().unwrap() = handshake?;
         *self.connection.lock().unwrap() = Some(connection);
         Ok(())
+    }
+    /// Closes the current connection, leaving the machine ready to be reconnected.
+    pub fn disconnect(&self) {
+        if let Some(connection) = self.connection.lock().unwrap().take() {
+            connection.close();
+        }
+    }
+    /// What to do when the machine's endpoint is missing or incompatible.
+    fn remedy(&self) -> String {
+        match &self.endpoint {
+            Some(_) => format!(
+                "Build both binaries with `cargo build --workspace` so the editor can install the matching server into {}.",
+                self.name
+            ),
+            None => format!(
+                "Build with `cargo build -p pm-server --release`, then `scp target/release/pandemonium-server {}:.local/bin/pandemonium-server` (create ~/.local/bin and put it on the remote PATH).",
+                self.name
+            ),
+        }
     }
     /// Whether SSH is still serving the current generation.
     pub fn connected(&self) -> bool {

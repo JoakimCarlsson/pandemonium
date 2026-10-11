@@ -16,12 +16,17 @@ fn directory() -> String {
     )
 }
 
-/// Starts the private endpoint when present, otherwise the user's installed server.
-pub(crate) fn server_command() -> String {
+/// The script starting the private endpoint when present, otherwise the user's installed server.
+pub(crate) fn server_script() -> String {
     let directory = directory();
-    shell_command(&format!(
+    format!(
         "if [ -x \"{directory}/pandemonium-server\" ]; then exec \"{directory}/pandemonium-server\" --stdio; else exec pandemonium-server --stdio; fi"
-    ))
+    )
+}
+
+/// Starts the private endpoint through the login shell of an SSH host.
+pub(crate) fn server_command() -> String {
+    shell_command(&server_script())
 }
 
 /// Runs POSIX setup commands without depending on the user's login shell syntax.
@@ -38,16 +43,24 @@ impl Remote {
         let os = match lines.next() {
             Some("Linux") => "linux",
             Some("Darwin") => "macos",
-            _ => {
-                return Err(io::Error::other(
-                    "Automatic server setup requires a Linux or macOS SSH host",
-                ));
+            other => {
+                return Err(io::Error::other(format!(
+                    "Automatic server setup supports Linux and macOS, but {} reports operating system {}",
+                    self.name,
+                    other.unwrap_or("unknown")
+                )));
             }
         };
         let arch = match lines.next() {
             Some("x86_64" | "amd64") => "x86_64",
             Some("aarch64" | "arm64") => "aarch64",
-            _ => return Err(io::Error::other("Unsupported remote architecture")),
+            other => {
+                return Err(io::Error::other(format!(
+                    "Automatic server setup supports x86_64 and aarch64, but {} reports architecture {}",
+                    self.name,
+                    other.unwrap_or("unknown")
+                )));
+            }
         };
         let sibling = std::env::current_exe()?.with_file_name("pandemonium-server");
         if os == std::env::consts::OS && arch == std::env::consts::ARCH && sibling.is_file() {
@@ -77,8 +90,11 @@ impl Remote {
         Ok(())
     }
 
-    /// Runs a bootstrap command through the authenticated SSH connection.
-    fn execute(&self, script: &str, bytes: &[u8]) -> io::Result<Vec<u8>> {
+    /// The local command running a bootstrap script on the machine.
+    fn bootstrap_command(&self, script: &str) -> io::Result<Command> {
+        if let Some(endpoint) = &self.endpoint {
+            return endpoint.shell(script);
+        }
         let mut command = Command::new("ssh");
         command.args([
             "-T",
@@ -94,9 +110,14 @@ impl Remote {
         if let Some(control) = self.control.lock().unwrap().as_ref() {
             command.arg("-S").arg(control);
         }
-        let mut child = command
-            .arg(&self.name)
-            .arg(shell_command(script))
+        command.arg(&self.name).arg(shell_command(script));
+        Ok(command)
+    }
+
+    /// Runs a bootstrap command through the authenticated connection.
+    fn execute(&self, script: &str, bytes: &[u8]) -> io::Result<Vec<u8>> {
+        let mut child = self
+            .bootstrap_command(script)?
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

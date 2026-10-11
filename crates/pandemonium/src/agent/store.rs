@@ -2668,23 +2668,27 @@ fn configured_session(
     if root.host.is_local() {
         crate::config::prepare_account(agent, environment)?;
     }
-    let mut servers = servers;
     let mut tunnels = Vec::new();
-    if !root.host.is_local() {
-        for server in &mut servers {
-            let pm_acp::Reach::Http { url, .. } = &mut server.reach else {
-                continue;
-            };
-            let Some(address) = url.strip_prefix("http://127.0.0.1:") else {
-                continue;
-            };
+    let mut reachable = Vec::new();
+    for mut server in servers {
+        if !root.host.is_local()
+            && let pm_acp::Reach::Http { url, .. } = &mut server.reach
+            && let Some(address) = url.strip_prefix("http://127.0.0.1:")
+        {
             let (port, path) = address.split_once('/').unwrap_or((address, ""));
             let port = port.parse().map_err(std::io::Error::other)?;
-            let tunnel = root.host.forward_local(port)?;
-            *url = format!("http://127.0.0.1:{}/{}", tunnel.port(), path);
-            tunnels.push(tunnel);
+            match root.host.forward_local(port) {
+                Ok(tunnel) => {
+                    *url = format!("http://127.0.0.1:{}/{}", tunnel.port(), path);
+                    tunnels.push(tunnel);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Unsupported => continue,
+                Err(error) => return Err(error),
+            }
         }
+        reachable.push(server);
     }
+    let servers = reachable;
     let mut session = Session::configured(agent, root, environment, conversation, servers, notify)?;
     for tunnel in tunnels {
         session.keep_tunnel(tunnel);

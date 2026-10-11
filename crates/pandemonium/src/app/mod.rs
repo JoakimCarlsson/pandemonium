@@ -20,6 +20,7 @@ mod debug;
 mod dialog;
 mod disk;
 mod drag;
+mod environments;
 mod excerpts;
 mod form;
 mod formatter;
@@ -310,6 +311,8 @@ pub struct App {
     control: Option<crate::control::Server>,
     /// The SSH login terminal while a connection is authenticating.
     authentication: Option<remote::Authentication>,
+    /// Dev container environments and the operations running on them.
+    environments: environments::Environments,
     /// The remote directory whose browser request is current.
     remote_browse: Option<pm_host::Location>,
     /// Remote handshakes completed away from the window.
@@ -742,6 +745,9 @@ impl App {
         let restored = config::load();
         let mut open = Projects::new();
         let mut hosts = pm_host::Hosts::default();
+        let environments =
+            environments::Environments::new(&restored.preferences.devcontainer_engine);
+        hosts.resolve_with(environments.docker.resolver());
         let mut remote_errors = Vec::new();
         for root in &restored.projects {
             match hosts.restore(root) {
@@ -832,6 +838,7 @@ impl App {
             hosts,
             control,
             authentication: None,
+            environments,
             remote_browse: None,
             remote_back: Arc::default(),
             files,
@@ -1874,6 +1881,10 @@ impl App {
             self.open_server_log();
             return self.request_redraw();
         }
+        if message == Message::OpenEnvironmentLog {
+            self.open_environment_log();
+            return self.request_redraw();
+        }
         if self.session_command(message) {
             self.request_redraw();
             return;
@@ -1900,9 +1911,9 @@ impl App {
             {
                 let mut roots = vec![root];
                 roots.extend(self.sessions.of(id).flat_map(|session| {
-                    std::iter::once(session.root())
+                    std::iter::once(session.root().clone())
                         .chain(session.roots())
-                        .map(|root| root.to_path_buf())
+                        .map(|root| root.path)
                 }));
                 self.notebooks.forget(|scope| scope.project() == id);
                 self.editor.close_project(id, &roots);

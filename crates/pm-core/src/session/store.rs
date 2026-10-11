@@ -69,7 +69,26 @@ impl Sessions {
     }
 
     /// Takes up a session [`Sessions::cut_later`] cut, giving it its id.
+    ///
+    /// A session that was found on disk while its environment was still being
+    /// set up is the same session, and keeps the id it was found under.
     pub fn took(&mut self, cutting: Cutting) -> Started {
+        if let Some(held) = self
+            .open
+            .iter_mut()
+            .find(|session| session.source == cutting.source)
+        {
+            held.project = cutting.project;
+            held.name = cutting.name;
+            held.summary = cutting.summary;
+            held.root = cutting.root;
+            held.cuts = cutting.cuts;
+            held.port = cutting.port;
+            return Started {
+                id: held.id,
+                trouble: cutting.trouble,
+            };
+        }
         let id = self.next;
         self.next = id.next();
         self.open.push(Session {
@@ -79,6 +98,7 @@ impl Sessions {
             name: cutting.name,
             summary: cutting.summary,
             root: cutting.root,
+            source: cutting.source,
             cuts: cutting.cuts,
             port: cutting.port,
         });
@@ -102,13 +122,23 @@ impl Sessions {
         &self,
         id: SessionId,
     ) -> impl FnOnce() -> Result<(), StartError> + Send + 'static + use<> {
-        let held = self
-            .get(id)
-            .map(|session| (session.root.clone(), session.cuts.clone()));
+        let held = self.get(id).map(|session| {
+            (
+                session.root.clone(),
+                session.source.clone(),
+                session.cuts.clone(),
+            )
+        });
         move || {
-            let Some((root, cuts)) = held else {
+            let Some((execution, root, cuts)) = held else {
                 return Ok(());
             };
+            if execution != root {
+                execution
+                    .host
+                    .retire(&root.path)
+                    .map_err(|error| StartError::Environment(error.to_string()))?;
+            }
             for cut in cuts.iter().rev() {
                 git::remove_worktree(&cut.origin, &cut.root).map_err(StartError::Git)?;
             }
@@ -145,12 +175,22 @@ impl Sessions {
         projects: &[Project],
         under: &Path,
     ) -> impl FnOnce() -> Vec<Found> + Send + 'static + use<> {
-        let projects = projects.to_vec();
+        let projects = projects
+            .iter()
+            .filter(|project| {
+                !projects.iter().any(|other| {
+                    other
+                        .native_root()
+                        .is_some_and(|root| &root == project.root())
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         let under = under.to_path_buf();
         let held = self
             .open
             .iter()
-            .map(|session| session.root.clone())
+            .map(|session| session.source.clone())
             .collect::<Vec<_>>();
         move || {
             projects
@@ -164,7 +204,7 @@ impl Sessions {
     /// one taken up since it was asked.
     pub fn adopt(&mut self, found: Vec<Found>) {
         for found in found {
-            if self.open.iter().any(|open| open.root == found.root) {
+            if self.open.iter().any(|open| open.source == found.source) {
                 continue;
             }
             let id = self.next;
@@ -176,6 +216,7 @@ impl Sessions {
                 name: found.name,
                 summary: found.summary,
                 root: found.root,
+                source: found.source,
                 cuts: found.cuts,
                 port: found.port,
             });
@@ -270,8 +311,10 @@ pub struct Cutting {
     project: ProjectId,
     /// What the reader called it.
     name: String,
-    /// The folder the agent works in.
+    /// The folder the agent works in, as tools see it.
     root: Location,
+    /// The folder the worktrees were cut in.
+    source: Location,
     /// The worktree cut of each repository, the outermost first.
     cuts: Vec<Cut>,
     /// The local port it serves on, where one was free.
@@ -291,8 +334,10 @@ pub struct Found {
     project: ProjectId,
     /// What it was called when it was cut.
     name: String,
-    /// The session folder the worktrees sit in.
+    /// The session folder the worktrees sit in, as tools see it.
     root: Location,
+    /// The session folder where the worktrees sit.
+    source: Location,
     /// The worktree cut of each repository, the outermost first.
     cuts: Vec<Cut>,
     /// The local port it was given, if it was given one.
@@ -303,7 +348,50 @@ pub struct Found {
 
 /// Cuts a session of `project`, as [`Sessions::cut_later`] says, giving it
 /// a port none of `taken` is.
+///
+/// A project living in an environment is cut on the desktop, where its files
+/// are, and the session is then given an environment of its own, set up before
+/// the session is taken up. Dependency trees are not linked into it: a link
+/// would point at a desktop path the session's environment cannot see.
 fn cut(
+    project: &Project,
+    name: &str,
+    base: &str,
+    chosen: &[PathBuf],
+    under: &Path,
+    wanted: &Bootstrap,
+    taken: &[u16],
+) -> Result<Cutting, StartError> {
+    let Some(native) = project.native() else {
+        return cut_on(project, name, base, chosen, under, wanted, taken);
+    };
+    let host = &project.root().host;
+    let chosen = chosen
+        .iter()
+        .map(|path| {
+            host.native(path)
+                .map_or_else(|| path.clone(), |native| native.path)
+        })
+        .collect::<Vec<_>>();
+    let wanted = Bootstrap {
+        link: Vec::new(),
+        ..wanted.clone()
+    };
+    let mut cutting = cut_on(&native, name, base, &chosen, under, &wanted, taken)?;
+    match host.isolate(&cutting.source.path) {
+        Ok(execution) => {
+            cutting.root = execution;
+            Ok(cutting)
+        }
+        Err(error) => {
+            tear_down(&cutting.source, &cutting.cuts);
+            Err(StartError::Environment(error.to_string()))
+        }
+    }
+}
+
+/// Cuts a session of `project`, wherever its files are, on its own machine.
+fn cut_on(
     project: &Project,
     name: &str,
     base: &str,
@@ -387,6 +475,7 @@ fn cut(
         project: project.id(),
         name: name.to_owned(),
         summary: super::drift(&cuts),
+        source: root.clone(),
         root,
         cuts,
         port,
@@ -408,7 +497,9 @@ fn worktrees_on(project: &Project, local: &Path) -> std::io::Result<Location> {
 }
 
 /// The sessions of `project` under `under` whose folders are none of `held`.
-fn find(project: &Project, under: &Path, held: &[Location]) -> Vec<Found> {
+fn find(original: &Project, under: &Path, held: &[Location]) -> Vec<Found> {
+    let native = original.native();
+    let project = native.as_ref().unwrap_or(original);
     let Ok(under) = worktrees_on(project, under) else {
         return Vec::new();
     };
@@ -446,18 +537,23 @@ fn find(project: &Project, under: &Path, held: &[Location]) -> Vec<Found> {
 
     found
         .into_iter()
-        .map(|(root, cuts)| {
+        .filter_map(|(source, cuts)| {
             let first = &cuts[0].root;
-            Found {
+            let root = match &native {
+                Some(_) => original.root().host.locate(&source.path).ok()?,
+                None => source.clone(),
+            };
+            Some(Found {
                 delegation: git::remembered_delegation(first)
                     .and_then(|text| serde_json::from_str(&text).ok()),
                 project: project.id(),
-                name: git::remembered_name(first).unwrap_or_else(|| named(&root)),
+                name: git::remembered_name(first).unwrap_or_else(|| named(&source)),
                 port: git::remembered_port(first),
                 summary: super::drift(&cuts),
                 root,
+                source,
                 cuts,
-            }
+            })
         })
         .collect()
 }
@@ -514,6 +610,8 @@ pub enum StartError {
     },
     /// Git would not do it, and said this.
     Git(String),
+    /// The session's environment could not be set up or taken away, and said this.
+    Environment(String),
 }
 
 impl Display for StartError {
@@ -531,6 +629,7 @@ impl Display for StartError {
                 )
             }
             Self::Git(said) => write!(formatter, "{said}"),
+            Self::Environment(said) => write!(formatter, "the session's environment: {said}"),
         }
     }
 }
