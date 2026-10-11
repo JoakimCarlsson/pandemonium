@@ -5,12 +5,14 @@
 //! other execution-affecting fields it refuses rather than ignoring.
 
 mod command;
+mod inherit;
 mod mount;
 mod problem;
 mod read;
 mod resolve;
 
 pub use command::{Command, Single};
+pub use inherit::inherit;
 pub use mount::{Kind, Mount};
 pub use problem::{Problem, Problems};
 pub use resolve::{Build, Hooks, Resolved, ResolvedOrigin, Tools, default_folder};

@@ -214,7 +214,7 @@ impl Endpoint for Container {
         let request = crate::environment::Request {
             identity,
             source: Location::local(native),
-            declaration: None,
+            declaration: crate::declaration::inherit(&self.source, native)?,
         };
         super::open(
             &shared,

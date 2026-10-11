@@ -428,7 +428,7 @@ impl pm_core::Provision for Containers {
         let request = Request {
             identity,
             source: Location::local(folder),
-            declaration: None,
+            declaration: pm_devcontainer::declaration::inherit(&project.path, folder)?,
         };
         self.docker
             .open(&request, Intent::Open, &sink)
