@@ -191,40 +191,10 @@ impl Emulator {
             _ => {}
         }
     }
-}
 
-impl Perform for Emulator {
-    /// Writes one character at the cursor.
-    fn print(&mut self, c: char) {
-        let c = if self.line_drawing { line_drawn(c) } else { c };
-        let width = c.width().unwrap_or(1);
-        if width == 0 {
-            return;
-        }
-        let (wrap, insert) = (self.modes.wrap, self.modes.insert);
-        let grid = self.grid_mut();
-        grid.scroll_to_bottom();
-        grid.write(c, width, wrap, insert);
-    }
-
-    /// Carries out one C0 control character.
-    fn execute(&mut self, byte: u8) {
-        let grid = self.grid_mut();
-        match byte {
-            0x08 => grid.backspace(),
-            0x09 => grid.tab(1),
-            0x0a..=0x0c => {
-                grid.scroll_to_bottom();
-                grid.index();
-            }
-            0x0d => grid.carriage_return(),
-            _ => {}
-        }
-    }
-
-    /// Carries out one `CSI` sequence.
-    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
-        let private = intermediates.first() == Some(&b'?');
+    /// Carries out one `CSI` sequence that carries no private marker or
+    /// intermediate.
+    fn csi_plain(&mut self, params: &Params, action: char) {
         let arg = |index: usize| -> u16 {
             params
                 .iter()
@@ -248,12 +218,7 @@ impl Perform for Emulator {
                 sgr::apply(&mut attrs, params);
                 self.grid_mut().set_attrs(attrs);
             }
-            'h' | 'l' => {
-                let on = action == 'h';
-                for mode in params.iter().filter_map(|values| values.first().copied()) {
-                    self.set_mode(mode, private, on);
-                }
-            }
+            'h' | 'l' => self.set_modes(params, false, action == 'h'),
             'r' => {
                 let bottom = match raw(1) {
                     0 => self.grid().rows(),
@@ -307,6 +272,65 @@ impl Perform for Emulator {
             }
             's' => self.grid_mut().save_cursor(),
             'u' => self.grid_mut().restore_cursor(),
+            _ => {}
+        }
+    }
+
+    /// Carries out one `CSI ?` sequence: the DEC private modes.
+    fn csi_private(&mut self, params: &Params, action: char) {
+        match action {
+            'h' | 'l' => self.set_modes(params, true, action == 'h'),
+            _ => {}
+        }
+    }
+
+    /// Turns every mode `params` lists on or off, from the DEC private set
+    /// when `private` is set and the ANSI set otherwise.
+    fn set_modes(&mut self, params: &Params, private: bool, on: bool) {
+        for mode in params.iter().filter_map(|values| values.first().copied()) {
+            self.set_mode(mode, private, on);
+        }
+    }
+}
+
+impl Perform for Emulator {
+    /// Writes one character at the cursor.
+    fn print(&mut self, c: char) {
+        let c = if self.line_drawing { line_drawn(c) } else { c };
+        let width = c.width().unwrap_or(1);
+        if width == 0 {
+            return;
+        }
+        let (wrap, insert) = (self.modes.wrap, self.modes.insert);
+        let grid = self.grid_mut();
+        grid.scroll_to_bottom();
+        grid.write(c, width, wrap, insert);
+    }
+
+    /// Carries out one C0 control character.
+    fn execute(&mut self, byte: u8) {
+        let grid = self.grid_mut();
+        match byte {
+            0x08 => grid.backspace(),
+            0x09 => grid.tab(1),
+            0x0a..=0x0c => {
+                grid.scroll_to_bottom();
+                grid.index();
+            }
+            0x0d => grid.carriage_return(),
+            _ => {}
+        }
+    }
+
+    /// Carries out one `CSI` sequence.
+    ///
+    /// The private marker or intermediates pick the command as much as the
+    /// final byte does: `CSI > 4 m` is not `CSI 4 m`. A sequence whose prefix
+    /// no command here implements is dropped.
+    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
+        match intermediates {
+            [] => self.csi_plain(params, action),
+            [b'?'] => self.csi_private(params, action),
             _ => {}
         }
     }
