@@ -92,7 +92,7 @@ impl App {
         for chosen in chosen {
             match chosen {
                 Chosen::Project(root) => {
-                    let _ = self.open.find_or_open(root);
+                    let _ = self.open.find_or_open_folder(root);
                     self.read_new_worktrees();
                     self.store();
                 }
