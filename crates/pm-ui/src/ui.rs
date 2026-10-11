@@ -227,6 +227,7 @@ impl<M> Ui<M> {
                                 ))
                             .then_some(index)
                         })
+                        .filter(|&parent| self.within_text(parent, index, pointer))
                 })
                 .flatten()
         });
@@ -614,6 +615,16 @@ impl<M> Ui<M> {
         self.regions
             .iter()
             .rposition(|region| region.bounds.contains(point))
+    }
+
+    /// Whether every region from just above the text area at `parent` up to
+    /// the pressed one at `index` that covers `pointer` lies inside that text
+    /// area, so a press on a sheet or menu drawn over the text stays off it.
+    fn within_text(&self, parent: usize, index: usize, pointer: Point) -> bool {
+        let text = self.regions[parent].bounds;
+        self.regions[parent + 1..=index]
+            .iter()
+            .all(|region| !region.bounds.contains(pointer) || text.encloses(&region.bounds))
     }
 
     /// Builds a message from the captured handler without consulting painted regions.
