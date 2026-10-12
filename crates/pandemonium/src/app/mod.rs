@@ -1685,6 +1685,13 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::ScrollPickerHistory(event, step) = message {
+            if let Some(picker) = self.picker.as_mut() {
+                picker.drag_history(event, step);
+            }
+            self.request_redraw();
+            return;
+        }
         if let Message::ChoosePicker(place) = message {
             self.choose_picker(place);
             self.request_redraw();

@@ -43,9 +43,9 @@ install_desktop_entry() {
 # Adds the app bundle.
 install_app_bundle() {
     mkdir -p "$MAC_APPS_DIR"
-    scripts/bundle-macos.sh target/release/pandemonium "$MAC_APPS_DIR/Pandemonium.app" \
-        Pandemonium io.github.joakimcarlsson.pandemonium
-    echo "installed $MAC_APPS_DIR/Pandemonium.app"
+    scripts/bundle-macos.sh target/release/pandemonium "$MAC_APPS_DIR/Pandemonium Preview.app" \
+        "Pandemonium Preview" io.github.joakimcarlsson.pandemonium.preview
+    echo "installed $MAC_APPS_DIR/Pandemonium Preview.app"
 }
 
 # Builds and installs the preview.
