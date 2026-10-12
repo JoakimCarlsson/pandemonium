@@ -187,10 +187,13 @@ value is never substituted for a container variable.
 
 Each `forwardPorts` entry opens a desktop listener on `127.0.0.1`, owned by the
 environment. Connections are carried through the endpoint to the container's
-loopback, so a service bound to `127.0.0.1` inside the container is reachable.
-When the requested desktop port is busy, the listener binds a free port
+loopback, so a service bound to `127.0.0.1` or `::1` inside the container is
+reachable. When the requested desktop port is busy, the listener binds a free port
 instead and a notice names it. Stopping, rebuilding or dropping the environment
 releases every listener.
+
+Container terminals and shell tasks retain the container's environment, including
+its `PATH`; only SSH terminals start login shells.
 
 ## Extensions
 

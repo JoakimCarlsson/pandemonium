@@ -11,6 +11,7 @@ mod location;
 mod pty;
 mod remote;
 mod server;
+mod tcp;
 mod tunnel;
 mod walk;
 mod watch;

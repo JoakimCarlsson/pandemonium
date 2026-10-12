@@ -175,7 +175,7 @@ impl Host {
         match &self.0 {
             Some(remote) => remote.tcp(port),
             None => {
-                let stream = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))?;
+                let stream = crate::tcp::connect(port)?;
                 Ok((Box::new(stream.try_clone()?), Box::new(stream)))
             }
         }

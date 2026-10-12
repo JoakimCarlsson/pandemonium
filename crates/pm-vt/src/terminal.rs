@@ -50,7 +50,7 @@ impl Terminal {
     ) -> std::io::Result<Self> {
         let cwd = cwd.into();
         let mut command = cwd.host.shell();
-        if !cwd.host.is_local() && cwd.host.os() != "windows" {
+        if cwd.host.is_ssh() && cwd.host.os() != "windows" {
             command.arg("-l");
         }
         for (name, value) in env {
@@ -81,7 +81,7 @@ impl Terminal {
                 shell.arg(if cwd.host.os() == "windows" {
                     "/C"
                 } else {
-                    if cwd.host.is_local() { "-c" } else { "-lc" }
+                    if cwd.host.is_ssh() { "-lc" } else { "-c" }
                 });
                 shell.arg(program);
                 shell
