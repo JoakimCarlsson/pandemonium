@@ -1509,10 +1509,6 @@ name = "pm-mcp"
 version = "0.12.0"
 
 [[package]]
-name = "pm-panes"
-version = "0.12.0"
-
-[[package]]
 name = "pm-plugin"
 version = "0.12.0"
 

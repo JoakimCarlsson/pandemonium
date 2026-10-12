@@ -43,4 +43,3 @@ pm-wasm = { path = "crates/pm-wasm" }
 pm-store = { path = "crates/pm-store" }
 pm-config = { path = "crates/pm-config" }
 pm-markdown = { path = "crates/pm-markdown" }
-pm-panes = { path = "crates/pm-panes" }
