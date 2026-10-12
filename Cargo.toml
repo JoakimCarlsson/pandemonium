@@ -10,6 +10,7 @@ license = "MIT"
 [workspace.dependencies]
 pm-primitives = { path = "crates/pm-primitives" }
 pm-color = { path = "crates/pm-color" }
+pm-renderer = { path = "crates/pm-renderer" }
 pm-layout = { path = "crates/pm-layout" }
 pm-typography = { path = "crates/pm-typography" }
 pm-decoration = { path = "crates/pm-decoration" }
