@@ -1260,6 +1260,13 @@ name = "pm-color"
 version = "0.12.0"
 
 [[package]]
+name = "pm-components"
+version = "0.12.0"
+dependencies = [
+ "pm-style",
+]
+
+[[package]]
 name = "pm-decoration"
 version = "0.12.0"
 dependencies = [

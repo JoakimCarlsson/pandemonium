@@ -1,0 +1,8 @@
+[package]
+name = "pm-components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-style.workspace = true

@@ -16,4 +16,5 @@ pm-typography = { path = "crates/pm-typography" }
 pm-decoration = { path = "crates/pm-decoration" }
 pm-animation = { path = "crates/pm-animation" }
 pm-style = { path = "crates/pm-style" }
+pm-components = { path = "crates/pm-components" }
 pm-icon = { path = "crates/pm-icon" }
