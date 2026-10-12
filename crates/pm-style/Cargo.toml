@@ -1,0 +1,13 @@
+[package]
+name = "pm-style"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-primitives.workspace = true
+pm-color.workspace = true
+pm-layout.workspace = true
+pm-typography.workspace = true
+pm-decoration.workspace = true
+pm-animation.workspace = true
