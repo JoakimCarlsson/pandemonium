@@ -1282,6 +1282,7 @@ impl App {
                 message,
                 Some(
                     Message::ChoosePicker(_)
+                        | Message::ScrollPickerHistory(..)
                         | Message::SetAgentKnob(..)
                         | Message::FlipAgentKnob(..)
                 )
@@ -1312,6 +1313,17 @@ impl App {
     /// A focused terminal scrolls its own scrollback instead: the page behind
     /// it does not move while the pointer is working in the pane.
     pub(super) fn scroll_by(&mut self, delta: f32) {
+        if self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| matches!(picker.kind(), crate::picker::Kind::AgentHistory(_)))
+        {
+            let rows = self.wheel_lines(delta, 30.0);
+            if let Some(picker) = self.picker.as_mut() {
+                picker.scroll_history(-rows);
+            }
+            return self.request_redraw();
+        }
         if self.scroll_settings(delta) {
             return self.request_redraw();
         }

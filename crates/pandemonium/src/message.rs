@@ -427,6 +427,8 @@ pub enum Message {
     WritePicker(ResizePhase, Position, Position),
     /// Take the row the picker is showing in this place.
     ChoosePicker(usize),
+    /// Drag the history scrollbar, in chats per pixel of pointer travel.
+    ScrollPickerHistory(ResizeEvent, f32),
     /// Take the completion the list is showing in this place.
     ChooseCompletion(usize),
     /// Take the fix the server offered in this place.
