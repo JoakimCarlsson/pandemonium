@@ -5,33 +5,71 @@
 //! seat for a data device, and takes what is let go as a `text/uri-list` on
 //! a thread of its own.
 
-use std::ffi::{OsString, c_void};
-use std::io::Read;
+use std::ffi::OsString;
+use std::io::{self, Read};
 use std::os::fd::AsFd;
 use std::os::unix::ffi::OsStringExt;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::ptr::NonNull;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use pm_gfx::Point;
 use wayland_backend::client::Backend;
-use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
 use wayland_client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceManager};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
+use wayland_client::protocol::wl_registry;
 use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
+
+use winit::event_loop::OwnedDisplayHandle;
+use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 
 use super::Arrival;
 
 /// The kind of data a file manager offers the files it carries as.
 const URI_LIST: &str = "text/uri-list";
 
+/// How often the guest queue checks events read by winit and pending transfers.
+const DISPATCH_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Owns the listener thread and keeps its borrowed display alive until it joins.
+pub struct Listening {
+    /// Cancellation shared with initialization, dispatch and file transfers.
+    stop: Arc<AtomicBool>,
+    /// The thread whose guest backend must be dropped before the display.
+    thread: Option<JoinHandle<()>>,
+    /// Winit's display owner, retained through errors and unwinding as well.
+    _display: OwnedDisplayHandle,
+}
+
+impl Drop for Listening {
+    /// Wakes the listener and waits for every guest Wayland object to be dropped.
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            thread.thread().unpark();
+            let _ = thread.join();
+        }
+    }
+}
+
 /// The data device's side of the drag it is following.
 struct Listener {
     /// The display, flushed before what is let go is read.
     connection: Connection,
+    /// Cancellation checked before dispatching and while reading files.
+    stop: Arc<AtomicBool>,
+    /// The first data-device manager advertised by the compositor.
+    manager: Option<WlDataDeviceManager>,
+    /// The first seat advertised by the compositor.
+    seat: Option<WlSeat>,
+    /// The data device, released before dropping the guest backend.
+    device: Option<WlDataDevice>,
     /// What is being carried over the window, when it is files.
     offer: Option<WlDataOffer>,
     /// Where over the window it was last seen.
@@ -40,35 +78,73 @@ struct Listener {
     send: Box<dyn Fn(Arrival) + Send>,
 }
 
-/// Follows drags onto the windows of the Wayland `display`, on a thread of
-/// its own, calling `send` with each arrival.
-pub fn listen(display: NonNull<c_void>, send: impl Fn(Arrival) + Send + 'static) {
-    // SAFETY: winit keeps the display open for as long as its event loop runs,
-    // which is the life of the process.
-    let backend = unsafe { Backend::from_foreign_display(display.as_ptr().cast()) };
+/// Follows drags on an owned winit display until the returned guard is dropped.
+///
+/// The foreign backend borrows the raw display held by `display`; the guard
+/// joins its thread before releasing that owner, including during unwinding.
+pub fn listen(
+    display: OwnedDisplayHandle,
+    send: impl Fn(Arrival) + Send + 'static,
+) -> io::Result<Listening> {
+    let handle = display.display_handle().map_err(io::Error::other)?;
+    let RawDisplayHandle::Wayland(raw) = handle.as_raw() else {
+        return Err(io::Error::other("the display is not Wayland"));
+    };
+    let backend = unsafe { Backend::from_foreign_display(raw.display.as_ptr().cast()) };
     let connection = Connection::from_backend(backend);
-    std::thread::spawn(move || follow(connection, Box::new(send)));
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopping = stop.clone();
+    let thread = thread::Builder::new()
+        .name("wayland-arrivals".to_owned())
+        .spawn(move || follow(connection, Box::new(send), stopping))?;
+    Ok(Listening {
+        stop,
+        thread: Some(thread),
+        _display: display,
+    })
 }
 
-/// Binds the seat's data device on a queue of its own and dispatches it for
-/// as long as the display stays open.
-fn follow(connection: Connection, send: Box<dyn Fn(Arrival) + Send>) -> Option<()> {
-    let (globals, mut queue) = registry_queue_init::<Listener>(&connection).ok()?;
+/// Dispatches the guest queue's events read by winit, without a second reader.
+///
+/// Registry discovery uses the same cancellable loop as normal dispatch, so
+/// missing globals and an unresponsive compositor cannot block shutdown.
+/// Parking is interrupted by the guard, and no libwayland read guard can hold
+/// shutdown waiting for another display reader.
+fn follow(connection: Connection, send: Box<dyn Fn(Arrival) + Send>, stop: Arc<AtomicBool>) {
+    let mut queue = connection.new_event_queue::<Listener>();
     let handle = queue.handle();
-    let manager: WlDataDeviceManager = globals.bind(&handle, 1..=3, ()).ok()?;
-    let seat: WlSeat = globals.bind(&handle, 1..=1, ()).ok()?;
-    manager.get_data_device(&seat, &handle, ());
+    connection.display().get_registry(&handle, ());
     let mut listener = Listener {
         connection,
+        stop,
+        manager: None,
+        seat: None,
+        device: None,
         offer: None,
         at: Point::new(0.0, 0.0),
         send,
     };
-    while queue.blocking_dispatch(&mut listener).is_ok() {}
-    Some(())
+    while !listener.stopped() {
+        if queue.dispatch_pending(&mut listener).is_err() || listener.connection.flush().is_err() {
+            break;
+        }
+        thread::park_timeout(DISPATCH_INTERVAL);
+    }
+    listener.leave();
+    if let Some(device) = listener.device.take()
+        && device.version() >= 2
+    {
+        device.release();
+    }
+    let _ = listener.connection.flush();
 }
 
 impl Listener {
+    /// Whether the owning application has requested shutdown.
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+
     /// Takes up the offer carried onto the window at `serial`, when it is
     /// files, and turns down anything else.
     fn enter(&mut self, serial: u32, offer: WlDataOffer) {
@@ -107,22 +183,38 @@ impl Listener {
             offer.finish();
         }
         offer.destroy();
-        (self.send)(Arrival::Dropped {
-            at: Some(self.at),
-            paths,
-        });
+        if !self.stopped() {
+            (self.send)(Arrival::Dropped {
+                at: Some(self.at),
+                paths,
+            });
+        }
     }
 
     /// Asks the program carrying `offer` for its files, and reads them.
     fn read_paths(&self, offer: &WlDataOffer) -> Vec<PathBuf> {
-        let Ok((mut reader, writer)) = std::io::pipe() else {
+        let Ok((mut reader, writer)) = UnixStream::pair() else {
             return Vec::new();
         };
+        if reader.set_nonblocking(true).is_err() {
+            return Vec::new();
+        }
         offer.receive(URI_LIST.to_owned(), writer.as_fd());
         drop(writer);
         let _ = self.connection.flush();
         let mut listed = Vec::new();
-        let _ = reader.read_to_end(&mut listed);
+        let mut bytes = [0; 4096];
+        while !self.stopped() {
+            match reader.read(&mut bytes) {
+                Ok(0) => break,
+                Ok(count) => listed.extend_from_slice(&bytes[..count]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::park_timeout(DISPATCH_INTERVAL);
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
         paths_listed(&String::from_utf8_lossy(&listed))
     }
 }
@@ -163,16 +255,40 @@ fn percent_decoded(text: &str) -> Vec<u8> {
     decoded
 }
 
-impl Dispatch<WlRegistry, GlobalListContents> for Listener {
-    /// Globals coming and going after the start are of no interest.
+impl Dispatch<WlRegistry, ()> for Listener {
+    /// Binds the first manager and seat as their globals arrive, then their device.
     fn event(
-        _: &mut Self,
-        _: &WlRegistry,
-        _: <WlRegistry as Proxy>::Event,
-        _: &GlobalListContents,
+        listener: &mut Self,
+        registry: &WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
         _: &Connection,
-        _: &QueueHandle<Self>,
+        handle: &QueueHandle<Self>,
     ) {
+        if listener.stopped() {
+            return;
+        }
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
+            match interface.as_str() {
+                "wl_data_device_manager" if listener.manager.is_none() => {
+                    listener.manager = Some(registry.bind(name, version.min(3), handle, ()));
+                }
+                "wl_seat" if listener.seat.is_none() => {
+                    listener.seat = Some(registry.bind(name, 1, handle, ()));
+                }
+                _ => {}
+            }
+            if listener.device.is_none()
+                && let (Some(manager), Some(seat)) = (&listener.manager, &listener.seat)
+            {
+                listener.device = Some(manager.get_data_device(seat, handle, ()));
+            }
+        }
     }
 }
 

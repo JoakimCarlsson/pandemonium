@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use pm_gfx::Point;
-use winit::window::Window;
+use winit::event_loop::OwnedDisplayHandle;
 
 /// What files carried in from outside the window are doing.
 #[derive(Clone, Debug)]
@@ -35,24 +35,36 @@ pub enum Arrival {
 /// in yet.
 pub type Arrivals = Arc<Mutex<Vec<Arrival>>>;
 
-/// Follows files carried onto `window` where winit does not, putting what
+/// Owns platform drag handling until the application stops it.
+pub struct Listening {
+    /// The guest backend's thread and borrowed display owner.
+    #[cfg(target_os = "linux")]
+    _wayland: wayland::Listening,
+}
+
+/// Follows files carried onto the display where winit does not, putting what
 /// happens on `arrivals` and calling `wake` after each.
-pub fn listen(window: &Window, arrivals: Arrivals, wake: Arc<dyn Fn() + Send + Sync>) {
+///
+/// Returns a guard that stops and joins the listener before releasing its display.
+pub fn listen(
+    display: OwnedDisplayHandle,
+    arrivals: Arrivals,
+    wake: Arc<dyn Fn() + Send + Sync>,
+) -> Option<Listening> {
     #[cfg(target_os = "linux")]
     {
-        use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
-
-        if let Ok(handle) = window.display_handle()
-            && let RawDisplayHandle::Wayland(display) = handle.as_raw()
-        {
-            wayland::listen(display.display, move |arrival| {
-                if let Ok(mut arrivals) = arrivals.lock() {
-                    arrivals.push(arrival);
-                }
-                wake();
-            });
-        }
+        wayland::listen(display, move |arrival| {
+            if let Ok(mut arrivals) = arrivals.lock() {
+                arrivals.push(arrival);
+            }
+            wake();
+        })
+        .ok()
+        .map(|listener| Listening { _wayland: listener })
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = (window, arrivals, wake);
+    {
+        let _ = (display, arrivals, wake);
+        None
+    }
 }

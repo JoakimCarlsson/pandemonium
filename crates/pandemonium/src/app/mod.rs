@@ -358,6 +358,8 @@ pub struct App {
     /// What files carried in from outside have done away from the window
     /// and has not been taken in yet.
     arrivals: crate::arrival::Arrivals,
+    /// Owned drag handling, stopped before the event loop releases its display.
+    arrival_listener: Option<crate::arrival::Listening>,
     /// The directory files carried in from outside would land in.
     arriving: Option<std::path::PathBuf>,
     /// The project row the pointer is carrying up or down the sidebar.
@@ -861,6 +863,7 @@ impl App {
             shifted: Arc::default(),
             entry_drag: None,
             arrivals: Arc::default(),
+            arrival_listener: None,
             arriving: None,
             project_drag: None,
             project_list: drag::unmeasured(),
@@ -3139,6 +3142,11 @@ impl ApplicationHandler<Wake> for App {
         }
     }
 
+    /// Stops drag handling while the event loop still owns the native display.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.arrival_listener.take();
+    }
+
     /// Opens the window and builds its renderer once the platform is ready.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -3188,7 +3196,11 @@ impl ApplicationHandler<Wake> for App {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
-        crate::arrival::listen(&window, self.arrivals.clone(), self.waker(Wake::Arrival));
+        self.arrival_listener = crate::arrival::listen(
+            event_loop.owned_display_handle(),
+            self.arrivals.clone(),
+            self.waker(Wake::Arrival),
+        );
         self.window = Some(window);
         self.resolver.set_keymap(self.preferences.keymap_in_force());
 
