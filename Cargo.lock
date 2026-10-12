@@ -1432,11 +1432,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "pm-acp"
+version = "0.12.0"
+
+[[package]]
+name = "pm-agent-library"
+version = "0.12.0"
+
+[[package]]
 name = "pm-animation"
 version = "0.12.0"
 dependencies = [
  "pm-primitives",
 ]
+
+[[package]]
+name = "pm-buffer"
+version = "0.12.0"
 
 [[package]]
 name = "pm-color"
@@ -1453,12 +1465,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-config"
+version = "0.12.0"
+
+[[package]]
 name = "pm-decoration"
 version = "0.12.0"
 dependencies = [
  "pm-color",
  "pm-primitives",
 ]
+
+[[package]]
+name = "pm-git"
+version = "0.12.0"
 
 [[package]]
 name = "pm-icon"
@@ -1477,7 +1497,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-lsp"
+version = "0.12.0"
+
+[[package]]
+name = "pm-markdown"
+version = "0.12.0"
+
+[[package]]
+name = "pm-mcp"
+version = "0.12.0"
+
+[[package]]
+name = "pm-panes"
+version = "0.12.0"
+
+[[package]]
+name = "pm-plugin"
+version = "0.12.0"
+
+[[package]]
+name = "pm-plugin-api"
+version = "0.12.0"
+
+[[package]]
+name = "pm-policy"
+version = "0.12.0"
+
+[[package]]
 name = "pm-primitives"
+version = "0.12.0"
+
+[[package]]
+name = "pm-protocol"
 version = "0.12.0"
 
 [[package]]
@@ -1493,11 +1545,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-review"
+version = "0.12.0"
+
+[[package]]
+name = "pm-server"
+version = "0.12.0"
+
+[[package]]
+name = "pm-session"
+version = "0.12.0"
+
+[[package]]
 name = "pm-shaders"
 version = "0.12.0"
 
 [[package]]
+name = "pm-ssh"
+version = "0.12.0"
+
+[[package]]
 name = "pm-state"
+version = "0.12.0"
+
+[[package]]
+name = "pm-store"
 version = "0.12.0"
 
 [[package]]
@@ -1513,12 +1585,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-terminal"
+version = "0.12.0"
+
+[[package]]
 name = "pm-text"
 version = "0.12.0"
 dependencies = [
  "cosmic-text",
  "pm-typography",
 ]
+
+[[package]]
+name = "pm-treesitter"
+version = "0.12.0"
 
 [[package]]
 name = "pm-typography"
@@ -1537,6 +1617,10 @@ dependencies = [
  "pm-style",
  "pm-text",
 ]
+
+[[package]]
+name = "pm-wasm"
+version = "0.12.0"
 
 [[package]]
 name = "png"
