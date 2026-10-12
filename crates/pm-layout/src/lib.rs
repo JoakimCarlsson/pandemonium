@@ -1,8 +1,8 @@
-//! Layout styling: spacing, sizing, display, positioning, flex and grid.
+//! Layout: spacing, sizing, display, positioning, flex and grid.
 //!
-//! Each module owns one slice of a [`LayoutStyle`], the plain data a layout
-//! pass reads, and the rules that write into it. Nothing here measures or
-//! places an element.
+//! Each style module owns one slice of a [`LayoutStyle`], the plain data a
+//! layout reads, and the rules that write into it. [`solve`] turns a tree of
+//! [`Item`]s carrying those styles into placed rectangles.
 
 mod breakpoint;
 mod display;
@@ -11,6 +11,7 @@ mod grid;
 mod positioning;
 mod rule;
 mod sizing;
+mod solve;
 mod spacing;
 mod style;
 
@@ -24,5 +25,6 @@ pub use grid::{AutoFlow, GridItem, GridLine, GridRule, GridStyle, Track, TrackLi
 pub use positioning::{Position, PositioningRule, PositioningStyle, ZIndex};
 pub use rule::LayoutRule;
 pub use sizing::{SizingRule, SizingStyle};
+pub use solve::{Item, Placed, solve};
 pub use spacing::{Margin, SpacingRule, SpacingStyle};
 pub use style::LayoutStyle;

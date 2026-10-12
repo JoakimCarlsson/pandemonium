@@ -1,14 +1,23 @@
 //! The application: the window, its renderer and the events that drive them.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
-use pm_color::Color;
-use pm_renderer::Renderer;
+use pm_components::ShowcaseState;
+use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
+use pm_renderer::{DrawList, Renderer};
+use pm_state::State;
+use pm_text::Shaper;
+use pm_ui::{Input, Output};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
+
+use crate::{keys, scene};
 
 /// The name the desktop knows the application by.
 const APP_ID: &str = "pandemonium";
@@ -20,12 +29,55 @@ const WIDTH: f32 = 1280.0;
 const HEIGHT: f32 = 800.0;
 
 /// The window and what draws into it; both exist once the platform is ready.
-#[derive(Default)]
 pub struct App {
     /// The window, once it is open.
     window: Option<Arc<Window>>,
     /// What draws into the window, once it is open.
     renderer: Option<Renderer>,
+    /// Shapes the text on screen.
+    shaper: Shaper,
+    /// The primitives of the frame being drawn, kept to reuse its allocation.
+    list: DrawList,
+    /// What the user can change on the screen.
+    model: State<ShowcaseState>,
+    /// Set by the model whenever it changes, so the screen is drawn again.
+    dirty: Rc<Cell<bool>>,
+    /// The pointer as the events so far left it.
+    pointer: PointerState,
+    /// Which element holds keyboard focus.
+    focus: Focus,
+    /// Which modifier keys are held.
+    modifiers: Modifiers,
+    /// What the last frame found on screen.
+    output: Output,
+    /// The element the primary button went down on.
+    pressed_on: Option<FocusId>,
+    /// When the application started, which animations run on.
+    started: Instant,
+}
+
+impl Default for App {
+    /// An application with no window yet, whose clock starts now.
+    fn default() -> Self {
+        let model = State::new(ShowcaseState::default());
+        let dirty = Rc::new(Cell::new(false));
+        let flag = Rc::clone(&dirty);
+        model.subscribe(move |_| flag.set(true));
+        Self {
+            window: None,
+            renderer: None,
+            shaper: Shaper::new(),
+            list: DrawList::new(),
+            model,
+            dirty,
+            pointer: PointerState::default(),
+            focus: Focus::new(),
+            modifiers: Modifiers::default(),
+            output: Output::default(),
+            pressed_on: None,
+            started: Instant::now(),
+        }
+    }
 }
 
 impl App {
@@ -43,6 +95,93 @@ impl App {
             WindowAttributesExtX11::with_name(attributes, APP_ID, APP_ID)
         };
         attributes
+    }
+
+    /// Milliseconds on the application clock.
+    fn now_ms(&self) -> f32 {
+        self.started.elapsed().as_secs_f32() * 1000.0
+    }
+
+    /// Draws one frame and asks for the next one while anything is moving or
+    /// the frame could not be presented.
+    fn redraw(&mut self) {
+        let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
+            return;
+        };
+        let input = Input {
+            pointer: self.pointer,
+            focused: self.focus.current(),
+            elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
+        };
+        let (width, height) = renderer.size();
+        let state = self.model.get();
+        self.output = scene::paint(
+            width,
+            height,
+            &state,
+            &input,
+            &mut self.shaper,
+            &mut self.list,
+        );
+        self.focus
+            .set_order(self.output.regions.iter().map(|region| region.id).collect());
+        let presented = renderer.render(&self.list, &mut self.shaper, scene::GROUND, || {
+            window.pre_present_notify()
+        });
+        if self.output.animating || !presented {
+            window.request_redraw();
+        }
+    }
+
+    /// Carries out what pressing the element `id` means.
+    fn activate(&mut self, id: FocusId) {
+        let now = self.now_ms();
+        self.model
+            .update(|state| *state = state.clone().after(id, now));
+    }
+
+    /// Folds a pointer event in, and acts on a press that ends on the
+    /// element it began on.
+    fn pointer(&mut self, event: PointerEvent) {
+        self.pointer.apply(event);
+        match event {
+            PointerEvent::Pressed(Button::Left) => {
+                self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+            }
+            PointerEvent::Released(Button::Left) => {
+                let released_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                if let (Some(pressed), Some(released)) = (self.pressed_on.take(), released_on)
+                    && pressed == released
+                {
+                    self.focus.focus(pressed);
+                    self.activate(pressed);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Acts on a key: Tab walks the focus, Enter and Space press the focused
+    /// element, Escape lets go of focus.
+    fn key(&mut self, event: KeyEvent) {
+        if !event.pressed {
+            return;
+        }
+        match event.key {
+            Key::Tab if event.modifiers.shift => self.focus.previous(),
+            Key::Tab => self.focus.next(),
+            Key::Escape => self.focus.clear(),
+            _ => match self.focus.current() {
+                Some(id) if ShowcaseState::is_field(id) => {
+                    if let Some(edit) = keys::edit(&event) {
+                        self.model
+                            .update(|state| *state = state.clone().edited(id, edit));
+                    }
+                }
+                Some(id) if matches!(event.key, Key::Enter | Key::Space) => self.activate(id),
+                _ => {}
+            },
+        }
     }
 }
 
@@ -63,7 +202,8 @@ impl ApplicationHandler for App {
             Err(error) => fail_to_start(&format!("could not open a window: {error}")),
         };
         let size = window.inner_size();
-        match Renderer::new(window.clone(), size.width, size.height) {
+        let scale = window.scale_factor() as f32;
+        match Renderer::new(window.clone(), size.width, size.height, scale) {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
@@ -71,26 +211,65 @@ impl ApplicationHandler for App {
         self.window = Some(window);
     }
 
-    /// Routes window events to the renderer.
+    /// Draws again when the model changed while no event asked for it.
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if self.dirty.replace(false)
+            && let Some(window) = self.window.as_ref()
+        {
+            window.request_redraw();
+        }
+    }
+
+    /// Routes window events to the renderer, the pointer and the keyboard.
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let scale = window.scale_factor() as f32;
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size.width, size.height);
+                    renderer.resize(size.width, size.height, scale);
                 }
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                let size = window.inner_size();
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer.resize(size.width, size.height, scale);
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.pointer(PointerEvent::Moved(
+                    position.x as f32 / scale,
+                    position.y as f32 / scale,
+                ));
+            }
+            WindowEvent::CursorLeft { .. } => self.pointer(PointerEvent::Left),
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => self.pointer(match state {
+                ElementState::Pressed => PointerEvent::Pressed(Button::Left),
+                ElementState::Released => PointerEvent::Released(Button::Left),
+            }),
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = keys::modifiers(modifiers.state());
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let Some(event) =
+                    keys::key_event(&event.logical_key, event.state, self.modifiers)
+                {
+                    self.key(event);
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let (Some(window), Some(renderer)) =
-                    (self.window.as_ref(), self.renderer.as_mut())
-                {
-                    renderer.render(Color::Zinc950.srgba(), || window.pre_present_notify());
-                }
+                self.redraw();
+                return;
             }
-            _ => {}
+            _ => return,
         }
+        window.request_redraw();
     }
 }

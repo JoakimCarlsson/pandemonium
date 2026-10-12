@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
 pm-color.workspace = true
+pm-shaders.workspace = true
+pm-text.workspace = true
 pollster = "1.0.1"
 wgpu = "30.0.1"
