@@ -231,6 +231,12 @@ stay in the repository; records and logs live in
 - File ownership follows bind-mount semantics: use a container user whose id
   matches the desktop user.
 
+Linked submodules use Git's `extensions.worktreeConfig`: checkout-specific
+`core.worktree` and `core.bare` settings move into the main checkout's
+`config.worktree` before another worktree is created. Lifecycle commands can
+then update a session's submodules without rewriting the main checkout's paths.
+Git 2.20 or newer is required for repositories migrated to this format.
+
 ## Fixtures and verification
 
 Two runnable repositories live in `crates/pm-devcontainer/fixtures`: `image`

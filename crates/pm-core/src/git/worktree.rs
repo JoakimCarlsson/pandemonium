@@ -14,9 +14,13 @@ use pm_host::Location;
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::git::Said;
 use crate::git::run::{answer, git};
+
+/// Serializes the migration of repository settings shared by concurrent session cuts.
+static CONFIGURATION: Mutex<()> = Mutex::new(());
 
 /// The config key a worktree remembers the commit it was cut from under.
 const BASE_KEY: &str = "pandemonium.base";
@@ -74,6 +78,7 @@ impl Summary {
 /// after rather than before the agent has written a line.
 pub fn add_worktree(root: impl Into<Location>, path: &Path, base: &str) -> Said {
     let root = root.into();
+    isolate_worktree_config(&root)?;
     git(
         &root,
         [
@@ -82,6 +87,85 @@ pub fn add_worktree(root: impl Into<Location>, path: &Path, base: &str) -> Said 
             OsStr::new("--detach"),
             path.as_os_str(),
             OsStr::new(base),
+        ],
+    )
+}
+
+/// Moves checkout-specific settings out of shared config before creating linked worktrees.
+///
+/// Git's submodule update rewrites `core.worktree` when it exists in a linked
+/// submodule's configuration. Keeping that setting in the main checkout's
+/// `config.worktree` leaves linked checkouts without it and protects the main
+/// checkout from paths belonging to a session or its container.
+fn isolate_worktree_config(root: &Location) -> Result<(), String> {
+    let _configuration = CONFIGURATION.lock().unwrap();
+    let directory = git(root, ["rev-parse", "--git-common-dir"])?;
+    let directory = root.join(directory.trim_end_matches('\n'));
+    let shared = directory.join("config");
+    if configured(root, &shared, "core.worktree").is_none() {
+        return Ok(());
+    }
+    git(
+        root,
+        [
+            OsStr::new("config"),
+            OsStr::new("--file"),
+            shared.as_os_str(),
+            OsStr::new("extensions.worktreeConfig"),
+            OsStr::new("true"),
+        ],
+    )?;
+    for key in ["core.bare", "core.worktree"] {
+        move_worktree_setting(root, &shared, &directory.join("config.worktree"), key)?;
+    }
+    Ok(())
+}
+
+/// Moves one shared setting into the main checkout's config, preserving an existing override.
+fn move_worktree_setting(
+    root: &Location,
+    shared: &Path,
+    main: &Path,
+    key: &str,
+) -> Result<(), String> {
+    let Some(value) = configured(root, shared, key) else {
+        return Ok(());
+    };
+    if configured(root, main, key).is_none() {
+        git(
+            root,
+            [
+                OsStr::new("config"),
+                OsStr::new("--file"),
+                main.as_os_str(),
+                OsStr::new(key),
+                OsStr::new(value.trim_end_matches('\n')),
+            ],
+        )?;
+    }
+    git(
+        root,
+        [
+            OsStr::new("config"),
+            OsStr::new("--file"),
+            shared.as_os_str(),
+            OsStr::new("--unset-all"),
+            OsStr::new(key),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Reads one setting from a particular repository configuration file.
+fn configured(root: &Location, file: &Path, key: &str) -> Option<String> {
+    answer(
+        root,
+        [
+            OsStr::new("config"),
+            OsStr::new("--file"),
+            file.as_os_str(),
+            OsStr::new("--get"),
+            OsStr::new(key),
         ],
     )
 }

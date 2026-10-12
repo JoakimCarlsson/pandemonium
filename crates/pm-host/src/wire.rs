@@ -99,4 +99,6 @@ pub(crate) struct Reply {
 }
 
 /// The host protocol revision, independent of the release version.
-pub const PROTOCOL: u64 = 2;
+///
+/// Revision three requires endpoints that can connect to IPv6 loopback services.
+pub const PROTOCOL: u64 = 3;
