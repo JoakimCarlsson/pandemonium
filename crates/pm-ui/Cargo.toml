@@ -1,8 +1,0 @@
-[package]
-name = "pm-ui"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-pm-gfx.workspace = true
