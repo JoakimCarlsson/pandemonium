@@ -225,6 +225,9 @@ pub(super) struct Stored {
     remote_projects: Option<Vec<PathBuf>>,
     /// Saved SSH aliases independent of the folders recently opened.
     remote_hosts: Option<Vec<String>>,
+    /// The program that speaks the Docker command line for dev containers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    devcontainer_engine: Option<String>,
     /// Named project groups and their membership.
     #[serde(skip_serializing_if = "Option::is_none")]
     project_groups: Option<Vec<crate::project_groups::ProjectGroup>>,
@@ -925,6 +928,10 @@ impl Stored {
         Preferences {
             remote_projects: self.remote_projects.unwrap_or_default(),
             remote_hosts: self.remote_hosts.unwrap_or_default(),
+            devcontainer_engine: self
+                .devcontainer_engine
+                .filter(|engine| !engine.trim().is_empty())
+                .unwrap_or(defaults.devcontainer_engine),
             orchestration: self.orchestration,
             agent_options: self.agents.unwrap_or_default(),
             theme_mode: self.theme_mode.unwrap_or(defaults.theme_mode),
@@ -1171,6 +1178,8 @@ impl Stored {
             projects: Some(projects.clone()),
             remote_projects: Some(preferences.remote_projects.clone()),
             remote_hosts: Some(preferences.remote_hosts.clone()),
+            devcontainer_engine: Some(preferences.devcontainer_engine.clone())
+                .filter(|engine| engine != "docker"),
             project_groups: (!project_groups.is_empty()).then(|| project_groups.clone()),
             active_project: active.clone(),
             panes: None,

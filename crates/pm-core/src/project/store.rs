@@ -38,10 +38,25 @@ impl Projects {
     ///
     /// A path already open, or inside a project already open, resolves to
     /// the project that is already there instead of being held twice, so a
-    /// menu entry, a keybinding and a restored window all land on the same
-    /// project — and a repository inside a folder of several is the folder's.
+    /// file lookup and a command-line path land on the same project — and
+    /// a repository inside a folder of several is the folder's.
     pub fn find_or_open(&mut self, path: impl Into<Location>) -> Result<ProjectId, OpenError> {
-        let location = path.into();
+        self.open(path.into(), OpenMode::Containing)
+    }
+
+    /// Opens exactly `folder` as a project and makes it active.
+    ///
+    /// Only a project rooted at this folder is reused. Repositories are
+    /// discovered inside the folder without resolving an enclosing repository.
+    pub fn find_or_open_folder(
+        &mut self,
+        folder: impl Into<Location>,
+    ) -> Result<ProjectId, OpenError> {
+        self.open(folder.into(), OpenMode::Folder)
+    }
+
+    /// Opens `location` according to `mode`, reusing a matching project.
+    fn open(&mut self, location: Location, mode: OpenMode) -> Result<ProjectId, OpenError> {
         let path = if location.host.connected() {
             location
                 .host
@@ -57,7 +72,12 @@ impl Projects {
         let holding = self
             .open
             .iter()
-            .filter(|project| path.host == project.root().host && path.starts_with(project.root()))
+            .filter(|project| match mode {
+                OpenMode::Folder => &path == project.root(),
+                OpenMode::Containing => {
+                    path.host == project.root().host && path.starts_with(project.root())
+                }
+            })
             .max_by_key(|project| project.root().components().count());
         if let Some(project) = holding {
             let id = project.id();
@@ -65,7 +85,10 @@ impl Projects {
             return Ok(id);
         }
 
-        let root = repository::root(&path).unwrap_or_else(|| folder_of(path));
+        let root = match mode {
+            OpenMode::Folder => path,
+            OpenMode::Containing => repository::root(&path).unwrap_or_else(|| folder_of(path)),
+        };
         let id = self.next;
         self.next = id.next();
         self.open.push(Project::at(id, root));
@@ -189,6 +212,15 @@ impl Projects {
             .map(|project| project.root().stored())
             .collect()
     }
+}
+
+/// How a caller wants its path resolved to a project root.
+#[derive(Clone, Copy)]
+enum OpenMode {
+    /// Preserve the chosen folder and reuse only the same root.
+    Folder,
+    /// Reuse an enclosing project or resolve the enclosing repository.
+    Containing,
 }
 
 /// The folder `path` names, or the one holding it when it names a file.

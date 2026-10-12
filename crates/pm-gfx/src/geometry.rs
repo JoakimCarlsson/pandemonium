@@ -123,6 +123,14 @@ impl Rect {
             && other.top() < self.bottom()
     }
 
+    /// Whether `other` lies wholly inside this rectangle.
+    pub fn encloses(&self, other: &Self) -> bool {
+        other.left() >= self.left()
+            && other.right() <= self.right()
+            && other.top() >= self.top()
+            && other.bottom() <= self.bottom()
+    }
+
     /// The largest rectangle contained by both this one and `other`.
     pub fn intersect(self, other: Self) -> Self {
         let left = self.left().max(other.left());

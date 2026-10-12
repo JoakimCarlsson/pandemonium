@@ -46,6 +46,10 @@ main() {
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     install -m 0755 "$binary" "$app/Contents/MacOS/pandemonium"
+    server="$(dirname "$binary")/pandemonium-server"
+    if [ -x "$server" ]; then
+        install -m 0755 "$server" "$app/Contents/MacOS/pandemonium-server"
+    fi
     sed -e "s|@NAME@|$name|g" \
         -e "s|@IDENTIFIER@|$identifier|g" \
         -e "s|@VERSION@|$version|g" \

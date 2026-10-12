@@ -26,12 +26,21 @@ the draw list.
 One crate per layer, each depending only on the layers below it. `pm-core` is
 the domain; nothing in it knows that a UI exists.
 
-- `pm-host` — the bottom layer: local and SSH machine handles, filesystem
-  operations, processes, ptys, walks, watches and the byte transport. It
-  depends on nothing of ours; every other crate may depend on it.
+- `pm-host` — the bottom layer: local, SSH and launched machine handles (a
+  launched machine is reached through a local command, such as `docker exec`),
+  filesystem operations, processes, ptys, walks, watches and the byte
+  transport. It depends on nothing of ours; every other crate may depend on it.
 - `pm-server` — the headless `pandemonium-server` endpoint on a remote host.
   Serves machine operations over standard input and output; knows `pm-host`
   alone and no editor features.
+- `pm-devcontainer` — dev container environments in Rust: `devcontainer.json`
+  discovery and parsing, the Docker engine's command line, lifecycle commands,
+  workspace and git-metadata mounts, container ownership and port forwarding,
+  behind the provider-independent environment contract (identity, source and
+  execution workspace locations, context, state, capabilities, events). It
+  launches the `pandemonium-server` endpoint with `docker exec` as a
+  `pm_host::Endpoint`; it knows `pm-host` alone, and nothing above it builds an
+  engine command or reads Docker configuration.
 - `pm-core` — projects, sessions and worktrees: the model the whole window is
   drawn from. A project is a repository the window holds open; a session is an
   agent, its worktree and its branch. Everything is scoped by project id, from
@@ -99,10 +108,10 @@ which of them callers may name.
   same kind of item in the same pane tree: splittable, tabbable, closable. No
   bespoke docks, no panel that only one feature can live in.
 - **The layers point one way.** `pm-host` depends on nothing of ours and every
-  other crate may depend on it; `pm-server`, `pm-core` and `pm-acp` know
-  `pm-host` alone; `pm-vim` knows `pm-text`; `pm-dap` knows `pm-text` and
-  `pm-host`; `pm-ui` knows `pm-gfx` and
-  not the binary; the binary knows everyone. A layer never reaches back up.
+  other crate may depend on it; `pm-server`, `pm-devcontainer`, `pm-core` and
+  `pm-acp` know `pm-host` alone; `pm-vim` knows `pm-text`; `pm-dap` knows
+  `pm-text` and `pm-host`; `pm-ui` knows `pm-gfx` and not the binary; the
+  binary knows everyone. A layer never reaches back up.
 - **One seam, one place.** Creating a session, resolving a project, tearing a
   worktree down: each has exactly one implementation, and every caller — the
   palette, a keybinding, a pane — goes through it.

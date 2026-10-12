@@ -10,7 +10,7 @@ use pm_ui::{Div, IconName, IconSize, Styled, Theme, h_flex, icon, kbd, rule, spa
 use crate::agent::mode_icon;
 use crate::input::compact_hinted_input_view;
 use crate::message::Message;
-use crate::picker::state::{Choice, Kind, Picker, Row};
+use crate::picker::state::{Choice, HISTORY_VISIBLE, Kind, Picker, Row};
 
 /// How wide the panel is drawn, and the command center that opens it.
 pub const WIDTH: f32 = 600.0;
@@ -196,6 +196,29 @@ pub fn agent_choices(
         .into_iter()
         .map(|(place, row)| agent_row(theme, place, row, place == picker.selected(), modes))
         .collect::<Vec<_>>();
+    let history = matches!(picker.kind(), Kind::AgentHistory(_));
+    let shown = agent_shown(picker);
+    let row_height = shown
+        .first()
+        .map_or(ROW_HEIGHT, |(_, row)| agent_row_height(theme, row));
+    let total = picker.shown_count() as f32 * row_height + space(0.5);
+    let at = picker.history_first() as f32 * row_height;
+    let list = v_flex()
+        .w_full()
+        .px(0.5)
+        .pb(0.5)
+        .items_stretch()
+        .when(history && picker.shown_count() > HISTORY_VISIBLE, |list| {
+            list.pr(f64::from(pm_ui::SCROLLBAR_GUTTER / space(1.0)))
+        })
+        .children(rows);
+    let list: Box<dyn pm_ui::Element<Message>> = if history {
+        Box::new(pm_ui::scrollbar(list, total, at, move |event, step| {
+            Message::ScrollPickerHistory(event, step / row_height)
+        }))
+    } else {
+        Box::new(list)
+    };
     let set = !knobs.is_empty();
 
     v_flex()
@@ -224,14 +247,7 @@ pub fn agent_choices(
                         .child(text("to switch").text_xs().color(theme.colors.text_subtle))
                 }),
         )
-        .child(
-            v_flex()
-                .w_full()
-                .px(0.5)
-                .pb(0.5)
-                .items_stretch()
-                .children(rows),
-        )
+        .child(list)
         .when(set, |panel| {
             panel.child(rule(theme)).child(
                 v_flex()
@@ -252,8 +268,14 @@ pub fn agent_choices(
 
 /// The choices an agent control shows: a window of them around the selected one.
 fn agent_shown(picker: &Picker) -> Vec<(usize, &Row)> {
-    let first = picker.selected().saturating_sub(AGENT_VISIBLE - 1);
-    picker.shown().skip(first).take(AGENT_VISIBLE).collect()
+    let (first, visible) = match picker.kind() {
+        Kind::AgentHistory(_) => (picker.history_first(), HISTORY_VISIBLE),
+        _ => (
+            picker.selected().saturating_sub(AGENT_VISIBLE - 1),
+            AGENT_VISIBLE,
+        ),
+    };
+    picker.shown().skip(first).take(visible).collect()
 }
 
 /// What one agent choice says under its name, and whether it is the current one.

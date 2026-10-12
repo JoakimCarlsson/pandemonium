@@ -43,9 +43,9 @@ install_desktop_entry() {
 # Adds the app bundle.
 install_app_bundle() {
     mkdir -p "$MAC_APPS_DIR"
-    scripts/bundle-macos.sh target/release/pandemonium "$MAC_APPS_DIR/Pandemonium.app" \
-        Pandemonium io.github.joakimcarlsson.pandemonium
-    echo "installed $MAC_APPS_DIR/Pandemonium.app"
+    scripts/bundle-macos.sh target/release/pandemonium "$MAC_APPS_DIR/Pandemonium Preview.app" \
+        "Pandemonium Preview" io.github.joakimcarlsson.pandemonium.preview
+    echo "installed $MAC_APPS_DIR/Pandemonium Preview.app"
 }
 
 # Builds and installs the preview.
@@ -55,9 +55,11 @@ main() {
     revision="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     echo "building pandemonium preview at $revision"
     PANDEMONIUM_VERSION=preview cargo build --release --locked -p pandemonium
+    sh scripts/build-server.sh release
 
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
+    install -m 0755 target/release/pandemonium-server "$BIN_DIR/pandemonium-server"
     case "$(uname -s)" in
         Linux)
             install_icons assets/brand/png assets/brand/pandemonium.svg

@@ -1,7 +1,7 @@
 //! Shared machine handles and the window's pool of SSH connections.
 
 use crate::remote::Remote;
-use crate::{Command, FileSystem, Location};
+use crate::{Command, Endpoint, FileSystem, Location};
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
@@ -15,9 +15,68 @@ impl Host {
     pub fn local() -> Self {
         Self(None)
     }
-    /// The SSH alias, for a remote machine.
+    /// A machine started through a local launcher instead of SSH.
+    pub fn launched(endpoint: Arc<dyn Endpoint>) -> Self {
+        Self(Some(Arc::new(Remote::launched(endpoint))))
+    }
+    /// The SSH alias, or the launched machine's own name, for a remote machine.
     pub fn name(&self) -> Option<&str> {
         self.0.as_ref().map(|remote| remote.name.as_str())
+    }
+    /// What the machine is called beside a project's name.
+    pub fn label(&self) -> Option<String> {
+        let remote = self.0.as_ref()?;
+        Some(
+            remote
+                .endpoint
+                .as_ref()
+                .map_or_else(|| remote.name.clone(), |endpoint| endpoint.label()),
+        )
+    }
+    /// The stored-location prefix naming how this machine is reached.
+    pub fn scheme(&self) -> Option<&'static str> {
+        self.0.as_ref().map(|remote| {
+            remote
+                .endpoint
+                .as_ref()
+                .map_or("ssh", |endpoint| endpoint.scheme())
+        })
+    }
+    /// Whether this machine is reached over SSH.
+    pub fn is_ssh(&self) -> bool {
+        self.scheme() == Some("ssh")
+    }
+    /// The desktop path a path on this machine is a bind mount of, if it is one.
+    pub fn native(&self, path: &std::path::Path) -> Option<Location> {
+        let endpoint = self.0.as_ref()?.endpoint.as_ref()?;
+        endpoint.native(path).map(Location::local)
+    }
+    /// Where `native` is worked on in an environment that already exists, without starting it.
+    pub fn locate(&self, native: &std::path::Path) -> io::Result<Location> {
+        match self.0.as_ref().and_then(|remote| remote.endpoint.as_ref()) {
+            Some(endpoint) => endpoint.locate(native),
+            None => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this machine cannot locate an environment of its own",
+            )),
+        }
+    }
+    /// Takes away the environment that was created for the desktop folder `native`.
+    pub fn retire(&self, native: &std::path::Path) -> io::Result<()> {
+        match self.0.as_ref().and_then(|remote| remote.endpoint.as_ref()) {
+            Some(endpoint) => endpoint.retire(native),
+            None => Ok(()),
+        }
+    }
+    /// Where the desktop folder `native` is worked on in an environment of its own.
+    pub fn isolate(&self, native: &std::path::Path) -> io::Result<Location> {
+        match self.0.as_ref().and_then(|remote| remote.endpoint.as_ref()) {
+            Some(endpoint) => endpoint.isolate(native),
+            None => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this machine cannot provide an environment of its own",
+            )),
+        }
     }
     /// Whether this machine is local.
     pub fn is_local(&self) -> bool {
@@ -65,6 +124,12 @@ impl Host {
             .ok_or_else(|| io::Error::other("Local hosts need no SSH login"))?
             .authentication()
     }
+    /// Closes the connection while keeping the handle, so a later reconnect revives every holder of it.
+    pub fn disconnect(&self) {
+        if let Some(remote) = &self.0 {
+            remote.disconnect();
+        }
+    }
     /// Redials a disconnected remote, retaining all existing handles.
     pub fn reconnect(&self) -> io::Result<()> {
         match &self.0 {
@@ -110,7 +175,7 @@ impl Host {
         match &self.0 {
             Some(remote) => remote.tcp(port),
             None => {
-                let stream = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))?;
+                let stream = crate::tcp::connect(port)?;
                 Ok((Box::new(stream.try_clone()?), Box::new(stream)))
             }
         }
@@ -174,7 +239,7 @@ impl std::fmt::Debug for Host {
 impl PartialEq for Host {
     /// Compares machine identities.
     fn eq(&self, other: &Self) -> bool {
-        self.name() == other.name()
+        self.scheme() == other.scheme() && self.name() == other.name()
     }
 }
 impl Eq for Host {}
@@ -182,18 +247,49 @@ impl Eq for Host {}
 impl std::hash::Hash for Host {
     /// Hashes the same stable machine identity used by equality.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.scheme().hash(state);
         self.name().hash(state);
     }
 }
+
+/// Rebuilds the machine a stored location names from its scheme and name.
+pub type Resolver = Arc<dyn Fn(&str, &str) -> io::Result<Host> + Send + Sync>;
 
 /// One connection for every SSH alias held by the window.
 #[derive(Default)]
 pub struct Hosts {
     /// Reusable handles, including disconnected ones.
     hosts: HashMap<String, Host>,
+    /// Recovers launched machines the window no longer holds, such as after a restart.
+    resolver: Option<Resolver>,
 }
 
 impl Hosts {
+    /// Sets how stored locations of launched machines are brought back.
+    pub fn resolve_with(&mut self, resolver: Resolver) {
+        self.resolver = Some(resolver);
+    }
+    /// Holds a launched machine so stored locations of it share its handle.
+    pub fn adopt(&mut self, host: &Host) {
+        if let (Some(scheme), Some(name)) = (host.scheme(), host.name()) {
+            self.hosts
+                .insert(format!("{scheme}://{name}"), host.clone());
+        }
+    }
+    /// Finds or recovers the launched machine named `name` within `scheme`.
+    fn launched(&mut self, scheme: &str, name: &str) -> io::Result<Host> {
+        let key = format!("{scheme}://{name}");
+        if let Some(host) = self.hosts.get(&key) {
+            return Ok(host.clone());
+        }
+        let resolver = self
+            .resolver
+            .clone()
+            .ok_or_else(|| io::Error::other(format!("No provider restores {scheme} locations")))?;
+        let host = resolver(scheme, name)?;
+        self.hosts.insert(key, host.clone());
+        Ok(host)
+    }
     /// Reserves the shared host handle before its login terminal starts.
     pub fn prepare(&mut self, name: &str) -> io::Result<Host> {
         if let Some(host) = self.hosts.get(name) {
@@ -214,17 +310,24 @@ impl Hosts {
     /// Recovers machine identity and path even while the saved host is offline.
     pub fn location(&mut self, path: &std::path::Path) -> io::Result<Location> {
         let text = path.to_string_lossy();
-        if let Some(remote) = text.strip_prefix("ssh://") {
-            let (host, path) = remote
-                .split_once('/')
-                .ok_or_else(|| io::Error::other("invalid SSH location"))?;
-            return Ok(Location::new(self.prepare(host)?, format!("/{path}")));
-        }
-        Ok(Location::local(path))
+        let Some((scheme, remote)) = text.split_once("://") else {
+            return Ok(Location::local(path));
+        };
+        let (host, path) = remote
+            .split_once('/')
+            .ok_or_else(|| io::Error::other(format!("invalid {scheme} location")))?;
+        let host = match scheme {
+            "ssh" => self.prepare(host)?,
+            _ => self.launched(scheme, host)?,
+        };
+        Ok(Location::new(host, format!("/{path}")))
     }
     /// Restores a stored local path or SSH location.
     pub fn restore(&mut self, path: &std::path::Path) -> io::Result<Location> {
         let location = self.location(path)?;
+        if location.host.scheme().is_some_and(|scheme| scheme != "ssh") {
+            return Ok(location);
+        }
         if !location.host.connected() {
             location.host.reconnect()?;
         }

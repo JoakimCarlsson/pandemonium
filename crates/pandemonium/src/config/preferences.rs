@@ -289,6 +289,8 @@ pub struct Preferences {
     pub remote_projects: Vec<PathBuf>,
     /// SSH aliases successfully connected through the remote folder picker.
     pub remote_hosts: Vec<String>,
+    /// The program that speaks the Docker command line for dev containers.
+    pub devcontainer_engine: String,
     /// Limits and explicit project grants for editor-owned session tools.
     pub orchestration: super::Orchestration,
     /// The last options chosen for each agent CLI, by agent id.
@@ -364,6 +366,7 @@ impl Default for Preferences {
         Self {
             remote_projects: Vec::new(),
             remote_hosts: Vec::new(),
+            devcontainer_engine: "docker".to_owned(),
             orchestration: super::Orchestration::default(),
             agent_options: BTreeMap::new(),
             theme_mode: ThemeMode::System,

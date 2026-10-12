@@ -11,12 +11,16 @@ use std::path::PathBuf;
 
 use pm_core::{ProjectId, Scope, SessionId};
 use pm_text::Position;
+use pm_ui::{Axis, ResizeEvent, ResizePhase};
 
 use crate::agent::TalkId;
 use crate::config::FontSlot;
 use crate::input::Input;
 use crate::keymap::Action;
 use crate::terminal::ShellId;
+
+/// Maximum number of chats visible in the history dropdown.
+pub const HISTORY_VISIBLE: usize = 10;
 
 /// What a query starts with to ask the file picker for commands instead.
 const COMMAND_PREFIX: char = '>';
@@ -102,6 +106,8 @@ pub enum Kind {
     /// Which repositories of the active project the session about to be cut
     /// works in.
     SessionRepositories,
+    /// Whether the session about to be cut runs on this machine or in a dev container.
+    SessionPlace,
     /// Accounts and organizations available for cloning through GitHub.
     CloneSources,
     /// Repositories belonging to the selected GitHub account.
@@ -184,6 +190,7 @@ impl Kind {
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
+            Self::SessionPlace => "Where should this session run?",
             Self::RemoteProject => "host or host:/absolute/path",
             Self::RemoteHosts => "Choose an SSH host or recent project",
             Self::RemoteFolders => "Choose a remote folder",
@@ -361,6 +368,8 @@ pub enum Choice {
     CloneRepository(String),
     /// Cut the session about to be cut, of the repositories ticked.
     StartSession,
+    /// Cut the session about to be cut, in a dev container when true.
+    SessionPlace(bool),
 }
 
 /// One thing the picker is offering.
@@ -397,6 +406,10 @@ pub struct Picker {
     narrowed_by: Option<String>,
     /// Which of those is selected.
     selected: usize,
+    /// First visible row of the agent history dropdown.
+    history_first: usize,
+    /// History offset captured when the scrollbar drag began.
+    history_drag_first: Option<usize>,
 }
 
 impl Picker {
@@ -410,6 +423,8 @@ impl Picker {
             candidates: Vec::new(),
             narrowed_by: None,
             selected: 0,
+            history_first: 0,
+            history_drag_first: None,
         };
         picker.filter();
         picker
@@ -497,7 +512,9 @@ impl Picker {
     /// Replaces rows while keeping the selected choice when it is still shown.
     pub fn refill_preserving_selection(&mut self, rows: Vec<Row>) {
         let chosen = self.chosen().cloned();
+        let first = self.history_first();
         self.refill(rows);
+        self.history_first = first;
         let selected = chosen.and_then(|chosen| {
             self.shown()
                 .find(|(_, row)| row.choice == chosen)
@@ -534,6 +551,12 @@ impl Picker {
     /// Selects the `place`-th shown row.
     pub fn select(&mut self, place: usize) {
         self.selected = place.min(self.matched.len().saturating_sub(1));
+        if matches!(self.kind, Kind::AgentHistory(_)) {
+            self.history_first = self.history_first.min(self.selected);
+            self.history_first = self
+                .history_first
+                .max(self.selected.saturating_sub(HISTORY_VISIBLE - 1));
+        }
     }
 
     /// Moves the selection `step` rows along, wrapping around at either end.
@@ -542,7 +565,37 @@ impl Picker {
         if count == 0 {
             return;
         }
-        self.selected = (self.selected as isize + step).rem_euclid(count as isize) as usize;
+        self.select((self.selected as isize + step).rem_euclid(count as isize) as usize);
+    }
+
+    /// First visible history row, bounded by the ten-chat viewport.
+    pub fn history_first(&self) -> usize {
+        self.history_first
+            .min(self.matched.len().saturating_sub(HISTORY_VISIBLE))
+    }
+
+    /// Scrolls the complete filtered history without wrapping at either end.
+    pub fn scroll_history(&mut self, rows: isize) {
+        self.history_first = self
+            .history_first()
+            .saturating_add_signed(rows)
+            .min(self.matched.len().saturating_sub(HISTORY_VISIBLE));
+    }
+
+    /// Moves the history viewport with its scrollbar thumb, in rows per pixel.
+    pub fn drag_history(&mut self, event: ResizeEvent, step: f32) {
+        if event.phase == ResizePhase::Started {
+            self.history_drag_first = Some(self.history_first());
+        }
+        if let Some(first) = self.history_drag_first {
+            let rows = (event.delta(Axis::Vertical) * step).round() as isize;
+            self.history_first = first
+                .saturating_add_signed(rows)
+                .min(self.matched.len().saturating_sub(HISTORY_VISIBLE));
+        }
+        if event.phase == ResizePhase::Ended {
+            self.history_drag_first = None;
+        }
     }
 
     /// What choosing the selected row would do, if it can be chosen.
@@ -553,6 +606,7 @@ impl Picker {
 
     /// Narrows the rows to the ones the query matches, best match first.
     pub fn filter(&mut self) {
+        self.history_first = 0;
         let value = self.field.value();
         let query = self.kind.query(&value);
         let limit = self.limit();

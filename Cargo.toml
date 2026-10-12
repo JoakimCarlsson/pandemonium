@@ -10,6 +10,7 @@ license = "MIT"
 [workspace.dependencies]
 pm-host = { path = "crates/pm-host" }
 pm-acp = { path = "crates/pm-acp" }
+pm-devcontainer = { path = "crates/pm-devcontainer" }
 pm-core = { path = "crates/pm-core" }
 pm-dap = { path = "crates/pm-dap" }
 pm-gfx = { path = "crates/pm-gfx" }

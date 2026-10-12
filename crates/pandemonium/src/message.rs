@@ -151,6 +151,8 @@ pub enum Message {
     OpenServerLog,
     /// Open the log of a particular server, even after focus changes.
     OpenServerLogAt(usize),
+    /// Open the log of the latest dev container operation.
+    OpenEnvironmentLog,
     /// Draw a guide down this column, or none.
     SetWrapGuide(Option<usize>),
     /// Ask which family to set this kind of text in.
@@ -427,6 +429,8 @@ pub enum Message {
     WritePicker(ResizePhase, Position, Position),
     /// Take the row the picker is showing in this place.
     ChoosePicker(usize),
+    /// Drag the history scrollbar, in chats per pixel of pointer travel.
+    ScrollPickerHistory(ResizeEvent, f32),
     /// Take the completion the list is showing in this place.
     ChooseCompletion(usize),
     /// Take the fix the server offered in this place.

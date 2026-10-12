@@ -2038,6 +2038,7 @@ impl Files {
     /// A document lives as long as a tab somewhere names it, so closing a tab
     /// is the pane tree's business alone and the store is swept afterwards:
     /// the same file open in two panes survives one of them being closed.
+    /// Servers whose final document closed are reconciled and shut down.
     pub fn retain(&mut self, held: &BTreeSet<FileId>) {
         self.open.retain(|id, _| held.contains(id));
         let documents = self
@@ -2046,11 +2047,11 @@ impl Files {
             .filter_map(|entry| {
                 Some((
                     entry.root.clone(),
-                    entry.document.borrow().buffer().language()?.name(),
+                    entry.document.borrow().buffer().language()?,
                 ))
             })
             .collect::<Vec<_>>();
-        self.servers.retain_opened(&documents);
+        self.servers.reconcile(&documents);
     }
 
     /// Closes every file and server of `scope` over its worktree roots.

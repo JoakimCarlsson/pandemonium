@@ -2253,6 +2253,7 @@ dependencies = [
  "pm-acp",
  "pm-core",
  "pm-dap",
+ "pm-devcontainer",
  "pm-gfx",
  "pm-host",
  "pm-text",
@@ -2386,6 +2387,15 @@ version = "0.11.0"
 dependencies = [
  "pm-host",
  "pm-text",
+ "serde_json",
+]
+
+[[package]]
+name = "pm-devcontainer"
+version = "0.11.0"
+dependencies = [
+ "pm-host",
+ "serde",
  "serde_json",
 ]
 

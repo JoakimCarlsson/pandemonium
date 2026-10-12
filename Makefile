@@ -1,4 +1,4 @@
-.PHONY: fmt lint run install release
+.PHONY: fmt lint run server install release
 
 fmt:
 	cargo fmt --all
@@ -6,8 +6,11 @@ fmt:
 lint:
 	cargo clippy --workspace --all-targets -- -D warnings
 
-run:
+run: server
 	cargo run -p pandemonium
+
+server:
+	sh scripts/build-server.sh debug
 
 install:
 	scripts/install-preview.sh

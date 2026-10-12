@@ -73,6 +73,16 @@ pub enum Action {
     OpenRemoteProject,
     /// Reconnects the active project's remote machine.
     ReconnectProject,
+    /// Opens the focused project in the environment its dev container declares.
+    OpenEnvironment,
+    /// Replaces the focused project's dev container with a fresh one.
+    RebuildEnvironment,
+    /// Attaches to the focused project's existing dev container without setup.
+    ReconnectEnvironment,
+    /// Stops the focused project's dev container.
+    StopEnvironment,
+    /// Opens the log of the latest dev container operation.
+    ShowEnvironmentLog,
     /// Take the focused project out of the window.
     RemoveProject,
     /// Start a session on the focused project, in a worktree of its own.
@@ -508,6 +518,31 @@ const CATALOGUE: &[(Action, &str, &str)] = &[
         Action::ReconnectProject,
         "project.reconnect",
         "Project: Reconnect",
+    ),
+    (
+        Action::OpenEnvironment,
+        "environment.open",
+        "Dev Container: Reopen in Container",
+    ),
+    (
+        Action::RebuildEnvironment,
+        "environment.rebuild",
+        "Dev Container: Rebuild",
+    ),
+    (
+        Action::ReconnectEnvironment,
+        "environment.reconnect",
+        "Dev Container: Reconnect",
+    ),
+    (
+        Action::StopEnvironment,
+        "environment.stop",
+        "Dev Container: Stop",
+    ),
+    (
+        Action::ShowEnvironmentLog,
+        "environment.log",
+        "Dev Container: Show Log",
     ),
     (Action::AddProject, "project.add", "Add Project"),
     (Action::RemoveProject, "project.remove", "Remove Project"),

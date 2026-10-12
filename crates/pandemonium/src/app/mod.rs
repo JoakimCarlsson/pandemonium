@@ -20,6 +20,7 @@ mod debug;
 mod dialog;
 mod disk;
 mod drag;
+mod environments;
 mod excerpts;
 mod form;
 mod formatter;
@@ -281,6 +282,8 @@ pub struct App {
     session_base: Option<String>,
     /// What the session whose repositories are being picked is called.
     session_name: String,
+    /// Whether the session being started runs in a dev container, once chosen.
+    session_container: Option<bool>,
     /// The repositories ticked for that session.
     session_picks: BTreeSet<PathBuf>,
     /// The field of an agent's form that the prompt or list on screen is editing.
@@ -310,6 +313,8 @@ pub struct App {
     control: Option<crate::control::Server>,
     /// The SSH login terminal while a connection is authenticating.
     authentication: Option<remote::Authentication>,
+    /// Dev container environments and the operations running on them.
+    environments: environments::Environments,
     /// The remote directory whose browser request is current.
     remote_browse: Option<pm_host::Location>,
     /// Remote handshakes completed away from the window.
@@ -353,6 +358,8 @@ pub struct App {
     /// What files carried in from outside have done away from the window
     /// and has not been taken in yet.
     arrivals: crate::arrival::Arrivals,
+    /// Owned drag handling, stopped before the event loop releases its display.
+    arrival_listener: Option<crate::arrival::Listening>,
     /// The directory files carried in from outside would land in.
     arriving: Option<std::path::PathBuf>,
     /// The project row the pointer is carrying up or down the sidebar.
@@ -742,16 +749,19 @@ impl App {
         let restored = config::load();
         let mut open = Projects::new();
         let mut hosts = pm_host::Hosts::default();
+        let environments =
+            environments::Environments::new(&restored.preferences.devcontainer_engine);
+        hosts.resolve_with(environments.docker.resolver());
         let mut remote_errors = Vec::new();
         for root in &restored.projects {
             match hosts.restore(root) {
                 Ok(location) => {
-                    let _ = open.find_or_open(location);
+                    let _ = open.find_or_open_folder(location);
                 }
                 Err(error) => {
                     remote_errors.push(error.to_string());
                     if let Ok(location) = hosts.location(root) {
-                        let _ = open.find_or_open(location);
+                        let _ = open.find_or_open_folder(location);
                     }
                 }
             }
@@ -760,7 +770,7 @@ impl App {
         if let Some(active) = restored.active.as_ref()
             && let Ok(location) = hosts.location(active)
         {
-            let _ = open.find_or_open(location);
+            let _ = open.find_or_open_folder(location);
         }
 
         let layout = restored.layout;
@@ -818,6 +828,7 @@ impl App {
             working: 0,
             session_base: None,
             session_name: String::new(),
+            session_container: None,
             session_picks: BTreeSet::new(),
             server_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),
@@ -832,6 +843,7 @@ impl App {
             hosts,
             control,
             authentication: None,
+            environments,
             remote_browse: None,
             remote_back: Arc::default(),
             files,
@@ -851,6 +863,7 @@ impl App {
             shifted: Arc::default(),
             entry_drag: None,
             arrivals: Arc::default(),
+            arrival_listener: None,
             arriving: None,
             project_drag: None,
             project_list: drag::unmeasured(),
@@ -1672,6 +1685,13 @@ impl App {
             self.request_redraw();
             return;
         }
+        if let Message::ScrollPickerHistory(event, step) = message {
+            if let Some(picker) = self.picker.as_mut() {
+                picker.drag_history(event, step);
+            }
+            self.request_redraw();
+            return;
+        }
         if let Message::ChoosePicker(place) = message {
             self.choose_picker(place);
             self.request_redraw();
@@ -1874,6 +1894,10 @@ impl App {
             self.open_server_log();
             return self.request_redraw();
         }
+        if message == Message::OpenEnvironmentLog {
+            self.open_environment_log();
+            return self.request_redraw();
+        }
         if self.session_command(message) {
             self.request_redraw();
             return;
@@ -1900,9 +1924,9 @@ impl App {
             {
                 let mut roots = vec![root];
                 roots.extend(self.sessions.of(id).flat_map(|session| {
-                    std::iter::once(session.root())
+                    std::iter::once(session.root().clone())
                         .chain(session.roots())
-                        .map(|root| root.to_path_buf())
+                        .map(|root| root.path)
                 }));
                 self.notebooks.forget(|scope| scope.project() == id);
                 self.editor.close_project(id, &roots);
@@ -3125,6 +3149,11 @@ impl ApplicationHandler<Wake> for App {
         }
     }
 
+    /// Stops drag handling while the event loop still owns the native display.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.arrival_listener.take();
+    }
+
     /// Opens the window and builds its renderer once the platform is ready.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -3174,7 +3203,11 @@ impl ApplicationHandler<Wake> for App {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
-        crate::arrival::listen(&window, self.arrivals.clone(), self.waker(Wake::Arrival));
+        self.arrival_listener = crate::arrival::listen(
+            event_loop.owned_display_handle(),
+            self.arrivals.clone(),
+            self.waker(Wake::Arrival),
+        );
         self.window = Some(window);
         self.resolver.set_keymap(self.preferences.keymap_in_force());
 

@@ -1,0 +1,4 @@
+- label: serve
+  command: python3 app.py
+- label: whoami
+  command: id; pwd; printenv PANDEMONIUM_FIXTURE; ps -eo pid,user,args | head -20

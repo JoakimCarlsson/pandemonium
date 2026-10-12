@@ -36,11 +36,13 @@ impl Location {
         &self.path
     }
 
-    /// The preference representation, preserving the SSH alias.
+    /// The preference representation, preserving how the machine is reached.
     pub fn stored(&self) -> PathBuf {
-        match self.host.name() {
-            Some(host) => PathBuf::from(format!("ssh://{host}{}", self.path.display())),
-            None => self.path.clone(),
+        match (self.host.scheme(), self.host.name()) {
+            (Some(scheme), Some(host)) => {
+                PathBuf::from(format!("{scheme}://{host}{}", self.path.display()))
+            }
+            _ => self.path.clone(),
         }
     }
 }
