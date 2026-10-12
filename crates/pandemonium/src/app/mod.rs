@@ -20,6 +20,7 @@ mod debug;
 mod dialog;
 mod disk;
 mod drag;
+mod environments;
 mod excerpts;
 mod form;
 mod formatter;
@@ -281,6 +282,8 @@ pub struct App {
     session_base: Option<String>,
     /// What the session whose repositories are being picked is called.
     session_name: String,
+    /// Whether the session being started runs in a dev container, once chosen.
+    session_container: Option<bool>,
     /// The repositories ticked for that session.
     session_picks: BTreeSet<PathBuf>,
     /// The field of an agent's form that the prompt or list on screen is editing.
@@ -310,6 +313,8 @@ pub struct App {
     control: Option<crate::control::Server>,
     /// The SSH login terminal while a connection is authenticating.
     authentication: Option<remote::Authentication>,
+    /// Dev container environments and the operations running on them.
+    environments: environments::Environments,
     /// The remote directory whose browser request is current.
     remote_browse: Option<pm_host::Location>,
     /// Remote handshakes completed away from the window.
@@ -744,6 +749,9 @@ impl App {
         let restored = config::load();
         let mut open = Projects::new();
         let mut hosts = pm_host::Hosts::default();
+        let environments =
+            environments::Environments::new(&restored.preferences.devcontainer_engine);
+        hosts.resolve_with(environments.docker.resolver());
         let mut remote_errors = Vec::new();
         for root in &restored.projects {
             match hosts.restore(root) {
@@ -820,6 +828,7 @@ impl App {
             working: 0,
             session_base: None,
             session_name: String::new(),
+            session_container: None,
             session_picks: BTreeSet::new(),
             server_form: None,
             mcp_search: crate::input::Input::one_line("Search MCP servers"),
@@ -834,6 +843,7 @@ impl App {
             hosts,
             control,
             authentication: None,
+            environments,
             remote_browse: None,
             remote_back: Arc::default(),
             files,
@@ -1884,6 +1894,10 @@ impl App {
             self.open_server_log();
             return self.request_redraw();
         }
+        if message == Message::OpenEnvironmentLog {
+            self.open_environment_log();
+            return self.request_redraw();
+        }
         if self.session_command(message) {
             self.request_redraw();
             return;
@@ -1910,9 +1924,9 @@ impl App {
             {
                 let mut roots = vec![root];
                 roots.extend(self.sessions.of(id).flat_map(|session| {
-                    std::iter::once(session.root())
+                    std::iter::once(session.root().clone())
                         .chain(session.roots())
-                        .map(|root| root.to_path_buf())
+                        .map(|root| root.path)
                 }));
                 self.notebooks.forget(|scope| scope.project() == id);
                 self.editor.close_project(id, &roots);

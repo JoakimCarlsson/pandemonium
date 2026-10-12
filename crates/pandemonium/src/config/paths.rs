@@ -39,6 +39,14 @@ pub fn agents() -> Option<PathBuf> {
     home().map(|home| home.join(AGENTS_DIRECTORY))
 }
 
+/// The directory the records and logs of dev container environments are kept in.
+const DEVCONTAINERS_DIRECTORY: &str = "devcontainers";
+
+/// The directory the records and logs of dev container environments are kept in.
+pub fn devcontainers() -> Option<PathBuf> {
+    home().map(|home| home.join(DEVCONTAINERS_DIRECTORY))
+}
+
 /// The directory language servers' logs are written in.
 const LOGS_DIRECTORY: &str = "logs";
 

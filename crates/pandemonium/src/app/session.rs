@@ -129,6 +129,7 @@ impl App {
             .collect::<BTreeSet<_>>();
 
         self.session_name = name.to_owned();
+        self.session_container = None;
         self.session_picks = roots;
         match self.session_picks.len() > 1 {
             true => self.open_picker(Kind::SessionRepositories),
@@ -184,6 +185,11 @@ impl App {
     /// Cuts the session being named, of the repositories ticked for it, and
     /// points the window at it once git has cut it.
     pub(super) fn cut_session(&mut self) {
+        if self.session_container.is_none() && self.session_could_use_container() {
+            self.open_picker(Kind::SessionPlace);
+            return;
+        }
+        let container = self.session_container.take().unwrap_or(false);
         let name = std::mem::take(&mut self.session_name);
         let chosen = std::mem::take(&mut self.session_picks)
             .into_iter()
@@ -196,7 +202,8 @@ impl App {
             return;
         };
 
-        self.cut_session_later(&project, &name, &base, &chosen, &under, None);
+        let provision = container.then(|| self.provision());
+        self.cut_session_later(&project, &name, &base, &chosen, &under, None, provision);
     }
 
     /// Points the window at `session`, bringing its agent forward if it has one.
@@ -275,9 +282,9 @@ impl App {
         let Some((scope, roots)) = self.sessions.get(session).map(|held| {
             (
                 Scope::of(held.project(), session),
-                std::iter::once(held.root())
+                std::iter::once(held.root().clone())
                     .chain(held.roots())
-                    .map(|root| root.path.clone())
+                    .map(|root| root.path)
                     .collect::<Vec<_>>(),
             )
         }) else {

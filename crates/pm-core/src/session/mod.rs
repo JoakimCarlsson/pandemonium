@@ -26,6 +26,19 @@ pub use delegation::Delegation;
 pub use placement::slug;
 pub use store::{Cutting, Found, Sessions, StartError, Started};
 
+/// Gives a session's worktree an environment of its own to run tools in.
+///
+/// The worktree is always cut on the project's own machine. A provision says
+/// where its tools run instead, and is told the project and the folder so it
+/// can name the environment after both.
+pub trait Provision: Send + Sync {
+    /// Creates and sets up the environment for `folder`, returning where tools run in it.
+    fn isolate(&self, project: &Location, folder: &std::path::Path) -> std::io::Result<Location>;
+
+    /// Where tools run for `folder` when its environment already exists, without starting it.
+    fn locate(&self, project: &Location, folder: &std::path::Path) -> Option<Location>;
+}
+
 use pm_host::Location;
 
 use crate::git::{Summary, WorkAtRisk};
@@ -68,7 +81,14 @@ pub struct Session {
     /// What the reader called it, which is what a row says.
     name: String,
     /// The folder the agent works in: the one worktree, or the folder of them.
+    ///
+    /// This is where tools run. It is the folder where the worktrees were cut
+    /// unless the project lives in an environment, and then the same files as
+    /// that environment sees them.
     root: Location,
+    /// The folder the worktrees were cut in, which is where the session is
+    /// found again and finished from.
+    source: Location,
     /// The worktree cut of each repository, the outermost first.
     cuts: Vec<Cut>,
     /// The local port this session serves on, where one was free.
@@ -114,9 +134,19 @@ impl Session {
         &self.root
     }
 
-    /// The root of every worktree cut for this session.
-    pub fn roots(&self) -> impl Iterator<Item = &Location> {
-        self.cuts.iter().map(|cut| &cut.root)
+    /// The root of every worktree cut for this session, as tools see it.
+    pub fn roots(&self) -> impl Iterator<Item = Location> + '_ {
+        self.cuts
+            .iter()
+            .map(|cut| match cut.root.path.strip_prefix(&self.source.path) {
+                Ok(within) if self.root != self.source => self.root.at(self.root.join(within)),
+                _ => cut.root.clone(),
+            })
+    }
+
+    /// The folder the worktrees were cut in.
+    pub fn source(&self) -> &Location {
+        &self.source
     }
 
     /// The commit it was cut from, or the first of them for a session cut

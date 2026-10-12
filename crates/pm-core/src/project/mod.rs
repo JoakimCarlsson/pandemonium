@@ -62,7 +62,7 @@ impl Project {
         );
         let name = root
             .host
-            .name()
+            .label()
             .map_or(name.clone(), |host| format!("{name} ({host})"));
         let repositories = Repository::under(&root);
 
@@ -72,6 +72,18 @@ impl Project {
             name,
             repositories,
         }
+    }
+
+    /// Where the project's files sit on the desktop, when its machine is an
+    /// environment working on a bind mount of them.
+    pub fn native_root(&self) -> Option<Location> {
+        self.root.host.native(&self.root.path)
+    }
+
+    /// The same project as its files sit on the desktop, when its machine is an
+    /// environment working on a bind mount of them.
+    pub fn native(&self) -> Option<Self> {
+        Some(Self::at(self.id, self.native_root()?))
     }
 
     /// What this project is called for as long as it is open.

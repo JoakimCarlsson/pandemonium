@@ -106,6 +106,8 @@ pub enum Kind {
     /// Which repositories of the active project the session about to be cut
     /// works in.
     SessionRepositories,
+    /// Whether the session about to be cut runs on this machine or in a dev container.
+    SessionPlace,
     /// Accounts and organizations available for cloning through GitHub.
     CloneSources,
     /// Repositories belonging to the selected GitHub account.
@@ -188,6 +190,7 @@ impl Kind {
             Self::NewBranch => "Name of the new branch",
             Self::NewSession => "What the session is called",
             Self::SessionRepositories => "Pick the repositories this session works in",
+            Self::SessionPlace => "Where should this session run?",
             Self::RemoteProject => "host or host:/absolute/path",
             Self::RemoteHosts => "Choose an SSH host or recent project",
             Self::RemoteFolders => "Choose a remote folder",
@@ -365,6 +368,8 @@ pub enum Choice {
     CloneRepository(String),
     /// Cut the session about to be cut, of the repositories ticked.
     StartSession,
+    /// Cut the session about to be cut, in a dev container when true.
+    SessionPlace(bool),
 }
 
 /// One thing the picker is offering.

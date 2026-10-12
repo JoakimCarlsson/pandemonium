@@ -44,8 +44,9 @@ pub use overrides::ThemeOverrides;
 #[cfg(unix)]
 pub use paths::home;
 pub use paths::{
-    agents as agents_directory, clipboard, keymaps as keymaps_directory, logs, servers,
-    settings as settings_file, themes as themes_directory, worktrees,
+    agents as agents_directory, clipboard, devcontainers as devcontainers_directory,
+    keymaps as keymaps_directory, logs, servers, settings as settings_file,
+    themes as themes_directory, worktrees,
 };
 pub use preferences::{
     AgentOptions, EditPredictions, InstallLanguageServers, KnobValue, Preference, Preferences,

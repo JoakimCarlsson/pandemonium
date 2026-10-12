@@ -164,10 +164,7 @@ fn dispatch(
         "free_port" => Ok(json!(Host::local().free_port()?)),
         "tcp" => {
             let port: u16 = serde_json::from_value(args["port"].clone())?;
-            let stream = std::net::TcpStream::connect_timeout(
-                &std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
-                std::time::Duration::from_secs(2),
-            )?;
+            let stream = crate::tcp::connect(port)?;
             pipe_out(
                 Box::new(stream.try_clone()?),
                 output.clone(),
