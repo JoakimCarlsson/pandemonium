@@ -18,6 +18,7 @@ pm-decoration = { path = "crates/pm-decoration" }
 pm-animation = { path = "crates/pm-animation" }
 pm-style = { path = "crates/pm-style" }
 pm-components = { path = "crates/pm-components" }
+pm-pages = { path = "crates/pm-pages" }
 pm-ui = { path = "crates/pm-ui" }
 pm-icon = { path = "crates/pm-icon" }
 pm-state = { path = "crates/pm-state" }

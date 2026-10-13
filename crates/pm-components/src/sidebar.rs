@@ -3,21 +3,21 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, animate_pulse, bg, border_color, border_r, border_t, cursor_pointer, flex,
-    flex_col, flex_none, font_mono, gap, h, h_full, items_center, justify_center, leading_ratio,
-    mb, min_h, overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, size, text_color,
-    text_px, w_px,
+    Role, animate_pulse, bg, border_color, border_r, border_t, flex, flex_col, flex_none,
+    font_mono, gap, h, h_full, items_center, justify_center, leading_ratio, mb, min_h,
+    overflow_hidden, p, pl, pr, pt, px, rounded_full, size, text_color, text_px, w_px,
 };
 use pm_ui::{Node, node, text};
 
-use super::sample::{Session, Status};
-use super::state::{
+use crate::Avatar;
+use crate::Button;
+use crate::Tile;
+use crate::parts::{clipped, glyph, line, spacer};
+use crate::sample::{Session, Status};
+use crate::state::{
     ADD_PROJECT, HISTORY, NEW, NEW_IN_BASE, PROJECT_BASE, Page, SEARCH, SESSION_BASE, SETTINGS,
     WorkspaceState,
 };
-use crate::Avatar;
-use crate::Button;
-use crate::parts::{clipped, glyph, line, spacer};
 
 /// How wide the sidebar is, in logical pixels.
 pub const WIDTH: f32 = 280.0;
@@ -33,12 +33,12 @@ const SECTION_GAP: f32 = 12.0;
 const CHROME: f32 = 12.0 + 8.0 + 3.0 * ROW + 2.0 * 2.0 + ROW + 45.0;
 
 /// How tall the part of the sidebar showing the list is, in a window `height` logical pixels tall.
-pub(super) fn list_viewport(height: f32) -> f32 {
+pub fn list_viewport(height: f32) -> f32 {
     height - CHROME
 }
 
 /// How tall the project at `index` is with its sessions, in logical pixels.
-pub(super) fn project_height(state: &WorkspaceState, index: usize) -> f32 {
+pub fn project_height(state: &WorkspaceState, index: usize) -> f32 {
     let rows = if state.folded[index] {
         1
     } else {
@@ -52,26 +52,8 @@ pub(super) fn project_height(state: &WorkspaceState, index: usize) -> f32 {
     rows as f32 * ROW + SECTION_GAP
 }
 
-/// A row of the sidebar: `selected` fills it, and it answers to `id`.
-fn tile(id: FocusId, selected: bool) -> Node {
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(3),
-        h(9),
-        rounded(Radius::Md),
-        cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
-        bg(Role::SurfaceActive).active(),
-    ];
-    if selected {
-        styles.push(bg(Role::SurfaceSelected));
-    }
-    node().styles(styles).focusable(id)
-}
-
 /// The mark of where a session stands: a turning ring, a tick or a dot.
-pub(super) fn status_icon(status: Status) -> Node {
+pub fn status_icon(status: Status) -> Node {
     let slot = node().styles([
         flex(),
         items_center(),
@@ -89,7 +71,9 @@ pub(super) fn status_icon(status: Status) -> Node {
 /// One of the three ways in at the top: a glyph and a label.
 fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) -> Node {
     let tone = if selected { Role::Text } else { Role::Muted };
-    tile(id, selected)
+    Tile::new(id)
+        .selected(selected)
+        .build()
         .styles([px(2)])
         .child(glyph(icon, 4.0, tone))
         .child(line(label, 14, 1.4, tone))
@@ -97,7 +81,9 @@ fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) -> Node {
 
 /// The row of one session under its project.
 fn session_row(index: usize, session: &Session, selected: bool) -> Node {
-    tile(FocusId(SESSION_BASE + index as u64), selected)
+    Tile::new(FocusId(SESSION_BASE + index as u64))
+        .selected(selected)
+        .build()
         .styles([pl(3.5), pr(2)])
         .child(status_icon(session.status))
         .child(clipped(&session.title, 14, Role::Text))
@@ -114,7 +100,9 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .filter(|(_, session)| session.project == index)
         .collect();
     let folded = state.folded[index];
-    let mut header = tile(FocusId(PROJECT_BASE + index as u64), false)
+    let mut header = Tile::new(FocusId(PROJECT_BASE + index as u64))
+        .selected(false)
+        .build()
         .styles([px(2)])
         .child(Avatar::of(project).build())
         .child(clipped(&project.name, 14, Role::Text));
@@ -139,7 +127,9 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         );
         let starting = state.page == Page::New(index);
         section = section.child(
-            tile(FocusId(NEW_IN_BASE + index as u64), starting)
+            Tile::new(FocusId(NEW_IN_BASE + index as u64))
+                .selected(starting)
+                .build()
                 .styles([pl(3)])
                 .child(glyph(
                     IconName::Plus,
@@ -158,7 +148,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
 }
 
 /// The whole sidebar for `state`.
-pub(super) fn sidebar(state: &WorkspaceState) -> Node {
+pub fn sidebar(state: &WorkspaceState) -> Node {
     node()
         .styles([
             flex(),

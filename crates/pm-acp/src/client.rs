@@ -1,6 +1,7 @@
 //! A conversation with an agent's process: requests and their answers.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -24,6 +25,16 @@ pub(crate) struct Client {
     next: u64,
 }
 
+/// What listening to an agent for a moment came to.
+pub(crate) enum Heard {
+    /// The agent wrote this message.
+    Message(Value),
+    /// The agent wrote nothing in the time given.
+    Silence,
+    /// The agent's output is closed: it has stopped.
+    Closed,
+}
+
 /// What an agent answered to one request.
 pub(crate) enum Answer {
     /// The request worked, with this result.
@@ -34,12 +45,17 @@ pub(crate) enum Answer {
 
 impl Client {
     /// Starts `command` with its standard streams piped, in the reader's home directory.
-    pub(crate) fn start(mut command: Command) -> Result<Self, String> {
+    pub(crate) fn start(command: Command) -> Result<Self, String> {
+        Self::start_in(command, &std::env::home_dir().unwrap_or_else(|| ".".into()))
+    }
+
+    /// Starts `command` with its standard streams piped, in `directory`.
+    pub(crate) fn start_in(mut command: Command, directory: &Path) -> Result<Self, String> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .current_dir(std::env::home_dir().unwrap_or_else(|| ".".into()))
+            .current_dir(directory)
             .spawn()
             .map_err(|error| format!("could not start: {error}"))?;
         let stdin = child.stdin.take().ok_or("no input pipe")?;
@@ -62,6 +78,50 @@ impl Client {
         })
     }
 
+    /// Writes `message` to the agent as one line.
+    pub(crate) fn send(&mut self, message: &Value) -> Result<(), String> {
+        writeln!(self.stdin, "{message}").map_err(|error| format!("could not write: {error}"))?;
+        self.stdin
+            .flush()
+            .map_err(|error| format!("could not write: {error}"))
+    }
+
+    /// Sends `method` with `params` without waiting, and returns the id it went out under.
+    pub(crate) fn request(&mut self, method: &str, params: &Value) -> Result<u64, String> {
+        let id = self.next;
+        self.next += 1;
+        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
+        Ok(id)
+    }
+
+    /// Sends `notification` without an id, so that nothing answers it.
+    pub(crate) fn notify(&mut self, method: &str, params: &Value) -> Result<(), String> {
+        self.send(&json!({ "jsonrpc": "2.0", "method": method, "params": params }))
+    }
+
+    /// Answers the request the agent made under `id` with `result`.
+    pub(crate) fn respond(&mut self, id: &Value, result: &Value) -> Result<(), String> {
+        self.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+    }
+
+    /// Refuses the request the agent made under `id`, for `message`.
+    pub(crate) fn refuse(&mut self, id: &Value, code: i64, message: &str) -> Result<(), String> {
+        self.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": code, "message": message },
+        }))
+    }
+
+    /// The next message the agent wrote, waiting up to `patience` for one.
+    pub(crate) fn receive(&mut self, patience: Duration) -> Heard {
+        match self.lines.recv_timeout(patience) {
+            Ok(message) => Heard::Message(message),
+            Err(RecvTimeoutError::Timeout) => Heard::Silence,
+            Err(RecvTimeoutError::Disconnected) => Heard::Closed,
+        }
+    }
+
     /// Sends `method` with `params` and waits up to `patience` for its answer.
     pub(crate) fn ask(
         &mut self,
@@ -69,13 +129,7 @@ impl Client {
         params: &Value,
         patience: Duration,
     ) -> Result<Answer, String> {
-        let id = self.next;
-        self.next += 1;
-        let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        writeln!(self.stdin, "{request}").map_err(|error| format!("could not write: {error}"))?;
-        self.stdin
-            .flush()
-            .map_err(|error| format!("could not write: {error}"))?;
+        let id = self.request(method, params)?;
         let deadline = Instant::now() + patience;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -87,13 +141,7 @@ impl Client {
             if message["id"] != json!(id) || message.get("method").is_some() {
                 continue;
             }
-            return Ok(match message.get("error") {
-                Some(error) => Answer::Error(
-                    error["code"].as_i64().unwrap_or_default(),
-                    error["message"].as_str().unwrap_or("failed").to_owned(),
-                ),
-                None => Answer::Result(message["result"].clone()),
-            });
+            return Ok(answer(&message));
         }
     }
 
@@ -101,7 +149,7 @@ impl Client {
     pub(crate) fn initialize(&mut self, patience: Duration) -> Result<Value, String> {
         match self.ask(
             "initialize",
-            &json!({ "protocolVersion": 1, "clientCapabilities": {} }),
+            &json!({ "protocolVersion": 1, "clientCapabilities": { "terminal": true, "auth": { "terminal": true } } }),
             patience,
         )? {
             Answer::Result(result) => Ok(result),
@@ -115,6 +163,17 @@ impl Drop for Client {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// What a response message says: its result, or its error.
+pub(crate) fn answer(message: &Value) -> Answer {
+    match message.get("error") {
+        Some(error) => Answer::Error(
+            error["code"].as_i64().unwrap_or_default(),
+            error["message"].as_str().unwrap_or("failed").to_owned(),
+        ),
+        None => Answer::Result(message["result"].clone()),
     }
 }
 

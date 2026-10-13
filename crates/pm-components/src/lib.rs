@@ -6,28 +6,55 @@
 //! reaches into it. Each component lives in a module named for what it is,
 //! which holds its `Variant` and `Size`, and is re-exported here.
 
+pub mod activity;
 pub mod avatar;
 pub mod button;
-mod context_menu;
+pub mod chat;
+pub mod checkbox;
+pub mod chip;
+pub mod choices;
+pub mod code_box;
+pub mod composer;
+pub mod context_menu;
+pub mod diff;
+pub mod hearing;
+pub mod history;
 pub mod input;
 pub mod menu;
-mod onboarding;
-mod parts;
-mod project;
-mod screen;
-mod workspace;
+pub mod parts;
+pub mod popover;
+pub mod progress;
+pub mod project;
+pub mod prompt;
+pub mod review;
+pub mod sample;
+pub mod sidebar;
+pub mod state;
+pub mod stepper;
+pub mod steps;
+pub mod strip;
+pub mod tally;
+pub mod terminal;
+pub mod tile;
+pub mod toggle;
+pub mod welcome;
 
 pub use avatar::Avatar;
 pub use button::Button;
+pub use checkbox::Checkbox;
+pub use chip::Chip;
+pub use code_box::CodeBox;
 pub use context_menu::{
     ContextMenu, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO,
     is_menu_item,
 };
 pub use input::Input;
 pub use menu::Menu;
-pub use onboarding::{
-    ADD, AgentStatus, BACK, BROWSE, CONTINUE, FINISH, OnboardingState, PATH, SKIP, Step,
-};
+pub use popover::Popover;
+pub use progress::Progress;
 pub use project::Project;
-pub use screen::{Screen, screen};
-pub use workspace::{ADD_PROJECT, HISTORY, NEW, TAB_DIFF, TERMINAL, WorkspaceState};
+pub use stepper::Stepper;
+pub use strip::Strip;
+pub use tally::Tally;
+pub use tile::Tile;
+pub use toggle::Toggle;

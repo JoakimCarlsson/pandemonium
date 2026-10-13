@@ -4,8 +4,8 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, bg, border, border_color, cursor_not_allowed, cursor_pointer, flex,
-    font_medium, gap, h, items_center, justify_center, leading_ratio, opacity, px, ring,
-    ring_color, rounded, size, text_color, text_px, underline,
+    font_medium, font_mono, gap, h, items_center, justify_center, leading_ratio, opacity, px, ring,
+    ring_color, rounded, rounded_full, size, text_color, text_px, underline,
 };
 use pm_ui::{Node, node, text};
 
@@ -39,6 +39,8 @@ pub enum Size {
     Lg,
     /// A 28px square holding only an icon.
     Icon,
+    /// A 32px square holding only an icon.
+    IconLg,
 }
 
 /// A button being described: what it says, how it looks, and what it does.
@@ -59,6 +61,10 @@ pub struct Button {
     id: FocusId,
     /// Whether it is switched off.
     disabled: bool,
+    /// Whether its corners are fully round.
+    round: bool,
+    /// Whether its words are set in the code font.
+    monospace: bool,
 }
 
 impl Button {
@@ -71,6 +77,8 @@ impl Button {
             size: Size::Default,
             id,
             disabled: false,
+            round: false,
+            monospace: false,
         }
     }
 
@@ -83,12 +91,26 @@ impl Button {
             size: Size::Icon,
             id,
             disabled: false,
+            round: false,
+            monospace: false,
         }
     }
 
     /// The button with `variant`'s look.
     pub fn variant(mut self, variant: Variant) -> Self {
         self.variant = variant;
+        self
+    }
+
+    /// The button with fully round corners.
+    pub fn round(mut self) -> Self {
+        self.round = true;
+        self
+    }
+
+    /// The button with its words set in the code font.
+    pub fn monospace(mut self) -> Self {
+        self.monospace = true;
         self
     }
 
@@ -119,17 +141,22 @@ impl Button {
             Size::Sm => (8.0, 3.0, 12),
             Size::Lg => (10.0, 5.0, 13),
             Size::Icon => (7.0, 0.0, 13),
+            Size::IconLg => (8.0, 0.0, 13),
         };
         let mut styles = vec![
             flex(),
             items_center(),
             justify_center(),
             gap(2),
-            rounded(Radius::Md),
+            if self.round {
+                rounded_full()
+            } else {
+                rounded(Radius::Md)
+            },
             ring(2).focus(),
             ring_color(Role::Focused).focus(),
         ];
-        if self.size == Size::Icon {
+        if matches!(self.size, Size::Icon | Size::IconLg) {
             styles.push(size(height));
         } else {
             styles.extend([h(height), px(side)]);
@@ -153,6 +180,9 @@ impl Button {
             ];
             if self.variant == Variant::Link {
                 words.push(underline());
+            }
+            if self.monospace {
+                words.push(font_mono());
             }
             button = button.child(text(label).styles(words));
         }

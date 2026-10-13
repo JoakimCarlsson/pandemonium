@@ -53,11 +53,11 @@ pub enum Edit {
     ScrollTo(f32),
 }
 
-/// A line of text with a caret between two of its characters and, when the
+/// Text with a caret between two of its characters and, when the
 /// reader has selected some, the other end of the selection.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Field {
-    /// The line being edited, which never contains control characters.
+    /// The text being edited, which holds no control characters but line breaks, and those only in a multiline field.
     text: String,
     /// The caret, as a byte offset on a character boundary.
     caret: usize,
@@ -72,6 +72,8 @@ pub struct Field {
     masked: bool,
     /// Whether the line can be selected and copied but not changed.
     read_only: bool,
+    /// Whether the text may hold line breaks, and so is more than one line.
+    multiline: bool,
     /// The states the line was in before each change, oldest first.
     past: Vec<Snapshot>,
     /// The states that were taken back, most recently taken back last.
@@ -149,6 +151,17 @@ impl Field {
     pub fn read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
         self
+    }
+
+    /// The field that may hold line breaks: Enter's partner, a line break typed or pasted, is kept.
+    pub fn multiline(mut self, multiline: bool) -> Self {
+        self.multiline = multiline;
+        self
+    }
+
+    /// Whether the field may hold line breaks.
+    pub fn is_multiline(&self) -> bool {
+        self.multiline
     }
 
     /// Whether the field cannot be changed.
@@ -271,12 +284,17 @@ impl Field {
         let typed = matches!(&edit, Edit::Insert(c) if !c.is_whitespace());
         match edit {
             Edit::Insert(character) => {
-                if !character.is_control() {
+                if !character.is_control() || (character == '\n' && self.multiline) {
                     self.replace_selection(character.encode_utf8(&mut [0; 4]));
                 }
             }
             Edit::Paste(text) => {
-                let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+                let multiline = self.multiline;
+                let clean: String = text
+                    .replace("\r\n", "\n")
+                    .chars()
+                    .filter(|c| !c.is_control() || (multiline && *c == '\n'))
+                    .collect();
                 self.replace_selection(&clean);
             }
             Edit::Backspace => self.delete_or(|field| field.before(field.caret)),

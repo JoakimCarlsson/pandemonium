@@ -1,12 +1,13 @@
 //! The device, the target and the one frame each redraw presents.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use pm_color::Srgba;
 use pm_text::Shaper;
 
 use crate::atlas::Atlas;
-use crate::draw::{DrawList, Primitive};
+use crate::draw::{DrawList, Picture, Primitive};
 use crate::geometry::Rect;
 use crate::pipeline::{GlyphInstance, QuadInstance, Viewport, build_pipeline};
 
@@ -89,6 +90,16 @@ pub struct Renderer {
     quad_pipeline: wgpu::RenderPipeline,
     /// The pipeline that draws glyphs.
     glyph_pipeline: wgpu::RenderPipeline,
+    /// The pipeline that draws pictures.
+    image_pipeline: wgpu::RenderPipeline,
+    /// The layout of the bind group a picture is sampled through.
+    image_layout: wgpu::BindGroupLayout,
+    /// The sampler pictures are drawn with.
+    image_sampler: wgpu::Sampler,
+    /// The bind group of every picture uploaded so far, by key.
+    images: HashMap<u64, wgpu::BindGroup>,
+    /// The buffer holding the picture instances of the frame being drawn.
+    image_instances: Option<wgpu::Buffer>,
     /// The coverage of every glyph drawn so far.
     atlas: Atlas,
     /// The buffer holding the quad instances of the frame being drawn.
@@ -104,6 +115,8 @@ enum Kind {
     Quad,
     /// Glyphs.
     Glyph,
+    /// The picture with this key.
+    Image(u64),
 }
 
 /// Writes `bytes` into `slot`, growing the buffer when it is too small.
@@ -276,6 +289,42 @@ impl Renderer {
             size_of::<GlyphInstance>() as u64,
             &GlyphInstance::ATTRIBUTES,
         );
+        let image_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("picture"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let image_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("picture"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let image_pipeline = build_pipeline(
+            &device,
+            format,
+            "picture",
+            pm_shaders::IMAGE,
+            &[Some(&viewport_layout), Some(&image_layout)],
+            size_of::<GlyphInstance>() as u64,
+            &GlyphInstance::ATTRIBUTES,
+        );
 
         Ok(Self {
             device,
@@ -286,10 +335,71 @@ impl Renderer {
             viewport_group,
             quad_pipeline,
             glyph_pipeline,
+            image_pipeline,
+            image_layout,
+            image_sampler,
+            images: HashMap::new(),
+            image_instances: None,
             atlas,
             quad_instances: None,
             glyph_instances: None,
         })
+    }
+
+    /// Puts `picture` on the GPU unless a picture with its key already is there.
+    fn upload_picture(&mut self, picture: &Picture) {
+        if self.images.contains_key(&picture.key) || picture.width == 0 || picture.height == 0 {
+            return;
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("picture"),
+            size: wgpu::Extent3d {
+                width: picture.width,
+                height: picture.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &picture.pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(picture.width * 4),
+                rows_per_image: Some(picture.height),
+            },
+            wgpu::Extent3d {
+                width: picture.width,
+                height: picture.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("picture"),
+            layout: &self.image_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
+                },
+            ],
+        });
+        self.images.insert(picture.key, group);
     }
 
     /// The target size in logical pixels.
@@ -469,6 +579,7 @@ impl Renderer {
 
         let mut quads: Vec<QuadInstance> = Vec::new();
         let mut glyphs: Vec<GlyphInstance> = Vec::new();
+        let mut pictures: Vec<GlyphInstance> = Vec::new();
         let mut batches: Vec<(Kind, Range<u32>, Option<Rect>)> = Vec::new();
         let mut clip: Option<Rect> = None;
         for primitive in list.primitives() {
@@ -479,6 +590,34 @@ impl Renderer {
                     extend(&mut batches, Kind::Quad, at..at + 1, clip);
                 }
                 Primitive::Clip(next) => clip = *next,
+                Primitive::Image(image) => {
+                    let picture = &image.picture;
+                    self.upload_picture(picture);
+                    if !self.images.contains_key(&picture.key) {
+                        continue;
+                    }
+                    let (width, height) = (picture.width as f32, picture.height as f32);
+                    let wanted = image.width / image.height.max(f32::EPSILON);
+                    let held = width / height;
+                    let (across, down) = if held > wanted {
+                        (wanted / held, 1.0)
+                    } else {
+                        (1.0, held / wanted)
+                    };
+                    let at = pictures.len() as u32;
+                    pictures.push(GlyphInstance {
+                        origin: [image.x * self.scale, image.y * self.scale],
+                        size: [image.width * self.scale, image.height * self.scale],
+                        uv: [
+                            (1.0 - across) / 2.0,
+                            (1.0 - down) / 2.0,
+                            (1.0 + across) / 2.0,
+                            (1.0 + down) / 2.0,
+                        ],
+                        color: [image.radius * self.scale, 0.0, 0.0, 1.0],
+                    });
+                    extend(&mut batches, Kind::Image(picture.key), at..at + 1, clip);
+                }
                 Primitive::Icon(icon) => {
                     let pixels = (icon.size * self.scale).round() as u32;
                     let Some(entry) = self.atlas.icon(&self.queue, icon.svg, pixels) else {
@@ -527,6 +666,13 @@ impl Renderer {
             "glyphs",
             bytemuck::cast_slice(&glyphs),
         );
+        upload(
+            &self.device,
+            &self.queue,
+            &mut self.image_instances,
+            "pictures",
+            bytemuck::cast_slice(&pictures),
+        );
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("frame"),
@@ -555,6 +701,17 @@ impl Renderer {
                 continue;
             };
             pass.set_scissor_rect(x, y, w, h);
+            if let Kind::Image(key) = kind {
+                if let (Some(group), Some(buffer)) =
+                    (self.images.get(&key), &self.image_instances)
+                {
+                    pass.set_pipeline(&self.image_pipeline);
+                    pass.set_bind_group(1, group, &[]);
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..6, range);
+                }
+                continue;
+            }
             match (kind, &self.quad_instances, &self.glyph_instances) {
                 (Kind::Quad, Some(buffer), _) => {
                     pass.set_pipeline(&self.quad_pipeline);

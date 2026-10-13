@@ -1,7 +1,7 @@
 //! The screen the window shows, and how it is drawn.
 
 use pm_color::{Role, Roles, Srgba};
-use pm_components::{Screen, screen};
+use pm_pages::{Screen, screen};
 use pm_renderer::DrawList;
 use pm_text::Shaper;
 use pm_theme::{Fonts, Theme};
@@ -31,6 +31,6 @@ pub fn paint(
     list: &mut DrawList,
 ) -> Output {
     list.clear();
-    let root = screen(state, width);
+    let root = screen(state, width, height, shaper);
     pm_ui::draw(&root, width, height, input, theme, shaper, list)
 }

@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 use pm_acp::{AGENTS, Login, Standing};
 use pm_components::{
-    ADD_PROJECT, AgentStatus, BROWSE, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
-    MENU_UNDO, Screen, is_menu_item,
+    MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
+use pm_pages::{ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PROMPT, Screen};
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
@@ -25,6 +25,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::keys::Clip;
+use crate::work::Work;
 use crate::{keys, scene};
 
 /// The name the desktop knows the application by.
@@ -86,17 +87,43 @@ pub struct App {
     last_press: Option<(Instant, FocusId, u8)>,
     /// The project paths last written to disk, so only changes are written.
     saved: Option<Vec<String>>,
+    /// The choices for the agents' settings last written to disk, so only changes are written.
+    saved_choices: Vec<pm_store::Choice>,
     /// The logins each agent last offered.
     logins: [Vec<Login>; AGENTS.len()],
+    /// The agents that run, and the work done for them.
+    work: Work,
+    /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
+    autofocused: bool,
 }
 
 impl Default for App {
     /// An application with no window yet, whose clock starts now.
     fn default() -> Self {
         let saved = pm_store::load_projects();
+        let choices = pm_store::load_choices();
+        let (logins, in_use) = pm_store::load_accounts();
+        crate::work::apply_accounts(&logins, &in_use);
         let screen = saved
             .as_deref()
-            .map_or_else(Screen::default, Screen::opened);
+            .map_or_else(Screen::default, Screen::opened)
+            .with_choices(choices.clone())
+            .with_accounts(logins, in_use);
+        let screen = AGENTS
+            .iter()
+            .enumerate()
+            .fold(
+                screen,
+                |screen, (index, agent)| match pm_store::load_text(&format!(
+                    "discovery-{}",
+                    agent.id
+                ))
+                .and_then(|text| pm_acp::Discovery::from_text(&text))
+                {
+                    Some(found) => screen.with_discovery(index, found),
+                    None => screen,
+                },
+            );
         let model = State::new(screen);
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
@@ -124,7 +151,10 @@ impl Default for App {
             dragging: None,
             last_press: None,
             saved,
+            saved_choices: choices,
             logins: Default::default(),
+            work: Work::new(),
+            autofocused: false,
         }
     }
 }
@@ -171,8 +201,30 @@ impl App {
         );
         self.focus
             .set_order(self.output.regions.iter().map(|region| region.id).collect());
+        let starting = state.is_starting();
+        if starting && !self.autofocused {
+            self.focus.focus(PROMPT);
+        }
+        self.autofocused = starting;
         let mut scroll_to = None;
         if let Some(id) = self.focus.current()
+            && let Some(field) = state.field(id)
+            && field.is_multiline()
+        {
+            let caret = field.caret();
+            if let Some(held) = self
+                .output
+                .fields
+                .iter()
+                .rfind(|held| held.id == id && held.start <= caret)
+            {
+                let caret_x = held.run.caret_x(caret - held.start);
+                window.set_ime_cursor_area(
+                    LogicalPosition::new(held.x + caret_x, held.y),
+                    LogicalSize::new(1.0, held.height),
+                );
+            }
+        } else if let Some(id) = self.focus.current()
             && let Some(field) = state.field(id)
             && let Some(held) = self.output.fields.iter().find(|held| held.id == id)
             && let Some(view) = held.view
@@ -217,12 +269,45 @@ impl App {
             self.browse();
             return;
         }
+        if id == ATTACH {
+            self.attach();
+            return;
+        }
         self.model.update(|state| *state = state.clone().after(id));
+        if let Some(next) = Screen::refocus(id) {
+            self.focus.focus(next);
+        }
         self.persist();
+        self.deliver();
+    }
+
+    /// Carries out what the reader asked of the agents and the folders, and copies what was asked to be copied.
+    fn deliver(&mut self) {
+        for text in self.work.deliver(&self.model) {
+            if let Some(clipboard) = self.clipboard() {
+                let _ = clipboard.set_text(text);
+            }
+        }
+    }
+
+    /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
+    fn persist_choices(&mut self) {
+        let screen = self.model.get();
+        let Some(choices) = screen.choices() else {
+            return;
+        };
+        if choices == self.saved_choices.as_slice() {
+            return;
+        }
+        let choices = choices.to_vec();
+        if pm_store::save_choices(&choices).is_ok() {
+            self.saved_choices = choices;
+        }
     }
 
     /// Writes the project list to disk when the workspace's differs from what was last written.
     fn persist(&mut self) {
+        self.persist_choices();
         let Some(paths) = self.model.get().project_paths() else {
             return;
         };
@@ -309,11 +394,47 @@ impl App {
         self.persist();
     }
 
-    /// Scrolls what is under the pointer by `pixels` logical pixels, downwards when positive.
-    fn scroll(&mut self, pixels: f32) {
-        let (Some((x, _)), Some(renderer)) = (self.pointer.position, self.renderer.as_ref()) else {
+    /// Asks the desktop for files and mentions them in the prompt, unless the dialog is dismissed.
+    fn attach(&mut self) {
+        let Some(files) = rfd::FileDialog::new()
+            .set_title("Attach files")
+            .pick_files()
+        else {
             return;
         };
+        let paths: Vec<String> = files
+            .iter()
+            .map(|file| file.to_string_lossy().into_owned())
+            .collect();
+        self.model
+            .update(|state| *state = state.clone().with_attachments(&paths));
+        self.work.preview(paths);
+        self.focus.focus(PROMPT);
+    }
+
+    /// Scrolls what is under the pointer by `pixels` logical pixels, downwards when positive.
+    fn scroll(&mut self, pixels: f32) {
+        let (Some((x, y)), Some(renderer)) = (self.pointer.position, self.renderer.as_ref()) else {
+            return;
+        };
+        if let Some(scroller) = self
+            .output
+            .scrollers
+            .iter()
+            .rev()
+            .find(|scroller| scroller.rect.contains(x, y))
+        {
+            let room = scroller.room;
+            let menu = scroller.id == MENU_SCROLL;
+            self.model.update(|state| {
+                *state = if menu {
+                    state.clone().scrolled_menu(pixels, room)
+                } else {
+                    state.clone().scrolled_chat(pixels, room)
+                };
+            });
+            return;
+        }
         let height = renderer.size().1;
         self.model
             .update(|state| *state = state.clone().scrolled(x, pixels, height));
@@ -340,15 +461,19 @@ impl App {
                         .update(|state| *state = state.clone().without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                if self.pressed_on.is_none() && self.model.get().picker_open() {
+                    self.model
+                        .update(|state| *state = state.clone().without_picker());
+                }
                 if let Some(id) = self.pressed_on
                     && Screen::is_field(id)
                 {
                     self.press_in_field(id);
                 }
             }
-            PointerEvent::Moved(x, _) => {
+            PointerEvent::Moved(x, y) => {
                 if let Some(id) = self.dragging
-                    && let Some(offset) = self.output.offset_in(id, x)
+                    && let Some(offset) = self.output.offset_in(id, x, y)
                 {
                     self.edit_field(id, Edit::Place(offset, true));
                 }
@@ -393,7 +518,7 @@ impl App {
         let Some((x, y)) = self.pointer.position else {
             return;
         };
-        let Some(offset) = self.output.offset_in(id, x) else {
+        let Some(offset) = self.output.offset_in(id, x, y) else {
             return;
         };
         self.focus.focus(id);
@@ -413,10 +538,10 @@ impl App {
     /// the pointer is, and starts a selection that dragging extends. A second
     /// press soon after the first selects the word under it.
     fn press_in_field(&mut self, id: FocusId) {
-        let Some((x, _)) = self.pointer.position else {
+        let Some((x, y)) = self.pointer.position else {
             return;
         };
-        let Some(offset) = self.output.offset_in(id, x) else {
+        let Some(offset) = self.output.offset_in(id, x, y) else {
             return;
         };
         self.focus.focus(id);
@@ -432,6 +557,35 @@ impl App {
             _ => Edit::SelectAll,
         };
         self.edit_field(id, edit);
+    }
+
+    /// Moves the caret of the multiline field `id` by `by` lines as they are
+    /// drawn, to the start or the end of the text when there is no line there.
+    fn move_vertically(&mut self, id: FocusId, by: isize, extend: bool) {
+        let Some((caret, length)) = self
+            .model
+            .get()
+            .field(id)
+            .map(|field| (field.caret(), field.text().len()))
+        else {
+            return;
+        };
+        let target = self
+            .output
+            .vertical(id, caret, by)
+            .unwrap_or(if by < 0 { 0 } else { length });
+        self.edit_field(id, Edit::Place(target, extend));
+    }
+
+    /// Moves the caret of the multiline field `id` to the start, or the end
+    /// when `end` is set, of the line it is on as the line is drawn.
+    fn move_to_line_edge(&mut self, id: FocusId, end: bool, extend: bool) {
+        let Some(caret) = self.model.get().field(id).map(|field| field.caret()) else {
+            return;
+        };
+        if let Some(target) = self.output.line_edge(id, caret, end) {
+            self.edit_field(id, Edit::Place(target, extend));
+        }
     }
 
     /// Makes `edit` to the field `id`.
@@ -479,6 +633,11 @@ impl App {
         }
     }
 
+    /// Whether the prompt box holds keyboard focus.
+    fn in_prompt(&self) -> bool {
+        self.focus.current() == Some(PROMPT)
+    }
+
     /// Acts on a key: Tab walks the focus, Enter and Space press the focused
     /// element, Escape lets go of focus.
     fn key(&mut self, event: KeyEvent) {
@@ -486,17 +645,56 @@ impl App {
             return;
         }
         match event.key {
+            Key::Tab if event.modifiers.shift && self.in_prompt() => {
+                self.model
+                    .update(|state| *state = state.clone().mode_cycled());
+                self.persist();
+                self.deliver();
+            }
+            Key::Tab if self.in_prompt() && self.model.get().slash_open() => {
+                self.model
+                    .update(|state| *state = state.clone().slash_taken());
+            }
+            Key::ArrowUp | Key::ArrowDown if self.in_prompt() && self.model.get().slash_open() => {
+                let delta = if event.key == Key::ArrowUp { -1 } else { 1 };
+                self.model
+                    .update(|state| *state = state.clone().slash_moved(delta));
+            }
+            Key::Enter if self.in_prompt() && self.model.get().slash_open() => {
+                self.model
+                    .update(|state| *state = state.clone().slash_taken());
+            }
             Key::Tab if event.modifiers.shift => self.focus.previous(),
             Key::Tab => self.focus.next(),
             Key::Escape if self.model.get().menu().is_some() => {
                 self.model
                     .update(|state| *state = state.clone().without_menu());
             }
+            Key::Escape if self.model.get().picker_open() => {
+                self.model
+                    .update(|state| *state = state.clone().without_picker());
+            }
             Key::Escape => self.focus.clear(),
             _ => match self.focus.current() {
                 Some(id) if Screen::is_field(id) => {
-                    if event.key == Key::Enter {
+                    let multiline = self
+                        .model
+                        .get()
+                        .field(id)
+                        .is_some_and(pm_text::Field::is_multiline);
+                    let shift = event.modifiers.shift;
+                    if event.key == Key::Enter && shift && multiline {
+                        self.edit_field(id, Edit::Insert('\n'));
+                    } else if event.key == Key::Enter {
                         self.activate(Screen::submit_of(id));
+                    } else if multiline && matches!(event.key, Key::ArrowUp | Key::ArrowDown) {
+                        self.move_vertically(
+                            id,
+                            if event.key == Key::ArrowUp { -1 } else { 1 },
+                            shift,
+                        );
+                    } else if multiline && matches!(event.key, Key::Home | Key::End) {
+                        self.move_to_line_edge(id, event.key == Key::End, shift);
                     } else if let Some(action) = keys::clip(&event) {
                         self.clip(id, action);
                     } else if let Some(edit) = keys::edit(&event) {
@@ -577,9 +775,11 @@ impl ApplicationHandler for App {
     /// Draws again when the model changed while no event asked for it.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.take_standings();
-        let waiting = self.model.get().waiting();
+        self.work.discover(&self.model);
+        self.work.poll(&self.model);
+        let waiting = self.model.get().waiting() || self.work.busy();
         event_loop.set_control_flow(if waiting {
-            ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100))
+            ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50))
         } else {
             ControlFlow::Wait
         });

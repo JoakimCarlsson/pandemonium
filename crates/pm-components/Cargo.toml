@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pm-acp.workspace = true
+pm-git.workspace = true
 pm-icon.workspace = true
 pm-input.workspace = true
 pm-style.workspace = true

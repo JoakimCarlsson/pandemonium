@@ -9,7 +9,10 @@
 
 mod node;
 mod paint;
+mod wrap;
 
 pub use node::{Node, node, text};
-pub use paint::{FieldBox, Input, Output, Region, draw};
+pub use paint::{FieldBox, Input, Output, Region, Scroller, draw};
+pub use pm_renderer::Picture;
 pub use pm_style::Cursor;
+pub use wrap::{Line, wrap};

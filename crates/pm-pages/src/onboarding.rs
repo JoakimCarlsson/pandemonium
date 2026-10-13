@@ -4,20 +4,20 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, font_medium, font_semibold,
-    gap, h, items_center, justify_center, leading_ratio, max_w, min_w_px, p, px, rounded,
-    rounded_full, size, text_color, text_px, tracking_tight, tracking_wide, w, w_full,
+    Radius, Role, bg, flex, flex_1, flex_col, font_medium, font_semibold, gap, items_center,
+    justify_center, leading_ratio, max_w, min_w_px, p, rounded, size, text_color, text_px,
+    tracking_tight, tracking_wide, w_full,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node, text};
 
-use crate::Avatar;
-use crate::Button;
-use crate::Input;
-use crate::button::{Size, Variant};
-use crate::context_menu::{ContextMenu, field_menu};
-use crate::parts::{glyph, line};
-use crate::project::Project;
+use pm_components::Button;
+use pm_components::Input;
+use pm_components::button::{Size, Variant};
+use pm_components::context_menu::{ContextMenu, field_menu};
+use pm_components::parts::{glyph, line};
+use pm_components::project::Project;
+use pm_components::{Avatar, Progress, Strip};
 
 /// Moves to the step after the current one.
 pub const CONTINUE: FocusId = FocusId(100);
@@ -273,43 +273,9 @@ fn heading(
         )
 }
 
-/// A row of a list of `height` steps: a bordered strip holding its children side by side.
-fn row(height: u32) -> Node {
-    node().styles([
-        flex(),
-        items_center(),
-        gap(3),
-        h(height),
-        px(4),
-        w_full(),
-        rounded(Radius::Xl),
-        border(),
-        border_color(Role::Border),
-    ])
-}
-
 /// The bar showing how far through onboarding the reader is.
 fn progress(step: Step) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(3)])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .children(Step::ALL.map(|candidate| {
-                    let tone = if candidate <= step {
-                        Role::Text
-                    } else {
-                        Role::SurfaceActive
-                    };
-                    node().styles([w(8), h(1.5), rounded_full(), bg(tone)])
-                })),
-        )
-        .child(line(
-            format!("Step {} of {}", step as usize + 1, Step::ALL.len()),
-            12,
-            1.4,
-            Role::Subtle,
-        ))
+    Progress::new(Step::ALL.len(), step as usize).build()
 }
 
 /// The welcome step: what the app is for.
@@ -334,7 +300,7 @@ fn welcome() -> Node {
                     FLOW.iter()
                         .enumerate()
                         .map(|(index, (icon, title, detail))| {
-                            row(18).children([
+                            Strip::new(18).build().children([
                                 node()
                                     .styles([
                                         flex(),
@@ -364,7 +330,7 @@ fn welcome() -> Node {
 fn project(state: &OnboardingState) -> Node {
     let can_add = Project::from_source(state.path.text()).is_some();
     let added = state.projects.iter().enumerate().map(|(index, project)| {
-        row(11).children([
+        Strip::new(11).build().children([
             Avatar::of(project).build(),
             node()
                 .styles([flex_1()])
@@ -447,7 +413,7 @@ fn agents(state: &OnboardingState) -> Node {
                                 (reason.chars().take(REASON_WIDTH).collect(), Some("Retry"))
                             }
                         };
-                        row(14).children([
+                        Strip::new(14).build().children([
                             glyph(*icon, 5.0, Role::Muted),
                             node().styles([flex(), flex_col(), flex_1()]).children([
                                 line(*name, 14, 1.4, Role::Text),

@@ -9,17 +9,17 @@ use pm_style::{
 };
 use pm_ui::{Node, node, text};
 
-use super::chat::tally;
-use super::sample::{Change, Session};
-use super::state::{
+use crate::button::{Size, Variant};
+use crate::parts::{clipped, glyph, line, spacer};
+use crate::sample::{Change, Session};
+use crate::state::{
     COMMIT, COMMIT_MESSAGE, FILE_BASE, REVIEW, STAGE_ALL, STAGE_BASE, WorkspaceState,
 };
-use crate::button::{Size, Variant};
-use crate::parts::{check_box, clipped, glyph, line, spacer};
 use crate::{Button, Input};
+use crate::{Checkbox, Tally};
 
 /// How wide the review panel is, in logical pixels.
-pub(super) const WIDTH: f32 = 380.0;
+pub const WIDTH: f32 = 380.0;
 
 /// Pushes the commits made so far.
 const PUSH: FocusId = FocusId(319);
@@ -59,7 +59,7 @@ fn change_row(index: usize, change: &Change, selected: bool) -> Node {
     };
     node()
         .styles(styles)
-        .child(check_box(change.staged, FocusId(STAGE_BASE + index as u64)))
+        .child(Checkbox::new(change.staged, FocusId(STAGE_BASE + index as u64)).build())
         .child(
             node()
                 .styles([
@@ -81,7 +81,11 @@ fn change_row(index: usize, change: &Change, selected: bool) -> Node {
                     pm_style::truncate(),
                 ])),
         )
-        .child(tally(change.added(), change.removed(), 11))
+        .child(
+            Tally::new(change.added(), change.removed())
+                .size(11)
+                .build(),
+        )
 }
 
 /// The changes of `session` and the commits made from it.
@@ -147,9 +151,13 @@ fn changes(state: &WorkspaceState, session: &Session) -> Node {
         .child(
             band(10)
                 .styles([px(4), gap(3)])
-                .child(check_box(all, STAGE_ALL))
+                .child(Checkbox::new(all, STAGE_ALL).build())
                 .child(line("Changes", 12, 1.4, Role::Muted))
-                .child(tally(session.added(), session.removed(), 12))
+                .child(
+                    Tally::new(session.added(), session.removed())
+                        .size(12)
+                        .build(),
+                )
                 .child(spacer())
                 .child(line(
                     format!("{staged} of {} staged", session.changes.len()),
@@ -193,7 +201,7 @@ fn changes(state: &WorkspaceState, session: &Session) -> Node {
 }
 
 /// The review panel for `session`.
-pub(super) fn review(state: &WorkspaceState, session: &Session) -> Node {
+pub fn review(state: &WorkspaceState, session: &Session) -> Node {
     node()
         .styles([
             flex(),
@@ -230,7 +238,11 @@ pub(super) fn review(state: &WorkspaceState, session: &Session) -> Node {
         .child(
             band(10)
                 .child(glyph(IconName::GitFork, 3.5, Role::Muted))
-                .child(clipped(&session.branch, 12, Role::Text).styles([font_mono()]))
+                .child(if session.branch.is_empty() {
+                    clipped("Not a Git repository", 12, Role::Subtle)
+                } else {
+                    clipped(&session.branch, 12, Role::Text).styles([font_mono()])
+                })
                 .child(
                     Button::new("Push", PUSH)
                         .variant(Variant::Ghost)

@@ -848,9 +848,14 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1576,7 +1581,9 @@ dependencies = [
  "pm-acp",
  "pm-color",
  "pm-components",
+ "pm-git",
  "pm-input",
+ "pm-pages",
  "pm-renderer",
  "pm-state",
  "pm-store",
@@ -1675,6 +1682,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "pm-acp"
 version = "0.12.0"
 dependencies = [
+ "base64",
  "serde_json",
 ]
 
@@ -1701,6 +1709,8 @@ version = "0.12.0"
 name = "pm-components"
 version = "0.12.0"
 dependencies = [
+ "pm-acp",
+ "pm-git",
  "pm-icon",
  "pm-input",
  "pm-style",
@@ -1754,6 +1764,20 @@ version = "0.12.0"
 [[package]]
 name = "pm-mcp"
 version = "0.12.0"
+
+[[package]]
+name = "pm-pages"
+version = "0.12.0"
+dependencies = [
+ "pm-acp",
+ "pm-components",
+ "pm-git",
+ "pm-icon",
+ "pm-input",
+ "pm-style",
+ "pm-text",
+ "pm-ui",
+]
 
 [[package]]
 name = "pm-plugin"

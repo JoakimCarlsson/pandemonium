@@ -20,6 +20,8 @@ pub struct Node {
     /// An icon the box draws, tinted with the text colour, in the largest
     /// square that fits its content area.
     pub(crate) icon: Option<IconName>,
+    /// A picture the box draws in its own colours, cropped to fill its content area.
+    pub(crate) picture: Option<pm_renderer::Picture>,
     /// A blinking caret at this byte offset of the text, shown while the
     /// named box holds focus.
     pub(crate) caret: Option<(usize, FocusId)>,
@@ -30,6 +32,24 @@ pub struct Node {
     pub(crate) scroll_x: f32,
     /// How far the contents are shifted up, in logical pixels, to scroll them.
     pub(crate) scroll_y: f32,
+    /// The text field this box shows one line of, and the byte offset of the
+    /// text field at which the line starts, so presses and the caret can be
+    /// placed in it.
+    pub(crate) field_line: Option<(FocusId, usize)>,
+    /// A box whose focus this one takes on: its focus styles apply while that box holds keyboard focus.
+    pub(crate) focus_for: Option<FocusId>,
+    /// Scrolls the contents from one end of them, and reports how far they
+    /// can be scrolled under this name.
+    pub(crate) scroll_anchor: Option<(FocusId, Anchor, f32)>,
+}
+
+/// The end of a box's contents that a scroll position is measured from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Anchor {
+    /// The top: the position is how far down the contents are scrolled.
+    Start,
+    /// The bottom: the position is how far back up from the end they are.
+    End,
 }
 
 /// An empty, unstyled box.
@@ -49,6 +69,12 @@ impl Node {
     /// Makes the box draw `name` in the text colour; size the box to size the icon.
     pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name);
+        self
+    }
+
+    /// Makes the box draw `picture` across its content area.
+    pub fn picture(mut self, picture: pm_renderer::Picture) -> Self {
+        self.picture = Some(picture);
         self
     }
 
@@ -98,6 +124,20 @@ impl Node {
         self
     }
 
+    /// Marks the box as one line of the text field `owner` shows, the line
+    /// that starts at byte `start` of the field's text.
+    pub fn field_line(mut self, owner: FocusId, start: usize) -> Self {
+        self.field_line = Some((owner, start));
+        self
+    }
+
+    /// Makes the box take the focus styles of the box named `id` as well as
+    /// its own: it looks focused while `id` holds keyboard focus.
+    pub fn focused_with(mut self, id: FocusId) -> Self {
+        self.focus_for = Some(id);
+        self
+    }
+
     /// Scrolls the contents `offset` logical pixels to the left; they are
     /// clipped to the box when its style says overflow is hidden.
     pub fn scroll_x(mut self, offset: f32) -> Self {
@@ -110,6 +150,24 @@ impl Node {
     /// scrolled out of view cannot be pressed.
     pub fn scroll_y(mut self, offset: f32) -> Self {
         self.scroll_y = offset;
+        self
+    }
+
+    /// Scrolls the contents to the bottom, then `back` logical pixels back up
+    /// from it, kept within the contents. The frame reports how many pixels
+    /// the contents can be scrolled back under the name `id`, which is not
+    /// one that can be pressed.
+    pub fn scroll_from_end(mut self, id: FocusId, back: f32) -> Self {
+        self.scroll_anchor = Some((id, Anchor::End, back));
+        self
+    }
+
+    /// Scrolls the contents `offset` logical pixels down from their start,
+    /// kept within the contents. The frame reports how many pixels the
+    /// contents can be scrolled under the name `id`, which is not one that
+    /// can be pressed.
+    pub fn scroll_from_start(mut self, id: FocusId, offset: f32) -> Self {
+        self.scroll_anchor = Some((id, Anchor::Start, offset));
         self
     }
 

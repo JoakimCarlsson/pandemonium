@@ -3,8 +3,8 @@
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
-    font_mono, h, h_full, items_center, leading_ratio, min_w_px, opacity, overflow_hidden, px,
-    ring, ring_color, rounded, text_color, text_px, w_full,
+    font_mono, h, h_full, h_px, items_center, items_start, leading_ratio, min_w_px, opacity,
+    overflow_hidden, pt, px, ring, ring_color, rounded, text_color, text_px, w_full,
 };
 use pm_text::Field;
 use pm_ui::{Node, node, text};
@@ -52,6 +52,8 @@ pub struct Input<'a> {
     disabled: bool,
     /// Whether what it holds is not acceptable.
     invalid: bool,
+    /// How many lines tall the box is, with the line at the top when it is more than one.
+    rows: u32,
 }
 
 impl<'a> Input<'a> {
@@ -65,7 +67,14 @@ impl<'a> Input<'a> {
             size: Size::Default,
             disabled: false,
             invalid: false,
+            rows: 1,
         }
+    }
+
+    /// The input as tall as `rows` lines, the line it edits at the top.
+    pub fn rows(mut self, rows: u32) -> Self {
+        self.rows = rows.max(1);
+        self
     }
 
     /// The input saying `placeholder` while it is empty.
@@ -114,19 +123,20 @@ impl<'a> Input<'a> {
             Size::Lg => (12, 14),
         };
         let mut line = text(content)
-            .styles([
-                text_px(font),
-                leading_ratio(1.4),
-                font_mono(),
-                text_color(tone),
-            ])
+            .styles([text_px(font), leading_ratio(1.4), text_color(tone)])
             .caret(caret, self.id);
+        if self.variant == Variant::Default {
+            line = line.styles([font_mono()]);
+        } else {
+            line = line.styles([leading_ratio(1.57)]);
+        }
         if let Some(range) = self.field.selection() {
             line = line.selection(
                 self.field.to_shown(range.start)..self.field.to_shown(range.end),
                 self.id,
             );
         }
+        let tall = self.rows > 1;
         let mut styles = vec![
             flex(),
             items_center(),
@@ -153,6 +163,9 @@ impl<'a> Input<'a> {
                 ring_color(Role::Danger).focus(),
             ]);
         }
+        if tall {
+            styles.extend([h_px(self.rows as f32 * 22.0 + 28.0), pt(3.5)]);
+        }
         if self.disabled {
             styles.extend([opacity(40), cursor_not_allowed()]);
         } else {
@@ -163,7 +176,7 @@ impl<'a> Input<'a> {
                 flex(),
                 flex_1(),
                 h_full(),
-                items_center(),
+                if tall { items_start() } else { items_center() },
                 overflow_hidden(),
             ])
             .scroll_x(self.field.scroll())

@@ -7,15 +7,15 @@ use pm_style::{
 };
 use pm_ui::{Node, node, text};
 
-use super::state::TERMINAL;
 use crate::Button;
 use crate::parts::{glyph, line, spacer};
+use crate::state::TERMINAL;
 
 /// How tall the dock is, in logical pixels.
 const HEIGHT: f32 = 280.0;
 
 /// The dock for a session of `project`: one shell, waiting at its prompt.
-pub(super) fn terminal(project: &str) -> Node {
+pub fn terminal(project: &str) -> Node {
     node()
         .styles([
             flex(),

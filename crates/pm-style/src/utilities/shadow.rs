@@ -1,7 +1,7 @@
 //! Box shadows, rings, drop shadows and text shadows.
 
 use pm_color::Color;
-use pm_decoration::{DropShadow, InsetShadow, Shadow, ShadowRule, TextShadow};
+use pm_decoration::{DropShadow, InsetShadow, Shadow, ShadowLayer, ShadowRule, TextShadow};
 use pm_primitives::Number;
 
 use crate::Utility;
@@ -9,6 +9,11 @@ use crate::Utility;
 /// A box shadow from a named preset.
 pub fn shadow(preset: Shadow) -> Utility {
     ShadowRule::Layers(preset.layers()).into()
+}
+
+/// A box shadow made of `layers`, painted first to last, for a shadow no preset gives.
+pub fn shadow_layers(layers: &'static [ShadowLayer]) -> Utility {
+    ShadowRule::Layers(layers).into()
 }
 
 /// An inset box shadow from a named preset.

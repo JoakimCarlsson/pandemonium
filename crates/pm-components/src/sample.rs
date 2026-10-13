@@ -1,56 +1,35 @@
 //! Made-up projects, sessions and changes, for showing the workspace before real ones exist.
 
+use std::time::Instant;
+
+use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState};
 use pm_icon::IconName;
 
 use crate::project::Project;
 
-/// An agent a workspace can be started with.
+/// An agent a workspace can be started with, in the same order as [`pm_acp::AGENTS`].
 #[derive(Clone, Copy, Debug)]
 pub struct AgentChoice {
     /// The glyph on its chip.
     pub icon: IconName,
     /// What it is called.
     pub name: &'static str,
-    /// The model it starts with.
-    pub model: &'static str,
-    /// The mode it starts in.
-    pub mode: &'static str,
 }
 
 /// The agents offered when starting work, in the order the chips show them.
-pub const AGENTS: [AgentChoice; 4] = [
+pub const AGENTS: [AgentChoice; 3] = [
     AgentChoice {
         icon: IconName::Sparkles,
         name: "Claude Code",
-        model: "Default (recommended)",
-        mode: "Manual",
     },
     AgentChoice {
         icon: IconName::Terminal,
         name: "Codex",
-        model: "GPT-5.6",
-        mode: "Read-only",
-    },
-    AgentChoice {
-        icon: IconName::FileCode,
-        name: "Cursor",
-        model: "Auto",
-        mode: "Ask",
     },
     AgentChoice {
         icon: IconName::Zap,
-        name: "Gemini CLI",
-        model: "Gemini 3 Pro",
-        mode: "Default",
+        name: "Grok Build",
     },
-];
-
-/// What a new workspace can start from, one click each.
-pub const SUGGESTIONS: [(IconName, &str); 4] = [
-    (IconName::Sparkles, "Explain how this project is laid out"),
-    (IconName::Git, "Fix the failing tests on this branch"),
-    (IconName::GitCompare, "Review my uncommitted changes"),
-    (IconName::Zap, "Find and remove dead code"),
 ];
 
 /// Where a session stands in the agent, review, code flow.
@@ -102,7 +81,7 @@ pub struct Change {
 impl Change {
     /// A change to `path` read out of `source`, one line per diff line, each
     /// starting with `@`, `+`, `-` or a space.
-    fn new(path: &str, source: &str) -> Self {
+    pub fn new(path: &str, source: &str) -> Self {
         let diff = source
             .lines()
             .map(|line| {
@@ -166,26 +145,93 @@ pub struct Message {
     pub bullets: Vec<String>,
     /// How long the agent worked on it, if it is a reply.
     pub duration: Option<String>,
+    /// What the agent did on the way to the reply, oldest first.
+    pub steps: Vec<Step>,
+    /// Whether the steps are shown, when the reader has chosen; otherwise only the latest turn's are.
+    pub open: Option<bool>,
+    /// How many steps the reply had when its text last grew, to tell when new words follow a step.
+    pub said_after: usize,
+    /// The files the reader sent with it, by path.
+    pub attachments: Vec<String>,
+}
+
+/// One thing the agent did on the way to a reply.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Step {
+    /// What the agent thought.
+    Thought(Thought),
+    /// A tool it used.
+    Tool(ToolUse),
+    /// The plan it keeps.
+    Plan(Vec<PlanStep>),
+}
+
+/// What the agent thought, and for how long.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Thought {
+    /// What it thought.
+    pub text: String,
+    /// When it began.
+    pub started: Instant,
+    /// How many seconds it went on, once it has stopped.
+    pub seconds: Option<u64>,
+}
+
+/// A tool the agent used, shown as a line of the conversation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolUse {
+    /// What the agent calls this use of the tool.
+    pub id: String,
+    /// What it did.
+    pub title: String,
+    /// What kind of tool it is.
+    pub kind: ToolKind,
+    /// How far it got.
+    pub state: ToolState,
+    /// The file, command or query it worked on.
+    pub target: Option<String>,
+    /// What it changed in a file.
+    pub diff: Option<Diff>,
+    /// What it printed.
+    pub output: Option<String>,
+    /// When it began.
+    pub started: Instant,
+    /// How many seconds it took, once it has ended.
+    pub seconds: Option<u64>,
 }
 
 impl Message {
     /// A message the reader wrote.
     pub fn user(text: &str) -> Self {
-        Self {
-            from_user: true,
-            text: text.to_owned(),
-            bullets: Vec::new(),
-            duration: None,
-        }
+        Self::new(true, text, Vec::new(), None)
+    }
+
+    /// A reply from the agent that says `text` so far.
+    pub fn reply(text: &str) -> Self {
+        Self::new(false, text, Vec::new(), None)
     }
 
     /// An agent reply that took `duration`, listing `bullets` under `text`.
     fn agent(text: &str, bullets: &[&str], duration: &str) -> Self {
+        Self::new(
+            false,
+            text,
+            bullets.iter().map(|bullet| (*bullet).to_owned()).collect(),
+            Some(duration.to_owned()),
+        )
+    }
+
+    /// A message with nothing done on the way to it.
+    fn new(from_user: bool, text: &str, bullets: Vec<String>, duration: Option<String>) -> Self {
         Self {
-            from_user: false,
+            from_user,
             text: text.to_owned(),
-            bullets: bullets.iter().map(|bullet| (*bullet).to_owned()).collect(),
-            duration: Some(duration.to_owned()),
+            bullets,
+            duration,
+            steps: Vec::new(),
+            open: None,
+            said_after: 0,
+            attachments: Vec::new(),
         }
     }
 }
@@ -199,6 +245,10 @@ pub struct Session {
     pub project: usize,
     /// The branch its worktree is on.
     pub branch: String,
+    /// The folder the agent works in.
+    pub directory: String,
+    /// The branch its worktree was made from, when it has one of its own.
+    pub base: Option<String>,
     /// Which agent, by position in [`AGENTS`], runs it.
     pub agent: usize,
     /// Where it stands.
@@ -211,6 +261,16 @@ pub struct Session {
     pub changes: Vec<Change>,
     /// The messages of the commits made from it, oldest first.
     pub commits: Vec<String>,
+    /// What can be changed about the conversation, once the agent has said.
+    pub settings: Vec<Setting>,
+    /// The commands the agent offers behind a slash.
+    pub commands: Vec<Slash>,
+    /// The skills the agent offers behind a dollar sign.
+    pub skills: Vec<Slash>,
+    /// The question the agent waits on the reader to answer, if it waits on one.
+    pub ask: Option<Permission>,
+    /// When the turn that is running began, if one is.
+    pub turn_started: Option<Instant>,
 }
 
 impl Session {
@@ -227,12 +287,19 @@ impl Session {
             title: title.to_owned(),
             project,
             branch: branch.to_owned(),
+            directory: String::new(),
+            base: None,
             agent: 0,
             status,
             updated: updated.to_owned(),
             messages,
             changes: Vec::new(),
             commits: Vec::new(),
+            settings: Vec::new(),
+            commands: Vec::new(),
+            skills: Vec::new(),
+            ask: None,
+            turn_started: None,
         }
     }
 
@@ -246,6 +313,13 @@ impl Session {
             "now",
             vec![Message::user(prompt)],
         )
+    }
+
+    /// The position of the latest reply that has steps, which is the one whose steps show unasked.
+    pub fn latest_steps(&self) -> Option<usize> {
+        self.messages
+            .iter()
+            .rposition(|message| !message.steps.is_empty())
     }
 
     /// How many lines all its changes put in.

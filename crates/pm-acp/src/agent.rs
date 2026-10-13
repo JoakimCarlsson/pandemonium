@@ -121,6 +121,9 @@ impl Agent {
             (program, _) => Command::new(program.unwrap_or_else(|| self.program.into())),
         };
         command.args(self.arguments).args(extra);
+        if let Some((name, home)) = self.environment() {
+            command.env(name, home);
+        }
         command
     }
 }

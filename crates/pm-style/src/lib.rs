@@ -37,7 +37,7 @@ pub use pm_color::{Color, Oklch, Role, Roles, Srgba};
 pub use pm_decoration as decoration;
 pub use pm_decoration::{
     BlendMode, Blur, BorderStyle, Cursor, DropShadow, GradientDirection, InsetShadow,
-    PointerEvents, Radius, Shadow, TextShadow, UserSelect,
+    PointerEvents, Radius, Shadow, ShadowLayer, TextShadow, UserSelect,
 };
 pub use pm_layout as layout;
 pub use pm_layout::{Breakpoint, Container};

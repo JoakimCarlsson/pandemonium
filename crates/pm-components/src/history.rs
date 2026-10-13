@@ -7,12 +7,12 @@ use pm_style::{
 };
 use pm_ui::{Node, node};
 
-use super::sidebar::status_icon;
-use super::state::{SESSION_BASE, WorkspaceState};
 use crate::parts::{clipped, line};
+use crate::sidebar::status_icon;
+use crate::state::{SESSION_BASE, WorkspaceState};
 
 /// The history page for `state`.
-pub(super) fn history(state: &WorkspaceState) -> Node {
+pub fn history(state: &WorkspaceState) -> Node {
     node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
         .child(

@@ -35,6 +35,26 @@ impl Project {
         })
     }
 
+    /// The folder on disk the project is, with a leading `~` taken to be the reader's home.
+    pub fn directory(&self) -> std::path::PathBuf {
+        match (self.path.strip_prefix("~/"), std::env::home_dir()) {
+            (Some(rest), Some(home)) => home.join(rest),
+            _ => self.path.clone().into(),
+        }
+    }
+
+    /// The branch the project's folder has checked out, or nothing when it is not a repository.
+    pub fn branch(&self) -> String {
+        std::fs::read_to_string(self.directory().join(".git/HEAD"))
+            .ok()
+            .and_then(|head| {
+                head.trim()
+                    .strip_prefix("ref: refs/heads/")
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default()
+    }
+
     /// The colour of the project's avatar, which the same path always gets.
     pub fn color(&self) -> Color {
         let hash = self.path.bytes().fold(FNV_OFFSET, |hash, byte| {

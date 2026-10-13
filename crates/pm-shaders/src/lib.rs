@@ -8,3 +8,6 @@ pub const QUAD: &str = include_str!("quad.wgsl");
 
 /// Glyphs, one instanced quad each, sampled from a coverage atlas.
 pub const GLYPH: &str = include_str!("glyph.wgsl");
+
+/// Pictures, one instanced quad each, sampled from a full-colour texture.
+pub const IMAGE: &str = include_str!("image.wgsl");

@@ -1,32 +1,35 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
-mod chat;
-mod composer;
-mod diff;
-mod history;
-mod review;
-mod sample;
-pub mod sidebar;
-mod state;
-mod terminal;
-mod welcome;
-
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Role, bg, border_b, border_color, flex, flex_1, flex_col, flex_none, font_medium, gap, h,
     h_full, items_center, items_end, mb, min_h, min_w_px, px, text_color, w_full,
 };
+use pm_text::Shaper;
 use pm_ui::{Node, node};
 
-use crate::context_menu::field_menu;
-use crate::parts::{glyph, line, spacer};
+use pm_components::context_menu::field_menu;
+use pm_components::parts::{glyph, line, spacer};
+use pm_components::{chat, diff, history, prompt, review, sidebar, terminal, welcome};
 
-pub use sidebar::WIDTH as SIDEBAR_WIDTH;
-pub use state::{ADD_PROJECT, HISTORY, NEW, TAB_DIFF, TERMINAL, WorkspaceState};
+pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
+pub use pm_components::state::{
+    ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, NEW, Outgoing, PROMPT, SEND, STOP,
+    TAB_DIFF, TERMINAL, WorkspaceState,
+};
 
-use sample::{AGENTS, Session};
-use state::{Page, TAB_CHAT, Tab};
+use pm_components::sample::{AGENTS, Session};
+use pm_components::state::{Page, TAB_CHAT, Tab};
+
+/// How much of a window's height the conversation page keeps for something other than the room above the prompt box, in logical pixels.
+const CHAT_CHROME: f32 = 230.0;
+
+/// How tall the page for starting work is, in logical pixels.
+const WELCOME_HEIGHT: f32 = 265.0;
+
+/// How far down the page for starting work its prompt box starts, from the top of the page's own content, in logical pixels.
+const WELCOME_ABOVE: f32 = 127.0;
 
 /// One tab of the strip above a session: a glyph and a label, filled while it is the one shown.
 fn tab(icon: IconName, label: &str, id: FocusId, shown: bool) -> Node {
@@ -107,10 +110,16 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
 }
 
 /// What fills the main area while a session is open.
-fn session_page(state: &WorkspaceState, session: &Session, width: f32) -> Node {
+fn session_page(
+    state: &WorkspaceState,
+    session: &Session,
+    width: f32,
+    above: f32,
+    shaper: &mut Shaper,
+) -> Node {
     let view = match state.tab {
         Tab::Diff if !session.changes.is_empty() => diff::diff(state, session),
-        _ => chat::chat(state, session, width),
+        _ => chat::chat(state, session, width, above, shaper),
     };
     let project = &state.projects[session.project].name;
     let mut page = node()
@@ -124,15 +133,26 @@ fn session_page(state: &WorkspaceState, session: &Session, width: f32) -> Node {
 }
 
 /// The whole workspace screen for `state` in a window `width` logical pixels wide.
-pub fn workspace(state: &WorkspaceState, width: f32) -> Node {
+pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
     let open = state.open();
     let reviewing = open.is_some() && state.review;
     let main_width = width - sidebar::WIDTH - if reviewing { review::WIDTH } else { 0.0 };
     let main = match (state.page, open) {
         _ if state.projects.is_empty() => welcome::no_project(),
-        (Page::Session(_), Some(session)) => session_page(state, session, main_width),
+        (Page::Session(_), Some(session)) => session_page(
+            state,
+            session,
+            main_width,
+            (height - CHAT_CHROME).max(0.0),
+            shaper,
+        ),
         (Page::History, _) => history::history(state),
-        _ => welcome::welcome(state),
+        _ => welcome::welcome(
+            state,
+            ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
+            prompt::inner_width((main_width - 48.0).min(680.0)),
+            shaper,
+        ),
     };
     let mut root = node()
         .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Background)])

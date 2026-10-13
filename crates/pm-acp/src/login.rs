@@ -82,23 +82,33 @@ impl Agent {
 
     /// Runs the agent with `args` in a terminal window, and waits for the window to close.
     fn in_terminal(self, args: &[String]) -> Result<(), String> {
-        let wanted = std::env::var("TERMINAL").ok();
-        let candidates = wanted
-            .iter()
-            .map(|name| (name.as_str(), &["-e"][..]))
-            .chain(TERMINALS);
-        for (terminal, before) in candidates {
-            let agent = self.command(args);
-            let mut command = Command::new(terminal);
-            command
-                .args(before)
-                .arg(agent.get_program())
-                .args(agent.get_args());
-            if let Ok(mut child) = command.spawn() {
-                child.wait().map_err(|error| error.to_string())?;
-                return Ok(());
+        run_in_terminal(self.command(args))
+    }
+}
+
+/// Runs `command`, with its environment, in a terminal window, and waits for the window to close.
+pub(crate) fn run_in_terminal(program: Command) -> Result<(), String> {
+    let wanted = std::env::var("TERMINAL").ok();
+    let candidates = wanted
+        .iter()
+        .map(|name| (name.as_str(), &["-e"][..]))
+        .chain(TERMINALS);
+    for (terminal, before) in candidates {
+        let mut command = Command::new(terminal);
+        command.args(before).arg("env");
+        for (name, value) in program.get_envs() {
+            if let Some(value) = value {
+                let mut pair = name.to_os_string();
+                pair.push("=");
+                pair.push(value);
+                command.arg(pair);
             }
         }
-        Err("no terminal to log in with".to_owned())
+        command.arg(program.get_program()).args(program.get_args());
+        if let Ok(mut child) = command.spawn() {
+            child.wait().map_err(|error| error.to_string())?;
+            return Ok(());
+        }
     }
+    Err("no terminal to log in with".to_owned())
 }

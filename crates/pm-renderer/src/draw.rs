@@ -1,5 +1,7 @@
 //! What a frame is made of: a list of rounded, bordered, transformed quads.
 
+use std::sync::Arc;
+
 use pm_color::Srgba;
 use pm_text::Run;
 
@@ -97,6 +99,43 @@ pub struct Icon {
     pub color: Srgba,
 }
 
+/// The pixels of a picture, decoded and ready to be drawn.
+#[derive(Clone, Debug)]
+pub struct Picture {
+    /// What names the picture; two pictures with one key are the same pixels.
+    pub key: u64,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Tightly packed sRGB-encoded RGBA bytes, row by row from the top.
+    pub pixels: Arc<Vec<u8>>,
+}
+
+impl PartialEq for Picture {
+    /// Two pictures are equal when they carry the same key.
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+/// A picture drawn to fill a rectangle, cropped to the rectangle's shape.
+#[derive(Clone, Debug)]
+pub struct Image {
+    /// The pixels.
+    pub picture: Picture,
+    /// Left edge, in logical pixels.
+    pub x: f32,
+    /// Top edge, in logical pixels.
+    pub y: f32,
+    /// Width, in logical pixels.
+    pub width: f32,
+    /// Height, in logical pixels.
+    pub height: f32,
+    /// How round the corners are, in logical pixels.
+    pub radius: f32,
+}
+
 /// One thing a frame draws.
 #[derive(Clone, Debug)]
 pub enum Primitive {
@@ -106,6 +145,8 @@ pub enum Primitive {
     Text(Text),
     /// A tinted icon.
     Icon(Icon),
+    /// A picture in its own colours.
+    Image(Image),
     /// Everything after this is drawn only inside the rectangle, or
     /// anywhere when there is none.
     Clip(Option<Rect>),
@@ -148,6 +189,11 @@ impl DrawList {
     /// Adds `icon` over everything already in the list.
     pub fn push_icon(&mut self, icon: Icon) {
         self.primitives.push(Primitive::Icon(icon));
+    }
+
+    /// Adds `image` over everything already in the list.
+    pub fn push_image(&mut self, image: Image) {
+        self.primitives.push(Primitive::Image(image));
     }
 
     /// The primitives, in drawing order.

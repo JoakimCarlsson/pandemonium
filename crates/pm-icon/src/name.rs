@@ -112,6 +112,8 @@ pub enum IconName {
     Minimize,
     /// An open ring: loading.
     Loading,
+    /// A square: stop what is running.
+    Stop,
 }
 
 impl IconName {
@@ -164,6 +166,7 @@ impl IconName {
             Self::Maximize => Svg::new("maximize", include_icon!("maximize")),
             Self::Minimize => Svg::new("minimize", include_icon!("minimize")),
             Self::Loading => Svg::new("loading", include_icon!("loading")),
+            Self::Stop => Svg::new("stop", include_icon!("stop")),
         }
     }
 }

@@ -9,13 +9,13 @@ use pm_style::{
 };
 use pm_ui::{Node, node, text};
 
-use super::chat::tally;
-use super::sample::{Change, Kind, Session};
-use super::state::{FILE_BASE, VIEWED_BASE, WorkspaceState};
-use crate::parts::{check_box, glyph, line, spacer};
+use crate::parts::{glyph, line, spacer};
+use crate::sample::{Change, Kind, Session};
+use crate::state::{FILE_BASE, VIEWED_BASE, WorkspaceState};
+use crate::{Checkbox, Tally};
 
 /// One line of a diff: tinted by what it does, written in the code font.
-fn diff_line(kind: Kind, content: &str) -> Node {
+pub fn diff_line(kind: Kind, content: &str) -> Node {
     let (marker, fill, tone) = match kind {
         Kind::Hunk => (" ", Some(Color::from(Role::Surface)), Role::Subtle),
         Kind::Context => (" ", None, Role::Muted),
@@ -85,11 +85,12 @@ fn file(index: usize, change: &Change, open: bool) -> Node {
                     pm_style::truncate(),
                 ])),
         )
-        .child(tally(change.added(), change.removed(), 11))
-        .child(check_box(
-            change.viewed,
-            FocusId(VIEWED_BASE + index as u64),
-        ));
+        .child(
+            Tally::new(change.added(), change.removed())
+                .size(11)
+                .build(),
+        )
+        .child(Checkbox::new(change.viewed, FocusId(VIEWED_BASE + index as u64)).build());
     if open {
         header = header.styles([border_b(), border_color(Role::Border)]);
     }
@@ -118,7 +119,7 @@ fn file(index: usize, change: &Change, open: bool) -> Node {
 }
 
 /// The diff of `session`: a summary strip, then each changed file.
-pub(super) fn diff(state: &WorkspaceState, session: &Session) -> Node {
+pub fn diff(state: &WorkspaceState, session: &Session) -> Node {
     let viewed = session
         .changes
         .iter()
@@ -162,7 +163,11 @@ pub(super) fn diff(state: &WorkspaceState, session: &Session) -> Node {
                     1.4,
                     Role::Muted,
                 ))
-                .child(tally(session.added(), session.removed(), 12))
+                .child(
+                    Tally::new(session.added(), session.removed())
+                        .size(12)
+                        .build(),
+                )
                 .child(spacer())
                 .child(line(
                     format!("{viewed} of {count} viewed"),

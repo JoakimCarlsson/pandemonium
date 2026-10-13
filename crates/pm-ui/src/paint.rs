@@ -11,13 +11,25 @@ use pm_style::layout::{Placed, solve};
 use pm_text::{Run, Shaper};
 use pm_theme::Theme;
 
-use crate::node::Node;
+use crate::node::{Anchor, Node};
 
 /// How long the caret stays on, and then off, in milliseconds.
 const CARET_BLINK_MS: f32 = 530.0;
 
 /// The width of the caret in logical pixels.
 const CARET_WIDTH: f32 = 1.5;
+
+/// How far a shadow's edge fades, as a share of its blur radius, which is what makes it look as soft as a browser draws it.
+const SHADOW_SOFTNESS: f32 = 1.3;
+
+/// How wide the bar of a scrolling box is, in logical pixels.
+const SCROLLBAR_WIDTH: f32 = 4.0;
+
+/// How far the bar of a scrolling box stays from its edges, in logical pixels.
+const SCROLLBAR_INSET: f32 = 3.0;
+
+/// How short the bar of a scrolling box is at least, in logical pixels.
+const SCROLLBAR_MINIMUM: f32 = 24.0;
 
 /// What the screen is being drawn for: the pointer, the focus and the clock.
 #[derive(Clone, Copy, Debug, Default)]
@@ -51,6 +63,19 @@ pub struct Output {
     pub cursor: Cursor,
     /// The text boxes that hold a caret, in tree order.
     pub fields: Vec<FieldBox>,
+    /// The boxes that scroll from their end, in tree order.
+    pub scrollers: Vec<Scroller>,
+}
+
+/// One box whose contents scroll from their end, where it ended up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Scroller {
+    /// The name the box was given.
+    pub id: FocusId,
+    /// Where it is, in logical pixels.
+    pub rect: Rect,
+    /// How far back from the end its contents can be scrolled, in logical pixels.
+    pub room: f32,
 }
 
 /// One line of editable text, where it was drawn.
@@ -58,8 +83,14 @@ pub struct Output {
 pub struct FieldBox {
     /// The name of the box that owns the caret.
     pub id: FocusId,
+    /// The byte offset of the field's text at which this line starts.
+    pub start: usize,
     /// Where the line starts along x, in logical pixels.
     pub x: f32,
+    /// Where the line is along y, in logical pixels.
+    pub y: f32,
+    /// How tall the line is, in logical pixels.
+    pub height: f32,
     /// The line, shaped.
     pub run: Run,
     /// The rectangle the line is clipped to, if it is.
@@ -69,11 +100,52 @@ pub struct FieldBox {
 }
 
 impl Output {
-    /// The byte offset in the field `id` nearest to `x` logical pixels, if
-    /// that field was drawn.
-    pub fn offset_in(&self, id: FocusId, x: f32) -> Option<usize> {
-        let field = self.fields.iter().find(|field| field.id == id)?;
-        Some(field.run.byte_at(x - field.x, field.length))
+    /// The lines of the field `id` that were drawn, from the top.
+    fn lines_of(&self, id: FocusId) -> Vec<&FieldBox> {
+        let mut lines: Vec<&FieldBox> = self.fields.iter().filter(|field| field.id == id).collect();
+        lines.sort_by(|a, b| a.y.total_cmp(&b.y));
+        lines
+    }
+
+    /// The byte offset in the field `id` nearest to the point `x`, `y`
+    /// logical pixels, if that field was drawn: on the line at `y`, or the
+    /// nearest line to it.
+    pub fn offset_in(&self, id: FocusId, x: f32, y: f32) -> Option<usize> {
+        let lines = self.lines_of(id);
+        let line = lines
+            .iter()
+            .find(|line| y < line.y + line.height)
+            .or(lines.last())?;
+        Some(line.start + line.run.byte_at(x - line.x, line.length))
+    }
+
+    /// The byte offset in the field `id` on the line `by` lines from the one
+    /// the caret at byte `caret` is on, at the same distance from the left,
+    /// if there is such a line.
+    pub fn vertical(&self, id: FocusId, caret: usize, by: isize) -> Option<usize> {
+        let lines = self.lines_of(id);
+        let here = Self::line_at(&lines, caret)?;
+        let target = lines.get(here.checked_add_signed(by)?)?;
+        let x = lines[here].run.caret_x(caret - lines[here].start);
+        Some(target.start + target.run.byte_at(x, target.length))
+    }
+
+    /// The byte offset at the start, or when `end` is set the end, of the
+    /// line of the field `id` that the caret at byte `caret` is on.
+    pub fn line_edge(&self, id: FocusId, caret: usize, end: bool) -> Option<usize> {
+        let lines = self.lines_of(id);
+        let line = lines[Self::line_at(&lines, caret)?];
+        Some(if end {
+            line.start + line.length
+        } else {
+            line.start
+        })
+    }
+
+    /// The position among `lines` of the one the byte `caret` is on: the
+    /// last line that starts at or before it.
+    fn line_at(lines: &[&FieldBox], caret: usize) -> Option<usize> {
+        lines.iter().rposition(|line| line.start <= caret)
     }
 
     /// The topmost region under `point`.
@@ -179,25 +251,99 @@ impl Frame<'_> {
             self.clip = Some(seen);
             self.list.set_clip(self.clip);
         }
-        let content = if node.scroll_x == 0.0 && node.scroll_y == 0.0 {
+        let (scroll_y, room) = match node.scroll_anchor {
+            Some((id, anchor, position)) => self.scroll_anchored(
+                id,
+                (anchor, position),
+                rect,
+                seen,
+                laid,
+                computed.layout.spacing.padding.bottom,
+            ),
+            None => (node.scroll_y, 0.0),
+        };
+        let content = if node.scroll_x == 0.0 && scroll_y == 0.0 {
             world
         } else {
-            Affine::translation(-node.scroll_x, -node.scroll_y).then(world)
+            Affine::translation(-node.scroll_x, -scroll_y).then(world)
         };
-        let scrolled = (scrolled.0 + node.scroll_x, scrolled.1 + node.scroll_y);
+        let scrolled = (scrolled.0 + node.scroll_x, scrolled.1 + scroll_y);
         if let Some(text) = node.text.as_deref() {
             self.text(text, node, &computed, rect, content, opacity);
         }
         if let Some(name) = node.icon {
             self.icon(name, &computed, rect, content, opacity);
         }
+        if let Some(picture) = &node.picture {
+            let inset = computed.layout.spacing.padding;
+            let (x, y) = content.apply(rect.x + inset.left, rect.y + inset.top);
+            self.list.push_image(pm_renderer::Image {
+                picture: picture.clone(),
+                x,
+                y,
+                width: rect.width - inset.left - inset.right,
+                height: rect.height - inset.top - inset.bottom,
+                radius: computed.decoration.borders.radius.top_left,
+            });
+        }
         for (child, child_laid) in node.children.iter().zip(&laid.children) {
             self.node(child, child_laid, content, opacity, cursor, scrolled);
+        }
+        if room > 0.0 {
+            self.scrollbar(rect, scroll_y, room, world);
         }
         if self.clip != outer {
             self.clip = outer;
             self.list.set_clip(outer);
         }
+    }
+
+    /// Draws a thin bar down the right edge of the box at `rect` that shows
+    /// where its contents, scrolled `scrolled` pixels of `room`, are.
+    fn scrollbar(&mut self, rect: Rect, scrolled: f32, room: f32, world: Affine) {
+        let track = (rect.height - 2.0 * SCROLLBAR_INSET).max(0.0);
+        let thumb = (track * rect.height / (rect.height + room)).max(SCROLLBAR_MINIMUM);
+        let thumb = thumb.min(track);
+        let top = rect.y + SCROLLBAR_INSET + (track - thumb) * (scrolled / room).clamp(0.0, 1.0);
+        let left = rect.x + rect.width - SCROLLBAR_INSET - SCROLLBAR_WIDTH;
+        let color = Color::from(Role::Muted).resolve(self.theme).alpha(0.55);
+        self.list.push(
+            Quad::filled(Rect::new(left, top, SCROLLBAR_WIDTH, thumb), color)
+                .radii([SCROLLBAR_WIDTH / 2.0; 4])
+                .transformed(world),
+        );
+    }
+
+    /// How far to shift the contents of the box at `rect` up so they are
+    /// seen at `place`, measured from one of their ends; how far they can be
+    /// scrolled is also reported.
+    fn scroll_anchored(
+        &mut self,
+        id: FocusId,
+        place: (Anchor, f32),
+        rect: Rect,
+        seen: Rect,
+        laid: &Placed,
+        padding: f32,
+    ) -> (f32, f32) {
+        let end = laid
+            .children
+            .iter()
+            .map(|child| child.y + child.height)
+            .fold(rect.y, f32::max)
+            + padding;
+        let room = (end - (rect.y + rect.height)).max(0.0);
+        self.output.scrollers.push(Scroller {
+            id,
+            rect: seen,
+            room,
+        });
+        let (anchor, position) = place;
+        let offset = match anchor {
+            Anchor::Start => position.clamp(0.0, room),
+            Anchor::End => room - position.clamp(0.0, room),
+        };
+        (offset, room)
     }
 
     /// The node's style for the pointer and the viewport.
@@ -211,7 +357,8 @@ impl Frame<'_> {
                 states = states.with(State::Active);
             }
         }
-        if node.focus.is_some() && node.focus == self.input.focused {
+        let focused = self.input.focused;
+        if focused.is_some() && (node.focus == focused || node.focus_for == focused) {
             states = states.with(State::Focus);
         }
         node.style.resolve(&Context {
@@ -290,10 +437,13 @@ impl Frame<'_> {
             .unwrap_or(Role::Text.into())
             .resolve(self.theme)
             .alpha(opacity);
-        if let Some((_, owner)) = node.caret {
+        if let Some((owner, start)) = node.field_line.or(node.caret.map(|(_, owner)| (owner, 0))) {
             self.output.fields.push(FieldBox {
                 id: owner,
+                start,
                 x,
+                y,
+                height: run.height,
                 run: run.clone(),
                 view: self.clip,
                 length: content.len(),
@@ -352,7 +502,7 @@ impl Frame<'_> {
             self.list.push(
                 Quad::filled(bounds, shadow.alpha(layer.alpha * opacity))
                     .radii(radii.map(|radius| (radius + layer.spread).max(0.0)))
-                    .softness(layer.blur / 2.0)
+                    .softness(layer.blur * SHADOW_SOFTNESS)
                     .transformed(world),
             );
         }

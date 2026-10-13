@@ -6,6 +6,7 @@ mod app;
 mod keys;
 mod scene;
 mod snapshot;
+mod work;
 
 use std::path::Path;
 
@@ -40,15 +41,28 @@ fn main() {
             _ => pm_theme::Appearance::Dark,
         };
         let shot = match arguments.get(7).map(String::as_str) {
-            Some("project") => Shot::Onboarding(pm_components::Step::Project),
-            Some("agents") => Shot::Onboarding(pm_components::Step::Agents),
+            Some("project") => Shot::Onboarding(pm_pages::Step::Project),
+            Some("agents") => Shot::Onboarding(pm_pages::Step::Agents),
             Some("workspace") => Shot::Workspace,
             Some("diff") => Shot::Diff,
             Some("terminal") => Shot::Terminal,
             Some("new") => Shot::New,
             Some("empty") => Shot::Empty,
             Some("history") => Shot::History,
-            _ => Shot::Onboarding(pm_components::Step::Welcome),
+            Some("welcome") => Shot::Welcome,
+            Some("wrapped") => Shot::Wrapped,
+            Some("slashed") => Shot::Slashed,
+            Some("dollar") => Shot::Dollar,
+            Some("scrolling") => Shot::Scrolling,
+            Some("placing") => Shot::Placing,
+            Some("live") => Shot::Live,
+            Some("asking") => Shot::Asking,
+            Some("picking") => Shot::Picking,
+            Some("expanded") => Shot::Expanded,
+            Some("slashing") => Shot::Slashing,
+            Some("missing") => Shot::Missing,
+            Some("attached") => Shot::Attached,
+            _ => Shot::Onboarding(pm_pages::Step::Welcome),
         };
         if let Err(error) = snapshot::write(
             Path::new(path),
