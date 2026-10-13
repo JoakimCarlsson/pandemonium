@@ -4,10 +4,11 @@ use pm_input::{FocusId, PointerState};
 use pm_renderer::{Affine, DrawList, Quad, Rect, Text};
 use pm_style::layout::Display;
 use pm_style::primitives::Side;
-use pm_style::{Color, ComputedStyle, Context, State, StateSet, Transform};
+use pm_style::{Color, ComputedStyle, Context, Role, State, StateSet, Transform};
 
 use pm_style::layout::{Placed, solve};
 use pm_text::Shaper;
+use pm_theme::Theme;
 
 use crate::node::Node;
 
@@ -65,6 +66,7 @@ pub fn draw(
     width: f32,
     height: f32,
     input: &Input,
+    theme: &Theme,
     shaper: &mut Shaper,
     list: &mut DrawList,
 ) -> Output {
@@ -72,6 +74,7 @@ pub fn draw(
     let mut frame = Frame {
         input,
         width,
+        theme,
         shaper,
         list,
         output: Output::default(),
@@ -86,6 +89,8 @@ struct Frame<'a> {
     input: &'a Input,
     /// The viewport width, which breakpoints are resolved against.
     width: f32,
+    /// The theme roles are resolved against.
+    theme: &'a Theme,
     /// Shapes the text the tree holds.
     shaper: &'a mut Shaper,
     /// Where primitives go.
@@ -172,8 +177,8 @@ impl Frame<'_> {
         let color = computed
             .typography
             .color
-            .unwrap_or(Color::Zinc100)
-            .srgba()
+            .unwrap_or(Role::Text.into())
+            .resolve(self.theme)
             .alpha(opacity);
         if let Some((byte, owner)) = caret
             && self.input.focused == Some(owner)
@@ -200,7 +205,11 @@ impl Frame<'_> {
             decoration.borders.radius.bottom_left,
         ];
 
-        let shadow = decoration.shadows.color.unwrap_or(Color::Black).srgba();
+        let shadow = decoration
+            .shadows
+            .color
+            .unwrap_or(Color::Black)
+            .resolve(self.theme);
         for layer in decoration
             .shadows
             .layers
@@ -217,7 +226,10 @@ impl Frame<'_> {
         }
 
         if let Some(ring) = decoration.shadows.ring {
-            let color = ring.color.unwrap_or(Color::Blue500).srgba();
+            let color = ring
+                .color
+                .unwrap_or(Role::Focused.into())
+                .resolve(self.theme);
             self.list.push(
                 Quad::filled(rect.inflate(ring.width), color.alpha(0.0))
                     .border(ring.width, color.alpha(opacity))
@@ -230,7 +242,7 @@ impl Frame<'_> {
             .background
             .color
             .unwrap_or(Color::Transparent)
-            .srgba()
+            .resolve(self.theme)
             .alpha(opacity);
         let borders = decoration.borders;
         let widths = borders.width;
@@ -246,7 +258,7 @@ impl Frame<'_> {
             let color = colors
                 .top
                 .unwrap_or(Color::Transparent)
-                .srgba()
+                .resolve(self.theme)
                 .alpha(opacity);
             self.list.push(quad.border(widths.top, color));
             return;
@@ -257,7 +269,7 @@ impl Frame<'_> {
             let color = colors
                 .get(side)
                 .unwrap_or(Color::Transparent)
-                .srgba()
+                .resolve(self.theme)
                 .alpha(opacity);
             if width > 0.0 && color.a > 0.0 {
                 self.list

@@ -10,6 +10,7 @@ use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, P
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
 use pm_text::Shaper;
+use pm_theme::{Appearance, ThemeFamily, default_family};
 use pm_ui::{Input, Output};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -36,6 +37,10 @@ pub struct App {
     renderer: Option<Renderer>,
     /// Shapes the text on screen.
     shaper: Shaper,
+    /// The themes the app ships.
+    family: ThemeFamily,
+    /// Whether the desktop asks for light or dark.
+    appearance: Appearance,
     /// The primitives of the frame being drawn, kept to reuse its allocation.
     list: DrawList,
     /// What the user can change on the screen.
@@ -67,6 +72,8 @@ impl Default for App {
             window: None,
             renderer: None,
             shaper: Shaper::new(),
+            family: default_family(),
+            appearance: Appearance::Dark,
             list: DrawList::new(),
             model,
             dirty,
@@ -115,17 +122,19 @@ impl App {
         };
         let (width, height) = renderer.size();
         let state = self.model.get();
+        let theme = self.family.variant(self.appearance);
         self.output = scene::paint(
             width,
             height,
             &state,
             &input,
+            theme,
             &mut self.shaper,
             &mut self.list,
         );
         self.focus
             .set_order(self.output.regions.iter().map(|region| region.id).collect());
-        let presented = renderer.render(&self.list, &mut self.shaper, scene::GROUND, || {
+        let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
             window.pre_present_notify()
         });
         if self.output.animating || !presented {
@@ -185,6 +194,14 @@ impl App {
     }
 }
 
+/// The appearance the desktop asks for; dark when it does not say.
+fn appearance(theme: Option<winit::window::Theme>) -> Appearance {
+    match theme {
+        Some(winit::window::Theme::Light) => Appearance::Light,
+        _ => Appearance::Dark,
+    }
+}
+
 /// Reports why the application cannot start and leaves.
 fn fail_to_start(reason: &str) -> ! {
     eprintln!("pandemonium: {reason}");
@@ -207,6 +224,7 @@ impl ApplicationHandler for App {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
+        self.appearance = appearance(window.theme());
         window.request_redraw();
         self.window = Some(window);
     }
@@ -228,6 +246,7 @@ impl ApplicationHandler for App {
         let scale = window.scale_factor() as f32;
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::ThemeChanged(theme) => self.appearance = appearance(Some(theme)),
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height, scale);

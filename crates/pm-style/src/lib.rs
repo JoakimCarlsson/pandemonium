@@ -33,7 +33,7 @@ pub use computed::ComputedStyle;
 pub use pm_animation as animation;
 pub use pm_animation::{Animation, CubicBezier, Ease, Origin, Transform, TransitionProperty};
 pub use pm_color as color;
-pub use pm_color::{Color, Oklch, Srgba};
+pub use pm_color::{Color, Oklch, Role, Roles, Srgba};
 pub use pm_decoration as decoration;
 pub use pm_decoration::{
     BlendMode, Blur, BorderStyle, Cursor, DropShadow, GradientDirection, InsetShadow,

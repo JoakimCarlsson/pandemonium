@@ -9,10 +9,10 @@
 mod color;
 mod oklch;
 mod palette;
-mod scheme;
+mod role;
 mod srgba;
 
 pub use color::Color;
 pub use oklch::{Oklab, Oklch};
-pub use scheme::{Interface, Syntax, Terminal};
+pub use role::{Role, Roles};
 pub use srgba::Srgba;

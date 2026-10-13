@@ -14,7 +14,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use app::App;
 
 /// Opens the window and runs the event loop until it is closed, or, given
-/// `--snapshot <path> [elapsed_ms [x y [focus]]]`, writes one frame to a PNG and leaves.
+/// `--snapshot <path> [elapsed_ms [x y [focus [light]]]]`, writes one frame to a PNG and leaves.
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.first().map(String::as_str) == Some("--snapshot") {
@@ -34,7 +34,13 @@ fn main() {
             .get(5)
             .and_then(|value| value.parse().ok())
             .map(pm_input::FocusId);
-        if let Err(error) = snapshot::write(Path::new(path), elapsed_ms, pointer, focused) {
+        let appearance = match arguments.get(6).map(String::as_str) {
+            Some("light") => pm_theme::Appearance::Light,
+            _ => pm_theme::Appearance::Dark,
+        };
+        if let Err(error) =
+            snapshot::write(Path::new(path), elapsed_ms, pointer, focused, appearance)
+        {
             eprintln!("pandemonium: {error}");
             std::process::exit(1);
         }

@@ -1,6 +1,6 @@
 //! The named colour palette: twenty-five hues in eleven shades each.
 
-use crate::{Oklch, Srgba};
+use crate::{Oklch, Role, Srgba};
 
 /// A colour: an entry of the named palette or an explicit sRGB value.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -585,6 +585,9 @@ pub enum Color {
     Taupe950,
     /// An explicit sRGB value outside the palette.
     Srgb(Srgba),
+    /// A role, resolved against a theme when painted, at the given opacity
+    /// from 0.0 to 1.0.
+    Role(Role, f32),
 }
 
 impl Color {
@@ -1173,7 +1176,7 @@ impl Color {
             Self::Taupe800 => Some(Oklch::new(0.268, 0.011, 36.5)),
             Self::Taupe900 => Some(Oklch::new(0.214, 0.009, 43.1)),
             Self::Taupe950 => Some(Oklch::new(0.147, 0.004, 49.3)),
-            Self::Srgb(_) => None,
+            Self::Srgb(_) | Self::Role(..) => None,
         }
     }
 
@@ -1469,7 +1472,7 @@ impl Color {
             Self::Taupe800 => Some("taupe-800"),
             Self::Taupe900 => Some("taupe-900"),
             Self::Taupe950 => Some("taupe-950"),
-            Self::Srgb(_) => None,
+            Self::Srgb(_) | Self::Role(..) => None,
         }
     }
 }

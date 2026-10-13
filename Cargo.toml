@@ -23,6 +23,7 @@ pm-icon = { path = "crates/pm-icon" }
 pm-state = { path = "crates/pm-state" }
 pm-input = { path = "crates/pm-input" }
 pm-text = { path = "crates/pm-text" }
+pm-theme = { path = "crates/pm-theme" }
 pm-protocol = { path = "crates/pm-protocol" }
 pm-server = { path = "crates/pm-server" }
 pm-ssh = { path = "crates/pm-ssh" }

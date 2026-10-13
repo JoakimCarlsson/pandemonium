@@ -1,7 +1,7 @@
 //! The card: a raised surface that groups what belongs together.
 
 use pm_style::{
-    Color, Radius, bg, border, border_color, flex, flex_col, font_semibold, gap, p, rounded,
+    Radius, Role, bg, border, border_color, flex, flex_col, font_semibold, gap, p, rounded,
     shadow_lg, text_color, text_sm,
 };
 use pm_ui::{Node, node, text};
@@ -16,10 +16,10 @@ pub fn card(title: &str) -> Node {
             gap(4),
             p(5),
             rounded(Radius::Xl),
-            bg(Color::Zinc900),
+            bg(Role::Surface),
             border(),
-            border_color(Color::Zinc800),
+            border_color(Role::Border),
             shadow_lg(),
         ])
-        .child(text(title).styles([text_sm(), font_semibold(), text_color(Color::Zinc400)]))
+        .child(text(title).styles([text_sm(), font_semibold(), text_color(Role::Muted)]))
 }

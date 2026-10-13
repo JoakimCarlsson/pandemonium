@@ -9,3 +9,4 @@ pm-input.workspace = true
 pm-renderer.workspace = true
 pm-style.workspace = true
 pm-text.workspace = true
+pm-theme.workspace = true

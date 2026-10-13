@@ -2,15 +2,15 @@
 
 use pm_input::FocusId;
 use pm_style::{
-    Color, Radius, bg, border_2, border_color, flex, font_medium, gap, h, items_center,
+    Color, Radius, Role, bg, border_2, border_color, flex, font_medium, gap, h, items_center,
     justify_center, justify_end, ml, px, py, ring, ring_color, rounded, rounded_full, shadow_md,
     size, text_color, text_sm, w,
 };
 use pm_ui::{Node, node, text};
 
-/// A button labelled `label` in `tone`: it lightens under the pointer,
+/// A button labelled `label` in `tone`, the label drawn in `on`: it lightens under the pointer,
 /// darkens while pressed and shows a ring when it has keyboard focus.
-pub fn button(label: &str, tone: [Color; 3], id: FocusId) -> Node {
+pub fn button(label: &str, tone: [Color; 3], on: Color, id: FocusId) -> Node {
     node()
         .styles([
             flex(),
@@ -24,10 +24,10 @@ pub fn button(label: &str, tone: [Color; 3], id: FocusId) -> Node {
             bg(tone[0]).hover(),
             bg(tone[2]).active(),
             ring(2).focus(),
-            ring_color(tone[0].alpha(0.6)).focus(),
+            ring_color(Role::Focused).focus(),
         ])
         .focusable(id)
-        .child(text(label).styles([text_sm(), font_medium(), text_color(Color::White)]))
+        .child(text(label).styles([text_sm(), font_medium(), text_color(on)]))
 }
 
 /// A pill in `tone` labelled `label`, the way a status is shown.
@@ -61,7 +61,7 @@ pub fn switch(travel: f32, id: FocusId) -> Node {
             bg(track),
             bg(track.mix(Color::White, 0.12)).hover(),
             ring(2).focus(),
-            ring_color(Color::Emerald400.alpha(0.6)).focus(),
+            ring_color(Role::Focused).focus(),
         ])
         .focusable(id)
         .child(node().styles([
@@ -84,7 +84,7 @@ pub fn avatar_stack(tones: &[Color]) -> Node {
                 rounded_full(),
                 bg(*tone),
                 border_2(),
-                border_color(Color::Zinc900),
+                border_color(Role::Surface),
                 ml(if index == 0 { 0.0 } else { -3.0 }),
             ])
         }))

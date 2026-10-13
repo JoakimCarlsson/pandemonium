@@ -2,7 +2,7 @@
 
 use pm_input::FocusId;
 use pm_style::{
-    Color, Ease, bg, col_span, flex, flex_col, font_medium, gap, grid, grid_cols, h_full, p,
+    Color, Ease, Role, bg, col_span, flex, flex_col, font_medium, gap, grid, grid_cols, h_full, p,
     text_color, text_lg, w_full,
 };
 use pm_text::{Edit, Field};
@@ -129,23 +129,33 @@ pub fn showcase(state: &ShowcaseState, elapsed_ms: f32) -> Node {
             p(6),
             w_full(),
             h_full(),
-            bg(Color::Zinc950),
+            bg(Role::Background),
         ])
         .child(
             card("Controls")
                 .child(node().styles([flex(), gap(3)]).children([
                     button(
                         "Press me",
-                        tone(Color::Blue400, Color::Blue500, Color::Blue700),
+                        tone(
+                            Role::AccentHover.into(),
+                            Role::Accent.into(),
+                            Color::from(Role::Accent).alpha(0.8),
+                        ),
+                        Role::OnAccent.into(),
                         INCREMENT,
                     ),
                     button(
                         "Reset",
-                        tone(Color::Zinc500, Color::Zinc600, Color::Zinc800),
+                        tone(
+                            Role::SurfaceActive.into(),
+                            Role::SurfaceHover.into(),
+                            Role::SurfaceSelected.into(),
+                        ),
+                        Role::Text.into(),
                         RESET,
                     ),
                 ]))
-                .child(text(counter).styles([text_lg(), font_medium(), text_color(Color::Zinc100)]))
+                .child(text(counter).styles([text_lg(), font_medium(), text_color(Role::Text)]))
                 .child(node().styles([flex(), gap(2)]).children([
                     badge("Active", Color::Amber400),
                     badge("Failed", Color::Rose400),
@@ -179,7 +189,7 @@ pub fn showcase(state: &ShowcaseState, elapsed_ms: f32) -> Node {
                 .child(text(format!("Hello, {}", state.name.text())).styles([
                     text_lg(),
                     font_medium(),
-                    text_color(Color::Zinc100),
+                    text_color(Role::Text),
                 ])),
         )
         .child(card("Radius, opacity, transform").child(stack([
