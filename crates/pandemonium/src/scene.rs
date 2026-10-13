@@ -1,7 +1,7 @@
 //! The screen the window shows, and how it is drawn.
 
 use pm_color::{Role, Roles, Srgba};
-use pm_components::{OnboardingState, onboarding};
+use pm_components::{Screen, screen};
 use pm_renderer::DrawList;
 use pm_text::Shaper;
 use pm_theme::{Fonts, Theme};
@@ -24,13 +24,13 @@ pub fn ground(theme: &Theme) -> Srgba {
 pub fn paint(
     width: f32,
     height: f32,
-    state: &OnboardingState,
+    state: &Screen,
     input: &Input,
     theme: &Theme,
     shaper: &mut Shaper,
     list: &mut DrawList,
 ) -> Output {
     list.clear();
-    let root = onboarding(state);
+    let root = screen(state, width);
     pm_ui::draw(&root, width, height, input, theme, shaper, list)
 }

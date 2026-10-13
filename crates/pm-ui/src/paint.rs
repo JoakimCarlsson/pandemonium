@@ -107,7 +107,14 @@ pub fn draw(
         output: Output::default(),
         clip: None,
     };
-    frame.node(root, &laid, Affine::IDENTITY, 1.0, Cursor::Default);
+    frame.node(
+        root,
+        &laid,
+        Affine::IDENTITY,
+        1.0,
+        Cursor::Default,
+        (0.0, 0.0),
+    );
     frame.output
 }
 
@@ -138,9 +145,11 @@ impl Frame<'_> {
         parent: Affine,
         opacity: f32,
         inherited: Cursor,
+        scrolled: (f32, f32),
     ) {
         let rect = Rect::new(laid.x, laid.y, laid.width, laid.height);
-        let computed = self.resolve(node, rect);
+        let seen = intersect(self.clip, rect.offset(-scrolled.0, -scrolled.1));
+        let computed = self.resolve(node, seen);
         if computed.layout.display.display == Display::None {
             return;
         }
@@ -153,12 +162,12 @@ impl Frame<'_> {
             .input
             .pointer
             .position
-            .is_some_and(|(x, y)| rect.contains(x, y))
+            .is_some_and(|(x, y)| seen.contains(x, y))
         {
             self.output.cursor = cursor;
         }
         if let Some(id) = node.focus {
-            self.output.regions.push(Region { id, rect });
+            self.output.regions.push(Region { id, rect: seen });
         }
         let (pose, pose_opacity) = self.pose(&computed, rect);
         let world = pose.then(parent);
@@ -167,15 +176,15 @@ impl Frame<'_> {
         let outer = self.clip;
         let display = computed.layout.display;
         if display.overflow_x != Overflow::Visible || display.overflow_y != Overflow::Visible {
-            let held = intersect(outer, rect);
-            self.clip = Some(held);
+            self.clip = Some(seen);
             self.list.set_clip(self.clip);
         }
-        let content = if node.scroll_x == 0.0 {
+        let content = if node.scroll_x == 0.0 && node.scroll_y == 0.0 {
             world
         } else {
-            Affine::translation(-node.scroll_x, 0.0).then(world)
+            Affine::translation(-node.scroll_x, -node.scroll_y).then(world)
         };
+        let scrolled = (scrolled.0 + node.scroll_x, scrolled.1 + node.scroll_y);
         if let Some(text) = node.text.as_deref() {
             self.text(text, node, &computed, rect, content, opacity);
         }
@@ -183,7 +192,7 @@ impl Frame<'_> {
             self.icon(name, &computed, rect, content, opacity);
         }
         for (child, child_laid) in node.children.iter().zip(&laid.children) {
-            self.node(child, child_laid, content, opacity, cursor);
+            self.node(child, child_laid, content, opacity, cursor, scrolled);
         }
         if self.clip != outer {
             self.clip = outer;

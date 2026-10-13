@@ -1,0 +1,149 @@
+//! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
+
+mod chat;
+mod composer;
+mod diff;
+mod history;
+mod review;
+mod sample;
+pub mod sidebar;
+mod state;
+mod terminal;
+mod welcome;
+
+use pm_icon::IconName;
+use pm_input::FocusId;
+use pm_style::{
+    Role, bg, border_b, border_color, flex, flex_1, flex_col, flex_none, font_medium, gap, h,
+    h_full, items_center, items_end, mb, min_h, min_w_px, px, text_color, w_full,
+};
+use pm_ui::{Node, node};
+
+use crate::context_menu::field_menu;
+use crate::parts::{glyph, line, spacer};
+
+pub use sidebar::WIDTH as SIDEBAR_WIDTH;
+pub use state::{ADD_PROJECT, HISTORY, NEW, TAB_DIFF, TERMINAL, WorkspaceState};
+
+use sample::{AGENTS, Session};
+use state::{Page, TAB_CHAT, Tab};
+
+/// One tab of the strip above a session: a glyph and a label, filled while it is the one shown.
+fn tab(icon: IconName, label: &str, id: FocusId, shown: bool) -> Node {
+    let tone = if shown { Role::Text } else { Role::Muted };
+    let mut styles = vec![
+        flex(),
+        items_center(),
+        gap(2),
+        h(10),
+        px(3),
+        pm_style::rounded_t(8),
+        pm_style::cursor_pointer(),
+        text_color(tone),
+    ];
+    if shown {
+        styles.push(bg(Role::Surface));
+    } else {
+        styles.push(bg(Role::SurfaceHover).hover());
+    }
+    node()
+        .styles(styles)
+        .child(glyph(icon, 3.5, tone))
+        .child(line(label, 13, 1.4, tone))
+        .focusable(id)
+}
+
+/// The strip above a session: its views, and the button for the terminal.
+fn tabs(state: &WorkspaceState, session: &Session) -> Node {
+    let agent = &AGENTS[session.agent.min(AGENTS.len() - 1)];
+    let mut strip = node()
+        .styles([
+            flex(),
+            items_end(),
+            gap(1),
+            h(12),
+            px(3),
+            flex_none(),
+            border_b(),
+            border_color(Role::Border),
+        ])
+        .child(tab(
+            IconName::Sparkles,
+            agent.name,
+            TAB_CHAT,
+            state.tab == Tab::Chat,
+        ));
+    if !session.changes.is_empty() {
+        strip = strip.child(tab(
+            IconName::GitCompare,
+            "Diff",
+            TAB_DIFF,
+            state.tab == Tab::Diff,
+        ));
+    }
+    let on = state.terminal;
+    let mut toggle = vec![
+        flex(),
+        items_center(),
+        gap(2),
+        h(8),
+        px(3),
+        mb(1),
+        pm_style::rounded(pm_style::Radius::Lg),
+        pm_style::cursor_pointer(),
+        bg(Role::SurfaceHover).hover(),
+    ];
+    if on {
+        toggle.push(bg(Role::SurfaceSelected));
+    }
+    let tone = if on { Role::Text } else { Role::Muted };
+    strip.child(spacer()).child(
+        node()
+            .styles(toggle)
+            .child(glyph(IconName::Terminal, 3.5, tone))
+            .child(line("Terminal", 13, 1.4, tone).styles([font_medium()]))
+            .focusable(TERMINAL),
+    )
+}
+
+/// What fills the main area while a session is open.
+fn session_page(state: &WorkspaceState, session: &Session, width: f32) -> Node {
+    let view = match state.tab {
+        Tab::Diff if !session.changes.is_empty() => diff::diff(state, session),
+        _ => chat::chat(state, session, width),
+    };
+    let project = &state.projects[session.project].name;
+    let mut page = node()
+        .styles([flex(), flex_col(), flex_1(), min_w_px(0), h_full()])
+        .child(tabs(state, session))
+        .child(view);
+    if state.terminal {
+        page = page.child(terminal::terminal(project));
+    }
+    page
+}
+
+/// The whole workspace screen for `state` in a window `width` logical pixels wide.
+pub fn workspace(state: &WorkspaceState, width: f32) -> Node {
+    let open = state.open();
+    let reviewing = open.is_some() && state.review;
+    let main_width = width - sidebar::WIDTH - if reviewing { review::WIDTH } else { 0.0 };
+    let main = match (state.page, open) {
+        _ if state.projects.is_empty() => welcome::no_project(),
+        (Page::Session(_), Some(session)) => session_page(state, session, main_width),
+        (Page::History, _) => history::history(state),
+        _ => welcome::welcome(state),
+    };
+    let mut root = node()
+        .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Background)])
+        .child(sidebar::sidebar(state))
+        .child(main);
+    if let Some(session) = open.filter(|_| reviewing) {
+        root = root.child(review::review(state, session));
+    }
+    root.children(
+        state
+            .menu
+            .and_then(|menu| state.field(menu.field).map(|field| field_menu(field, menu))),
+    )
+}

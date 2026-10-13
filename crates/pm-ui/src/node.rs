@@ -28,6 +28,8 @@ pub struct Node {
     pub(crate) selection: Option<(std::ops::Range<usize>, FocusId)>,
     /// How far the contents are shifted left, in logical pixels, to scroll them.
     pub(crate) scroll_x: f32,
+    /// How far the contents are shifted up, in logical pixels, to scroll them.
+    pub(crate) scroll_y: f32,
 }
 
 /// An empty, unstyled box.
@@ -100,6 +102,14 @@ impl Node {
     /// clipped to the box when its style says overflow is hidden.
     pub fn scroll_x(mut self, offset: f32) -> Self {
         self.scroll_x = offset;
+        self
+    }
+
+    /// Scrolls the contents `offset` logical pixels upwards; they are
+    /// clipped to the box when its style says overflow is hidden, and what is
+    /// scrolled out of view cannot be pressed.
+    pub fn scroll_y(mut self, offset: f32) -> Self {
+        self.scroll_y = offset;
         self
     }
 

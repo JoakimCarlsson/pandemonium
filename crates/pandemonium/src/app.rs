@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use pm_acp::{AGENTS, Login, Standing};
 use pm_components::{
-    ADD, AgentStatus, BROWSE, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
-    MENU_UNDO, OnboardingState,
+    ADD_PROJECT, AgentStatus, BROWSE, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
+    MENU_UNDO, Screen, is_menu_item,
 };
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_renderer::{DrawList, Renderer};
@@ -20,7 +20,7 @@ use pm_theme::{Appearance, ThemeFamily, default_family};
 use pm_ui::{Cursor, Input, Output};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
@@ -35,6 +35,9 @@ const WIDTH: f32 = 1280.0;
 
 /// Logical height of the window when it opens.
 const HEIGHT: f32 = 800.0;
+
+/// How far one notch of a mouse wheel scrolls, in logical pixels.
+const WHEEL_LINE: f32 = 48.0;
 
 /// How soon after one press in a field a second one counts as a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
@@ -54,7 +57,7 @@ pub struct App {
     /// The primitives of the frame being drawn, kept to reuse its allocation.
     list: DrawList,
     /// What the user can change on the screen.
-    model: State<OnboardingState>,
+    model: State<Screen>,
     /// Set by the model whenever it changes, so the screen is drawn again.
     dirty: Rc<Cell<bool>>,
     /// The pointer as the events so far left it.
@@ -81,6 +84,8 @@ pub struct App {
     dragging: Option<FocusId>,
     /// The last press that landed in a field, for noticing a double click.
     last_press: Option<(Instant, FocusId, u8)>,
+    /// The project paths last written to disk, so only changes are written.
+    saved: Option<Vec<String>>,
     /// The logins each agent last offered.
     logins: [Vec<Login>; AGENTS.len()],
 }
@@ -88,7 +93,11 @@ pub struct App {
 impl Default for App {
     /// An application with no window yet, whose clock starts now.
     fn default() -> Self {
-        let model = State::new(OnboardingState::default());
+        let saved = pm_store::load_projects();
+        let screen = saved
+            .as_deref()
+            .map_or_else(Screen::default, Screen::opened);
+        let model = State::new(screen);
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
@@ -114,6 +123,7 @@ impl Default for App {
             clipboard: None,
             dragging: None,
             last_press: None,
+            saved,
             logins: Default::default(),
         }
     }
@@ -195,19 +205,33 @@ impl App {
 
     /// Carries out what pressing the element `id` means.
     fn activate(&mut self, id: FocusId) {
-        if OnboardingState::is_menu_item(id) {
+        if is_menu_item(id) {
             self.menu_action(id);
             return;
         }
-        if let Some(index) = OnboardingState::agent_of(id) {
+        if let Some(index) = Screen::agent_of(id) {
             self.agent_action(index);
             return;
         }
-        if id == BROWSE {
+        if id == BROWSE || id == ADD_PROJECT {
             self.browse();
             return;
         }
         self.model.update(|state| *state = state.clone().after(id));
+        self.persist();
+    }
+
+    /// Writes the project list to disk when the workspace's differs from what was last written.
+    fn persist(&mut self) {
+        let Some(paths) = self.model.get().project_paths() else {
+            return;
+        };
+        if self.saved.as_ref() == Some(&paths) {
+            return;
+        }
+        if pm_store::save_projects(&paths).is_ok() {
+            self.saved = Some(paths);
+        }
     }
 
     /// Finds out where every agent stands, each on a thread of its own, since
@@ -227,7 +251,9 @@ impl App {
         let Some(agent) = AGENTS.get(index).copied() else {
             return;
         };
-        let status = self.model.get().agents[index].clone();
+        let Some(status) = self.model.get().agent(index).cloned() else {
+            return;
+        };
         let login = self.logins[index]
             .iter()
             .find(|login| !login.id.contains("cached"))
@@ -280,6 +306,17 @@ impl App {
         let path = folder.to_string_lossy().into_owned();
         self.model
             .update(|state| *state = state.clone().with_project(&path));
+        self.persist();
+    }
+
+    /// Scrolls what is under the pointer by `pixels` logical pixels, downwards when positive.
+    fn scroll(&mut self, pixels: f32) {
+        let (Some((x, _)), Some(renderer)) = (self.pointer.position, self.renderer.as_ref()) else {
+            return;
+        };
+        let height = renderer.size().1;
+        self.model
+            .update(|state| *state = state.clone().scrolled(x, pixels, height));
     }
 
     /// Folds a pointer event in, and acts on a press that ends on the
@@ -290,7 +327,7 @@ impl App {
             PointerEvent::Pressed(Button::Right) => {
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
                 match on {
-                    Some(id) if OnboardingState::is_field(id) => self.open_menu(id),
+                    Some(id) if Screen::is_field(id) => self.open_menu(id),
                     _ => self
                         .model
                         .update(|state| *state = state.clone().without_menu()),
@@ -298,14 +335,13 @@ impl App {
             }
             PointerEvent::Pressed(Button::Left) => {
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
-                if self.model.get().menu.is_some() && !on.is_some_and(OnboardingState::is_menu_item)
-                {
+                if self.model.get().menu().is_some() && !on.is_some_and(is_menu_item) {
                     self.model
                         .update(|state| *state = state.clone().without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
                 if let Some(id) = self.pressed_on
-                    && OnboardingState::is_field(id)
+                    && Screen::is_field(id)
                 {
                     self.press_in_field(id);
                 }
@@ -333,7 +369,7 @@ impl App {
 
     /// Carries out the menu row `row` on the field the menu is open over, and closes the menu.
     fn menu_action(&mut self, row: FocusId) {
-        let Some(open) = self.model.get().menu else {
+        let Some(open) = self.model.get().menu() else {
             return;
         };
         self.model
@@ -452,15 +488,15 @@ impl App {
         match event.key {
             Key::Tab if event.modifiers.shift => self.focus.previous(),
             Key::Tab => self.focus.next(),
-            Key::Escape if self.model.get().menu.is_some() => {
+            Key::Escape if self.model.get().menu().is_some() => {
                 self.model
                     .update(|state| *state = state.clone().without_menu());
             }
             Key::Escape => self.focus.clear(),
             _ => match self.focus.current() {
-                Some(id) if OnboardingState::is_field(id) => {
+                Some(id) if Screen::is_field(id) => {
                     if event.key == Key::Enter {
-                        self.activate(ADD);
+                        self.activate(Screen::submit_of(id));
                     } else if let Some(action) = keys::clip(&event) {
                         self.clip(id, action);
                     } else if let Some(edit) = keys::edit(&event) {
@@ -530,7 +566,9 @@ impl ApplicationHandler for App {
             Err(error) => fail_to_start(&error.to_string()),
         }
         self.appearance = appearance(window.theme());
-        self.check_agents();
+        if matches!(self.model.get(), Screen::Onboarding(_)) {
+            self.check_agents();
+        }
         window.set_ime_allowed(true);
         window.request_redraw();
         self.window = Some(window);
@@ -539,12 +577,7 @@ impl ApplicationHandler for App {
     /// Draws again when the model changed while no event asked for it.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.take_standings();
-        let waiting = self
-            .model
-            .get()
-            .agents
-            .iter()
-            .any(|status| matches!(status, AgentStatus::Checking | AgentStatus::Working));
+        let waiting = self.model.get().waiting();
         event_loop.set_control_flow(if waiting {
             ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100))
         } else {
@@ -584,6 +617,13 @@ impl ApplicationHandler for App {
                 ));
             }
             WindowEvent::CursorLeft { .. } => self.pointer(PointerEvent::Left),
+            WindowEvent::MouseWheel { delta, .. } => {
+                let pixels = match delta {
+                    MouseScrollDelta::LineDelta(_, lines) => -lines * WHEEL_LINE,
+                    MouseScrollDelta::PixelDelta(moved) => -moved.y as f32 / scale,
+                };
+                self.scroll(pixels);
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 let button = match button {
                     MouseButton::Left => Button::Left,
@@ -597,7 +637,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Ime(Ime::Commit(committed)) => {
                 if let Some(id) = self.focus.current()
-                    && OnboardingState::is_field(id)
+                    && Screen::is_field(id)
                 {
                     self.edit_field(id, Edit::Paste(committed));
                 }

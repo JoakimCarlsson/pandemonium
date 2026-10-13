@@ -12,9 +12,10 @@ use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 use app::App;
+use snapshot::Shot;
 
 /// Opens the window and runs the event loop until it is closed, or, given
-/// `--snapshot <path> [elapsed_ms [x y [focus [light [step]]]]]`, writes one frame to a PNG and leaves.
+/// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.first().map(String::as_str) == Some("--snapshot") {
@@ -38,10 +39,16 @@ fn main() {
             Some("light") => pm_theme::Appearance::Light,
             _ => pm_theme::Appearance::Dark,
         };
-        let step = match arguments.get(7).map(String::as_str) {
-            Some("project") => pm_components::Step::Project,
-            Some("agents") => pm_components::Step::Agents,
-            _ => pm_components::Step::Welcome,
+        let shot = match arguments.get(7).map(String::as_str) {
+            Some("project") => Shot::Onboarding(pm_components::Step::Project),
+            Some("agents") => Shot::Onboarding(pm_components::Step::Agents),
+            Some("workspace") => Shot::Workspace,
+            Some("diff") => Shot::Diff,
+            Some("terminal") => Shot::Terminal,
+            Some("new") => Shot::New,
+            Some("empty") => Shot::Empty,
+            Some("history") => Shot::History,
+            _ => Shot::Onboarding(pm_components::Step::Welcome),
         };
         if let Err(error) = snapshot::write(
             Path::new(path),
@@ -49,7 +56,7 @@ fn main() {
             pointer,
             focused,
             appearance,
-            step,
+            shot,
         ) {
             eprintln!("pandemonium: {error}");
             std::process::exit(1);

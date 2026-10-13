@@ -4,16 +4,20 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Color, Radius, Role, bg, border, border_color, flex, flex_1, flex_col, font_medium,
-    font_semibold, gap, h, items_center, justify_center, leading_ratio, max_w, min_w_px, p, px,
-    rounded, rounded_full, size, text_color, text_px, tracking_tight, tracking_wide, w, w_full,
+    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, font_medium, font_semibold,
+    gap, h, items_center, justify_center, leading_ratio, max_w, min_w_px, p, px, rounded,
+    rounded_full, size, text_color, text_px, tracking_tight, tracking_wide, w, w_full,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node, text};
 
+use crate::Avatar;
 use crate::Button;
+use crate::Input;
 use crate::button::{Size, Variant};
-use crate::{Input, Menu};
+use crate::context_menu::{ContextMenu, field_menu};
+use crate::parts::{glyph, line};
+use crate::project::Project;
 
 /// Moves to the step after the current one.
 pub const CONTINUE: FocusId = FocusId(100);
@@ -33,24 +37,6 @@ pub const BROWSE: FocusId = FocusId(105);
 /// Leaves onboarding for the workspace.
 pub const FINISH: FocusId = FocusId(104);
 
-/// Takes back the last change to the field the menu was opened on.
-pub const MENU_UNDO: FocusId = FocusId(200);
-
-/// Makes again the change that was taken back.
-pub const MENU_REDO: FocusId = FocusId(201);
-
-/// Copies the selection and deletes it.
-pub const MENU_CUT: FocusId = FocusId(202);
-
-/// Copies the selection.
-pub const MENU_COPY: FocusId = FocusId(203);
-
-/// Inserts what the clipboard holds.
-pub const MENU_PASTE: FocusId = FocusId(204);
-
-/// Selects the whole line.
-pub const MENU_SELECT_ALL: FocusId = FocusId(205);
-
 /// The folder or repository address field.
 pub const PATH: FocusId = FocusId(110);
 
@@ -62,16 +48,6 @@ const AGENT_BASE: u64 = 160;
 
 /// How many characters of a failure an agent row has room for.
 const REASON_WIDTH: usize = 72;
-
-/// The avatar colours added projects take in turn.
-const AVATARS: [Color; 6] = [
-    Color::Orange700,
-    Color::Violet500,
-    Color::Teal600,
-    Color::Pink600,
-    Color::Sky600,
-    Color::Amber600,
-];
 
 /// The three stages of working with an agent, in the order the app puts them.
 const FLOW: [(IconName, &str, &str); 3] = [
@@ -155,23 +131,14 @@ pub struct OnboardingState {
     pub step: Step,
     /// The address typed for the next project.
     pub path: Field,
-    /// The names of the projects added, in the order they were added.
-    pub projects: Vec<String>,
+    /// The projects added, in the order they were added.
+    pub projects: Vec<Project>,
     /// Where each of the agents stands.
     pub agents: [AgentStatus; 3],
     /// Whether the reader has left onboarding.
     pub finished: bool,
     /// The menu open over a field, and where, if one is.
     pub menu: Option<ContextMenu>,
-}
-
-/// A menu open over a text field.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ContextMenu {
-    /// The field it acts on.
-    pub field: FocusId,
-    /// Where it opened, in logical pixels.
-    pub at: (f32, f32),
 }
 
 impl Default for OnboardingState {
@@ -186,13 +153,6 @@ impl Default for OnboardingState {
             menu: None,
         }
     }
-}
-
-/// The name a project takes from the folder or repository it was added from.
-fn name_of(source: &str) -> &str {
-    let trimmed = source.trim().trim_end_matches('/');
-    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
-    trimmed.rsplit('/').next().unwrap_or(trimmed)
 }
 
 impl OnboardingState {
@@ -265,19 +225,6 @@ impl OnboardingState {
         self
     }
 
-    /// Whether `id` names a row of the menu.
-    pub fn is_menu_item(id: FocusId) -> bool {
-        [
-            MENU_UNDO,
-            MENU_REDO,
-            MENU_CUT,
-            MENU_COPY,
-            MENU_PASTE,
-            MENU_SELECT_ALL,
-        ]
-        .contains(&id)
-    }
-
     /// Whether `id` names a text field.
     pub fn is_field(id: FocusId) -> bool {
         id == PATH
@@ -290,21 +237,12 @@ impl OnboardingState {
 
     /// Adds a project named after `source`, unless it is empty or already added.
     fn add(&mut self, source: &str) {
-        let name = name_of(source);
-        if !name.is_empty() && !self.projects.iter().any(|project| project == name) {
-            self.projects.push(name.to_owned());
+        if let Some(project) = Project::from_source(source)
+            && !self.projects.iter().any(|held| held.path == project.path)
+        {
+            self.projects.push(project);
         }
     }
-}
-
-/// A line of `content` at `pixels` tall type with a line height of `ratio` times that, in `tone`.
-fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: Role) -> Node {
-    text(content).styles([text_px(pixels), leading_ratio(ratio), text_color(tone)])
-}
-
-/// `name` drawn in `tone` in a square `steps` on a side.
-fn glyph(name: IconName, steps: f32, tone: Role) -> Node {
-    node().styles([size(steps), text_color(tone)]).icon(name)
 }
 
 /// A heading of `title` at `pixels` tall type above `lines` of body text at
@@ -424,35 +362,13 @@ fn welcome() -> Node {
 
 /// The project step: a field for a folder or repository, one-click folders and what is added so far.
 fn project(state: &OnboardingState) -> Node {
-    let can_add = !name_of(state.path.text()).is_empty();
-    let added = state.projects.iter().enumerate().map(|(index, name)| {
+    let can_add = Project::from_source(state.path.text()).is_some();
+    let added = state.projects.iter().enumerate().map(|(index, project)| {
         row(11).children([
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    justify_center(),
-                    size(5),
-                    rounded(Radius::Md),
-                    bg(AVATARS[index % AVATARS.len()]),
-                ])
-                .child(
-                    text(
-                        name.chars()
-                            .next()
-                            .map(|initial| initial.to_uppercase().to_string())
-                            .unwrap_or_default(),
-                    )
-                    .styles([
-                        text_px(11),
-                        leading_ratio(1.4),
-                        font_semibold(),
-                        text_color(Color::White),
-                    ]),
-                ),
+            Avatar::of(project).build(),
             node()
                 .styles([flex_1()])
-                .child(line(name.clone(), 13, 1.4, Role::Text)),
+                .child(line(project.name.clone(), 13, 1.4, Role::Text)),
             Button::icon(IconName::Close, FocusId(REMOVE_BASE + index as u64)).build(),
         ])
     });
@@ -590,54 +506,30 @@ fn footer(state: &OnboardingState) -> Node {
         .child(forward)
 }
 
-/// The screen shown once onboarding is over, until the workspace exists.
-fn finished() -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            items_center(),
-            justify_center(),
-            gap(2),
-            w_full(),
-        ])
-        .child(text("Workspace").styles([
-            text_px(34),
-            leading_ratio(1.15),
-            font_semibold(),
-            text_color(Role::Text),
-        ]))
-        .child(line("Nothing here yet.", 15, 1.6, Role::Muted))
-}
-
 /// The whole onboarding screen for `state`.
 pub fn onboarding(state: &OnboardingState) -> Node {
-    let body = if state.finished {
-        finished()
-    } else {
-        let step = match state.step {
-            Step::Welcome => welcome(),
-            Step::Project => project(state),
-            Step::Agents => agents(state),
-        };
-        node()
-            .styles([flex(), flex_col(), gap(8), w_full(), max_w(160)])
-            .child(
-                node()
-                    .styles([flex(), items_center(), w_full()])
-                    .child(text("Pandemonium").styles([
-                        text_px(12),
-                        leading_ratio(1.4),
-                        font_medium(),
-                        tracking_wide(),
-                        text_color(Role::Muted),
-                    ]))
-                    .child(node().styles([flex_1()]))
-                    .child(progress(state.step)),
-            )
-            .child(step)
-            .child(footer(state))
+    let step = match state.step {
+        Step::Welcome => welcome(),
+        Step::Project => project(state),
+        Step::Agents => agents(state),
     };
+    let body = node()
+        .styles([flex(), flex_col(), gap(8), w_full(), max_w(160)])
+        .child(
+            node()
+                .styles([flex(), items_center(), w_full()])
+                .child(text("Pandemonium").styles([
+                    text_px(12),
+                    leading_ratio(1.4),
+                    font_medium(),
+                    tracking_wide(),
+                    text_color(Role::Muted),
+                ]))
+                .child(node().styles([flex_1()]))
+                .child(progress(state.step)),
+        )
+        .child(step)
+        .child(footer(state));
     node()
         .styles([
             flex(),
@@ -654,38 +546,5 @@ pub fn onboarding(state: &OnboardingState) -> Node {
 
 /// The menu for the field it was opened on, if that field still exists.
 fn menu_over(state: &OnboardingState, open: ContextMenu) -> Option<Node> {
-    let field = state.field(open.field)?;
-    let editable = !field.is_read_only();
-    Some(
-        Menu::new(open.at.0, open.at.1)
-            .item(
-                "Undo",
-                Some("Ctrl+Z"),
-                MENU_UNDO,
-                !(editable && field.can_undo()),
-            )
-            .item(
-                "Redo",
-                Some("Ctrl+Shift+Z"),
-                MENU_REDO,
-                !(editable && field.can_redo()),
-            )
-            .separator()
-            .item(
-                "Cut",
-                Some("Ctrl+X"),
-                MENU_CUT,
-                !(editable && field.can_copy()),
-            )
-            .item("Copy", Some("Ctrl+C"), MENU_COPY, !field.can_copy())
-            .item("Paste", Some("Ctrl+V"), MENU_PASTE, !editable)
-            .separator()
-            .item(
-                "Select all",
-                Some("Ctrl+A"),
-                MENU_SELECT_ALL,
-                field.text().is_empty(),
-            )
-            .build(),
-    )
+    state.field(open.field).map(|field| field_menu(field, open))
 }
