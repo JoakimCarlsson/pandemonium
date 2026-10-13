@@ -7,6 +7,7 @@ use pm_text::Shaper;
 
 use crate::atlas::Atlas;
 use crate::draw::{DrawList, Primitive};
+use crate::geometry::Rect;
 use crate::pipeline::{GlyphInstance, QuadInstance, Viewport, build_pipeline};
 
 /// The format an offscreen target is drawn in and read back as.
@@ -468,13 +469,29 @@ impl Renderer {
 
         let mut quads: Vec<QuadInstance> = Vec::new();
         let mut glyphs: Vec<GlyphInstance> = Vec::new();
-        let mut batches: Vec<(Kind, Range<u32>)> = Vec::new();
+        let mut batches: Vec<(Kind, Range<u32>, Option<Rect>)> = Vec::new();
+        let mut clip: Option<Rect> = None;
         for primitive in list.primitives() {
             match primitive {
                 Primitive::Quad(quad) => {
                     let at = quads.len() as u32;
                     quads.push(QuadInstance::new(quad));
-                    extend(&mut batches, Kind::Quad, at..at + 1);
+                    extend(&mut batches, Kind::Quad, at..at + 1, clip);
+                }
+                Primitive::Clip(next) => clip = *next,
+                Primitive::Icon(icon) => {
+                    let pixels = (icon.size * self.scale).round() as u32;
+                    let Some(entry) = self.atlas.icon(&self.queue, icon.svg, pixels) else {
+                        continue;
+                    };
+                    let at = glyphs.len() as u32;
+                    glyphs.push(GlyphInstance {
+                        origin: [(icon.x * self.scale).round(), (icon.y * self.scale).round()],
+                        size: [entry.width, entry.height],
+                        uv: entry.uv,
+                        color: icon.color.to_array(),
+                    });
+                    extend(&mut batches, Kind::Glyph, at..at + 1, clip);
                 }
                 Primitive::Text(text) => {
                     let start = glyphs.len() as u32;
@@ -491,7 +508,7 @@ impl Renderer {
                     }
                     let end = glyphs.len() as u32;
                     if end > start {
-                        extend(&mut batches, Kind::Glyph, start..end);
+                        extend(&mut batches, Kind::Glyph, start..end, clip);
                     }
                 }
             }
@@ -533,7 +550,11 @@ impl Renderer {
             occlusion_query_set: None,
         });
         pass.set_bind_group(0, &self.viewport_group, &[]);
-        for (kind, range) in batches {
+        for (kind, range, clip) in batches {
+            let Some((x, y, w, h)) = scissor(clip, self.scale, (width, height)) else {
+                continue;
+            };
+            pass.set_scissor_rect(x, y, w, h);
             match (kind, &self.quad_instances, &self.glyph_instances) {
                 (Kind::Quad, Some(buffer), _) => {
                     pass.set_pipeline(&self.quad_pipeline);
@@ -554,9 +575,36 @@ impl Renderer {
 
 /// Adds `range` to the last batch when it is of the same `kind` and runs on
 /// from it, and starts a new batch otherwise.
-fn extend(batches: &mut Vec<(Kind, Range<u32>)>, kind: Kind, range: Range<u32>) {
+fn extend(
+    batches: &mut Vec<(Kind, Range<u32>, Option<Rect>)>,
+    kind: Kind,
+    range: Range<u32>,
+    clip: Option<Rect>,
+) {
     match batches.last_mut() {
-        Some((last, held)) if *last == kind && held.end == range.start => held.end = range.end,
-        _ => batches.push((kind, range)),
+        Some((last, held, held_clip))
+            if *last == kind && held.end == range.start && *held_clip == clip =>
+        {
+            held.end = range.end;
+        }
+        _ => batches.push((kind, range, clip)),
     }
+}
+
+/// The scissor rectangle, in physical pixels inside a target of `size`, that
+/// keeps drawing inside `clip`; the whole target without one, and nothing
+/// when the clip leaves no pixel of it.
+fn scissor(clip: Option<Rect>, scale: f32, size: (u32, u32)) -> Option<(u32, u32, u32, u32)> {
+    let Some(clip) = clip else {
+        return Some((0, 0, size.0, size.1));
+    };
+    let left = (clip.x * scale).floor().clamp(0.0, size.0 as f32) as u32;
+    let top = (clip.y * scale).floor().clamp(0.0, size.1 as f32) as u32;
+    let right = ((clip.x + clip.width) * scale)
+        .ceil()
+        .clamp(0.0, size.0 as f32) as u32;
+    let bottom = ((clip.y + clip.height) * scale)
+        .ceil()
+        .clamp(0.0, size.1 as f32) as u32;
+    (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
 }

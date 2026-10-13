@@ -1,5 +1,6 @@
 //! The node: a style, what it holds and whether it answers to the user.
 
+use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::layout::Item;
 use pm_style::{Style, Utility};
@@ -16,9 +17,17 @@ pub struct Node {
     pub(crate) text: Option<String>,
     /// What names the box to the user: it can be pressed and takes focus.
     pub(crate) focus: Option<FocusId>,
+    /// An icon the box draws, tinted with the text colour, in the largest
+    /// square that fits its content area.
+    pub(crate) icon: Option<IconName>,
     /// A blinking caret at this byte offset of the text, shown while the
     /// named box holds focus.
     pub(crate) caret: Option<(usize, FocusId)>,
+    /// A highlighted byte range of this node's text, shown while the named
+    /// box holds focus.
+    pub(crate) selection: Option<(std::ops::Range<usize>, FocusId)>,
+    /// How far the contents are shifted left, in logical pixels, to scroll them.
+    pub(crate) scroll_x: f32,
 }
 
 /// An empty, unstyled box.
@@ -35,6 +44,12 @@ pub fn text(content: impl Into<String>) -> Node {
 }
 
 impl Node {
+    /// Makes the box draw `name` in the text colour; size the box to size the icon.
+    pub fn icon(mut self, name: IconName) -> Self {
+        self.icon = Some(name);
+        self
+    }
+
     /// Applies utilities in order, after whatever was applied before.
     pub fn styles(mut self, utilities: impl IntoIterator<Item = Utility>) -> Self {
         self.style.extend(utilities);
@@ -60,10 +75,31 @@ impl Node {
         self
     }
 
+    /// Takes away the name given by [`Node::focusable`]: the box stops
+    /// answering to the user, for a control that is switched off.
+    pub fn inert(mut self) -> Self {
+        self.focus = None;
+        self
+    }
+
     /// Shows a blinking caret at byte offset `byte` of this node's text while
     /// the box named `owner` holds focus.
     pub fn caret(mut self, byte: usize, owner: FocusId) -> Self {
         self.caret = Some((byte, owner));
+        self
+    }
+
+    /// Highlights the byte range `range` of this node's text while the box
+    /// named `owner` holds focus.
+    pub fn selection(mut self, range: std::ops::Range<usize>, owner: FocusId) -> Self {
+        self.selection = Some((range, owner));
+        self
+    }
+
+    /// Scrolls the contents `offset` logical pixels to the left; they are
+    /// clipped to the box when its style says overflow is hidden.
+    pub fn scroll_x(mut self, offset: f32) -> Self {
+        self.scroll_x = offset;
         self
     }
 

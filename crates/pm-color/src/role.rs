@@ -11,6 +11,8 @@ use crate::Srgba;
 pub enum Role {
     /// The window behind everything.
     Background,
+    /// The side panel listing projects and sessions.
+    Sidebar,
     /// A panel or card sitting on the background.
     Surface,
     /// A surface under the pointer.
@@ -47,8 +49,9 @@ pub enum Role {
 
 impl Role {
     /// Every role, in declaration order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Background,
+        Self::Sidebar,
         Self::Surface,
         Self::SurfaceHover,
         Self::SurfaceActive,
@@ -71,6 +74,7 @@ impl Role {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Background => "background",
+            Self::Sidebar => "sidebar",
             Self::Surface => "surface",
             Self::SurfaceHover => "surface-hover",
             Self::SurfaceActive => "surface-active",

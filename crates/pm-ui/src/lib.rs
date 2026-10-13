@@ -11,4 +11,5 @@ mod node;
 mod paint;
 
 pub use node::{Node, node, text};
-pub use paint::{Input, Output, Region, draw};
+pub use paint::{FieldBox, Input, Output, Region, draw};
+pub use pm_style::Cursor;

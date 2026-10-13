@@ -25,6 +25,10 @@ pub struct Shaper {
     fonts: FontSystem,
     /// The rasterizer for glyph outlines.
     swash: SwashCache,
+    /// The installed family sans text is set in, when a stack named one.
+    sans: Option<String>,
+    /// The installed family monospaced text is set in, when a stack named one.
+    mono: Option<String>,
 }
 
 impl Shaper {
@@ -33,7 +37,28 @@ impl Shaper {
         Self {
             fonts: FontSystem::new(),
             swash: SwashCache::new(),
+            sans: None,
+            mono: None,
         }
+    }
+
+    /// Sets sans and monospaced text in the first family of each stack that is
+    /// installed, leaving the system's own choice where none is.
+    pub fn set_stacks(&mut self, sans: &[&str], mono: &[&str]) {
+        self.sans = self.installed(sans);
+        self.mono = self.installed(mono);
+    }
+
+    /// The first of `stack` the system has a font for.
+    fn installed(&self, stack: &[&str]) -> Option<String> {
+        stack.iter().find_map(|wanted| {
+            self.fonts
+                .db()
+                .faces()
+                .flat_map(|face| face.families.iter())
+                .find(|(name, _)| name.eq_ignore_ascii_case(wanted))
+                .map(|(name, _)| name.clone())
+        })
     }
 
     /// Shapes `text` on one line in `style`.
@@ -41,9 +66,9 @@ impl Shaper {
         let line_height = style.line_height_px();
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(style.size, line_height));
         let family = match style.family {
-            FontFamily::Sans => Family::SansSerif,
+            FontFamily::Sans => self.sans.as_deref().map_or(Family::SansSerif, Family::Name),
             FontFamily::Serif => Family::Serif,
-            FontFamily::Mono => Family::Monospace,
+            FontFamily::Mono => self.mono.as_deref().map_or(Family::Monospace, Family::Name),
         };
         let attrs = Attrs::new()
             .family(family)

@@ -5,3 +5,4 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+resvg = "0.48.1"

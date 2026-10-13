@@ -1,22 +1,20 @@
 //! The components the app is built from.
 //!
-//! A component is a function that returns a [`pm_ui::Node`] styled with
-//! utilities, so the caller changes how it looks with `.styles([...])` and
-//! never reaches into it. Each component lives in a module named for what it
-//! is and is re-exported here.
+//! A component is a builder. It is made with `new`, given a variant for how
+//! it looks and a size for how big it is, and turned into a [`pm_ui::Node`]
+//! with `build`; the caller restyles the node with `.styles([...])` and never
+//! reaches into it. Each component lives in a module named for what it is,
+//! which holds its `Variant` and `Size`, and is re-exported here.
 
-mod activity;
-mod card;
-mod controls;
-mod field;
-mod progress;
-mod showcase;
-mod swatches;
+pub mod button;
+pub mod input;
+pub mod menu;
+mod onboarding;
 
-pub use activity::{bouncing_dots, ping_dot, pulse_dot, spinner};
-pub use card::card;
-pub use controls::{avatar_stack, badge, button, switch};
-pub use field::text_input;
-pub use progress::progress_bar;
-pub use showcase::{INCREMENT, NAME, NOTES, RESET, ShowcaseState, TOGGLE, showcase};
-pub use swatches::{opacity_steps, palette, radius_steps, shadow_steps, transforms};
+pub use button::Button;
+pub use input::Input;
+pub use menu::Menu;
+pub use onboarding::{
+    ADD, AgentStatus, BACK, BROWSE, CONTINUE, FINISH, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO,
+    MENU_SELECT_ALL, MENU_UNDO, OnboardingState, PATH, SKIP, Step, onboarding,
+};

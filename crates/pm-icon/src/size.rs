@@ -1,19 +1,18 @@
 //! The sizes an icon is drawn at.
 
-/// The sizes an icon is drawn at; the artwork is designed on a sixteen-pixel grid.
+/// The sizes an icon is drawn at; the artwork is designed on a 256-unit grid.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum IconSize {
     /// 12px: inside a tab or a row of text.
     ///
-    /// The artwork is drawn on a grid of sixteen, so anything below
-    /// [`IconSize::Medium`] rasterizes its strokes across two pixels rather
-    /// than into one: a size for an icon that has to fit, not one to reach
-    /// for because the icon is small.
+    /// Fine detail in the artwork blurs below [`IconSize::Medium`]: a size
+    /// for an icon that has to fit, not one to reach for because the icon is
+    /// small.
     XSmall,
     /// 14px: a smaller icon, where one at its own size would crowd its row.
     #[default]
     Small,
-    /// 16px: the artwork's own size, which is the size it is sharpest at.
+    /// 16px: the size the artwork is sharpest at.
     Medium,
 }
 

@@ -1,7 +1,7 @@
 //! Turning the window's keyboard events into the app's own.
 
 use pm_input::{Key, KeyEvent, Modifiers};
-use pm_text::Edit;
+use pm_text::{Edit, Motion};
 use winit::event::ElementState;
 use winit::keyboard::{Key as WindowKey, ModifiersState, NamedKey};
 
@@ -42,20 +42,69 @@ pub fn key_event(key: &WindowKey, state: ElementState, modifiers: Modifiers) -> 
 }
 
 /// The edit a key event asks of a text field, or nothing for a key that does
-/// not edit text or is part of a shortcut.
+/// not edit text or is a shortcut the window handles itself, such as copy.
 pub fn edit(event: &KeyEvent) -> Option<Edit> {
-    if !event.pressed || event.modifiers.control || event.modifiers.alt || event.modifiers.logo {
+    let modifiers = event.modifiers;
+    if !event.pressed || modifiers.alt {
+        return None;
+    }
+    let command = modifiers.control || modifiers.logo;
+    let shift = modifiers.shift;
+    match event.key {
+        Key::Character(character) if command => match character.to_ascii_lowercase() {
+            'a' => Some(Edit::SelectAll),
+            'z' if shift => Some(Edit::Redo),
+            'z' => Some(Edit::Undo),
+            'y' => Some(Edit::Redo),
+            _ => None,
+        },
+        Key::Character(character) => Some(Edit::Insert(character)),
+        Key::Space if !command => Some(Edit::Insert(' ')),
+        Key::Backspace => Some(by_word(command, Edit::Backspace, Edit::BackspaceWord)),
+        Key::Delete => Some(by_word(command, Edit::Delete, Edit::DeleteWord)),
+        Key::ArrowLeft => Some(Edit::Move(
+            by_word(command, Motion::Left, Motion::WordLeft),
+            shift,
+        )),
+        Key::ArrowRight => Some(Edit::Move(
+            by_word(command, Motion::Right, Motion::WordRight),
+            shift,
+        )),
+        Key::Home => Some(Edit::Move(Motion::Home, shift)),
+        Key::End => Some(Edit::Move(Motion::End, shift)),
+        _ => None,
+    }
+}
+
+/// `by_word` while the command key is held, `plain` otherwise.
+fn by_word<T>(command: bool, plain: T, by_word: T) -> T {
+    if command { by_word } else { plain }
+}
+
+/// What a shortcut asks of the clipboard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Clip {
+    /// Copy what is selected.
+    Copy,
+    /// Copy what is selected and delete it.
+    Cut,
+    /// Insert what the clipboard holds.
+    Paste,
+}
+
+/// The clipboard action a key event asks for, if it is one of the shortcuts for it.
+pub fn clip(event: &KeyEvent) -> Option<Clip> {
+    let modifiers = event.modifiers;
+    if !event.pressed || modifiers.alt || !(modifiers.control || modifiers.logo) {
         return None;
     }
     match event.key {
-        Key::Character(character) => Some(Edit::Insert(character)),
-        Key::Space => Some(Edit::Insert(' ')),
-        Key::Backspace => Some(Edit::Backspace),
-        Key::Delete => Some(Edit::Delete),
-        Key::ArrowLeft => Some(Edit::Left),
-        Key::ArrowRight => Some(Edit::Right),
-        Key::Home => Some(Edit::Home),
-        Key::End => Some(Edit::End),
+        Key::Character(character) => match character.to_ascii_lowercase() {
+            'c' => Some(Clip::Copy),
+            'x' => Some(Clip::Cut),
+            'v' => Some(Clip::Paste),
+            _ => None,
+        },
         _ => None,
     }
 }

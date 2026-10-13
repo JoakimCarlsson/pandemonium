@@ -57,6 +57,15 @@ impl Run {
             .map_or(self.width, |glyph| glyph.x)
     }
 
+    /// The byte offset of the character boundary nearest `x` logical pixels
+    /// right of the start of the line, in a line of `length` bytes.
+    pub fn byte_at(&self, x: f32, length: usize) -> usize {
+        self.glyphs
+            .iter()
+            .find(|glyph| x < glyph.x + glyph.w / 2.0)
+            .map_or(length, |glyph| glyph.start)
+    }
+
     /// The glyphs placed for a line whose top-left corner is at `x`, `y`
     /// logical pixels, drawn at `scale` physical pixels per logical pixel.
     pub fn place(&self, x: f32, y: f32, scale: f32) -> impl Iterator<Item = PlacedGlyph> + '_ {

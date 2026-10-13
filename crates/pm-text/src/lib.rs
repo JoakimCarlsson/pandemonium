@@ -9,6 +9,6 @@ mod field;
 mod run;
 mod shaper;
 
-pub use field::{Edit, Field};
+pub use field::{Edit, Field, Motion};
 pub use run::{Bitmap, GlyphKey, PlacedGlyph, Run};
 pub use shaper::{Extent, Shaper};

@@ -82,6 +82,21 @@ pub struct Text {
     pub color: Srgba,
 }
 
+/// An icon, tinted: its artwork drawn into a square.
+#[derive(Clone, Debug)]
+pub struct Icon {
+    /// The artwork.
+    pub svg: pm_icon::Svg,
+    /// Left edge of the square, in logical pixels.
+    pub x: f32,
+    /// Top edge of the square, in logical pixels.
+    pub y: f32,
+    /// The side of the square, in logical pixels.
+    pub size: f32,
+    /// What the artwork is tinted.
+    pub color: Srgba,
+}
+
 /// One thing a frame draws.
 #[derive(Clone, Debug)]
 pub enum Primitive {
@@ -89,6 +104,11 @@ pub enum Primitive {
     Quad(Quad),
     /// A line of text.
     Text(Text),
+    /// A tinted icon.
+    Icon(Icon),
+    /// Everything after this is drawn only inside the rectangle, or
+    /// anywhere when there is none.
+    Clip(Option<Rect>),
 }
 
 /// The primitives of one frame, in the order they are drawn: later ones cover
@@ -118,6 +138,16 @@ impl DrawList {
     /// Adds `text` over everything already in the list.
     pub fn push_text(&mut self, text: Text) {
         self.primitives.push(Primitive::Text(text));
+    }
+
+    /// Limits what is added from now on to `clip`, or lifts the limit.
+    pub fn set_clip(&mut self, clip: Option<Rect>) {
+        self.primitives.push(Primitive::Clip(clip));
+    }
+
+    /// Adds `icon` over everything already in the list.
+    pub fn push_icon(&mut self, icon: Icon) {
+        self.primitives.push(Primitive::Icon(icon));
     }
 
     /// The primitives, in drawing order.

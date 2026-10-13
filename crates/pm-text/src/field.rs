@@ -1,41 +1,223 @@
-//! A single line of editable text and where the caret is in it.
+//! A single line of editable text, the caret in it and what is selected.
 
-/// One change to make to a [`Field`].
+use std::ops::Range;
+
+/// Where a caret moves to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Edit {
-    /// Type a character at the caret.
-    Insert(char),
-    /// Delete the character before the caret.
-    Backspace,
-    /// Delete the character after the caret.
-    Delete,
-    /// Move the caret one character left.
+pub enum Motion {
+    /// One character left.
     Left,
-    /// Move the caret one character right.
+    /// One character right.
     Right,
-    /// Move the caret to the start.
+    /// To the start of the word before the caret.
+    WordLeft,
+    /// To the end of the word after the caret.
+    WordRight,
+    /// To the start of the line.
     Home,
-    /// Move the caret to the end.
+    /// To the end of the line.
     End,
 }
 
-/// A line of text with a caret between two of its characters.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// One change to make to a [`Field`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum Edit {
+    /// Type a character, replacing what is selected.
+    Insert(char),
+    /// Insert text, replacing what is selected; control characters are dropped.
+    Paste(String),
+    /// Delete what is selected, or else the character before the caret.
+    Backspace,
+    /// Delete what is selected, or else the character after the caret.
+    Delete,
+    /// Delete what is selected, or else the word before the caret.
+    BackspaceWord,
+    /// Delete what is selected, or else the word after the caret.
+    DeleteWord,
+    /// Move the caret, extending the selection when the flag is set and
+    /// dropping it otherwise.
+    Move(Motion, bool),
+    /// Select the whole line.
+    SelectAll,
+    /// Put the caret at a byte offset of what is shown, extending the
+    /// selection when the flag is set and dropping it otherwise.
+    Place(usize, bool),
+    /// Select the word around a byte offset of what is shown.
+    SelectWordAt(usize),
+    /// Take back the last change.
+    Undo,
+    /// Make again the change that was taken back.
+    Redo,
+    /// Scroll the line so it starts this many logical pixels left of the
+    /// view; negative offsets are taken as none.
+    ScrollTo(f32),
+}
+
+/// A line of text with a caret between two of its characters and, when the
+/// reader has selected some, the other end of the selection.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Field {
     /// The line being edited, which never contains control characters.
     text: String,
     /// The caret, as a byte offset on a character boundary.
     caret: usize,
+    /// The end of the selection that does not move, as a byte offset on a
+    /// character boundary; equal to the caret when nothing is selected.
+    anchor: usize,
+    /// How far the line is scrolled left, in logical pixels.
+    scroll: f32,
+    /// How many characters the line may hold, if it is limited.
+    limit: Option<usize>,
+    /// Whether the line is shown as dots and cannot be copied from.
+    masked: bool,
+    /// Whether the line can be selected and copied but not changed.
+    read_only: bool,
+    /// The states the line was in before each change, oldest first.
+    past: Vec<Snapshot>,
+    /// The states that were taken back, most recently taken back last.
+    future: Vec<Snapshot>,
+    /// Whether the last change was typing, which the next typing joins.
+    typing: bool,
+}
+
+/// What a field held at one moment, for undoing back to it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Snapshot {
+    /// The line.
+    text: String,
+    /// The caret.
+    caret: usize,
+    /// The other end of the selection.
+    anchor: usize,
+}
+
+/// What a masked line shows for each of its characters.
+const MASK: char = '•';
+
+/// How many changes undo remembers.
+const HISTORY: usize = 200;
+
+/// What kind of character a word is made of.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Class {
+    /// Space.
+    Space,
+    /// Letters, digits and the underscore.
+    Word,
+    /// Anything else.
+    Other,
+}
+
+impl Class {
+    /// The class `character` belongs to.
+    fn of(character: char) -> Self {
+        if character.is_whitespace() {
+            Self::Space
+        } else if character.is_alphanumeric() || character == '_' {
+            Self::Word
+        } else {
+            Self::Other
+        }
+    }
 }
 
 impl Field {
-    /// A field holding `text`, with the caret at its end.
+    /// A field holding `text`, with the caret at its end and nothing selected.
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         Self {
             caret: text.len(),
+            anchor: text.len(),
             text,
+            ..Self::default()
         }
+    }
+
+    /// The field limited to `characters` characters.
+    pub fn limited(mut self, characters: usize) -> Self {
+        self.limit = Some(characters);
+        self
+    }
+
+    /// The field shown as dots, whose text cannot be copied.
+    pub fn masked(mut self, masked: bool) -> Self {
+        self.masked = masked;
+        self
+    }
+
+    /// The field that can be selected and copied from but not changed.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Whether the field cannot be changed.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Whether there is a change to take back.
+    pub fn can_undo(&self) -> bool {
+        !self.past.is_empty()
+    }
+
+    /// Whether there is a change that was taken back to make again.
+    pub fn can_redo(&self) -> bool {
+        !self.future.is_empty()
+    }
+
+    /// Whether the line can be copied from: something is selected and the line is not masked.
+    pub fn can_copy(&self) -> bool {
+        !self.selected().is_empty()
+    }
+
+    /// How far the line is scrolled left, in logical pixels.
+    pub fn scroll(&self) -> f32 {
+        self.scroll
+    }
+
+    /// What the line looks like: its text, or a dot for each character when masked.
+    pub fn shown(&self) -> std::borrow::Cow<'_, str> {
+        if self.masked {
+            std::borrow::Cow::Owned(MASK.to_string().repeat(self.text.chars().count()))
+        } else {
+            std::borrow::Cow::Borrowed(&self.text)
+        }
+    }
+
+    /// The offset in what is shown that matches the byte offset `byte` of the text.
+    pub fn to_shown(&self, byte: usize) -> usize {
+        if self.masked {
+            self.text[..byte.min(self.text.len())].chars().count() * MASK.len_utf8()
+        } else {
+            byte
+        }
+    }
+
+    /// The byte offset of the text that matches the offset `shown` in what is shown.
+    fn to_text(&self, shown: usize) -> usize {
+        if !self.masked {
+            return self.boundary(shown);
+        }
+        let characters = shown / MASK.len_utf8();
+        self.text
+            .char_indices()
+            .nth(characters)
+            .map_or(self.text.len(), |(at, _)| at)
+    }
+
+    /// Where the line should scroll to so the caret, `caret_x` logical pixels
+    /// from the start of the line, stays inside a view `view` wide.
+    pub fn scroll_for(&self, caret_x: f32, line: f32, view: f32) -> f32 {
+        let margin = 2.0;
+        let mut scroll = self.scroll;
+        if caret_x - scroll > view - margin {
+            scroll = caret_x - view + margin;
+        }
+        if caret_x - scroll < 0.0 {
+            scroll = caret_x;
+        }
+        scroll.clamp(0.0, (line - view + margin).max(0.0))
     }
 
     /// The line as typed so far, without the caret.
@@ -48,45 +230,230 @@ impl Field {
         self.caret
     }
 
-    /// Makes `edit`.
-    pub fn apply(&mut self, edit: Edit) {
-        match edit {
-            Edit::Insert(character) if !character.is_control() => {
-                self.text.insert(self.caret, character);
-                self.caret += character.len_utf8();
-            }
-            Edit::Insert(_) => {}
-            Edit::Backspace => {
-                if let Some(start) = self.before() {
-                    self.text.replace_range(start..self.caret, "");
-                    self.caret = start;
-                }
-            }
-            Edit::Delete => {
-                if let Some(end) = self.after() {
-                    self.text.replace_range(self.caret..end, "");
-                }
-            }
-            Edit::Left => self.caret = self.before().unwrap_or(self.caret),
-            Edit::Right => self.caret = self.after().unwrap_or(self.caret),
-            Edit::Home => self.caret = 0,
-            Edit::End => self.caret = self.text.len(),
+    /// The selected bytes of [`Field::text`], or nothing when none are.
+    pub fn selection(&self) -> Option<Range<usize>> {
+        (self.anchor != self.caret)
+            .then(|| self.anchor.min(self.caret)..self.anchor.max(self.caret))
+    }
+
+    /// The selected text, empty when nothing is selected or the line is masked.
+    pub fn selected(&self) -> &str {
+        match self.selection() {
+            Some(range) if !self.masked => &self.text[range],
+            _ => "",
         }
     }
 
-    /// The offset of the character boundary before the caret.
-    fn before(&self) -> Option<usize> {
-        self.text[..self.caret]
+    /// Makes `edit`.
+    pub fn apply(&mut self, edit: Edit) {
+        match &edit {
+            Edit::Undo => return self.undo(),
+            Edit::Redo => return self.redo(),
+            Edit::ScrollTo(offset) => {
+                self.scroll = offset.max(0.0);
+                return;
+            }
+            _ => {}
+        }
+        let changes = matches!(
+            edit,
+            Edit::Insert(_)
+                | Edit::Paste(_)
+                | Edit::Backspace
+                | Edit::Delete
+                | Edit::BackspaceWord
+                | Edit::DeleteWord
+        );
+        if changes && self.read_only {
+            return;
+        }
+        let before = changes.then(|| self.snapshot());
+        let typed = matches!(&edit, Edit::Insert(c) if !c.is_whitespace());
+        match edit {
+            Edit::Insert(character) => {
+                if !character.is_control() {
+                    self.replace_selection(character.encode_utf8(&mut [0; 4]));
+                }
+            }
+            Edit::Paste(text) => {
+                let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+                self.replace_selection(&clean);
+            }
+            Edit::Backspace => self.delete_or(|field| field.before(field.caret)),
+            Edit::Delete => self.delete_or(|field| field.after(field.caret)),
+            Edit::BackspaceWord => self.delete_or(|field| Some(field.word_before(field.caret))),
+            Edit::DeleteWord => self.delete_or(|field| Some(field.word_after(field.caret))),
+            Edit::Move(motion, extend) => self.travel(motion, extend),
+            Edit::SelectAll => {
+                self.anchor = 0;
+                self.caret = self.text.len();
+            }
+            Edit::Place(shown, extend) => {
+                self.caret = self.to_text(shown);
+                if !extend {
+                    self.anchor = self.caret;
+                }
+            }
+            Edit::SelectWordAt(shown) => {
+                let byte = self.to_text(shown);
+                self.anchor = self.word_before(self.after(byte).unwrap_or(byte));
+                self.caret = self.word_after(self.before(byte).unwrap_or(byte));
+            }
+            Edit::Undo | Edit::Redo | Edit::ScrollTo(_) => {}
+        }
+        if let Some(before) = before
+            && before != self.snapshot()
+        {
+            if !(typed && self.typing) {
+                self.past.push(before);
+                if self.past.len() > HISTORY {
+                    self.past.remove(0);
+                }
+            }
+            self.future.clear();
+            self.typing = typed;
+        } else if !changes {
+            self.typing = false;
+        }
+    }
+
+    /// The line, caret and selection as they are now.
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            text: self.text.clone(),
+            caret: self.caret,
+            anchor: self.anchor,
+        }
+    }
+
+    /// Takes in a state the line is put back to.
+    fn restore(&mut self, snapshot: Snapshot) {
+        self.text = snapshot.text;
+        self.caret = snapshot.caret;
+        self.anchor = snapshot.anchor;
+        self.typing = false;
+    }
+
+    /// Takes back the last change.
+    fn undo(&mut self) {
+        if let Some(previous) = self.past.pop() {
+            self.future.push(self.snapshot());
+            self.restore(previous);
+        }
+    }
+
+    /// Makes again the last change that was taken back.
+    fn redo(&mut self) {
+        if let Some(next) = self.future.pop() {
+            self.past.push(self.snapshot());
+            self.restore(next);
+        }
+    }
+
+    /// Replaces what is selected, or else nothing at the caret, with `text`.
+    fn replace_selection(&mut self, text: &str) {
+        let range = self.selection().unwrap_or(self.caret..self.caret);
+        let kept = self.text.chars().count() - self.text[range.clone()].chars().count();
+        let room = self
+            .limit
+            .map_or(usize::MAX, |limit| limit.saturating_sub(kept));
+        let text: String = text.chars().take(room).collect();
+        self.caret = range.start + text.len();
+        self.text.replace_range(range, &text);
+        self.anchor = self.caret;
+    }
+
+    /// Deletes what is selected, or else what lies between the caret and the
+    /// offset `other` finds.
+    fn delete_or(&mut self, other: impl Fn(&Self) -> Option<usize>) {
+        let range = self.selection().or_else(|| {
+            let other = other(self)?;
+            Some(other.min(self.caret)..other.max(self.caret))
+        });
+        if let Some(range) = range {
+            self.caret = range.start;
+            self.text.replace_range(range, "");
+            self.anchor = self.caret;
+        }
+    }
+
+    /// Moves the caret by `motion`.
+    fn travel(&mut self, motion: Motion, extend: bool) {
+        let selection = self.selection();
+        let target = match (motion, &selection) {
+            (Motion::Left, Some(range)) if !extend => range.start,
+            (Motion::Right, Some(range)) if !extend => range.end,
+            (Motion::Left, _) => self.before(self.caret).unwrap_or(self.caret),
+            (Motion::Right, _) => self.after(self.caret).unwrap_or(self.caret),
+            (Motion::WordLeft, _) => self.word_before(self.caret),
+            (Motion::WordRight, _) => self.word_after(self.caret),
+            (Motion::Home, _) => 0,
+            (Motion::End, _) => self.text.len(),
+        };
+        self.caret = target;
+        if !extend {
+            self.anchor = target;
+        }
+    }
+
+    /// The nearest character boundary at or before `byte`, within the text.
+    fn boundary(&self, byte: usize) -> usize {
+        let mut byte = byte.min(self.text.len());
+        while !self.text.is_char_boundary(byte) {
+            byte -= 1;
+        }
+        byte
+    }
+
+    /// The offset of the character boundary before `from`.
+    fn before(&self, from: usize) -> Option<usize> {
+        self.text[..from]
             .char_indices()
             .next_back()
             .map(|(start, _)| start)
     }
 
-    /// The offset of the character boundary after the caret.
-    fn after(&self) -> Option<usize> {
-        self.text[self.caret..]
+    /// The offset of the character boundary after `from`.
+    fn after(&self, from: usize) -> Option<usize> {
+        self.text[from..]
             .chars()
             .next()
-            .map(|character| self.caret + character.len_utf8())
+            .map(|character| from + character.len_utf8())
+    }
+
+    /// The start of the word before `from`: past any space, then past the
+    /// run of characters of one class.
+    fn word_before(&self, from: usize) -> usize {
+        let mut at = from;
+        let mut class = None;
+        for (start, character) in self.text[..from].char_indices().rev() {
+            let this = Class::of(character);
+            match class {
+                None if this == Class::Space => {}
+                None => class = Some(this),
+                Some(class) if class != this => break,
+                Some(_) => {}
+            }
+            at = start;
+        }
+        at
+    }
+
+    /// The end of the word after `from`: past any space, then past the run
+    /// of characters of one class.
+    fn word_after(&self, from: usize) -> usize {
+        let mut at = from;
+        let mut class = None;
+        for (start, character) in self.text[from..].char_indices() {
+            let this = Class::of(character);
+            match class {
+                None if this == Class::Space => {}
+                None => class = Some(this),
+                Some(class) if class != this => break,
+                Some(_) => {}
+            }
+            at = from + start + character.len_utf8();
+        }
+        at
     }
 }

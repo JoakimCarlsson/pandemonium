@@ -2,10 +2,9 @@
 
 use std::path::Path;
 
-use pm_components::ShowcaseState;
+use pm_components::{OnboardingState, Step};
 use pm_input::{FocusId, PointerState};
 use pm_renderer::{DrawList, Renderer};
-use pm_text::Shaper;
 use pm_theme::{Appearance, default_family};
 use pm_ui::Input;
 
@@ -26,9 +25,10 @@ pub fn write(
     pointer: Option<(f32, f32)>,
     focused: Option<FocusId>,
     appearance: Appearance,
+    step: Step,
 ) -> Result<(), String> {
     let mut renderer = Renderer::headless(WIDTH, HEIGHT, 1.0).map_err(|error| error.to_string())?;
-    let mut shaper = Shaper::new();
+    let mut shaper = scene::shaper();
     let mut list = DrawList::new();
     let input = Input {
         pointer: PointerState {
@@ -43,7 +43,15 @@ pub fn write(
     scene::paint(
         WIDTH as f32,
         HEIGHT as f32,
-        &ShowcaseState::default(),
+        &OnboardingState {
+            step,
+            projects: if step == Step::Project {
+                vec!["pandemonium".to_owned(), "voxel".to_owned()]
+            } else {
+                Vec::new()
+            },
+            ..OnboardingState::default()
+        },
         &input,
         theme,
         &mut shaper,

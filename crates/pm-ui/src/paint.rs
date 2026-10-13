@@ -1,13 +1,14 @@
 //! Painting a laid-out node tree into a draw list.
 
+use pm_icon::IconName;
 use pm_input::{FocusId, PointerState};
-use pm_renderer::{Affine, DrawList, Quad, Rect, Text};
-use pm_style::layout::Display;
+use pm_renderer::{Affine, DrawList, Icon, Quad, Rect, Text};
+use pm_style::layout::{Display, Overflow};
 use pm_style::primitives::Side;
-use pm_style::{Color, ComputedStyle, Context, Role, State, StateSet, Transform};
+use pm_style::{Color, ComputedStyle, Context, Cursor, Role, State, StateSet, Transform};
 
 use pm_style::layout::{Placed, solve};
-use pm_text::Shaper;
+use pm_text::{Run, Shaper};
 use pm_theme::Theme;
 
 use crate::node::Node;
@@ -46,9 +47,35 @@ pub struct Output {
     /// The boxes that answer to the user, in tree order, which is the order
     /// Tab walks them in.
     pub regions: Vec<Region>,
+    /// The pointer shape the box under the pointer asks for.
+    pub cursor: Cursor,
+    /// The text boxes that hold a caret, in tree order.
+    pub fields: Vec<FieldBox>,
+}
+
+/// One line of editable text, where it was drawn.
+#[derive(Clone, Debug)]
+pub struct FieldBox {
+    /// The name of the box that owns the caret.
+    pub id: FocusId,
+    /// Where the line starts along x, in logical pixels.
+    pub x: f32,
+    /// The line, shaped.
+    pub run: Run,
+    /// The rectangle the line is clipped to, if it is.
+    pub view: Option<Rect>,
+    /// How many bytes the line has.
+    pub length: usize,
 }
 
 impl Output {
+    /// The byte offset in the field `id` nearest to `x` logical pixels, if
+    /// that field was drawn.
+    pub fn offset_in(&self, id: FocusId, x: f32) -> Option<usize> {
+        let field = self.fields.iter().find(|field| field.id == id)?;
+        Some(field.run.byte_at(x - field.x, field.length))
+    }
+
     /// The topmost region under `point`.
     pub fn hit(&self, point: (f32, f32)) -> Option<FocusId> {
         self.regions
@@ -78,8 +105,9 @@ pub fn draw(
         shaper,
         list,
         output: Output::default(),
+        clip: None,
     };
-    frame.node(root, &laid, Affine::IDENTITY, 1.0);
+    frame.node(root, &laid, Affine::IDENTITY, 1.0, Cursor::Default);
     frame.output
 }
 
@@ -97,17 +125,38 @@ struct Frame<'a> {
     list: &'a mut DrawList,
     /// What the pass found out.
     output: Output,
+    /// The rectangle everything now being painted is clipped to.
+    clip: Option<Rect>,
 }
 
 impl Frame<'_> {
     /// Paints `node` and its children, drawn through `parent` at `opacity`.
-    fn node(&mut self, node: &Node, laid: &Placed, parent: Affine, opacity: f32) {
+    fn node(
+        &mut self,
+        node: &Node,
+        laid: &Placed,
+        parent: Affine,
+        opacity: f32,
+        inherited: Cursor,
+    ) {
         let rect = Rect::new(laid.x, laid.y, laid.width, laid.height);
         let computed = self.resolve(node, rect);
         if computed.layout.display.display == Display::None {
             return;
         }
 
+        let cursor = match computed.decoration.effects.interactivity.cursor {
+            Cursor::Default => inherited,
+            own => own,
+        };
+        if self
+            .input
+            .pointer
+            .position
+            .is_some_and(|(x, y)| rect.contains(x, y))
+        {
+            self.output.cursor = cursor;
+        }
         if let Some(id) = node.focus {
             self.output.regions.push(Region { id, rect });
         }
@@ -115,11 +164,30 @@ impl Frame<'_> {
         let world = pose.then(parent);
         let opacity = opacity * computed.decoration.effects.opacity * pose_opacity;
         self.decoration(&computed, rect, world, opacity);
-        if let Some(content) = node.text.as_deref() {
-            self.text(content, node.caret, &computed, rect, world, opacity);
+        let outer = self.clip;
+        let display = computed.layout.display;
+        if display.overflow_x != Overflow::Visible || display.overflow_y != Overflow::Visible {
+            let held = intersect(outer, rect);
+            self.clip = Some(held);
+            self.list.set_clip(self.clip);
+        }
+        let content = if node.scroll_x == 0.0 {
+            world
+        } else {
+            Affine::translation(-node.scroll_x, 0.0).then(world)
+        };
+        if let Some(text) = node.text.as_deref() {
+            self.text(text, node, &computed, rect, content, opacity);
+        }
+        if let Some(name) = node.icon {
+            self.icon(name, &computed, rect, content, opacity);
         }
         for (child, child_laid) in node.children.iter().zip(&laid.children) {
-            self.node(child, child_laid, world, opacity);
+            self.node(child, child_laid, content, opacity, cursor);
+        }
+        if self.clip != outer {
+            self.clip = outer;
+            self.list.set_clip(outer);
         }
     }
 
@@ -157,11 +225,44 @@ impl Frame<'_> {
         }
     }
 
+    /// Paints `name` in the largest square that fits the content area of the box at `rect`.
+    fn icon(
+        &mut self,
+        name: IconName,
+        computed: &ComputedStyle,
+        rect: Rect,
+        world: Affine,
+        opacity: f32,
+    ) {
+        let inset = computed.layout.spacing.padding;
+        let border = computed.decoration.borders.width;
+        let width = rect.width - inset.left - inset.right - border.left - border.right;
+        let height = rect.height - inset.top - inset.bottom - border.top - border.bottom;
+        let size = width.min(height);
+        let (x, y) = world.apply(
+            rect.x + inset.left + border.left + (width - size) / 2.0,
+            rect.y + inset.top + border.top + (height - size) / 2.0,
+        );
+        let color = computed
+            .typography
+            .color
+            .unwrap_or(Role::Text.into())
+            .resolve(self.theme)
+            .alpha(opacity);
+        self.list.push_icon(Icon {
+            svg: name.svg(),
+            x,
+            y,
+            size,
+            color,
+        });
+    }
+
     /// Paints one line of text inside the box at `rect`.
     fn text(
         &mut self,
         content: &str,
-        caret: Option<(usize, FocusId)>,
+        node: &Node,
         computed: &ComputedStyle,
         rect: Rect,
         world: Affine,
@@ -180,7 +281,29 @@ impl Frame<'_> {
             .unwrap_or(Role::Text.into())
             .resolve(self.theme)
             .alpha(opacity);
-        if let Some((byte, owner)) = caret
+        if let Some((_, owner)) = node.caret {
+            self.output.fields.push(FieldBox {
+                id: owner,
+                x,
+                run: run.clone(),
+                view: self.clip,
+                length: content.len(),
+            });
+        }
+        if let Some((range, owner)) = &node.selection
+            && self.input.focused == Some(*owner)
+        {
+            let left = run.caret_x(range.start);
+            let right = run.caret_x(range.end);
+            let tint = Color::from(Role::Focused)
+                .resolve(self.theme)
+                .alpha(0.45 * opacity);
+            self.list.push(Quad::filled(
+                Rect::new(x + left, y, right - left, run.height),
+                tint,
+            ));
+        }
+        if let Some((byte, owner)) = node.caret
             && self.input.focused == Some(owner)
         {
             self.output.animating = true;
@@ -277,6 +400,18 @@ impl Frame<'_> {
             }
         }
     }
+}
+
+/// `rect` cut down to what `outer` leaves of it.
+fn intersect(outer: Option<Rect>, rect: Rect) -> Rect {
+    let Some(outer) = outer else {
+        return rect;
+    };
+    let left = rect.x.max(outer.x);
+    let top = rect.y.max(outer.y);
+    let right = (rect.x + rect.width).min(outer.x + outer.width);
+    let bottom = (rect.y + rect.height).min(outer.y + outer.height);
+    Rect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0))
 }
 
 /// The transform as it acts on an element at `rect`: pivoting about its own

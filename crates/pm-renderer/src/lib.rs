@@ -11,6 +11,6 @@ mod geometry;
 mod pipeline;
 mod renderer;
 
-pub use draw::{DrawList, Primitive, Quad, Text};
+pub use draw::{DrawList, Icon, Primitive, Quad, Text};
 pub use geometry::{Affine, Rect};
 pub use renderer::{Renderer, RendererError};

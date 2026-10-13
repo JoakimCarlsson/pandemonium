@@ -1,4 +1,4 @@
-//! The app's icons: its own artwork, named and sized.
+//! The app's icons: Phosphor artwork, named and sized.
 //!
 //! Each icon is one piece of vector artwork shipped with the app, drawn at
 //! whatever size the caller asks for and tinted from the theme. Artwork is
@@ -12,4 +12,4 @@ mod svg;
 
 pub use name::IconName;
 pub use size::IconSize;
-pub use svg::Svg;
+pub use svg::{Mask, Svg};
