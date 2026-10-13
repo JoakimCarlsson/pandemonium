@@ -7,7 +7,6 @@
 mod decoration;
 mod family;
 mod flow;
-mod font;
 mod rule;
 mod scale;
 mod style;
@@ -15,7 +14,6 @@ mod style;
 pub use decoration::{LineStyle, TextDecoration, TextLine};
 pub use family::{FontFamily, FontSlant};
 pub use flow::{TextAlign, TextOverflow, TextTransform, TextWrap, WhiteSpace};
-pub use font::{Font, TextScale};
 pub use rule::TypographyRule;
 pub use scale::{FontWeight, Leading, TextSize, Tracking};
 pub use style::{LineHeight, TypographyStyle};

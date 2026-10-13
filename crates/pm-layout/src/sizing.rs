@@ -24,9 +24,9 @@ pub struct SizingStyle {
 /// One declaration about size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SizingRule {
-    /// The width.
+    /// Sets the width; [`Length::Auto`] lets layout decide.
     Width(Length),
-    /// The height.
+    /// Sets the height; [`Length::Auto`] lets layout decide.
     Height(Length),
     /// Width and height together.
     Size(Length),

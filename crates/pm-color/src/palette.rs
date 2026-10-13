@@ -11,577 +11,577 @@ pub enum Color {
     White,
     /// Fully transparent black.
     Transparent,
-    /// The red hue at shade 50.
+    /// oklch(97.1% 0.013 17.38)
     Red50,
-    /// The red hue at shade 100.
+    /// oklch(93.6% 0.032 17.717)
     Red100,
-    /// The red hue at shade 200.
+    /// oklch(88.5% 0.062 18.334)
     Red200,
-    /// The red hue at shade 300.
+    /// oklch(80.8% 0.114 19.571)
     Red300,
-    /// The red hue at shade 400.
+    /// oklch(70.4% 0.191 22.216)
     Red400,
-    /// The red hue at shade 500.
+    /// oklch(63.7% 0.237 25.331)
     Red500,
-    /// The red hue at shade 600.
+    /// oklch(57.7% 0.245 27.325)
     Red600,
-    /// The red hue at shade 700.
+    /// oklch(50.5% 0.213 27.518)
     Red700,
-    /// The red hue at shade 800.
+    /// oklch(44.4% 0.177 26.899)
     Red800,
-    /// The red hue at shade 900.
+    /// oklch(39.6% 0.141 25.723)
     Red900,
-    /// The red hue at shade 950.
+    /// oklch(25.8% 0.092 26.042)
     Red950,
-    /// The orange hue at shade 50.
+    /// oklch(98% 0.016 73.684)
     Orange50,
-    /// The orange hue at shade 100.
+    /// oklch(95.4% 0.038 75.164)
     Orange100,
-    /// The orange hue at shade 200.
+    /// oklch(90.1% 0.076 70.697)
     Orange200,
-    /// The orange hue at shade 300.
+    /// oklch(83.7% 0.128 66.29)
     Orange300,
-    /// The orange hue at shade 400.
+    /// oklch(75% 0.183 55.934)
     Orange400,
-    /// The orange hue at shade 500.
+    /// oklch(70.5% 0.213 47.604)
     Orange500,
-    /// The orange hue at shade 600.
+    /// oklch(64.6% 0.222 41.116)
     Orange600,
-    /// The orange hue at shade 700.
+    /// oklch(55.3% 0.195 38.402)
     Orange700,
-    /// The orange hue at shade 800.
+    /// oklch(47% 0.157 37.304)
     Orange800,
-    /// The orange hue at shade 900.
+    /// oklch(40.8% 0.123 38.172)
     Orange900,
-    /// The orange hue at shade 950.
+    /// oklch(26.6% 0.079 36.259)
     Orange950,
-    /// The amber hue at shade 50.
+    /// oklch(98.7% 0.022 95.277)
     Amber50,
-    /// The amber hue at shade 100.
+    /// oklch(96.2% 0.059 95.617)
     Amber100,
-    /// The amber hue at shade 200.
+    /// oklch(92.4% 0.12 95.746)
     Amber200,
-    /// The amber hue at shade 300.
+    /// oklch(87.9% 0.169 91.605)
     Amber300,
-    /// The amber hue at shade 400.
+    /// oklch(82.8% 0.189 84.429)
     Amber400,
-    /// The amber hue at shade 500.
+    /// oklch(76.9% 0.188 70.08)
     Amber500,
-    /// The amber hue at shade 600.
+    /// oklch(66.6% 0.179 58.318)
     Amber600,
-    /// The amber hue at shade 700.
+    /// oklch(55.5% 0.163 48.998)
     Amber700,
-    /// The amber hue at shade 800.
+    /// oklch(47.3% 0.137 46.201)
     Amber800,
-    /// The amber hue at shade 900.
+    /// oklch(41.4% 0.112 45.904)
     Amber900,
-    /// The amber hue at shade 950.
+    /// oklch(27.9% 0.077 45.635)
     Amber950,
-    /// The yellow hue at shade 50.
+    /// oklch(98.7% 0.026 102.212)
     Yellow50,
-    /// The yellow hue at shade 100.
+    /// oklch(97.3% 0.071 103.193)
     Yellow100,
-    /// The yellow hue at shade 200.
+    /// oklch(94.5% 0.129 101.54)
     Yellow200,
-    /// The yellow hue at shade 300.
+    /// oklch(90.5% 0.182 98.111)
     Yellow300,
-    /// The yellow hue at shade 400.
+    /// oklch(85.2% 0.199 91.936)
     Yellow400,
-    /// The yellow hue at shade 500.
+    /// oklch(79.5% 0.184 86.047)
     Yellow500,
-    /// The yellow hue at shade 600.
+    /// oklch(68.1% 0.162 75.834)
     Yellow600,
-    /// The yellow hue at shade 700.
+    /// oklch(55.4% 0.135 66.442)
     Yellow700,
-    /// The yellow hue at shade 800.
+    /// oklch(47.6% 0.114 61.907)
     Yellow800,
-    /// The yellow hue at shade 900.
+    /// oklch(42.1% 0.095 57.708)
     Yellow900,
-    /// The yellow hue at shade 950.
+    /// oklch(28.6% 0.066 53.813)
     Yellow950,
-    /// The lime hue at shade 50.
+    /// oklch(98.6% 0.031 120.757)
     Lime50,
-    /// The lime hue at shade 100.
+    /// oklch(96.7% 0.067 122.328)
     Lime100,
-    /// The lime hue at shade 200.
+    /// oklch(93.8% 0.127 124.321)
     Lime200,
-    /// The lime hue at shade 300.
+    /// oklch(89.7% 0.196 126.665)
     Lime300,
-    /// The lime hue at shade 400.
+    /// oklch(84.1% 0.238 128.85)
     Lime400,
-    /// The lime hue at shade 500.
+    /// oklch(76.8% 0.233 130.85)
     Lime500,
-    /// The lime hue at shade 600.
+    /// oklch(64.8% 0.2 131.684)
     Lime600,
-    /// The lime hue at shade 700.
+    /// oklch(53.2% 0.157 131.589)
     Lime700,
-    /// The lime hue at shade 800.
+    /// oklch(45.3% 0.124 130.933)
     Lime800,
-    /// The lime hue at shade 900.
+    /// oklch(40.5% 0.101 131.063)
     Lime900,
-    /// The lime hue at shade 950.
+    /// oklch(27.4% 0.072 132.109)
     Lime950,
-    /// The green hue at shade 50.
+    /// oklch(98.2% 0.018 155.826)
     Green50,
-    /// The green hue at shade 100.
+    /// oklch(96.2% 0.044 156.743)
     Green100,
-    /// The green hue at shade 200.
+    /// oklch(92.5% 0.084 155.995)
     Green200,
-    /// The green hue at shade 300.
+    /// oklch(87.1% 0.15 154.449)
     Green300,
-    /// The green hue at shade 400.
+    /// oklch(79.2% 0.209 151.711)
     Green400,
-    /// The green hue at shade 500.
+    /// oklch(72.3% 0.219 149.579)
     Green500,
-    /// The green hue at shade 600.
+    /// oklch(62.7% 0.194 149.214)
     Green600,
-    /// The green hue at shade 700.
+    /// oklch(52.7% 0.154 150.069)
     Green700,
-    /// The green hue at shade 800.
+    /// oklch(44.8% 0.119 151.328)
     Green800,
-    /// The green hue at shade 900.
+    /// oklch(39.3% 0.095 152.535)
     Green900,
-    /// The green hue at shade 950.
+    /// oklch(26.6% 0.065 152.934)
     Green950,
-    /// The emerald hue at shade 50.
+    /// oklch(97.9% 0.021 166.113)
     Emerald50,
-    /// The emerald hue at shade 100.
+    /// oklch(95% 0.052 163.051)
     Emerald100,
-    /// The emerald hue at shade 200.
+    /// oklch(90.5% 0.093 164.15)
     Emerald200,
-    /// The emerald hue at shade 300.
+    /// oklch(84.5% 0.143 164.978)
     Emerald300,
-    /// The emerald hue at shade 400.
+    /// oklch(76.5% 0.177 163.223)
     Emerald400,
-    /// The emerald hue at shade 500.
+    /// oklch(69.6% 0.17 162.48)
     Emerald500,
-    /// The emerald hue at shade 600.
+    /// oklch(59.6% 0.145 163.225)
     Emerald600,
-    /// The emerald hue at shade 700.
+    /// oklch(50.8% 0.118 165.612)
     Emerald700,
-    /// The emerald hue at shade 800.
+    /// oklch(43.2% 0.095 166.913)
     Emerald800,
-    /// The emerald hue at shade 900.
+    /// oklch(37.8% 0.077 168.94)
     Emerald900,
-    /// The emerald hue at shade 950.
+    /// oklch(26.2% 0.051 172.552)
     Emerald950,
-    /// The teal hue at shade 50.
+    /// oklch(98.4% 0.014 180.72)
     Teal50,
-    /// The teal hue at shade 100.
+    /// oklch(95.3% 0.051 180.801)
     Teal100,
-    /// The teal hue at shade 200.
+    /// oklch(91% 0.096 180.426)
     Teal200,
-    /// The teal hue at shade 300.
+    /// oklch(85.5% 0.138 181.071)
     Teal300,
-    /// The teal hue at shade 400.
+    /// oklch(77.7% 0.152 181.912)
     Teal400,
-    /// The teal hue at shade 500.
+    /// oklch(70.4% 0.14 182.503)
     Teal500,
-    /// The teal hue at shade 600.
+    /// oklch(60% 0.118 184.704)
     Teal600,
-    /// The teal hue at shade 700.
+    /// oklch(51.1% 0.096 186.391)
     Teal700,
-    /// The teal hue at shade 800.
+    /// oklch(43.7% 0.078 188.216)
     Teal800,
-    /// The teal hue at shade 900.
+    /// oklch(38.6% 0.063 188.416)
     Teal900,
-    /// The teal hue at shade 950.
+    /// oklch(27.7% 0.046 192.524)
     Teal950,
-    /// The cyan hue at shade 50.
+    /// oklch(98.4% 0.019 200.873)
     Cyan50,
-    /// The cyan hue at shade 100.
+    /// oklch(95.6% 0.045 203.388)
     Cyan100,
-    /// The cyan hue at shade 200.
+    /// oklch(91.7% 0.08 205.041)
     Cyan200,
-    /// The cyan hue at shade 300.
+    /// oklch(86.5% 0.127 207.078)
     Cyan300,
-    /// The cyan hue at shade 400.
+    /// oklch(78.9% 0.154 211.53)
     Cyan400,
-    /// The cyan hue at shade 500.
+    /// oklch(71.5% 0.143 215.221)
     Cyan500,
-    /// The cyan hue at shade 600.
+    /// oklch(60.9% 0.126 221.723)
     Cyan600,
-    /// The cyan hue at shade 700.
+    /// oklch(52% 0.105 223.128)
     Cyan700,
-    /// The cyan hue at shade 800.
+    /// oklch(45% 0.085 224.283)
     Cyan800,
-    /// The cyan hue at shade 900.
+    /// oklch(39.8% 0.07 227.392)
     Cyan900,
-    /// The cyan hue at shade 950.
+    /// oklch(30.2% 0.056 229.695)
     Cyan950,
-    /// The sky hue at shade 50.
+    /// oklch(97.7% 0.013 236.62)
     Sky50,
-    /// The sky hue at shade 100.
+    /// oklch(95.1% 0.026 236.824)
     Sky100,
-    /// The sky hue at shade 200.
+    /// oklch(90.1% 0.058 230.902)
     Sky200,
-    /// The sky hue at shade 300.
+    /// oklch(82.8% 0.111 230.318)
     Sky300,
-    /// The sky hue at shade 400.
+    /// oklch(74.6% 0.16 232.661)
     Sky400,
-    /// The sky hue at shade 500.
+    /// oklch(68.5% 0.169 237.323)
     Sky500,
-    /// The sky hue at shade 600.
+    /// oklch(58.8% 0.158 241.966)
     Sky600,
-    /// The sky hue at shade 700.
+    /// oklch(50% 0.134 242.749)
     Sky700,
-    /// The sky hue at shade 800.
+    /// oklch(44.3% 0.11 240.79)
     Sky800,
-    /// The sky hue at shade 900.
+    /// oklch(39.1% 0.09 240.876)
     Sky900,
-    /// The sky hue at shade 950.
+    /// oklch(29.3% 0.066 243.157)
     Sky950,
-    /// The blue hue at shade 50.
+    /// oklch(97% 0.014 254.604)
     Blue50,
-    /// The blue hue at shade 100.
+    /// oklch(93.2% 0.032 255.585)
     Blue100,
-    /// The blue hue at shade 200.
+    /// oklch(88.2% 0.059 254.128)
     Blue200,
-    /// The blue hue at shade 300.
+    /// oklch(80.9% 0.105 251.813)
     Blue300,
-    /// The blue hue at shade 400.
+    /// oklch(70.7% 0.165 254.624)
     Blue400,
-    /// The blue hue at shade 500.
+    /// oklch(62.3% 0.214 259.815)
     Blue500,
-    /// The blue hue at shade 600.
+    /// oklch(54.6% 0.245 262.881)
     Blue600,
-    /// The blue hue at shade 700.
+    /// oklch(48.8% 0.243 264.376)
     Blue700,
-    /// The blue hue at shade 800.
+    /// oklch(42.4% 0.199 265.638)
     Blue800,
-    /// The blue hue at shade 900.
+    /// oklch(37.9% 0.146 265.522)
     Blue900,
-    /// The blue hue at shade 950.
+    /// oklch(28.2% 0.091 267.935)
     Blue950,
-    /// The indigo hue at shade 50.
+    /// oklch(96.2% 0.018 272.314)
     Indigo50,
-    /// The indigo hue at shade 100.
+    /// oklch(93% 0.034 272.788)
     Indigo100,
-    /// The indigo hue at shade 200.
+    /// oklch(87% 0.065 274.039)
     Indigo200,
-    /// The indigo hue at shade 300.
+    /// oklch(78.5% 0.115 274.713)
     Indigo300,
-    /// The indigo hue at shade 400.
+    /// oklch(67.3% 0.182 276.935)
     Indigo400,
-    /// The indigo hue at shade 500.
+    /// oklch(58.5% 0.233 277.117)
     Indigo500,
-    /// The indigo hue at shade 600.
+    /// oklch(51.1% 0.262 276.966)
     Indigo600,
-    /// The indigo hue at shade 700.
+    /// oklch(45.7% 0.24 277.023)
     Indigo700,
-    /// The indigo hue at shade 800.
+    /// oklch(39.8% 0.195 277.366)
     Indigo800,
-    /// The indigo hue at shade 900.
+    /// oklch(35.9% 0.144 278.697)
     Indigo900,
-    /// The indigo hue at shade 950.
+    /// oklch(25.7% 0.09 281.288)
     Indigo950,
-    /// The violet hue at shade 50.
+    /// oklch(96.9% 0.016 293.756)
     Violet50,
-    /// The violet hue at shade 100.
+    /// oklch(94.3% 0.029 294.588)
     Violet100,
-    /// The violet hue at shade 200.
+    /// oklch(89.4% 0.057 293.283)
     Violet200,
-    /// The violet hue at shade 300.
+    /// oklch(81.1% 0.111 293.571)
     Violet300,
-    /// The violet hue at shade 400.
+    /// oklch(70.2% 0.183 293.541)
     Violet400,
-    /// The violet hue at shade 500.
+    /// oklch(60.6% 0.25 292.717)
     Violet500,
-    /// The violet hue at shade 600.
+    /// oklch(54.1% 0.281 293.009)
     Violet600,
-    /// The violet hue at shade 700.
+    /// oklch(49.1% 0.27 292.581)
     Violet700,
-    /// The violet hue at shade 800.
+    /// oklch(43.2% 0.232 292.759)
     Violet800,
-    /// The violet hue at shade 900.
+    /// oklch(38% 0.189 293.745)
     Violet900,
-    /// The violet hue at shade 950.
+    /// oklch(28.3% 0.141 291.089)
     Violet950,
-    /// The purple hue at shade 50.
+    /// oklch(97.7% 0.014 308.299)
     Purple50,
-    /// The purple hue at shade 100.
+    /// oklch(94.6% 0.033 307.174)
     Purple100,
-    /// The purple hue at shade 200.
+    /// oklch(90.2% 0.063 306.703)
     Purple200,
-    /// The purple hue at shade 300.
+    /// oklch(82.7% 0.119 306.383)
     Purple300,
-    /// The purple hue at shade 400.
+    /// oklch(71.4% 0.203 305.504)
     Purple400,
-    /// The purple hue at shade 500.
+    /// oklch(62.7% 0.265 303.9)
     Purple500,
-    /// The purple hue at shade 600.
+    /// oklch(55.8% 0.288 302.321)
     Purple600,
-    /// The purple hue at shade 700.
+    /// oklch(49.6% 0.265 301.924)
     Purple700,
-    /// The purple hue at shade 800.
+    /// oklch(43.8% 0.218 303.724)
     Purple800,
-    /// The purple hue at shade 900.
+    /// oklch(38.1% 0.176 304.987)
     Purple900,
-    /// The purple hue at shade 950.
+    /// oklch(29.1% 0.149 302.717)
     Purple950,
-    /// The fuchsia hue at shade 50.
+    /// oklch(97.7% 0.017 320.058)
     Fuchsia50,
-    /// The fuchsia hue at shade 100.
+    /// oklch(95.2% 0.037 318.852)
     Fuchsia100,
-    /// The fuchsia hue at shade 200.
+    /// oklch(90.3% 0.076 319.62)
     Fuchsia200,
-    /// The fuchsia hue at shade 300.
+    /// oklch(83.3% 0.145 321.434)
     Fuchsia300,
-    /// The fuchsia hue at shade 400.
+    /// oklch(74% 0.238 322.16)
     Fuchsia400,
-    /// The fuchsia hue at shade 500.
+    /// oklch(66.7% 0.295 322.15)
     Fuchsia500,
-    /// The fuchsia hue at shade 600.
+    /// oklch(59.1% 0.293 322.896)
     Fuchsia600,
-    /// The fuchsia hue at shade 700.
+    /// oklch(51.8% 0.253 323.949)
     Fuchsia700,
-    /// The fuchsia hue at shade 800.
+    /// oklch(45.2% 0.211 324.591)
     Fuchsia800,
-    /// The fuchsia hue at shade 900.
+    /// oklch(40.1% 0.17 325.612)
     Fuchsia900,
-    /// The fuchsia hue at shade 950.
+    /// oklch(29.3% 0.136 325.661)
     Fuchsia950,
-    /// The pink hue at shade 50.
+    /// oklch(97.1% 0.014 343.198)
     Pink50,
-    /// The pink hue at shade 100.
+    /// oklch(94.8% 0.028 342.258)
     Pink100,
-    /// The pink hue at shade 200.
+    /// oklch(89.9% 0.061 343.231)
     Pink200,
-    /// The pink hue at shade 300.
+    /// oklch(82.3% 0.12 346.018)
     Pink300,
-    /// The pink hue at shade 400.
+    /// oklch(71.8% 0.202 349.761)
     Pink400,
-    /// The pink hue at shade 500.
+    /// oklch(65.6% 0.241 354.308)
     Pink500,
-    /// The pink hue at shade 600.
+    /// oklch(59.2% 0.249 0.584)
     Pink600,
-    /// The pink hue at shade 700.
+    /// oklch(52.5% 0.223 3.958)
     Pink700,
-    /// The pink hue at shade 800.
+    /// oklch(45.9% 0.187 3.815)
     Pink800,
-    /// The pink hue at shade 900.
+    /// oklch(40.8% 0.153 2.432)
     Pink900,
-    /// The pink hue at shade 950.
+    /// oklch(28.4% 0.109 3.907)
     Pink950,
-    /// The rose hue at shade 50.
+    /// oklch(96.9% 0.015 12.422)
     Rose50,
-    /// The rose hue at shade 100.
+    /// oklch(94.1% 0.03 12.58)
     Rose100,
-    /// The rose hue at shade 200.
+    /// oklch(89.2% 0.058 10.001)
     Rose200,
-    /// The rose hue at shade 300.
+    /// oklch(81% 0.117 11.638)
     Rose300,
-    /// The rose hue at shade 400.
+    /// oklch(71.2% 0.194 13.428)
     Rose400,
-    /// The rose hue at shade 500.
+    /// oklch(64.5% 0.246 16.439)
     Rose500,
-    /// The rose hue at shade 600.
+    /// oklch(58.6% 0.253 17.585)
     Rose600,
-    /// The rose hue at shade 700.
+    /// oklch(51.4% 0.222 16.935)
     Rose700,
-    /// The rose hue at shade 800.
+    /// oklch(45.5% 0.188 13.697)
     Rose800,
-    /// The rose hue at shade 900.
+    /// oklch(41% 0.159 10.272)
     Rose900,
-    /// The rose hue at shade 950.
+    /// oklch(27.1% 0.105 12.094)
     Rose950,
-    /// The slate hue at shade 50.
+    /// oklch(98.4% 0.003 247.858)
     Slate50,
-    /// The slate hue at shade 100.
+    /// oklch(96.8% 0.007 247.896)
     Slate100,
-    /// The slate hue at shade 200.
+    /// oklch(92.9% 0.013 255.508)
     Slate200,
-    /// The slate hue at shade 300.
+    /// oklch(86.9% 0.022 252.894)
     Slate300,
-    /// The slate hue at shade 400.
+    /// oklch(70.4% 0.04 256.788)
     Slate400,
-    /// The slate hue at shade 500.
+    /// oklch(55.4% 0.046 257.417)
     Slate500,
-    /// The slate hue at shade 600.
+    /// oklch(44.6% 0.043 257.281)
     Slate600,
-    /// The slate hue at shade 700.
+    /// oklch(37.2% 0.044 257.287)
     Slate700,
-    /// The slate hue at shade 800.
+    /// oklch(27.9% 0.041 260.031)
     Slate800,
-    /// The slate hue at shade 900.
+    /// oklch(20.8% 0.042 265.755)
     Slate900,
-    /// The slate hue at shade 950.
+    /// oklch(12.9% 0.042 264.695)
     Slate950,
-    /// The gray hue at shade 50.
+    /// oklch(98.5% 0.002 247.839)
     Gray50,
-    /// The gray hue at shade 100.
+    /// oklch(96.7% 0.003 264.542)
     Gray100,
-    /// The gray hue at shade 200.
+    /// oklch(92.8% 0.006 264.531)
     Gray200,
-    /// The gray hue at shade 300.
+    /// oklch(87.2% 0.01 258.338)
     Gray300,
-    /// The gray hue at shade 400.
+    /// oklch(70.7% 0.022 261.325)
     Gray400,
-    /// The gray hue at shade 500.
+    /// oklch(55.1% 0.027 264.364)
     Gray500,
-    /// The gray hue at shade 600.
+    /// oklch(44.6% 0.03 256.802)
     Gray600,
-    /// The gray hue at shade 700.
+    /// oklch(37.3% 0.034 259.733)
     Gray700,
-    /// The gray hue at shade 800.
+    /// oklch(27.8% 0.033 256.848)
     Gray800,
-    /// The gray hue at shade 900.
+    /// oklch(21% 0.034 264.665)
     Gray900,
-    /// The gray hue at shade 950.
+    /// oklch(13% 0.028 261.692)
     Gray950,
-    /// The zinc hue at shade 50.
+    /// oklch(98.5% 0 0)
     Zinc50,
-    /// The zinc hue at shade 100.
+    /// oklch(96.7% 0.001 286.375)
     Zinc100,
-    /// The zinc hue at shade 200.
+    /// oklch(92% 0.004 286.32)
     Zinc200,
-    /// The zinc hue at shade 300.
+    /// oklch(87.1% 0.006 286.286)
     Zinc300,
-    /// The zinc hue at shade 400.
+    /// oklch(70.5% 0.015 286.067)
     Zinc400,
-    /// The zinc hue at shade 500.
+    /// oklch(55.2% 0.016 285.938)
     Zinc500,
-    /// The zinc hue at shade 600.
+    /// oklch(44.2% 0.017 285.786)
     Zinc600,
-    /// The zinc hue at shade 700.
+    /// oklch(37% 0.013 285.805)
     Zinc700,
-    /// The zinc hue at shade 800.
+    /// oklch(27.4% 0.006 286.033)
     Zinc800,
-    /// The zinc hue at shade 900.
+    /// oklch(21% 0.006 285.885)
     Zinc900,
-    /// The zinc hue at shade 950.
+    /// oklch(14.1% 0.005 285.823)
     Zinc950,
-    /// The neutral hue at shade 50.
+    /// oklch(98.5% 0 0)
     Neutral50,
-    /// The neutral hue at shade 100.
+    /// oklch(97% 0 0)
     Neutral100,
-    /// The neutral hue at shade 200.
+    /// oklch(92.2% 0 0)
     Neutral200,
-    /// The neutral hue at shade 300.
+    /// oklch(87% 0 0)
     Neutral300,
-    /// The neutral hue at shade 400.
+    /// oklch(70.8% 0 0)
     Neutral400,
-    /// The neutral hue at shade 500.
+    /// oklch(55.6% 0 0)
     Neutral500,
-    /// The neutral hue at shade 600.
+    /// oklch(43.9% 0 0)
     Neutral600,
-    /// The neutral hue at shade 700.
+    /// oklch(37.1% 0 0)
     Neutral700,
-    /// The neutral hue at shade 800.
+    /// oklch(26.9% 0 0)
     Neutral800,
-    /// The neutral hue at shade 900.
+    /// oklch(20.5% 0 0)
     Neutral900,
-    /// The neutral hue at shade 950.
+    /// oklch(14.5% 0 0)
     Neutral950,
-    /// The stone hue at shade 50.
+    /// oklch(98.5% 0.001 106.423)
     Stone50,
-    /// The stone hue at shade 100.
+    /// oklch(97% 0.001 106.424)
     Stone100,
-    /// The stone hue at shade 200.
+    /// oklch(92.3% 0.003 48.717)
     Stone200,
-    /// The stone hue at shade 300.
+    /// oklch(86.9% 0.005 56.366)
     Stone300,
-    /// The stone hue at shade 400.
+    /// oklch(70.9% 0.01 56.259)
     Stone400,
-    /// The stone hue at shade 500.
+    /// oklch(55.3% 0.013 58.071)
     Stone500,
-    /// The stone hue at shade 600.
+    /// oklch(44.4% 0.011 73.639)
     Stone600,
-    /// The stone hue at shade 700.
+    /// oklch(37.4% 0.01 67.558)
     Stone700,
-    /// The stone hue at shade 800.
+    /// oklch(26.8% 0.007 34.298)
     Stone800,
-    /// The stone hue at shade 900.
+    /// oklch(21.6% 0.006 56.043)
     Stone900,
-    /// The stone hue at shade 950.
+    /// oklch(14.7% 0.004 49.25)
     Stone950,
-    /// The mauve hue at shade 50.
+    /// oklch(98.5% 0 0)
     Mauve50,
-    /// The mauve hue at shade 100.
+    /// oklch(96% 0.003 325.6)
     Mauve100,
-    /// The mauve hue at shade 200.
+    /// oklch(92.2% 0.005 325.62)
     Mauve200,
-    /// The mauve hue at shade 300.
+    /// oklch(86.5% 0.012 325.68)
     Mauve300,
-    /// The mauve hue at shade 400.
+    /// oklch(71.1% 0.019 323.02)
     Mauve400,
-    /// The mauve hue at shade 500.
+    /// oklch(54.2% 0.034 322.5)
     Mauve500,
-    /// The mauve hue at shade 600.
+    /// oklch(43.5% 0.029 321.78)
     Mauve600,
-    /// The mauve hue at shade 700.
+    /// oklch(36.4% 0.029 323.89)
     Mauve700,
-    /// The mauve hue at shade 800.
+    /// oklch(26.3% 0.024 320.12)
     Mauve800,
-    /// The mauve hue at shade 900.
+    /// oklch(21.2% 0.019 322.12)
     Mauve900,
-    /// The mauve hue at shade 950.
+    /// oklch(14.5% 0.008 326)
     Mauve950,
-    /// The olive hue at shade 50.
+    /// oklch(98.8% 0.003 106.5)
     Olive50,
-    /// The olive hue at shade 100.
+    /// oklch(96.6% 0.005 106.5)
     Olive100,
-    /// The olive hue at shade 200.
+    /// oklch(93% 0.007 106.5)
     Olive200,
-    /// The olive hue at shade 300.
+    /// oklch(88% 0.011 106.6)
     Olive300,
-    /// The olive hue at shade 400.
+    /// oklch(73.7% 0.021 106.9)
     Olive400,
-    /// The olive hue at shade 500.
+    /// oklch(58% 0.031 107.3)
     Olive500,
-    /// The olive hue at shade 600.
+    /// oklch(46.6% 0.025 107.3)
     Olive600,
-    /// The olive hue at shade 700.
+    /// oklch(39.4% 0.023 107.4)
     Olive700,
-    /// The olive hue at shade 800.
+    /// oklch(28.6% 0.016 107.4)
     Olive800,
-    /// The olive hue at shade 900.
+    /// oklch(22.8% 0.013 107.4)
     Olive900,
-    /// The olive hue at shade 950.
+    /// oklch(15.3% 0.006 107.1)
     Olive950,
-    /// The mist hue at shade 50.
+    /// oklch(98.7% 0.002 197.1)
     Mist50,
-    /// The mist hue at shade 100.
+    /// oklch(96.3% 0.002 197.1)
     Mist100,
-    /// The mist hue at shade 200.
+    /// oklch(92.5% 0.005 214.3)
     Mist200,
-    /// The mist hue at shade 300.
+    /// oklch(87.2% 0.007 219.6)
     Mist300,
-    /// The mist hue at shade 400.
+    /// oklch(72.3% 0.014 214.4)
     Mist400,
-    /// The mist hue at shade 500.
+    /// oklch(56% 0.021 213.5)
     Mist500,
-    /// The mist hue at shade 600.
+    /// oklch(45% 0.017 213.2)
     Mist600,
-    /// The mist hue at shade 700.
+    /// oklch(37.8% 0.015 216)
     Mist700,
-    /// The mist hue at shade 800.
+    /// oklch(27.5% 0.011 216.9)
     Mist800,
-    /// The mist hue at shade 900.
+    /// oklch(21.8% 0.008 223.9)
     Mist900,
-    /// The mist hue at shade 950.
+    /// oklch(14.8% 0.004 228.8)
     Mist950,
-    /// The taupe hue at shade 50.
+    /// oklch(98.6% 0.002 67.8)
     Taupe50,
-    /// The taupe hue at shade 100.
+    /// oklch(96% 0.002 17.2)
     Taupe100,
-    /// The taupe hue at shade 200.
+    /// oklch(92.2% 0.005 34.3)
     Taupe200,
-    /// The taupe hue at shade 300.
+    /// oklch(86.8% 0.007 39.5)
     Taupe300,
-    /// The taupe hue at shade 400.
+    /// oklch(71.4% 0.014 41.2)
     Taupe400,
-    /// The taupe hue at shade 500.
+    /// oklch(54.7% 0.021 43.1)
     Taupe500,
-    /// The taupe hue at shade 600.
+    /// oklch(43.8% 0.017 39.3)
     Taupe600,
-    /// The taupe hue at shade 700.
+    /// oklch(36.7% 0.016 35.7)
     Taupe700,
-    /// The taupe hue at shade 800.
+    /// oklch(26.8% 0.011 36.5)
     Taupe800,
-    /// The taupe hue at shade 900.
+    /// oklch(21.4% 0.009 43.1)
     Taupe900,
-    /// The taupe hue at shade 950.
+    /// oklch(14.7% 0.004 49.3)
     Taupe950,
     /// An explicit sRGB value outside the palette.
     Srgb(Srgba),

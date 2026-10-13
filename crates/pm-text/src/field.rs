@@ -22,7 +22,7 @@ pub enum Edit {
 /// A line of text with a caret between two of its characters.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Field {
-    /// The text.
+    /// The line being edited, which never contains control characters.
     text: String,
     /// The caret, as a byte offset on a character boundary.
     caret: usize,
@@ -38,7 +38,7 @@ impl Field {
         }
     }
 
-    /// The text.
+    /// The line as typed so far, without the caret.
     pub fn text(&self) -> &str {
         &self.text
     }

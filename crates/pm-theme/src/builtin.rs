@@ -4,7 +4,7 @@ use pm_color::{Color, Role};
 
 use crate::{Theme, ThemeFamily};
 
-/// The dark theme, with every role written out.
+/// Near-black surfaces under light grey text, with a blue-teal accent.
 fn dark() -> Theme {
     Theme::blank()
         .with(Role::Background, Color::hex(0x121314))
@@ -26,7 +26,7 @@ fn dark() -> Theme {
         .with(Role::OnDanger, Color::hex(0x1f0b07))
 }
 
-/// The light theme, with every role written out.
+/// Light grey surfaces under dark grey text, with the same accent as the dark theme.
 fn light() -> Theme {
     Theme::blank()
         .with(Role::Background, Color::hex(0xf5f5f5))

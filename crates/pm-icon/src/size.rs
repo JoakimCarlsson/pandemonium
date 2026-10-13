@@ -1,6 +1,6 @@
 //! The sizes an icon is drawn at.
 
-/// How large an icon is drawn, in the steps the editor uses.
+/// The sizes an icon is drawn at; the artwork is designed on a sixteen-pixel grid.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum IconSize {
     /// 12px: inside a tab or a row of text.

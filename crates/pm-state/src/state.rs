@@ -12,7 +12,7 @@ type Observer<T> = Rc<dyn Fn(&T)>;
 
 /// The part of a state every handle shares.
 struct Shared<T> {
-    /// The value.
+    /// The shared value; borrowed only for the length of one read or update.
     value: RefCell<T>,
     /// How many times the value has changed.
     version: Cell<u64>,
