@@ -7,6 +7,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use pm_acp::{AGENTS, Login, Standing};
+use pm_components::arrange::is_project_menu_item;
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
@@ -44,6 +45,9 @@ const WHEEL_LINE: f32 = 48.0;
 
 /// How soon after one press in a field a second one counts as a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
+/// How far the pointer has to move, in logical pixels, with a project header held down for it to be a drag.
+const DRAG_DISTANCE: f32 = 6.0;
 
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
@@ -97,6 +101,10 @@ pub struct App {
     work: Work,
     /// What was last written as the view, which is what the window opened with until it changes.
     saved_view: Option<View>,
+    /// The project header a press began on, by position, and where the pointer was.
+    project_press: Option<(usize, (f32, f32))>,
+    /// Whether the pointer moved far enough from `project_press` for it to be a drag.
+    project_dragging: bool,
     /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
     autofocused: bool,
 }
@@ -179,6 +187,8 @@ impl Default for App {
             last_press: None,
             saved,
             saved_view,
+            project_press: None,
+            project_dragging: false,
             saved_choices: choices,
             logins: Default::default(),
             work,
@@ -299,6 +309,10 @@ impl App {
         }
         if id == ATTACH {
             self.attach();
+            return;
+        }
+        if let Some(project) = self.model.get().more_button_of(id) {
+            self.open_project_menu(project);
             return;
         }
         self.model.update(|state| *state = state.clone().after(id));
@@ -434,6 +448,7 @@ impl App {
         self.model
             .update(|state| *state = state.clone().with_project_opened(&path));
         self.persist();
+        self.work.relist();
     }
 
     /// Asks the desktop for files and mentions them in the prompt, unless the dialog is dismissed.
@@ -498,6 +513,15 @@ impl App {
             }
             PointerEvent::Pressed(Button::Left) => {
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
+                let screen = self.model.get();
+                self.project_press = on
+                    .and_then(|id| screen.header_of(id))
+                    .zip(self.pointer.position);
+                self.project_dragging = false;
+                if screen.project_menu_open() && !on.is_some_and(is_project_menu_item) {
+                    self.model
+                        .update(|state| *state = state.clone().without_menu());
+                }
                 if self.model.get().menu().is_some() && !on.is_some_and(is_menu_item) {
                     self.model
                         .update(|state| *state = state.clone().without_menu());
@@ -514,6 +538,7 @@ impl App {
                 }
             }
             PointerEvent::Moved(x, y) => {
+                self.drag_project((x, y));
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
                 {
@@ -522,6 +547,10 @@ impl App {
             }
             PointerEvent::Released(Button::Left) => {
                 self.dragging = None;
+                if self.drop_project() {
+                    self.pressed_on = None;
+                    return;
+                }
                 let released_on = self.pointer.position.and_then(|at| self.output.hit(at));
                 if let (Some(pressed), Some(released)) = (self.pressed_on.take(), released_on)
                     && pressed == released
@@ -552,6 +581,54 @@ impl App {
             MENU_SELECT_ALL => self.edit_field(field, Edit::SelectAll),
             _ => {}
         }
+    }
+
+    /// Opens the menu of the project at `project`, just under the pointer.
+    fn open_project_menu(&mut self, project: usize) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        self.model.update(|state| {
+            *state = state
+                .clone()
+                .with_project_menu(project, (x - 8.0, y + 12.0))
+        });
+    }
+
+    /// Follows the pointer to `at` while a project header is held down: past a few pixels it is a drag, and the project under the pointer is the one it would take the place of.
+    fn drag_project(&mut self, at: (f32, f32)) {
+        let Some((from, origin)) = self.project_press else {
+            return;
+        };
+        if !self.project_dragging && (at.0 - origin.0).hypot(at.1 - origin.1) < DRAG_DISTANCE {
+            return;
+        }
+        self.project_dragging = true;
+        let held = self.model.get();
+        let current = match &held {
+            Screen::Workspace(state) => state.project_drag.map_or(from, |drag| drag.over),
+            Screen::Onboarding(_) => from,
+        };
+        let over = self
+            .output
+            .hit(at)
+            .and_then(|id| held.project_at(id))
+            .filter(|project| *project != from)
+            .unwrap_or(current);
+        self.model
+            .update(|state| *state = state.clone().dragged_over(from, over, at));
+    }
+
+    /// Ends a drag of a project header, putting the project where it was let go, and says whether there was a drag.
+    fn drop_project(&mut self) -> bool {
+        self.project_press = None;
+        if !std::mem::take(&mut self.project_dragging) {
+            return false;
+        }
+        self.model.update(|state| *state = state.clone().dropped());
+        self.persist();
+        self.deliver();
+        true
     }
 
     /// Opens the menu over the field `id` at the pointer, after putting the

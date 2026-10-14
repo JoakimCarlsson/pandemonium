@@ -41,6 +41,10 @@ pub enum Shot {
     Empty,
     /// The workspace on the history page.
     History,
+    /// The workspace with the menu of a project open.
+    ProjectMenu,
+    /// The workspace with a project dragged over another.
+    Dragging,
     /// The workspace with every project folded, showing how many sessions each has.
     Folded,
     /// The page for starting work in this repository, with the agent's settings known.
@@ -102,6 +106,10 @@ impl Shot {
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::Workspace(WorkspaceState::new(&[])),
             Self::History => Screen::Workspace(workspace().after(HISTORY)),
+            Self::ProjectMenu => {
+                Screen::Workspace(workspace().with_project_menu(1, (236.0, 250.0)))
+            }
+            Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Folded => Screen::Workspace(
                 (1000..1004).fold(workspace(), |state, id| state.after(FocusId(id))),
             ),

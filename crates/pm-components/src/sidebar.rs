@@ -3,15 +3,17 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Role, animate_pulse, bg, border_color, border_r, border_t, flex, flex_col, flex_none,
-    font_mono, gap, h, h_full, items_center, justify_center, leading_ratio, mb, min_h,
-    overflow_hidden, p, pl, pr, pt, px, rounded_full, size, text_color, text_px, w_px,
+    Radius, Role, absolute, animate_pulse, bg, border, border_color, border_r, border_t, flex,
+    flex_col, flex_none, font_mono, gap, h, h_full, items_center, justify_center, leading_ratio,
+    left, mb, min_h, opacity, overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md,
+    size, text_color, text_px, top, w_px, z,
 };
 use pm_ui::{Node, node, text};
 
 use crate::Avatar;
 use crate::Button;
 use crate::Tile;
+use crate::arrange::PROJECT_MORE_BASE;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
 use crate::state::{
@@ -100,6 +102,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .filter(|(_, session)| session.project == index)
         .collect();
     let folded = state.folded[index];
+    let dragged = state.project_drag.is_some_and(|drag| drag.from == index);
     let mut header = Tile::new(FocusId(PROJECT_BASE + index as u64))
         .selected(false)
         .build()
@@ -114,7 +117,12 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
             text_color(Role::Subtle),
         ]));
     }
+    header = header
+        .child(Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64)).build());
     let mut section = node().styles([flex(), flex_col(), mb(3)]).child(header);
+    if dragged {
+        section = section.styles([opacity(35)]);
+    }
     if !folded {
         let open = match state.page {
             Page::Session(open) => Some(open),
@@ -189,7 +197,12 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
                     overflow_hidden(),
                     pm_style::flex_1(),
                 ])
-                .children((0..state.projects.len()).map(|index| project(state, index)))
+                .children(
+                    state
+                        .display_order()
+                        .into_iter()
+                        .map(|index| project(state, index)),
+                )
                 .scroll_y(state.sidebar_scroll),
         )
         .child(
@@ -205,4 +218,32 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
                 .child(spacer())
                 .child(Button::icon(IconName::Settings, SETTINGS).build()),
         )
+}
+
+/// The header of the project being dragged, floating where the pointer is.
+pub fn drag_ghost(state: &WorkspaceState) -> Option<Node> {
+    let drag = state.project_drag?;
+    let project = state.projects.get(drag.from)?;
+    Some(
+        node()
+            .styles([
+                absolute(),
+                left(2),
+                top((drag.at.1 - ROW / 2.0) / 4.0),
+                z(60),
+                flex(),
+                items_center(),
+                gap(3),
+                h(9),
+                w_px(WIDTH - 16.0),
+                px(2),
+                rounded(Radius::Md),
+                bg(Role::Surface),
+                border(),
+                border_color(Role::Border),
+                shadow_md(),
+            ])
+            .child(Avatar::of(project).build())
+            .child(clipped(&project.name, 14, Role::Text)),
+    )
 }

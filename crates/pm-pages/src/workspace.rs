@@ -9,6 +9,8 @@ use pm_style::{
 use pm_text::Shaper;
 use pm_ui::{Node, node};
 
+use pm_components::Menu;
+use pm_components::arrange::{PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu};
 use pm_components::context_menu::field_menu;
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::{chat, diff, history, input, review, sidebar, terminal, welcome};
@@ -166,4 +168,15 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             .menu
             .and_then(|menu| state.field(menu.field).map(|field| field_menu(field, menu))),
     )
+    .children(sidebar::drag_ghost(state))
+    .children(state.project_menu.map(project_menu))
+}
+
+/// The menu of a project: start a session in it, or take it out of the window.
+fn project_menu(open: ProjectMenu) -> Node {
+    Menu::new(open.at.0, open.at.1)
+        .item("New session", None, PROJECT_MENU_NEW, false)
+        .separator()
+        .item("Remove workspace", None, PROJECT_MENU_REMOVE, false)
+        .build()
 }

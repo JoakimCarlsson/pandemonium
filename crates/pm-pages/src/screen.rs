@@ -134,6 +134,59 @@ impl Screen {
         }
     }
 
+    /// The screen with the menu of the project at `project` open at `at`, while the workspace is showing.
+    pub fn with_project_menu(self, project: usize, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_project_menu(project, at)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// Which project's menu button `id` is, while the workspace is showing.
+    pub fn more_button_of(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.more_button_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// Which project's header `id` is, while the workspace is showing.
+    pub fn header_of(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.header_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The project the element `id` belongs to, while the workspace is showing.
+    pub fn project_at(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.project_at(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the project at `from` being dragged to the place of the one at `over`, with the pointer at `at`.
+    pub fn dragged_over(self, from: usize, over: usize, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.dragged_over(from, over, at)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen after a dragged project was let go.
+    pub fn dropped(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.dropped()),
+            onboarding => onboarding,
+        }
+    }
+
+    /// Whether a menu is open over a project, so that a press elsewhere has to close it.
+    pub fn project_menu_open(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some())
+    }
+
     /// The screen with no menu open.
     pub fn without_menu(self) -> Self {
         match self {

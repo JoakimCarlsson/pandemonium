@@ -4,6 +4,7 @@ use pm_acp::{Event, Setting, Slash};
 use pm_input::FocusId;
 use pm_text::{Edit, Field};
 
+use crate::arrange::{PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectDrag, ProjectMenu};
 use crate::context_menu::ContextMenu;
 use crate::project::Project;
 use crate::sample::{AGENTS, Change, Message, Session, Status, projects, sessions};
@@ -154,6 +155,8 @@ pub const CHOICE_BASE: u64 = 3600;
 /// Something the window has to do or tell an agent, taken off the state by whoever runs the agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outgoing {
+    /// Tells the window's own bookkeeping that the sessions moved: for each old position, the new one, or nothing for a session that is gone.
+    Reindexed(Vec<Option<usize>>),
     /// Starts the agent of a new session, in a worktree off `base` when one is given, and hands it the words.
     Start {
         /// The session, by position.
@@ -366,6 +369,10 @@ pub struct WorkspaceState {
     pub sidebar_scroll: f32,
     /// The menu open over a field, and where, if one is.
     pub menu: Option<ContextMenu>,
+    /// The menu open over a project, and where, if one is.
+    pub project_menu: Option<ProjectMenu>,
+    /// The project being dragged to another place, if one is.
+    pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
     pub outbox: Vec<Outgoing>,
     /// How far the conversation is scrolled back from its end, in logical pixels.
@@ -446,6 +453,8 @@ impl WorkspaceState {
             message: Field::default(),
             sidebar_scroll: 0.0,
             menu: None,
+            project_menu: None,
+            project_drag: None,
             outbox: Vec::new(),
             chat_back: 0.0,
             picker: None,
@@ -558,6 +567,7 @@ impl WorkspaceState {
             self.activity = None;
         }
         match action {
+            PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
             HISTORY => self.page = Page::History,
             TAB_CHAT => self.tab = Tab::Chat,
             TAB_DIFF => self.tab = Tab::Diff,
@@ -617,6 +627,7 @@ impl WorkspaceState {
     /// The state with no menu open.
     pub fn without_menu(mut self) -> Self {
         self.menu = None;
+        self.project_menu = None;
         self
     }
 

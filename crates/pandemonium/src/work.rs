@@ -1,7 +1,7 @@
 //! The work behind the screen: asking the servers to run the agents and the git operations, and taking in what they answer.
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use pm_acp::{AGENTS, Discovery, Event};
@@ -106,6 +106,8 @@ pub struct Work {
     numbers: HashMap<usize, (Host, u64)>,
     /// The session's position, by the machine and the server's number.
     positions: HashMap<(Host, u64), usize>,
+    /// The sessions the window let go of with their project, whose events are not wanted until the project is added again.
+    forgotten: HashSet<(Host, u64)>,
     /// What agents did before their session was known by position.
     early: HashMap<(Host, u64), Vec<Event>>,
     /// What the threads report.
@@ -128,6 +130,7 @@ impl Work {
             links: HashMap::new(),
             numbers: HashMap::new(),
             positions: HashMap::new(),
+            forgotten: HashSet::new(),
             early: HashMap::new(),
             jobs,
             reporter,
@@ -325,6 +328,7 @@ impl Work {
         let mut copies = Vec::new();
         for outgoing in outbox {
             match outgoing {
+                Outgoing::Reindexed(moved) => self.reindex(&moved),
                 Outgoing::Start {
                     session,
                     text,
@@ -602,9 +606,38 @@ impl Work {
         }
     }
 
+    /// Follows the sessions to their new positions after the window dropped some: `moved` says, for each old position, the new one, or nothing for a session that is gone.
+    fn reindex(&mut self, moved: &[Option<usize>]) {
+        let before = std::mem::take(&mut self.numbers);
+        self.positions.clear();
+        for (old, key) in before {
+            match moved.get(old).copied().flatten() {
+                Some(new) => {
+                    self.positions.insert(key.clone(), new);
+                    self.numbers.insert(new, key);
+                }
+                None => {
+                    self.early.remove(&key);
+                    self.forgotten.insert(key);
+                }
+            }
+        }
+    }
+
+    /// Asks every server reached for its sessions again, so that those of a project just added come back.
+    pub fn relist(&mut self) {
+        let hosts: Vec<Host> = self.links.keys().cloned().collect();
+        for host in hosts {
+            self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
+        }
+    }
+
     /// Passes what the agent of the session numbered `number` on `host` did on to the screen.
     fn heard(&mut self, model: &State<Screen>, host: &Host, number: u64, event: Event) {
         let key = (host.clone(), number);
+        if self.forgotten.contains(&key) {
+            return;
+        }
         let Some(session) = self.positions.get(&key).copied() else {
             self.early.entry(key).or_default().push(event);
             return;
@@ -774,6 +807,7 @@ impl Work {
             added = mapping;
         });
         for (position, number) in added {
+            self.forgotten.remove(&(origin.clone(), number));
             self.numbers.insert(position, (origin.clone(), number));
             self.positions.insert((origin.clone(), number), position);
             if let Some(client) = self.links.get(origin).and_then(|link| link.client.as_ref()) {
