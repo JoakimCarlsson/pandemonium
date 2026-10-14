@@ -11,6 +11,8 @@ use crate::arrange::{
 };
 use crate::context_menu::ContextMenu;
 use crate::draft::{NEXT, OTHER};
+use crate::git_controls::{BRANCH_FILTER, BRANCH_SUBMIT, GitControls, OPEN_ARROW_BASE};
+use crate::git_prompts::{PROMPT_CONFIRM, STASH_FIELD};
 use crate::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_COPY_MARKDOWN, MESSAGE_MENU_COPY_REPLY,
     MESSAGE_MENU_SELECT_ALL, MessageMenu,
@@ -21,6 +23,11 @@ use crate::sample::{AGENTS, Change, Comment, Message, Range, Session, Status, pr
 /// A prompt holding `text`, which may run to several lines.
 pub fn prompt_field(text: &str) -> Field {
     Field::new(text).multiline(true)
+}
+
+/// A box for a commit message, which runs to several lines.
+pub fn commit_field() -> Field {
+    Field::new("").multiline(true)
 }
 
 /// Lists every session.
@@ -457,12 +464,111 @@ pub enum Outgoing {
         /// Whether to stage them, rather than unstage them.
         stage: bool,
     },
+    /// Puts files back as they are in the last commit in the folder of a session.
+    Discard {
+        /// The session, by position.
+        session: usize,
+        /// The files, from the root of the repository.
+        paths: Vec<String>,
+    },
+    /// Adds files to the `.gitignore` of the folder of a session.
+    Ignore {
+        /// The session, by position.
+        session: usize,
+        /// The files, from the root of the repository.
+        paths: Vec<String>,
+    },
+    /// Checks a branch out in the folder of a session.
+    Checkout {
+        /// The session, by position.
+        session: usize,
+        /// The branch.
+        branch: String,
+    },
+    /// Makes a branch in the folder of a session and checks it out.
+    CreateBranch {
+        /// The session, by position.
+        session: usize,
+        /// What the branch is called.
+        name: String,
+    },
+    /// Lists the branches of the repository the folder of a session is in.
+    SessionBranches {
+        /// The session, by position.
+        session: usize,
+    },
+    /// Reads a file of the folder of a session.
+    ReadFile {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the repository.
+        path: String,
+        /// Whether to read it from the last commit.
+        head: bool,
+    },
     /// Commits what is staged in the folder of a session.
     Commit {
         /// The session, by position.
         session: usize,
         /// The commit message.
         message: String,
+        /// Whether, with nothing staged, to take the changes of every tracked file.
+        tracked: bool,
+        /// Whether to push the branch afterwards.
+        push: bool,
+        /// Whether to rewrite the last commit in place of making another.
+        amend: bool,
+    },
+    /// Takes the next step of the merge, rebase or cherry-pick the folder of a session is stopped in.
+    Step {
+        /// The session, by position.
+        session: usize,
+        /// `continue`, `skip` or `abort`.
+        action: &'static str,
+        /// The message to finish a merge or a cherry-pick with.
+        message: Option<String>,
+    },
+    /// Saves the changes of the folder of a session in a stash, or applies, pops or drops one.
+    Stash {
+        /// The session, by position.
+        session: usize,
+        /// `push`, `apply`, `pop` or `drop`.
+        action: &'static str,
+        /// The stash to take, by its index in the list.
+        index: Option<usize>,
+        /// What to call the stash being made.
+        message: Option<String>,
+    },
+    /// Lists the stashes of the repository the folder of a session is in.
+    Stashes {
+        /// The session, by position.
+        session: usize,
+    },
+    /// Applies a commit to the branch the folder of a session has checked out.
+    CherryPick {
+        /// The session, by position.
+        session: usize,
+        /// The commit, by its abbreviated name.
+        commit: String,
+    },
+    /// Fetches, pulls or pushes the repository the folder of a session is in, or syncs it.
+    Sync {
+        /// The session, by position.
+        session: usize,
+        /// `fetch`, `pull`, `push` or `sync`.
+        operation: &'static str,
+    },
+    /// Lists the commits of the repository the folder of a session is in.
+    Log {
+        /// The session, by position.
+        session: usize,
+        /// Whether to list what every reference reaches.
+        all: bool,
+    },
+    /// Reads the changes of the folder of a session again.
+    Refresh {
+        /// The session, by position.
+        session: usize,
     },
     /// Lists the GitHub accounts and organizations on this machine, for the panel for adding a project.
     Owners,
@@ -545,6 +651,8 @@ pub enum Tab {
     Chat,
     /// The files the agent changed.
     Diff,
+    /// A file being read.
+    File,
 }
 
 /// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
@@ -590,12 +698,14 @@ pub struct WorkspaceState {
     pub folded: Vec<bool>,
     /// Whether the review panel is open.
     pub review: bool,
+    /// What the reader picked and opened among the changes.
+    pub git: GitControls,
     /// What the review panel lists.
     pub review_tab: ReviewTab,
-    /// The folders of the changed files that are folded away, by path.
-    pub closed_folders: std::collections::HashSet<String>,
     /// The folders of the project's files that are folded away, by path.
     pub closed_tree: std::collections::HashSet<String>,
+    /// The folders of the changed files that are folded away, by group and path.
+    pub closed_folders: std::collections::HashSet<String>,
     /// The changed files folded away in the diff, by path.
     pub closed_diffs: std::collections::HashSet<String>,
     /// The lines or file the comment being written or the lines being dragged over are about.
@@ -727,9 +837,10 @@ impl WorkspaceState {
             page: Page::New(0),
             tab: Tab::Chat,
             review: true,
+            git: GitControls::default(),
             review_tab: ReviewTab::Changes,
-            closed_folders: std::collections::HashSet::new(),
             closed_tree: std::collections::HashSet::new(),
+            closed_folders: std::collections::HashSet::new(),
             closed_diffs: std::collections::HashSet::new(),
             comment_target: None,
             comment_text: Field::default(),
@@ -744,7 +855,7 @@ impl WorkspaceState {
             agent: 0,
             file: None,
             prompt: prompt_field(""),
-            message: Field::default(),
+            message: commit_field(),
             history_search: Field::default(),
             sidebar_scroll: 0.0,
             adder: None,
@@ -866,6 +977,12 @@ impl WorkspaceState {
         if !Self::keeps_activity(action) {
             self.activity = None;
         }
+        if !Self::keeps_branches(action) {
+            self.git.branch_menu = false;
+        }
+        if !self.is_menu_row(action) {
+            self.git.menu = None;
+        }
         let restoring = self.restoring.take();
         match action {
             RESTORE_FILES => self.restore(restoring),
@@ -899,11 +1016,16 @@ impl WorkspaceState {
             SEND_NOW => self.send(true),
             STOP => self.stop(),
             STAGE_ALL => self.stage_all(),
-            COMMIT => self.commit(),
-            FocusId(id) => self.after_numbered(id),
+            COMMIT => self.primary_pressed(),
+            FocusId(id) => {
+                if !self.press_git(action) {
+                    self.after_numbered(id);
+                }
+            }
         }
         self.sync_context();
         self.refresh_files();
+        self.ask_log_once();
         self
     }
 
@@ -919,6 +1041,8 @@ impl WorkspaceState {
             }
             COMMIT_MESSAGE => self.message.apply(edit),
             COMMENT_FIELD => self.comment_text.apply(edit),
+            BRANCH_FILTER => self.git.filter.apply(edit),
+            STASH_FIELD => self.git.stash_message.apply(edit),
             ADDER_FIELD => self.adder_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
             OTHER => {
@@ -941,6 +1065,8 @@ impl WorkspaceState {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
             COMMENT_FIELD => Some(&self.comment_text),
+            BRANCH_FILTER => Some(&self.git.filter),
+            STASH_FIELD => Some(&self.git.stash_message),
             HISTORY_SEARCH => Some(&self.history_search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             OTHER => self.other_field(),
@@ -953,6 +1079,8 @@ impl WorkspaceState {
         id == PROMPT
             || id == COMMIT_MESSAGE
             || id == COMMENT_FIELD
+            || id == BRANCH_FILTER
+            || id == STASH_FIELD
             || id == HISTORY_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
@@ -963,6 +1091,8 @@ impl WorkspaceState {
         match id {
             COMMIT_MESSAGE => COMMIT,
             COMMENT_FIELD => COMMENT_ADD,
+            BRANCH_FILTER => BRANCH_SUBMIT,
+            STASH_FIELD => PROMPT_CONFIRM,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
             OTHER => NEXT,
@@ -972,7 +1102,11 @@ impl WorkspaceState {
 
     /// What pressing Control or Command with Enter in the field `id` hands in, when it hands in something of its own.
     pub fn hurried_submit_of(id: FocusId) -> Option<FocusId> {
-        (id == PROMPT).then_some(SEND_NOW)
+        match id {
+            PROMPT => Some(SEND_NOW),
+            COMMIT_MESSAGE => Some(COMMIT),
+            _ => None,
+        }
     }
 
     /// The state with a menu open over the field `field` at `at`.
@@ -987,6 +1121,7 @@ impl WorkspaceState {
         self.project_menu = None;
         self.session_menu = None;
         self.message_menu = None;
+        self.git.menu = None;
         self
     }
 
@@ -1089,6 +1224,7 @@ impl WorkspaceState {
             self.tab = Tab::Chat;
             self.file = None;
             self.comment_target = None;
+            self.git = GitControls::default();
             self.chat_back = 0.0;
         } else if let Some(index) = position(AGENT_BASE, AGENTS.len()) {
             self.agent = index;
@@ -1124,6 +1260,8 @@ impl WorkspaceState {
             self.fold_change_folder(index);
         } else if let Some(index) = position(FOLDER_STAGE_BASE, self.change_count()) {
             self.stage_change_folder(index);
+        } else if let Some(index) = position(OPEN_ARROW_BASE, self.change_count()) {
+            self.open_changed_file(index);
         } else if let Some(index) = position(DIFF_FOLD_BASE, self.change_count()) {
             self.fold_diff(index);
         } else if let Some(index) = position(COMMENT_FILE_BASE, self.change_count()) {
@@ -1320,7 +1458,7 @@ impl WorkspaceState {
     }
 
     /// How many changes the open session has.
-    fn change_count(&self) -> usize {
+    pub(crate) fn change_count(&self) -> usize {
         self.open().map_or(0, |session| session.changes.len())
     }
 
@@ -1438,23 +1576,48 @@ impl WorkspaceState {
     }
 
     /// Stages the changes at `indices` of the open session, or unstages them when all of them are staged already.
-    fn stage_changes(&mut self, indices: &[usize]) {
+    pub(crate) fn stage_changes(&mut self, indices: &[usize]) {
+        let stage = !self.open().is_some_and(|session| {
+            indices
+                .iter()
+                .filter_map(|&index| session.changes.get(index))
+                .all(|change| change.fully_staged())
+        });
+        self.set_staged(indices, stage);
+    }
+
+    /// Stages the changes at `indices` of the open session, or, when `stage` is not set, unstages them.
+    pub(crate) fn set_staged(&mut self, indices: &[usize], stage: bool) {
+        self.git.trouble = None;
         let Page::Session(open) = self.page else {
             return;
         };
         let Some(session) = self.sessions.get_mut(open) else {
             return;
         };
-        let stage = !indices
-            .iter()
-            .filter_map(|&index| session.changes.get(index))
-            .all(|change| change.staged);
         let mut paths = Vec::new();
         for &index in indices {
             if let Some(change) = session.changes.get_mut(index)
-                && change.staged != stage
+                && !change.conflicted
+                && change.fully_staged() != stage
             {
+                if stage {
+                    change.index = Some(match change.worktree {
+                        Some('?') => 'A',
+                        Some(letter) => letter,
+                        None => change.index.unwrap_or('M'),
+                    });
+                    change.worktree = None;
+                    change.untracked = false;
+                } else if change.index == Some('A') {
+                    change.index = None;
+                    change.worktree = Some('?');
+                    change.untracked = true;
+                } else {
+                    change.worktree = change.index.take().or(Some('M'));
+                }
                 change.staged = stage;
+                change.unstaged = !stage;
                 paths.push(change.path.clone());
             }
         }
@@ -1610,8 +1773,9 @@ impl WorkspaceState {
     }
 
     /// Opens the diff scrolled to the change at `index`, unfolded.
-    fn open_change(&mut self, index: usize) {
+    pub(crate) fn open_change(&mut self, index: usize) {
         self.file = Some(index);
+        self.select_change(index);
         self.tab = Tab::Diff;
         if let Some(path) = self
             .open()
@@ -1627,20 +1791,24 @@ impl WorkspaceState {
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
-        let paths: Vec<String> = self
-            .open()
-            .map(|session| crate::change_tree::folder_paths(&session.changes))
-            .unwrap_or_default();
-        if let Some(path) = paths.into_iter().nth(position) {
-            toggle(&mut self.closed_folders, path);
+        let key = self.open().and_then(|session| {
+            crate::change_list::folder_table(&session.changes)
+                .get(position)
+                .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
+        });
+        if let Some(key) = key {
+            toggle(&mut self.closed_folders, key);
         }
     }
 
-    /// Stages the changes under the folder at `position` of the open session's changes, or unstages them when all are staged.
+    /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
-        let files = self
-            .open()
-            .and_then(|session| crate::change_tree::folder_files(&session.changes, position));
+        let files = self.open().and_then(|session| {
+            crate::change_list::folder_table(&session.changes)
+                .into_iter()
+                .nth(position)
+                .map(|folder| folder.files)
+        });
         if let Some(files) = files {
             self.stage_changes(&files);
         }
@@ -1677,8 +1845,8 @@ impl WorkspaceState {
         self
     }
 
-    /// Commits the staged changes of the open session under the message typed.
-    fn commit(&mut self) {
+    /// Commits the staged changes of the open session under the message typed, or, with none staged, the changes of its tracked files, and pushes afterwards when `push` is set.
+    pub(crate) fn commit_with(&mut self, push: bool, amend: bool) {
         let message = self.message.text().trim().to_owned();
         let Page::Session(index) = self.page else {
             return;
@@ -1686,16 +1854,47 @@ impl WorkspaceState {
         let Some(session) = self.sessions.get_mut(index) else {
             return;
         };
-        if message.is_empty() || !session.changes.iter().any(|change| change.staged) {
+        let staged = session.changes.iter().any(|change| change.staged);
+        let tracked = !staged && !amend;
+        if message.is_empty()
+            || (!amend
+                && !staged
+                && !session
+                    .changes
+                    .iter()
+                    .any(|change| !change.untracked && !change.conflicted))
+        {
             return;
         }
-        session.changes.retain(|change| !change.staged);
+        if amend {
+            session.commits.pop();
+        }
+        session.changes.retain_mut(|change| {
+            if amend {
+                return !change.staged || change.unstaged;
+            }
+            if tracked {
+                return change.untracked || change.conflicted;
+            }
+            if !change.staged {
+                return true;
+            }
+            change.index = None;
+            change.staged = false;
+            change.unstaged
+        });
         session.commits.push(message.clone());
-        self.message = Field::default();
+        self.message = commit_field();
         self.file = None;
+        self.git.marked.clear();
+        self.git.busy = Some(if push { "Pushing…" } else { "Committing…" });
+        self.git.trouble = None;
         self.outbox.push(Outgoing::Commit {
             session: index,
             message,
+            tracked,
+            push,
+            amend,
         });
     }
 
@@ -1713,6 +1912,24 @@ impl WorkspaceState {
             if branch.is_some() || head.is_some() {
                 held.branch = Session::checkout_label(branch, head, held.base.as_deref());
             }
+        }
+        self
+    }
+
+    /// The state after the branch of the folder of the session at `session` was seen to stand as `tracking` says against the one it follows, `branch` being the one it has checked out, if it is on one.
+    pub fn tracked(
+        mut self,
+        session: usize,
+        branch: Option<&str>,
+        tracking: pm_git::Tracking,
+        operation: Option<pm_git::Operation>,
+    ) -> Self {
+        if let Some(held) = self.sessions.get_mut(session) {
+            held.on_branch = branch.is_some();
+            held.tracking = tracking;
+        }
+        if self.page == Page::Session(session) {
+            self.git.operation = operation;
         }
         self
     }
@@ -1736,12 +1953,19 @@ impl WorkspaceState {
         changes: &[pm_git::Change],
         commits: Option<Vec<String>>,
     ) -> Self {
+        let marked = self.marked_by_path();
         if let Some(held) = self.sessions.get_mut(session) {
             held.changes = changes
                 .iter()
                 .map(|found| {
                     let mut change = Change::new(&found.path, &found.diff);
-                    change.staged = found.staged;
+                    change.staged = found.index.is_some() || found.staged;
+                    change.unstaged = found.worktree.is_some() || !found.staged;
+                    change.untracked = found.untracked;
+                    change.conflicted = found.conflicted;
+                    change.index = found.index;
+                    change.worktree = found.worktree;
+                    change.from = found.from.clone();
                     change.viewed = held
                         .changes
                         .iter()
@@ -1759,6 +1983,7 @@ impl WorkspaceState {
         if self.file.is_some_and(|file| file >= self.change_count()) {
             self.file = None;
         }
+        self.remarked(&marked);
         self
     }
 

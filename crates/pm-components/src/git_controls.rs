@@ -1,0 +1,879 @@
+//! What the reader does to the changes with git: picking several files, the menu on them, discarding, ignoring, reading a file and changing branch.
+
+use pm_input::FocusId;
+use pm_text::Field;
+
+use crate::change_list::Group;
+use crate::git_menus::{MENU_ROW_BASE, MenuKind, OpenMenu};
+use crate::git_prompts::Prompt;
+use crate::sample::Change;
+use crate::state::{Outgoing, Page, Tab, WorkspaceState};
+
+/// The button that opens the list of branches.
+pub const BRANCH_BUTTON: FocusId = FocusId(7020);
+
+/// The panel listing the branches.
+pub const BRANCH_BODY: FocusId = FocusId(7021);
+
+/// The box branches are searched in and a new one is named in.
+pub const BRANCH_FILTER: FocusId = FocusId(7022);
+
+/// The row that makes a branch of the name typed.
+pub const BRANCH_CREATE: FocusId = FocusId(7023);
+
+/// What Enter does in the box branches are searched in.
+pub const BRANCH_SUBMIT: FocusId = FocusId(7024);
+
+/// The first of the rows that check a branch out; the rest follow it.
+pub const BRANCH_PICK_BASE: u64 = 8300;
+
+/// How many branches the list shows at once.
+pub const BRANCH_ROWS: usize = 12;
+
+/// The button that closes the file being read.
+pub const VIEWER_CLOSE: FocusId = FocusId(7030);
+
+/// Shows the file being read.
+pub const TAB_VIEWER: FocusId = FocusId(7031);
+
+/// The scrolling body of the file being read.
+pub const VIEWER_SCROLL: FocusId = FocusId(7032);
+
+/// Dismisses the banner saying what git refused to do.
+pub const TROUBLE_DISMISS: FocusId = FocusId(7069);
+
+/// Closes whatever of these is open.
+pub const REVIEW_DISMISS: FocusId = FocusId(7040);
+
+/// Stages or unstages every tracked file that is not staged.
+pub const GROUP_TRACKED: FocusId = FocusId(7051);
+
+/// Stages or unstages every file git does not track yet.
+pub const GROUP_UNTRACKED: FocusId = FocusId(7052);
+
+/// Folds or unfolds the changes section.
+pub const CHANGES_TOGGLE: FocusId = FocusId(7053);
+
+/// Folds or unfolds the graph.
+pub const GRAPH_TOGGLE: FocusId = FocusId(7054);
+
+/// Switches the graph between the checked out branch and every reference.
+pub const GRAPH_REFS: FocusId = FocusId(7055);
+
+/// Scrolls the graph back to the commit the checked out branch is at.
+pub const GRAPH_TARGET: FocusId = FocusId(7056);
+
+/// Fetches from every remote.
+pub const GRAPH_FETCH: FocusId = FocusId(7057);
+
+/// Pulls the checked out branch.
+pub const GRAPH_PULL: FocusId = FocusId(7058);
+
+/// Pushes the checked out branch.
+pub const GRAPH_PUSH: FocusId = FocusId(7059);
+
+/// Reads the changes and the graph again.
+pub const CHANGES_REFRESH: FocusId = FocusId(7060);
+
+/// Opens the menu of what else the button under the commit message can do.
+pub const COMMIT_CHEVRON: FocusId = FocusId(7062);
+
+/// Opens the menu over the panel's actions.
+pub const CHANGES_MORE: FocusId = FocusId(7070);
+
+/// The handle between the changes and the graph, which is dragged to change how tall the graph is.
+pub const GRAPH_SASH: FocusId = FocusId(7071);
+
+/// The scrolling body of the graph.
+pub const GRAPH_SCROLL: FocusId = FocusId(7065);
+
+/// The first of the arrows that open a changed file; the rest follow it.
+pub const OPEN_ARROW_BASE: u64 = 8500;
+
+/// How many commits the graph lists.
+pub const GRAPH_LIMIT: usize = 200;
+
+/// What the button under the commit message does.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Primary {
+    /// Commits, under `title`, unless `stopped` says why it cannot.
+    Commit {
+        /// What the button calls the commit it would make.
+        title: &'static str,
+        /// Why it cannot commit, when it cannot.
+        stopped: Option<&'static str>,
+    },
+    /// Pulls what the branch is behind by and pushes what it is ahead by.
+    Sync {
+        /// Commits this branch has that the one it follows has not.
+        ahead: usize,
+        /// Commits the branch it follows has that this one has not.
+        behind: usize,
+    },
+    /// Pushes a branch that follows nothing, and makes it follow what it was pushed to.
+    Publish,
+    /// Waits on the remote, saying what is being `doing`.
+    Busy(&'static str),
+}
+
+/// What stops a commit when there is nothing to commit.
+const NOTHING_TO_COMMIT: &str = "Nothing to commit";
+
+/// How a press on a changed file adds to the files picked.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Pick {
+    /// Adds the file, or takes it out when it is picked already.
+    Toggle,
+    /// Picks every file from the one picked last to this one, as they are listed.
+    Range,
+}
+
+/// What a file being read shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Contents {
+    /// The server has not answered yet.
+    Loading,
+    /// The lines of the file.
+    Text {
+        /// The lines.
+        lines: Vec<String>,
+        /// Whether the file was longer than could be shown.
+        truncated: bool,
+    },
+    /// Why there is nothing to show.
+    Message(String),
+}
+
+/// A file being read in the window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Viewer {
+    /// The file, from the root of the repository.
+    pub path: String,
+    /// Whether it is read from the last commit rather than from the folder.
+    pub head: bool,
+    /// What it holds.
+    pub contents: Contents,
+    /// How far down it is scrolled, in logical pixels.
+    pub scroll: f32,
+}
+
+/// What the reader has picked and opened among the changes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GitControls {
+    /// The changed files picked, by position, in the order they are in.
+    pub marked: Vec<usize>,
+    /// The file the keyboard is on.
+    pub selected: Option<usize>,
+    /// Where the range being marked was anchored, and what was marked before it began.
+    pub gesture: Option<(usize, Vec<usize>)>,
+    /// The menu that is open, if one is.
+    pub menu: Option<OpenMenu>,
+    /// The question or list that is open, if one is.
+    pub prompt: Option<Prompt>,
+    /// The box a stash is named in.
+    pub stash_message: Field,
+    /// The stashes of the open session's repository, newest first.
+    pub stashes: Vec<pm_git::Stash>,
+    /// The merge, rebase or cherry-pick the open session's folder is stopped in, if it is in one.
+    pub operation: Option<pm_git::Operation>,
+    /// How tall the graph is when it is open, in logical pixels.
+    pub graph_height: f32,
+    /// Whether the list of branches is open.
+    pub branch_menu: bool,
+    /// The branches of the open session's repository, the one checked out first.
+    pub branches: Vec<String>,
+    /// What branches are searched for and a new one is named by.
+    pub filter: Field,
+    /// The file being read, if one is.
+    pub viewer: Option<Viewer>,
+    /// Whether the changes section is open.
+    pub changes_open: bool,
+    /// Whether the graph is open.
+    pub graph_open: bool,
+    /// Whether the graph lists every reference rather than what the checked out branch reaches.
+    pub graph_all: bool,
+    /// The commits of the graph, newest first.
+    pub history: Vec<pm_git::Commit>,
+    /// How far down the graph is scrolled, in logical pixels.
+    pub graph_scroll: f32,
+    /// What is being waited on from the remote, as the button words it.
+    pub busy: Option<&'static str>,
+    /// The session the graph was asked for, so that it is asked for once.
+    pub logged: Option<usize>,
+    /// Whether the server is busy with something asked about the folder: reading it, staging, committing, switching branch or talking to the remote.
+    pub working: bool,
+    /// What git refused to do, shown in the panel until something is asked of it again.
+    pub trouble: Option<String>,
+}
+
+impl Default for GitControls {
+    /// Nothing picked or open, with the changes and the graph unfolded.
+    fn default() -> Self {
+        Self {
+            marked: Vec::new(),
+            selected: None,
+            gesture: None,
+            menu: None,
+            prompt: None,
+            stash_message: Field::default(),
+            stashes: Vec::new(),
+            operation: None,
+            graph_height: crate::graph::HEIGHT,
+            branch_menu: false,
+            branches: Vec::new(),
+            filter: Field::default(),
+            viewer: None,
+            changes_open: true,
+            graph_open: true,
+            graph_all: false,
+            history: Vec::new(),
+            graph_scroll: 0.0,
+            busy: None,
+            logged: None,
+            working: false,
+            trouble: None,
+        }
+    }
+}
+
+impl GitControls {
+    /// The branches whose name holds what was typed, at most as many as the list shows.
+    pub fn matching(&self) -> Vec<&String> {
+        let wanted = self.filter.text().trim().to_lowercase();
+        self.branches
+            .iter()
+            .filter(|name| name.to_lowercase().contains(&wanted))
+            .take(BRANCH_ROWS)
+            .collect()
+    }
+
+    /// Whether a branch is called exactly what was typed.
+    pub fn exists(&self) -> bool {
+        let wanted = self.filter.text().trim();
+        self.branches.iter().any(|name| name == wanted)
+    }
+}
+
+impl WorkspaceState {
+    /// Which changed file's row `id` is, if it is one.
+    pub fn change_row_of(&self, id: FocusId) -> Option<usize> {
+        id.0.checked_sub(crate::state::FILE_BASE)
+            .map(|index| index as usize)
+            .filter(|index| *index < self.change_count())
+    }
+
+    /// Which folder of the changed files' tree row `id` is, by its place among the folders, if it is one.
+    pub fn change_folder_row_of(&self, id: FocusId) -> Option<usize> {
+        id.0.checked_sub(crate::state::FOLDER_BASE)
+            .map(|index| index as usize)
+            .filter(|index| *index < self.change_count())
+    }
+
+    /// The state with the menu on changed files open at `at` over the folder at `position` of the tree, acting on every file in it.
+    pub fn with_folder_change_menu(mut self, position: usize, at: (f32, f32)) -> Self {
+        let files = self.open().and_then(|session| {
+            crate::change_list::folder_table(&session.changes)
+                .into_iter()
+                .nth(position)
+                .map(|folder| folder.files)
+        });
+        let Some(files) = files else {
+            return self;
+        };
+        self.git.selected = files.first().copied();
+        self.git.gesture = None;
+        self.git.marked = files;
+        self.with_git_menu(MenuKind::Change, at)
+    }
+
+    /// Whether pressing `id` leaves the list of branches open.
+    pub fn keeps_branches(id: FocusId) -> bool {
+        id == BRANCH_BUTTON
+            || id == BRANCH_BODY
+            || id == BRANCH_FILTER
+            || id == BRANCH_CREATE
+            || (BRANCH_PICK_BASE..BRANCH_PICK_BASE + BRANCH_ROWS as u64).contains(&id.0)
+    }
+
+    /// Whether a menu of the panel, a question or the list of branches is open.
+    pub fn review_overlay_open(&self) -> bool {
+        self.git.menu.is_some() || self.git.prompt.is_some() || self.git.branch_menu
+    }
+
+    /// The state with the menus of the panel, the question and the list of branches closed.
+    pub fn review_overlay_closed(mut self) -> Self {
+        self.git.menu = None;
+        self.git.prompt = None;
+        self.git.branch_menu = false;
+        self
+    }
+
+    /// The files in the order the list shows them, group by group.
+    fn listed(&self) -> Vec<usize> {
+        self.open().map_or_else(Vec::new, |session| {
+            crate::change_list::order_shown(&session.changes, &self.closed_folders)
+        })
+    }
+
+    /// The files a command acts on, in the order the list shows them: those marked, or the row the keyboard is on.
+    ///
+    /// A single mark on the row the keyboard is already on is not a selection of one thing said twice, so it reads as the row itself: marking a row and then acting on it means no different than acting on it would have.
+    pub fn acting_on(&self) -> Vec<usize> {
+        let real = match self.git.marked.len() {
+            0 => false,
+            1 => self
+                .git
+                .selected
+                .is_none_or(|selected| !self.git.marked.contains(&selected)),
+            _ => true,
+        };
+        if !real {
+            return self.git.selected.into_iter().collect();
+        }
+        self.listed()
+            .into_iter()
+            .filter(|row| self.git.marked.contains(row))
+            .collect()
+    }
+
+    /// The changed files a command acts on, in the order the list shows them.
+    pub fn marked_changes(&self) -> Vec<&Change> {
+        let Some(session) = self.open() else {
+            return Vec::new();
+        };
+        self.acting_on()
+            .into_iter()
+            .filter_map(|index| session.changes.get(index))
+            .collect()
+    }
+
+    /// Puts the keyboard on the file at `index` alone, forgetting every mark.
+    pub(crate) fn select_change(&mut self, index: usize) {
+        self.git.marked.clear();
+        self.git.gesture = None;
+        self.git.selected = Some(index);
+    }
+
+    /// The state after the changed file at `index` was pressed with the modifier that marks several.
+    pub fn change_picked(mut self, index: usize, how: Pick) -> Self {
+        match how {
+            Pick::Toggle => {
+                self.git.gesture = None;
+                if self.git.marked.is_empty()
+                    && let Some(selected) = self.git.selected.filter(|selected| *selected != index)
+                {
+                    self.git.marked.push(selected);
+                }
+                if let Some(at) = self.git.marked.iter().position(|&held| held == index) {
+                    self.git.marked.remove(at);
+                } else {
+                    self.git.marked.push(index);
+                }
+                self.git.marked.sort_unstable();
+                self.git.selected = Some(index);
+            }
+            Pick::Range => self.mark_to(index),
+        }
+        self
+    }
+
+    /// Marks every file between the one the keyboard is on and `index`.
+    ///
+    /// The range is drawn from where the gesture was anchored rather than from wherever the keyboard has reached, so dragging one out and back again leaves behind only what it still covers.
+    fn mark_to(&mut self, index: usize) {
+        let (anchor, base) = match &self.git.gesture {
+            Some((anchor, base)) => (*anchor, base.clone()),
+            None => {
+                let anchor = self.git.selected.unwrap_or(index);
+                self.git.gesture = Some((anchor, self.git.marked.clone()));
+                (anchor, self.git.marked.clone())
+            }
+        };
+        let listed = self.listed();
+        let (Some(from), Some(to)) = (
+            listed.iter().position(|row| *row == anchor),
+            listed.iter().position(|row| *row == index),
+        ) else {
+            return;
+        };
+        let (first, last) = (from.min(to), from.max(to));
+        let mut marked = base;
+        marked.extend(&listed[first..=last]);
+        marked.sort_unstable();
+        marked.dedup();
+        self.git.marked = marked;
+        self.git.selected = Some(index);
+    }
+
+    /// The state with the menu on changed files open at `at` over the file at `index`: on the files marked when it is one of them, on it alone when it is not.
+    pub fn with_change_menu(mut self, index: usize, at: (f32, f32)) -> Self {
+        if index >= self.change_count() {
+            return self;
+        }
+        if !self.acting_on().contains(&index) {
+            self.select_change(index);
+        }
+        self.with_git_menu(MenuKind::Change, at)
+    }
+
+    /// Closes the menus that cannot be open together with the menu on changed files.
+    fn close_other_menus(&mut self) {
+        self.menu = None;
+        self.project_menu = None;
+        self.session_menu = None;
+        self.message_menu = None;
+        self.git.branch_menu = false;
+    }
+
+    /// Whether every file picked is staged.
+    pub fn marked_all_staged(&self) -> bool {
+        let marked = self.marked_changes();
+        !marked.is_empty() && marked.iter().all(|change| change.fully_staged())
+    }
+
+    /// Whether the files picked can be added to `.gitignore`: all of them are new to git.
+    pub fn marked_ignorable(&self) -> bool {
+        let marked = self.marked_changes();
+        !marked.is_empty() && marked.iter().all(|change| change.untracked)
+    }
+
+    /// Whether one file is picked and it has a version in the last commit.
+    pub fn marked_has_head(&self) -> bool {
+        matches!(self.marked_changes().as_slice(), [change] if !change.is_created())
+    }
+
+    /// What the button under the commit message does now: commits while there is something to commit, and once there is nothing, brings the branch level with the one it follows, or publishes it.
+    pub fn primary(&self) -> Primary {
+        if let Some(doing) = self.git.busy {
+            return Primary::Busy(doing);
+        }
+        let Some(session) = self.open() else {
+            return Primary::Commit {
+                title: "Commit",
+                stopped: Some(NOTHING_TO_COMMIT),
+            };
+        };
+        let staged = session
+            .changes
+            .iter()
+            .filter(|change| change.staged && !change.conflicted)
+            .count();
+        let tracked = session
+            .changes
+            .iter()
+            .filter(|change| change.unstaged && !change.untracked && !change.conflicted)
+            .count();
+        let operation = self.git.operation.as_ref();
+        let title = match operation {
+            Some(pm_git::Operation::Merge { .. }) => "Commit Merge",
+            Some(pm_git::Operation::Rebase { .. }) => "Continue Rebase",
+            Some(pm_git::Operation::CherryPick { .. }) => "Continue Cherry-Pick",
+            None if staged == 0 => "Commit Tracked",
+            None => "Commit",
+        };
+        let unsaid = self.message.text().trim().is_empty();
+        let stopped = if session.changes.iter().any(|change| change.conflicted) {
+            Some(
+                if matches!(operation, Some(pm_git::Operation::Merge { .. })) {
+                    "Resolve the conflicts before committing"
+                } else {
+                    "Resolve the conflicts before continuing"
+                },
+            )
+        } else if operation.is_none() && staged == 0 && tracked == 0 {
+            Some(NOTHING_TO_COMMIT)
+        } else if unsaid && !matches!(operation, Some(pm_git::Operation::Rebase { .. })) {
+            Some("No commit message")
+        } else {
+            None
+        };
+        if stopped != Some(NOTHING_TO_COMMIT) {
+            return Primary::Commit { title, stopped };
+        }
+        let tracking = &session.tracking;
+        match (session.on_branch, &tracking.upstream) {
+            (true, None) if !session.commits.is_empty() || !self.git.history.is_empty() => {
+                Primary::Publish
+            }
+            (true, Some(_)) if tracking.ahead + tracking.behind > 0 => Primary::Sync {
+                ahead: tracking.ahead,
+                behind: tracking.behind,
+            },
+            _ => Primary::Commit { title, stopped },
+        }
+    }
+
+    /// Carries out what the button under the commit message says.
+    pub(crate) fn primary_pressed(&mut self) {
+        match self.primary() {
+            Primary::Commit { stopped: None, .. } => self.commit_pressed(false),
+            Primary::Sync { .. } => self.remote("sync", "Syncing…"),
+            Primary::Publish => self.remote("push", "Publishing…"),
+            Primary::Commit { .. } | Primary::Busy(_) => {}
+        }
+    }
+
+    /// Commits, or, while a merge, a rebase or a cherry-pick is stopped, takes its next step, finishing it under the message written; pushes afterwards when `push` is set.
+    pub(crate) fn commit_pressed(&mut self, push: bool) {
+        if self.git.operation.is_none() {
+            self.commit_with(push, false);
+            return;
+        }
+        let message = self.message.text().trim().to_owned();
+        let message = (!message.is_empty()).then_some(message);
+        self.message = crate::state::commit_field();
+        self.step_with("continue", "Continuing…", message);
+    }
+
+    /// Takes the next step of what is stopped, `doing` being what the button says meanwhile.
+    pub(crate) fn step(&mut self, action: &'static str, doing: &'static str) {
+        self.step_with(action, doing, None);
+    }
+
+    /// Takes the next step of what is stopped, finishing it under `message` when there is one.
+    fn step_with(&mut self, action: &'static str, doing: &'static str, message: Option<String>) {
+        if let Page::Session(session) = self.page {
+            self.git.busy = Some(doing);
+            self.git.trouble = None;
+            self.outbox.push(Outgoing::Step {
+                session,
+                action,
+                message,
+            });
+        }
+    }
+
+    /// Asks the server to do `operation` with the remote of the open session's repository, and shows `doing` until it has.
+    pub(crate) fn remote(&mut self, operation: &'static str, doing: &'static str) {
+        if let Page::Session(session) = self.page
+            && self.git.busy.is_none()
+        {
+            self.git.busy = Some(doing);
+            self.git.trouble = None;
+            self.outbox.push(Outgoing::Sync { session, operation });
+        }
+    }
+
+    /// Asks for the commits of the graph the first time the graph is open for the open session.
+    pub(crate) fn ask_log_once(&mut self) {
+        if let Page::Session(session) = self.page
+            && self.git.graph_open
+            && self.git.logged != Some(session)
+        {
+            self.git.logged = Some(session);
+            self.ask_log();
+        }
+    }
+
+    /// Asks for the commits of the graph, of what every reference reaches or only the checked out branch.
+    pub(crate) fn ask_log(&mut self) {
+        if let Page::Session(session) = self.page {
+            self.outbox.push(Outgoing::Log {
+                session,
+                all: self.git.graph_all,
+            });
+        }
+    }
+
+    /// Whether the graph is open for the open session, and whether it lists every reference.
+    pub fn graph_wanted(&self) -> Option<bool> {
+        (self.open().is_some() && self.git.graph_open).then_some(self.git.graph_all)
+    }
+
+    /// The state after the server listed the `commits` of the repository of the session at `session`.
+    pub fn with_history(mut self, session: usize, commits: Vec<pm_git::Commit>) -> Self {
+        if self.page == Page::Session(session) {
+            self.git.history = commits;
+        }
+        self
+    }
+
+    /// The state after the remote answered the request of the session at `session`, which failed for `failure` when it did.
+    pub fn remote_done(mut self, _session: usize, failure: Option<String>) -> Self {
+        self.git.busy = None;
+        match failure {
+            Some(message) => self.git_failed(&format!("Could not reach the remote: {message}")),
+            None => self,
+        }
+    }
+
+    /// The state after git refused something asked of the folder of the open session, for `reason`, which it says in the panel with git's own `fatal:` or `error:` prefix left off.
+    pub fn git_failed(mut self, reason: &str) -> Self {
+        let plain = |text: &str| {
+            let text = text.trim();
+            let text = text
+                .strip_prefix("fatal: ")
+                .or_else(|| text.strip_prefix("error: "))
+                .unwrap_or(text);
+            let mut letters = text.chars();
+            letters
+                .next()
+                .map(|first| first.to_uppercase().chain(letters).collect::<String>())
+                .unwrap_or_default()
+        };
+        let cleaned = match reason.split_once(": ") {
+            Some((context, said)) => format!("{context}: {}", plain(said)),
+            None => plain(reason),
+        };
+        self.git.trouble = Some(cleaned);
+        self
+    }
+
+    /// The state after the graph is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_graph(mut self, delta: f32, room: f32) -> Self {
+        self.git.graph_scroll = (self.git.graph_scroll + delta).clamp(0.0, room);
+        self
+    }
+
+    /// Opens the file at `index` of the changes as it is in the folder.
+    pub(crate) fn open_changed_file(&mut self, index: usize) {
+        if let Some(path) = self
+            .open()
+            .and_then(|session| session.changes.get(index))
+            .map(|change| change.path.clone())
+        {
+            self.open_viewer(path, false);
+        }
+    }
+
+    /// Carries out `action` if it is one of this module's, and says whether it was.
+    pub(crate) fn press_git(&mut self, action: FocusId) -> bool {
+        if let Some(row) = action
+            .0
+            .checked_sub(MENU_ROW_BASE)
+            .filter(|row| *row < 40 && self.git.menu.is_some())
+        {
+            self.press_menu_row(row as usize);
+            return true;
+        }
+        if self.press_prompt(action) {
+            return true;
+        }
+        match action {
+            REVIEW_DISMISS => {
+                self.git.menu = None;
+                self.git.prompt = None;
+                self.git.branch_menu = false;
+            }
+            BRANCH_BODY | BRANCH_FILTER => {}
+            GROUP_TRACKED | GROUP_UNTRACKED => {
+                let group = match action {
+                    GROUP_TRACKED => Group::Tracked,
+                    _ => Group::Untracked,
+                };
+                let members = self.open().map_or_else(Vec::new, |session| {
+                    crate::change_list::members(&session.changes, group)
+                });
+                self.stage_changes(&members);
+            }
+            TROUBLE_DISMISS => self.git.trouble = None,
+            CHANGES_TOGGLE => self.git.changes_open = !self.git.changes_open,
+            GRAPH_TOGGLE => self.git.graph_open = !self.git.graph_open,
+            GRAPH_TARGET => {
+                self.git.graph_all = false;
+                self.git.graph_scroll = 0.0;
+                self.ask_log();
+            }
+            GRAPH_FETCH => self.remote("fetch", "Fetching…"),
+            GRAPH_PULL => self.remote("pull", "Pulling…"),
+            GRAPH_PUSH => self.remote("push", "Pushing…"),
+            CHANGES_REFRESH => {
+                if let Page::Session(session) = self.page {
+                    self.outbox.push(Outgoing::Refresh { session });
+                }
+            }
+            BRANCH_BUTTON => self.toggle_branch_menu(),
+            BRANCH_CREATE | BRANCH_SUBMIT => self.submit_branch(action == BRANCH_CREATE),
+            VIEWER_CLOSE => {
+                self.git.viewer = None;
+                if self.tab == Tab::File {
+                    self.tab = Tab::Diff;
+                }
+            }
+            TAB_VIEWER => self.tab = Tab::File,
+            _ => return self.press_branch_row(action),
+        }
+        true
+    }
+
+    /// Opens or closes the list of branches, asking the server for them when it opens.
+    fn toggle_branch_menu(&mut self) {
+        if self.git.branch_menu {
+            self.git.branch_menu = false;
+            return;
+        }
+        let Page::Session(open) = self.page else {
+            return;
+        };
+        self.close_other_menus();
+        self.git.branch_menu = true;
+        self.git.filter = Field::default();
+        self.outbox
+            .push(Outgoing::SessionBranches { session: open });
+    }
+
+    /// Checks out the branch typed, or makes it when `create` is set or none is called that.
+    fn submit_branch(&mut self, create: bool) {
+        let Page::Session(open) = self.page else {
+            return;
+        };
+        let typed = self.git.filter.text().trim().to_owned();
+        if !create {
+            let matching = self.git.matching();
+            let picked = matching
+                .iter()
+                .find(|name| ***name == typed)
+                .or_else(|| (matching.len() == 1).then(|| &matching[0]))
+                .map(|name| (*name).clone());
+            if let Some(branch) = picked {
+                self.git.branch_menu = false;
+                self.git.trouble = None;
+                self.git.busy = Some("Switching branch…");
+                self.outbox.push(Outgoing::Checkout {
+                    session: open,
+                    branch,
+                });
+                return;
+            }
+        }
+        if !typed.is_empty() && !self.git.exists() {
+            self.git.branch_menu = false;
+            self.git.trouble = None;
+            self.git.busy = Some("Making branch…");
+            self.outbox.push(Outgoing::CreateBranch {
+                session: open,
+                name: typed,
+            });
+        }
+    }
+
+    /// Checks out the branch of the row `action` if it is one, and says whether it was.
+    fn press_branch_row(&mut self, action: FocusId) -> bool {
+        let Some(row) = action
+            .0
+            .checked_sub(BRANCH_PICK_BASE)
+            .map(|row| row as usize)
+            .filter(|row| *row < BRANCH_ROWS)
+        else {
+            return false;
+        };
+        let Page::Session(open) = self.page else {
+            return true;
+        };
+        let name = self.git.matching().get(row).map(|name| (*name).clone());
+        if let Some(branch) = name {
+            self.git.branch_menu = false;
+            self.git.trouble = None;
+            self.git.busy = Some("Switching branch…");
+            self.outbox.push(Outgoing::Checkout {
+                session: open,
+                branch,
+            });
+        }
+        true
+    }
+
+    /// The state after the server listed the branches of the folder of the session at `session`.
+    pub fn with_session_branches(mut self, session: usize, names: Vec<String>) -> Self {
+        if self.page == Page::Session(session) {
+            self.git.branches = names;
+        }
+        self
+    }
+
+    /// Opens the file at `path` in the window, as it is in the last commit when `head`, and asks the server for it.
+    pub fn open_viewer(&mut self, path: String, head: bool) {
+        let Page::Session(open) = self.page else {
+            return;
+        };
+        self.git.viewer = Some(Viewer {
+            path: path.clone(),
+            head,
+            contents: Contents::Loading,
+            scroll: 0.0,
+        });
+        self.tab = Tab::File;
+        self.outbox.push(Outgoing::ReadFile {
+            session: open,
+            path,
+            head,
+        });
+    }
+
+    /// The state after the server answered for the file at `path` of the session at `session`: its text and whether it was cut short, or why there is none.
+    pub fn with_file(
+        mut self,
+        session: usize,
+        path: &str,
+        head: bool,
+        read: Result<(Option<String>, bool), String>,
+    ) -> Self {
+        if self.page != Page::Session(session) {
+            return self;
+        }
+        if let Some(viewer) = self.git.viewer.as_mut()
+            && viewer.path == path
+            && viewer.head == head
+        {
+            viewer.contents = match read {
+                Ok((Some(text), truncated)) => Contents::Text {
+                    lines: text.lines().map(str::to_owned).collect(),
+                    truncated,
+                },
+                Ok((None, _)) => Contents::Message("This file is not text.".to_owned()),
+                Err(reason) => Contents::Message(reason),
+            };
+        }
+        self
+    }
+
+    /// The state after the viewer is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_viewer(mut self, delta: f32, room: f32) -> Self {
+        if let Some(viewer) = self.git.viewer.as_mut() {
+            viewer.scroll = (viewer.scroll + delta).clamp(0.0, room);
+        }
+        self
+    }
+
+    /// Keeps the files marked, and the one the keyboard is on, by path, after the changes were read again.
+    pub(crate) fn remarked(&mut self, kept: &(Vec<String>, Option<String>)) {
+        let (marked, selected) = match self.open() {
+            Some(session) => (
+                session
+                    .changes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, change)| kept.0.contains(&change.path))
+                    .map(|(index, _)| index)
+                    .collect(),
+                kept.1.as_ref().and_then(|path| {
+                    session
+                        .changes
+                        .iter()
+                        .position(|change| &change.path == path)
+                }),
+            ),
+            None => (Vec::new(), None),
+        };
+        self.git.marked = marked;
+        self.git.selected = selected;
+        self.git.gesture = None;
+    }
+
+    /// The paths of the files marked and of the one the keyboard is on, for [`WorkspaceState::remarked`].
+    pub(crate) fn marked_by_path(&self) -> (Vec<String>, Option<String>) {
+        let Some(session) = self.open() else {
+            return (Vec::new(), None);
+        };
+        let path = |index: &usize| {
+            session
+                .changes
+                .get(*index)
+                .map(|change| change.path.clone())
+        };
+        (
+            self.git.marked.iter().filter_map(path).collect(),
+            self.git.selected.as_ref().and_then(path),
+        )
+    }
+}

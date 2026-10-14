@@ -114,7 +114,18 @@ request with exactly one `response` carrying the same `id`.
 | `accounts`     | none                                                                                             | `accounts`      |
 | `sessions`     | none                                                                                             | `sessions`      |
 | `stage`        | `directory`, `paths`, `stage`                                                                    | `done`          |
-| `commit`       | `directory`, `message`                                                                           | `done`          |
+| `commit`       | `directory`, `message`, `tracked` (optional), `amend` (optional)                                 | `done`          |
+| `log`          | `directory`, `limit`, `all`                                                                      | `log`           |
+| `sync`         | `directory`, `operation`                                                                         | `done`          |
+| `cherry_pick`  | `directory`, `commit`                                                                            | `done`          |
+| `stashes`      | `directory`                                                                                      | `stashes`       |
+| `stash`        | `directory`, `action`, `index`, `message`                                                        | `done`          |
+| `step`         | `directory`, `action`, `message` (optional)                                                      | `done`          |
+| `discard`      | `directory`, `paths`                                                                             | `done`          |
+| `ignore`       | `directory`, `paths`                                                                             | `done`          |
+| `checkout`     | `directory`, `branch`                                                                            | `done`          |
+| `create_branch`| `directory`, `name`                                                                              | `done`          |
+| `read_file`    | `directory`, `path`, `head`                                                                      | `file`          |
 | `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
 | `resize_terminal`| `terminal`, `columns`, `rows`                                                                  | `done`          |
@@ -228,6 +239,38 @@ request with exactly one `response` carrying the same `id`.
   that folder is taken.
 - **`stage`:** stages the `paths` (from the repository root) or, when `stage`
   is `false`, unstages them.
+- **`commit`:** commits what is staged under `message`. With nothing staged and
+  `tracked` set, it takes the changes of every tracked file instead. Fails on an
+  empty message.
+- **`log`:** the most recent `limit` commits, newest first, as `{id, refs,
+  summary, lanes}`. `refs` are the branches and tags pointing at the commit as
+  git decorates them (`HEAD -> main`, `tag: v1`). `lanes` lays the commit out in
+  a graph: its `lane` and `color`, the `edges` crossing its row (`half`
+  `Upper` or `Lower`, `from` and `to` lanes, `color`) and the `width` in lanes.
+  Without `all` it lists what the checked out branch reaches; with it, every
+  reference.
+- **`sync`:** `operation` is `fetch` (all remotes, pruning), `pull`,
+  `pull_rebase`, `push` (publishing the branch when it follows nothing),
+  `force_push` (`--force-with-lease`) or `sync` (pull, then push).
+- **`cherry_pick`:** applies `commit` to the checked out branch.
+- **`stashes`:** the stashes, newest first, as `{index, message, when}`.
+- **`stash`:** `action` is `push` (untracked files included, named `message`
+  when given), or `apply`, `pop` or `drop` for the stash at `index`.
+- **`step`:** takes the next step of the merge, rebase or cherry-pick the folder
+  is stopped in: `action` is `continue` (a merge or cherry-pick finishes under
+  `message` when given), `skip` or `abort`. Fails when nothing is stopped.
+- **`commit` with `amend`:** rewrites the last commit in place of making another.
+- **`discard`:** puts the `paths` back as they are in the last commit, in the
+  index and in the files; a path that is not in the last commit is deleted.
+- **`ignore`:** adds each of the `paths` to the `.gitignore` at the root of the
+  repository, anchored with a leading slash, unless it is in it already.
+- **`checkout`:** checks out the local branch `branch`; a remote branch such as
+  `origin/main` gets a local branch that follows it. Fails when git refuses,
+  for instance while the branch is checked out in another worktree.
+- **`create_branch`:** makes the branch `name` at the commit the folder is at
+  and checks it out.
+- **`read_file`:** reads `path` from the working folder or, when `head`, from
+  the last commit. The response holds no text for a file that is not text.
 
 An **attachment** is `{ "name": "a.txt", "data": "<base64>" }`. The file is
 sent whole, so the server needs no access to the client's disk. The server
@@ -245,9 +288,12 @@ embedded context, and anything else as a link to the stored file.
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
 | `files`      | `paths`: repository-relative, tracked or not ignored      |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
+| `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
+| `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
+| `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
-| `inspected`  | `changes`: `[{path, diff, staged}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null |
+| `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |

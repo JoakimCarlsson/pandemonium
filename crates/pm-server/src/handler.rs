@@ -32,6 +32,14 @@ fn failed(message: impl Into<String>) -> Response {
     }
 }
 
+/// `Done`, or a failure saying why `outcome` is an error.
+fn done(outcome: Result<(), String>) -> Response {
+    match outcome {
+        Ok(()) => Response::Done,
+        Err(reason) => failed(reason),
+    }
+}
+
 /// `Directory` naming the folder a clone made, or a failure saying why it did not.
 fn directory_made(made: Result<PathBuf, String>) -> Response {
     match made {
@@ -471,6 +479,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     commits: None,
                     branch: None,
                     head: None,
+                    tracking: pm_git::Tracking::default(),
+                    operation: None,
                 };
             }
             Response::Inspected {
@@ -478,6 +488,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 commits: base.map(|base| pm_git::commits_since(directory, &base)),
                 branch: pm_git::current_branch(directory),
                 head: pm_git::resolve(directory, "HEAD"),
+                tracking: pm_git::tracking(directory),
+                operation: pm_git::operation(directory),
             }
         }
         Request::Stage {
@@ -487,16 +499,35 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         } => {
             let directory = place(&directory);
             let directory = directory.as_path();
-            let done = if stage {
+            done(if stage {
                 pm_git::stage(directory, &paths)
             } else {
                 pm_git::unstage(directory, &paths)
-            };
-            match done {
-                Ok(()) => Response::Done,
-                Err(reason) => failed(reason),
-            }
+            })
         }
+        Request::Discard { directory, paths } => done(pm_git::discard(&place(&directory), &paths)),
+        Request::Ignore { directory, paths } => done(pm_git::ignore(&place(&directory), &paths)),
+        Request::Checkout { directory, branch } => {
+            done(pm_git::checkout(&place(&directory), &branch))
+        }
+        Request::CreateBranch { directory, name } => {
+            done(pm_git::create_branch(&place(&directory), &name))
+        }
+        Request::ReadFile {
+            directory,
+            path,
+            head,
+        } => match pm_git::read(&place(&directory), &path, head) {
+            Ok(pm_git::Contents::Text { text, truncated }) => Response::File {
+                text: Some(text),
+                truncated,
+            },
+            Ok(pm_git::Contents::Binary) => Response::File {
+                text: None,
+                truncated: false,
+            },
+            Err(reason) => failed(reason),
+        },
         Request::OpenTerminal {
             directory,
             columns,
@@ -531,11 +562,48 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Terminals => Response::Terminals {
             terminals: core.terminal_infos(),
         },
-        Request::Commit { directory, message } => {
-            match pm_git::commit(&place(&directory), &message) {
-                Ok(()) => Response::Done,
-                Err(reason) => failed(reason),
-            }
+        Request::Commit {
+            directory,
+            message,
+            tracked,
+            amend,
+        } => done(pm_git::commit(&place(&directory), &message, tracked, amend)),
+        Request::CherryPick { directory, commit } => {
+            done(pm_git::cherry_pick(&place(&directory), &commit))
         }
+        Request::Stashes { directory } => Response::Stashes {
+            stashes: pm_git::stashes(&place(&directory)),
+        },
+        Request::Stash {
+            directory,
+            action,
+            index,
+            message,
+        } => done(pm_git::stash(
+            &place(&directory),
+            &action,
+            index,
+            message.as_deref(),
+        )),
+        Request::Step {
+            directory,
+            action,
+            message,
+        } => done(pm_git::step(
+            &place(&directory),
+            &action,
+            message.as_deref(),
+        )),
+        Request::Log {
+            directory,
+            limit,
+            all,
+        } => Response::Log {
+            commits: pm_git::history(&place(&directory), limit, all),
+        },
+        Request::Sync {
+            directory,
+            operation,
+        } => done(pm_git::remote(&place(&directory), &operation)),
     }
 }

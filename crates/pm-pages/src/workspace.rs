@@ -14,9 +14,14 @@ use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE, SessionMenu,
 };
 use pm_components::context_menu::field_menu;
+use pm_components::file_icon::file_icon;
+use pm_components::git_controls::{TAB_VIEWER, VIEWER_CLOSE, Viewer};
+use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
 use pm_components::parts::{glyph, line, spacer};
-use pm_components::{adder, chat, diff, history, input, plan, review, sidebar, terminal, welcome};
+use pm_components::{
+    Button, adder, chat, diff, history, input, plan, review, sidebar, terminal, viewer, welcome,
+};
 
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
@@ -61,6 +66,42 @@ fn tab(icon: IconName, label: &str, id: FocusId, shown: bool) -> Node {
         .focusable(id)
 }
 
+/// The tab of the file being read: its icon and name, and a button that closes it.
+fn viewer_tab(viewer: &Viewer, shown: bool) -> Node {
+    let tone = if shown { Role::Text } else { Role::Muted };
+    let name = viewer.path.rsplit('/').next().unwrap_or(&viewer.path);
+    let label = if viewer.head {
+        format!("{name} (HEAD)")
+    } else {
+        name.to_owned()
+    };
+    let mut styles = vec![
+        flex(),
+        items_center(),
+        gap(2),
+        h(10),
+        px(3),
+        pm_style::rounded_t(8),
+        pm_style::cursor_pointer(),
+        text_color(tone),
+    ];
+    if shown {
+        styles.push(bg(Role::Surface));
+    } else {
+        styles.push(bg(Role::SurfaceHover).hover());
+    }
+    node()
+        .styles(styles)
+        .child(file_icon(&viewer.path, 3.5))
+        .child(line(&label, 13, 1.4, tone))
+        .child(
+            Button::icon(IconName::Close, VIEWER_CLOSE)
+                .size(pm_components::button::Size::Icon)
+                .build(),
+        )
+        .focusable(TAB_VIEWER)
+}
+
 /// The strip above a session: its views, and the button for the terminal.
 fn tabs(state: &WorkspaceState, session: &Session) -> Node {
     let agent = &AGENTS[session.agent.min(AGENTS.len() - 1)];
@@ -88,6 +129,9 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
             TAB_DIFF,
             state.tab == Tab::Diff,
         ));
+    }
+    if let Some(viewer) = &state.git.viewer {
+        strip = strip.child(viewer_tab(viewer, state.tab == Tab::File));
     }
     let on = state.terminal;
     let mut toggle = vec![
@@ -125,6 +169,7 @@ fn session_page(
 ) -> Node {
     let view = match state.tab {
         Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width, height),
+        Tab::File if state.git.viewer.is_some() => viewer::viewer(state, height),
         _ => chat::chat(state, session, width, above, shaper),
     };
     let mut page = node()
@@ -175,7 +220,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         root = root.child(plan::panel(state, source, plan_width, shaper));
     }
     if let Some(session) = open.filter(|_| reviewing) {
-        root = root.child(review::review(state, session));
+        root = root.child(review::review(state, session, shaper));
     }
     root.children(
         state
@@ -187,6 +232,14 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(state.session_menu.map(session_menu))
     .children(state.message_menu.map(message_menu))
     .children(adder::adder(state))
+    .children(state.git_menu_node().filter(|_| reviewing))
+    .children(
+        state
+            .git
+            .prompt
+            .as_ref()
+            .map(|open| git_prompts::prompt(state, open)),
+    )
 }
 
 /// The menu of a project: start a session in it, or take it out of the window.

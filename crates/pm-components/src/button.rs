@@ -3,9 +3,10 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Color, Radius, Role, bg, border, border_color, cursor_not_allowed, cursor_pointer, flex,
-    font_medium, font_mono, gap, h, items_center, justify_center, leading_ratio, opacity, px, ring,
-    ring_color, rounded, rounded_full, size, text_color, text_px, underline,
+    Color, Radius, Role, animate_spin, bg, border, border_color, cursor_not_allowed,
+    cursor_pointer, flex, font_medium, font_mono, gap, h, items_center, justify_center,
+    leading_ratio, opacity, px, ring, ring_color, rounded, rounded_full, size, text_color, text_px,
+    underline,
 };
 use pm_ui::{Node, node, text};
 
@@ -65,6 +66,8 @@ pub struct Button {
     round: bool,
     /// Whether its words are set in the code font.
     monospace: bool,
+    /// Whether its icon turns, to say something is under way.
+    spinning: bool,
 }
 
 impl Button {
@@ -79,6 +82,7 @@ impl Button {
             disabled: false,
             round: false,
             monospace: false,
+            spinning: false,
         }
     }
 
@@ -93,6 +97,7 @@ impl Button {
             disabled: false,
             round: false,
             monospace: false,
+            spinning: false,
         }
     }
 
@@ -133,6 +138,12 @@ impl Button {
         self
     }
 
+    /// The button with its icon turning while `spinning` is true.
+    pub fn spinning(mut self, spinning: bool) -> Self {
+        self.spinning = spinning;
+        self
+    }
+
     /// The node that draws the button.
     pub fn build(self) -> Node {
         let ink = self.ink();
@@ -169,7 +180,11 @@ impl Button {
         }
         let mut button = node().styles(styles);
         if let Some(icon) = self.icon {
-            button = button.child(node().styles([size(4), text_color(ink)]).icon(icon));
+            let mut mark = node().styles([size(4), text_color(ink)]).icon(icon);
+            if self.spinning {
+                mark = mark.styles([animate_spin()]);
+            }
+            button = button.child(mark);
         }
         if let Some(label) = self.label {
             let mut words = vec![

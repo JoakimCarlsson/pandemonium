@@ -1,0 +1,449 @@
+//! The menus of the source control panel: on changed files, under the commit button, over the panel's own actions, on the graph's references and on a commit.
+
+use pm_input::FocusId;
+use pm_ui::Node;
+
+use crate::Menu;
+use crate::git_controls::{BRANCH_BUTTON, CHANGES_MORE, COMMIT_CHEVRON, GRAPH_REFS};
+use crate::git_prompts::{Prompt, StashAction};
+use crate::state::{ADD_PROJECT, Outgoing, Page, WorkspaceState};
+
+/// The first of the rows of the menu that is open; the rest follow it.
+pub const MENU_ROW_BASE: u64 = 9000;
+
+/// Which menu is open.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MenuKind {
+    /// What can be done to the files marked.
+    Change,
+    /// What else the button under the commit message can do.
+    Commit,
+    /// What can be done from the panel, over everything it lists.
+    Source,
+    /// Which references the graph lists.
+    Refs,
+    /// What can be done to a commit of the graph, by its place in the list.
+    History(usize),
+}
+
+/// A menu that is open, and where.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OpenMenu {
+    /// Which menu it is.
+    pub kind: MenuKind,
+    /// Where its corner is, in logical pixels.
+    pub at: (f32, f32),
+}
+
+/// What a row of a menu does.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Command {
+    /// Shows the diff of the file.
+    OpenChanges,
+    /// Reads the file as it is in the folder.
+    OpenFile,
+    /// Reads the file as it is in the last commit.
+    OpenHead,
+    /// Stages the files, or unstages them when all are staged.
+    StageActing,
+    /// Asks whether to discard the files.
+    Discard,
+    /// Stages every change.
+    StageAll,
+    /// Unstages every change.
+    UnstageAll,
+    /// Copies the path of the file on its machine.
+    CopyPath,
+    /// Copies the path of the file from the root of the repository.
+    CopyRelativePath,
+    /// Adds the files to `.gitignore`.
+    Ignore,
+    /// Commits, or finishes the merge, rebase or cherry-pick that stopped.
+    Commit,
+    /// Commits and pushes.
+    CommitAndPush,
+    /// Asks whether to rewrite the last commit.
+    Amend,
+    /// Asks whether to give up what stopped.
+    Abort,
+    /// Asks whether to leave out the commit it stopped on.
+    Skip,
+    /// Pulls.
+    Pull,
+    /// Pulls, replaying the branch's own commits on top.
+    PullRebase,
+    /// Pushes.
+    Push,
+    /// Pushes, overwriting only what was seen.
+    ForcePush,
+    /// Fetches from every remote.
+    Fetch,
+    /// Opens the panel that adds a project, which clones a repository.
+    Clone,
+    /// Opens the list of branches.
+    Checkout,
+    /// Reads the changes and the graph again.
+    Refresh,
+    /// Asks what to call a stash of the changes.
+    StashPush,
+    /// Asks which stash to take.
+    Stashes(StashAction),
+    /// Lists what the checked out branch reaches.
+    Auto,
+    /// Lists what every reference reaches.
+    All,
+    /// Applies the commit to the checked out branch.
+    CherryPick,
+    /// Copies the commit's name.
+    CopyHash,
+}
+
+/// One entry of a menu.
+enum Entry {
+    /// A row, which does nothing while it has no command.
+    Row(String, Option<Command>),
+    /// A rule between two groups.
+    Rule,
+}
+
+/// A row saying `label` that does `command`.
+fn row(label: impl Into<String>, command: Command) -> Entry {
+    Entry::Row(label.into(), Some(command))
+}
+
+/// A row saying `label` that does `command` while `enabled`, and nothing otherwise.
+fn row_if(label: impl Into<String>, command: Command, enabled: bool) -> Entry {
+    Entry::Row(label.into(), enabled.then_some(command))
+}
+
+impl WorkspaceState {
+    /// The menu button `id` is, if it is one: a press on it opens that menu.
+    pub fn menu_button_of(id: FocusId) -> Option<MenuKind> {
+        match id {
+            COMMIT_CHEVRON => Some(MenuKind::Commit),
+            CHANGES_MORE => Some(MenuKind::Source),
+            GRAPH_REFS => Some(MenuKind::Refs),
+            _ => None,
+        }
+    }
+
+    /// Whether `id` names a row of the menu that is open.
+    pub fn is_menu_row(&self, id: FocusId) -> bool {
+        self.git.menu.is_some() && id.0.checked_sub(MENU_ROW_BASE).is_some_and(|row| row < 40)
+    }
+
+    /// Which commit of the graph the row `id` is, if it is one.
+    pub fn history_row_of(&self, id: FocusId) -> Option<usize> {
+        id.0.checked_sub(crate::graph::HISTORY_ROW_BASE)
+            .map(|row| row as usize)
+            .filter(|row| *row < self.git.history.len())
+    }
+
+    /// The state with the menu `kind` open at `at`, and the others closed.
+    pub fn with_git_menu(mut self, kind: MenuKind, at: (f32, f32)) -> Self {
+        if self.open().is_none() {
+            return self;
+        }
+        self.menu = None;
+        self.project_menu = None;
+        self.session_menu = None;
+        self.message_menu = None;
+        self.git.branch_menu = false;
+        if kind == MenuKind::Source {
+            self.ask_stashes();
+        }
+        self.git.menu = Some(OpenMenu { kind, at });
+        self
+    }
+
+    /// Asks for the stashes, which the menu over the panel's actions offers to take.
+    pub(crate) fn ask_stashes(&mut self) {
+        if let Page::Session(session) = self.page {
+            self.outbox.push(Outgoing::Stashes { session });
+        }
+    }
+
+    /// The state after the server listed the stashes of the repository of the session at `session`.
+    pub fn with_stashes(mut self, session: usize, stashes: Vec<pm_git::Stash>) -> Self {
+        if self.page == Page::Session(session) {
+            self.git.stashes = stashes;
+        }
+        self
+    }
+
+    /// The commit and operation rows the menu under the commit button and the menu over the panel's actions share.
+    fn commit_entries(&self) -> Vec<Entry> {
+        let operation = self.git.operation.as_ref();
+        let title = match operation {
+            Some(pm_git::Operation::Merge { .. }) => "Commit Merge",
+            Some(pm_git::Operation::Rebase { .. }) => "Continue Rebase",
+            Some(pm_git::Operation::CherryPick { .. }) => "Continue Cherry-Pick",
+            None => "Commit",
+        };
+        let mut entries = vec![
+            row(title, Command::Commit),
+            row_if(
+                "Commit and Push",
+                Command::CommitAndPush,
+                operation.is_none(),
+            ),
+        ];
+        match operation {
+            Some(waiting) => {
+                entries.push(row(format!("Abort {}", waiting.name()), Command::Abort));
+                if !matches!(waiting, pm_git::Operation::Merge { .. }) {
+                    entries.push(row("Skip Commit", Command::Skip));
+                }
+            }
+            None => entries.push(row("Amend Last Commit", Command::Amend)),
+        }
+        entries
+    }
+
+    /// The entries of the menu `kind`.
+    fn menu_entries(&self, kind: MenuKind) -> Vec<Entry> {
+        match kind {
+            MenuKind::Change => {
+                let acting = self.marked_changes();
+                let count = acting.len();
+                let created = !acting.is_empty() && acting.iter().all(|change| change.is_created());
+                let staged = self.marked_all_staged();
+                let stage = match (count, staged) {
+                    (1, true) => "Unstage File".to_owned(),
+                    (1, false) => "Stage File".to_owned(),
+                    (count, true) => format!("Unstage {count} Files"),
+                    (count, false) => format!("Stage {count} Files"),
+                };
+                let discard = match (count, created) {
+                    (1, true) => "Delete File".to_owned(),
+                    (1, false) => "Discard Changes".to_owned(),
+                    (count, true) => format!("Delete {count} Files"),
+                    (count, false) => format!("Discard Changes to {count} Files"),
+                };
+                vec![
+                    row_if("Open Changes", Command::OpenChanges, count == 1),
+                    row_if("Open File", Command::OpenFile, count == 1),
+                    row_if(
+                        "Open File (HEAD)",
+                        Command::OpenHead,
+                        self.marked_has_head(),
+                    ),
+                    Entry::Rule,
+                    row(stage, Command::StageActing),
+                    row(discard, Command::Discard),
+                    Entry::Rule,
+                    row("Stage All Changes", Command::StageAll),
+                    row("Unstage All Changes", Command::UnstageAll),
+                    Entry::Rule,
+                    row_if("Copy Path", Command::CopyPath, count == 1),
+                    row_if("Copy Relative Path", Command::CopyRelativePath, count == 1),
+                    Entry::Rule,
+                    row_if(
+                        "Add to .gitignore",
+                        Command::Ignore,
+                        self.marked_ignorable(),
+                    ),
+                ]
+            }
+            MenuKind::Commit => self.commit_entries(),
+            MenuKind::Source => {
+                let stashed = !self.git.stashes.is_empty();
+                let mut entries = vec![
+                    row("Pull", Command::Pull),
+                    row("Push", Command::Push),
+                    row("Clone Repository…", Command::Clone),
+                    row("Checkout…", Command::Checkout),
+                    row("Fetch", Command::Fetch),
+                    Entry::Rule,
+                    row("Stage All Changes", Command::StageAll),
+                    row("Unstage All Changes", Command::UnstageAll),
+                    row("Pull (Rebase)", Command::PullRebase),
+                    row("Force Push", Command::ForcePush),
+                    Entry::Rule,
+                    row("Refresh", Command::Refresh),
+                ];
+                entries.extend(self.commit_entries());
+                entries.extend([
+                    Entry::Rule,
+                    row("Stash…", Command::StashPush),
+                    row_if(
+                        "Apply Stash…",
+                        Command::Stashes(StashAction::Apply),
+                        stashed,
+                    ),
+                    row_if("Pop Stash…", Command::Stashes(StashAction::Pop), stashed),
+                    row_if("Drop Stash…", Command::Stashes(StashAction::Drop), stashed),
+                ]);
+                entries
+            }
+            MenuKind::Refs => vec![row("Auto", Command::Auto), row("All", Command::All)],
+            MenuKind::History(commit) => {
+                let branch = self
+                    .open()
+                    .map(|session| session.branch.clone())
+                    .unwrap_or_default();
+                let known = self.git.history.get(commit).is_some();
+                vec![
+                    row_if(
+                        format!("Cherry-Pick into {branch}"),
+                        Command::CherryPick,
+                        known
+                            && self.git.operation.is_none()
+                            && self.git.graph_all
+                            && !self.git.history[commit]
+                                .refs
+                                .iter()
+                                .any(|name| name.starts_with("HEAD -> ")),
+                    ),
+                    row_if("Copy Commit Hash", Command::CopyHash, known),
+                ]
+            }
+        }
+    }
+
+    /// The node that draws the menu that is open.
+    pub fn git_menu_node(&self) -> Option<Node> {
+        let open = self.git.menu?;
+        let mut menu = Menu::new(open.at.0, open.at.1);
+        let mut position = 0;
+        for entry in self.menu_entries(open.kind) {
+            match entry {
+                Entry::Rule => menu = menu.separator(),
+                Entry::Row(label, command) => {
+                    menu = menu.item(
+                        &label,
+                        None,
+                        FocusId(MENU_ROW_BASE + position),
+                        command.is_none(),
+                    );
+                    position += 1;
+                }
+            }
+        }
+        Some(menu.build())
+    }
+
+    /// Carries out what the `position`-th row of the open menu does, and closes it.
+    pub(crate) fn press_menu_row(&mut self, position: usize) {
+        let Some(open) = self.git.menu.take() else {
+            return;
+        };
+        let command = self
+            .menu_entries(open.kind)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Entry::Row(_, command) => Some(command),
+                Entry::Rule => None,
+            })
+            .nth(position)
+            .flatten();
+        if let Some(command) = command {
+            self.run(command, open.kind);
+        }
+    }
+
+    /// Carries out `command` from the menu `kind`.
+    fn run(&mut self, command: Command, kind: MenuKind) {
+        let acting = self.acting_on();
+        match command {
+            Command::OpenChanges => {
+                if let [index] = acting.as_slice() {
+                    self.open_change(*index);
+                }
+            }
+            Command::OpenFile | Command::OpenHead => {
+                if let [change] = self.marked_changes().as_slice() {
+                    let path = change.path.clone();
+                    self.open_viewer(path, command == Command::OpenHead);
+                }
+            }
+            Command::StageActing => self.stage_changes(&acting),
+            Command::Discard => {
+                if !acting.is_empty() {
+                    self.ask(Prompt::Discard(acting));
+                }
+            }
+            Command::StageAll | Command::UnstageAll => {
+                let all: Vec<usize> = (0..self.change_count()).collect();
+                self.set_staged(&all, command == Command::StageAll);
+            }
+            Command::CopyPath | Command::CopyRelativePath => {
+                let copied = self.open().and_then(|session| {
+                    let [index] = acting.as_slice() else {
+                        return None;
+                    };
+                    let change = session.changes.get(*index)?;
+                    Some(if command == Command::CopyRelativePath {
+                        change.path.clone()
+                    } else {
+                        format!(
+                            "{}/{}",
+                            session.directory.trim_end_matches('/'),
+                            change.path
+                        )
+                    })
+                });
+                if let Some(text) = copied {
+                    self.outbox.push(Outgoing::Copy { text });
+                }
+            }
+            Command::Ignore => {
+                self.git.busy = Some("Updating .gitignore…");
+                self.git.trouble = None;
+                let paths = self.paths_of(&acting);
+                if let Page::Session(session) = self.page {
+                    self.outbox.push(Outgoing::Ignore { session, paths });
+                }
+            }
+            Command::Commit => self.commit_pressed(false),
+            Command::CommitAndPush => self.commit_pressed(true),
+            Command::Amend => self.ask(Prompt::Amend),
+            Command::Abort => self.ask(Prompt::Abort),
+            Command::Skip => self.ask(Prompt::Skip),
+            Command::Pull => self.remote("pull", "Pulling…"),
+            Command::PullRebase => self.remote("pull_rebase", "Pulling…"),
+            Command::Push => self.remote("push", "Pushing…"),
+            Command::ForcePush => self.remote("force_push", "Force pushing…"),
+            Command::Fetch => self.remote("fetch", "Fetching…"),
+            Command::Clone => {
+                *self = std::mem::replace(self, WorkspaceState::new(&[])).after(ADD_PROJECT);
+            }
+            Command::Checkout => {
+                *self = std::mem::replace(self, WorkspaceState::new(&[])).after(BRANCH_BUTTON);
+            }
+            Command::Refresh => {
+                if let Page::Session(session) = self.page {
+                    self.outbox.push(Outgoing::Refresh { session });
+                }
+            }
+            Command::StashPush => self.ask(Prompt::StashMessage),
+            Command::Stashes(action) => {
+                self.ask_stashes();
+                self.ask(Prompt::Stashes(action));
+            }
+            Command::Auto | Command::All => {
+                self.git.graph_all = command == Command::All;
+                self.git.graph_scroll = 0.0;
+                self.ask_log();
+            }
+            Command::CherryPick => {
+                if let (MenuKind::History(row), Page::Session(session)) = (kind, self.page)
+                    && let Some(commit) = self.git.history.get(row)
+                {
+                    let commit = commit.id.clone();
+                    self.git.busy = Some("Cherry-picking…");
+                    self.git.trouble = None;
+                    self.outbox.push(Outgoing::CherryPick { session, commit });
+                }
+            }
+            Command::CopyHash => {
+                if let MenuKind::History(row) = kind
+                    && let Some(commit) = self.git.history.get(row)
+                {
+                    let text = commit.id.clone();
+                    self.outbox.push(Outgoing::Copy { text });
+                }
+            }
+        }
+    }
+}

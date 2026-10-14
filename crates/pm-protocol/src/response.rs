@@ -78,6 +78,23 @@ pub enum Response {
         /// Their names, the current one first.
         names: Vec<String>,
     },
+    /// The history of a repository.
+    Log {
+        /// The commits, newest first.
+        commits: Vec<pm_git::Commit>,
+    },
+    /// The stashes of a repository.
+    Stashes {
+        /// The stashes, newest first.
+        stashes: Vec<pm_git::Stash>,
+    },
+    /// What a file holds.
+    File {
+        /// Its text, cut short when it was longer than could be shown; nothing when it is not text.
+        text: Option<String>,
+        /// Whether the text was cut short.
+        truncated: bool,
+    },
     /// Who an agent is signed in as.
     Identity {
         /// Who it is signed in as in its own folder.
@@ -133,6 +150,12 @@ pub enum Response {
         /// The commit the folder is at, abbreviated, when it is a repository with one.
         #[serde(default)]
         head: Option<String>,
+        /// What the checked out branch follows and how far apart they are.
+        #[serde(default)]
+        tracking: pm_git::Tracking,
+        /// The merge, rebase or cherry-pick the folder is stopped in, if it is in one.
+        #[serde(default)]
+        operation: Option<pm_git::Operation>,
     },
     /// A shell was started.
     Terminal {

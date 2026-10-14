@@ -134,6 +134,16 @@ pub enum IconName {
     Loading,
     /// A square: stop what is running.
     Stop,
+    /// A dot on a line: a commit.
+    GitCommit,
+    /// A cloud with an arrow down: fetch.
+    GitFetch,
+    /// An arrow down onto a line: pull.
+    GitPull,
+    /// An arrow up off a line: push.
+    GitPush,
+    /// Rings around a dot: the current place.
+    Target,
 }
 
 impl IconName {
@@ -197,6 +207,11 @@ impl IconName {
             Self::Minimize => Svg::new("minimize", include_icon!("minimize")),
             Self::Loading => Svg::new("loading", include_icon!("loading")),
             Self::Stop => Svg::new("stop", include_icon!("stop")),
+            Self::GitCommit => Svg::new("git_commit", include_icon!("git_commit")),
+            Self::GitFetch => Svg::new("git_fetch", include_icon!("git_fetch")),
+            Self::GitPull => Svg::new("git_pull", include_icon!("git_pull")),
+            Self::GitPush => Svg::new("git_push", include_icon!("git_push")),
+            Self::Target => Svg::new("target", include_icon!("target")),
         }
     }
 }

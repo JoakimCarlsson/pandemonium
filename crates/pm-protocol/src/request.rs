@@ -187,6 +187,43 @@ pub enum Request {
         /// Whether to stage them, or unstage them.
         stage: bool,
     },
+    /// Puts files back as they are in the last commit, deleting those that are new.
+    Discard {
+        /// The folder.
+        directory: String,
+        /// The paths, from the root of the repository.
+        paths: Vec<String>,
+    },
+    /// Adds files to the `.gitignore` at the root of the repository.
+    Ignore {
+        /// The folder.
+        directory: String,
+        /// The paths, from the root of the repository.
+        paths: Vec<String>,
+    },
+    /// Checks out a branch of the repository a folder is in.
+    Checkout {
+        /// The folder.
+        directory: String,
+        /// The branch, local or a remote's.
+        branch: String,
+    },
+    /// Makes a branch at the commit a folder is at and checks it out.
+    CreateBranch {
+        /// The folder.
+        directory: String,
+        /// What the branch is called.
+        name: String,
+    },
+    /// Reads a file of a folder, as it is in the working folder or in the last commit.
+    ReadFile {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the repository.
+        path: String,
+        /// Whether to read it from the last commit rather than from the working folder.
+        head: bool,
+    },
     /// The projects the reader has added on the server's machine.
     Projects,
     /// Replaces the projects the reader has added.
@@ -211,6 +248,61 @@ pub enum Request {
         directory: String,
         /// The commit message.
         message: String,
+        /// Whether, with nothing staged, to take the changes of every tracked file.
+        #[serde(default)]
+        tracked: bool,
+        /// Whether to rewrite the last commit in place of making another.
+        #[serde(default)]
+        amend: bool,
+    },
+    /// The most recent commits of the repository a folder is in, with the lanes of the graph they are drawn in.
+    Log {
+        /// The folder.
+        directory: String,
+        /// The most commits to return.
+        limit: usize,
+        /// Whether to list what every reference reaches, rather than what the checked out branch reaches.
+        all: bool,
+    },
+    /// Fetches, pulls or pushes the repository a folder is in, or syncs it by pulling and then pushing.
+    Sync {
+        /// The folder.
+        directory: String,
+        /// `fetch`, `pull`, `pull_rebase`, `push`, `force_push` or `sync`.
+        operation: String,
+    },
+    /// Applies a commit to the branch a folder has checked out.
+    CherryPick {
+        /// The folder.
+        directory: String,
+        /// The commit, by its abbreviated or full name.
+        commit: String,
+    },
+    /// The stashes of the repository a folder is in.
+    Stashes {
+        /// The folder.
+        directory: String,
+    },
+    /// Saves a folder's changes in a stash, or applies, pops or drops one.
+    Stash {
+        /// The folder.
+        directory: String,
+        /// `push`, `apply`, `pop` or `drop`.
+        action: String,
+        /// The stash for `apply`, `pop` and `drop`, by its index in the list.
+        index: Option<usize>,
+        /// What to call the stash `push` makes.
+        message: Option<String>,
+    },
+    /// Takes the next step of the merge, rebase or cherry-pick a folder is stopped in.
+    Step {
+        /// The folder.
+        directory: String,
+        /// `continue`, `skip` or `abort`.
+        action: String,
+        /// The message to finish a merge or a cherry-pick with, in place of the one git prepared.
+        #[serde(default)]
+        message: Option<String>,
     },
     /// Starts a shell in a folder, which keeps running until it exits or is closed, whoever is connected.
     OpenTerminal {

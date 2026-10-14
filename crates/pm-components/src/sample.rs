@@ -135,8 +135,33 @@ pub struct Change {
     pub diff: Vec<DiffLine>,
     /// Whether the reader has read it.
     pub viewed: bool,
-    /// Whether it goes into the next commit.
+    /// Whether some of it is in the index, which is what the next commit takes.
     pub staged: bool,
+    /// Whether some of it is not: it has changes the index does not, or git does not track it yet.
+    pub unstaged: bool,
+    /// Whether git does not track it yet.
+    pub untracked: bool,
+    /// Whether it is changed on both sides of a merge.
+    pub conflicted: bool,
+    /// What the index holds about it, as the letter git writes it with.
+    pub index: Option<char>,
+    /// What the working folder holds about it that the index does not, as the letter git writes it with.
+    pub worktree: Option<char>,
+    /// Where it was before it was renamed, when it was.
+    pub from: Option<String>,
+}
+
+/// What a file's status comes to once its letter is read: how loudly it asks to be noticed, and the letter it is written with.
+fn status_of(letter: char) -> Option<(u8, &'static str)> {
+    match letter {
+        'M' | 'T' => Some((0, "M")),
+        'R' | 'C' => Some((1, "R")),
+        'A' => Some((2, "A")),
+        'D' => Some((3, "D")),
+        '?' => Some((4, "U")),
+        'U' => Some((5, "C")),
+        _ => None,
+    }
 }
 
 impl Change {
@@ -164,6 +189,35 @@ impl Change {
             diff,
             viewed: false,
             staged: false,
+            unstaged: true,
+            untracked: false,
+            conflicted: false,
+            index: None,
+            worktree: Some('M'),
+            from: None,
+        }
+    }
+
+    /// Whether all of it is in the index.
+    pub fn fully_staged(&self) -> bool {
+        self.staged && !self.unstaged
+    }
+
+    /// Whether the last commit has no such file: it is new, staged or not, and putting it back means taking it off the disk.
+    pub fn is_created(&self) -> bool {
+        self.untracked || self.index == Some('A')
+    }
+
+    /// The one letter to write the file down as, and whether it is a new file, a deleted one or a changed one, for its colour.
+    pub fn mark(&self) -> &'static str {
+        let index = self.index.and_then(status_of);
+        let worktree = self.worktree.and_then(status_of);
+        match (index, worktree) {
+            _ if self.conflicted => "C",
+            (Some(index), Some(worktree)) if worktree.0 > index.0 => worktree.1,
+            (Some(index), _) => index.1,
+            (None, Some(worktree)) => worktree.1,
+            (None, None) => "M",
         }
     }
 
@@ -410,6 +464,10 @@ pub struct Session {
     pub project: usize,
     /// The branch its worktree is on.
     pub branch: String,
+    /// Whether the worktree is on a branch rather than at a bare commit.
+    pub on_branch: bool,
+    /// What the branch follows and how far apart they are.
+    pub tracking: pm_git::Tracking,
     /// The folder the agent works in.
     pub directory: String,
     /// The branch its worktree was made from, when it has one of its own.
@@ -468,6 +526,8 @@ impl Session {
             title: title.to_owned(),
             project,
             branch: branch.to_owned(),
+            on_branch: !branch.is_empty(),
+            tracking: pm_git::Tracking::default(),
             directory: String::new(),
             base: None,
             agent: 0,

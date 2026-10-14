@@ -10,6 +10,8 @@ use pm_acp::{AGENTS, Login, Standing};
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::diff::gutter_of;
+use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
+use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::{
@@ -92,6 +94,8 @@ pub struct App {
     pressed_on: Option<FocusId>,
     /// The scrolling box whose bar is held down, and where the pointer last was along it.
     bar_drag: Option<(FocusId, f32)>,
+    /// Where the pointer went down on the handle above the graph, and how tall the graph was.
+    sash_drag: Option<(f32, f32)>,
     /// When the application started, which animations run on.
     started: Instant,
     /// Where the threads that start agents report what they found.
@@ -208,6 +212,7 @@ impl Default for App {
             output: Output::default(),
             pressed_on: None,
             bar_drag: None,
+            sash_drag: None,
             started: Instant::now(),
             standings,
             reporter,
@@ -361,6 +366,21 @@ impl App {
         }
         if let Some(project) = self.model.read(|screen| screen.more_button_of(id)) {
             self.open_project_menu(project);
+            return;
+        }
+        if let Some(kind) = Screen::menu_button_of(id) {
+            self.open_git_menu(kind);
+            return;
+        }
+        let picks = self.modifiers.shift || self.modifiers.control || self.modifiers.logo;
+        if picks && let Some(index) = self.model.read(|screen| screen.change_row_of(id)) {
+            let how = if self.modifiers.shift {
+                Pick::Range
+            } else {
+                Pick::Toggle
+            };
+            self.model
+                .update(|state| *state = std::mem::take(state).change_picked(index, how));
             return;
         }
         self.model
@@ -557,9 +577,36 @@ impl App {
                 PLAN_SCROLL => std::mem::take(state).scrolled_plan(pixels, room),
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
+                VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
+                GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
                 _ => std::mem::take(state).scrolled_chat(pixels, room),
             };
         });
+    }
+
+    /// Takes hold of the handle above the graph when the pointer is down on it, and says whether it did.
+    fn grab_sash(&mut self) -> bool {
+        let Some((_, y)) = self.pointer.position else {
+            return false;
+        };
+        let on = self
+            .pointer
+            .position
+            .and_then(|at| self.output.hit(at))
+            .is_some_and(|id| id == GRAPH_SASH);
+        if on {
+            self.sash_drag = Some((y, self.model.read(|screen| screen.graph_height())));
+        }
+        on
+    }
+
+    /// Makes the graph as tall as the handle being held says, which is as far up as the pointer went.
+    fn drag_sash(&mut self, y: f32) {
+        if let Some((from, height)) = self.sash_drag {
+            self.model.update(|state| {
+                *state = std::mem::take(state).with_graph_height(height - (y - from))
+            });
+        }
     }
 
     /// Takes hold of the bar of the scrolling box under the pointer when it is down on the strip along its right edge, and says whether it did.
@@ -615,8 +662,22 @@ impl App {
                     Some(id) if screen.header_of(id).is_some() => {
                         self.open_project_menu(screen.header_of(id).unwrap_or_default());
                     }
+                    Some(id) if screen.change_row_of(id).is_some() => {
+                        self.open_change_menu(screen.change_row_of(id).unwrap_or_default());
+                    }
+                    Some(id) if screen.change_folder_row_of(id).is_some() => {
+                        let position = screen.change_folder_row_of(id).unwrap_or_default();
+                        self.open_folder_change_menu(position);
+                    }
+                    Some(id) if screen.history_row_of(id).is_some() => {
+                        let row = screen.history_row_of(id).unwrap_or_default();
+                        self.open_git_menu(MenuKind::History(row));
+                    }
                     _ => self.open_message_menu(),
                 }
+            }
+            PointerEvent::Pressed(Button::Left) if self.grab_sash() => {
+                self.pressed_on = None;
             }
             PointerEvent::Pressed(Button::Left) if self.grab_bar() => {
                 self.pressed_on = None;
@@ -638,6 +699,7 @@ impl App {
                         is_project_menu_item(id)
                             || is_session_menu_item(id)
                             || is_message_menu_item(id)
+                            || screen.is_menu_row(id)
                     })
                 {
                     self.model
@@ -666,6 +728,7 @@ impl App {
             }
             PointerEvent::Moved(x, y) => {
                 self.drag_bar(y);
+                self.drag_sash(y);
                 self.drag_comment((x, y));
                 self.drag_project((x, y));
                 self.terminal_drag((x, y));
@@ -678,6 +741,7 @@ impl App {
             }
             PointerEvent::Released(Button::Left) => {
                 self.bar_drag = None;
+                self.sash_drag = None;
                 self.end_comment_drag();
                 self.dragging = None;
                 self.terminal_anchor = None;
@@ -690,7 +754,9 @@ impl App {
                 if let (Some(pressed), Some(released)) = (self.pressed_on.take(), released_on)
                     && pressed == released
                 {
-                    self.focus.focus(pressed);
+                    if Screen::is_field(pressed) || pressed == TERMINAL_BODY {
+                        self.focus.focus(pressed);
+                    }
                     self.activate(pressed);
                 }
             }
@@ -728,6 +794,39 @@ impl App {
                 .clone()
                 .with_project_menu(project, (x - 8.0, y + 12.0))
         });
+    }
+
+    /// Opens the menu on changed files, just under the pointer, over the file at `index`.
+    fn open_change_menu(&mut self, index: usize) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        self.model.update(|state| {
+            *state = std::mem::take(state).with_change_menu(index, (x - 8.0, y + 12.0));
+        });
+    }
+
+    /// Opens the menu on changed files, just under the pointer, over the folder at `position` of their tree.
+    fn open_folder_change_menu(&mut self, position: usize) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        self.model.update(|state| {
+            *state = std::mem::take(state).with_folder_change_menu(position, (x - 8.0, y + 12.0));
+        });
+    }
+
+    /// Opens the menu `kind` of the source control panel, just under the pointer.
+    fn open_git_menu(&mut self, kind: MenuKind) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        let at = match kind {
+            MenuKind::History(_) => (x - 8.0, y + 12.0),
+            _ => (x - 190.0, y + 14.0),
+        };
+        self.model
+            .update(|state| *state = std::mem::take(state).with_git_menu(kind, at));
     }
 
     /// Opens the menu of the session at `session`, just under the pointer.
@@ -1013,6 +1112,9 @@ impl App {
             }
             Key::Tab if event.modifiers.shift => self.focus.previous(),
             Key::Tab => self.focus.next(),
+            Key::Escape if self.model.read(|screen| screen.review_overlay_open()) => {
+                self.activate(REVIEW_DISMISS)
+            }
             Key::Escape if self.model.read(|screen| screen.commenting()) => {
                 self.activate(COMMENT_CANCEL)
             }
@@ -1029,12 +1131,11 @@ impl App {
                 Some(id) if Screen::is_field(id) => {
                     let multiline = self
                         .model
-                        .get()
-                        .field(id)
-                        .is_some_and(pm_text::Field::is_multiline);
+                        .read(|screen| screen.field(id).is_some_and(pm_text::Field::is_multiline));
                     let shift = event.modifiers.shift;
                     let hurried = event.modifiers.control || event.modifiers.logo;
-                    if event.key == Key::Enter && shift && multiline {
+                    let breaks = shift || (Screen::enter_breaks_line(id) && !hurried);
+                    if event.key == Key::Enter && breaks && multiline {
                         self.edit_field(id, Edit::Insert('\n'));
                     } else if event.key == Key::Enter
                         && hurried

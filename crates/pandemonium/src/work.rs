@@ -7,6 +7,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use pm_acp::{AGENTS, Discovery, Event};
 use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
+use pm_components::git_controls::GRAPH_LIMIT;
 use pm_components::state::SESSION_BASE;
 use pm_input::FocusId;
 use pm_pages::{Outgoing, Screen, WorkspaceState};
@@ -71,7 +72,19 @@ enum Pending {
     /// Files of the session at this position were staged or unstaged.
     Stage(usize),
     /// A commit was made in the folder of the session at this position.
-    Commit(usize),
+    Commit(usize, bool),
+    /// The remote answered the session at this position, which asked it to fetch, pull, push or sync.
+    Remote(usize),
+    /// The commits of the repository of the session at this position.
+    Log(usize),
+    /// The stashes of the repository of the session at this position.
+    Stashes(usize),
+    /// Something was done to the files or branches of the folder of the session at this position, with what failing at it is called.
+    Git(usize, &'static str),
+    /// The branches of the folder of the session at this position.
+    SessionBranches(usize),
+    /// The file of the session at this position, at this path, and whether it was read from the last commit.
+    ReadFile(usize, String, bool),
     /// A session was branched off the session at this position.
     Fork(usize),
     /// The session at this position went back, with what its failing is called.
@@ -88,6 +101,23 @@ enum Pending {
     Folders(String),
     /// A repository the panel for adding a project asked to have cloned.
     Added,
+}
+
+impl Pending {
+    /// Whether this is waiting on the server for something about a session's folder that the source control panel shows as under way.
+    fn is_git(&self) -> bool {
+        matches!(
+            self,
+            Self::Inspect(_)
+                | Self::Log(_)
+                | Self::Stashes(_)
+                | Self::Stage(_)
+                | Self::Commit(..)
+                | Self::Git(..)
+                | Self::Remote(_)
+                | Self::SessionBranches(_)
+        )
+    }
 }
 
 /// Something done to a shell before the server said which shell it is, kept until it does.
@@ -547,17 +577,131 @@ impl Work {
                         );
                     }
                 }
-                Outgoing::Commit { session, message } => {
-                    if let Some(placement) = Self::session_of(model, session) {
-                        self.ask(
-                            &placement.host,
-                            Request::Commit {
-                                directory: placement.directory,
-                                message,
-                            },
-                            Pending::Commit(session),
-                        );
-                    }
+                Outgoing::Commit {
+                    session,
+                    message,
+                    tracked,
+                    push,
+                    amend,
+                } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Commit {
+                        directory,
+                        message,
+                        tracked,
+                        amend,
+                    },
+                    Pending::Commit(session, push),
+                ),
+                Outgoing::Step {
+                    session,
+                    action,
+                    message,
+                } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Step {
+                        directory,
+                        action: action.to_owned(),
+                        message,
+                    },
+                    Pending::Git(session, "continue"),
+                ),
+                Outgoing::Stash {
+                    session,
+                    action,
+                    index,
+                    message,
+                } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Stash {
+                        directory,
+                        action: action.to_owned(),
+                        index,
+                        message,
+                    },
+                    Pending::Git(session, "stash"),
+                ),
+                Outgoing::Stashes { session } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Stashes { directory },
+                    Pending::Stashes(session),
+                ),
+                Outgoing::CherryPick { session, commit } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CherryPick { directory, commit },
+                    Pending::Git(session, "cherry-pick"),
+                ),
+                Outgoing::Sync { session, operation } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Sync {
+                        directory,
+                        operation: operation.to_owned(),
+                    },
+                    Pending::Remote(session),
+                ),
+                Outgoing::Log { session, all } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Log {
+                        directory,
+                        limit: GRAPH_LIMIT,
+                        all,
+                    },
+                    Pending::Log(session),
+                ),
+                Outgoing::Refresh { session } => self.refresh(model, session),
+                Outgoing::Discard { session, paths } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Discard { directory, paths },
+                    Pending::Git(session, "discard the changes"),
+                ),
+                Outgoing::Ignore { session, paths } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Ignore { directory, paths },
+                    Pending::Git(session, "add the files to .gitignore"),
+                ),
+                Outgoing::Checkout { session, branch } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Checkout { directory, branch },
+                    Pending::Git(session, "switch branch"),
+                ),
+                Outgoing::CreateBranch { session, name } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CreateBranch { directory, name },
+                    Pending::Git(session, "make the branch"),
+                ),
+                Outgoing::SessionBranches { session } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Branches { directory },
+                    Pending::SessionBranches(session),
+                ),
+                Outgoing::ReadFile {
+                    session,
+                    path,
+                    head,
+                } => {
+                    let wanted = path.clone();
+                    self.ask_in_folder(
+                        model,
+                        session,
+                        |directory| Request::ReadFile {
+                            directory,
+                            path: wanted,
+                            head,
+                        },
+                        Pending::ReadFile(session, path, head),
+                    );
                 }
                 Outgoing::Accounts { logins, in_use } => self.set_accounts(&logins, &in_use),
                 Outgoing::SignIn { agent } => {
@@ -650,6 +794,7 @@ impl Work {
                 Outgoing::Copy { text } => copies.push(text),
             }
         }
+        self.publish_working(model);
         copies
     }
 
@@ -672,6 +817,9 @@ impl Work {
                     }
                     Incoming::Disconnected(reason) => {
                         eprintln!("the server on {host:?} is out of reach: {reason}");
+                        model.update(|screen| {
+                            *screen = std::mem::take(screen).with_git_working(false);
+                        });
                     }
                     Incoming::Response { id, response } => {
                         let pending = self
@@ -680,6 +828,7 @@ impl Work {
                             .and_then(|link| link.waiting.remove(&id));
                         if let Some(pending) = pending {
                             self.answered(model, &host, pending, response);
+                            self.publish_working(model);
                         }
                     }
                     Incoming::Event { session, event, .. } => {
@@ -825,6 +974,17 @@ impl Work {
         model.update(|screen| *screen = screen.clone().heard(session, event));
         if files_moved {
             self.refresh(model, session);
+        }
+    }
+
+    /// Tells the window whether the server is busy with something about a session's folder, when that has changed.
+    fn publish_working(&self, model: &State<Screen>) {
+        let working = self
+            .links
+            .values()
+            .any(|link| link.waiting.values().any(Pending::is_git));
+        if model.read(|screen| screen.git_working()) != working {
+            model.update(|screen| *screen = std::mem::take(screen).with_git_working(working));
         }
     }
 
@@ -1025,29 +1185,95 @@ impl Work {
                     commits,
                     branch,
                     head,
+                    tracking,
+                    operation,
                 } = response
                 {
                     model.update(|screen| {
-                        *screen = screen
-                            .clone()
+                        *screen = std::mem::take(screen)
                             .refreshed(session, &changes, commits)
-                            .checked_out(session, branch.as_deref(), head.as_deref());
+                            .checked_out(session, branch.as_deref(), head.as_deref())
+                            .tracked(session, branch.as_deref(), tracking, operation);
                     });
                 }
             }
             Pending::Stage(session) => {
                 if let Some(message) = failure {
                     let reason = format!("Could not stage the files: {message}");
-                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
                 }
                 self.refresh(model, session);
             }
-            Pending::Commit(session) => {
+            Pending::Git(session, what) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).remote_done(session, None);
+                });
                 if let Some(message) = failure {
-                    let reason = format!("The commit failed: {message}");
-                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                    let reason = format!("Could not {what}: {message}");
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
                 }
                 self.refresh(model, session);
+            }
+            Pending::SessionBranches(session) => {
+                if let Response::Branches { names } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_session_branches(session, names);
+                    });
+                }
+            }
+            Pending::ReadFile(session, path, head) => {
+                let read = match response {
+                    Response::File { text, truncated } => Ok((text, truncated)),
+                    Response::Failed { message } => Err(message),
+                    _ => Err("the server answered with something else".to_owned()),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_file(session, &path, head, read);
+                });
+            }
+            Pending::Commit(session, push) => {
+                let failed = failure.is_some();
+                if let Some(message) = failure {
+                    let reason = format!("The commit failed: {message}");
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                }
+                if failed || !push {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).remote_done(session, None);
+                    });
+                }
+                self.refresh(model, session);
+                if push && !failed {
+                    self.ask_in_folder(
+                        model,
+                        session,
+                        |directory| Request::Sync {
+                            directory,
+                            operation: "push".to_owned(),
+                        },
+                        Pending::Remote(session),
+                    );
+                }
+            }
+            Pending::Remote(session) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).remote_done(session, failure);
+                });
+                self.refresh(model, session);
+            }
+            Pending::Stashes(session) => {
+                if let Response::Stashes { stashes } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_stashes(session, stashes);
+                    });
+                }
+            }
+            Pending::Log(session) => {
+                if let Response::Log { commits } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_history(session, commits);
+                    });
+                }
             }
             Pending::Fork(session) => match response {
                 Response::Sessions { sessions } => {
@@ -1245,6 +1471,19 @@ impl Work {
         })
     }
 
+    /// Asks the machine the session at `session` is on for what `make` builds from its folder.
+    fn ask_in_folder(
+        &mut self,
+        model: &State<Screen>,
+        session: usize,
+        make: impl FnOnce(String) -> Request,
+        pending: Pending,
+    ) {
+        if let Some(placement) = Self::session_of(model, session) {
+            self.ask(&placement.host, make(placement.directory), pending);
+        }
+    }
+
     /// Looks at the folder of the session at `session` again, for its changes and commits.
     fn refresh(&mut self, model: &State<Screen>, session: usize) {
         let Some(placement) = Self::session_of(model, session) else {
@@ -1258,14 +1497,26 @@ impl Work {
         if inspecting {
             return;
         }
+        let log = model.read(|screen| screen.graph_wanted());
         self.ask(
             &placement.host,
             Request::Inspect {
-                directory: placement.directory,
+                directory: placement.directory.clone(),
                 base: placement.base,
             },
             Pending::Inspect(session),
         );
+        if let Some(all) = log {
+            self.ask(
+                &placement.host,
+                Request::Log {
+                    directory: placement.directory,
+                    limit: GRAPH_LIMIT,
+                    all,
+                },
+                Pending::Log(session),
+            );
+        }
     }
 }
 

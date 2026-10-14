@@ -875,6 +875,9 @@ impl WorkspaceState {
         if crate::adder::is_adder(id) {
             return Some(crate::adder::ADDER_FIELD);
         }
+        if id == crate::git_controls::BRANCH_BUTTON {
+            return Some(crate::git_controls::BRANCH_FILTER);
+        }
         if (crate::state::COMMENT_FILE_BASE..crate::state::COMMENT_REMOVE_BASE).contains(&number) {
             return Some(crate::state::COMMENT_FIELD);
         }

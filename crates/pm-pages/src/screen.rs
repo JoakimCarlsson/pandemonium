@@ -8,6 +8,9 @@ use pm_ui::Node;
 use crate::onboarding::{ADD, AgentStatus, OnboardingState, PATH, onboarding};
 use crate::workspace::{Outgoing, SIDEBAR_WIDTH, WorkspaceState, workspace};
 use pm_components::context_menu::ContextMenu;
+use pm_components::git_controls::Pick;
+use pm_components::git_menus::MenuKind;
+use pm_components::graph;
 use pm_components::project::Project;
 
 /// Which screen is showing, with what it remembers.
@@ -202,7 +205,7 @@ impl Screen {
 
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some())
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.git.menu.is_some())
     }
 
     /// Which session the row `id` of the sidebar opens, while the workspace is showing.
@@ -337,6 +340,214 @@ impl Screen {
         }
     }
 
+    /// Which changed file's row `id` is, while the workspace is showing.
+    pub fn change_row_of(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.change_row_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// Which folder of the changed files' tree row `id` is, while the workspace is showing.
+    pub fn change_folder_row_of(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.change_folder_row_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the menu on changed files open at `at` over the folder at `position` of their tree.
+    pub fn with_folder_change_menu(self, position: usize, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_folder_change_menu(position, at)),
+            other => other,
+        }
+    }
+
+    /// The screen with the menu on changed files open at `at` over the file at `index`.
+    pub fn with_change_menu(self, index: usize, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_change_menu(index, at)),
+            other => other,
+        }
+    }
+
+    /// The screen after the changed file at `index` was pressed with the modifier that picks several.
+    pub fn change_picked(self, index: usize, how: Pick) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.change_picked(index, how)),
+            other => other,
+        }
+    }
+
+    /// The screen after the server listed the branches of the folder of the session at `session`.
+    pub fn with_session_branches(self, session: usize, names: Vec<String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_session_branches(session, names)),
+            other => other,
+        }
+    }
+
+    /// The screen after the server answered for the file at `path` of the session at `session`.
+    pub fn with_file(
+        self,
+        session: usize,
+        path: &str,
+        head: bool,
+        read: Result<(Option<String>, bool), String>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_file(session, path, head, read)),
+            other => other,
+        }
+    }
+
+    /// Which menu the button `id` opens, if it is one.
+    pub fn menu_button_of(id: FocusId) -> Option<MenuKind> {
+        WorkspaceState::menu_button_of(id)
+    }
+
+    /// Which commit of the graph the row `id` is, while the workspace is showing.
+    pub fn history_row_of(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.history_row_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// Whether `id` names a row of the menu of the source control panel that is open.
+    pub fn is_menu_row(&self, id: FocusId) -> bool {
+        matches!(self, Self::Workspace(state) if state.is_menu_row(id))
+    }
+
+    /// The screen with the menu `kind` open at `at`.
+    pub fn with_git_menu(self, kind: MenuKind, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_git_menu(kind, at)),
+            other => other,
+        }
+    }
+
+    /// The screen after the server listed the stashes of the repository of the session at `session`.
+    pub fn with_stashes(self, session: usize, stashes: Vec<pm_git::Stash>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_stashes(session, stashes)),
+            other => other,
+        }
+    }
+
+    /// How tall the graph is when it is open, in logical pixels.
+    pub fn graph_height(&self) -> f32 {
+        match self {
+            Self::Workspace(state) => state.git.graph_height,
+            Self::Onboarding(_) => 0.0,
+        }
+    }
+
+    /// The screen with the graph `height` tall when it is open.
+    pub fn with_graph_height(self, height: f32) -> Self {
+        match self {
+            Self::Workspace(mut state) => {
+                state.git.graph_height = height.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1);
+                Self::Workspace(state)
+            }
+            other => other,
+        }
+    }
+
+    /// The screen after the branch of the session at `session` was seen to stand as `tracking` says.
+    pub fn tracked(
+        self,
+        session: usize,
+        branch: Option<&str>,
+        tracking: pm_git::Tracking,
+        operation: Option<pm_git::Operation>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.tracked(session, branch, tracking, operation))
+            }
+            other => other,
+        }
+    }
+
+    /// The screen after the server listed the commits of the repository of the session at `session`.
+    pub fn with_history(self, session: usize, commits: Vec<pm_git::Commit>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_history(session, commits)),
+            other => other,
+        }
+    }
+
+    /// Whether the server is busy with something asked about the open session's folder.
+    pub fn git_working(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.git.working)
+    }
+
+    /// The screen knowing whether the server is busy with something asked about a folder; once it is not, nothing is waited on.
+    pub fn with_git_working(self, working: bool) -> Self {
+        match self {
+            Self::Workspace(mut state) => {
+                state.git.working = working;
+                if !working {
+                    state.git.busy = None;
+                }
+                Self::Workspace(state)
+            }
+            other => other,
+        }
+    }
+
+    /// The screen after git refused something asked of the open session's folder, for `reason`: the source control panel says so.
+    pub fn git_failed(self, reason: &str) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.git_failed(reason)),
+            other => other,
+        }
+    }
+
+    /// The screen after the remote answered the request of the session at `session`.
+    pub fn remote_done(self, session: usize, failure: Option<String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.remote_done(session, failure)),
+            other => other,
+        }
+    }
+
+    /// Whether the graph is open, and whether it lists every reference.
+    pub fn graph_wanted(&self) -> Option<bool> {
+        match self {
+            Self::Workspace(state) => state.graph_wanted(),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen after the graph is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_graph(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_graph(delta, room)),
+            other => other,
+        }
+    }
+
+    /// Whether pressing Enter in the field `id` puts a line break in it rather than pressing its button.
+    pub fn enter_breaks_line(id: FocusId) -> bool {
+        id == pm_components::state::COMMIT_MESSAGE
+    }
+
+    /// Whether the menu on changed files, the question of whether to discard or the list of branches is open.
+    pub fn review_overlay_open(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.review_overlay_open())
+    }
+
+    /// The screen after the file being read is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_viewer(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_viewer(delta, room)),
+            other => other,
+        }
+    }
+
     /// The screen after the pointer went down on the line number `id` of the diff.
     pub fn comment_drag_begun(self, id: FocusId) -> Self {
         match self {
@@ -402,7 +613,7 @@ impl Screen {
 
     /// Whether a menu of a setting, or the offer to put files back, is open.
     pub fn picker_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.picker.is_some() || state.restoring.is_some())
+        matches!(self, Self::Workspace(state) if state.picker.is_some() || state.restoring.is_some() || state.git.branch_menu)
     }
 
     /// The screen with no setting menu, and no offer to put files back, open.
@@ -411,6 +622,7 @@ impl Screen {
             Self::Workspace(mut state) => {
                 state.picker = None;
                 state.restoring = None;
+                state.git.branch_menu = false;
                 Self::Workspace(state)
             }
             other => other,

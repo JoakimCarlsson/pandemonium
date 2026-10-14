@@ -29,6 +29,9 @@ const HEADER: f32 = 40.0;
 /// The space above each file and the rules around it, in logical pixels.
 const SECTION_CHROME: f32 = 16.0 + 2.0;
 
+/// How tall what is above and below the diff in its column is at most: the strip of tabs and the summary, in logical pixels.
+const CHROME: f32 = 88.0;
+
 /// How far beyond the view, above and below, rows are still built, so that scrolling shows no gaps, in logical pixels.
 const OVERSCAN: f32 = 100.0;
 
@@ -723,15 +726,22 @@ fn summary(session: &Session) -> Node {
 
 /// The diff of `session` in a view `width` by `height` logical pixels: a summary strip, then each changed file, of which only those in or near the view are built.
 pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) -> Node {
+    let heights: Vec<f32> = (0..session.changes.len())
+        .map(|index| section_height(state, session, index, width))
+        .collect();
+    let total: f32 = heights.iter().sum();
+    let view = (height - CHROME).max(0.0);
     let window = (
-        state.diff_scroll - OVERSCAN,
-        state.diff_scroll + height + OVERSCAN,
+        state.diff_scroll.min(total - view) - OVERSCAN,
+        state.diff_scroll.min(total) + view + OVERSCAN,
     );
     let mut top = 0.0;
-    let files: Vec<Node> = (0..session.changes.len())
-        .map(|index| {
+    let files: Vec<Node> = heights
+        .iter()
+        .enumerate()
+        .map(|(index, tall)| {
             let node = file(state, session, index, width, top, window);
-            top += section_height(state, session, index, width);
+            top += tall;
             node
         })
         .collect();
