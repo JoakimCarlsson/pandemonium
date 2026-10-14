@@ -29,3 +29,12 @@ pm-protocol = { path = "crates/pm-protocol" }
 pm-git = { path = "crates/pm-git" }
 pm-acp = { path = "crates/pm-acp" }
 pm-store = { path = "crates/pm-store" }
+pm-client = { path = "crates/pm-client" }
+pm-ssh = { path = "crates/pm-ssh" }
+pm-server = { path = "crates/pm-server" }
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = true

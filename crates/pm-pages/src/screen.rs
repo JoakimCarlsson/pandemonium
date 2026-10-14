@@ -12,6 +12,7 @@ use pm_components::project::Project;
 
 /// Which screen is showing, with what it remembers.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Screen {
     /// Adding a project and connecting agents.
     Onboarding(OnboardingState),

@@ -127,7 +127,7 @@ fn exclude_worktrees(repository: &Path) -> Result<(), String> {
     } else {
         "\n"
     };
-    write!(file, "{separator}.pandemonium/\n").map_err(|error| error.to_string())
+    writeln!(file, "{separator}.pandemonium/").map_err(|error| error.to_string())
 }
 
 /// Makes a new branch off `base` in a worktree of its own under `repository`, named from `title`.

@@ -15,6 +15,9 @@ from platform-specific code.
 make run     # cargo run -p pandemonium
 make fmt     # cargo fmt --all
 make lint    # cargo clippy --workspace --all-targets -- -D warnings
+make install        # build and install the window as pandemonium-preview
+make install-server # build and install only the headless pandemonium-server
+make release VERSION=x.y.z  # bump, tag and push; CI builds and publishes
 ```
 
 **Verify a change:** build, then draw the screen you touched. `pandemonium

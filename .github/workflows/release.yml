@@ -61,7 +61,6 @@ jobs:
           for package in "$editor" "$server"; do
             cp LICENSE README.md "build/dist/$package/"
           done
-          cp assets/icons/LICENSES "build/dist/$editor/LICENSES-icons"
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp "target/${{ matrix.target }}/dist/pandemonium.exe" "build/dist/$editor/"
             cp "target/${{ matrix.target }}/dist/pandemonium-server.exe" "build/dist/$server/"

@@ -262,7 +262,7 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
     if !session.changes.is_empty() {
         strip = strip.child(
             Button::new(
-                &format!(
+                format!(
                     "Review changes  +{} −{}",
                     session.added(),
                     session.removed()

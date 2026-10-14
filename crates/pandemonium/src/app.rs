@@ -29,6 +29,7 @@ use crate::work::Work;
 use crate::{keys, scene};
 
 /// The name the desktop knows the application by.
+#[cfg(target_os = "linux")]
 const APP_ID: &str = "pandemonium";
 
 /// Logical width of the window when it opens.

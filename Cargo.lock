@@ -1674,6 +1674,7 @@ dependencies = [
  "pm-pages",
  "pm-protocol",
  "pm-renderer",
+ "pm-server",
  "pm-ssh",
  "pm-state",
  "pm-store",

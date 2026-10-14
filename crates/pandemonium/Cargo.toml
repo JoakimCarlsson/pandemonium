@@ -21,6 +21,7 @@ pm-theme.workspace = true
 pm-ui.workspace = true
 rfd = "0.17.2"
 winit = "0.30.13"
-pm-client = { version = "0.12.0", path = "../pm-client" }
 pm-protocol.workspace = true
-pm-ssh = { version = "0.12.0", path = "../pm-ssh" }
+pm-client.workspace = true
+pm-ssh.workspace = true
+pm-server.workspace = true

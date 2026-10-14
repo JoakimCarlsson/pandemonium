@@ -76,15 +76,18 @@ pub(crate) fn append(number: u64, seq: u64, event: &Event) {
     }
 }
 
-/// Every session kept on disk: its number, its description and its log.
-pub(crate) fn load_all() -> Vec<(u64, Meta, Vec<(u64, Event)>)> {
+/// A session kept on disk: its number, its description and its log.
+pub(crate) type Stored = (u64, Meta, Vec<(u64, Event)>);
+
+/// Every session kept on disk.
+pub(crate) fn load_all() -> Vec<Stored> {
     let Some(root) = pm_store::data_directory().map(|root| root.join(FOLDER)) else {
         return Vec::new();
     };
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
     };
-    let mut found: Vec<(u64, Meta, Vec<(u64, Event)>)> = entries
+    let mut found: Vec<Stored> = entries
         .flatten()
         .filter_map(|entry| {
             let number: u64 = entry.file_name().to_str()?.parse().ok()?;

@@ -329,6 +329,9 @@ pub enum Tab {
     Diff,
 }
 
+/// What one machine said about its agents: the settings and the commands of each.
+pub type Discovered = (Vec<Vec<Setting>>, Vec<Vec<Slash>>);
+
 /// Everything the workspace window shows and lets the reader change.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceState {
@@ -357,8 +360,7 @@ pub struct WorkspaceState {
     /// The machine, by destination, that the settings and commands held belong to; nothing for this one.
     pub discovery_host: Option<String>,
     /// What other machines said about the agents, by destination, while the settings of one machine are showing.
-    pub discovered_elsewhere:
-        std::collections::HashMap<Option<String>, (Vec<Vec<Setting>>, Vec<Vec<Slash>>)>,
+    pub discovered_elsewhere: std::collections::HashMap<Option<String>, Discovered>,
     /// What the attached pictures look like, by path, once they are decoded.
     pub previews: std::collections::HashMap<String, pm_ui::Picture>,
     /// The commit message being written.

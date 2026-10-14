@@ -15,10 +15,17 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use app::App;
 use snapshot::Shot;
 
-/// Opens the window and runs the event loop until it is closed, or, given
+/// Opens the window and runs the event loop until it is closed, or, given `--server`, runs the server
+/// on this machine with the options that follow, or, given
 /// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("--server") {
+        std::process::exit(pm_server::run_with_arguments(
+            "pandemonium --server",
+            arguments.into_iter().skip(1),
+        ));
+    }
     if arguments.first().map(String::as_str) == Some("--snapshot") {
         let Some(path) = arguments.get(1) else {
             eprintln!("pandemonium: --snapshot needs a path");

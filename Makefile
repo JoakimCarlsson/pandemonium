@@ -1,4 +1,4 @@
-.PHONY: fmt lint run
+.PHONY: fmt lint run install install-server release
 
 fmt:
 	cargo fmt --all
@@ -8,3 +8,12 @@ lint:
 
 run:
 	cargo run -p pandemonium
+
+install:
+	scripts/install-preview.sh
+
+install-server:
+	scripts/install-preview.sh server
+
+release:
+	scripts/release.sh $(VERSION)

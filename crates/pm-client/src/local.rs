@@ -36,15 +36,11 @@ fn running() -> Option<Target> {
     })
 }
 
-/// Starts the server program that sits beside this one, on a port of the system's choosing, apart from this process so that it outlives it.
+/// Starts this program again in its server mode, on a port of the system's choosing, apart from this process so that it outlives it.
 fn start() -> std::io::Result<()> {
-    let program = std::env::current_exe()?
-        .parent()
-        .map(|folder| folder.join("pandemonium-server"))
-        .ok_or_else(|| std::io::Error::other("this program has no folder"))?;
-    let mut command = std::process::Command::new(program);
+    let mut command = std::process::Command::new(std::env::current_exe()?);
     command
-        .args(["--listen", "127.0.0.1:0"])
+        .args(["--server", "--listen", "127.0.0.1:0"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

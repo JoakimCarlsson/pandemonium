@@ -208,8 +208,8 @@ impl Atlas {
                 rows_per_image: Some(height),
             },
             wgpu::Extent3d {
-                width: width,
-                height: height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
         );
