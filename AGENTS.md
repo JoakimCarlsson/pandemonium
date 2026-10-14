@@ -69,6 +69,8 @@ One crate per layer, each depending only on the layers below it.
 - **Client:** `pm-client`: one connection to a server that is dialled again when
   it drops, plus finding and starting the server on this machine.
 - **Transport:** `pm-ssh`: reaches a server on another machine through ssh.
+- **Markdown:** `pm-markdown`: markdown parsed into blocks of styled spans;
+  `pm-components` lays them out as `Markdown`.
 - **Domain:** `pm-acp` (agents over the Agent Client Protocol), `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.
@@ -76,7 +78,7 @@ One crate per layer, each depending only on the layers below it.
   talk to the servers. It wires the layers and implements none of them.
 - **Not built yet** (one doc comment each): `pm-session`, `pm-review`,
   `pm-terminal`, `pm-config`, `pm-lsp`, `pm-treesitter`, `pm-buffer`,
-  `pm-markdown`, `pm-mcp`, `pm-policy`, `pm-plugin`, `pm-plugin-api`, `pm-wasm`,
+  `pm-mcp`, `pm-policy`, `pm-plugin`, `pm-plugin-api`, `pm-wasm`,
   `pm-agent-library`.
 
 ## Hard rules

@@ -152,6 +152,9 @@ pub const TURN_BASE: u64 = 100_000;
 /// The first of the lines opening a step's detail; the rest follow it, a thousand to a reply.
 pub const STEP_BASE: u64 = 200_000;
 
+/// The first of the summaries folding a part of a reply; the rest follow it, a thousand to a reply.
+pub const DETAILS_BASE: u64 = 400_000;
+
 /// The first of the buttons answering the agent's question; the rest follow it.
 pub const CHOICE_BASE: u64 = 3600;
 
@@ -431,6 +434,8 @@ pub struct WorkspaceState {
     pub slash: usize,
     /// The steps whose detail is open, by session, reply and position.
     pub opened: Vec<(usize, usize, usize)>,
+    /// The fold-outs of replies that are open, by session, reply and place in the reply.
+    pub unfolded: Vec<(usize, usize, usize)>,
 }
 
 impl WorkspaceState {
@@ -494,6 +499,7 @@ impl WorkspaceState {
             menu_scroll: 0.0,
             slash: 0,
             opened: Vec::new(),
+            unfolded: Vec::new(),
         };
         state.sync_context();
         state
@@ -709,6 +715,9 @@ impl WorkspaceState {
             self.copy(index);
         } else if let Some(index) = position(TURN_BASE, self.messages_open()) {
             self.toggle_turn(index);
+        } else if id >= DETAILS_BASE {
+            let offset = (id - DETAILS_BASE) as usize;
+            self.toggle_details(offset / 1000, offset % 1000);
         } else if id >= STEP_BASE {
             let offset = (id - STEP_BASE) as usize;
             self.toggle_step(offset / 1000, offset % 1000);
@@ -773,6 +782,30 @@ impl WorkspaceState {
             }
             None => self.opened.push(key),
         }
+    }
+
+    /// Opens or closes fold-out `place` of the reply at `message` of the open session.
+    fn toggle_details(&mut self, message: usize, place: usize) {
+        let Page::Session(open) = self.page else {
+            return;
+        };
+        let key = (open, message, place);
+        match self.unfolded.iter().position(|held| *held == key) {
+            Some(at) => {
+                self.unfolded.remove(at);
+            }
+            None => self.unfolded.push(key),
+        }
+    }
+
+    /// The fold-outs open in the reply at `message` of the open session, by place.
+    pub fn unfolded_in(&self, message: usize) -> Vec<usize> {
+        let page = self.open_index();
+        self.unfolded
+            .iter()
+            .filter(|(session, reply, _)| page == Some(*session) && *reply == message)
+            .map(|(_, _, place)| *place)
+            .collect()
     }
 
     /// How many answers the open session's agent is waiting on one of.

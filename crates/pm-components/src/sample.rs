@@ -404,7 +404,7 @@ pub fn sessions() -> Vec<Session> {
             ),
             Message::user("Can restoring be undone?"),
             Message::agent(
-                "Yes. Restoring now takes a checkpoint of the current state first, so the previous position is always one step back. Ready for review.",
+                "Yes. **Restoring** now takes a checkpoint of the *current* state first, so the previous position is always one step back:\n\n1. `Session::restore` calls `checkpoint()` before it moves the root.\n2. The new checkpoint is pushed onto the list, so ~~nothing is lost~~ the old state stays reachable.\n\n```rust\nlet before = session.checkpoint().id;\nsession.restore(target)?;\n```\n\n### Undo\n\n- Restoring `before` again undoes it, and the checkpoint taken on the way keeps the position the reader undid from.\n  - Nothing is ever dropped.\n\n> Undoing is restoring `before` again.\n\n| Action | Checkpoints |\n| --- | --- |\n| Restore | +1 |\n| Undo | +1 |\n\nReady for review, see [the diff](#).\n\n<details>\n<summary>Why it matters</summary>\n\nThe first version only needs to be <b>fun</b>.<br>Press <kbd>Ctrl</kbd> to go. <!-- hidden -->\n\n</details>",
                 &[],
                 "Worked for 1m 03s",
             ),

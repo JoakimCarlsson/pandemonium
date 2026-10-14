@@ -12,6 +12,7 @@ use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
 use crate::Button;
+use crate::Markdown;
 use crate::Tally;
 use crate::activity::activity;
 use crate::button::Size;
@@ -20,7 +21,9 @@ use crate::input;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::sample::{AGENTS, Message, Session, Status};
 use crate::sidebar::status_icon;
-use crate::state::{CHAT_SCROLL, COPY_BASE, OPEN_DIFF, REVIEW, TURN_BASE, WorkspaceState};
+use crate::state::{
+    CHAT_SCROLL, COPY_BASE, DETAILS_BASE, OPEN_DIFF, REVIEW, TURN_BASE, WorkspaceState,
+};
 use crate::steps::{question, steps};
 
 /// How wide the column holding the conversation is at most, in logical pixels.
@@ -68,7 +71,13 @@ fn user_message(state: &WorkspaceState, message: &Message, width: f32) -> Node {
 }
 
 /// A reply from the agent: the steps it took, what it says, the points it lists and how long it took.
-fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> Node {
+fn agent_message(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    width: f32,
+    shaper: &mut Shaper,
+) -> Node {
     let message = &session.messages[index];
     let mut reply = node().styles([flex(), flex_col(), gap(3)]);
     if !message.steps.is_empty() {
@@ -130,7 +139,11 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
         );
     }
     if !message.text.is_empty() {
-        reply = reply.child(paragraph(&message.text, Role::Text, width));
+        reply = reply.child(
+            Markdown::new(&message.text, width)
+                .details(DETAILS_BASE + index as u64 * 1000, state.unfolded_in(index))
+                .build(shaper),
+        );
     }
     if !message.bullets.is_empty() {
         reply = reply.child(node().styles([flex(), flex_col(), gap(1.5)]).children(
@@ -309,7 +322,7 @@ pub fn chat(
             if message.from_user {
                 user_message(state, message, column)
             } else {
-                agent_message(state, session, index, column)
+                agent_message(state, session, index, column, shaper)
             }
         }));
     if let Some(ask) = &session.ask {

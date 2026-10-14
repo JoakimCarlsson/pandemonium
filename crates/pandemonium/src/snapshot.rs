@@ -7,6 +7,7 @@ use pm_acp::{
     Tool, ToolState, Verdict,
 };
 use pm_components::Project;
+use pm_components::state::DETAILS_BASE;
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
     HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL, WorkspaceState,
@@ -73,6 +74,8 @@ pub enum Shot {
     Missing,
     /// The page for starting work with files attached.
     Attached,
+    /// The workspace on its first session with the fold-out of its last reply open.
+    Unfolded,
 }
 
 /// The projects a first launch has after onboarding.
@@ -101,6 +104,7 @@ impl Shot {
                 ..OnboardingState::default()
             }),
             Self::Workspace => Screen::Workspace(workspace()),
+            Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
             Self::Diff => Screen::Workspace(workspace().after(TAB_DIFF)),
             Self::Terminal => Screen::Workspace(workspace().after(TERMINAL)),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),

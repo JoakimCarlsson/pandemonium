@@ -1,5 +1,6 @@
 //! The shaper: fonts loaded once, and runs shaped and rasterized against them.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cosmic_text::fontdb::Weight;
@@ -9,6 +10,13 @@ use cosmic_text::{
 use pm_typography::{FontFamily, FontSlant, TypographyStyle};
 
 use crate::run::{Bitmap, GlyphKey, Run};
+
+/// How many measured extents are kept before the cache of them is emptied.
+const MEASURED_LIMIT: usize = 32_768;
+
+/// What a measured extent depends on besides the text: the family, the size
+/// and line height as bits, the weight and the slant.
+type Setting = (FontFamily, u32, u32, u16, FontSlant);
 
 /// The room one run of text takes, in logical pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -29,6 +37,8 @@ pub struct Shaper {
     sans: Option<String>,
     /// The installed family monospaced text is set in, when a stack named one.
     mono: Option<String>,
+    /// The extents of text measured before, by its text and setting.
+    measured: HashMap<(String, Setting), Extent>,
 }
 
 impl Shaper {
@@ -39,6 +49,7 @@ impl Shaper {
             swash: SwashCache::new(),
             sans: None,
             mono: None,
+            measured: HashMap::new(),
         }
     }
 
@@ -47,6 +58,7 @@ impl Shaper {
     pub fn set_stacks(&mut self, sans: &[&str], mono: &[&str]) {
         self.sans = self.installed(sans);
         self.mono = self.installed(mono);
+        self.measured.clear();
     }
 
     /// The first of `stack` the system has a font for.
@@ -96,13 +108,30 @@ impl Shaper {
         }
     }
 
-    /// The extent `text` occupies on one line in `style`.
+    /// The extent `text` occupies on one line in `style`, remembered so the
+    /// same text in the same setting is shaped once.
     pub fn measure(&mut self, text: &str, style: &TypographyStyle) -> Extent {
+        let setting = (
+            style.family,
+            style.size.to_bits(),
+            style.line_height_px().to_bits(),
+            style.weight,
+            style.slant,
+        );
+        let key = (text.to_owned(), setting);
+        if let Some(extent) = self.measured.get(&key) {
+            return *extent;
+        }
         let run = self.shape(text, style);
-        Extent {
+        let extent = Extent {
             width: run.width,
             height: run.height,
+        };
+        if self.measured.len() >= MEASURED_LIMIT {
+            self.measured.clear();
         }
+        self.measured.insert(key, extent);
+        extent
     }
 
     /// The coverage bitmap of one glyph, or nothing for a glyph with no ink

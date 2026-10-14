@@ -3,6 +3,7 @@
 use pm_icon::IconName;
 use pm_input::{FocusId, PointerState};
 use pm_renderer::{Affine, DrawList, Icon, Quad, Rect, Text};
+use pm_style::color::Srgba;
 use pm_style::layout::{Display, Overflow};
 use pm_style::primitives::Side;
 use pm_style::{Color, ComputedStyle, Context, Cursor, Role, State, StateSet, Transform};
@@ -475,7 +476,40 @@ impl Frame<'_> {
                 ));
             }
         }
+        self.lines(computed, &run, x, y, color);
         self.list.push_text(Text { run, x, y, color });
+    }
+
+    /// Paints the underline and the line through that the typography of
+    /// `computed` asks for, along `run` drawn at `x`, `y` in `color`.
+    fn lines(&mut self, computed: &ComputedStyle, run: &Run, x: f32, y: f32, color: Srgba) {
+        let typography = &computed.typography;
+        let decoration = typography.decoration;
+        if !decoration.underline && !decoration.line_through {
+            return;
+        }
+        let thickness = decoration
+            .thickness
+            .unwrap_or((typography.size / 14.0).max(1.0));
+        let color = decoration
+            .color
+            .map_or(color, |own| own.resolve(self.theme).alpha(color.a));
+        let baseline = y + run.baseline;
+        let mut rule = |top: f32| {
+            self.list
+                .push(Quad::filled(Rect::new(x, top, run.width, thickness), color));
+        };
+        if decoration.underline {
+            rule(
+                baseline
+                    + decoration
+                        .underline_offset
+                        .unwrap_or(typography.size * 0.12),
+            );
+        }
+        if decoration.line_through {
+            rule(baseline - typography.size * 0.3);
+        }
     }
 
     /// Paints the shadows, ring, fill and borders of one node.

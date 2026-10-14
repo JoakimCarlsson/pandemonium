@@ -21,6 +21,7 @@ pub mod diff;
 pub mod hearing;
 pub mod history;
 pub mod input;
+pub mod markdown;
 pub mod menu;
 pub mod parts;
 pub mod popover;
@@ -47,6 +48,7 @@ pub use context_menu::{
     is_menu_item,
 };
 pub use input::Input;
+pub use markdown::Markdown;
 pub use menu::Menu;
 pub use popover::Popover;
 pub use progress::Progress;
