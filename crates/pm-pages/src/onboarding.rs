@@ -17,7 +17,7 @@ use pm_components::button::{Size, Variant};
 use pm_components::context_menu::{ContextMenu, field_menu};
 use pm_components::parts::{glyph, line};
 use pm_components::project::Project;
-use pm_components::{Avatar, Progress, Strip};
+use pm_components::{Avatar, Progress, Tile};
 
 /// Moves to the step after the current one.
 pub const CONTINUE: FocusId = FocusId(100);
@@ -300,7 +300,7 @@ fn welcome() -> Node {
                     FLOW.iter()
                         .enumerate()
                         .map(|(index, (icon, title, detail))| {
-                            Strip::new(18).build().children([
+                            Tile::strip(18).build().children([
                                 node()
                                     .styles([
                                         flex(),
@@ -330,7 +330,7 @@ fn welcome() -> Node {
 fn project(state: &OnboardingState) -> Node {
     let can_add = Project::from_source(state.path.text()).is_some();
     let added = state.projects.iter().enumerate().map(|(index, project)| {
-        Strip::new(11).build().children([
+        Tile::strip(11).build().children([
             Avatar::of(project).build(),
             node()
                 .styles([flex_1()])
@@ -413,7 +413,7 @@ fn agents(state: &OnboardingState) -> Node {
                                 (reason.chars().take(REASON_WIDTH).collect(), Some("Retry"))
                             }
                         };
-                        Strip::new(14).build().children([
+                        Tile::strip(14).build().children([
                             glyph(*icon, 5.0, Role::Muted),
                             node().styles([flex(), flex_col(), flex_1()]).children([
                                 line(*name, 14, 1.4, Role::Text),

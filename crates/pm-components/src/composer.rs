@@ -14,14 +14,13 @@ use pm_ui::{Node, node, text};
 
 use crate::parts::{line, spacer};
 use crate::popover::{anchored, heading, row};
-use crate::prompt::prompt;
 use crate::sample::Session;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE, LOCATION,
     Location, MENTION, MENU_BODY, MENU_SCROLL, PICK_BASE, PLACE_BASE, PROMPT, Picker, SEND,
     SETTING_BASE, SKILL_BUTTON, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
 };
-use crate::{Button, Stepper, Toggle, button};
+use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
 use crate::{Chip, Popover, chip};
 
 /// The shadow under the prompt box: a soft, wide one that lifts it off the page.
@@ -215,7 +214,9 @@ fn agent_row(agent: &Setting) -> Node {
     labelled(
         "Agent",
         if on { "On" } else { "Default" },
-        Toggle::new(on, AGENT_TOGGLE).build(),
+        Checkbox::new(on, AGENT_TOGGLE)
+            .variant(checkbox::Variant::Switch)
+            .build(),
         false,
     )
 }
@@ -568,12 +569,13 @@ pub fn composer(
         .focused_with(PROMPT)
         .children(slash_list(state))
         .children(attachment_row(state))
-        .child(prompt(
-            &state.prompt,
-            &placeholder,
-            rows,
-            text_width,
-            shaper,
-        ))
+        .child(
+            Input::new(&state.prompt, PROMPT)
+                .variant(input::Variant::Multiline)
+                .placeholder(&placeholder)
+                .rows(rows)
+                .wrap(text_width, shaper)
+                .build(),
+        )
         .child(strip)
 }

@@ -11,7 +11,7 @@ use pm_ui::{Node, node};
 
 use pm_components::context_menu::field_menu;
 use pm_components::parts::{glyph, line, spacer};
-use pm_components::{chat, diff, history, prompt, review, sidebar, terminal, welcome};
+use pm_components::{chat, diff, history, input, review, sidebar, terminal, welcome};
 
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
@@ -150,7 +150,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         _ => welcome::welcome(
             state,
             ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
-            prompt::inner_width((main_width - 48.0).min(680.0)),
+            input::inner_width((main_width - 48.0).min(680.0)),
             shaper,
         ),
     };

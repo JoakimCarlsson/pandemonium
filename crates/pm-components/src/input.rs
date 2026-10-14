@@ -1,13 +1,35 @@
-//! The input: a box holding one editable line, with a look per variant and a measure per size.
+//! The input: a box holding editable text, one line or several, with a look per variant and a measure per size.
 
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
-    font_mono, h, h_full, h_px, items_center, items_start, leading_ratio, min_w_px, opacity,
-    overflow_hidden, pt, px, ring, ring_color, rounded, text_color, text_px, w_full,
+    Radius, Role, Utility, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
+    flex_col, flex_none, font_mono, h, h_full, items_center, leading_ratio, min_h, min_w_px,
+    opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, w_full,
 };
-use pm_text::Field;
-use pm_ui::{Node, node, text};
+use pm_text::{Field, Shaper};
+use pm_ui::{Line, Node, node, text, wrap};
+
+/// How tall a line of a multiline input is as a share of its type size.
+const LINE_RATIO: f32 = 1.57;
+
+/// How tall a line of a multiline input is, in logical pixels.
+const LINE: f32 = 22.0;
+
+/// How tall a multiline input is above and below its lines together, in logical pixels.
+const PADDING: f32 = 18.0;
+
+/// How many lines a multiline input shows at most; longer text scrolls to keep the caret in view.
+const MAX_LINES: usize = 8;
+
+/// The size and leading every line of a multiline input is set in.
+fn typography() -> [Utility; 2] {
+    [text_px(14), leading_ratio(LINE_RATIO)]
+}
+
+/// How wide the lines of a multiline input `outer` logical pixels wide are, inside its border and padding.
+pub fn inner_width(outer: f32) -> f32 {
+    (outer - 2.0 - 32.0).max(40.0)
+}
 
 /// How an input looks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -17,6 +39,8 @@ pub enum Variant {
     Default,
     /// No fill and no outline, for a line edited in place.
     Ghost,
+    /// Several wrapped lines with no fill and no outline, for a box that draws its own; give the lines with [`Input::wrap`].
+    Multiline,
 }
 
 /// How big an input is.
@@ -52,8 +76,10 @@ pub struct Input<'a> {
     disabled: bool,
     /// Whether what it holds is not acceptable.
     invalid: bool,
-    /// How many lines tall the box is, with the line at the top when it is more than one.
+    /// How many lines tall a multiline box is at least.
     rows: u32,
+    /// The text cut into the lines a multiline box shows.
+    lines: Vec<Line>,
 }
 
 impl<'a> Input<'a> {
@@ -68,12 +94,19 @@ impl<'a> Input<'a> {
             disabled: false,
             invalid: false,
             rows: 1,
+            lines: Vec::new(),
         }
     }
 
-    /// The input as tall as `rows` lines, the line it edits at the top.
+    /// The multiline input at least `rows` lines tall.
     pub fn rows(mut self, rows: u32) -> Self {
         self.rows = rows.max(1);
+        self
+    }
+
+    /// The multiline input with its text wrapped to `width` logical pixels.
+    pub fn wrap(mut self, width: f32, shaper: &mut Shaper) -> Self {
+        self.lines = wrap(shaper, self.field.text(), typography(), width);
         self
     }
 
@@ -111,6 +144,9 @@ impl<'a> Input<'a> {
     /// The node that draws the input: a ring and a blinking caret while it
     /// holds keyboard focus, and the selection highlighted.
     pub fn build(self) -> Node {
+        if self.variant == Variant::Multiline {
+            return self.build_multiline();
+        }
         let shown = self.field.shown();
         let (content, tone, caret) = if shown.is_empty() {
             (self.placeholder, Role::Subtle, 0)
@@ -136,7 +172,6 @@ impl<'a> Input<'a> {
                 self.id,
             );
         }
-        let tall = self.rows > 1;
         let mut styles = vec![
             flex(),
             items_center(),
@@ -163,9 +198,6 @@ impl<'a> Input<'a> {
                 ring_color(Role::Danger).focus(),
             ]);
         }
-        if tall {
-            styles.extend([h_px(self.rows as f32 * 22.0 + 28.0), pt(3.5)]);
-        }
         if self.disabled {
             styles.extend([opacity(40), cursor_not_allowed()]);
         } else {
@@ -176,7 +208,7 @@ impl<'a> Input<'a> {
                 flex(),
                 flex_1(),
                 h_full(),
-                if tall { items_start() } else { items_center() },
+                items_center(),
                 overflow_hidden(),
             ])
             .scroll_x(self.field.scroll())
@@ -187,6 +219,64 @@ impl<'a> Input<'a> {
         } else {
             input.focusable(self.id)
         }
+    }
+
+    /// The node that draws a multiline input: its wrapped lines in a column, the caret and selection placed in them.
+    fn build_multiline(self) -> Node {
+        let content = self.field.text();
+        let caret = self.field.caret();
+        let caret_line = self
+            .lines
+            .iter()
+            .position(|line| caret < line.next)
+            .unwrap_or(self.lines.len().saturating_sub(1));
+        let first = (caret_line + 1).saturating_sub(MAX_LINES);
+        let selection = self.field.selection();
+        let column = node()
+            .styles([
+                flex(),
+                flex_col(),
+                w_full(),
+                min_w_px(0),
+                px(4),
+                pt(3.5),
+                pb(1),
+                min_h((self.rows as f32 * LINE + PADDING) / 4.0),
+                cursor_text(),
+            ])
+            .focusable(self.id);
+        if content.is_empty() {
+            return column.child(
+                text(self.placeholder)
+                    .styles(typography())
+                    .styles([text_color(Role::Subtle), flex_none()])
+                    .caret(0, self.id)
+                    .field_line(self.id, 0),
+            );
+        }
+        column.children(
+            self.lines
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(MAX_LINES)
+                .map(|(index, line)| {
+                    let mut row = text(&content[line.start..line.end])
+                        .styles(typography())
+                        .styles([text_color(Role::Text), flex_none()])
+                        .field_line(self.id, line.start);
+                    if index == caret_line {
+                        row = row.caret(caret - line.start, self.id);
+                    }
+                    if let Some(range) = &selection {
+                        let (low, high) = (range.start.max(line.start), range.end.min(line.end));
+                        if low < high {
+                            row = row.selection(low - line.start..high - line.start, self.id);
+                        }
+                    }
+                    row
+                }),
+        )
     }
 }
 

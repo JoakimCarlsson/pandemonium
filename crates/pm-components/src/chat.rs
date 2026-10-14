@@ -16,8 +16,8 @@ use crate::Tally;
 use crate::activity::activity;
 use crate::button::Size;
 use crate::composer::composer;
+use crate::input;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
-use crate::prompt;
 use crate::sample::{AGENTS, Message, Session, Status};
 use crate::sidebar::status_icon;
 use crate::state::{CHAT_SCROLL, COPY_BASE, OPEN_DIFF, REVIEW, TURN_BASE, WorkspaceState};
@@ -361,7 +361,7 @@ pub fn chat(
                             Some(session),
                             2,
                             above,
-                            prompt::inner_width(column),
+                            input::inner_width(column),
                             shaper,
                         )),
                 ),
