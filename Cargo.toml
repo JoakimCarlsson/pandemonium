@@ -33,6 +33,7 @@ pm-client = { path = "crates/pm-client" }
 pm-ssh = { path = "crates/pm-ssh" }
 pm-server = { path = "crates/pm-server" }
 pm-markdown = { path = "crates/pm-markdown" }
+pm-terminal = { path = "crates/pm-terminal" }
 
 [profile.dist]
 inherits = "release"

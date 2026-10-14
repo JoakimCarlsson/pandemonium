@@ -10,5 +10,5 @@ pub use onboarding::{
 pub use screen::{Screen, screen};
 pub use workspace::{
     ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PROMPT, SEND, STOP, TAB_DIFF,
-    TERMINAL, WorkspaceState,
+    TERMINAL, TERMINAL_BODY, WorkspaceState,
 };

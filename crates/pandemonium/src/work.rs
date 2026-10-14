@@ -69,6 +69,21 @@ enum Pending {
     Stage(usize),
     /// A commit was made in the folder of the session at this position.
     Commit(usize),
+    /// The shell of the tab with this name was started, or could not be.
+    OpenTerminal(u64),
+    /// The shells the server of this machine holds.
+    Terminals(Host),
+}
+
+/// Something done to a shell before the server said which shell it is, kept until it does.
+#[derive(Clone, Debug)]
+enum Held {
+    /// Bytes typed.
+    Input(Vec<u8>),
+    /// The window's new size, as columns and rows.
+    Resize(u16, u16),
+    /// The tab was closed.
+    Close,
 }
 
 /// Where a session works and what it is made of.
@@ -116,6 +131,14 @@ pub struct Work {
     reporter: Sender<Job>,
     /// Whether the agents on this machine have been asked what they let the reader change.
     discovered: bool,
+    /// The machine and the server's number of the shell of each tab.
+    tabs: HashMap<u64, (Host, u64)>,
+    /// The tab, by the machine and the server's number of its shell.
+    shells: HashMap<(Host, u64), u64>,
+    /// What was done to the tabs whose shells are not known yet, in order.
+    held: HashMap<u64, Vec<Held>>,
+    /// What shells printed before their tab was known, by machine and number.
+    unclaimed: HashMap<(Host, u64), Vec<u8>>,
     /// Where the window was left, to be finished once the server that holds its session has listed its sessions.
     resume: Option<View>,
     /// How many threads have yet to report.
@@ -132,6 +155,10 @@ impl Work {
             positions: HashMap::new(),
             forgotten: HashSet::new(),
             early: HashMap::new(),
+            tabs: HashMap::new(),
+            shells: HashMap::new(),
+            held: HashMap::new(),
+            unclaimed: HashMap::new(),
             jobs,
             reporter,
             discovered: false,
@@ -329,6 +356,38 @@ impl Work {
         for outgoing in outbox {
             match outgoing {
                 Outgoing::Reindexed(moved) => self.reindex(&moved),
+                Outgoing::OpenTerminal {
+                    session,
+                    tab,
+                    columns,
+                    rows,
+                } => {
+                    let Some(placement) = Self::session_of(model, session) else {
+                        continue;
+                    };
+                    let directory = if placement.directory.is_empty() {
+                        placement.repository
+                    } else {
+                        placement.directory
+                    };
+                    self.held.insert(tab, Vec::new());
+                    self.ask(
+                        &placement.host,
+                        Request::OpenTerminal {
+                            directory,
+                            columns,
+                            rows,
+                        },
+                        Pending::OpenTerminal(tab),
+                    );
+                }
+                Outgoing::TerminalInput { tab, data } => {
+                    self.ask_terminal(tab, Held::Input(data));
+                }
+                Outgoing::ResizeTerminal { tab, columns, rows } => {
+                    self.ask_terminal(tab, Held::Resize(columns, rows));
+                }
+                Outgoing::CloseTerminal { tab } => self.ask_terminal(tab, Held::Close),
                 Outgoing::Close { session } => self.ask_session(
                     session,
                     |number| Request::CloseSession { session: number },
@@ -538,6 +597,22 @@ impl Work {
                     Incoming::Event { session, event, .. } => {
                         self.heard(model, &host, session, event);
                     }
+                    Incoming::TerminalOutput { terminal, data } => {
+                        let key = (host.clone(), terminal);
+                        match self.shells.get(&key).copied() {
+                            Some(tab) => {
+                                model.update(|screen| screen.terminal_output(tab, &data));
+                            }
+                            None => self.unclaimed.entry(key).or_default().extend(data),
+                        }
+                    }
+                    Incoming::TerminalExited(terminal) => {
+                        self.unclaimed.remove(&(host.clone(), terminal));
+                        if let Some(tab) = self.shells.remove(&(host.clone(), terminal)) {
+                            self.tabs.remove(&tab);
+                            model.update(|screen| screen.terminal_exited(tab));
+                        }
+                    }
                     Incoming::SessionAdded(info) => self.adopt(model, &host, vec![info]),
                     Incoming::SessionClosed(number) => {
                         if let Some(position) = self.positions.get(&(host.clone(), number)).copied()
@@ -711,6 +786,25 @@ impl Work {
             Pending::Sessions(origin) => {
                 if let Response::Sessions { sessions } = response {
                     self.adopt(model, &origin, sessions);
+                    self.ask(
+                        &origin,
+                        Request::Terminals,
+                        Pending::Terminals(origin.clone()),
+                    );
+                }
+            }
+            Pending::OpenTerminal(tab) => match response {
+                Response::Terminal { terminal } => self.opened_terminal(model, host, tab, terminal),
+                Response::Failed { message } => {
+                    self.held.remove(&tab);
+                    let report = format!("\r\ncould not start a shell: {message}\r\n");
+                    model.update(|screen| screen.terminal_output(tab, report.as_bytes()));
+                }
+                _ => {}
+            },
+            Pending::Terminals(origin) => {
+                if let Response::Terminals { terminals } = response {
+                    self.adopt_terminals(model, &origin, terminals);
                 }
             }
             Pending::Skills(agent, project) => {
@@ -798,6 +892,80 @@ impl Work {
                     model.update(|screen| *screen = screen.clone().noted(session, &reason));
                 }
                 self.refresh(model, session);
+            }
+        }
+    }
+
+    /// Sends what is done to the shell of `tab` to the server that runs it, or keeps it until the server says which shell that is.
+    fn ask_terminal(&mut self, tab: u64, item: Held) {
+        if let Some(queue) = self.held.get_mut(&tab) {
+            queue.push(item);
+            return;
+        }
+        if let Some((host, terminal)) = self.tabs.get(&tab).cloned() {
+            self.send_to_terminal(&host, tab, terminal, item);
+        }
+    }
+
+    /// Asks the server on `host` to do `item` to its shell numbered `terminal`, which is the shell of `tab`.
+    fn send_to_terminal(&mut self, host: &Host, tab: u64, terminal: u64, item: Held) {
+        let request = match item {
+            Held::Input(data) => Request::TerminalInput { terminal, data },
+            Held::Resize(columns, rows) => Request::ResizeTerminal {
+                terminal,
+                columns,
+                rows,
+            },
+            Held::Close => {
+                self.tabs.remove(&tab);
+                self.shells.remove(&(host.clone(), terminal));
+                Request::CloseTerminal { terminal }
+            }
+        };
+        self.ask(host, request, Pending::Nothing);
+    }
+
+    /// Takes in the server's number for the shell of `tab`: what was done to it meanwhile is sent, and what it printed meanwhile is shown.
+    fn opened_terminal(&mut self, model: &State<Screen>, host: &Host, tab: u64, terminal: u64) {
+        self.tabs.insert(tab, (host.clone(), terminal));
+        self.shells.insert((host.clone(), terminal), tab);
+        if let Some(client) = self.links.get(host).and_then(|link| link.client.as_ref()) {
+            client.watch_terminal(terminal, 0);
+        }
+        if let Some(data) = self.unclaimed.remove(&(host.clone(), terminal)) {
+            model.update(|screen| screen.terminal_output(tab, &data));
+        }
+        for item in self.held.remove(&tab).unwrap_or_default() {
+            self.send_to_terminal(host, tab, terminal, item);
+        }
+    }
+
+    /// Adds a tab for each shell of the server on `origin` that runs in the folder of a session the window shows and has no tab yet.
+    fn adopt_terminals(
+        &mut self,
+        model: &State<Screen>,
+        origin: &Host,
+        terminals: Vec<pm_protocol::TerminalInfo>,
+    ) {
+        for info in terminals {
+            let key = (origin.clone(), info.terminal);
+            if self.shells.contains_key(&key) {
+                continue;
+            }
+            let Some(session) = model.get().session_in(origin, &info.directory) else {
+                continue;
+            };
+            let mut adopted = None;
+            model.update(|screen| {
+                adopted = screen.adopt_terminal(session, info.columns, info.rows);
+            });
+            let Some(tab) = adopted else {
+                continue;
+            };
+            self.tabs.insert(tab, key.clone());
+            self.shells.insert(key.clone(), tab);
+            if let Some(client) = self.links.get(origin).and_then(|link| link.client.as_ref()) {
+                client.watch_terminal(info.terminal, 0);
             }
         }
     }

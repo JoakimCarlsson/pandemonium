@@ -5,6 +5,7 @@ use std::time::Instant;
 use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState};
 use pm_icon::IconName;
 
+use crate::dock::TerminalTab;
 use crate::project::Project;
 
 /// An agent a workspace can be started with, in the same order as [`pm_acp::AGENTS`].
@@ -275,6 +276,10 @@ pub struct Session {
     pub echoes: usize,
     /// Whether the reader closed it, which takes it out of the sidebar but not out of the history.
     pub closed: bool,
+    /// The shells in its terminal dock.
+    pub terminals: Vec<TerminalTab>,
+    /// Which of the shells shows, by position.
+    pub terminal_active: usize,
 }
 
 impl Session {
@@ -306,6 +311,8 @@ impl Session {
             turn_started: None,
             echoes: 0,
             closed: false,
+            terminals: Vec::new(),
+            terminal_active: 0,
         }
     }
 

@@ -12,7 +12,9 @@ use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
-use pm_pages::{ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PROMPT, Screen};
+use pm_pages::{
+    ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PROMPT, Screen, TERMINAL_BODY,
+};
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
 
@@ -24,6 +26,8 @@ use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
+
+mod terminal;
 
 use crate::keys::Clip;
 use crate::view::View;
@@ -107,6 +111,12 @@ pub struct App {
     project_dragging: bool,
     /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
     autofocused: bool,
+    /// Whether the shell is to take the keyboard once it is drawn.
+    focus_terminal: bool,
+    /// The cell of the shell's window a press began in, while the button is held, so dragging marks text.
+    terminal_anchor: Option<(usize, usize)>,
+    /// The part of a line the wheel has scrolled the shell that was not enough to move it.
+    terminal_scroll_rest: f32,
 }
 
 impl Default for App {
@@ -193,6 +203,9 @@ impl Default for App {
             logins: Default::default(),
             work,
             autofocused: false,
+            focus_terminal: false,
+            terminal_anchor: None,
+            terminal_scroll_rest: 0.0,
         }
     }
 }
@@ -217,6 +230,7 @@ impl App {
     /// Draws one frame and asks for the next one while anything is moving or
     /// the frame could not be presented.
     fn redraw(&mut self) {
+        self.fit_terminal();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -239,6 +253,9 @@ impl App {
         );
         self.focus
             .set_order(self.output.regions.iter().map(|region| region.id).collect());
+        if std::mem::take(&mut self.focus_terminal) {
+            self.focus.focus(TERMINAL_BODY);
+        }
         let starting = state.is_starting();
         if starting && !self.autofocused {
             self.focus.focus(PROMPT);
@@ -319,6 +336,7 @@ impl App {
         if let Some(next) = Screen::refocus(id) {
             self.focus.focus(next);
         }
+        self.focus_terminal = Screen::takes_keyboard(id);
         self.persist();
         self.deliver();
     }
@@ -471,6 +489,9 @@ impl App {
 
     /// Scrolls what is under the pointer by `pixels` logical pixels, downwards when positive.
     fn scroll(&mut self, pixels: f32) {
+        if self.terminal_wheel(pixels) {
+            return;
+        }
         let (Some((x, y)), Some(renderer)) = (self.pointer.position, self.renderer.as_ref()) else {
             return;
         };
@@ -519,6 +540,7 @@ impl App {
                 }
             }
             PointerEvent::Pressed(Button::Left) => {
+                self.terminal_press();
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
                 let screen = self.model.get();
                 self.project_press = on
@@ -548,6 +570,7 @@ impl App {
             }
             PointerEvent::Moved(x, y) => {
                 self.drag_project((x, y));
+                self.terminal_drag((x, y));
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
                 {
@@ -556,6 +579,7 @@ impl App {
             }
             PointerEvent::Released(Button::Left) => {
                 self.dragging = None;
+                self.terminal_anchor = None;
                 if self.drop_project() {
                     self.pressed_on = None;
                     return;
@@ -784,6 +808,9 @@ impl App {
         if !event.pressed {
             return;
         }
+        if self.terminal_key(event) {
+            return;
+        }
         match event.key {
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model
@@ -917,6 +944,9 @@ impl ApplicationHandler for App {
         self.take_standings();
         self.work.discover(&self.model);
         self.work.poll(&self.model);
+        if self.model.read(Screen::has_outbox) {
+            self.deliver();
+        }
         let waiting = self.model.get().waiting() || self.work.busy();
         event_loop.set_control_flow(if waiting {
             ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50))
@@ -979,7 +1009,8 @@ impl ApplicationHandler for App {
                 });
             }
             WindowEvent::Ime(Ime::Commit(committed)) => {
-                if let Some(id) = self.focus.current()
+                if self.commit_to_terminal(&committed) {
+                } else if let Some(id) = self.focus.current()
                     && Screen::is_field(id)
                 {
                     self.edit_field(id, Edit::Paste(committed));

@@ -38,6 +38,15 @@ pub enum Incoming {
     SessionClosed(u64),
     /// Another client changed the projects; these are the projects now.
     ProjectsChanged(Vec<String>),
+    /// Something a shell printed, which has not been reported before.
+    TerminalOutput {
+        /// The shell.
+        terminal: u64,
+        /// The bytes.
+        data: Vec<u8>,
+    },
+    /// The shell with this number ended.
+    TerminalExited(u64),
     /// Something an agent did, numbered within its session.
     Event {
         /// The session.
@@ -55,6 +64,23 @@ enum Order {
     Send(u64, Request),
     /// Watches the session, which has events numbered up to the second number already.
     Watch(u64, u64),
+    /// Watches the shell, whose output up to the second number, in bytes, the caller already has.
+    WatchTerminal(u64, u64),
+}
+
+/// What the connection thread remembers across reconnections.
+#[derive(Default)]
+struct Memory {
+    /// The number of the last event heard of each session.
+    seen: HashMap<u64, u64>,
+    /// The sessions being watched.
+    watched: HashSet<u64>,
+    /// How many bytes of output have been heard of each shell.
+    heard: HashMap<u64, u64>,
+    /// The shells being watched.
+    shells: HashSet<u64>,
+    /// The requests sent that have no answer yet.
+    waiting: Vec<(u64, Request)>,
 }
 
 /// A connection to a server.
@@ -90,6 +116,11 @@ impl Client {
     /// Watches `session`, whose events up to `after` the caller already has, across reconnections.
     pub fn watch(&self, session: u64, after: u64) {
         let _ = self.orders.send(Order::Watch(session, after));
+    }
+
+    /// Watches the shell `terminal`, whose output up to the byte `after` the caller already has, across reconnections.
+    pub fn watch_terminal(&self, terminal: u64, after: u64) {
+        let _ = self.orders.send(Order::WatchTerminal(terminal, after));
     }
 
     /// What the connection has reported since the last look.
@@ -159,24 +190,15 @@ fn dial(target: &Target) -> Result<WebSocket<TcpStream>, String> {
 
 /// Keeps a connection to `target`, passing orders to the server and what it says to `reporter`, until the client is dropped.
 fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Sender<Incoming>) {
-    let mut seen: HashMap<u64, u64> = HashMap::new();
-    let mut watched: HashSet<u64> = HashSet::new();
-    let mut waiting: Vec<(u64, Request)> = Vec::new();
+    let mut memory = Memory::default();
     loop {
         match dial(target) {
             Ok(mut socket) => {
                 let _ = reporter.send(Incoming::Connected);
-                let gone = converse(
-                    &mut socket,
-                    ordered,
-                    reporter,
-                    &mut seen,
-                    &mut watched,
-                    &mut waiting,
-                );
+                let gone = converse(&mut socket, ordered, reporter, &mut memory);
                 match gone {
                     Some(reason) => {
-                        for (id, _) in waiting.drain(..) {
+                        for (id, _) in memory.waiting.drain(..) {
                             let _ = reporter.send(Incoming::Response {
                                 id,
                                 response: Response::Failed {
@@ -196,8 +218,12 @@ fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Sender<Incoming>)
         loop {
             match ordered.recv_timeout(RETRY) {
                 Ok(Order::Watch(session, after)) => {
-                    watched.insert(session);
-                    seen.entry(session).or_insert(after);
+                    memory.watched.insert(session);
+                    memory.seen.entry(session).or_insert(after);
+                }
+                Ok(Order::WatchTerminal(terminal, after)) => {
+                    memory.shells.insert(terminal);
+                    memory.heard.entry(terminal).or_insert(after);
                 }
                 Ok(Order::Send(id, _)) => {
                     let _ = reporter.send(Incoming::Response {
@@ -214,17 +240,46 @@ fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Sender<Incoming>)
     }
 }
 
+/// Sends the request that subscribes to the shell `terminal` from the byte `after`.
+fn attach_terminal(
+    socket: &mut WebSocket<TcpStream>,
+    terminal: u64,
+    after: u64,
+) -> Result<(), String> {
+    send(
+        socket,
+        &ClientMessage::Request {
+            id: 0,
+            request: Request::AttachTerminal { terminal, after },
+        },
+    )
+}
+
+/// What of the output `data` that starts at the byte `offset` is new to a client that has heard `heard` bytes, and where it ends.
+fn fresh_output(heard: u64, offset: u64, data: Vec<u8>) -> Option<(Vec<u8>, u64)> {
+    let end = offset + data.len() as u64;
+    if end <= heard {
+        return None;
+    }
+    let skipped = heard.saturating_sub(offset) as usize;
+    Some((data[skipped..].to_vec(), end))
+}
+
 /// Carries orders to the server and what it says back, until the connection fails, giving the reason, or the client is dropped, giving nothing.
 fn converse(
     socket: &mut WebSocket<TcpStream>,
     ordered: &Receiver<Order>,
     reporter: &Sender<Incoming>,
-    seen: &mut HashMap<u64, u64>,
-    watched: &mut HashSet<u64>,
-    waiting: &mut Vec<(u64, Request)>,
+    memory: &mut Memory,
 ) -> Option<String> {
-    for session in watched.iter() {
-        let after = seen.get(session).copied().unwrap_or(0);
+    for terminal in memory.shells.iter() {
+        let after = memory.heard.get(terminal).copied().unwrap_or(0);
+        if let Err(reason) = attach_terminal(socket, *terminal, after) {
+            return Some(reason);
+        }
+    }
+    for session in memory.watched.iter() {
+        let after = memory.seen.get(session).copied().unwrap_or(0);
         let message = ClientMessage::Request {
             id: 0,
             request: Request::Attach {
@@ -240,14 +295,21 @@ fn converse(
         loop {
             match ordered.try_recv() {
                 Ok(Order::Send(id, request)) => {
-                    waiting.push((id, request.clone()));
+                    memory.waiting.push((id, request.clone()));
                     if let Err(reason) = send(socket, &ClientMessage::Request { id, request }) {
                         return Some(reason);
                     }
                 }
+                Ok(Order::WatchTerminal(terminal, after)) => {
+                    let fresh = memory.shells.insert(terminal);
+                    let from = *memory.heard.entry(terminal).or_insert(after);
+                    if fresh && let Err(reason) = attach_terminal(socket, terminal, from) {
+                        return Some(reason);
+                    }
+                }
                 Ok(Order::Watch(session, after)) => {
-                    let fresh = watched.insert(session);
-                    let from = *seen.entry(session).or_insert(after);
+                    let fresh = memory.watched.insert(session);
+                    let from = *memory.seen.entry(session).or_insert(after);
                     if fresh {
                         let message = ClientMessage::Request {
                             id: 0,
@@ -272,7 +334,7 @@ fn converse(
                 };
                 match message {
                     ServerMessage::Response { id, response } => {
-                        waiting.retain(|(held, _)| *held != id);
+                        memory.waiting.retain(|(held, _)| *held != id);
                         if id != 0 {
                             let _ = reporter.send(Incoming::Response { id, response });
                         }
@@ -282,8 +344,8 @@ fn converse(
                         seq,
                         event,
                     } => {
-                        watched.insert(session);
-                        let last = seen.entry(session).or_insert(0);
+                        memory.watched.insert(session);
+                        let last = memory.seen.entry(session).or_insert(0);
                         if seq > *last {
                             *last = seq;
                             let _ = reporter.send(Incoming::Event {
@@ -292,6 +354,23 @@ fn converse(
                                 event,
                             });
                         }
+                    }
+                    ServerMessage::TerminalOutput {
+                        terminal,
+                        offset,
+                        data,
+                    } => {
+                        memory.shells.insert(terminal);
+                        let heard = memory.heard.entry(terminal).or_insert(0);
+                        if let Some((data, end)) = fresh_output(*heard, offset, data) {
+                            *heard = end;
+                            let _ = reporter.send(Incoming::TerminalOutput { terminal, data });
+                        }
+                    }
+                    ServerMessage::TerminalExited { terminal } => {
+                        memory.shells.remove(&terminal);
+                        memory.heard.remove(&terminal);
+                        let _ = reporter.send(Incoming::TerminalExited(terminal));
                     }
                     ServerMessage::SessionAdded { info } => {
                         let _ = reporter.send(Incoming::SessionAdded(info));

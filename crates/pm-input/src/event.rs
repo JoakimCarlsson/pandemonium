@@ -43,6 +43,10 @@ pub enum Key {
     Home,
     /// End.
     End,
+    /// Page Up.
+    PageUp,
+    /// Page Down.
+    PageDown,
     /// The space bar.
     Space,
     /// The up arrow.

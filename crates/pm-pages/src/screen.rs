@@ -518,6 +518,105 @@ impl Screen {
         }
     }
 
+    /// Whether the workspace has something to send to the servers.
+    pub fn has_outbox(&self) -> bool {
+        matches!(self, Self::Workspace(state) if !state.outbox.is_empty())
+    }
+
+    /// Whether pressing `id` shows a shell that should then take the keyboard.
+    pub fn takes_keyboard(id: FocusId) -> bool {
+        WorkspaceState::takes_keyboard(id)
+    }
+
+    /// The columns and lines of the window of the shell showing, and how far back it is scrolled.
+    pub fn terminal_window(&self) -> Option<(usize, usize, usize)> {
+        match self {
+            Self::Workspace(state) if state.terminal => state.terminal_window(),
+            _ => None,
+        }
+    }
+
+    /// Reads what the shell of the tab `tab` printed, while the workspace is showing.
+    pub fn terminal_output(&mut self, tab: u64, data: &[u8]) {
+        if let Self::Workspace(state) = self {
+            state.terminal_output(tab, data);
+        }
+    }
+
+    /// Takes the shell of the tab `tab` out of the workspace because it ended.
+    pub fn terminal_exited(&mut self, tab: u64) {
+        if let Self::Workspace(state) = self {
+            state.terminal_exited(tab);
+        }
+    }
+
+    /// Types `data` into the shell showing.
+    pub fn type_into_terminal(&mut self, data: Vec<u8>) {
+        if let Self::Workspace(state) = self {
+            state.type_into_terminal(data);
+        }
+    }
+
+    /// Scrolls the shell showing `lines` lines back up, or down when negative.
+    pub fn scroll_terminal(&mut self, lines: isize) {
+        if let Self::Workspace(state) = self {
+            state.scroll_terminal(lines);
+        }
+    }
+
+    /// Tells the shell showing that its window is `columns` by `rows`.
+    pub fn fit_terminal(&mut self, columns: u16, rows: u16) {
+        if let Self::Workspace(state) = self {
+            state.fit_terminal(columns, rows);
+        }
+    }
+
+    /// Adds a tab for a shell the server already runs for the session at `session`, and returns its name in this window.
+    pub fn adopt_terminal(&mut self, session: usize, columns: u16, rows: u16) -> Option<u64> {
+        match self {
+            Self::Workspace(state) => state.adopt_terminal(session, columns, rows),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The position of a session on the machine `host` that works in `directory`.
+    pub fn session_in(&self, host: &Option<String>, directory: &str) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.session_in(host, directory),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// What the shell showing asks of the keys, if one is showing: whether the arrows send the application form, and whether a paste is wrapped in markers.
+    pub fn terminal_modes(&self) -> Option<(bool, bool)> {
+        match self {
+            Self::Workspace(state) => state.terminal_modes(),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The text marked in the shell showing.
+    pub fn terminal_selection(&self) -> Option<String> {
+        match self {
+            Self::Workspace(state) => state.terminal_selection(),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// Marks text in the shell showing, from `anchor` to `head`, each a line of its window and a column.
+    pub fn select_in_terminal(&mut self, anchor: (usize, usize), head: (usize, usize)) {
+        if let Self::Workspace(state) = self {
+            state.select_in_terminal(anchor, head);
+        }
+    }
+
+    /// Unmarks the text of the shell showing.
+    pub fn clear_terminal_selection(&mut self) {
+        if let Self::Workspace(state) = self {
+            state.clear_terminal_selection();
+        }
+    }
+
     /// Whether an agent is being started, signed in or at work, so the app should keep looking.
     pub fn waiting(&self) -> bool {
         match self {

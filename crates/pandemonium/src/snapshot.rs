@@ -78,6 +78,28 @@ pub enum Shot {
     Unfolded,
 }
 
+/// The workspace of made-up sessions.
+fn workspace_sample() -> WorkspaceState {
+    WorkspaceState::sample()
+}
+
+/// The workspace with a shell open that has run a few commands, as the shell would have drawn them.
+fn terminal() -> WorkspaceState {
+    let mut state = workspace_sample().after(TERMINAL);
+    state.fit_terminal(75, 11);
+    let printed = "\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ git status\r\n\
+On branch \x1b[36mtask/227-checkpoints\x1b[0m\r\n\
+Changes not staged for commit:\r\n\
+\t\x1b[31mmodified:   crates/pandemonium/src/session.rs\x1b[0m\r\n\
+\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ cargo test\r\n\
+\x1b[1;32m   Compiling\x1b[0m pandemonium v0.12.0\r\n\
+\x1b[1;32m    Finished\x1b[0m test profile in 6.21s\r\n\
+test result: \x1b[32mok\x1b[0m. 9 passed; 0 failed\r\n\
+\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ ";
+    state.terminal_output(1, printed.as_bytes());
+    state
+}
+
 /// The projects a first launch has after onboarding.
 fn projects() -> Vec<Project> {
     ["~/code/pandemonium", "~/code/voxel"]
@@ -89,7 +111,7 @@ fn projects() -> Vec<Project> {
 impl Shot {
     /// The screen this snapshot is of.
     fn screen(self) -> Screen {
-        let workspace = WorkspaceState::sample;
+        let workspace = workspace_sample;
         match self {
             Self::Onboarding(step) => Screen::Onboarding(OnboardingState {
                 step,
@@ -106,7 +128,7 @@ impl Shot {
             Self::Workspace => Screen::Workspace(workspace()),
             Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
             Self::Diff => Screen::Workspace(workspace().after(TAB_DIFF)),
-            Self::Terminal => Screen::Workspace(workspace().after(TERMINAL)),
+            Self::Terminal => Screen::Workspace(terminal()),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::Workspace(WorkspaceState::new(&[])),
             Self::History => Screen::Workspace(workspace().after(HISTORY)),

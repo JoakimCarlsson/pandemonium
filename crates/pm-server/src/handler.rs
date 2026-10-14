@@ -30,6 +30,15 @@ fn failed(message: impl Into<String>) -> Response {
     }
 }
 
+/// `Done` when a request about a shell found it, and a failure saying there is none otherwise.
+fn terminal_done(found: bool, terminal: u64) -> Response {
+    if found {
+        Response::Done
+    } else {
+        failed(format!("no terminal is numbered {terminal}"))
+    }
+}
+
 /// Points every agent at the folder of the login in use for it, or at its own when none is.
 fn apply_accounts(logins: &[pm_protocol::Login], in_use: &[(String, String)]) {
     for agent in AGENTS {
@@ -379,6 +388,40 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 Err(reason) => failed(reason),
             }
         }
+        Request::OpenTerminal {
+            directory,
+            columns,
+            rows,
+        } => {
+            let folder = place(&directory);
+            if !folder.is_dir() {
+                return failed(format!("{directory} is not a folder on this machine"));
+            }
+            match core.open_terminal(&folder, &directory, columns, rows) {
+                Ok(terminal) => {
+                    core.attach_terminal(connection, terminal, 0);
+                    Response::Terminal { terminal }
+                }
+                Err(reason) => failed(format!("could not start a shell: {reason}")),
+            }
+        }
+        Request::TerminalInput { terminal, data } => {
+            terminal_done(core.type_into_terminal(terminal, &data), terminal)
+        }
+        Request::ResizeTerminal {
+            terminal,
+            columns,
+            rows,
+        } => terminal_done(core.resize_terminal(terminal, columns, rows), terminal),
+        Request::CloseTerminal { terminal } => {
+            terminal_done(core.close_terminal(terminal), terminal)
+        }
+        Request::AttachTerminal { terminal, after } => {
+            terminal_done(core.attach_terminal(connection, terminal, after), terminal)
+        }
+        Request::Terminals => Response::Terminals {
+            terminals: core.terminal_infos(),
+        },
         Request::Commit { directory, message } => {
             match pm_git::commit(&place(&directory), &message) {
                 Ok(()) => Response::Done,

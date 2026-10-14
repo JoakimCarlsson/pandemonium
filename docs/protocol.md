@@ -110,6 +110,12 @@ request with exactly one `response` carrying the same `id`.
 | `sessions`     | none                                                                                             | `sessions`      |
 | `stage`        | `directory`, `paths`, `stage`                                                                    | `done`          |
 | `commit`       | `directory`, `message`                                                                           | `done`          |
+| `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
+| `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
+| `resize_terminal`| `terminal`, `columns`, `rows`                                                                  | `done`          |
+| `close_terminal`| `terminal`                                                                                      | `done`          |
+| `attach_terminal`| `terminal`, `after`                                                                            | `done`          |
+| `terminals`    | none                                                                                             | `terminals`     |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -149,6 +155,10 @@ request with exactly one `response` carrying the same `id`.
 - **`sessions`:** every session the server holds, running or not, with enough
   to list it. To open one, send `attach` with `after: 0`: the log replays the
   whole conversation.
+- **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
+  in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
+  connection is attached to the shell already. The shell keeps running when no
+  client is connected, until it exits or is closed. See [Terminals](#terminals).
 - **`stage`:** stages the `paths` (from the repository root) or, when `stage`
   is `false`, unstages them.
 
@@ -175,6 +185,8 @@ embedded context, and anything else as a link to the stored file.
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |
 | `sessions`   | `sessions`: `[SessionInfo]`                               |
+| `terminal`   | `terminal`: the number of the shell that was started      |
+| `terminals`  | `terminals`: `[{terminal, directory, columns, rows}]`, oldest first; `directory` is the address `open_terminal` was given |
 
 ## Changes other clients make
 
@@ -256,6 +268,33 @@ Shapes used above:
 - **Permission:** `{ticket, title, command, choices: [{id, name, verdict}]}`
   with `verdict` one of `Allow`, `Always`, `Reject`.
 
+## Terminals
+
+A shell is a process in a pseudo-terminal that the server runs. The server
+does not interpret what it prints: it passes the bytes on, and each client
+keeps its own emulator for them.
+
+```json
+{ "type": "terminal_output", "terminal": 1, "offset": 0, "data": "<base64>" }
+{ "type": "terminal_exited", "terminal": 1 }
+```
+
+- `terminal_output`: bytes the shell printed. `offset` is how many bytes it had
+  printed before these, so a client drops what it already has and notices a gap.
+  A connection gets output from `open_terminal`, and from `attach_terminal`
+  until it ends. Output is not sent to a connection that has not attached.
+- `attach_terminal` sends what the shell printed after the byte `after`. The
+  server keeps the latest 256 KiB; a client that is further behind gets the
+  oldest it still has, from its `offset`. A client attaches again after every
+  reconnect with the number of bytes it has, and after a restart of the window
+  with `after: 0` for each shell `terminals` lists.
+- `terminal_exited` is sent to every client when the shell's process ends, and
+  the shell is forgotten.
+- `terminal_input` carries what a terminal sends the shell for a key or a paste
+  (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
+  emulator gives to the shell's queries.
+- A shell started in a session's folder belongs to that session in the window.
+
 ## Compatibility
 
 - The protocol is append-only. Add fields (optional on read) and new variants.
@@ -272,7 +311,8 @@ Shapes used above:
   next `prompt` starts the agent again as a new conversation, without what was
   said before.
 - The log of events is never trimmed.
-- There are no requests for terminals, file contents, file watching,
+- Shells do not survive a restart of the server.
+- There are no requests for file contents, file watching,
   checkpoints or deleting a session, and no message says that a project was
   removed or a session renamed or deleted.
 - A client that reconnects to a server restarted on another port has to read

@@ -233,7 +233,15 @@ impl WorkspaceState {
                     moved.push(Some(kept.len()));
                     kept.push(session);
                 }
-                None => moved.push(None),
+                None => {
+                    moved.push(None);
+                    self.outbox.extend(
+                        session
+                            .terminals
+                            .iter()
+                            .map(|tab| Outgoing::CloseTerminal { tab: tab.id }),
+                    );
+                }
             }
         }
         self.sessions = kept;

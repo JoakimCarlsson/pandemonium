@@ -10,6 +10,7 @@ use pm_acp::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
 
 use crate::sessions::{self, Meta};
+use crate::terminals::Terminal;
 
 /// One client connected to the server.
 pub(crate) struct Connection {
@@ -41,6 +42,10 @@ pub(crate) struct Core {
     next: AtomicU64,
     /// The clients that are connected.
     pub(crate) connections: Mutex<Vec<Arc<Connection>>>,
+    /// The shells, by number.
+    pub(crate) terminals: Mutex<HashMap<u64, Arc<Terminal>>>,
+    /// The number the next shell gets.
+    next_terminal: AtomicU64,
 }
 
 impl Core {
@@ -50,12 +55,19 @@ impl Core {
             sessions: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
             connections: Mutex::new(Vec::new()),
+            terminals: Mutex::new(HashMap::new()),
+            next_terminal: AtomicU64::new(1),
         })
     }
 
     /// The number for a new session.
     pub(crate) fn next_session(&self) -> u64 {
         self.next.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// The number for a new shell.
+    pub(crate) fn next_terminal(&self) -> u64 {
+        self.next_terminal.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them.

@@ -18,6 +18,7 @@ pub mod code_box;
 pub mod composer;
 pub mod context_menu;
 pub mod diff;
+pub mod dock;
 pub mod hearing;
 pub mod history;
 pub mod input;
@@ -35,6 +36,7 @@ pub mod stepper;
 pub mod steps;
 pub mod tally;
 pub mod terminal;
+pub mod terminal_keys;
 pub mod tile;
 pub mod welcome;
 

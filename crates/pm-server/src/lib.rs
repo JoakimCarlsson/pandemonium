@@ -11,6 +11,7 @@ mod credential;
 mod handler;
 mod listener;
 mod sessions;
+mod terminals;
 mod uploads;
 
 pub use cli::run_with_arguments;

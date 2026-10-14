@@ -35,6 +35,19 @@ pub struct SessionInfo {
     pub running: bool,
 }
 
+/// What the server knows about one shell.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TerminalInfo {
+    /// The shell's number.
+    pub terminal: u64,
+    /// The folder it was started in.
+    pub directory: String,
+    /// How many characters wide its window is.
+    pub columns: u16,
+    /// How many lines tall its window is.
+    pub rows: u16,
+}
+
 /// The answer to one [`crate::Request`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "response", rename_all = "snake_case")]
@@ -114,5 +127,15 @@ pub enum Response {
         changes: Vec<Change>,
         /// The commits of the session's own branch, when it has one.
         commits: Option<Vec<String>>,
+    },
+    /// A shell was started.
+    Terminal {
+        /// The shell.
+        terminal: u64,
+    },
+    /// The shells the server holds.
+    Terminals {
+        /// Each one, oldest first.
+        terminals: Vec<TerminalInfo>,
     },
 }

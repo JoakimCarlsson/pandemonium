@@ -113,6 +113,21 @@ pub const PLAN_CHIP: FocusId = FocusId(4270);
 /// Opens the questions waiting for an answer above the prompt box.
 pub const APPROVALS_CHIP: FocusId = FocusId(4271);
 
+/// The body of the terminal dock, which takes the keyboard while it has focus.
+pub const TERMINAL_BODY: FocusId = FocusId(323);
+
+/// Starts another shell in the terminal dock.
+pub const NEW_TERMINAL: FocusId = FocusId(324);
+
+/// Makes the terminal dock taller, or gives it its height back.
+pub const MAXIMIZE_TERMINAL: FocusId = FocusId(325);
+
+/// The first of the tabs showing one of the dock's shells; the rest follow it.
+pub const TERMINAL_TAB_BASE: u64 = 5000;
+
+/// The first of the buttons ending one of the dock's shells; the rest follow it.
+pub const TERMINAL_CLOSE_BASE: u64 = 5100;
+
 /// The first of the buttons copying a reply; the rest follow it.
 pub const COPY_BASE: u64 = 300_000;
 
@@ -161,6 +176,38 @@ pub const CHOICE_BASE: u64 = 3600;
 /// Something the window has to do or tell an agent, taken off the state by whoever runs the agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outgoing {
+    /// Starts a shell for the tab, in the folder of the session at this position.
+    OpenTerminal {
+        /// The session, by position.
+        session: usize,
+        /// The tab, by the name this window knows it by.
+        tab: u64,
+        /// How many columns wide its window is.
+        columns: u16,
+        /// How many lines tall its window is.
+        rows: u16,
+    },
+    /// Types into the shell of a tab.
+    TerminalInput {
+        /// The tab.
+        tab: u64,
+        /// The bytes the shell reads.
+        data: Vec<u8>,
+    },
+    /// Tells the shell of a tab how large its window is.
+    ResizeTerminal {
+        /// The tab.
+        tab: u64,
+        /// How many columns wide.
+        columns: u16,
+        /// How many lines tall.
+        rows: u16,
+    },
+    /// Ends the shell of a tab.
+    CloseTerminal {
+        /// The tab.
+        tab: u64,
+    },
     /// Closes the session at this position: its agent is stopped and it leaves the sidebar, the server keeping it.
     Close {
         /// The session, by position.
@@ -360,6 +407,12 @@ pub struct WorkspaceState {
     pub review: bool,
     /// Whether the terminal is open.
     pub terminal: bool,
+    /// Whether the terminal is taller than usual.
+    pub terminal_maximized: bool,
+    /// How many columns and lines the dock's window last held.
+    pub terminal_size: (u16, u16),
+    /// The name the next shell gets in this window.
+    pub next_terminal: u64,
     /// The agent chosen for new work, by position.
     pub agent: usize,
     /// The changed file the reader picked, by position, if one was.
@@ -462,6 +515,9 @@ impl WorkspaceState {
             tab: Tab::Chat,
             review: true,
             terminal: false,
+            terminal_maximized: false,
+            terminal_size: crate::dock::FIRST_SIZE,
+            next_terminal: 1,
             agent: 0,
             file: None,
             prompt: prompt_field(""),
@@ -589,7 +645,9 @@ impl WorkspaceState {
             HISTORY => self.page = Page::History,
             TAB_CHAT => self.tab = Tab::Chat,
             TAB_DIFF => self.tab = Tab::Diff,
-            TERMINAL => self.terminal = !self.terminal,
+            TERMINAL | NEW_TERMINAL | MAXIMIZE_TERMINAL => {
+                self.press_terminal(action);
+            }
             REVIEW => self.review = !self.review,
             OPEN_DIFF => self.tab = Tab::Diff,
             SEND => self.send(),
@@ -686,6 +744,9 @@ impl WorkspaceState {
 
     /// The state after one of the rows or chips numbered from a base was pressed.
     fn after_numbered(&mut self, id: u64) {
+        if self.press_terminal(FocusId(id)) {
+            return;
+        }
         if self.press_choice(id) {
             return;
         }

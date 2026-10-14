@@ -26,6 +26,8 @@ pub fn key_event(key: &WindowKey, state: ElementState, modifiers: Modifiers) -> 
         WindowKey::Named(NamedKey::Delete) => Key::Delete,
         WindowKey::Named(NamedKey::Home) => Key::Home,
         WindowKey::Named(NamedKey::End) => Key::End,
+        WindowKey::Named(NamedKey::PageUp) => Key::PageUp,
+        WindowKey::Named(NamedKey::PageDown) => Key::PageDown,
         WindowKey::Named(NamedKey::Space) => Key::Space,
         WindowKey::Named(NamedKey::ArrowUp) => Key::ArrowUp,
         WindowKey::Named(NamedKey::ArrowDown) => Key::ArrowDown,
@@ -102,6 +104,23 @@ pub fn clip(event: &KeyEvent) -> Option<Clip> {
         Key::Character(character) => match character.to_ascii_lowercase() {
             'c' => Some(Clip::Copy),
             'x' => Some(Clip::Cut),
+            'v' => Some(Clip::Paste),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The clipboard action a key event asks for in a terminal, where control alone belongs to the shell: Command, or Control with Shift.
+pub fn terminal_clip(event: &KeyEvent) -> Option<Clip> {
+    let modifiers = event.modifiers;
+    let chord = modifiers.logo || (modifiers.control && modifiers.shift);
+    if !event.pressed || modifiers.alt || !chord {
+        return None;
+    }
+    match event.key {
+        Key::Character(character) => match character.to_ascii_lowercase() {
+            'c' => Some(Clip::Copy),
             'v' => Some(Clip::Paste),
             _ => None,
         },

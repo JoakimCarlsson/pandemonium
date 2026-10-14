@@ -72,4 +72,19 @@ pub enum ServerMessage {
         /// What happened.
         event: Event,
     },
+    /// What a shell printed, which a client feeds to its emulator.
+    TerminalOutput {
+        /// The shell.
+        terminal: u64,
+        /// How many bytes the shell had printed before these.
+        offset: u64,
+        /// The bytes.
+        #[serde(with = "crate::bytes")]
+        data: Vec<u8>,
+    },
+    /// A shell ended.
+    TerminalExited {
+        /// The shell.
+        terminal: u64,
+    },
 }

@@ -172,4 +172,44 @@ pub enum Request {
         /// The commit message.
         message: String,
     },
+    /// Starts a shell in a folder, which keeps running until it exits or is closed, whoever is connected.
+    OpenTerminal {
+        /// The folder the shell starts in.
+        directory: String,
+        /// How many characters wide the window of the shell is.
+        columns: u16,
+        /// How many lines tall the window of the shell is.
+        rows: u16,
+    },
+    /// Types into a shell.
+    TerminalInput {
+        /// The shell.
+        terminal: u64,
+        /// The bytes the shell reads, as the keys the reader pressed come out.
+        #[serde(with = "crate::bytes")]
+        data: Vec<u8>,
+    },
+    /// Tells a shell how large its window now is.
+    ResizeTerminal {
+        /// The shell.
+        terminal: u64,
+        /// How many characters wide.
+        columns: u16,
+        /// How many lines tall.
+        rows: u16,
+    },
+    /// Ends a shell and forgets it.
+    CloseTerminal {
+        /// The shell.
+        terminal: u64,
+    },
+    /// Subscribes the connection to what a shell prints and replays what it printed after the byte `after`.
+    AttachTerminal {
+        /// The shell.
+        terminal: u64,
+        /// How many bytes of its output the client has.
+        after: u64,
+    },
+    /// Every shell the server holds.
+    Terminals,
 }

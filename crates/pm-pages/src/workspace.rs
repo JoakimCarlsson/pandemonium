@@ -20,7 +20,7 @@ use pm_components::{chat, diff, history, input, review, sidebar, terminal, welco
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
     ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PROMPT, SEND, STOP, TAB_DIFF,
-    TERMINAL, WorkspaceState,
+    TERMINAL, TERMINAL_BODY, WorkspaceState,
 };
 
 use pm_components::sample::{AGENTS, Session};
@@ -119,19 +119,19 @@ fn session_page(
     session: &Session,
     width: f32,
     above: f32,
+    height: f32,
     shaper: &mut Shaper,
 ) -> Node {
     let view = match state.tab {
         Tab::Diff if !session.changes.is_empty() => diff::diff(state, session),
         _ => chat::chat(state, session, width, above, shaper),
     };
-    let project = &state.projects[session.project].name;
     let mut page = node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), h_full()])
         .child(tabs(state, session))
         .child(view);
     if state.terminal {
-        page = page.child(terminal::terminal(project));
+        page = page.child(terminal::terminal(state, session, width, height, shaper));
     }
     page
 }
@@ -148,6 +148,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             session,
             main_width,
             (height - CHAT_CHROME).max(0.0),
+            height,
             shaper,
         ),
         (Page::History, _) => history::history(state),
