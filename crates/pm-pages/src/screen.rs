@@ -546,6 +546,14 @@ impl Screen {
         matches!(self, Self::Workspace(state) if !state.outbox.is_empty())
     }
 
+    /// What the key for the number `digit` presses while the agent's questions are open.
+    pub fn inquiry_hotkey(&self, digit: usize) -> Option<FocusId> {
+        match self {
+            Self::Workspace(state) => state.inquiry_hotkey(digit),
+            Self::Onboarding(_) => None,
+        }
+    }
+
     /// Whether pressing `id` shows a shell that should then take the keyboard.
     pub fn takes_keyboard(id: FocusId) -> bool {
         WorkspaceState::takes_keyboard(id)

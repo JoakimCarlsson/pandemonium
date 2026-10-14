@@ -9,6 +9,7 @@ use crate::arrange::{
     SessionMenu,
 };
 use crate::context_menu::ContextMenu;
+use crate::draft::{NEXT, OTHER};
 use crate::project::Project;
 use crate::sample::{AGENTS, Change, Message, Session, Status, projects, sessions};
 
@@ -351,6 +352,15 @@ pub enum Outgoing {
         ticket: u64,
         /// The choice made.
         option: String,
+    },
+    /// Answers the form of questions the agent of a session asked, or abandons it.
+    Answer {
+        /// The session, by position.
+        session: usize,
+        /// The form, by the number the agent put it under.
+        ticket: u64,
+        /// What was answered to each question, or nothing to abandon the form.
+        replies: Option<Vec<pm_acp::Reply>>,
     },
     /// Takes the conversation of a session back to before one of the reader's turns, dropping it and all after it.
     Rewind {
@@ -764,6 +774,14 @@ impl WorkspaceState {
             }
             COMMIT_MESSAGE => self.message.apply(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
+            OTHER => {
+                if let Page::Session(open) = self.page
+                    && let Some(draft) =
+                        self.sessions.get_mut(open).and_then(|s| s.inquiry.as_mut())
+                {
+                    draft.others[draft.step].apply(edit);
+                }
+            }
             _ => {}
         }
         self.refresh_files();
@@ -776,13 +794,14 @@ impl WorkspaceState {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
             HISTORY_SEARCH => Some(&self.history_search),
+            OTHER => self.other_field(),
             _ => None,
         }
     }
 
     /// Whether `id` names a text field.
     pub fn is_field(id: FocusId) -> bool {
-        id == PROMPT || id == COMMIT_MESSAGE || id == HISTORY_SEARCH
+        id == PROMPT || id == COMMIT_MESSAGE || id == HISTORY_SEARCH || id == OTHER
     }
 
     /// What pressing the field `id` hands in when Enter is pressed in it.
@@ -790,6 +809,7 @@ impl WorkspaceState {
         match id {
             COMMIT_MESSAGE => COMMIT,
             HISTORY_SEARCH => HISTORY,
+            OTHER => NEXT,
             _ => SEND,
         }
     }
@@ -882,6 +902,9 @@ impl WorkspaceState {
 
     /// The state after one of the rows or chips numbered from a base was pressed.
     fn after_numbered(&mut self, id: u64) {
+        if self.press_inquiry(FocusId(id)) {
+            return;
+        }
         if self.press_terminal(FocusId(id)) {
             return;
         }

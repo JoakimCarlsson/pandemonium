@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use crate::agent::Agent;
 use crate::background::{self, Shells};
 use crate::client::{Answer, Client, Heard, LOGIN_REQUIRED, answer};
+use crate::inquiry::{self, Inquiry, Question, Reply};
 use crate::subagent::Subagents;
 
 /// How long an agent that is already installed has to start and open a conversation.
@@ -229,6 +230,10 @@ pub enum Event {
     Plan(Vec<PlanStep>),
     /// The agent waits for an answer to this.
     Ask(Permission),
+    /// The agent waits for the answers to this form of questions.
+    Inquire(Inquiry),
+    /// The reader answered a form of questions: each question with what was answered, or nothing when it was skipped.
+    Answered(Vec<(String, Option<String>)>),
     /// The turn ended, with the reason it failed where it did.
     Finished(Option<String>),
     /// The agent could not be started or stopped, for this reason.
@@ -286,6 +291,13 @@ enum Command {
         /// The choice made, or nothing to decline.
         option: Option<String>,
     },
+    /// Answers the form under `ticket` with `replies`, one for each of its questions, or abandons it.
+    Answer {
+        /// The form being answered.
+        ticket: u64,
+        /// What the reader answered, or nothing to abandon the form.
+        replies: Option<Vec<Reply>>,
+    },
     /// Stops the turn that is running.
     Cancel,
     /// Gives the setting `setting` the value `value`.
@@ -333,6 +345,11 @@ impl Chat {
     /// Answers the question under `ticket` with the choice `option`, or declines it.
     pub fn choose(&self, ticket: u64, option: Option<String>) {
         let _ = self.commands.send(Command::Choose { ticket, option });
+    }
+
+    /// Answers the form of questions under `ticket` with `replies`, or abandons it.
+    pub fn answer(&self, ticket: u64, replies: Option<Vec<Reply>>) {
+        let _ = self.commands.send(Command::Answer { ticket, replies });
     }
 
     /// Stops the turn that is running.
@@ -623,6 +640,8 @@ struct Waiting {
     sets: HashSet<u64>,
     /// The questions put to the reader, by ticket, against the id the agent asked under.
     asked: HashMap<u64, Value>,
+    /// The forms of questions put to the reader, by ticket, with the questions each asked.
+    inquired: HashMap<u64, Vec<Question>>,
     /// The ticket the next question is put under.
     tickets: u64,
     /// Whether the agent takes pictures inside a prompt.
@@ -655,6 +674,7 @@ fn converse(
         turn: None,
         sets: HashSet::new(),
         asked: HashMap::new(),
+        inquired: HashMap::new(),
         tickets: 0,
         shells: Shells::new(),
         running: Shells::new(),
@@ -664,7 +684,9 @@ fn converse(
     loop {
         loop {
             match commands.try_recv() {
-                Ok(command) => command_agent(client, session, configurable, &mut waiting, command)?,
+                Ok(command) => {
+                    command_agent(client, session, configurable, &mut waiting, command, events)?
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return Ok(()),
             }
@@ -685,6 +707,7 @@ fn command_agent(
     configurable: bool,
     waiting: &mut Waiting,
     command: Command,
+    events: &Sender<Event>,
 ) -> Result<(), String> {
     match command {
         Command::Prompt { text, files } if waiting.turn.is_none() => {
@@ -704,10 +727,26 @@ fn command_agent(
                 client.respond(&id, &outcome(option))?;
             }
         }
+        Command::Answer { ticket, replies } => {
+            if let (Some(id), Some(questions)) = (
+                waiting.asked.remove(&ticket),
+                waiting.inquired.remove(&ticket),
+            ) {
+                if let Some(replies) = &replies {
+                    let _ = events.send(Event::Answered(inquiry::summary(&questions, replies)));
+                }
+                client.respond(&id, &inquiry::response(&questions, replies))?;
+            }
+        }
         Command::Cancel => {
             waiting.cancelled = true;
-            for (_, id) in waiting.asked.drain() {
-                client.respond(&id, &outcome(None))?;
+            for (ticket, id) in waiting.asked.drain() {
+                let outcome = if waiting.inquired.remove(&ticket).is_some() {
+                    inquiry::response(&[], None)
+                } else {
+                    outcome(None)
+                };
+                client.respond(&id, &outcome)?;
             }
             client.notify("session/cancel", &json!({ "sessionId": session }))?;
         }
@@ -743,6 +782,18 @@ fn hear_agent(
             waiting.asked.insert(waiting.tickets, id.clone());
             let _ = events.send(Event::Ask(permission(waiting.tickets, &message["params"])));
         }
+        (Some("elicitation/create"), Some(id)) => match inquiry::questions(&message["params"]) {
+            Some(questions) => {
+                waiting.tickets += 1;
+                waiting.asked.insert(waiting.tickets, id.clone());
+                let _ = events.send(Event::Inquire(Inquiry {
+                    ticket: waiting.tickets,
+                    questions: questions.clone(),
+                }));
+                waiting.inquired.insert(waiting.tickets, questions);
+            }
+            None => client.respond(id, &json!({ "action": "decline" }))?,
+        },
         (Some(_), Some(id)) => client.refuse(id, NO_SUCH_METHOD, "not supported")?,
         (Some("session/update"), None) => {
             for event in updated(session, waiting, &message["params"]) {
@@ -858,7 +909,10 @@ fn permission(ticket: u64, params: &Value) -> Permission {
         ticket,
         title: call["title"].as_str().unwrap_or("Use a tool").to_owned(),
         command: call["rawInput"]["command"].as_str().map(str::to_owned),
-        plan: call["rawInput"]["plan"].as_str().map(str::to_owned),
+        plan: call["rawInput"]["plan"]
+            .as_str()
+            .filter(|_| call["rawInput"]["command"].is_null())
+            .map(str::to_owned),
         choices,
     }
 }

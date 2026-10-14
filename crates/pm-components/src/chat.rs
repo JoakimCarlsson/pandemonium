@@ -4,9 +4,9 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, items_center, leading_ratio, max_w_px, min_h, min_w_px,
-    mt, opacity, overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size,
-    text_color, text_px, w_full,
+    flex_col, flex_none, font_mono, gap, h, items_center, leading_ratio, max_w_px, mb, min_h,
+    min_w_px, mt, opacity, overflow_hidden, pb, px, py, rounded, rounded_full, self_end,
+    self_start, size, text_color, text_px, w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
@@ -18,6 +18,7 @@ use crate::activity::activity;
 use crate::button::{Size, Variant};
 use crate::composer::composer;
 use crate::input;
+use crate::inquiry::{answered, inquiry};
 use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::queued::queued;
 use crate::sample::{AGENTS, Session, Status};
@@ -211,12 +212,21 @@ fn agent_message(
             }))
     };
     let mut shown = 0;
+    let mut recorded = 0;
     for (number, (before, piece)) in message.chunks().into_iter().enumerate() {
         let before = before.min(message.steps.len());
         if before > shown {
             reply = reply.child(run(shown, before));
         }
         shown = shown.max(before);
+        while let Some((_, answers)) = message
+            .answers
+            .get(recorded)
+            .filter(|(at, _)| *at <= before)
+        {
+            reply = reply.child(answered(answers));
+            recorded += 1;
+        }
         let base = number * FOLDS_PER_PIECE;
         let unfolded = state
             .unfolded_in(index)
@@ -232,6 +242,9 @@ fn agent_message(
     }
     if shown < message.steps.len() {
         reply = reply.child(run(shown, message.steps.len()));
+    }
+    for (_, answers) in &message.answers[recorded..] {
+        reply = reply.child(answered(answers));
     }
     if !message.bullets.is_empty() {
         reply = reply.child(node().styles([flex(), flex_col(), gap(1.5)]).children(
@@ -426,7 +439,7 @@ pub fn chat(
     let asking = session.ask.as_ref();
     if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask));
-    } else if asking.is_none() && session.status == Status::Working {
+    } else if asking.is_none() && session.inquiry.is_none() && session.status == Status::Working {
         messages = messages.child(
             node()
                 .styles([flex(), items_center(), gap(2)])
@@ -467,6 +480,11 @@ pub fn chat(
                     node()
                         .styles([w_full(), max_w_px(COLUMN), px(6)])
                         .children(queued(session))
+                        .children(
+                            session.inquiry.as_ref().map(|draft| {
+                                node().styles([w_full(), mb(2)]).child(inquiry(draft))
+                            }),
+                        )
                         .children(activity(state, session))
                         .child(composer(
                             state,

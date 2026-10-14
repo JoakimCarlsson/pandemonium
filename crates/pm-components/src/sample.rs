@@ -6,6 +6,7 @@ use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolS
 use pm_icon::IconName;
 
 use crate::dock::TerminalTab;
+use crate::draft::Draft;
 use crate::project::Project;
 
 /// An agent a workspace can be started with, in the same order as [`pm_acp::AGENTS`].
@@ -148,6 +149,8 @@ pub struct Message {
     pub duration: Option<String>,
     /// What the agent did on the way to the reply, oldest first.
     pub steps: Vec<Step>,
+    /// The forms of questions the reader answered during the reply, each with how many steps came before it: every question and its answer, or nothing when skipped.
+    pub answers: Vec<(usize, Vec<Answered>)>,
     /// Whether the steps are shown, when the reader has chosen; otherwise only the latest turn's are.
     pub open: Option<bool>,
     /// How many steps the reply had when its text last grew, to tell when new words follow a step.
@@ -159,6 +162,9 @@ pub struct Message {
     /// Whether the server kept the files as they were before the reader's turn, so they can be put back.
     pub checkpoint: bool,
 }
+
+/// A question of a form the reader answered, with the answer, or nothing when it was skipped.
+pub type Answered = (String, Option<String>);
 
 /// One thing the agent did on the way to a reply.
 #[derive(Clone, Debug, PartialEq)]
@@ -265,6 +271,7 @@ impl Message {
             steps: Vec::new(),
             open: None,
             said_after: 0,
+            answers: Vec::new(),
             said: Vec::new(),
             attachments: Vec::new(),
             checkpoint: false,
@@ -331,6 +338,8 @@ pub struct Session {
     pub skills: Vec<Slash>,
     /// The question the agent waits on the reader to answer, if it waits on one.
     pub ask: Option<Permission>,
+    /// The form of questions the agent waits on the reader to answer, if it waits on one.
+    pub inquiry: Option<Draft>,
     /// When the turn that is running began, if one is.
     pub turn_started: Option<Instant>,
     /// How many of the prompts this window sent the server has yet to repeat back, so that they are not added twice.
@@ -373,6 +382,7 @@ impl Session {
             commands: Vec::new(),
             skills: Vec::new(),
             ask: None,
+            inquiry: None,
             turn_started: None,
             echoes: 0,
             queued: Vec::new(),

@@ -846,6 +846,16 @@ impl App {
             return;
         }
         match event.key {
+            Key::Character(digit)
+                if digit.is_ascii_digit()
+                    && !self.focus.current().is_some_and(Screen::is_field)
+                    && let Some(id) = self
+                        .model
+                        .get()
+                        .inquiry_hotkey(digit.to_digit(10).unwrap_or_default() as usize) =>
+            {
+                self.activate(id);
+            }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model
                     .update(|state| *state = state.clone().mode_cycled());

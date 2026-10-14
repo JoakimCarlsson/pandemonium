@@ -403,6 +403,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 chat.choose(ticket, Some(option));
             }
         }),
+        Request::Answer {
+            session,
+            ticket,
+            replies,
+        } => with_session(core, session, |held| {
+            if let Some(chat) = &held.chat {
+                chat.answer(ticket, replies);
+            }
+        }),
         Request::Cancel { session } => telling(core, session, |held| {
             if let Some(chat) = &held.chat {
                 chat.cancel();

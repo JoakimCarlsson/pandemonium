@@ -466,6 +466,19 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
+                Outgoing::Answer {
+                    session,
+                    ticket,
+                    replies,
+                } => self.ask_session(
+                    session,
+                    |number| Request::Answer {
+                        session: number,
+                        ticket,
+                        replies,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Rewind { session, turn } => self.ask_session(
                     session,
                     |number| Request::Rewind {

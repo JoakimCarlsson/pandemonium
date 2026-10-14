@@ -865,10 +865,13 @@ impl WorkspaceState {
         }
     }
 
-    /// The box to give keyboard focus after `id` was pressed, when that is the prompt.
+    /// The box to give keyboard focus after `id` was pressed, when that is the prompt or the field for an answer of the reader's own.
     pub fn refocus(id: FocusId) -> Option<FocusId> {
         let FocusId(number) = id;
         let slash_row = (SLASH_BASE..SLASH_BASE + 50).contains(&number);
+        if id == crate::draft::TYPE_OWN {
+            return Some(crate::draft::OTHER);
+        }
         (slash_row
             || id == SLASH_BUTTON
             || id == SKILL_BUTTON

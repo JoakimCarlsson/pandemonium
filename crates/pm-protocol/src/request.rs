@@ -141,6 +141,15 @@ pub enum Request {
         /// The choice made.
         option: String,
     },
+    /// Answers the form of questions a session's agent asked, or abandons it.
+    Answer {
+        /// The session.
+        session: u64,
+        /// The form, by the number the agent put it under.
+        ticket: u64,
+        /// What was answered to each question, in order, or nothing to abandon the form.
+        replies: Option<Vec<pm_acp::Reply>>,
+    },
     /// Stops the turn a session's agent is on and drops the prompts queued behind it.
     Cancel {
         /// The session.

@@ -11,6 +11,7 @@ mod attachment;
 mod background;
 mod chat;
 mod client;
+mod inquiry;
 mod install;
 mod login;
 mod profile;
@@ -23,4 +24,5 @@ pub use chat::{
     Background, Chat, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
     Setting, Slash, Tool, ToolState, Verdict, discover, skills,
 };
+pub use inquiry::{Alternative, Inquiry, Question, Reply};
 pub use standing::{Login, Standing, Way};

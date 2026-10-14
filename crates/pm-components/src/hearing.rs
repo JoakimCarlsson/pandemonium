@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use pm_acp::{Event, Kind as ToolKind, Tool, ToolState};
 
+use crate::draft::Draft;
 use crate::sample::{Message, Queued, Session, Shell, Status, Step, Thought, ToolUse};
 
 impl Session {
@@ -22,6 +23,13 @@ impl Session {
             Event::Halted => self.halted(),
             Event::Plan(plan) => self.plan(plan),
             Event::Ask(question) => self.ask = Some(question),
+            Event::Inquire(inquiry) => self.inquiry = Some(Draft::new(inquiry)),
+            Event::Answered(answers) => {
+                self.inquiry = None;
+                let reply = self.reply();
+                let at = reply.steps.len();
+                reply.answers.push((at, answers));
+            }
             Event::Finished(error) => self.finish(error),
             Event::Failed(reason) => self.finish(Some(reason)),
             Event::Titled(title) => self.title = title,
@@ -108,6 +116,7 @@ impl Session {
             self.messages.truncate(at);
         }
         self.ask = None;
+        self.inquiry = None;
         self.echoes = 0;
         self.turn_started = None;
         self.status = Status::Done;
@@ -354,6 +363,7 @@ impl Session {
             reply.duration = Some(took.unwrap_or_default());
         }
         self.ask = None;
+        self.inquiry = None;
         self.status = if self.changes.is_empty() {
             Status::Done
         } else {

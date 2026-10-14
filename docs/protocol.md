@@ -101,6 +101,7 @@ request with exactly one `response` carrying the same `id`.
 | `restore`      | `session`, `turn`                                                                                | `done`          |
 | `fork_session` | `session`, `turn`                                                                                | `sessions`      |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
+| `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
 | `close_session`| `session`                                                                                        | `done`          |
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
@@ -181,6 +182,11 @@ request with exactly one `response` carrying the same `id`.
   declined.
 - **`choose`:** answers an `ask` event. `ticket` is the ticket of the question
   and `option` is the `id` of one of its choices.
+- **`answer`:** answers an `Inquire` event. `ticket` is the ticket of the form
+  and `replies` holds one `{picks, other}` for each question, in order: `picks`
+  are the `label`s of the alternatives chosen and `other` is what the reader
+  typed, both possibly empty to skip the question. A null `replies` abandons the
+  form, which aborts the agent's use of the tool.
 - **`attach`:** subscribes the connection to a session and replays the events
   numbered after `after`. See [Events](#events).
 - **`inspect`:** the files that differ from the last commit, with their diffs,
@@ -292,6 +298,8 @@ Events use serde's default form, one key naming the type.
 | `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
+| `{"Inquire": Inquiry}`      | The agent waits for answers to a form of questions: send `answer` with the `ticket` and a reply for each question. |
+| `{"Answered": [[question, answer]]}` | A client answered a form of questions. `answer` is null for a question that was skipped. |
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
@@ -316,6 +324,9 @@ Shapes used above:
   `Done`.
 - **Permission:** `{ticket, title, command, plan?, choices: [{id, name, verdict}]}`
   with `verdict` one of `Allow`, `Always`, `Reject`.
+
+- **Inquiry:** `{ticket, questions: [{header, text, multiple, alternatives: [{label, description}]}]}`.
+  Send the answers to the questions with `answer`.
 
 ## Terminals
 

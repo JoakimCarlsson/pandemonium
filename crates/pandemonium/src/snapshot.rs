@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use pm_acp::{
-    Background, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
-    Setting, Slash, Tool, ToolState, Verdict,
+    Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Permission, Pick,
+    PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
 };
 use pm_components::Project;
 use pm_components::state::{DETAILS_BASE, RESTORE_BASE, SUBAGENTS_CHIP};
@@ -64,6 +64,10 @@ pub enum Shot {
     Live,
     /// A conversation whose agent waits for permission.
     Asking,
+    /// A conversation whose agent waits for the answers to a form of three questions.
+    Inquiring,
+    /// A conversation whose reader answered a form of questions.
+    Answered,
     /// A conversation whose turn ended while two subagents and a command were still running.
     Background,
     /// The same conversation with the subagents above the prompt box open.
@@ -196,6 +200,17 @@ impl Shot {
             }
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
+            Self::Answered => Screen::Workspace(live(Turn::Working).heard(
+                0,
+                Event::Answered(vec![
+                    (
+                        "If a duck wore pants, how would it wear them?".to_owned(),
+                        Some("Something else".to_owned()),
+                    ),
+                    ("Which would win in a fight?".to_owned(), None),
+                ]),
+            )),
+            Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
             Self::Background => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
@@ -311,6 +326,8 @@ enum Turn {
     Finished,
     /// The agent waits for permission.
     Asking,
+    /// The agent waits for the answers to a form of questions.
+    Inquiring,
     /// The agent is still on it.
     Working,
     /// The agent finished it with subagents and a command left running.
@@ -462,6 +479,46 @@ fn live(turn: Turn) -> WorkspaceState {
                     id: "c".to_owned(),
                     name: "Keep planning".to_owned(),
                     verdict: Verdict::Reject,
+                },
+            ],
+        }));
+    } else if turn == Turn::Inquiring {
+        let alternative = |label: &str, description: &str| Alternative {
+            label: label.to_owned(),
+            description: description.to_owned(),
+        };
+        events.push(Event::Inquire(Inquiry {
+            ticket: 1,
+            questions: vec![
+                Question {
+                    header: "Themes".to_owned(),
+                    text: "Which themes should the system setting apply to?".to_owned(),
+                    multiple: false,
+                    alternatives: vec![
+                        alternative(
+                            "Light and dark only",
+                            "Follow the operating system between the two built-in themes.",
+                        ),
+                        alternative(
+                            "Every theme",
+                            "Let each custom theme declare a light and a dark variant.",
+                        ),
+                    ],
+                },
+                Question {
+                    header: "Where".to_owned(),
+                    text: "Where should the setting live?".to_owned(),
+                    multiple: true,
+                    alternatives: vec![
+                        alternative("Settings page", ""),
+                        alternative("Menu bar", ""),
+                    ],
+                },
+                Question {
+                    header: "Name".to_owned(),
+                    text: "What should it be called?".to_owned(),
+                    multiple: false,
+                    alternatives: vec![alternative("Appearance", ""), alternative("Theme", "")],
                 },
             ],
         }));
