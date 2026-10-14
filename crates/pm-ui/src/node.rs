@@ -1,10 +1,14 @@
 //! The node: a style, what it holds and whether it answers to the user.
 
+use std::sync::Arc;
+
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::layout::Item;
 use pm_style::{Style, Utility};
 use pm_text::Shaper;
+
+use crate::retain::Retained;
 
 /// One box of the tree: how it is styled and what it holds.
 #[derive(Clone, Debug, Default)]
@@ -41,6 +45,9 @@ pub struct Node {
     /// Scrolls the contents from one end of them, and reports how far they
     /// can be scrolled under this name.
     pub(crate) scroll_anchor: Option<(FocusId, Anchor, f32)>,
+    /// A subtree laid out before, which the box holds at its laid-out size
+    /// instead of children.
+    pub(crate) retained: Option<Arc<Retained>>,
 }
 
 /// The end of a box's contents that a scroll position is measured from.
@@ -174,10 +181,14 @@ impl Node {
     /// The box this node and its children ask the layout for.
     pub(crate) fn item(&self, shaper: &mut Shaper) -> Item {
         let base = self.style.base();
-        let intrinsic = self.text.as_deref().map(|content| {
-            let extent = shaper.measure(content, &base.typography);
-            (extent.width, extent.height)
-        });
+        let intrinsic = match (&self.retained, self.text.as_deref()) {
+            (Some(retained), _) => Some((retained.placed.width, retained.placed.height)),
+            (None, Some(content)) => {
+                let extent = shaper.measure(content, &base.typography);
+                Some((extent.width, extent.height))
+            }
+            (None, None) => None,
+        };
         Item {
             style: base.layout,
             border: base.decoration.borders.width,

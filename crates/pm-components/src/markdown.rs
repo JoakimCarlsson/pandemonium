@@ -1,5 +1,7 @@
 //! Markdown: a source laid out as paragraphs, headings, lists, code, quotes, fold-outs, rules and tables.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_markdown::{Block, Inline, Span};
@@ -10,7 +12,7 @@ use pm_style::{
     pl, px, py, rounded, rounded_full, size, text_color, text_px, underline, w_full, w_px,
 };
 use pm_text::Shaper;
-use pm_ui::{Node, node, text};
+use pm_ui::{Node, node, retained, text};
 
 use crate::CodeBox;
 use crate::parts::{glyph, line};
@@ -86,18 +88,61 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// The node that draws the source, its lines broken as `shaper` measures them.
+    /// The node that draws the source, its lines broken as `shaper` measures
+    /// them. The source is parsed and laid out once for as long as nothing
+    /// about it changes, and each block once for as long as it stays the
+    /// same, so a reply that grows only lays out its last block again.
     pub fn build(self, shaper: &mut Shaper) -> Node {
-        let blocks = pm_markdown::parse(self.source);
-        Layout {
-            pixels: self.pixels,
-            shaper,
-            details: self.details,
-            unfolded: self.unfolded,
-            seen: 0,
-        }
-        .blocks(&blocks, self.tone, self.width)
+        let width = self.width;
+        let whole = hash((
+            self.source,
+            self.pixels,
+            self.tone,
+            self.details,
+            &self.unfolded,
+        ));
+        retained(whole, width, shaper, |shaper| {
+            let blocks = pm_markdown::parse(self.source);
+            let mut seen = 0;
+            node()
+                .styles([flex(), flex_col(), gap(3)])
+                .children(blocks.iter().map(|block| {
+                    let first = seen;
+                    seen += count_details(std::slice::from_ref(block));
+                    let unfolded: Vec<usize> = self
+                        .unfolded
+                        .iter()
+                        .copied()
+                        .filter(|place| (first..seen).contains(place))
+                        .collect();
+                    let key = hash((
+                        block,
+                        self.pixels,
+                        self.tone,
+                        self.details,
+                        first,
+                        &unfolded,
+                    ));
+                    retained(key, width, shaper, |shaper| {
+                        Layout {
+                            pixels: self.pixels,
+                            shaper,
+                            details: self.details,
+                            unfolded,
+                            seen: first,
+                        }
+                        .block(block, self.tone, width)
+                    })
+                }))
+        })
     }
+}
+
+/// `value` hashed, to tell one retained subtree from another.
+fn hash(value: impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// One pass of laying blocks out.

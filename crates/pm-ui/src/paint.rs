@@ -13,6 +13,7 @@ use pm_text::{Run, Shaper};
 use pm_theme::Theme;
 
 use crate::node::{Anchor, Node};
+use crate::retain;
 
 /// How long the caret stays on, and then off, in milliseconds.
 const CARET_BLINK_MS: f32 = 530.0;
@@ -179,6 +180,8 @@ pub fn draw(
         list,
         output: Output::default(),
         clip: None,
+        origin: (0.0, 0.0),
+        culling: true,
     };
     frame.node(
         root,
@@ -188,6 +191,7 @@ pub fn draw(
         Cursor::Default,
         (0.0, 0.0),
     );
+    retain::end_frame();
     frame.output
 }
 
@@ -207,6 +211,11 @@ struct Frame<'a> {
     output: Output,
     /// The rectangle everything now being painted is clipped to.
     clip: Option<Rect>,
+    /// Where the boxes now being painted were laid out from: the top-left
+    /// corner of the retained subtree they are in, or of the window.
+    origin: (f32, f32),
+    /// Whether boxes wholly outside the clip are passed over rather than painted.
+    culling: bool,
 }
 
 impl Frame<'_> {
@@ -220,8 +229,18 @@ impl Frame<'_> {
         inherited: Cursor,
         scrolled: (f32, f32),
     ) {
-        let rect = Rect::new(laid.x, laid.y, laid.width, laid.height);
-        let seen = intersect(self.clip, rect.offset(-scrolled.0, -scrolled.1));
+        let rect = Rect::new(
+            laid.x + self.origin.0,
+            laid.y + self.origin.1,
+            laid.width,
+            laid.height,
+        );
+        let shown = rect.offset(-scrolled.0, -scrolled.1);
+        if self.culling && self.clip.is_some_and(|clip| apart(clip, shown)) {
+            self.unseen(node, laid, parent, opacity, inherited, scrolled);
+            return;
+        }
+        let seen = intersect(self.clip, shown);
         let computed = self.resolve(node, seen);
         if computed.layout.display.display == Display::None {
             return;
@@ -290,12 +309,75 @@ impl Frame<'_> {
         for (child, child_laid) in node.children.iter().zip(&laid.children) {
             self.node(child, child_laid, content, opacity, cursor, scrolled);
         }
+        if let Some(retained) = &node.retained {
+            let inset = computed.layout.spacing.padding;
+            let border = computed.decoration.borders.width;
+            let outer = self.origin;
+            self.origin = (
+                rect.x + inset.left + border.left,
+                rect.y + inset.top + border.top,
+            );
+            self.node(
+                &retained.root,
+                &retained.placed,
+                content,
+                opacity,
+                cursor,
+                scrolled,
+            );
+            self.origin = outer;
+        }
         if room > 0.0 {
             self.scrollbar(rect, scroll_y, room, world);
         }
         if self.clip != outer {
             self.clip = outer;
             self.list.set_clip(outer);
+        }
+    }
+
+    /// Walks `node`, which lies wholly outside the clip and so shows nothing,
+    /// without painting it: the names its boxes answer to are still reported,
+    /// in tree order, and the lines of text fields in it are painted as usual
+    /// so the caret can still be moved through them.
+    fn unseen(
+        &mut self,
+        node: &Node,
+        laid: &Placed,
+        parent: Affine,
+        opacity: f32,
+        inherited: Cursor,
+        scrolled: (f32, f32),
+    ) {
+        if node.style.base().layout.display.display == Display::None {
+            return;
+        }
+        if node.field_line.is_some() || node.caret.is_some() {
+            self.culling = false;
+            self.node(node, laid, parent, opacity, inherited, scrolled);
+            self.culling = true;
+            return;
+        }
+        if let Some(id) = node.focus {
+            let rect = Rect::new(laid.x + self.origin.0, laid.y + self.origin.1, 0.0, 0.0);
+            self.output.regions.push(Region { id, rect });
+        }
+        let scrolled = (scrolled.0 + node.scroll_x, scrolled.1 + node.scroll_y);
+        for (child, child_laid) in node.children.iter().zip(&laid.children) {
+            self.unseen(child, child_laid, parent, opacity, inherited, scrolled);
+        }
+        if let Some(retained) = &node.retained {
+            let outer = self.origin;
+            self.origin = (laid.x + outer.0, laid.y + outer.1);
+            self.unseen(
+                &retained.root,
+                &retained.placed,
+                parent,
+                opacity,
+                inherited,
+                scrolled,
+            );
+            self.origin = outer;
         }
     }
 
@@ -330,7 +412,7 @@ impl Frame<'_> {
         let end = laid
             .children
             .iter()
-            .map(|child| child.y + child.height)
+            .map(|child| self.origin.1 + child.y + child.height)
             .fold(rect.y, f32::max)
             + padding;
         let room = (end - (rect.y + rect.height)).max(0.0);
@@ -594,6 +676,14 @@ impl Frame<'_> {
             }
         }
     }
+}
+
+/// Whether `rect` lies wholly outside `clip`, sharing no point with it.
+fn apart(clip: Rect, rect: Rect) -> bool {
+    rect.x >= clip.x + clip.width
+        || rect.y >= clip.y + clip.height
+        || rect.x + rect.width <= clip.x
+        || rect.y + rect.height <= clip.y
 }
 
 /// `rect` cut down to what `outer` leaves of it.

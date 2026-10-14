@@ -1,7 +1,7 @@
 //! The blocks a markdown source is made of and the styled text inside them.
 
 /// How a run of text is set.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Inline {
     /// Set heavier, for `**strong**` text.
     pub strong: bool,
@@ -16,7 +16,7 @@ pub struct Inline {
 }
 
 /// A run of text set one way. A hard line break is a span of `"\n"`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Span {
     /// What it says.
     pub text: String,
@@ -25,7 +25,7 @@ pub struct Span {
 }
 
 /// One block of a markdown source.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Block {
     /// Running text.
     Paragraph(Vec<Span>),

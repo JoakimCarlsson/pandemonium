@@ -43,13 +43,25 @@ pub struct Placed {
 /// Lays `root` out inside a viewport of `width` by `height` logical pixels;
 /// the root fills it.
 pub fn solve(root: &Item, width: f32, height: f32) -> Placed {
+    lay_out(root, width, Some(height))
+}
+
+/// Lays `root` out `width` logical pixels wide and as tall as its contents
+/// make it, its top-left corner at the origin.
+pub fn fit(root: &Item, width: f32) -> Placed {
+    lay_out(root, width, None)
+}
+
+/// Lays `root` out `width` logical pixels wide and `height` tall, or as tall
+/// as its contents make it when no height is given.
+fn lay_out(root: &Item, width: f32, height: Option<f32>) -> Placed {
     let mut tree: TaffyTree<(f32, f32)> = TaffyTree::new();
     let id = build(&mut tree, root, Some((width, height)));
     let _ = tree.compute_layout_with_measure(
         id,
         Size {
             width: AvailableSpace::Definite(width),
-            height: AvailableSpace::Definite(height),
+            height: height.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
         },
         |input, _id, content, style| {
             taffy::compute_leaf_layout(
@@ -69,8 +81,13 @@ pub fn solve(root: &Item, width: f32, height: f32) -> Placed {
     collect(&tree, id, 0.0, 0.0)
 }
 
-/// Adds `item` and its children to `tree`, the root pinned to the viewport.
-fn build(tree: &mut TaffyTree<(f32, f32)>, item: &Item, viewport: Option<(f32, f32)>) -> NodeId {
+/// Adds `item` and its children to `tree`, the root pinned to the viewport,
+/// whose height is left to the contents when it has none.
+fn build(
+    tree: &mut TaffyTree<(f32, f32)>,
+    item: &Item,
+    viewport: Option<(f32, Option<f32>)>,
+) -> NodeId {
     let children: Vec<NodeId> = item
         .children
         .iter()
@@ -80,7 +97,7 @@ fn build(tree: &mut TaffyTree<(f32, f32)>, item: &Item, viewport: Option<(f32, f
     if let Some((width, height)) = viewport {
         style.size = Size {
             width: length(width),
-            height: length(height),
+            height: height.map_or(auto(), length),
         };
     }
     let built = match item.intrinsic {

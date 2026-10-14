@@ -11,10 +11,10 @@ use pm_typography::{FontFamily, FontSlant, TypographyStyle};
 
 use crate::run::{Bitmap, GlyphKey, Run};
 
-/// How many measured extents are kept before the cache of them is emptied.
-const MEASURED_LIMIT: usize = 32_768;
+/// How many shaped runs are kept before the cache of them is emptied.
+const SHAPED_LIMIT: usize = 32_768;
 
-/// What a measured extent depends on besides the text: the family, the size
+/// What a shaped run depends on besides the text: the family, the size
 /// and line height as bits, the weight and the slant.
 type Setting = (FontFamily, u32, u32, u16, FontSlant);
 
@@ -37,8 +37,10 @@ pub struct Shaper {
     sans: Option<String>,
     /// The installed family monospaced text is set in, when a stack named one.
     mono: Option<String>,
-    /// The extents of text measured before, by its text and setting.
-    measured: HashMap<(String, Setting), Extent>,
+    /// The runs shaped before, by their setting and then their text.
+    shaped: HashMap<Setting, HashMap<String, Run>>,
+    /// How many runs `shaped` holds across all settings.
+    shaped_count: usize,
 }
 
 impl Shaper {
@@ -49,7 +51,8 @@ impl Shaper {
             swash: SwashCache::new(),
             sans: None,
             mono: None,
-            measured: HashMap::new(),
+            shaped: HashMap::new(),
+            shaped_count: 0,
         }
     }
 
@@ -58,7 +61,8 @@ impl Shaper {
     pub fn set_stacks(&mut self, sans: &[&str], mono: &[&str]) {
         self.sans = self.installed(sans);
         self.mono = self.installed(mono);
-        self.measured.clear();
+        self.shaped.clear();
+        self.shaped_count = 0;
     }
 
     /// The first of `stack` the system has a font for.
@@ -73,8 +77,43 @@ impl Shaper {
         })
     }
 
-    /// Shapes `text` on one line in `style`.
+    /// Shapes `text` on one line in `style`, remembered so the same text in
+    /// the same setting is shaped once.
     pub fn shape(&mut self, text: &str, style: &TypographyStyle) -> Run {
+        let setting = (
+            style.family,
+            style.size.to_bits(),
+            style.line_height_px().to_bits(),
+            style.weight,
+            style.slant,
+        );
+        if let Some(run) = self.shaped.get(&setting).and_then(|runs| runs.get(text)) {
+            return run.clone();
+        }
+        let run = self.shape_uncached(text, style);
+        if self.shaped_count >= SHAPED_LIMIT {
+            self.shaped.clear();
+            self.shaped_count = 0;
+        }
+        self.shaped
+            .entry(setting)
+            .or_default()
+            .insert(text.to_owned(), run.clone());
+        self.shaped_count += 1;
+        run
+    }
+
+    /// The extent `text` occupies on one line in `style`.
+    pub fn measure(&mut self, text: &str, style: &TypographyStyle) -> Extent {
+        let run = self.shape(text, style);
+        Extent {
+            width: run.width,
+            height: run.height,
+        }
+    }
+
+    /// Shapes `text` on one line in `style` with the shaping engine.
+    fn shape_uncached(&mut self, text: &str, style: &TypographyStyle) -> Run {
         let line_height = style.line_height_px();
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(style.size, line_height));
         let family = match style.family {
@@ -106,32 +145,6 @@ impl Shaper {
                 glyphs: Arc::from([]),
             },
         }
-    }
-
-    /// The extent `text` occupies on one line in `style`, remembered so the
-    /// same text in the same setting is shaped once.
-    pub fn measure(&mut self, text: &str, style: &TypographyStyle) -> Extent {
-        let setting = (
-            style.family,
-            style.size.to_bits(),
-            style.line_height_px().to_bits(),
-            style.weight,
-            style.slant,
-        );
-        let key = (text.to_owned(), setting);
-        if let Some(extent) = self.measured.get(&key) {
-            return *extent;
-        }
-        let run = self.shape(text, style);
-        let extent = Extent {
-            width: run.width,
-            height: run.height,
-        };
-        if self.measured.len() >= MEASURED_LIMIT {
-            self.measured.clear();
-        }
-        self.measured.insert(key, extent);
-        extent
     }
 
     /// The coverage bitmap of one glyph, or nothing for a glyph with no ink
