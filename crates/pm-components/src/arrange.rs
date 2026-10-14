@@ -13,6 +13,18 @@ pub const PROJECT_MENU_NEW: FocusId = FocusId(305);
 /// The row of a project's menu that takes it out of the window.
 pub const PROJECT_MENU_REMOVE: FocusId = FocusId(306);
 
+/// The row of a session's menu that closes it.
+pub const SESSION_MENU_CLOSE: FocusId = FocusId(307);
+
+/// The menu open over a session, and where.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SessionMenu {
+    /// The session, by position.
+    pub session: usize,
+    /// Where it opened, in logical pixels.
+    pub at: (f32, f32),
+}
+
 /// The menu open over a project, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProjectMenu {
@@ -31,6 +43,11 @@ pub struct ProjectDrag {
     pub over: usize,
     /// Where the pointer is, in logical pixels, which is where the dragged header is drawn.
     pub at: (f32, f32),
+}
+
+/// Whether `id` names the row of a session's menu.
+pub fn is_session_menu_item(id: FocusId) -> bool {
+    id == SESSION_MENU_CLOSE
 }
 
 /// Whether `id` names a row of a project's menu.
@@ -68,10 +85,53 @@ impl WorkspaceState {
             })
     }
 
+    /// Which session the row `id` of the sidebar opens, if it is one.
+    pub fn session_row_of(&self, id: FocusId) -> Option<usize> {
+        id.0.checked_sub(SESSION_BASE)
+            .map(|index| index as usize)
+            .filter(|index| *index < self.sessions.len())
+    }
+
+    /// The state with the menu of the session at `session` open at `at`.
+    pub fn with_session_menu(mut self, session: usize, at: (f32, f32)) -> Self {
+        if session < self.sessions.len() {
+            self.menu = None;
+            self.project_menu = None;
+            self.session_menu = Some(SessionMenu { session, at });
+        }
+        self
+    }
+
+    /// The state after the row of the open session menu was pressed: the session is closed.
+    pub(crate) fn session_menu_pressed(mut self) -> Self {
+        match self.session_menu.take() {
+            Some(open) => self.closed_session(open.session, true),
+            None => self,
+        }
+    }
+
+    /// The state with the session at `position` closed, and, when `ask` is set, the server told to close it.
+    pub fn closed_session(mut self, position: usize, ask: bool) -> Self {
+        let Some(held) = self.sessions.get_mut(position) else {
+            return self;
+        };
+        held.closed = true;
+        let project = held.project;
+        if self.page == Page::Session(position) {
+            self.page = Page::New(project);
+            self.sync_context();
+        }
+        if ask {
+            self.outbox.push(Outgoing::Close { session: position });
+        }
+        self
+    }
+
     /// The state with the menu of the project at `project` open at `at`.
     pub fn with_project_menu(mut self, project: usize, at: (f32, f32)) -> Self {
         if project < self.projects.len() {
             self.menu = None;
+            self.session_menu = None;
             self.project_menu = Some(ProjectMenu { project, at });
         }
         self

@@ -273,6 +273,8 @@ pub struct Session {
     pub turn_started: Option<Instant>,
     /// How many of the prompts this window sent the server has yet to repeat back, so that they are not added twice.
     pub echoes: usize,
+    /// Whether the reader closed it, which takes it out of the sidebar but not out of the history.
+    pub closed: bool,
 }
 
 impl Session {
@@ -303,6 +305,7 @@ impl Session {
             ask: None,
             turn_started: None,
             echoes: 0,
+            closed: false,
         }
     }
 
@@ -324,8 +327,10 @@ impl Session {
         directory: &str,
         base: Option<String>,
         agent: usize,
+        closed: bool,
     ) -> Self {
         let mut session = Self::new(title, project, branch, Status::Done, "", Vec::new());
+        session.closed = closed;
         session.directory = directory.to_owned();
         session.base = base;
         session.agent = agent;

@@ -3,7 +3,7 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, absolute, animate_pulse, bg, border, border_color, border_r, border_t, flex,
+    Radius, Role, absolute, animate_spin, bg, border, border_color, border_r, border_t, flex,
     flex_col, flex_none, font_mono, gap, h, h_full, items_center, justify_center, leading_ratio,
     left, mb, min_h, opacity, overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md,
     size, text_color, text_px, top, w_px, z,
@@ -47,7 +47,7 @@ pub fn project_height(state: &WorkspaceState, index: usize) -> f32 {
         state
             .sessions
             .iter()
-            .filter(|session| session.project == index)
+            .filter(|session| session.project == index && !session.closed)
             .count()
             + 2
     };
@@ -64,7 +64,7 @@ pub fn status_icon(status: Status) -> Node {
         flex_none(),
     ]);
     slot.child(match status {
-        Status::Working => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_pulse()]),
+        Status::Working => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
         Status::Review => glyph(IconName::CheckCircle, 4.0, Role::Success),
         Status::Done => node().styles([size(1.5), rounded_full(), bg(Role::Subtle)]),
     })
@@ -99,7 +99,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .sessions
         .iter()
         .enumerate()
-        .filter(|(_, session)| session.project == index)
+        .filter(|(_, session)| session.project == index && !session.closed)
         .collect();
     let folded = state.folded[index];
     let dragged = state.project_drag.is_some_and(|drag| drag.from == index);

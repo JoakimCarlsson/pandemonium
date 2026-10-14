@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use pm_acp::{AGENTS, Login, Standing};
-use pm_components::arrange::is_project_menu_item;
+use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
@@ -504,8 +504,15 @@ impl App {
         match event {
             PointerEvent::Pressed(Button::Right) => {
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
+                let screen = self.model.get();
                 match on {
                     Some(id) if Screen::is_field(id) => self.open_menu(id),
+                    Some(id) if screen.session_row_of(id).is_some() => {
+                        self.open_session_menu(screen.session_row_of(id).unwrap_or_default());
+                    }
+                    Some(id) if screen.header_of(id).is_some() => {
+                        self.open_project_menu(screen.header_of(id).unwrap_or_default());
+                    }
                     _ => self
                         .model
                         .update(|state| *state = state.clone().without_menu()),
@@ -518,7 +525,9 @@ impl App {
                     .and_then(|id| screen.header_of(id))
                     .zip(self.pointer.position);
                 self.project_dragging = false;
-                if screen.project_menu_open() && !on.is_some_and(is_project_menu_item) {
+                if screen.list_menu_open()
+                    && !on.is_some_and(|id| is_project_menu_item(id) || is_session_menu_item(id))
+                {
                     self.model
                         .update(|state| *state = state.clone().without_menu());
                 }
@@ -592,6 +601,18 @@ impl App {
             *state = state
                 .clone()
                 .with_project_menu(project, (x - 8.0, y + 12.0))
+        });
+    }
+
+    /// Opens the menu of the session at `session`, just under the pointer.
+    fn open_session_menu(&mut self, session: usize) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        self.model.update(|state| {
+            *state = state
+                .clone()
+                .with_session_menu(session, (x - 8.0, y + 12.0))
         });
     }
 

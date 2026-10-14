@@ -28,6 +28,9 @@ pub struct SessionInfo {
     pub updated: u64,
     /// The number of its latest event.
     pub last_seq: u64,
+    /// Whether the reader closed it: its agent is stopped and it is left out of the lists of what is going on, but it can be opened again.
+    #[serde(default)]
+    pub closed: bool,
     /// Whether its agent is running now.
     pub running: bool,
 }

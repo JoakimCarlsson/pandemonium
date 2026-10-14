@@ -615,6 +615,7 @@ impl Renderer {
                             (1.0 + down) / 2.0,
                         ],
                         color: [image.radius * self.scale, 0.0, 0.0, 1.0],
+                        rotation: 0.0,
                     });
                     extend(&mut batches, Kind::Image(picture.key), at..at + 1, clip);
                 }
@@ -629,6 +630,7 @@ impl Renderer {
                         size: [entry.width, entry.height],
                         uv: entry.uv,
                         color: icon.color.to_array(),
+                        rotation: icon.rotation,
                     });
                     extend(&mut batches, Kind::Glyph, at..at + 1, clip);
                 }
@@ -643,6 +645,7 @@ impl Renderer {
                             size: [entry.width, entry.height],
                             uv: entry.uv,
                             color: text.color.to_array(),
+                            rotation: 0.0,
                         });
                     }
                     let end = glyphs.len() as u32;

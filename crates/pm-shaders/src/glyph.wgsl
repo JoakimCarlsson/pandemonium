@@ -15,6 +15,7 @@ struct Instance {
     @location(1) size: vec2<f32>,
     @location(2) uv: vec4<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) rotation: f32,
 }
 
 struct Fragment {
@@ -38,7 +39,14 @@ fn unit_corner(index: u32) -> vec2<f32> {
 @vertex
 fn vertex(@builtin(vertex_index) index: u32, instance: Instance) -> Fragment {
     let corner = unit_corner(index);
-    let point = instance.origin + corner * instance.size;
+    let middle = instance.origin + instance.size * 0.5;
+    let offset = (corner - vec2<f32>(0.5, 0.5)) * instance.size;
+    let sine = sin(instance.rotation);
+    let cosine = cos(instance.rotation);
+    let point = middle + vec2<f32>(
+        offset.x * cosine - offset.y * sine,
+        offset.x * sine + offset.y * cosine,
+    );
 
     var out: Fragment;
     out.position = vec4<f32>(

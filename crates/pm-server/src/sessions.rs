@@ -27,6 +27,9 @@ pub(crate) struct Meta {
     pub(crate) base: Option<String>,
     /// What it is called.
     pub(crate) title: String,
+    /// Whether the reader closed it.
+    #[serde(default)]
+    pub(crate) closed: bool,
     /// When it last changed, in milliseconds since the epoch.
     pub(crate) updated: u64,
 }

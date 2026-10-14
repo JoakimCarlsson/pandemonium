@@ -204,6 +204,8 @@ pub enum Event {
     Finished(Option<String>),
     /// The agent could not be started or stopped, for this reason.
     Failed(String),
+    /// The agent named the conversation, or named it again.
+    Titled(String),
     /// A reader handed the agent a turn: what they wrote and the names of the files they attached.
     Prompted {
         /// What the reader wrote.
@@ -773,6 +775,10 @@ fn update(update: &Value) -> Vec<Event> {
                 })
                 .collect(),
         )),
+        "session_info_update" => update["title"]
+            .as_str()
+            .filter(|title| !title.trim().is_empty())
+            .map(|title| Event::Titled(title.trim().to_owned())),
         "config_option_update" => update["configOptions"]
             .is_array()
             .then(|| Event::Settings(settings(update))),

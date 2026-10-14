@@ -107,6 +107,7 @@ fn start_session(
         head: head.clone(),
         base: base.map(str::to_owned),
         title: title.to_owned(),
+        closed: false,
         updated: now(),
     };
     sessions::save_meta(number, &meta);
@@ -285,6 +286,19 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             &text,
             &attachments,
         ),
+        Request::CloseSession { session } => {
+            let closed = with_session(core, session, |held| {
+                if let Some(chat) = held.chat.take() {
+                    chat.cancel();
+                }
+                held.meta.closed = true;
+                sessions::save_meta(session, &held.meta);
+            });
+            if matches!(closed, Response::Done) {
+                core.broadcast(&ServerMessage::SessionClosed { session }, Some(connection));
+            }
+            closed
+        }
         Request::Prompt {
             session,
             text,
@@ -298,6 +312,10 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 },
             );
             with_session(core, session, |held| {
+                if held.meta.closed {
+                    held.meta.closed = false;
+                    sessions::save_meta(session, &held.meta);
+                }
                 if held.chat.is_none() {
                     start_agent(held, &[]);
                 }

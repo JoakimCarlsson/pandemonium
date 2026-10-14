@@ -395,9 +395,9 @@ impl Frame<'_> {
         let width = rect.width - inset.left - inset.right - border.left - border.right;
         let height = rect.height - inset.top - inset.bottom - border.top - border.bottom;
         let size = width.min(height);
-        let (x, y) = world.apply(
-            rect.x + inset.left + border.left + (width - size) / 2.0,
-            rect.y + inset.top + border.top + (height - size) / 2.0,
+        let (middle_x, middle_y) = world.apply(
+            rect.x + inset.left + border.left + width / 2.0,
+            rect.y + inset.top + border.top + height / 2.0,
         );
         let color = computed
             .typography
@@ -407,10 +407,11 @@ impl Frame<'_> {
             .alpha(opacity);
         self.list.push_icon(Icon {
             svg: name.svg(),
-            x,
-            y,
+            x: middle_x - size / 2.0,
+            y: middle_y - size / 2.0,
             size,
             color,
+            rotation: world.b.atan2(world.a),
         });
     }
 

@@ -53,6 +53,11 @@ pub enum ServerMessage {
         /// What the server knows about the session.
         info: SessionInfo,
     },
+    /// Another client closed a session. Sent to every client but the one that closed it.
+    SessionClosed {
+        /// The session.
+        session: u64,
+    },
     /// Another client changed the projects. Sent to every client but the one that changed them.
     ProjectsChanged {
         /// The projects now, oldest first.

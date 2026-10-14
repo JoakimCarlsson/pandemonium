@@ -182,9 +182,33 @@ impl Screen {
         }
     }
 
-    /// Whether a menu is open over a project, so that a press elsewhere has to close it.
-    pub fn project_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some())
+    /// Whether a menu is open over a project or a session, so that a press elsewhere has to close it.
+    pub fn list_menu_open(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some())
+    }
+
+    /// Which session the row `id` of the sidebar opens, while the workspace is showing.
+    pub fn session_row_of(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.session_row_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the menu of the session at `session` open at `at`.
+    pub fn with_session_menu(self, session: usize, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_session_menu(session, at)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen with the session at `position` closed by another client.
+    pub fn closed_elsewhere(self, position: usize) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.closed_session(position, false)),
+            onboarding => onboarding,
+        }
     }
 
     /// The screen with no menu open.

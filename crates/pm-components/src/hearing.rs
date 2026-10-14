@@ -22,6 +22,7 @@ impl Session {
             Event::Ask(question) => self.ask = Some(question),
             Event::Finished(error) => self.finish(error),
             Event::Failed(reason) => self.finish(Some(reason)),
+            Event::Titled(title) => self.title = title,
             Event::Prompted { text, files } => self.prompted(text, files),
         }
     }

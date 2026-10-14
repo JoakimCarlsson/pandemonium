@@ -97,6 +97,8 @@ pub struct Icon {
     pub size: f32,
     /// What the artwork is tinted.
     pub color: Srgba,
+    /// How far the square is turned clockwise about its middle, in radians.
+    pub rotation: f32,
 }
 
 /// The pixels of a picture, decoded and ready to be drawn.

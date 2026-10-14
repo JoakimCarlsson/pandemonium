@@ -74,15 +74,18 @@ pub(crate) struct GlyphInstance {
     pub(crate) uv: [f32; 4],
     /// Tint, sRGB-encoded with straight alpha.
     pub(crate) color: [f32; 4],
+    /// How far the glyph is turned clockwise about the middle of its bitmap, in radians.
+    pub(crate) rotation: f32,
 }
 
 impl GlyphInstance {
     /// The vertex attributes the glyph shader expects, in declaration order.
-    pub(crate) const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+    pub(crate) const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
         3 => Float32x4,
+        4 => Float32,
     ];
 }
 

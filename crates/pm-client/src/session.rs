@@ -34,6 +34,8 @@ pub enum Incoming {
     },
     /// Another client started a session.
     SessionAdded(pm_protocol::SessionInfo),
+    /// Another client closed the session with this number.
+    SessionClosed(u64),
     /// Another client changed the projects; these are the projects now.
     ProjectsChanged(Vec<String>),
     /// Something an agent did, numbered within its session.
@@ -293,6 +295,9 @@ fn converse(
                     }
                     ServerMessage::SessionAdded { info } => {
                         let _ = reporter.send(Incoming::SessionAdded(info));
+                    }
+                    ServerMessage::SessionClosed { session } => {
+                        let _ = reporter.send(Incoming::SessionClosed(session));
                     }
                     ServerMessage::ProjectsChanged { paths } => {
                         let _ = reporter.send(Incoming::ProjectsChanged(paths));

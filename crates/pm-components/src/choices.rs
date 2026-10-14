@@ -718,6 +718,7 @@ impl WorkspaceState {
                 &info.directory,
                 info.base.clone(),
                 agent,
+                info.closed,
             ));
             added.push((self.sessions.len() - 1, info.session));
         }

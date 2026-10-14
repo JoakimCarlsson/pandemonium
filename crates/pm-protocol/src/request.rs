@@ -87,6 +87,11 @@ pub enum Request {
         /// The files attached.
         attachments: Vec<Attachment>,
     },
+    /// Closes a session: stops its agent and marks it finished. Its folder and its log are kept, and a later prompt opens it again.
+    CloseSession {
+        /// The session.
+        session: u64,
+    },
     /// Hands a session's agent its next turn.
     Prompt {
         /// The session.

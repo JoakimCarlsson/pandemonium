@@ -88,6 +88,7 @@ request with exactly one `response` carrying the same `id`.
 | `prompt`       | `session`, `text`, `attachments`                                                                 | `done`          |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
+| `close_session`| `session`                                                                                        | `done`          |
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
 | `attach`       | `session`, `after`                                                                               | `done`          |
 | `inspect`      | `directory`, `base`                                                                              | `inspected`     |
@@ -114,6 +115,10 @@ request with exactly one `response` carrying the same `id`.
   `settings` is a list of `[setting, value]` pairs applied before the first
   prompt. The response gives the session number, the folder the agent works in
   and, for a worktree, the abbreviated commit it has checked out (`head`). The connection is attached to the session already.
+- **`close_session`:** stops the session's agent and marks it `closed`. The
+  folder and the log are kept, so the session still shows in `sessions` (with
+  `closed: true`) and can be opened with `attach`. A later `prompt` opens it
+  again. Other clients are told with `session_closed`.
 - **`prompt`:** hands the agent its next turn. If the agent has stopped (after
   a `failed` event) the server starts it again first. A prompt sent while a
   turn is running is ignored.
@@ -168,12 +173,15 @@ sent to the client that made the change.
 
 ```json
 { "type": "session_added", "info": { "session": 2, "agent": "codex", … } }
+{ "type": "session_closed", "session": 2 }
 { "type": "projects_changed", "paths": ["~/code/app", "~/code/lib"] }
 ```
 
 - `session_added`: another client started a session. `info` is a
   `SessionInfo`. The client lists it and sends `attach` with `after: 0` to open
   it.
+- `session_closed`: another client closed a session. The client takes it out of
+  what is going on.
 - `projects_changed`: another client saved the projects. The client adds the
   ones it does not have. Removing a project is not sent yet.
 
@@ -202,7 +210,7 @@ What an agent does arrives as an `event`, not as a response:
 - A client drops an event whose `seq` it already has, so replays are safe.
 
 A **SessionInfo** is `{session, agent, repository, directory, branch, head,
-base, title, updated, last_seq, running}`. `updated` is milliseconds since the epoch,
+base, title, closed, updated, last_seq, running}`. `updated` is milliseconds since the epoch,
 `last_seq` is the number of the session's latest event, and `running` says
 whether its agent is running now.
 
@@ -221,6 +229,7 @@ Events use serde's default form, one key naming the type.
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
+| `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Prompted": {text, files}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. |
 
 Shapes used above:

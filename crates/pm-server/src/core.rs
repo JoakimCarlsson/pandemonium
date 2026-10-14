@@ -122,6 +122,7 @@ impl Core {
                 head: session.meta.head.clone(),
                 base: session.meta.base.clone(),
                 title: session.meta.title.clone(),
+                closed: session.meta.closed,
                 updated: session.meta.updated,
                 last_seq: session.log.last().map_or(0, |(seq, _)| *seq),
                 running: session.chat.is_some(),
@@ -143,6 +144,10 @@ impl Core {
             let seq = session.log.last().map_or(0, |(seq, _)| *seq) + 1;
             session.log.push((seq, event.clone()));
             sessions::append(number, seq, &event);
+            if let Event::Titled(title) = &event {
+                session.meta.title = title.clone();
+                sessions::save_meta(number, &session.meta);
+            }
             if matches!(
                 event,
                 Event::Prompted { .. } | Event::Finished(_) | Event::Failed(_)

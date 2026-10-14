@@ -4,7 +4,7 @@ use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Progress, ToolState, 
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, animate_pulse, bg, border, border_color, border_l, cursor_pointer, flex, flex_1,
+    Radius, Role, animate_spin, bg, border, border_color, border_l, cursor_pointer, flex, flex_1,
     flex_col, flex_none, font_mono, gap, items_center, leading_ratio, min_w_px, my,
     overflow_hidden, pl, px, py, rounded, rounded_full, size, text_color, text_px, w_full,
 };
@@ -119,7 +119,7 @@ fn clipped_mono(content: &str) -> Node {
 /// The mark of how a tool got on: a turning ring, or the glyph that is its kind.
 fn tool_mark(tool: &ToolUse) -> Node {
     match tool.state {
-        ToolState::Running => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_pulse()]),
+        ToolState::Running => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
         ToolState::Failed => glyph(IconName::Close, 3.5, Role::Danger),
         ToolState::Done => glyph(
             match tool.kind {
@@ -249,7 +249,7 @@ pub fn plan(items: &[PlanStep]) -> Node {
                     Role::Subtle,
                 ),
                 Progress::Doing => (
-                    glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_pulse()]),
+                    glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
                     Role::Text,
                 ),
                 Progress::Pending => (

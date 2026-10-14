@@ -329,6 +329,11 @@ impl Work {
         for outgoing in outbox {
             match outgoing {
                 Outgoing::Reindexed(moved) => self.reindex(&moved),
+                Outgoing::Close { session } => self.ask_session(
+                    session,
+                    |number| Request::CloseSession { session: number },
+                    Pending::Nothing,
+                ),
                 Outgoing::Start {
                     session,
                     text,
@@ -534,6 +539,14 @@ impl Work {
                         self.heard(model, &host, session, event);
                     }
                     Incoming::SessionAdded(info) => self.adopt(model, &host, vec![info]),
+                    Incoming::SessionClosed(number) => {
+                        if let Some(position) = self.positions.get(&(host.clone(), number)).copied()
+                        {
+                            model.update(|screen| {
+                                *screen = screen.clone().closed_elsewhere(position)
+                            });
+                        }
+                    }
                     Incoming::ProjectsChanged(paths) => {
                         if host.is_none() {
                             Self::projects_changed(model, &paths);
