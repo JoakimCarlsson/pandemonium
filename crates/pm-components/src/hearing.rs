@@ -23,20 +23,59 @@ impl Session {
             Event::Finished(error) => self.finish(error),
             Event::Failed(reason) => self.finish(Some(reason)),
             Event::Titled(title) => self.title = title,
-            Event::Prompted { text, files } => self.prompted(text, files),
+            Event::Prompted {
+                text,
+                files,
+                checkpoint,
+            } => self.prompted(text, files, checkpoint),
             Event::Queued { id, text, files } => self.queued.push(Queued { id, text, files }),
             Event::Unqueued(id) => self.queued.retain(|waiting| waiting.id != id),
+            Event::Rewound { turn } => self.rewound(turn),
+            Event::Restored { turn, files } => self.files_restored(turn, files.len()),
         }
     }
 
-    /// Adds the turn a reader handed the agent, unless this window handed it and already shows it.
-    fn prompted(&mut self, text: String, files: Vec<String>) {
+    /// Drops the reader's turn `turn`, counted from nought, and everything after it.
+    fn rewound(&mut self, turn: u64) {
+        let at = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, message)| message.from_user)
+            .nth(turn as usize)
+            .map(|(index, _)| index);
+        if let Some(at) = at {
+            self.messages.truncate(at);
+        }
+        self.ask = None;
+        self.echoes = 0;
+        self.turn_started = None;
+        self.status = Status::Done;
+    }
+
+    /// Says that `count` files were put back as they were before the reader's turn `turn`, counted from nought.
+    fn files_restored(&mut self, turn: u64, count: usize) {
+        let files = if count == 1 { "file" } else { "files" };
+        let mut note = Message::reply(&format!(
+            "Restored {count} {files} to how they were before turn {}.",
+            turn + 1
+        ));
+        note.duration = Some(String::new());
+        self.messages.push(note);
+    }
+
+    /// Adds the turn a reader handed the agent, unless this window handed it and already shows it, and notes whether its files were kept.
+    fn prompted(&mut self, text: String, files: Vec<String>, checkpoint: bool) {
         if self.echoes > 0 {
             self.echoes -= 1;
+            if let Some(shown) = self.messages.iter_mut().rev().find(|held| held.from_user) {
+                shown.checkpoint = checkpoint;
+            }
             return;
         }
         let mut message = Message::user(&text);
         message.attachments = files;
+        message.checkpoint = checkpoint;
         self.messages.push(message);
         self.status = Status::Working;
         self.turn_started = Some(Instant::now());

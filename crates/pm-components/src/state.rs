@@ -140,6 +140,21 @@ pub const TERMINAL_CLOSE_BASE: u64 = 5100;
 /// The first of the buttons copying a reply; the rest follow it.
 pub const COPY_BASE: u64 = 300_000;
 
+/// The first of the buttons taking the conversation back to before one of the reader's messages to write it again; the rest follow it.
+pub const REWIND_BASE: u64 = 1_000_000_000_000;
+
+/// The first of the buttons offering to put the files back as they were before one of the reader's messages; the rest follow it.
+pub const RESTORE_BASE: u64 = 2_000_000_000_000;
+
+/// The first of the buttons starting a session that branches off the conversation after one of the agent's replies; the rest follow it.
+pub const FORK_BASE: u64 = 3_000_000_000_000;
+
+/// Puts the files back as they were before the message whose offer is open.
+pub const RESTORE_FILES: FocusId = FocusId(4273);
+
+/// Closes the offer to put the files back, leaving them as they are.
+pub const KEEP_FILES: FocusId = FocusId(4274);
+
 /// The scrolling list of values in the open menu.
 pub const MENU_SCROLL: FocusId = FocusId(351);
 
@@ -319,6 +334,27 @@ pub enum Outgoing {
         /// The choice made.
         option: String,
     },
+    /// Takes the conversation of a session back to before one of the reader's turns, dropping it and all after it.
+    Rewind {
+        /// The session, by position.
+        session: usize,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// Starts a session that branches off the conversation of a session after one of the reader's turns and the agent's reply to it.
+    Fork {
+        /// The session, by position.
+        session: usize,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// Puts the files of a session back as they were before one of the reader's turns.
+    Restore {
+        /// The session, by position.
+        session: usize,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
     /// Stops the turn the agent of a session is on.
     Cancel {
         /// The session, by position.
@@ -465,6 +501,8 @@ pub struct WorkspaceState {
     pub chat_back: f32,
     /// The menu open over the prompt box, if one is.
     pub picker: Option<Picker>,
+    /// The reader's message of the open session, by position, whose offer to put the files back as they were before it is open, if one is.
+    pub restoring: Option<usize>,
     /// What each agent lets the reader change, by the agent's position, once it has been asked.
     pub agent_settings: Vec<Vec<Setting>>,
     /// The settings the reader changed before starting work, by agent and name.
@@ -545,6 +583,7 @@ impl WorkspaceState {
             history_search: Field::default(),
             sidebar_scroll: 0.0,
             menu: None,
+            restoring: None,
             project_menu: None,
             session_menu: None,
             project_drag: None,
@@ -660,7 +699,9 @@ impl WorkspaceState {
         if !Self::keeps_activity(action) {
             self.activity = None;
         }
+        let restoring = self.restoring.take();
         match action {
+            RESTORE_FILES => self.restore(restoring),
             SESSION_MENU_CLOSE => return self.session_menu_pressed(),
             PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
             HISTORY => self.page = Page::History,
@@ -810,6 +851,12 @@ impl WorkspaceState {
             .filter(|offset| *offset < self.messages_open())
         {
             self.copy(index);
+        } else if let Some(index) = position(REWIND_BASE, self.messages_open()) {
+            self.rewind(index);
+        } else if let Some(index) = position(FORK_BASE, self.messages_open()) {
+            self.fork(index);
+        } else if let Some(index) = position(RESTORE_BASE, self.messages_open()) {
+            self.restoring = Some(index);
         } else if let Some(index) = position(TURN_BASE, self.messages_open()) {
             self.toggle_turn(index);
         } else if id >= DETAILS_BASE {
@@ -851,6 +898,61 @@ impl WorkspaceState {
             text.push_str(&format!("\n- {bullet}"));
         }
         self.outbox.push(Outgoing::Copy { text });
+    }
+
+    /// Takes the open session's conversation back to before the reader's message at `index`, which goes back into the prompt box to be written again.
+    fn rewind(&mut self, index: usize) {
+        let Page::Session(session) = self.page else {
+            return;
+        };
+        let held = &self.sessions[session];
+        let Some(message) = held.messages.get(index).filter(|message| message.from_user) else {
+            return;
+        };
+        if held.status == Status::Working {
+            return;
+        }
+        let turn = held.turn_of(index);
+        self.prompt = prompt_field(&message.text);
+        self.outbox.push(Outgoing::Rewind { session, turn });
+    }
+
+    /// Starts a session that branches off the open session's conversation after the agent's reply at `index`.
+    fn fork(&mut self, index: usize) {
+        let Page::Session(session) = self.page else {
+            return;
+        };
+        let held = &self.sessions[session];
+        let writing = held.status == Status::Working && index + 1 == held.messages.len();
+        let Some(turn) = held.turn_of(index).checked_sub(1) else {
+            return;
+        };
+        if !writing
+            && held
+                .messages
+                .get(index)
+                .is_some_and(|reply| !reply.from_user)
+        {
+            self.outbox.push(Outgoing::Fork { session, turn });
+        }
+    }
+
+    /// Puts the open session's files back as they were before the reader's message at `restoring`, when there is one.
+    fn restore(&mut self, restoring: Option<usize>) {
+        let (Page::Session(session), Some(index)) = (self.page, restoring) else {
+            return;
+        };
+        let held = &self.sessions[session];
+        if held.status == Status::Working
+            || !held
+                .messages
+                .get(index)
+                .is_some_and(|message| message.checkpoint)
+        {
+            return;
+        }
+        let turn = held.turn_of(index);
+        self.outbox.push(Outgoing::Restore { session, turn });
     }
 
     /// Shows or hides the steps of the reply at `index` of the open session.
@@ -984,6 +1086,7 @@ impl WorkspaceState {
         if text.is_empty() && self.attachments.is_empty() {
             return;
         }
+        let starting = matches!(self.page, Page::New(_));
         let session = match self.page {
             Page::Session(index) => {
                 let Some(session) = self.sessions.get_mut(index) else {
@@ -1029,7 +1132,7 @@ impl WorkspaceState {
         held.status = Status::Working;
         held.updated_at = crate::age::now();
         held.turn_started = Some(std::time::Instant::now());
-        let outgoing = if self.sessions[session].messages.len() == 1 {
+        let outgoing = if starting {
             Outgoing::Start {
                 session,
                 text,

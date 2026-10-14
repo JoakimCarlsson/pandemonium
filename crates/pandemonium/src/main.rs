@@ -69,6 +69,8 @@ fn main() {
             Some("live") => Shot::Live,
             Some("asking") => Shot::Asking,
             Some("queued") => Shot::Queued,
+            Some("kept") => Shot::Kept,
+            Some("restoring") => Shot::Restoring,
             Some("picking") => Shot::Picking,
             Some("expanded") => Shot::Expanded,
             Some("slashing") => Shot::Slashing,

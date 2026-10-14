@@ -15,15 +15,16 @@ use crate::Button;
 use crate::Markdown;
 use crate::Tally;
 use crate::activity::activity;
-use crate::button::Size;
+use crate::button::{Size, Variant};
 use crate::composer::composer;
 use crate::input;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::queued::queued;
-use crate::sample::{AGENTS, Message, Session, Status};
+use crate::sample::{AGENTS, Session, Status};
 use crate::sidebar::status_icon;
 use crate::state::{
-    CHAT_SCROLL, COPY_BASE, DETAILS_BASE, OPEN_DIFF, REVIEW, TURN_BASE, WorkspaceState,
+    CHAT_SCROLL, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, OPEN_DIFF, RESTORE_BASE,
+    RESTORE_FILES, REVIEW, REWIND_BASE, TURN_BASE, WorkspaceState,
 };
 use crate::steps::{question, steps};
 
@@ -53,8 +54,67 @@ fn paragraph(content: &str, tone: Role, width: f32) -> Node {
         }))
 }
 
-/// A message the reader wrote: a filled bubble at the right.
-fn user_message(state: &WorkspaceState, message: &Message, width: f32) -> Node {
+/// A button that shows under a message while the pointer is over it or it has focus, showing `icon`, saying what it does with `tooltip` and answering to `id`, switched off while `disabled`.
+fn message_action(icon: IconName, tooltip: &str, id: u64, disabled: bool) -> Node {
+    Button::icon(icon, FocusId(id))
+        .disabled(disabled)
+        .build()
+        .tooltip(tooltip)
+        .styles([
+            text_color(Role::Subtle),
+            opacity(0),
+            opacity(100).group_hover(),
+            opacity(100).focus(),
+        ])
+}
+
+/// The offer to put the files back as they were before a message of the reader's, in place of the buttons under it.
+fn restore_offer() -> Node {
+    node()
+        .styles([self_end(), flex(), items_center(), gap(2)])
+        .child(line(
+            "Restore files to before this turn?",
+            12,
+            1.4,
+            Role::Muted,
+        ))
+        .child(
+            Button::new("Restore", RESTORE_FILES)
+                .variant(Variant::Destructive)
+                .size(Size::Sm)
+                .build(),
+        )
+        .child(
+            Button::new("Cancel", KEEP_FILES)
+                .variant(Variant::Ghost)
+                .size(Size::Sm)
+                .build(),
+        )
+}
+
+/// A message the reader wrote, at `index` of `session`: a filled bubble at the right, with buttons under it to write it again and to put the files back as they were before it.
+fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> Node {
+    let message = &session.messages[index];
+    let working = session.status == Status::Working;
+    let actions = match state.restoring == Some(index) {
+        true => restore_offer(),
+        false => node()
+            .styles([self_end(), flex(), items_center(), gap(1)])
+            .children(message.checkpoint.then(|| {
+                message_action(
+                    IconName::History,
+                    "Restore files to before this turn",
+                    RESTORE_BASE + index as u64,
+                    working,
+                )
+            }))
+            .child(message_action(
+                IconName::Undo,
+                "Rewind conversation to before this message · edit and resend",
+                REWIND_BASE + index as u64,
+                working,
+            )),
+    };
     let bubble = node()
         .styles([
             self_end(),
@@ -68,10 +128,15 @@ fn user_message(state: &WorkspaceState, message: &Message, width: f32) -> Node {
         true => bubble,
         false => bubble.child(crate::composer::sent_files(state, &message.attachments)),
     };
-    match message.text.is_empty() {
+    let bubble = match message.text.is_empty() {
         true => bubble,
         false => bubble.child(paragraph(&message.text, Role::Text, width * 0.85 - 32.0)),
-    }
+    };
+    node()
+        .styles([flex(), flex_col(), gap(1)])
+        .child(bubble)
+        .child(actions)
+        .group()
 }
 
 /// A reply from the agent: the steps it took, what it says, the points it lists and how long it took.
@@ -182,18 +247,23 @@ fn agent_message(
             }),
         ));
     }
-    if !message.text.is_empty() {
+    let copy = (!message.text.is_empty())
+        .then(|| message_action(IconName::Copy, "Copy", COPY_BASE + index as u64, false));
+    let writing = session.status == Status::Working && index + 1 == session.messages.len();
+    let fork = (session.turn_of(index) > 0).then(|| {
+        message_action(
+            IconName::GitFork,
+            "Branch from this reply · new session · shared current files",
+            FORK_BASE + index as u64,
+            writing,
+        )
+    });
+    if copy.is_some() || fork.is_some() {
         reply = reply.child(
-            node().styles([self_start(), mt(-1.0)]).child(
-                Button::icon(IconName::Copy, FocusId(COPY_BASE + index as u64))
-                    .build()
-                    .styles([
-                        text_color(Role::Subtle),
-                        opacity(0),
-                        opacity(100).group_hover(),
-                        opacity(100).focus(),
-                    ]),
-            ),
+            node()
+                .styles([self_start(), flex(), items_center(), gap(1), mt(-1.0)])
+                .children(copy)
+                .children(fork),
         );
     }
     if message.steps.is_empty()
@@ -346,7 +416,7 @@ pub fn chat(
         .children((0..session.messages.len()).map(|index| {
             let message = &session.messages[index];
             if message.from_user {
-                user_message(state, message, column)
+                user_message(state, session, index, column)
             } else {
                 agent_message(state, session, index, column, shaper)
             }

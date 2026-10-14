@@ -70,9 +70,14 @@ impl Session {
         self.chat = Some(chat);
     }
 
+    /// The number the next event noted in the log of this session gets.
+    pub(crate) fn next_seq(&self) -> u64 {
+        self.log.last().map_or(0, |(seq, _)| *seq) + 1
+    }
+
     /// Adds `event` to the log of this session, numbered `number`, keeps it on disk and returns the number it got.
     pub(crate) fn note(&mut self, number: u64, event: &Event) -> u64 {
-        let seq = self.log.last().map_or(0, |(seq, _)| *seq) + 1;
+        let seq = self.next_seq();
         self.log.push((seq, event.clone()));
         sessions::append(number, seq, event);
         if let Event::Titled(title) = event {

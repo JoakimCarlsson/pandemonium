@@ -6,6 +6,7 @@ use std::sync::Arc;
 use pm_acp::{AGENTS, Agent};
 use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
+use crate::conversation;
 use crate::core::{Connection, Core, Session, Told, now};
 use crate::queue::Prompt;
 use crate::sessions::{self, Meta};
@@ -76,6 +77,23 @@ fn telling(core: &Core, number: u64, action: impl FnOnce(&mut Session) -> Told) 
     response
 }
 
+/// Runs `action` on the session numbered `number` and tells the clients what it noted, or says why it could not be done.
+fn trying(
+    core: &Core,
+    number: u64,
+    action: impl FnOnce(&mut Session) -> Result<Told, String>,
+) -> Response {
+    let mut outcome = Ok(Told::new());
+    let response = with_session(core, number, |held| outcome = action(held));
+    match outcome {
+        Ok(told) => {
+            core.tell_all(told);
+            response
+        }
+        Err(reason) => failed(reason),
+    }
+}
+
 /// Starts a session and hands its agent the first prompt.
 #[allow(clippy::too_many_arguments)]
 fn start_session(
@@ -111,7 +129,6 @@ fn start_session(
             (folder, None)
         }
     };
-    let number = core.next_session();
     let meta = Meta {
         agent: agent.id.to_owned(),
         repository: repository.to_owned(),
@@ -123,25 +140,74 @@ fn start_session(
         closed: false,
         updated: now(),
     };
-    sessions::save_meta(number, &meta);
     let mut session = Session::new(agent, folder.clone(), Vec::new(), meta);
     session.start_agent(settings);
+    let number = hold_session(core, connection, session);
+    let first = prompt(number, text, attachments);
+    telling(core, number, |held| held.submit(number, first, false));
+    announce(core, connection, number);
+    Response::Started {
+        session: number,
+        directory: folder.to_string_lossy().into_owned(),
+        branch: None,
+        head,
+    }
+}
+
+/// Starts a session that branches off the conversation of session `source` after the reader's turn `turn`, counted from nought, and its reply: it works in the same folder, its agent is not started until it is handed a prompt, and that agent is then told the conversation so far.
+fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u64) -> Response {
+    let branch = {
+        let Ok(sessions) = core.sessions.lock() else {
+            return failed("the server is shutting down");
+        };
+        let Some(held) = sessions.get(&source) else {
+            return failed(format!("no session is numbered {source}"));
+        };
+        let replying = held.busy && conversation::turns(&held.log).len() as u64 == turn + 1;
+        if replying {
+            return failed("the agent is still writing that reply");
+        }
+        let Some(log) = conversation::through(&held.log, turn) else {
+            return failed(format!("session {source} has no turn {turn}"));
+        };
+        let meta = Meta {
+            title: format!("{} (branch)", held.meta.title),
+            closed: false,
+            updated: now(),
+            ..held.meta.clone()
+        };
+        Session::new(held.agent, held.directory.clone(), log, meta)
+    };
+    let number = hold_session(core, connection, branch);
+    announce(core, connection, number);
+    match core.info(number) {
+        Some(info) => Response::Sessions {
+            sessions: vec![info],
+        },
+        None => failed(format!("session {number} went away as it was made")),
+    }
+}
+
+/// Holds `session` under a new number, keeps it and its log on disk, has `connection` watch it and returns the number.
+fn hold_session(core: &Core, connection: &Arc<Connection>, session: Session) -> u64 {
+    let number = core.next_session();
+    sessions::save_meta(number, &session.meta);
+    for (seq, event) in &session.log {
+        sessions::append(number, *seq, event);
+    }
     if let Ok(mut held) = core.sessions.lock() {
         held.insert(number, session);
     }
     if let Ok(mut attached) = connection.attached.lock() {
         attached.insert(number);
     }
-    let first = prompt(number, text, attachments);
-    telling(core, number, |held| held.submit(number, first, false));
+    number
+}
+
+/// Tells every client but `connection` of the session numbered `number`.
+fn announce(core: &Core, connection: &Arc<Connection>, number: u64) {
     if let Some(info) = core.info(number) {
         core.broadcast(&ServerMessage::SessionAdded { info }, Some(connection));
-    }
-    Response::Started {
-        session: number,
-        directory: folder.to_string_lossy().into_owned(),
-        branch: None,
-        head,
     }
 }
 
@@ -320,6 +386,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 )),
                 response => response,
             }
+        }
+        Request::Rewind { session, turn } => {
+            trying(core, session, |held| held.rewind(session, turn))
+        }
+        Request::ForkSession { session, turn } => fork_session(core, connection, session, turn),
+        Request::Restore { session, turn } => {
+            trying(core, session, |held| held.restore(session, turn))
         }
         Request::Choose {
             session,

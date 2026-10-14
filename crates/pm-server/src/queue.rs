@@ -2,6 +2,7 @@
 
 use pm_acp::Event;
 
+use crate::conversation;
 use crate::core::{Session, Told};
 use crate::sessions;
 
@@ -102,22 +103,27 @@ impl Session {
         }
     }
 
-    /// Opens the session again if it was closed, starts its agent if it is not running and hands it `prompt` as its next turn.
+    /// Opens the session again if it was closed, keeps its files as they are, starts its agent if it is not running and hands it `prompt` as its next turn.
+    ///
+    /// An agent started afresh is told the conversation so far, and any agent is told of files put back since its last turn.
     fn hand(&mut self, number: u64, prompt: Prompt) -> Told {
         if self.meta.closed {
             self.meta.closed = false;
             sessions::save_meta(number, &self.meta);
         }
+        let afresh = self.chat.is_none();
+        let preface = conversation::preface(&self.log, afresh);
         let event = Event::Prompted {
             text: prompt.text.clone(),
             files: prompt.names,
+            checkpoint: self.checkpoint(number, self.next_seq()),
         };
         let told = vec![(number, self.note(number, &event), event)];
-        if self.chat.is_none() {
-            self.start_agent(&[]);
+        if afresh {
+            self.start_agent(&conversation::settings(&self.log));
         }
         if let Some(chat) = &self.chat {
-            chat.prompt(&prompt.text, &prompt.paths);
+            chat.prompt(&format!("{preface}{}", prompt.text), &prompt.paths);
             self.busy = true;
         }
         told

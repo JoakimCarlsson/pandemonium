@@ -7,7 +7,7 @@ use pm_acp::{
     Tool, ToolState, Verdict,
 };
 use pm_components::Project;
-use pm_components::state::DETAILS_BASE;
+use pm_components::state::{DETAILS_BASE, RESTORE_BASE};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
     HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL, WorkspaceState,
@@ -68,6 +68,10 @@ pub enum Shot {
     Queued,
     /// A conversation with the model menu open.
     Picking,
+    /// A finished conversation scrolled back to its first message, whose files were kept before it.
+    Kept,
+    /// A finished conversation with the offer to put the files back as they were before its first message open.
+    Restoring,
     /// A conversation with the details of its steps open.
     Expanded,
     /// A conversation with a slash being typed.
@@ -189,6 +193,8 @@ impl Shot {
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
             Self::Queued => Screen::Workspace(queued()),
+            Self::Kept => Screen::Workspace(kept()),
+            Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
             Self::Expanded => Screen::Workspace(
                 [201_000, 201_004, 201_005]
@@ -324,6 +330,20 @@ fn queued() -> WorkspaceState {
     )
 }
 
+/// A finished conversation whose files were kept before its first message, scrolled back to it.
+fn kept() -> WorkspaceState {
+    live(Turn::Finished)
+        .heard(
+            0,
+            Event::Prompted {
+                text: "Why does the sidebar lose its scroll position?".to_owned(),
+                files: Vec::new(),
+                checkpoint: true,
+            },
+        )
+        .scrolled_chat(-400.0, 400.0)
+}
+
 /// A conversation that went through what an agent says in a turn, ending as `turn` says.
 fn live(turn: Turn) -> WorkspaceState {
     let tool = |id: &str, title: &str, kind, target: &str| Tool {
@@ -440,7 +460,9 @@ fn live(turn: Turn) -> WorkspaceState {
 
 /// Draws the screen as it looks `elapsed_ms` into the animations, with the
 /// pointer at `pointer` and focus on `focused` if given, in `appearance`, and
-/// writes it to `path` as a PNG.
+/// writes it to `path` as a PNG. The pointer is taken to have rested where it
+/// is since the start, so a tooltip under it shows once `elapsed_ms` is long
+/// enough.
 pub fn write(
     path: &Path,
     elapsed_ms: f32,
@@ -462,10 +484,24 @@ pub fn write(
     };
     let family = default_family();
     let theme = family.variant(appearance);
+    let screen = shot.screen();
+    let resting = Input {
+        elapsed_ms: 0.0,
+        ..input
+    };
     scene::paint(
         WIDTH as f32,
         HEIGHT as f32,
-        &shot.screen(),
+        &screen,
+        &resting,
+        theme,
+        &mut shaper,
+        &mut DrawList::new(),
+    );
+    scene::paint(
+        WIDTH as f32,
+        HEIGHT as f32,
+        &screen,
         &input,
         theme,
         &mut shaper,

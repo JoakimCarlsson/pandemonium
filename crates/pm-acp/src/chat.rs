@@ -212,6 +212,9 @@ pub enum Event {
         text: String,
         /// The names of the files attached.
         files: Vec<String>,
+        /// Whether the files of the session's folder were kept as they were before the turn, so they can be put back.
+        #[serde(default)]
+        checkpoint: bool,
     },
     /// A reader wrote while the agent was on a turn, so their words wait for it, under `id`.
     Queued {
@@ -224,6 +227,18 @@ pub enum Event {
     },
     /// The waiting prompt numbered this stopped waiting: handed to the agent, or dropped.
     Unqueued(u64),
+    /// The conversation went back to before the reader's turn `turn`, counted from nought, which is dropped with all that followed it.
+    Rewound {
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// The files of the session's folder were put back as they were before the reader's turn `turn`.
+    Restored {
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+        /// The files that changed, from the root of the repository.
+        files: Vec<String>,
+    },
 }
 
 /// What the reader hands an agent.

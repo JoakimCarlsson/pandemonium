@@ -6,11 +6,14 @@
 //! style for the pointer and the clock, and paints the result into a
 //! [`pm_renderer::DrawList`]. The tree is rebuilt every frame; only the
 //! subtrees made with [`retained`] survive to the next, built and laid out
-//! once for as long as what they show stays the same.
+//! once for as long as what they show stays the same. A box given a
+//! [`Node::tooltip`] shows it over everything once the pointer has rested on
+//! it for a moment.
 
 mod node;
 mod paint;
 mod retain;
+mod tooltip;
 mod wrap;
 
 pub use node::{Node, node, text};

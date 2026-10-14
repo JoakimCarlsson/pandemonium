@@ -314,16 +314,17 @@ impl Screen {
         }
     }
 
-    /// Whether a menu of a setting is open.
+    /// Whether a menu of a setting, or the offer to put files back, is open.
     pub fn picker_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.picker.is_some())
+        matches!(self, Self::Workspace(state) if state.picker.is_some() || state.restoring.is_some())
     }
 
-    /// The screen with no setting menu open.
+    /// The screen with no setting menu, and no offer to put files back, open.
     pub fn without_picker(self) -> Self {
         match self {
             Self::Workspace(mut state) => {
                 state.picker = None;
+                state.restoring = None;
                 Self::Workspace(state)
             }
             other => other,

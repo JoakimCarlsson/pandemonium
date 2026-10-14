@@ -14,6 +14,7 @@ use pm_theme::Theme;
 
 use crate::node::{Anchor, Node};
 use crate::retain;
+use crate::tooltip::{self, Showing};
 
 /// How long the caret stays on, and then off, in milliseconds.
 const CARET_BLINK_MS: f32 = 530.0;
@@ -175,6 +176,7 @@ pub fn draw(
     let mut frame = Frame {
         input,
         width,
+        height,
         theme,
         shaper,
         list,
@@ -183,6 +185,7 @@ pub fn draw(
         origin: (0.0, 0.0),
         culling: true,
         group_hovered: false,
+        tooltip: None,
     };
     frame.node(
         root,
@@ -192,6 +195,11 @@ pub fn draw(
         Cursor::Default,
         (0.0, 0.0),
     );
+    match tooltip::settle(frame.tooltip.take(), input.elapsed_ms) {
+        Showing::Shown(over, words) => frame.paint_tooltip(over, &words),
+        Showing::Waiting => frame.output.animating = true,
+        Showing::Nothing => {}
+    }
     retain::end_frame();
     frame.output
 }
@@ -202,6 +210,8 @@ struct Frame<'a> {
     input: &'a Input,
     /// The viewport width, which breakpoints are resolved against.
     width: f32,
+    /// The viewport height.
+    height: f32,
     /// The theme roles are resolved against.
     theme: &'a Theme,
     /// Shapes the text the tree holds.
@@ -219,6 +229,8 @@ struct Frame<'a> {
     culling: bool,
     /// Whether the pointer is over the nearest group enclosing the boxes now being painted.
     group_hovered: bool,
+    /// The words the innermost box under the pointer that has a tooltip asks to show, and where that box is.
+    tooltip: Option<(Rect, String)>,
 }
 
 impl Frame<'_> {
@@ -260,6 +272,9 @@ impl Frame<'_> {
         };
         if self.pointer_in(seen) {
             self.output.cursor = cursor;
+            if let Some(words) = &node.tooltip {
+                self.tooltip = Some((seen, words.clone()));
+            }
         }
         if let Some(id) = node.focus {
             self.output.regions.push(Region { id, rect: seen });
@@ -338,6 +353,33 @@ impl Frame<'_> {
             self.list.set_clip(outer);
         }
         self.group_hovered = outer_group;
+    }
+
+    /// Paints a tooltip saying `words` over everything painted so far, above the box at `over`, or below it where there is no room above, kept inside the viewport.
+    fn paint_tooltip(&mut self, over: Rect, words: &str) {
+        let holder = tooltip::holder(words);
+        let laid = solve(&holder.item(self.shaper), self.width, self.height);
+        let (Some(card), Some(placed)) = (holder.children.first(), laid.children.first()) else {
+            return;
+        };
+        let above = over.y - tooltip::GAP - placed.height;
+        let top = match above >= 0.0 {
+            true => above,
+            false => over.y + over.height + tooltip::GAP,
+        };
+        let left = over.x.min(self.width - placed.width).max(0.0);
+        self.clip = None;
+        self.list.set_clip(None);
+        self.origin = (left - placed.x, top - placed.y);
+        self.node(
+            card,
+            placed,
+            Affine::IDENTITY,
+            1.0,
+            Cursor::Default,
+            (0.0, 0.0),
+        );
+        self.origin = (0.0, 0.0);
     }
 
     /// Whether the pointer is inside `rect`.

@@ -6,11 +6,13 @@
 
 mod cli;
 mod connection;
+mod conversation;
 mod core;
 mod credential;
 mod handler;
 mod listener;
 mod queue;
+mod rewind;
 mod sessions;
 mod terminals;
 mod uploads;

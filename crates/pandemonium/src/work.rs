@@ -6,6 +6,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use pm_acp::{AGENTS, Discovery, Event};
 use pm_client::{Client, Incoming};
+use pm_components::state::SESSION_BASE;
+use pm_input::FocusId;
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{Attachment, Login, Request, Response, Target};
 use pm_renderer::Picture;
@@ -69,6 +71,10 @@ enum Pending {
     Stage(usize),
     /// A commit was made in the folder of the session at this position.
     Commit(usize),
+    /// A session was branched off the session at this position.
+    Fork(usize),
+    /// The session at this position went back, with what its failing is called.
+    Back(usize, &'static str),
     /// The shell of the tab with this name was started, or could not be.
     OpenTerminal(u64),
     /// The shells the server of this machine holds.
@@ -460,6 +466,30 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
+                Outgoing::Rewind { session, turn } => self.ask_session(
+                    session,
+                    |number| Request::Rewind {
+                        session: number,
+                        turn,
+                    },
+                    Pending::Back(session, "Could not rewind the conversation"),
+                ),
+                Outgoing::Fork { session, turn } => self.ask_session(
+                    session,
+                    |number| Request::ForkSession {
+                        session: number,
+                        turn,
+                    },
+                    Pending::Fork(session),
+                ),
+                Outgoing::Restore { session, turn } => self.ask_session(
+                    session,
+                    |number| Request::Restore {
+                        session: number,
+                        turn,
+                    },
+                    Pending::Back(session, "Could not restore the files"),
+                ),
                 Outgoing::Cancel { session } => self.ask_session(
                     session,
                     |number| Request::Cancel { session: number },
@@ -740,9 +770,12 @@ impl Work {
             self.early.entry(key).or_default().push(event);
             return;
         };
-        let ended = matches!(event, Event::Finished(_) | Event::Failed(_));
+        let files_moved = matches!(
+            event,
+            Event::Finished(_) | Event::Failed(_) | Event::Restored { .. }
+        );
         model.update(|screen| *screen = screen.clone().heard(session, event));
-        if ended {
+        if files_moved {
             self.refresh(model, session);
         }
     }
@@ -911,6 +944,29 @@ impl Work {
                     model.update(|screen| *screen = screen.clone().noted(session, &reason));
                 }
                 self.refresh(model, session);
+            }
+            Pending::Fork(session) => match response {
+                Response::Sessions { sessions } => {
+                    let branched = sessions.first().map(|info| (host.clone(), info.session));
+                    self.adopt(model, host, sessions);
+                    if let Some(position) = branched.and_then(|key| self.positions.get(&key)) {
+                        let open = FocusId(SESSION_BASE + *position as u64);
+                        model.update(|screen| *screen = screen.clone().after(open));
+                    }
+                }
+                _ => {
+                    let reason = format!(
+                        "Could not branch from this reply: {}",
+                        failure.unwrap_or_else(|| "the server answered something else".to_owned())
+                    );
+                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                }
+            },
+            Pending::Back(session, failing) => {
+                if let Some(message) = failure {
+                    let reason = format!("{failing}: {message}");
+                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                }
             }
         }
     }

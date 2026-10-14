@@ -5,6 +5,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod checkpoint;
+
+pub use checkpoint::{checkpoint, restore};
+
 /// Where, under a repository, the worktrees made for tasks are kept.
 const WORKTREES: &str = ".pandemonium/worktrees";
 
@@ -36,10 +40,24 @@ pub struct Worktree {
 
 /// Runs `git` with `arguments` in `directory` and returns what it wrote, or what it complained of.
 fn run(directory: &Path, arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    run_indexed(directory, arguments, None)
+}
+
+/// Runs `git` with `arguments` in `directory`, staging into the file `index` in place of the repository's own when one is given, and returns what it wrote, or what it complained of.
+fn run_indexed(
+    directory: &Path,
+    arguments: &[&str],
+    index: Option<&Path>,
+) -> Result<String, String> {
+    let mut command = Command::new("git");
+    command
         .args(arguments)
         .current_dir(directory)
-        .stdin(Stdio::null())
+        .stdin(Stdio::null());
+    if let Some(index) = index {
+        command.env("GIT_INDEX_FILE", index);
+    }
+    let output = command
         .output()
         .map_err(|error| format!("could not run git: {error}"))?;
     if output.status.success() {

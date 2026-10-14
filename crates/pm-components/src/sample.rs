@@ -156,6 +156,8 @@ pub struct Message {
     pub said: Vec<(usize, String)>,
     /// The files the reader sent with it, by path.
     pub attachments: Vec<String>,
+    /// Whether the server kept the files as they were before the reader's turn, so they can be put back.
+    pub checkpoint: bool,
 }
 
 /// One thing the agent did on the way to a reply.
@@ -236,6 +238,7 @@ impl Message {
             said_after: 0,
             said: Vec::new(),
             attachments: Vec::new(),
+            checkpoint: false,
         }
     }
 
@@ -393,6 +396,14 @@ impl Session {
         );
         session.echoes = 1;
         session
+    }
+
+    /// The position among the reader's turns of the message at `index`, counted from nought.
+    pub fn turn_of(&self, index: usize) -> u64 {
+        self.messages[..index.min(self.messages.len())]
+            .iter()
+            .filter(|message| message.from_user)
+            .count() as u64
     }
 
     /// The position of the latest reply that has steps, which is the one whose steps show unasked.

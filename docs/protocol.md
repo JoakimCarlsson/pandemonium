@@ -97,6 +97,9 @@ request with exactly one `response` carrying the same `id`.
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`           | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
+| `rewind`       | `session`, `turn`                                                                                | `done`          |
+| `restore`      | `session`, `turn`                                                                                | `done`          |
+| `fork_session` | `session`, `turn`                                                                                | `sessions`      |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
 | `close_session`| `session`                                                                                        | `done`          |
@@ -146,6 +149,33 @@ request with exactly one `response` carrying the same `id`.
 - **`hurry`:** moves the queued prompt whose `Queued` event gave it the id
   `queued` to the front of the queue and stops the running turn, as `now`
   does for a new prompt. Fails when no prompt waits under that id.
+- **`rewind`:** takes the conversation back to before the reader's turn
+  `turn`, counted from 0 among the `Prompted` events a rewind has not
+  dropped. The turn and everything after it are dropped, announced with a
+  `Rewound` event, and the agent stops. The next `prompt` starts it again as a
+  new conversation and hands it what came before the turn, as text ahead of
+  the prompt, with the settings it last reported. Files are left as they are.
+  Fails while a turn is running.
+- **`restore`:** puts the files of the session's folder back as they were
+  before the reader's turn `turn`, counted as for `rewind`, and announces it
+  with a `Restored` event. Before every turn in a git repository the server
+  keeps the files, tracked or not but not ignored, under
+  `refs/worktree/pandemonium/sessions/<session>/turns/<seq>`, where `seq` is
+  the number of the turn's `Prompted` event; the files as they were before a
+  restore are kept under `…/sessions/<session>/before-restore`. Neither the
+  branch, the head nor the index changes. The agent's next prompt says that
+  the files were put back. Fails while a turn is running, or when no files
+  were kept before the turn.
+- **`fork_session`:** starts a session that branches off the conversation
+  of `session` after the reader's turn `turn`, counted as for `rewind`, and
+  the agent's reply to it. The new session works in the same folder, so the
+  files are shared, and is titled after the source with ` (branch)`. Its log
+  starts with the source's latest `Settings` and `Commands` and the events of
+  those turns, numbered from 1, with no files kept before them. Its agent is
+  not started until the first `prompt`, which hands it the conversation so far
+  as text ahead of the prompt. The response is `sessions` holding the new
+  session; the connection is attached to it, and other clients are told with
+  `session_added`. Fails while the agent is still writing that reply.
 - **`cancel`:** stops the running turn and drops the prompts queued behind it,
   each with an `Unqueued` event. A question the agent was waiting on is
   declined.
@@ -210,7 +240,7 @@ sent to the client that made the change.
 { "type": "projects_changed", "paths": ["~/code/app", "~/code/lib"] }
 ```
 
-- `session_added`: another client started a session. `info` is a
+- `session_added`: another client started or branched a session. `info` is a
   `SessionInfo`. The client lists it and sends `attach` with `after: 0` to open
   it.
 - `session_closed`: another client closed a session. The client takes it out of
@@ -263,9 +293,11 @@ Events use serde's default form, one key naming the type.
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
-| `{"Prompted": {text, files}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. |
+| `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |
 | `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. |
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
+| `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
+| `{"Restored": {turn, files}}` | The files were put back as they were before the reader's turn `turn`. `files` are the paths that changed, from the root of the repository. |
 
 Shapes used above:
 
@@ -321,13 +353,13 @@ keeps its own emulator for them.
 ## Not in the protocol yet
 
 - After a restart the server holds the sessions but not their agents. The
-  next `prompt` starts the agent again as a new conversation, without what was
-  said before. Queued prompts are not kept: the server drops them when it
+  next `prompt` starts the agent again as a new conversation and hands it what
+  was said before as text ahead of the prompt. Queued prompts are not kept: the server drops them when it
   starts again, with an `Unqueued` event for each.
 - The log of events is never trimmed.
 - Shells do not survive a restart of the server.
 - There are no requests for file contents, file watching,
-  checkpoints or deleting a session, and no message says that a project was
+  listing checkpoints or deleting a session, and no message says that a project was
   removed or a session renamed or deleted.
 - A client that reconnects to a server restarted on another port has to read
   `server.json` again itself.

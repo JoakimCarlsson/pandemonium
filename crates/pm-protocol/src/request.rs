@@ -111,6 +111,27 @@ pub enum Request {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
+    /// Takes a session's conversation back to before the reader's turn `turn`: the turn and all after it are dropped, and the agent starts the next one afresh with what came before it.
+    Rewind {
+        /// The session.
+        session: u64,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// Puts the files of a session's folder back as they were before the reader's turn `turn`.
+    Restore {
+        /// The session.
+        session: u64,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// Starts a session that branches off a session's conversation after the reader's turn `turn` and its reply. It works in the same folder, and its agent is told the conversation so far with the first prompt it is handed.
+    ForkSession {
+        /// The session branched off.
+        session: u64,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
     /// Answers the question a session's agent asked.
     Choose {
         /// The session.

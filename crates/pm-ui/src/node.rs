@@ -54,6 +54,8 @@ pub struct Node {
     /// Whether the box is a group: the group-hover styles of the boxes inside
     /// it apply while the pointer is over it.
     pub(crate) group: bool,
+    /// Words shown over the box once the pointer has rested on it for a moment.
+    pub(crate) tooltip: Option<String>,
 }
 
 /// The end of a box's contents that a scroll position is measured from.
@@ -120,6 +122,12 @@ impl Node {
     /// styles while the pointer is over it.
     pub fn group(mut self) -> Self {
         self.group = true;
+        self
+    }
+
+    /// Shows `words` over the box, above everything else, once the pointer has rested on it for a moment.
+    pub fn tooltip(mut self, words: impl Into<String>) -> Self {
+        self.tooltip = Some(words.into());
         self
     }
 
