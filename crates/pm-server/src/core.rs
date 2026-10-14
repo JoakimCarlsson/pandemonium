@@ -1,6 +1,6 @@
 //! What the server holds: the sessions and the connections watching them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use pm_acp::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
 
+use crate::queue::Waiting;
 use crate::sessions::{self, Meta};
 use crate::terminals::Terminal;
 
@@ -32,7 +33,65 @@ pub(crate) struct Session {
     pub(crate) log: Vec<(u64, Event)>,
     /// What the session is, apart from what its agent did.
     pub(crate) meta: Meta,
+    /// Whether its agent is on a turn.
+    pub(crate) busy: bool,
+    /// The prompts waiting for the turn to end, the next one first.
+    pub(crate) queue: VecDeque<Waiting>,
+    /// The id the next waiting prompt gets.
+    pub(crate) next_queued: u64,
 }
+
+impl Session {
+    /// A session of `agent` working in `directory`, described by `meta`, that has done what `log` holds and has no agent running.
+    pub(crate) fn new(
+        agent: Agent,
+        directory: PathBuf,
+        log: Vec<(u64, Event)>,
+        meta: Meta,
+    ) -> Self {
+        Self {
+            agent,
+            directory,
+            chat: None,
+            log,
+            meta,
+            busy: false,
+            queue: VecDeque::new(),
+            next_queued: 1,
+        }
+    }
+
+    /// Starts the agent in the session's folder and gives it the settings the reader chose.
+    pub(crate) fn start_agent(&mut self, settings: &[(String, String)]) {
+        let chat = Chat::start(self.agent, self.directory.clone());
+        for (setting, value) in settings {
+            chat.set(setting, value);
+        }
+        self.chat = Some(chat);
+    }
+
+    /// Adds `event` to the log of this session, numbered `number`, keeps it on disk and returns the number it got.
+    pub(crate) fn note(&mut self, number: u64, event: &Event) -> u64 {
+        let seq = self.log.last().map_or(0, |(seq, _)| *seq) + 1;
+        self.log.push((seq, event.clone()));
+        sessions::append(number, seq, event);
+        if let Event::Titled(title) = event {
+            self.meta.title = title.clone();
+            sessions::save_meta(number, &self.meta);
+        }
+        if matches!(
+            event,
+            Event::Prompted { .. } | Event::Finished(_) | Event::Failed(_)
+        ) {
+            self.meta.updated = now();
+            sessions::save_meta(number, &self.meta);
+        }
+        seq
+    }
+}
+
+/// Events noted in a session's log and yet to be told to the clients: the session, the number and the event.
+pub(crate) type Told = Vec<(u64, u64, Event)>;
 
 /// Everything the server shares between its threads.
 pub(crate) struct Core {
@@ -83,16 +142,9 @@ impl Core {
                     continue;
                 };
                 highest = highest.max(number);
-                sessions.insert(
-                    number,
-                    Session {
-                        agent,
-                        directory: PathBuf::from(&meta.directory),
-                        chat: None,
-                        log,
-                        meta,
-                    },
-                );
+                let mut session = Session::new(agent, PathBuf::from(&meta.directory), log, meta);
+                session.forget_queue(number);
+                sessions.insert(number, session);
             }
         }
         self.next.store(highest + 1, Ordering::Relaxed);
@@ -144,32 +196,11 @@ impl Core {
         infos
     }
 
-    /// Adds `event` to the log of the session numbered `number`, keeps it on disk and tells the clients watching the session.
-    pub(crate) fn record(&self, number: u64, event: Event) {
-        let seq = {
-            let Ok(mut sessions) = self.sessions.lock() else {
-                return;
-            };
-            let Some(session) = sessions.get_mut(&number) else {
-                return;
-            };
-            let seq = session.log.last().map_or(0, |(seq, _)| *seq) + 1;
-            session.log.push((seq, event.clone()));
-            sessions::append(number, seq, &event);
-            if let Event::Titled(title) = &event {
-                session.meta.title = title.clone();
-                sessions::save_meta(number, &session.meta);
-            }
-            if matches!(
-                event,
-                Event::Prompted { .. } | Event::Finished(_) | Event::Failed(_)
-            ) {
-                session.meta.updated = now();
-                sessions::save_meta(number, &session.meta);
-            }
-            seq
-        };
-        self.tell(number, seq, &event);
+    /// Tells the clients watching each session about the events noted in `told`.
+    pub(crate) fn tell_all(&self, told: Told) {
+        for (session, seq, event) in told {
+            self.tell(session, seq, &event);
+        }
     }
 
     /// Tells the clients watching `session` about `event`, numbered `seq`.
@@ -194,25 +225,32 @@ impl Core {
         }
     }
 
-    /// Takes what the agents did since the last look into the sessions' logs and tells the clients.
+    /// Takes what the agents did since the last look into the sessions' logs, hands the agents that ended a turn what waits for them and tells the clients.
     pub(crate) fn pump(&self) {
-        let mut fresh: Vec<(u64, Event)> = Vec::new();
+        let mut told = Told::new();
         if let Ok(mut sessions) = self.sessions.lock() {
             for (number, session) in sessions.iter_mut() {
                 let Some(chat) = &session.chat else {
                     continue;
                 };
                 for event in chat.events() {
-                    if matches!(event, Event::Failed(_)) {
-                        session.chat = None;
+                    told.push((*number, session.note(*number, &event), event.clone()));
+                    match event {
+                        Event::Failed(_) => {
+                            session.chat = None;
+                            session.busy = false;
+                            told.extend(session.drop_queue(*number));
+                        }
+                        Event::Finished(_) => {
+                            session.busy = false;
+                            told.extend(session.advance(*number));
+                        }
+                        _ => {}
                     }
-                    fresh.push((*number, event));
                 }
             }
         }
-        for (number, event) in fresh {
-            self.record(number, event);
-        }
+        self.tell_all(told);
     }
 }
 

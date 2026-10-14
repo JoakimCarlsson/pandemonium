@@ -118,6 +118,11 @@ impl Screen {
         }
     }
 
+    /// What pressing Control or Command with Enter inside the field `id` presses, when it presses something of its own.
+    pub fn hurried_submit_of(id: FocusId) -> Option<FocusId> {
+        WorkspaceState::hurried_submit_of(id)
+    }
+
     /// The menu open over a field, and where, if one is.
     pub fn menu(&self) -> Option<ContextMenu> {
         match self {

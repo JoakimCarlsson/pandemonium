@@ -64,6 +64,8 @@ pub enum Shot {
     Live,
     /// A conversation whose agent waits for permission.
     Asking,
+    /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
+    Queued,
     /// A conversation with the model menu open.
     Picking,
     /// A conversation with the details of its steps open.
@@ -170,13 +172,14 @@ impl Shot {
                         .after(FocusId(4250)),
                 )
             }
-            Self::Live => Screen::Workspace(live(false)),
-            Self::Asking => Screen::Workspace(live(true)),
+            Self::Live => Screen::Workspace(live(Turn::Finished)),
+            Self::Asking => Screen::Workspace(live(Turn::Asking)),
+            Self::Queued => Screen::Workspace(queued()),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
             Self::Expanded => Screen::Workspace(
                 [201_000, 201_004, 201_005]
                     .into_iter()
-                    .fold(live(false), |state, id| state.after(FocusId(id))),
+                    .fold(live(Turn::Finished), |state, id| state.after(FocusId(id))),
             ),
             Self::Attached => Screen::Workspace(
                 welcome()
@@ -273,8 +276,42 @@ fn claude_settings() -> Vec<Setting> {
     ]
 }
 
-/// A conversation that went through what an agent says in a turn, with `asking` for the last of it left open.
-fn live(asking: bool) -> WorkspaceState {
+/// How the turn of a made-up conversation stands at the end of it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Turn {
+    /// The agent finished it.
+    Finished,
+    /// The agent waits for permission.
+    Asking,
+    /// The agent is still on it.
+    Working,
+}
+
+/// A conversation on a turn, with two prompts waiting behind it and a third being written.
+fn queued() -> WorkspaceState {
+    let waiting = |id: u64, text: &str, files: &[&str]| Event::Queued {
+        id,
+        text: text.to_owned(),
+        files: files.iter().map(|name| (*name).to_owned()).collect(),
+    };
+    [
+        waiting(1, "Then add a test for the clamp", &[]),
+        waiting(
+            2,
+            "Use the layout in this screenshot for the empty state\nand keep the icon",
+            &["empty.png"],
+        ),
+    ]
+    .into_iter()
+    .fold(live(Turn::Working), |state, event| state.heard(0, event))
+    .edited(
+        PROMPT,
+        Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),
+    )
+}
+
+/// A conversation that went through what an agent says in a turn, ending as `turn` says.
+fn live(turn: Turn) -> WorkspaceState {
     let tool = |id: &str, title: &str, kind, target: &str| Tool {
         id: id.to_owned(),
         title: Some(title.to_owned()),
@@ -355,7 +392,7 @@ fn live(asking: bool) -> WorkspaceState {
         )),
         Event::Said("I changed the clamp to use the new height.".to_owned()),
     ];
-    if asking {
+    if turn == Turn::Asking {
         events.push(Event::Ask(Permission {
             ticket: 1,
             title: "Run cargo clippy".to_owned(),
@@ -378,7 +415,7 @@ fn live(asking: bool) -> WorkspaceState {
                 },
             ],
         }));
-    } else {
+    } else if turn == Turn::Finished {
         events.push(Event::Finished(None));
     }
     for event in events {

@@ -10,6 +10,7 @@ mod core;
 mod credential;
 mod handler;
 mod listener;
+mod queue;
 mod sessions;
 mod terminals;
 mod uploads;

@@ -29,6 +29,7 @@ pub mod parts;
 pub mod popover;
 pub mod progress;
 pub mod project;
+pub mod queued;
 pub mod review;
 pub mod sample;
 pub mod sidebar;

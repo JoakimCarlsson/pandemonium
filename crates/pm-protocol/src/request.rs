@@ -92,7 +92,7 @@ pub enum Request {
         /// The session.
         session: u64,
     },
-    /// Hands a session's agent its next turn.
+    /// Hands a session's agent its next turn, or queues it while the agent is on one.
     Prompt {
         /// The session.
         session: u64,
@@ -100,6 +100,16 @@ pub enum Request {
         text: String,
         /// The files attached.
         attachments: Vec<Attachment>,
+        /// Whether to stop the turn the agent is on and hand it this one next, ahead of the queue.
+        #[serde(default)]
+        now: bool,
+    },
+    /// Stops the turn a session's agent is on and hands it a queued prompt next.
+    Hurry {
+        /// The session.
+        session: u64,
+        /// The queued prompt, by the id its `Queued` event gave it.
+        queued: u64,
     },
     /// Answers the question a session's agent asked.
     Choose {
@@ -110,7 +120,7 @@ pub enum Request {
         /// The choice made.
         option: String,
     },
-    /// Stops the turn a session's agent is on.
+    /// Stops the turn a session's agent is on and drops the prompts queued behind it.
     Cancel {
         /// The session.
         session: u64,

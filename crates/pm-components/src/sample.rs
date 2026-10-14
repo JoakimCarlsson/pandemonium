@@ -255,6 +255,17 @@ impl Message {
     }
 }
 
+/// A prompt waiting on the server for the agent's turn to end.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Queued {
+    /// The number the server gave it within its session.
+    pub id: u64,
+    /// What the reader wrote.
+    pub text: String,
+    /// The names of the files attached.
+    pub files: Vec<String>,
+}
+
 /// One agent's work on one task: its conversation and what it changed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Session {
@@ -292,6 +303,8 @@ pub struct Session {
     pub turn_started: Option<Instant>,
     /// How many of the prompts this window sent the server has yet to repeat back, so that they are not added twice.
     pub echoes: usize,
+    /// The prompts waiting for the agent's turn to end, in the order they were queued.
+    pub queued: Vec<Queued>,
     /// Whether the reader closed it, which takes it out of the sidebar but not out of the history.
     pub closed: bool,
     /// The shells in its terminal dock.
@@ -328,6 +341,7 @@ impl Session {
             ask: None,
             turn_started: None,
             echoes: 0,
+            queued: Vec::new(),
             closed: false,
             terminals: Vec::new(),
             terminal_active: 0,

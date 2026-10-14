@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use pm_acp::{Event, Kind as ToolKind, Tool, ToolState};
 
-use crate::sample::{Message, Session, Status, Step, Thought, ToolUse};
+use crate::sample::{Message, Queued, Session, Status, Step, Thought, ToolUse};
 
 impl Session {
     /// Takes in what the agent did.
@@ -24,6 +24,8 @@ impl Session {
             Event::Failed(reason) => self.finish(Some(reason)),
             Event::Titled(title) => self.title = title,
             Event::Prompted { text, files } => self.prompted(text, files),
+            Event::Queued { id, text, files } => self.queued.push(Queued { id, text, files }),
+            Event::Unqueued(id) => self.queued.retain(|waiting| waiting.id != id),
         }
     }
 

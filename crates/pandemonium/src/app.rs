@@ -854,8 +854,14 @@ impl App {
                         .field(id)
                         .is_some_and(pm_text::Field::is_multiline);
                     let shift = event.modifiers.shift;
+                    let hurried = event.modifiers.control || event.modifiers.logo;
                     if event.key == Key::Enter && shift && multiline {
                         self.edit_field(id, Edit::Insert('\n'));
+                    } else if event.key == Key::Enter
+                        && hurried
+                        && let Some(submit) = Screen::hurried_submit_of(id)
+                    {
+                        self.activate(submit);
                     } else if event.key == Key::Enter {
                         self.activate(Screen::submit_of(id));
                     } else if multiline && matches!(event.key, Key::ArrowUp | Key::ArrowDown) {

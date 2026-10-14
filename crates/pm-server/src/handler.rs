@@ -3,10 +3,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pm_acp::{AGENTS, Agent, Chat, Event};
+use pm_acp::{AGENTS, Agent};
 use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
-use crate::core::{Connection, Core, Session, now};
+use crate::core::{Connection, Core, Session, Told, now};
+use crate::queue::Prompt;
 use crate::sessions::{self, Meta};
 use crate::uploads;
 
@@ -55,21 +56,24 @@ fn apply_accounts(logins: &[pm_protocol::Login], in_use: &[(String, String)]) {
     }
 }
 
-/// Starts the agent of a session in its folder and gives it the settings the reader chose.
-fn start_agent(session: &mut Session, settings: &[(String, String)]) {
-    let chat = Chat::start(session.agent, session.directory.clone());
-    for (setting, value) in settings {
-        chat.set(setting, value);
+/// What the reader wrote for `session` and the files of `attachments`, stored where the agent can read them.
+fn prompt(session: u64, text: &str, attachments: &[Attachment]) -> Prompt {
+    Prompt {
+        text: text.to_owned(),
+        paths: uploads::store(session, attachments)
+            .into_iter()
+            .map(|path: PathBuf| path.to_string_lossy().into_owned())
+            .collect(),
+        names: attachments.iter().map(|file| file.name.clone()).collect(),
     }
-    session.chat = Some(chat);
 }
 
-/// The files of `attachments` for `session`, stored where the agent can read them, as paths.
-fn stored(session: u64, attachments: &[Attachment]) -> Vec<String> {
-    uploads::store(session, attachments)
-        .into_iter()
-        .map(|path: PathBuf| path.to_string_lossy().into_owned())
-        .collect()
+/// Runs `action` on the session numbered `number`, tells the clients what it noted, or says there is no such session.
+fn telling(core: &Core, number: u64, action: impl FnOnce(&mut Session) -> Told) -> Response {
+    let mut told = Told::new();
+    let response = with_session(core, number, |held| told = action(held));
+    core.tell_all(told);
+    response
 }
 
 /// Starts a session and hands its agent the first prompt.
@@ -120,32 +124,16 @@ fn start_session(
         updated: now(),
     };
     sessions::save_meta(number, &meta);
-    let session = Session {
-        agent,
-        directory: folder.clone(),
-        chat: None,
-        log: Vec::new(),
-        meta,
-    };
+    let mut session = Session::new(agent, folder.clone(), Vec::new(), meta);
+    session.start_agent(settings);
     if let Ok(mut held) = core.sessions.lock() {
         held.insert(number, session);
     }
     if let Ok(mut attached) = connection.attached.lock() {
         attached.insert(number);
     }
-    core.record(
-        number,
-        Event::Prompted {
-            text: text.to_owned(),
-            files: attachments.iter().map(|file| file.name.clone()).collect(),
-        },
-    );
-    with_session(core, number, |held| {
-        start_agent(held, settings);
-        if let Some(chat) = &held.chat {
-            chat.prompt(text, &stored(number, attachments));
-        }
-    });
+    let first = prompt(number, text, attachments);
+    telling(core, number, |held| held.submit(number, first, false));
     if let Some(info) = core.info(number) {
         core.broadcast(&ServerMessage::SessionAdded { info }, Some(connection));
     }
@@ -296,12 +284,14 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             &attachments,
         ),
         Request::CloseSession { session } => {
-            let closed = with_session(core, session, |held| {
+            let closed = telling(core, session, |held| {
                 if let Some(chat) = held.chat.take() {
                     chat.cancel();
                 }
+                held.busy = false;
                 held.meta.closed = true;
                 sessions::save_meta(session, &held.meta);
+                held.drop_queue(session)
             });
             if matches!(closed, Response::Done) {
                 core.broadcast(&ServerMessage::SessionClosed { session }, Some(connection));
@@ -312,26 +302,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             session,
             text,
             attachments,
+            now,
         } => {
-            core.record(
-                session,
-                Event::Prompted {
-                    text: text.clone(),
-                    files: attachments.iter().map(|file| file.name.clone()).collect(),
-                },
-            );
-            with_session(core, session, |held| {
-                if held.meta.closed {
-                    held.meta.closed = false;
-                    sessions::save_meta(session, &held.meta);
-                }
-                if held.chat.is_none() {
-                    start_agent(held, &[]);
-                }
-                if let Some(chat) = &held.chat {
-                    chat.prompt(&text, &stored(session, &attachments));
-                }
-            })
+            let next = prompt(session, &text, &attachments);
+            telling(core, session, |held| held.submit(session, next, now))
+        }
+        Request::Hurry { session, queued } => {
+            let mut found = true;
+            let response = telling(core, session, |held| {
+                let told = held.hurry(session, queued);
+                found = told.is_some();
+                told.unwrap_or_default()
+            });
+            match response {
+                Response::Done if !found => failed(format!(
+                    "no prompt waits under {queued} in session {session}"
+                )),
+                response => response,
+            }
         }
         Request::Choose {
             session,
@@ -342,10 +330,11 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 chat.choose(ticket, Some(option));
             }
         }),
-        Request::Cancel { session } => with_session(core, session, |held| {
+        Request::Cancel { session } => telling(core, session, |held| {
             if let Some(chat) = &held.chat {
                 chat.cancel();
             }
+            held.drop_queue(session)
         }),
         Request::Set {
             session,

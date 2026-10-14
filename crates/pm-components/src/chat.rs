@@ -19,6 +19,7 @@ use crate::button::Size;
 use crate::composer::composer;
 use crate::input;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
+use crate::queued::queued;
 use crate::sample::{AGENTS, Message, Session, Status};
 use crate::sidebar::status_icon;
 use crate::state::{
@@ -392,6 +393,7 @@ pub fn chat(
                 .child(
                     node()
                         .styles([w_full(), max_w_px(COLUMN), px(6)])
+                        .children(queued(session))
                         .children(activity(state, session))
                         .child(composer(
                             state,

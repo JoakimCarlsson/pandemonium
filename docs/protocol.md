@@ -95,7 +95,8 @@ request with exactly one `response` carrying the same `id`.
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `sign_in`      | `agent`                                                                                          | `done`          |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`           | `started`       |
-| `prompt`       | `session`, `text`, `attachments`                                                                 | `done`          |
+| `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
+| `hurry`        | `session`, `queued`                                                                              | `done`          |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
 | `close_session`| `session`                                                                                        | `done`          |
@@ -131,13 +132,23 @@ request with exactly one `response` carrying the same `id`.
   `settings` is a list of `[setting, value]` pairs applied before the first
   prompt. The response gives the session number, the folder the agent works in
   and, for a worktree, the abbreviated commit it has checked out (`head`). The connection is attached to the session already.
-- **`close_session`:** stops the session's agent and marks it `closed`. The
+- **`close_session`:** stops the session's agent, drops its queued prompts and marks it `closed`. The
   folder and the log are kept, so the session still shows in `sessions` (with
   `closed: true`) and can be opened with `attach`. A later `prompt` opens it
   again. Other clients are told with `session_closed`.
 - **`prompt`:** hands the agent its next turn. If the agent has stopped (after
   a `failed` event) the server starts it again first. A prompt sent while a
-  turn is running is ignored.
+  turn is running waits in the session's queue, which the server keeps, and is
+  announced with a `Queued` event. When the turn ends, the prompt that has
+  waited longest is handed over: an `Unqueued` event, then `Prompted`. With
+  `now: true` the prompt goes to the front of the queue and the running turn is
+  stopped, so it is handed over as soon as the agent ends the turn.
+- **`hurry`:** moves the queued prompt whose `Queued` event gave it the id
+  `queued` to the front of the queue and stops the running turn, as `now`
+  does for a new prompt. Fails when no prompt waits under that id.
+- **`cancel`:** stops the running turn and drops the prompts queued behind it,
+  each with an `Unqueued` event. A question the agent was waiting on is
+  declined.
 - **`choose`:** answers an `ask` event. `ticket` is the ticket of the question
   and `option` is the `id` of one of its choices.
 - **`attach`:** subscribes the connection to a session and replays the events
@@ -253,6 +264,8 @@ Events use serde's default form, one key naming the type.
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Prompted": {text, files}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. |
+| `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. |
+| `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
 
 Shapes used above:
 
@@ -309,7 +322,8 @@ keeps its own emulator for them.
 
 - After a restart the server holds the sessions but not their agents. The
   next `prompt` starts the agent again as a new conversation, without what was
-  said before.
+  said before. Queued prompts are not kept: the server drops them when it
+  starts again, with an `Unqueued` event for each.
 - The log of events is never trimmed.
 - Shells do not survive a restart of the server.
 - There are no requests for file contents, file watching,

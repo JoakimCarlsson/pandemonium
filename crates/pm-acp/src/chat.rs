@@ -213,6 +213,17 @@ pub enum Event {
         /// The names of the files attached.
         files: Vec<String>,
     },
+    /// A reader wrote while the agent was on a turn, so their words wait for it, under `id`.
+    Queued {
+        /// The number the waiting prompt goes by within its session.
+        id: u64,
+        /// What the reader wrote.
+        text: String,
+        /// The names of the files attached.
+        files: Vec<String>,
+    },
+    /// The waiting prompt numbered this stopped waiting: handed to the agent, or dropped.
+    Unqueued(u64),
 }
 
 /// What the reader hands an agent.
@@ -638,6 +649,9 @@ fn command_agent(
             }
         }
         Command::Cancel => {
+            for (_, id) in waiting.asked.drain() {
+                client.respond(&id, &outcome(None))?;
+            }
             client.notify("session/cancel", &json!({ "sessionId": session }))?;
         }
         Command::Set { setting, value } => {

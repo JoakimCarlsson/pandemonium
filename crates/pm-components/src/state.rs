@@ -56,6 +56,12 @@ pub const COMMIT: FocusId = FocusId(317);
 /// Stops the turn the agent is on.
 pub const STOP: FocusId = FocusId(322);
 
+/// Stops the turn the agent is on and hands it the prompt in its place.
+pub const SEND_NOW: FocusId = FocusId(327);
+
+/// The first of the buttons handing a queued prompt to the agent at once; the rest follow it.
+pub const HURRY_BASE: u64 = 4900;
+
 /// The conversation's scrolling area.
 pub const CHAT_SCROLL: FocusId = FocusId(350);
 
@@ -286,7 +292,7 @@ pub enum Outgoing {
         /// The agent, by position.
         agent: usize,
     },
-    /// Hands the agent of a session the words as its next turn.
+    /// Hands the agent of a session the words as its next turn, or queues them while it is on one.
     Prompt {
         /// The session, by position.
         session: usize,
@@ -294,6 +300,15 @@ pub enum Outgoing {
         text: String,
         /// The files attached, by path.
         files: Vec<String>,
+        /// Whether to stop the turn the agent is on and hand it these words in its place.
+        now: bool,
+    },
+    /// Stops the turn the agent of a session is on and hands it a queued prompt in its place.
+    Hurry {
+        /// The session, by position.
+        session: usize,
+        /// The queued prompt, by the number the server gave it.
+        queued: u64,
     },
     /// Answers the question the agent of a session asked.
     Choose {
@@ -656,7 +671,8 @@ impl WorkspaceState {
             }
             REVIEW => self.review = !self.review,
             OPEN_DIFF => self.tab = Tab::Diff,
-            SEND => self.send(),
+            SEND => self.send(false),
+            SEND_NOW => self.send(true),
             STOP => self.stop(),
             STAGE_ALL => self.stage_all(),
             COMMIT => self.commit(),
@@ -704,6 +720,11 @@ impl WorkspaceState {
             HISTORY_SEARCH => HISTORY,
             _ => SEND,
         }
+    }
+
+    /// What pressing Control or Command with Enter in the field `id` hands in, when it hands in something of its own.
+    pub fn hurried_submit_of(id: FocusId) -> Option<FocusId> {
+        (id == PROMPT).then_some(SEND_NOW)
     }
 
     /// The state with a menu open over the field `field` at `at`.
@@ -781,6 +802,8 @@ impl WorkspaceState {
             self.agent = index;
         } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
             self.choose(index);
+        } else if let Some(index) = position(HURRY_BASE, self.queued_open()) {
+            self.hurry(index);
         } else if let Some(index) = id
             .checked_sub(COPY_BASE)
             .map(|offset| offset as usize)
@@ -910,6 +933,24 @@ impl WorkspaceState {
         }
     }
 
+    /// How many prompts wait for the open session's agent.
+    fn queued_open(&self) -> usize {
+        self.open().map_or(0, |session| session.queued.len())
+    }
+
+    /// Hands the open session's agent the queued prompt at `index` in place of the turn it is on.
+    fn hurry(&mut self, index: usize) {
+        let Page::Session(session) = self.page else {
+            return;
+        };
+        if let Some(queued) = self.sessions[session].queued.get(index) {
+            self.outbox.push(Outgoing::Hurry {
+                session,
+                queued: queued.id,
+            });
+        }
+    }
+
     /// Asks the open session's agent to stop what it is doing.
     fn stop(&mut self) {
         if let Page::Session(session) = self.page {
@@ -935,22 +976,23 @@ impl WorkspaceState {
     }
 
     /// Hands the prompt to the agent: as the next message of the open
-    /// session, or as the first of a new one. Nothing is sent while the
-    /// agent is still on a turn.
-    fn send(&mut self) {
+    /// session, or as the first of a new one. While the agent is on a turn
+    /// the server queues it, or, `now`, stops the turn and hands it over in
+    /// its place.
+    fn send(&mut self, now: bool) {
         let text = self.prompt.text().trim().to_owned();
         if text.is_empty() && self.attachments.is_empty() {
             return;
         }
         let session = match self.page {
             Page::Session(index) => {
-                let Some(session) = self
-                    .sessions
-                    .get_mut(index)
-                    .filter(|session| session.status != Status::Working)
-                else {
+                let Some(session) = self.sessions.get_mut(index) else {
                     return;
                 };
+                if session.status == Status::Working {
+                    self.queue(index, text, now);
+                    return;
+                }
                 session.echoes += 1;
                 session.closed = false;
                 let files = self.attachments.clone();
@@ -982,10 +1024,7 @@ impl WorkspaceState {
             }
             Page::History => return,
         };
-        self.prompt = prompt_field("");
-        let files = std::mem::take(&mut self.attachments);
-        self.chat_back = 0.0;
-        self.slash = 0;
+        let files = self.take_prompt();
         let held = &mut self.sessions[session];
         held.status = Status::Working;
         held.updated_at = crate::age::now();
@@ -1003,9 +1042,31 @@ impl WorkspaceState {
                 session,
                 text,
                 files,
+                now: false,
             }
         };
         self.outbox.push(outgoing);
+    }
+
+    /// Hands `text` to the server for the agent of `session`, which is on a
+    /// turn: to wait behind it, or, `now`, in place of it. The server says
+    /// when it waits and when it is handed over, so nothing is shown yet.
+    fn queue(&mut self, session: usize, text: String, now: bool) {
+        let files = self.take_prompt();
+        self.outbox.push(Outgoing::Prompt {
+            session,
+            text,
+            files,
+            now,
+        });
+    }
+
+    /// Empties the prompt box for the next message and returns the files that were attached.
+    fn take_prompt(&mut self) -> Vec<String> {
+        self.prompt = prompt_field("");
+        self.chat_back = 0.0;
+        self.slash = 0;
+        std::mem::take(&mut self.attachments)
     }
 
     /// Stages every change of the open session, or unstages them all when all are staged.

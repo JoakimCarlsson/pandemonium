@@ -425,6 +425,7 @@ impl Work {
                     session,
                     text,
                     files,
+                    now,
                 } => {
                     let attachments = Self::attachments(&files);
                     self.ask_session(
@@ -433,10 +434,19 @@ impl Work {
                             session: number,
                             text,
                             attachments,
+                            now,
                         },
                         Pending::Nothing,
                     );
                 }
+                Outgoing::Hurry { session, queued } => self.ask_session(
+                    session,
+                    |number| Request::Hurry {
+                        session: number,
+                        queued,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Choose {
                     session,
                     ticket,

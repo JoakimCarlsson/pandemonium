@@ -18,7 +18,7 @@ use crate::sample::Session;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE, LOCATION,
     Location, MENTION, MENU_BODY, MENU_SCROLL, PICK_BASE, PLACE_BASE, PROMPT, Picker, SEND,
-    SETTING_BASE, SKILL_BUTTON, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
+    SEND_NOW, SETTING_BASE, SKILL_BUTTON, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
 };
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
 use crate::{Chip, Popover, chip};
@@ -436,19 +436,33 @@ pub fn sent_files(state: &WorkspaceState, files: &[String]) -> Node {
         }))
 }
 
-/// The round button at the end of the strip: it sends the prompt, or stops the turn while there is one.
-fn send_button(working: bool, empty: bool) -> Node {
-    let (icon, id) = if working {
-        (IconName::Stop, STOP)
-    } else {
-        (IconName::ArrowUp, SEND)
-    };
+/// The round button at the end of the strip, answering to `id` with `icon`.
+fn round_button(icon: IconName, id: FocusId, disabled: bool) -> Node {
     Button::icon(icon, id)
         .variant(button::Variant::Default)
         .size(button::Size::IconLg)
         .round()
-        .disabled(empty && !working)
+        .disabled(disabled)
         .build()
+}
+
+/// The buttons at the end of the strip: one that sends the prompt, or,
+/// while the agent is on a turn, one that stops it when nothing is written
+/// and otherwise one that queues the prompt behind the turn and one that
+/// sends it in place of the turn.
+fn send_buttons(working: bool, empty: bool) -> Vec<Node> {
+    match (working, empty) {
+        (true, true) => vec![round_button(IconName::Stop, STOP, false)],
+        (true, false) => vec![
+            Button::new("Send now", SEND_NOW)
+                .variant(button::Variant::Ghost)
+                .size(button::Size::Sm)
+                .with_icon(IconName::Zap)
+                .build(),
+            round_button(IconName::ArrowUp, SEND, false),
+        ],
+        (false, _) => vec![round_button(IconName::ArrowUp, SEND, empty)],
+    }
 }
 
 /// A button in the prompt box's strip that names a setting's current value and opens its menu.
@@ -552,7 +566,7 @@ pub fn composer(
             open.then(|| account_menu(state)),
         ));
     }
-    let strip = strip.child(spacer()).child(send_button(working, empty));
+    let strip = strip.child(spacer()).children(send_buttons(working, empty));
     node()
         .styles([
             relative(),
