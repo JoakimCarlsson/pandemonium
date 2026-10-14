@@ -1,7 +1,7 @@
 //! Repositories, worktrees, branches, status and diffs, through the `git` program.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -76,6 +76,7 @@ fn run_indexed(
     command
         .args(arguments)
         .current_dir(directory)
+        .env("GIT_LITERAL_PATHSPECS", "1")
         .stdin(Stdio::null());
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
@@ -330,17 +331,35 @@ pub fn changes(directory: &Path) -> Vec<Change> {
     found
 }
 
+/// `path` when it names a file inside the repository and nothing else: not empty, not absolute, never stepping out with `..`, and free of line breaks and NUL.
+fn inside(path: &str) -> Result<&str, String> {
+    let steps_out = Path::new(path)
+        .components()
+        .any(|part| !matches!(part, std::path::Component::Normal(_)));
+    if path.is_empty() || steps_out || path.contains(['\0', '\n', '\r']) {
+        return Err(format!("{path:?} is not a path inside the repository"));
+    }
+    Ok(path)
+}
+
+/// Every one of `paths`, each checked to be inside the repository.
+fn all_inside(paths: &[String]) -> Result<Vec<&str>, String> {
+    paths.iter().map(|path| inside(path)).collect()
+}
+
 /// Stages `paths`.
 pub fn stage(directory: &Path, paths: &[String]) -> Result<(), String> {
+    let paths = all_inside(paths)?;
     let mut arguments = vec!["add", "--"];
-    arguments.extend(paths.iter().map(String::as_str));
+    arguments.extend(paths);
     run(directory, &arguments).map(|_| ())
 }
 
 /// Takes `paths` out of the next commit, leaving their changes in the files.
 pub fn unstage(directory: &Path, paths: &[String]) -> Result<(), String> {
+    let paths = all_inside(paths)?;
     let mut arguments = vec!["reset", "--quiet", "--"];
-    arguments.extend(paths.iter().map(String::as_str));
+    arguments.extend(paths);
     run(directory, &arguments).map(|_| ())
 }
 
@@ -415,7 +434,7 @@ fn listed(line: &str) -> Option<Listed> {
 
 /// The most recent `limit` commits of the repository `directory` is in, with the lanes of the graph they are drawn in; every reference's when `all`, and what the checked out branch reaches when not.
 pub fn history(directory: &Path, limit: usize, all: bool) -> Vec<Commit> {
-    let count = format!("-{}", limit.max(1));
+    let count = format!("-{}", limit.clamp(1, HISTORY_LIMIT));
     let mut arguments = vec![
         "log",
         &count,
@@ -531,7 +550,7 @@ fn in_head(directory: &Path, path: &str) -> bool {
 
 /// Puts `paths` back as they are in the last commit and takes them out of the next one: a file that is new is deleted.
 pub fn discard(directory: &Path, paths: &[String]) -> Result<(), String> {
-    for path in paths {
+    for path in all_inside(paths)? {
         if in_head(directory, path) {
             run(
                 directory,
@@ -563,13 +582,32 @@ pub fn discard(directory: &Path, paths: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `path` written as a pattern that matches that file and no other: what a pattern reads as more than itself is escaped.
+fn ignore_pattern(path: &str) -> String {
+    let mut pattern = String::new();
+    for (place, letter) in path.chars().enumerate() {
+        if matches!(letter, '\\' | '*' | '?' | '[' | ']')
+            || (place == 0 && matches!(letter, '#' | '!'))
+        {
+            pattern.push('\\');
+        }
+        pattern.push(letter);
+    }
+    if pattern.ends_with(' ') {
+        pattern.pop();
+        pattern.push_str("\\ ");
+    }
+    pattern
+}
+
 /// Adds `paths` to the `.gitignore` at the root of the repository `directory` is in, one line each, unless they are in it already.
 pub fn ignore(directory: &Path, paths: &[String]) -> Result<(), String> {
+    let paths = all_inside(paths)?;
     let root = run(directory, &["rev-parse", "--show-toplevel"])?;
     let file = Path::new(root.trim()).join(".gitignore");
     let mut text = fs::read_to_string(&file).unwrap_or_default();
     for path in paths {
-        let line = format!("/{path}");
+        let line = format!("/{}", ignore_pattern(path));
         if text.lines().any(|held| held == line) {
             continue;
         }
@@ -606,6 +644,9 @@ pub fn create_branch(directory: &Path, name: &str) -> Result<(), String> {
     run(directory, &["switch", "--quiet", "--create", name]).map(|_| ())
 }
 
+/// The most commits of the history that are listed, however many are asked for.
+const HISTORY_LIMIT: usize = 2000;
+
 /// The most bytes of a file that are read to be shown.
 const READ_LIMIT: usize = 2_000_000;
 
@@ -623,22 +664,53 @@ pub enum Contents {
     Binary,
 }
 
-/// What `path` holds in the working folder, or, when `head`, in the last commit of the repository `directory` is in.
+/// What `path` holds in the working folder, or, when `head`, in the last commit of the repository `directory` is in. No more than the limit of what is shown is ever read.
 pub fn read(directory: &Path, path: &str, head: bool) -> Result<Contents, String> {
-    let bytes = if head {
-        let output = Command::new("git")
+    let path = inside(path)?;
+    let limit = READ_LIMIT as u64 + 1;
+    let mut bytes = Vec::new();
+    if head {
+        let mut child = Command::new("git")
             .args(["show", &format!("HEAD:{path}")])
+            .env("GIT_LITERAL_PATHSPECS", "1")
             .current_dir(directory)
             .stdin(Stdio::null())
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|error| format!("could not run git: {error}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        if let Some(stdout) = child.stdout.take() {
+            stdout
+                .take(limit)
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("could not read {path}: {error}"))?;
         }
-        output.stdout
+        let cut = bytes.len() as u64 >= limit;
+        if cut {
+            let _ = child.kill();
+        }
+        let status = child
+            .wait()
+            .map_err(|error| format!("could not run git: {error}"))?;
+        if !cut && !status.success() {
+            let mut complaint = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut complaint);
+            }
+            return Err(complaint.trim().to_owned());
+        }
     } else {
-        fs::read(directory.join(path)).map_err(|error| format!("could not read {path}: {error}"))?
-    };
+        let root = fs::canonicalize(directory)
+            .map_err(|error| format!("could not read {path}: {error}"))?;
+        let file = fs::canonicalize(root.join(path))
+            .map_err(|error| format!("could not read {path}: {error}"))?;
+        if !file.starts_with(&root) {
+            return Err(format!("{path:?} is not a path inside the repository"));
+        }
+        fs::File::open(&file)
+            .and_then(|file| file.take(limit).read_to_end(&mut bytes))
+            .map_err(|error| format!("could not read {path}: {error}"))?;
+    }
     if bytes.iter().take(8000).any(|byte| *byte == 0) {
         return Ok(Contents::Binary);
     }
