@@ -123,6 +123,19 @@ impl Screen {
         WorkspaceState::hurried_submit_of(id)
     }
 
+    /// Whether the panel for adding a project is open.
+    pub fn adder_open(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.adder_open())
+    }
+
+    /// What pressing Enter presses while the panel for adding a project is open.
+    pub fn adder_enter(&self) -> Option<FocusId> {
+        match self {
+            Self::Workspace(state) => state.adder_enter(),
+            Self::Onboarding(_) => None,
+        }
+    }
+
     /// The menu open over a field, and where, if one is.
     pub fn menu(&self) -> Option<ContextMenu> {
         match self {

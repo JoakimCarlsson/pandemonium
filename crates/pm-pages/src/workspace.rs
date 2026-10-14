@@ -16,7 +16,7 @@ use pm_components::arrange::{
 use pm_components::context_menu::field_menu;
 use pm_components::message_menu::message_menu;
 use pm_components::parts::{glyph, line, spacer};
-use pm_components::{chat, diff, history, input, plan, review, sidebar, terminal, welcome};
+use pm_components::{adder, chat, diff, history, input, plan, review, sidebar, terminal, welcome};
 
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
@@ -186,6 +186,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(state.project_menu.map(project_menu))
     .children(state.session_menu.map(session_menu))
     .children(state.message_menu.map(message_menu))
+    .children(adder::adder(state))
 }
 
 /// The menu of a project: start a session in it, or take it out of the window.

@@ -7,10 +7,12 @@ use pm_acp::{
     PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
 };
 use pm_components::Project;
+use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
 use pm_components::state::{CHAT_TEXT, DETAILS_BASE, RESTORE_BASE, SUBAGENTS_CHIP};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
-    HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL, WorkspaceState,
+    ADD_PROJECT, HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL,
+    WorkspaceState,
 };
 use pm_renderer::{DrawList, Renderer};
 use pm_text::Edit;
@@ -98,6 +100,16 @@ pub enum Shot {
     Selecting,
     /// The same selection with the menu over a reply open.
     MessageMenu,
+    /// The page for starting work with the panel for adding a project open on its choices.
+    Adding,
+    /// The same panel waiting for the accounts and organizations to clone from.
+    Loading,
+    /// The same panel on the accounts and organizations to clone from.
+    Owning,
+    /// The same panel on the repositories of one of them.
+    Cloning,
+    /// The same panel on the folders of the machine, to open one as a project.
+    Folders,
 }
 
 /// The workspace of made-up sessions.
@@ -248,11 +260,74 @@ impl Shot {
             Self::Missing => {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
+            Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
+            Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
+            Self::Owning => Screen::Workspace(
+                welcome()
+                    .after(ADD_PROJECT)
+                    .after(ADDER_CLONE)
+                    .with_owners(Ok(owners())),
+            ),
+            Self::Folders => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_BROWSE).with_folders(
+                "~",
+                Ok((
+                    "/home/me/code".to_owned(),
+                    ["pandemonium", "voxel", "wasa-cli", "world"]
+                        .map(str::to_owned)
+                        .to_vec(),
+                )),
+            )),
+            Self::Cloning => Screen::Workspace(
+                welcome()
+                    .after(ADD_PROJECT)
+                    .after(ADDER_CLONE)
+                    .with_owners(Ok(owners()))
+                    .after(FocusId(ADDER_ROW_BASE))
+                    .with_repositories("JoakimCarlsson", Ok(repositories())),
+            ),
             Self::Slashing => {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("/c".to_owned())))
             }
         }
     }
+}
+
+/// Accounts and organizations as the server would list them for the account.
+fn owners() -> Vec<Found> {
+    [
+        ("JoakimCarlsson", "Personal repositories", false),
+        ("alsterverse", "Organization", true),
+    ]
+    .into_iter()
+    .map(|(name, detail, organization)| Found {
+        name: name.to_owned(),
+        detail: detail.to_owned(),
+        value: name.to_owned(),
+        kind: Row::Owner(organization),
+    })
+    .collect()
+}
+
+/// Repositories as the server would list them for the account.
+fn repositories() -> Vec<Found> {
+    [
+        (
+            "JoakimCarlsson/pandemonium",
+            "Agent-first desktop workspace",
+        ),
+        ("JoakimCarlsson/wasa-cli", "Command line client"),
+        ("JoakimCarlsson/voxel", "Voxel engine experiments"),
+        ("JoakimCarlsson/world", "Procedural world generator"),
+        ("JoakimCarlsson/dotfiles", "Shell and editor configuration"),
+    ]
+    .into_iter()
+    .map(|(name, detail)| Found {
+        name: name.to_owned(),
+        detail: detail.to_owned(),
+        value: format!("git@github.com:{name}.git"),
+        kind: Row::Repository,
+    })
+    .collect()
 }
 
 /// The page for starting work in this repository, once Claude Code has said what it offers.

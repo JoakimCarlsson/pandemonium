@@ -7,6 +7,7 @@
 //! which holds its `Variant` and `Size`, and is re-exported here.
 
 pub mod activity;
+pub mod adder;
 pub mod age;
 pub mod arrange;
 pub mod avatar;
@@ -21,6 +22,7 @@ pub mod context_menu;
 pub mod diff;
 pub mod dock;
 pub mod draft;
+pub mod folder_browser;
 pub mod hearing;
 pub mod history;
 pub mod input;
@@ -28,6 +30,7 @@ pub mod inquiry;
 pub mod markdown;
 pub mod menu;
 pub mod message_menu;
+pub mod modal;
 pub mod parts;
 pub mod plan;
 pub mod popover;
@@ -58,6 +61,7 @@ pub use context_menu::{
 pub use input::Input;
 pub use markdown::Markdown;
 pub use menu::Menu;
+pub use modal::Modal;
 pub use popover::Popover;
 pub use progress::Progress;
 pub use project::Project;

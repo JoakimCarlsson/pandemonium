@@ -6,9 +6,10 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use pm_acp::{AGENTS, Discovery, Event};
 use pm_client::{Client, Incoming};
+use pm_components::adder::{Found, Kind};
 use pm_components::state::SESSION_BASE;
 use pm_input::FocusId;
-use pm_pages::{Outgoing, Screen};
+use pm_pages::{Outgoing, Screen, WorkspaceState};
 use pm_protocol::{Attachment, Login, Request, Response, Target};
 use pm_renderer::Picture;
 use pm_state::State;
@@ -79,6 +80,14 @@ enum Pending {
     OpenTerminal(u64),
     /// The shells the server of this machine holds.
     Terminals(Host),
+    /// The GitHub accounts the panel for adding a project is waiting to list.
+    Owners,
+    /// The GitHub repositories of this account the panel for adding a project is waiting to list.
+    Repositories(String),
+    /// The folders inside this folder, which the panel for adding a project waits to list.
+    Folders(String),
+    /// A repository the panel for adding a project asked to have cloned.
+    Added,
 }
 
 /// Something done to a shell before the server said which shell it is, kept until it does.
@@ -612,6 +621,32 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::Owners => self.ask(&None, Request::Owners, Pending::Owners),
+                Outgoing::Repositories {
+                    login,
+                    organization,
+                } => self.ask(
+                    &None,
+                    Request::Repositories {
+                        owner: login.clone(),
+                        organization,
+                    },
+                    Pending::Repositories(login),
+                ),
+                Outgoing::Folders { path } => self.ask(
+                    &None,
+                    Request::Folders { path: path.clone() },
+                    Pending::Folders(path),
+                ),
+                Outgoing::Relist => self.relist(),
+                Outgoing::Clone { url, under } => self.ask(
+                    &None,
+                    Request::Clone {
+                        url,
+                        under: Some(under),
+                    },
+                    Pending::Added,
+                ),
                 Outgoing::Copy { text } => copies.push(text),
             }
         }
@@ -875,6 +910,62 @@ impl Work {
                     });
                 }
             }
+            Pending::Owners => {
+                let listed = match response {
+                    Response::Owners { owners } => Ok(owners
+                        .into_iter()
+                        .map(|owner| Found {
+                            name: owner.login.clone(),
+                            detail: match owner.organization {
+                                true => "Organization".to_owned(),
+                                false => "Personal repositories".to_owned(),
+                            },
+                            value: owner.login,
+                            kind: Kind::Owner(owner.organization),
+                        })
+                        .collect()),
+                    other => Err(Self::trouble_of(other)),
+                };
+                Self::in_workspace(model, |state| state.with_owners(listed));
+            }
+            Pending::Repositories(login) => {
+                let listed = match response {
+                    Response::Repositories { repositories } => Ok(repositories
+                        .into_iter()
+                        .map(|repository| Found {
+                            name: repository.name,
+                            detail: match repository.private {
+                                true => format!("Private · {}", repository.description),
+                                false => repository.description,
+                            },
+                            value: repository.url,
+                            kind: Kind::Repository,
+                        })
+                        .collect()),
+                    other => Err(Self::trouble_of(other)),
+                };
+                Self::in_workspace(model, |state| state.with_repositories(&login, listed));
+            }
+            Pending::Folders(requested) => {
+                let listed = match response {
+                    Response::Folders { path, names } => Ok((path, names)),
+                    other => Err(Self::trouble_of(other)),
+                };
+                Self::in_workspace(model, |state| state.with_folders(&requested, listed));
+            }
+            Pending::Added => match response {
+                Response::Directory { path } => {
+                    Self::in_workspace(model, |state| state.adder_landed(&path));
+                    if let Some(paths) = model.get().project_paths() {
+                        self.save_projects(paths);
+                    }
+                    self.relist();
+                }
+                Response::Failed { message } => {
+                    Self::in_workspace(model, |state| state.adder_failed(&message));
+                }
+                _ => {}
+            },
             Pending::Files(key) => {
                 if let Response::Files { paths } = response {
                     model.update(|screen| *screen = screen.clone().with_files(&key, paths));
@@ -1104,6 +1195,23 @@ impl Work {
         model.update(|screen| {
             if let Screen::Workspace(state) = screen {
                 *state = view.reopen(state.clone(), position);
+            }
+        });
+    }
+
+    /// Why `response` is not the answer that was waited for.
+    fn trouble_of(response: Response) -> String {
+        match response {
+            Response::Failed { message } => message,
+            _ => "the server answered with something else".to_owned(),
+        }
+    }
+
+    /// Replaces the workspace with what `change` makes of it, while the workspace is showing.
+    fn in_workspace(model: &State<Screen>, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
+        model.update(|screen| {
+            if let Screen::Workspace(state) = screen {
+                *state = change(state.clone());
             }
         });
     }

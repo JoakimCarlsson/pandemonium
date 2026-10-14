@@ -85,6 +85,11 @@ fn main() {
             Some("terminalcomposing") => Shot::TerminalComposing,
             Some("selecting") => Shot::Selecting,
             Some("messagemenu") => Shot::MessageMenu,
+            Some("adding") => Shot::Adding,
+            Some("loading") => Shot::Loading,
+            Some("owning") => Shot::Owning,
+            Some("cloning") => Shot::Cloning,
+            Some("folders") => Shot::Folders,
             _ => Shot::Onboarding(pm_pages::Step::Welcome),
         };
         if let Err(error) = snapshot::write(

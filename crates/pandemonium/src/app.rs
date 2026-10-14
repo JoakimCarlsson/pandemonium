@@ -7,6 +7,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use pm_acp::{AGENTS, Login, Standing};
+use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::{
@@ -14,8 +15,7 @@ use pm_components::{
 };
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
-    ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen,
-    TERMINAL_BODY,
+    ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen, TERMINAL_BODY,
 };
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
@@ -339,7 +339,7 @@ impl App {
             self.agent_action(index);
             return;
         }
-        if id == BROWSE || id == ADD_PROJECT {
+        if id == BROWSE {
             self.browse();
             return;
         }
@@ -866,6 +866,14 @@ impl App {
             return;
         }
         match event.key {
+            Key::Escape if self.model.get().adder_open() => self.activate(ADDER_ESCAPE),
+            Key::ArrowUp if self.model.get().adder_open() => self.activate(ADDER_UP),
+            Key::ArrowDown if self.model.get().adder_open() => self.activate(ADDER_DOWN),
+            Key::Enter if self.model.get().adder_open() => {
+                if let Some(id) = self.model.get().adder_enter() {
+                    self.activate(id);
+                }
+            }
             Key::Character(digit)
                 if digit.is_ascii_digit()
                     && !self.focus.current().is_some_and(Screen::is_field)

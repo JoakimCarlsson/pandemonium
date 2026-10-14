@@ -154,21 +154,24 @@ pub fn heading(title: &str, hint: Option<(&str, &str)>) -> Node {
         .styles([flex(), items_center(), justify_between(), h(8), px(2.5)])
         .child(line(title, 12, 1.4, Role::Subtle));
     if let Some((key, does)) = hint {
-        row = row.child(
-            node()
-                .styles([flex(), items_center(), gap(1.5)])
-                .child(
-                    node()
-                        .styles([px(1.5), rounded(Radius::Md), bg(Role::SurfaceHover)])
-                        .child(text(key.to_owned()).styles([
-                            text_px(11),
-                            leading_ratio(1.6),
-                            font_mono(),
-                            text_color(Role::Muted),
-                        ])),
-                )
-                .child(line(does, 12, 1.4, Role::Subtle)),
-        );
+        row = row.child(key_hint(key, does));
     }
     row
+}
+
+/// A key to press, in a small chip, and what it does.
+pub fn key_hint(key: &str, does: &str) -> Node {
+    node()
+        .styles([flex(), items_center(), gap(1.5)])
+        .child(
+            node()
+                .styles([px(1.5), rounded(Radius::Md), bg(Role::SurfaceHover)])
+                .child(text(key.to_owned()).styles([
+                    text_px(11),
+                    leading_ratio(1.6),
+                    font_mono(),
+                    text_color(Role::Muted),
+                ])),
+        )
+        .child(line(does, 12, 1.4, Role::Subtle))
 }

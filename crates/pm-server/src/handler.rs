@@ -32,6 +32,16 @@ fn failed(message: impl Into<String>) -> Response {
     }
 }
 
+/// `Directory` naming the folder a clone made, or a failure saying why it did not.
+fn directory_made(made: Result<PathBuf, String>) -> Response {
+    match made {
+        Ok(path) => Response::Directory {
+            path: path.to_string_lossy().into_owned(),
+        },
+        Err(reason) => failed(reason),
+    }
+}
+
 /// `Done` when a request about a shell found it, and a failure saying there is none otherwise.
 fn terminal_done(found: bool, terminal: u64) -> Response {
     if found {
@@ -311,6 +321,30 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             }
             Err(error) => failed(error.to_string()),
         },
+        Request::Owners => match pm_git::owners() {
+            Ok(owners) => Response::Owners { owners },
+            Err(reason) => failed(reason),
+        },
+        Request::Repositories {
+            owner,
+            organization,
+        } => match pm_git::repositories(&pm_git::Owner {
+            login: owner,
+            organization,
+        }) {
+            Ok(repositories) => Response::Repositories { repositories },
+            Err(reason) => failed(reason),
+        },
+        Request::Folders { path } => match pm_git::folders(&path) {
+            Ok((path, names)) => Response::Folders {
+                path: path.to_string_lossy().into_owned(),
+                names,
+            },
+            Err(reason) => failed(reason),
+        },
+        Request::Clone { url, under } => {
+            directory_made(pm_git::clone(&url, under.as_deref().map(place).as_deref()))
+        }
         Request::Choices => Response::Choices {
             choices: pm_store::load_choices(),
         },

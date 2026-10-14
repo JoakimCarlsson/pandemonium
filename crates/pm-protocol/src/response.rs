@@ -1,7 +1,7 @@
 //! What the server answers.
 
 use pm_acp::{Discovery, Slash};
-use pm_git::Change;
+use pm_git::{Change, Owner, Repository};
 use serde::{Deserialize, Serialize};
 
 /// What the server knows about one session, enough to list it and open it again.
@@ -143,5 +143,27 @@ pub enum Response {
     Terminals {
         /// Each one, oldest first.
         terminals: Vec<TerminalInfo>,
+    },
+    /// The GitHub accounts and organizations whose repositories can be listed.
+    Owners {
+        /// The signed-in account first, then its organizations.
+        owners: Vec<Owner>,
+    },
+    /// The GitHub repositories of one account or organization.
+    Repositories {
+        /// Each one, by name.
+        repositories: Vec<Repository>,
+    },
+    /// The folders inside a folder.
+    Folders {
+        /// The folder, as an absolute path.
+        path: String,
+        /// The names of the folders inside it, in order, hidden ones left out.
+        names: Vec<String>,
+    },
+    /// The folder a repository was cloned into.
+    Directory {
+        /// Its path on the server's machine.
+        path: String,
     },
 }

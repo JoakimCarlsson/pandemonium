@@ -872,6 +872,9 @@ impl WorkspaceState {
         if id == crate::draft::TYPE_OWN {
             return Some(crate::draft::OTHER);
         }
+        if crate::adder::is_adder(id) {
+            return Some(crate::adder::ADDER_FIELD);
+        }
         (slash_row
             || id == SLASH_BUTTON
             || id == SKILL_BUTTON

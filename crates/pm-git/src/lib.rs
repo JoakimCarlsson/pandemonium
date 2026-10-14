@@ -6,8 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod checkpoint;
+mod github;
+mod places;
 
 pub use checkpoint::{checkpoint, restore};
+pub use github::{Owner, Repository, owners, repositories};
+pub use places::{clone, folders};
 
 /// Where, under a repository, the worktrees made for tasks are kept.
 const WORKTREES: &str = ".pandemonium/worktrees";

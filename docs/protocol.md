@@ -121,6 +121,10 @@ request with exactly one `response` carrying the same `id`.
 | `close_terminal`| `terminal`                                                                                      | `done`          |
 | `attach_terminal`| `terminal`, `after`                                                                            | `done`          |
 | `terminals`    | none                                                                                             | `terminals`     |
+| `owners`       | none                                                                                             | `owners`        |
+| `repositories` | `owner`, `organization`                                                                          | `repositories`  |
+| `folders`      | `path`                                                                                           | `folders`       |
+| `clone`        | `url`, `under` (optional)                                                                        | `directory`     |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -206,6 +210,22 @@ request with exactly one `response` carrying the same `id`.
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
   client is connected, until it exits or is closed. See [Terminals](#terminals).
+- **`owners`:** the GitHub account `gh` is signed in to on the server's
+  machine, then the organizations it belongs to, as `{login, organization}`.
+  Fails with what `gh` complained of when it is not installed or signed in.
+- **`repositories`:** the repositories of `owner` the account can reach, by
+  name, each with the address to clone it from (over ssh when `gh` is set to
+  use ssh).
+- **`folders`:** the folders inside `path` on the server's machine, for choosing
+  one: a leading `~` is the home folder, and an empty `path` is the home folder
+  itself. The response gives the folder as an absolute path and the names of
+  the folders inside it, hidden ones left out. Fails when `path` is not a
+  folder that can be read.
+- **`clone`:** fetches the repository at `url` into a folder named after it, in
+  `under` (a leading `~` is the home folder; made when it is not there) or in
+  the first of `~/Documents/repos`, `~/repos`, `~/code` and `~/projects` that
+  exists, or `~/projects`. The response names the folder. Fails when
+  that folder is taken.
 - **`stage`:** stages the `paths` (from the repository root) or, when `stage`
   is `false`, unstages them.
 
@@ -234,6 +254,10 @@ embedded context, and anything else as a link to the stored file.
 | `sessions`   | `sessions`: `[SessionInfo]`                               |
 | `terminal`   | `terminal`: the number of the shell that was started      |
 | `terminals`  | `terminals`: `[{terminal, directory, columns, rows}]`, oldest first; `directory` is the address `open_terminal` was given |
+| `owners`     | `owners`: `[{login, organization}]`                       |
+| `repositories` | `repositories`: `[{name, description, private, url}]`   |
+| `folders`    | `path`: absolute, `names`: the folders inside it           |
+| `directory`  | `path`: a `clone` made   |
 
 ## Changes other clients make
 

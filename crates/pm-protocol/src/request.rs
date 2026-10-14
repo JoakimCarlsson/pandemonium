@@ -252,4 +252,26 @@ pub enum Request {
     },
     /// Every shell the server holds.
     Terminals,
+    /// The GitHub accounts and organizations whose repositories the account `gh` is signed in to on the server's machine can list.
+    Owners,
+    /// The GitHub repositories of an account or organization.
+    Repositories {
+        /// The account's login.
+        owner: String,
+        /// Whether it is an organization.
+        organization: bool,
+    },
+    /// The folders inside a folder of the server's machine, for choosing one.
+    Folders {
+        /// The folder; a leading `~` is the home folder, and nothing is the home folder itself.
+        path: String,
+    },
+    /// Fetches a repository into a folder of its own, named after it.
+    Clone {
+        /// Where to fetch it from.
+        url: String,
+        /// The folder to put it in, made when it is not there; the usual folder for clones when nothing.
+        #[serde(default)]
+        under: Option<String>,
+    },
 }

@@ -4,6 +4,7 @@ use pm_acp::{Event, Setting, Slash};
 use pm_input::FocusId;
 use pm_text::{Edit, Field};
 
+use crate::adder::{ADDER_FIELD, ADDER_ROW_BASE, ADDER_SUBMIT, Adder, is_adder};
 use crate::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectDrag, ProjectMenu, SESSION_MENU_CLOSE,
     SessionMenu,
@@ -421,6 +422,29 @@ pub enum Outgoing {
         /// The commit message.
         message: String,
     },
+    /// Lists the GitHub accounts and organizations on this machine, for the panel for adding a project.
+    Owners,
+    /// Lists the GitHub repositories of the account `login` on this machine, for the panel for adding a project.
+    Repositories {
+        /// The account's login.
+        login: String,
+        /// Whether it is an organization.
+        organization: bool,
+    },
+    /// Lists the folders inside the folder `path` on this machine, for the panel for adding a project.
+    Folders {
+        /// The folder; `~` is the home folder.
+        path: String,
+    },
+    /// Asks the servers which sessions they hold again, so that those of a project just added come back.
+    Relist,
+    /// Clones the repository at `url` into the folder `under` on this machine, for the panel for adding a project.
+    Clone {
+        /// Where to fetch it from.
+        url: String,
+        /// The folder to put it in.
+        under: String,
+    },
     /// Puts text on the clipboard.
     Copy {
         /// What to copy.
@@ -531,6 +555,8 @@ pub struct WorkspaceState {
     pub history_search: Field,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
+    /// The panel for adding a project, if it is open.
+    pub adder: Option<Adder>,
     /// The menu open over a field, and where, if one is.
     pub menu: Option<ContextMenu>,
     /// The menu open over a project, and where, if one is.
@@ -630,6 +656,7 @@ impl WorkspaceState {
             message: Field::default(),
             history_search: Field::default(),
             sidebar_scroll: 0.0,
+            adder: None,
             menu: None,
             restoring: None,
             project_menu: None,
@@ -757,6 +784,10 @@ impl WorkspaceState {
             | MESSAGE_MENU_COPY_MARKDOWN
             | MESSAGE_MENU_SELECT_ALL => return self.message_menu_pressed(action),
             PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
+            ADD_PROJECT => return self.with_adder(),
+            action if is_adder(action) && action.0 < ADDER_ROW_BASE => {
+                return self.adder_pressed(action);
+            }
             HISTORY => self.page = Page::History,
             TAB_CHAT => self.tab = Tab::Chat,
             TAB_DIFF => self.tab = Tab::Diff,
@@ -784,10 +815,14 @@ impl WorkspaceState {
     pub fn edited(mut self, id: FocusId, edit: Edit) -> Self {
         match id {
             PROMPT => {
+                let before = self.prompt.text().to_owned();
                 self.prompt.apply(edit);
-                self.menu_scroll = 0.0;
+                if self.prompt.text() != before {
+                    self.menu_scroll = 0.0;
+                }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
+            ADDER_FIELD => self.adder_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
             OTHER => {
                 if let Page::Session(open) = self.page
@@ -809,6 +844,7 @@ impl WorkspaceState {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
             HISTORY_SEARCH => Some(&self.history_search),
+            ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             OTHER => self.other_field(),
             _ => None,
         }
@@ -816,7 +852,11 @@ impl WorkspaceState {
 
     /// Whether `id` names a text field.
     pub fn is_field(id: FocusId) -> bool {
-        id == PROMPT || id == COMMIT_MESSAGE || id == HISTORY_SEARCH || id == OTHER
+        id == PROMPT
+            || id == COMMIT_MESSAGE
+            || id == HISTORY_SEARCH
+            || id == OTHER
+            || id == ADDER_FIELD
     }
 
     /// What pressing the field `id` hands in when Enter is pressed in it.
@@ -824,6 +864,7 @@ impl WorkspaceState {
         match id {
             COMMIT_MESSAGE => COMMIT,
             HISTORY_SEARCH => HISTORY,
+            ADDER_FIELD => ADDER_SUBMIT,
             OTHER => NEXT,
             _ => SEND,
         }
@@ -932,7 +973,10 @@ impl WorkspaceState {
                 .map(|offset| offset as usize)
                 .filter(|offset| *offset < count)
         };
-        if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
+        let rows = self.adder.as_ref().map_or(0, |open| open.count());
+        if let Some(index) = position(ADDER_ROW_BASE, rows) {
+            self.adder_chosen(index);
+        } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
             self.folded[index] = !self.folded[index];
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
             self.page = Page::New(index);

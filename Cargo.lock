@@ -1884,6 +1884,7 @@ name = "pm-git"
 version = "0.12.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
