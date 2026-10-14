@@ -106,7 +106,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .styles([px(2)])
         .child(Avatar::of(project).build())
         .child(clipped(&project.name, 14, Role::Text));
-    if folded && !members.is_empty() {
+    if folded {
         header = header.child(text(members.len().to_string()).styles([
             text_px(11),
             leading_ratio(1.4),

@@ -24,8 +24,9 @@ fn chip(index: usize, chosen: bool) -> Node {
         .build()
 }
 
-/// The page for starting work in a project.
+/// The page for starting work in a project, naming the project it starts in.
 pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut Shaper) -> Node {
+    let project = &state.projects[state.current_project()];
     node()
         .styles([
             flex(),
@@ -47,13 +48,15 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
                     w_full(),
                     max_w_px(680.0),
                 ])
-                .child(text("What should we build?").styles([
-                    text_px(28),
-                    leading_ratio(1.25),
-                    font_semibold(),
-                    tracking_tight(),
-                    text_color(Role::Text),
-                ]))
+                .child(
+                    text(format!("What should we build in {}?", project.name)).styles([
+                        text_px(28),
+                        leading_ratio(1.25),
+                        font_semibold(),
+                        tracking_tight(),
+                        text_color(Role::Text),
+                    ]),
+                )
                 .child(
                     node()
                         .styles([flex(), justify_center(), gap(2)])

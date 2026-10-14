@@ -41,6 +41,8 @@ pub enum Shot {
     Empty,
     /// The workspace on the history page.
     History,
+    /// The workspace with every project folded, showing how many sessions each has.
+    Folded,
     /// The page for starting work in this repository, with the agent's settings known.
     Welcome,
     /// The page for starting work with a long prompt that wraps and has a line break.
@@ -100,6 +102,9 @@ impl Shot {
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::Workspace(WorkspaceState::new(&[])),
             Self::History => Screen::Workspace(workspace().after(HISTORY)),
+            Self::Folded => Screen::Workspace(
+                (1000..1004).fold(workspace(), |state, id| state.after(FocusId(id))),
+            ),
             Self::Welcome => Screen::Workspace(welcome()),
             Self::Wrapped => Screen::Workspace(welcome().edited(
                 PROMPT,
