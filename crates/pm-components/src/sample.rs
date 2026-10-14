@@ -306,6 +306,16 @@ impl Session {
         }
     }
 
+    /// What a session's checkout is called: its branch, or, on a detached head, the commit and the branch it was made from.
+    pub fn checkout_label(branch: Option<&str>, head: Option<&str>, base: Option<&str>) -> String {
+        match (branch, head, base) {
+            (Some(branch), _, _) => branch.to_owned(),
+            (None, Some(head), Some(base)) => format!("{base} @ {head}"),
+            (None, Some(head), None) => format!("@ {head}"),
+            (None, None, _) => String::new(),
+        }
+    }
+
     /// A session the server held already: it has no messages until its events are replayed, and nothing is under way.
     pub fn restored(
         title: &str,

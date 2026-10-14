@@ -105,12 +105,15 @@ request with exactly one `response` carrying the same `id`.
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
   It can take several seconds.
-- **`start_session`:** if `base` is a branch name, the server makes a new
-  branch and a git worktree off it under `<repository>/.pandemonium/worktrees`
-  and the agent works there. Otherwise the agent works in `directory`.
+- **`start_session`:** if `base` is given, the server looks it up in the
+  repository at that moment, fails with `<base> does not exist` when it is
+  gone, and otherwise makes a git worktree under
+  `<repository>/.pandemonium/worktrees` with that commit checked out on a
+  detached head, so no branch is made. The agent works there. Without `base`
+  the agent works in `directory` itself.
   `settings` is a list of `[setting, value]` pairs applied before the first
-  prompt. The response gives the session number and the folder and branch the
-  agent works in. The connection is attached to the session already.
+  prompt. The response gives the session number, the folder the agent works in
+  and, for a worktree, the abbreviated commit it has checked out (`head`). The connection is attached to the session already.
 - **`prompt`:** hands the agent its next turn. If the agent has stopped (after
   a `failed` event) the server starts it again first. A prompt sent while a
   turn is running is ignored.
@@ -149,9 +152,9 @@ embedded context, and anything else as a link to the stored file.
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
 | `files`      | `paths`: repository-relative, tracked or not ignored      |
-| `branches`   | `names`: local branches, the current one first            |
+| `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
-| `started`    | `session`, `directory`, `branch` (null without a worktree) |
+| `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
 | `inspected`  | `changes`: `[{path, diff, staged}]`, `commits`: `[string]` or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
@@ -198,8 +201,8 @@ What an agent does arrives as an `event`, not as a response:
   session. A client should hold them until it knows the session.
 - A client drops an event whose `seq` it already has, so replays are safe.
 
-A **SessionInfo** is `{session, agent, repository, directory, branch, base,
-title, updated, last_seq, running}`. `updated` is milliseconds since the epoch,
+A **SessionInfo** is `{session, agent, repository, directory, branch, head,
+base, title, updated, last_seq, running}`. `updated` is milliseconds since the epoch,
 `last_seq` is the number of the session's latest event, and `running` says
 whether its agent is running now.
 

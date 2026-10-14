@@ -11,6 +11,8 @@ use pm_protocol::{Attachment, Login, Request, Response, Target};
 use pm_renderer::Picture;
 use pm_state::State;
 
+use crate::view::View;
+
 /// The most files listed for the list behind an `@`.
 const FILE_LIMIT: usize = 20_000;
 
@@ -112,6 +114,8 @@ pub struct Work {
     reporter: Sender<Job>,
     /// Whether the agents on this machine have been asked what they let the reader change.
     discovered: bool,
+    /// Where the window was left, to be finished once the server that holds its session has listed its sessions.
+    resume: Option<View>,
     /// How many threads have yet to report.
     pending: Cell<usize>,
 }
@@ -128,6 +132,7 @@ impl Work {
             jobs,
             reporter,
             discovered: false,
+            resume: None,
             pending: Cell::new(0),
         }
     }
@@ -186,6 +191,21 @@ impl Work {
                 .collect(),
             in_use,
         })
+    }
+
+    /// Has the window finish opening on `view` once the sessions it needs are listed.
+    pub fn resume(&mut self, view: View) {
+        self.resume = Some(view);
+    }
+
+    /// Whether the window has yet to finish opening where it was left, which is when what it shows must not be kept.
+    pub fn resuming(&self) -> bool {
+        self.resume.is_some()
+    }
+
+    /// The machine and the server's number of the session at `position`.
+    pub fn server_number(&self, position: usize) -> Option<(Host, u64)> {
+        self.numbers.get(&position).cloned()
     }
 
     /// Has the server on this machine keep `paths` as the projects the reader added.
@@ -683,6 +703,7 @@ impl Work {
                     session: number,
                     directory,
                     branch,
+                    head,
                 } => {
                     self.numbers.insert(session, (host.clone(), number));
                     self.positions.insert((host.clone(), number), session);
@@ -690,11 +711,14 @@ impl Work {
                     {
                         client.watch(number, 0);
                     }
-                    if let Some(branch) = branch {
-                        model.update(|screen| {
-                            *screen = screen.clone().worktree_ready(session, &directory, &branch);
-                        });
-                    }
+                    model.update(|screen| {
+                        *screen = screen.clone().worktree_ready(
+                            session,
+                            &directory,
+                            branch.as_deref(),
+                            head.as_deref(),
+                        );
+                    });
                     for event in self
                         .early
                         .remove(&(host.clone(), number))
@@ -756,6 +780,29 @@ impl Work {
                 client.watch(number, 0);
             }
         }
+        self.finish_resuming(model, origin);
+    }
+
+    /// Opens the session the window was left on, and scrolls the sidebar as it was, once the server of `origin` that holds the session has listed its sessions.
+    fn finish_resuming(&mut self, model: &State<Screen>, origin: &Host) {
+        if self
+            .resume
+            .as_ref()
+            .is_none_or(|view| view.home() != *origin)
+        {
+            return;
+        }
+        let Some(view) = self.resume.take() else {
+            return;
+        };
+        let position = view
+            .session()
+            .and_then(|key| self.positions.get(&key).copied());
+        model.update(|screen| {
+            if let Screen::Workspace(state) = screen {
+                *state = view.reopen(state.clone(), position);
+            }
+        });
     }
 
     /// Adds the projects another client added on this machine.

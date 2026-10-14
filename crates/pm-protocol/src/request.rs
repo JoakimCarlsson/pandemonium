@@ -76,9 +76,9 @@ pub enum Request {
         repository: String,
         /// The folder the agent works in when no worktree is made.
         directory: String,
-        /// What the session is called, which names its branch.
+        /// What the session is called, which names its worktree folder.
         title: String,
-        /// The branch to make a worktree from, when the session works in one of its own.
+        /// The branch or commit to check out in a worktree of its own, detached, when the session works in one.
         base: Option<String>,
         /// The settings the reader changed before starting, as the agent names them and their values.
         settings: Vec<(String, String)>,

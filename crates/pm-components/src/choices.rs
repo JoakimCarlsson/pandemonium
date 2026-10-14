@@ -181,6 +181,13 @@ impl WorkspaceState {
             if self.branches.is_empty() {
                 self.location = Location::Local;
             }
+            if self
+                .base
+                .as_ref()
+                .is_some_and(|base| !self.branches.contains(base))
+            {
+                self.base = None;
+            }
         }
         self
     }
@@ -526,6 +533,20 @@ impl WorkspaceState {
         }
     }
 
+    /// Asks again which branches the project being started in has, so that the list is never older than the menu showing it.
+    fn reread_branches(&mut self) {
+        let Page::New(project) = self.page else {
+            return;
+        };
+        if let Some(held) = self.projects.get(project) {
+            self.outbox.push(Outgoing::Branches {
+                project,
+                host: held.host(),
+                directory: held.directory().to_string_lossy().into_owned(),
+            });
+        }
+    }
+
     /// Whether the project being started in is a repository, so that work can be done in a worktree.
     pub fn is_repository(&self) -> bool {
         !self.branches.is_empty()
@@ -563,6 +584,9 @@ impl WorkspaceState {
             self.slash = 0;
         } else if id == LOCATION.0 {
             self.picker = (self.picker != Some(Picker::Location)).then_some(Picker::Location);
+            if self.picker.is_some() {
+                self.reread_branches();
+            }
         } else if id == ACCOUNT.0 {
             self.picker = (self.picker != Some(Picker::Account)).then_some(Picker::Account);
         } else if let Some(index) = within(ACCOUNT_BASE, 50) {
@@ -686,7 +710,11 @@ impl WorkspaceState {
             self.sessions.push(crate::sample::Session::restored(
                 &info.title,
                 project,
-                info.branch.as_deref().unwrap_or(""),
+                &crate::sample::Session::checkout_label(
+                    info.branch.as_deref(),
+                    info.head.as_deref(),
+                    info.base.as_deref(),
+                ),
                 &info.directory,
                 info.base.clone(),
                 agent,

@@ -80,19 +80,31 @@ fn start_session(
     let Some(agent) = agent_named(agent) else {
         return failed(format!("no agent is called {agent}"));
     };
-    let (folder, branch) = match base {
+    let (folder, head) = match base {
+        Some(_) if !pm_git::is_repository(&place(repository)) => {
+            return failed(format!(
+                "{repository} is not a git repository, so it has no worktrees"
+            ));
+        }
         Some(base) => match pm_git::add_worktree(&place(repository), title, base) {
-            Ok(made) => (made.path, Some(made.branch)),
+            Ok(made) => (made.path, Some(made.head)),
             Err(reason) => return failed(format!("could not make a worktree: {reason}")),
         },
-        None => (place(directory), None),
+        None => {
+            let folder = place(directory);
+            if !folder.is_dir() {
+                return failed(format!("{directory} is not a folder on this machine"));
+            }
+            (folder, None)
+        }
     };
     let number = core.next_session();
     let meta = Meta {
         agent: agent.id.to_owned(),
         repository: repository.to_owned(),
         directory: folder.to_string_lossy().into_owned(),
-        branch: branch.clone(),
+        branch: None,
+        head: head.clone(),
         base: base.map(str::to_owned),
         title: title.to_owned(),
         updated: now(),
@@ -130,7 +142,8 @@ fn start_session(
     Response::Started {
         session: number,
         directory: folder.to_string_lossy().into_owned(),
-        branch,
+        branch: None,
+        head,
     }
 }
 

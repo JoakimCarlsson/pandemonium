@@ -25,3 +25,5 @@ pm-protocol.workspace = true
 pm-client.workspace = true
 pm-ssh.workspace = true
 pm-server.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

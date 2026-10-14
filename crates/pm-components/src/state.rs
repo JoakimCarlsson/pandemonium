@@ -823,8 +823,12 @@ impl WorkspaceState {
                     .directory()
                     .to_string_lossy()
                     .into_owned();
-                session.branch = self.branches.first().cloned().unwrap_or_default();
                 session.base = self.base_for_new_work();
+                session.branch = if session.base.is_some() {
+                    String::new()
+                } else {
+                    self.branches.first().cloned().unwrap_or_default()
+                };
                 session.skills = self.skills.clone();
                 session.messages[0].attachments = self.attachments.clone();
                 self.sessions.push(session);
@@ -931,11 +935,19 @@ impl WorkspaceState {
     }
 
     /// The state after the folder of the session at `session` is ready: it
-    /// works in `directory`, on `branch`.
-    pub fn worktree_ready(mut self, session: usize, directory: &str, branch: &str) -> Self {
+    /// works in `directory`, on `branch` or on a detached `head`.
+    pub fn worktree_ready(
+        mut self,
+        session: usize,
+        directory: &str,
+        branch: Option<&str>,
+        head: Option<&str>,
+    ) -> Self {
         if let Some(held) = self.sessions.get_mut(session) {
             held.directory = directory.to_owned();
-            held.branch = branch.to_owned();
+            if branch.is_some() || head.is_some() {
+                held.branch = Session::checkout_label(branch, head, held.base.as_deref());
+            }
         }
         self
     }

@@ -17,6 +17,9 @@ pub struct SessionInfo {
     pub directory: String,
     /// The branch its worktree has, when it was given one of its own.
     pub branch: Option<String>,
+    /// The abbreviated commit its worktree has checked out on a detached head.
+    #[serde(default)]
+    pub head: Option<String>,
     /// The branch its worktree was made from, when it has one of its own.
     pub base: Option<String>,
     /// What it is called.
@@ -74,6 +77,9 @@ pub enum Response {
         directory: String,
         /// The branch its worktree has, when it was given one of its own.
         branch: Option<String>,
+        /// The abbreviated commit its worktree has checked out on a detached head.
+        #[serde(default)]
+        head: Option<String>,
     },
     /// The projects the reader has added.
     Projects {

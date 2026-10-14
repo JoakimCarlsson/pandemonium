@@ -119,6 +119,7 @@ impl Core {
                 repository: session.meta.repository.clone(),
                 directory: session.meta.directory.clone(),
                 branch: session.meta.branch.clone(),
+                head: session.meta.head.clone(),
                 base: session.meta.base.clone(),
                 title: session.meta.title.clone(),
                 updated: session.meta.updated,

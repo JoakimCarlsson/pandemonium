@@ -25,6 +25,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::keys::Clip;
+use crate::view::View;
 use crate::work::Work;
 use crate::{keys, scene};
 
@@ -94,6 +95,8 @@ pub struct App {
     logins: [Vec<Login>; AGENTS.len()],
     /// The agents that run, and the work done for them.
     work: Work,
+    /// What was last written as the view, which is what the window opened with until it changes.
+    saved_view: Option<View>,
     /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
     autofocused: bool,
 }
@@ -103,6 +106,7 @@ impl Default for App {
     fn default() -> Self {
         let mut work = Work::new();
         let opened = work.bootstrap();
+        let connected = opened.is_some();
         let (saved, choices, logins, in_use) = match opened {
             Some(held) => (held.projects, held.choices, held.logins, held.in_use),
             None => {
@@ -136,6 +140,17 @@ impl Default for App {
                     None => screen,
                 },
             );
+        let saved_view = View::load();
+        let screen = match (&saved_view, screen) {
+            (Some(view), Screen::Workspace(state)) => Screen::Workspace(view.apply(state)),
+            (_, screen) => screen,
+        };
+        if let Some(view) = saved_view
+            .clone()
+            .filter(|view| connected && view.home().is_none())
+        {
+            work.resume(view);
+        }
         let model = State::new(screen);
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
@@ -163,6 +178,7 @@ impl Default for App {
             dragging: None,
             last_press: None,
             saved,
+            saved_view,
             saved_choices: choices,
             logins: Default::default(),
             work,
@@ -314,6 +330,22 @@ impl App {
         let choices = choices.to_vec();
         self.work.save_choices(choices.clone());
         self.saved_choices = choices;
+    }
+
+    /// Writes where the window is to disk when it differs from what was last written, once the window has finished opening where it was left.
+    fn persist_view(&mut self) {
+        if self.work.resuming() {
+            return;
+        }
+        let Screen::Workspace(state) = self.model.get() else {
+            return;
+        };
+        let view = View::capture(&state, |position| self.work.server_number(position));
+        if self.saved_view.as_ref() == Some(&view) {
+            return;
+        }
+        view.save();
+        self.saved_view = Some(view);
     }
 
     /// Writes the project list to disk when the workspace's differs from what was last written.
@@ -793,6 +825,9 @@ impl ApplicationHandler for App {
         } else {
             ControlFlow::Wait
         });
+        if self.dirty.get() {
+            self.persist_view();
+        }
         if self.dirty.replace(false)
             && let Some(window) = self.window.as_ref()
         {

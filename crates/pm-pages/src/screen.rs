@@ -365,11 +365,17 @@ impl Screen {
     }
 
     /// The screen after the folder of the session at `session` is ready: it
-    /// works in `directory`, on `branch`.
-    pub fn worktree_ready(self, session: usize, directory: &str, branch: &str) -> Self {
+    /// works in `directory`, on `branch` or on a detached `head`.
+    pub fn worktree_ready(
+        self,
+        session: usize,
+        directory: &str,
+        branch: Option<&str>,
+        head: Option<&str>,
+    ) -> Self {
         match self {
             Self::Workspace(state) => {
-                Self::Workspace(state.worktree_ready(session, directory, branch))
+                Self::Workspace(state.worktree_ready(session, directory, branch, head))
             }
             onboarding => onboarding,
         }

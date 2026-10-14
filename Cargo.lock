@@ -1682,6 +1682,8 @@ dependencies = [
  "pm-theme",
  "pm-ui",
  "rfd",
+ "serde",
+ "serde_json",
  "winit",
 ]
 

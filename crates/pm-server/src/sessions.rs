@@ -20,6 +20,9 @@ pub(crate) struct Meta {
     pub(crate) directory: String,
     /// The branch its worktree has, when it was given one of its own.
     pub(crate) branch: Option<String>,
+    /// The abbreviated commit its worktree has checked out on a detached head.
+    #[serde(default)]
+    pub(crate) head: Option<String>,
     /// The branch its worktree was made from, when it has one of its own.
     pub(crate) base: Option<String>,
     /// What it is called.

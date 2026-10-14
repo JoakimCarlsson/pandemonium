@@ -27,7 +27,7 @@ use crate::{Chip, Popover, chip};
 const COMPOSER_SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 30.0, 0.0, 0.18, false)];
 
 /// How many branches the menu of where work is done lists.
-const BRANCH_ROWS: usize = 6;
+const BRANCH_ROWS: usize = 8;
 
 /// How many commands the list behind a slash shows at once.
 const SLASH_ROWS: usize = 8;
@@ -126,7 +126,7 @@ fn location_menu(state: &WorkspaceState) -> Node {
         .heading("Run in", None)
         .row(
             "Worktree",
-            "A new branch and worktree for this task",
+            "A worktree of its own on a detached head",
             worktree,
             FocusId(PLACE_BASE),
         )

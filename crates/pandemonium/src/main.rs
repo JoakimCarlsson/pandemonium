@@ -6,6 +6,7 @@ mod app;
 mod keys;
 mod scene;
 mod snapshot;
+mod view;
 mod work;
 
 use std::path::Path;

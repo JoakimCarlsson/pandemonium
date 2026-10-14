@@ -11,7 +11,7 @@ const WORKTREES: &str = ".pandemonium/worktrees";
 /// The most lines of a file's diff that are read.
 const DIFF_LINES: usize = 2000;
 
-/// The longest a branch name made from a title is, in characters.
+/// The longest a folder name made from a title is, in characters.
 const SLUG_LENGTH: usize = 40;
 
 /// A file that differs from the last commit.
@@ -25,13 +25,13 @@ pub struct Change {
     pub staged: bool,
 }
 
-/// A worktree made for one task.
+/// A worktree made for one task, on a detached head so that no branch has to exist for it.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Worktree {
     /// The folder it is in.
     pub path: PathBuf,
-    /// The branch it has checked out.
-    pub branch: String,
+    /// The abbreviated commit it has checked out.
+    pub head: String,
 }
 
 /// Runs `git` with `arguments` in `directory` and returns what it wrote, or what it complained of.
@@ -55,8 +55,44 @@ pub fn is_repository(directory: &Path) -> bool {
     directory.is_dir() && run(directory, &["rev-parse", "--git-dir"]).is_ok()
 }
 
-/// The files of the repository `directory` is in that are tracked or not ignored, as paths from its root, at most `limit` of them.
+/// The folders a plain folder's listing does not go into.
+const SKIPPED: [&str; 4] = ["node_modules", "target", "build", "dist"];
+
+/// The files under `directory`, as paths from `root`, at most `limit` of them, leaving out hidden and bulky folders.
+fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if found.len() >= limit {
+            return;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            if !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
+                walk(root, &path, limit, found);
+            }
+        } else if kind.is_file()
+            && let Ok(relative) = path.strip_prefix(root)
+        {
+            found.push(relative.to_string_lossy().into_owned());
+        }
+    }
+}
+
+/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository tracks or does not ignore, or, in a folder that is not a repository, every file but those in hidden and bulky folders.
 pub fn files(directory: &Path, limit: usize) -> Vec<String> {
+    if !is_repository(directory) {
+        let mut found = Vec::new();
+        walk(directory, directory, limit, &mut found);
+        return found;
+    }
     run(
         directory,
         &["ls-files", "--cached", "--others", "--exclude-standard"],
@@ -72,23 +108,44 @@ pub fn current_branch(directory: &Path) -> Option<String> {
     (!name.is_empty() && name != "HEAD").then(|| name.to_owned())
 }
 
-/// The local branches of the repository `directory` is in, the current one first.
-pub fn branches(directory: &Path) -> Vec<String> {
-    let listed = run(
+/// The names of the references under `prefix` in the repository `directory` is in, leaving out a remote's `HEAD`.
+fn references(directory: &Path, prefix: &str) -> Vec<String> {
+    run(
         directory,
-        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        &["for-each-ref", "--format=%(refname:short)", prefix],
     )
-    .unwrap_or_default();
-    let mut names: Vec<String> = listed.lines().map(str::to_owned).collect();
+    .unwrap_or_default()
+    .lines()
+    .filter(|name| !name.ends_with("/HEAD") && *name != "origin")
+    .map(str::to_owned)
+    .collect()
+}
+
+/// The branches of the repository `directory` is in as it has them now: the local ones, the current one first, then those of its remotes.
+pub fn branches(directory: &Path) -> Vec<String> {
+    let mut names = references(directory, "refs/heads");
     if let Some(current) = current_branch(directory)
         && let Some(at) = names.iter().position(|name| *name == current)
     {
         names.swap(0, at);
     }
+    names.extend(references(directory, "refs/remotes"));
     names
 }
 
-/// `title` as a branch name part: lower case words joined by dashes.
+/// The commit `reference` names in the repository `directory` is in, abbreviated, or nothing when it names none.
+pub fn resolve(directory: &Path, reference: &str) -> Option<String> {
+    let commit = format!("{reference}^{{commit}}");
+    run(
+        directory,
+        &["rev-parse", "--verify", "--quiet", "--short", &commit],
+    )
+    .ok()
+    .map(|short| short.trim().to_owned())
+    .filter(|short| !short.is_empty())
+}
+
+/// `title` as a folder name: lower case words joined by dashes.
 fn slug(title: &str) -> String {
     let mut slug = String::new();
     for character in title.chars() {
@@ -130,43 +187,31 @@ fn exclude_worktrees(repository: &Path) -> Result<(), String> {
     writeln!(file, "{separator}.pandemonium/").map_err(|error| error.to_string())
 }
 
-/// Makes a new branch off `base` in a worktree of its own under `repository`, named from `title`.
+/// Makes a worktree of its own under `repository`, named from `title`, with `base` checked out on a detached head.
+///
+/// `base` is looked up in the repository now, so a branch deleted a moment ago is refused rather than assumed.
 pub fn add_worktree(repository: &Path, title: &str, base: &str) -> Result<Worktree, String> {
+    let head = resolve(repository, base).ok_or_else(|| format!("{base} does not exist"))?;
     exclude_worktrees(repository)?;
     let slug = slug(title);
     let root = repository.join(WORKTREES);
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let mut attempt = 0;
-    loop {
+    let path = loop {
         let name = if attempt == 0 {
             slug.clone()
         } else {
             format!("{slug}-{}", attempt + 1)
         };
-        let branch = format!("task/{name}");
-        let path = root.join(&name);
-        let taken = path.exists()
-            || run(
-                repository,
-                &[
-                    "rev-parse",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/heads/{branch}"),
-                ],
-            )
-            .is_ok();
-        if taken {
-            attempt += 1;
-            continue;
+        let path = root.join(name);
+        if !path.exists() {
+            break path;
         }
-        let place = path.to_string_lossy().into_owned();
-        run(
-            repository,
-            &["worktree", "add", "-b", &branch, &place, base],
-        )?;
-        return Ok(Worktree { path, branch });
-    }
+        attempt += 1;
+    };
+    let place = path.to_string_lossy().into_owned();
+    run(repository, &["worktree", "add", "--detach", &place, &head])?;
+    Ok(Worktree { path, head })
 }
 
 /// The lines of the diff `text` holds, from the first hunk on.
