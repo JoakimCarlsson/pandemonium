@@ -10,6 +10,10 @@ use crate::arrange::{
 };
 use crate::context_menu::ContextMenu;
 use crate::draft::{NEXT, OTHER};
+use crate::message_menu::{
+    MESSAGE_MENU_COPY, MESSAGE_MENU_COPY_MARKDOWN, MESSAGE_MENU_COPY_REPLY,
+    MESSAGE_MENU_SELECT_ALL, MessageMenu,
+};
 use crate::project::Project;
 use crate::sample::{AGENTS, Change, Message, Session, Status, projects, sessions};
 
@@ -77,6 +81,10 @@ pub const HURRY_BASE: u64 = 4900;
 
 /// The conversation's scrolling area.
 pub const CHAT_SCROLL: FocusId = FocusId(350);
+
+/// The text of the conversation's messages, which the pointer selects as
+/// one: each message is a selectable box of it, in the order of the messages.
+pub const CHAT_TEXT: FocusId = FocusId(353);
 
 /// The prompt field.
 pub const PROMPT: FocusId = FocusId(320);
@@ -529,6 +537,8 @@ pub struct WorkspaceState {
     pub project_menu: Option<ProjectMenu>,
     /// The menu open over a session, and where, if one is.
     pub session_menu: Option<SessionMenu>,
+    /// The menu open over a message of the open session, and where, if one is.
+    pub message_menu: Option<MessageMenu>,
     /// The project being dragged to another place, if one is.
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
@@ -624,6 +634,7 @@ impl WorkspaceState {
             restoring: None,
             project_menu: None,
             session_menu: None,
+            message_menu: None,
             project_drag: None,
             outbox: Vec::new(),
             chat_back: 0.0,
@@ -741,6 +752,10 @@ impl WorkspaceState {
         match action {
             RESTORE_FILES => self.restore(restoring),
             SESSION_MENU_CLOSE => return self.session_menu_pressed(),
+            MESSAGE_MENU_COPY
+            | MESSAGE_MENU_COPY_REPLY
+            | MESSAGE_MENU_COPY_MARKDOWN
+            | MESSAGE_MENU_SELECT_ALL => return self.message_menu_pressed(action),
             PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
             HISTORY => self.page = Page::History,
             TAB_CHAT => self.tab = Tab::Chat,
@@ -830,6 +845,7 @@ impl WorkspaceState {
         self.menu = None;
         self.project_menu = None;
         self.session_menu = None;
+        self.message_menu = None;
         self
     }
 
@@ -980,10 +996,7 @@ impl WorkspaceState {
         let Some(message) = self.open().and_then(|session| session.messages.get(index)) else {
             return;
         };
-        let mut text = message.text.clone();
-        for bullet in &message.bullets {
-            text.push_str(&format!("\n- {bullet}"));
-        }
+        let text = message.markdown_text();
         self.outbox.push(Outgoing::Copy { text });
     }
 

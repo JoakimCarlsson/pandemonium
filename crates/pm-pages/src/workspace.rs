@@ -14,6 +14,7 @@ use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE, SessionMenu,
 };
 use pm_components::context_menu::field_menu;
+use pm_components::message_menu::message_menu;
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::{chat, diff, history, input, plan, review, sidebar, terminal, welcome};
 
@@ -184,6 +185,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(sidebar::drag_ghost(state))
     .children(state.project_menu.map(project_menu))
     .children(state.session_menu.map(session_menu))
+    .children(state.message_menu.map(message_menu))
 }
 
 /// The menu of a project: start a session in it, or take it out of the window.

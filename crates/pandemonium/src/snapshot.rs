@@ -7,7 +7,7 @@ use pm_acp::{
     PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
 };
 use pm_components::Project;
-use pm_components::state::{DETAILS_BASE, RESTORE_BASE, SUBAGENTS_CHIP};
+use pm_components::state::{CHAT_TEXT, DETAILS_BASE, RESTORE_BASE, SUBAGENTS_CHIP};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
     HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL, WorkspaceState,
@@ -15,7 +15,7 @@ use pm_pages::{
 use pm_renderer::{DrawList, Renderer};
 use pm_text::Edit;
 use pm_theme::{Appearance, default_family};
-use pm_ui::Input;
+use pm_ui::{Input, TextPoint, TextSelection};
 
 use crate::scene;
 
@@ -94,6 +94,10 @@ pub enum Shot {
     Composing,
     /// The workspace with the terminal open and a dead key's accent waiting for its letter at the cursor.
     TerminalComposing,
+    /// The workspace on its first session with a stretch of the conversation's text selected.
+    Selecting,
+    /// The same selection with the menu over a reply open.
+    MessageMenu,
 }
 
 /// The workspace of made-up sessions.
@@ -127,6 +131,15 @@ fn projects() -> Vec<Project> {
 }
 
 impl Shot {
+    /// The stretch of selectable text this snapshot shows selected, if any.
+    fn selection(self) -> Option<TextSelection> {
+        matches!(self, Self::Selecting | Self::MessageMenu).then_some(TextSelection {
+            id: CHAT_TEXT,
+            anchor: TextPoint { piece: 27, byte: 3 },
+            head: TextPoint { piece: 38, byte: 2 },
+        })
+    }
+
     /// The screen this snapshot is of.
     fn screen(self) -> Screen {
         let workspace = workspace_sample;
@@ -143,7 +156,10 @@ impl Shot {
                 },
                 ..OnboardingState::default()
             }),
-            Self::Workspace => Screen::Workspace(workspace()),
+            Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
+            Self::MessageMenu => {
+                Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
+            }
             Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
             Self::Diff => Screen::Workspace(workspace().after(TAB_DIFF)),
             Self::Terminal => Screen::Workspace(terminal()),
@@ -585,6 +601,7 @@ pub fn write(
         },
         focused,
         elapsed_ms,
+        selection: shot.selection(),
     };
     let family = default_family();
     let theme = family.variant(appearance);

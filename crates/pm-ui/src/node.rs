@@ -18,7 +18,7 @@ pub struct Node {
     /// The boxes inside it, in layout order.
     pub(crate) children: Vec<Node>,
     /// A line of text the box holds instead of children.
-    pub(crate) text: Option<String>,
+    pub(crate) text: Option<Arc<str>>,
     /// What names the box to the user: it can be pressed and takes focus.
     pub(crate) focus: Option<FocusId>,
     /// An icon the box draws, tinted with the text colour, in the largest
@@ -56,6 +56,8 @@ pub struct Node {
     pub(crate) group: bool,
     /// Words shown over the box once the pointer has rested on it for a moment.
     pub(crate) tooltip: Option<String>,
+    /// The selectable text the lines inside the box are part of.
+    pub(crate) selectable: Option<FocusId>,
 }
 
 /// The end of a box's contents that a scroll position is measured from.
@@ -75,7 +77,7 @@ pub fn node() -> Node {
 /// A box holding one line of `content`; style it with typography utilities.
 pub fn text(content: impl Into<String>) -> Node {
     Node {
-        text: Some(content.into()),
+        text: Some(Arc::from(content.into())),
         ..Node::default()
     }
 }
@@ -128,6 +130,15 @@ impl Node {
     /// Shows `words` over the box, above everything else, once the pointer has rested on it for a moment.
     pub fn tooltip(mut self, words: impl Into<String>) -> Self {
         self.tooltip = Some(words.into());
+        self
+    }
+
+    /// Makes the lines of text inside the box selectable with the pointer,
+    /// as part of the text named `id`: every box marked with the same name
+    /// is one text, its pieces counted in tree order, so a selection runs
+    /// from one box into the next.
+    pub fn selectable(mut self, id: FocusId) -> Self {
+        self.selectable = Some(id);
         self
     }
 

@@ -14,6 +14,7 @@ use pm_theme::Theme;
 
 use crate::node::{Anchor, Node};
 use crate::retain;
+use crate::select::{DrawnPiece, TextPiece, TextSelection};
 use crate::tooltip::{self, Showing};
 
 /// How long the caret stays on, and then off, in milliseconds.
@@ -43,6 +44,8 @@ pub struct Input {
     pub focused: Option<FocusId>,
     /// Milliseconds since the application started, which animations run on.
     pub elapsed_ms: f32,
+    /// The stretch of selectable text that is selected, if any.
+    pub selection: Option<TextSelection>,
 }
 
 /// One box that answers to the user, where it ended up.
@@ -68,6 +71,11 @@ pub struct Output {
     pub fields: Vec<FieldBox>,
     /// The boxes that scroll from their end, in tree order.
     pub scrollers: Vec<Scroller>,
+    /// The boxes made selectable, where they were seen, in tree order, those
+    /// off screen included with no size.
+    pub selectables: Vec<Region>,
+    /// The lines of selectable text, in tree order, those off screen included.
+    pub pieces: Vec<TextPiece>,
 }
 
 /// One box whose contents scroll from their end, where it ended up.
@@ -186,6 +194,8 @@ pub fn draw(
         culling: true,
         group_hovered: false,
         tooltip: None,
+        selectable: None,
+        counts: Vec::new(),
     };
     frame.node(
         root,
@@ -231,6 +241,10 @@ struct Frame<'a> {
     group_hovered: bool,
     /// The words the innermost box under the pointer that has a tooltip asks to show, and where that box is.
     tooltip: Option<(Rect, String)>,
+    /// The selectable text the boxes now being painted are part of.
+    selectable: Option<FocusId>,
+    /// How many pieces of each selectable text were met so far.
+    counts: Vec<(FocusId, usize)>,
 }
 
 impl Frame<'_> {
@@ -266,7 +280,13 @@ impl Frame<'_> {
             return;
         }
 
+        let outer_selectable = self.selectable;
+        if let Some(id) = node.selectable {
+            self.selectable = Some(id);
+            self.output.selectables.push(Region { id, rect: seen });
+        }
         let cursor = match computed.decoration.effects.interactivity.cursor {
+            Cursor::Default if self.selectable.is_some() && node.text.is_some() => Cursor::Text,
             Cursor::Default => inherited,
             own => own,
         };
@@ -306,8 +326,8 @@ impl Frame<'_> {
             Affine::translation(-node.scroll_x, -scroll_y).then(world)
         };
         let scrolled = (scrolled.0 + node.scroll_x, scrolled.1 + scroll_y);
-        if let Some(text) = node.text.as_deref() {
-            self.text(text, node, &computed, rect, content, opacity);
+        if let Some(text) = &node.text {
+            self.text(text, node, &computed, (rect, seen), content, opacity);
         }
         if let Some(name) = node.icon {
             self.icon(name, &computed, rect, content, opacity);
@@ -353,6 +373,61 @@ impl Frame<'_> {
             self.list.set_clip(outer);
         }
         self.group_hovered = outer_group;
+        self.selectable = outer_selectable;
+    }
+
+    /// The number of the next piece of the selectable text `id`, counted in tree order.
+    fn next_piece(&mut self, id: FocusId) -> usize {
+        match self.counts.iter_mut().find(|(owner, _)| *owner == id) {
+            Some((_, count)) => {
+                *count += 1;
+                *count - 1
+            }
+            None => {
+                self.counts.push((id, 1));
+                0
+            }
+        }
+    }
+
+    /// Records `content`, laid out at `laid`, as the next piece of the
+    /// selectable text the box is in, if it is in one, with where it was
+    /// `drawn`, and gives back that text and the piece's number.
+    fn record_piece(
+        &mut self,
+        content: &std::sync::Arc<str>,
+        laid: Rect,
+        drawn: Option<DrawnPiece>,
+    ) -> Option<(FocusId, usize)> {
+        let id = self.selectable?;
+        let index = self.next_piece(id);
+        self.output.pieces.push(TextPiece {
+            id,
+            index,
+            content: content.clone(),
+            laid,
+            drawn,
+        });
+        Some((id, index))
+    }
+
+    /// Tints the byte range `range` of `run`, drawn at `x`, `y`, as selected.
+    fn highlight(
+        &mut self,
+        run: &Run,
+        range: std::ops::Range<usize>,
+        at: (f32, f32),
+        opacity: f32,
+    ) {
+        let left = run.caret_x(range.start);
+        let right = run.caret_x(range.end);
+        let tint = Color::from(Role::Focused)
+            .resolve(self.theme)
+            .alpha(0.45 * opacity);
+        self.list.push(Quad::filled(
+            Rect::new(at.0 + left, at.1, right - left, run.height),
+            tint,
+        ));
     }
 
     /// Paints a tooltip saying `words` over everything painted so far, above the box at `over`, or below it where there is no room above, kept inside the viewport.
@@ -406,6 +481,38 @@ impl Frame<'_> {
         if node.style.base().layout.display.display == Display::None {
             return;
         }
+        let outer_selectable = self.selectable;
+        if let Some(id) = node.selectable {
+            self.selectable = Some(id);
+            let rect = Rect::new(laid.x + self.origin.0, laid.y + self.origin.1, 0.0, 0.0);
+            self.output.selectables.push(Region { id, rect });
+        }
+        if let Some(text) = &node.text
+            && node.field_line.is_none()
+            && node.caret.is_none()
+        {
+            let laid = Rect::new(
+                laid.x + self.origin.0,
+                laid.y + self.origin.1,
+                laid.width,
+                laid.height,
+            );
+            self.record_piece(text, laid, None);
+        }
+        self.unseen_inside(node, laid, parent, opacity, inherited, scrolled);
+        self.selectable = outer_selectable;
+    }
+
+    /// Walks what `node`, which shows nothing, holds without painting it, as [`Frame::unseen`] does.
+    fn unseen_inside(
+        &mut self,
+        node: &Node,
+        laid: &Placed,
+        parent: Affine,
+        opacity: f32,
+        inherited: Cursor,
+        scrolled: (f32, f32),
+    ) {
         if node.field_line.is_some() || node.caret.is_some() {
             self.culling = false;
             self.node(node, laid, parent, opacity, inherited, scrolled);
@@ -554,16 +661,18 @@ impl Frame<'_> {
         });
     }
 
-    /// Paints one line of text inside the box at `rect`.
+    /// Paints one line of text inside the box laid out at the first of
+    /// `boxes` and seen at the second.
     fn text(
         &mut self,
-        content: &str,
+        content: &std::sync::Arc<str>,
         node: &Node,
         computed: &ComputedStyle,
-        rect: Rect,
+        boxes: (Rect, Rect),
         world: Affine,
         opacity: f32,
     ) {
+        let (rect, seen) = boxes;
         let run = self.shaper.shape(content, &computed.typography);
         let inset = computed.layout.spacing.padding;
         let border = computed.decoration.borders.width;
@@ -592,15 +701,21 @@ impl Frame<'_> {
         if let Some((range, owner)) = &node.selection
             && self.input.focused == Some(*owner)
         {
-            let left = run.caret_x(range.start);
-            let right = run.caret_x(range.end);
-            let tint = Color::from(Role::Focused)
-                .resolve(self.theme)
-                .alpha(0.45 * opacity);
-            self.list.push(Quad::filled(
-                Rect::new(x + left, y, right - left, run.height),
-                tint,
-            ));
+            self.highlight(&run, range.clone(), (x, y), opacity);
+        }
+        let drawn = DrawnPiece {
+            seen,
+            x,
+            run: run.clone(),
+        };
+        if let Some((id, index)) = self.record_piece(content, rect, Some(drawn))
+            && let Some(range) = self
+                .input
+                .selection
+                .filter(|selection| selection.id == id)
+                .and_then(|selection| selection.covering(index, content.len()))
+        {
+            self.highlight(&run, range, (x, y), opacity);
         }
         if let Some((range, owner)) = &node.marked
             && self.input.focused == Some(*owner)

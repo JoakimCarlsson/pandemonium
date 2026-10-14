@@ -24,8 +24,8 @@ use crate::queued::queued;
 use crate::sample::{AGENTS, Session, Status};
 use crate::sidebar::status_icon;
 use crate::state::{
-    CHAT_SCROLL, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, OPEN_DIFF, RESTORE_BASE,
-    RESTORE_FILES, REVIEW, REWIND_BASE, TURN_BASE, WorkspaceState,
+    CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, OPEN_DIFF,
+    RESTORE_BASE, RESTORE_FILES, REVIEW, REWIND_BASE, TURN_BASE, WorkspaceState,
 };
 use crate::steps::{question, steps};
 
@@ -39,19 +39,26 @@ const FOLDS_PER_PIECE: usize = 100;
 const GUTTER: f32 = 24.0;
 
 /// The lines of `content` wrapped to `width`, one text line each, in `tone`, with a gap where it has a blank line.
+///
+/// A line the wrapping broke keeps the space it was broken at, so that text
+/// selected across it is copied as one line.
 fn paragraph(content: &str, tone: Role, width: f32) -> Node {
     node()
         .styles([flex(), flex_col()])
         .children(content.lines().flat_map(|source| {
             let pieces = wrap(source, 14, width);
             if pieces.is_empty() {
-                vec![node().styles([h(3)])]
-            } else {
-                pieces
-                    .into_iter()
-                    .map(|piece| line(piece, 14, 1.57, tone))
-                    .collect()
+                return vec![node().styles([h(3)])];
             }
+            let last = pieces.len() - 1;
+            pieces
+                .into_iter()
+                .enumerate()
+                .map(|(at, piece)| match at == last {
+                    true => line(piece, 14, 1.57, tone),
+                    false => line(piece + " ", 14, 1.57, tone),
+                })
+                .collect()
         }))
 }
 
@@ -138,6 +145,7 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
         .child(bubble)
         .child(actions)
         .group()
+        .selectable(CHAT_TEXT)
 }
 
 /// A reply from the agent: the steps it took, what it says, the points it lists and how long it took.
@@ -291,7 +299,7 @@ fn agent_message(
                 .child(line(duration, 12, 1.4, Role::Subtle)),
         );
     }
-    reply.group()
+    reply.group().selectable(CHAT_TEXT)
 }
 
 /// The card that sums up the changes and opens them for review.

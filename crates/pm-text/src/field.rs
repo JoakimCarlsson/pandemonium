@@ -2,6 +2,8 @@
 
 use std::ops::Range;
 
+use crate::word::Class;
+
 /// Where a caret moves to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Motion {
@@ -105,30 +107,6 @@ const MASK: char = '•';
 
 /// How many changes undo remembers.
 const HISTORY: usize = 200;
-
-/// What kind of character a word is made of.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Class {
-    /// Space.
-    Space,
-    /// Letters, digits and the underscore.
-    Word,
-    /// Anything else.
-    Other,
-}
-
-impl Class {
-    /// The class `character` belongs to.
-    fn of(character: char) -> Self {
-        if character.is_whitespace() {
-            Self::Space
-        } else if character.is_alphanumeric() || character == '_' {
-            Self::Word
-        } else {
-            Self::Other
-        }
-    }
-}
 
 impl Field {
     /// A field holding `text`, with the caret at its end and nothing selected.

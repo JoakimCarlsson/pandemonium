@@ -97,6 +97,7 @@ impl WorkspaceState {
         if session < self.sessions.len() {
             self.menu = None;
             self.project_menu = None;
+            self.message_menu = None;
             self.session_menu = Some(SessionMenu { session, at });
         }
         self
@@ -132,6 +133,7 @@ impl WorkspaceState {
         if project < self.projects.len() {
             self.menu = None;
             self.session_menu = None;
+            self.message_menu = None;
             self.project_menu = Some(ProjectMenu { project, at });
         }
         self

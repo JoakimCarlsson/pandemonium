@@ -241,6 +241,27 @@ pub struct Shell {
 }
 
 impl Message {
+    /// The message as it was written: the markdown of a reply, with the points it lists as a list under it.
+    pub fn markdown_text(&self) -> String {
+        let mut text = self.text.clone();
+        for bullet in &self.bullets {
+            text.push_str(&format!("\n- {bullet}"));
+        }
+        text
+    }
+
+    /// The message as it reads: a reply's markdown without its markup, with the points it lists as a list under it.
+    pub fn plain_text(&self) -> String {
+        if self.from_user {
+            return self.text.clone();
+        }
+        let mut text = pm_markdown::plain(&self.text);
+        for bullet in &self.bullets {
+            text.push_str(&format!("\n- {bullet}"));
+        }
+        text
+    }
+
     /// A message the reader wrote.
     pub fn user(text: &str) -> Self {
         Self::new(true, text, Vec::new(), None)

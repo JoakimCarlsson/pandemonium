@@ -27,6 +27,7 @@ pub mod input;
 pub mod inquiry;
 pub mod markdown;
 pub mod menu;
+pub mod message_menu;
 pub mod parts;
 pub mod plan;
 pub mod popover;

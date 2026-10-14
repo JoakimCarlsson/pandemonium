@@ -187,9 +187,9 @@ impl Screen {
         }
     }
 
-    /// Whether a menu is open over a project or a session, so that a press elsewhere has to close it.
+    /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some())
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some())
     }
 
     /// Which session the row `id` of the sidebar opens, while the workspace is showing.
@@ -197,6 +197,18 @@ impl Screen {
         match self {
             Self::Workspace(state) => state.session_row_of(id),
             Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the menu over the message at `message` of the open
+    /// session open at `at`, offering to copy the selection when `selected`,
+    /// while the workspace is showing.
+    pub fn with_message_menu(self, message: usize, at: (f32, f32), selected: bool) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_message_menu(message, at, selected))
+            }
+            onboarding => onboarding,
         }
     }
 

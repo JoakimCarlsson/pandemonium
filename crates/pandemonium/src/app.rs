@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use pm_acp::{AGENTS, Login, Standing};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
+use pm_components::message_menu::is_message_menu_item;
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
@@ -21,13 +22,14 @@ use pm_state::State;
 
 use pm_text::{Edit, Shaper};
 use pm_theme::{Appearance, ThemeFamily, default_family};
-use pm_ui::{Cursor, Input, Output};
+use pm_ui::{Cursor, Input, Output, TextPoint, TextSelection, Unit};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
+mod select;
 mod terminal;
 
 use crate::keys::Clip;
@@ -120,6 +122,12 @@ pub struct App {
     terminal_anchor: Option<(usize, usize)>,
     /// The part of a line the wheel has scrolled the shell that was not enough to move it.
     terminal_scroll_rest: f32,
+    /// The stretch of the conversation's text that is selected, if any.
+    text_selection: Option<TextSelection>,
+    /// What a press on selectable text took, from its start to its end, and
+    /// how much it takes at a time, while the button is held, so dragging
+    /// selects from it.
+    text_held: Option<(TextPoint, TextPoint, Unit)>,
 }
 
 impl Default for App {
@@ -210,6 +218,8 @@ impl Default for App {
             focus_terminal: false,
             terminal_anchor: None,
             terminal_scroll_rest: 0.0,
+            text_selection: None,
+            text_held: None,
         }
     }
 }
@@ -242,6 +252,7 @@ impl App {
             pointer: self.pointer,
             focused: self.focus.current(),
             elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
+            selection: self.text_selection,
         };
         let (width, height) = renderer.size();
         let state = self.model.get();
@@ -318,6 +329,10 @@ impl App {
     fn activate(&mut self, id: FocusId) {
         if is_menu_item(id) {
             self.menu_action(id);
+            return;
+        }
+        if is_message_menu_item(id) {
+            self.message_menu_action(id);
             return;
         }
         if let Some(index) = Screen::agent_of(id) {
@@ -539,9 +554,7 @@ impl App {
                     Some(id) if screen.header_of(id).is_some() => {
                         self.open_project_menu(screen.header_of(id).unwrap_or_default());
                     }
-                    _ => self
-                        .model
-                        .update(|state| *state = state.clone().without_menu()),
+                    _ => self.open_message_menu(),
                 }
             }
             PointerEvent::Pressed(Button::Left) => {
@@ -553,7 +566,11 @@ impl App {
                     .zip(self.pointer.position);
                 self.project_dragging = false;
                 if screen.list_menu_open()
-                    && !on.is_some_and(|id| is_project_menu_item(id) || is_session_menu_item(id))
+                    && !on.is_some_and(|id| {
+                        is_project_menu_item(id)
+                            || is_session_menu_item(id)
+                            || is_message_menu_item(id)
+                    })
                 {
                     self.model
                         .update(|state| *state = state.clone().without_menu());
@@ -563,6 +580,7 @@ impl App {
                         .update(|state| *state = state.clone().without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                self.text_press();
                 if self.focus.current() != self.pressed_on {
                     self.focus.clear();
                 }
@@ -579,6 +597,7 @@ impl App {
             PointerEvent::Moved(x, y) => {
                 self.drag_project((x, y));
                 self.terminal_drag((x, y));
+                self.text_drag((x, y));
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
                 {
@@ -588,6 +607,7 @@ impl App {
             PointerEvent::Released(Button::Left) => {
                 self.dragging = None;
                 self.terminal_anchor = None;
+                self.text_release();
                 if self.drop_project() {
                     self.pressed_on = None;
                     return;
@@ -842,7 +862,7 @@ impl App {
         if !event.pressed {
             return;
         }
-        if self.terminal_key(event) {
+        if self.terminal_key(event) || self.text_key(event) {
             return;
         }
         match event.key {

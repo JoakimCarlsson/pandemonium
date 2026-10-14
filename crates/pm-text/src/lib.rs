@@ -3,12 +3,15 @@
 //!
 //! The styling of text is `pm-typography`'s; this crate turns a string and a
 //! [`pm_typography::TypographyStyle`] into a [`Run`] of positioned glyphs,
-//! and a glyph into a coverage bitmap a renderer can draw.
+//! and a glyph into a coverage bitmap a renderer can draw. [`word_at`] finds
+//! the word around a place in a text.
 
 mod field;
 mod run;
 mod shaper;
+mod word;
 
 pub use field::{Edit, Field, Motion};
 pub use run::{Bitmap, GlyphKey, PlacedGlyph, Run};
 pub use shaper::{Extent, Shaper};
+pub use word::word_at;

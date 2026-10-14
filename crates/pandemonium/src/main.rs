@@ -83,6 +83,8 @@ fn main() {
             Some("unfolded") => Shot::Unfolded,
             Some("composing") => Shot::Composing,
             Some("terminalcomposing") => Shot::TerminalComposing,
+            Some("selecting") => Shot::Selecting,
+            Some("messagemenu") => Shot::MessageMenu,
             _ => Shot::Onboarding(pm_pages::Step::Welcome),
         };
         if let Err(error) = snapshot::write(
