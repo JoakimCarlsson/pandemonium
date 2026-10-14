@@ -68,6 +68,8 @@ fn main() {
             Some("placing") => Shot::Placing,
             Some("live") => Shot::Live,
             Some("asking") => Shot::Asking,
+            Some("background") => Shot::Background,
+            Some("subagents") => Shot::Agents,
             Some("queued") => Shot::Queued,
             Some("kept") => Shot::Kept,
             Some("restoring") => Shot::Restoring,

@@ -5,9 +5,9 @@ use pm_input::FocusId;
 
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
-    EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, Outgoing, PICK_BASE, PLACE_BASE,
-    PLAN_CHIP, Page, Picker, SETTING_BASE, SKILL_BUTTON, SLASH_BASE, SLASH_BUTTON, WorkspaceState,
-    prompt_field,
+    DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, Outgoing, PICK_BASE,
+    PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP, SKILL_BUTTON, SLASH_BASE,
+    SLASH_BUTTON, STEP_BASE, SUBAGENTS_CHIP, WorkspaceState, prompt_field,
 };
 
 /// How tall one value of a menu is, in logical pixels.
@@ -36,7 +36,11 @@ impl WorkspaceState {
 
     /// Whether pressing `action` leaves the open panel above the conversation's chips open.
     pub fn keeps_activity(action: FocusId) -> bool {
-        action == PLAN_CHIP || action == APPROVALS_CHIP
+        action == PLAN_CHIP
+            || action == APPROVALS_CHIP
+            || action == SUBAGENTS_CHIP
+            || action == SHELLS_CHIP
+            || (STEP_BASE..DETAILS_BASE).contains(&action.0)
     }
 
     /// What the agent about to be spoken to lets the reader change: the open session's, or the chosen agent's.
@@ -598,6 +602,11 @@ impl WorkspaceState {
         } else if id == APPROVALS_CHIP.0 {
             self.activity =
                 (self.activity != Some(Activity::Approvals)).then_some(Activity::Approvals);
+        } else if id == SUBAGENTS_CHIP.0 {
+            self.activity =
+                (self.activity != Some(Activity::Subagents)).then_some(Activity::Subagents);
+        } else if id == SHELLS_CHIP.0 {
+            self.activity = (self.activity != Some(Activity::Shells)).then_some(Activity::Shells);
         } else if let Some(index) = within(SETTING_BASE, SHOWN.len()) {
             let shown = Self::chips(self.settings_now());
             let wanted = shown.get(index).copied().map(Picker::Setting);

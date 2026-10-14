@@ -288,6 +288,8 @@ Events use serde's default form, one key naming the type.
 | `{"Said": "text"}`            | More of the agent's reply. Append it to the reply so far.                                                 |
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
+| `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
+| `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
@@ -304,8 +306,10 @@ Shapes used above:
 - **Setting:** `{id, category, name, current, picks: [{value, name, description}]}`.
   `category` is `model`, `mode`, `thought_level` or something else. Change one
   with `set` and a `value` from `picks`.
-- **Tool:** `{id, title, kind, state, target, diff, output}`, each but `id`
-  possibly null. `kind` is `Read`, `Edit`, `Search`, `Execute`, `Fetch` or
+- **Tool:** `{id, title, kind, state, target, diff, output, parent, agent}`,
+  each but `id` possibly null. `agent`, when set, says the call starts a
+  subagent of that kind; `parent` is the `id` of the subagent call whose work
+  this is. Both may be absent in older logs. `kind` is `Read`, `Edit`, `Search`, `Execute`, `Fetch` or
   `Other`. `state` is `Running`, `Done` or `Failed`. `diff` is
   `{path, old, new}`.
 - **PlanStep:** `{text, progress}` with `progress` one of `Pending`, `Doing`,

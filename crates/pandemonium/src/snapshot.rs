@@ -3,11 +3,11 @@
 use std::path::Path;
 
 use pm_acp::{
-    Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress, Setting, Slash,
-    Tool, ToolState, Verdict,
+    Background, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
+    Setting, Slash, Tool, ToolState, Verdict,
 };
 use pm_components::Project;
-use pm_components::state::{DETAILS_BASE, RESTORE_BASE};
+use pm_components::state::{DETAILS_BASE, RESTORE_BASE, SUBAGENTS_CHIP};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
     HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL, WorkspaceState,
@@ -64,6 +64,10 @@ pub enum Shot {
     Live,
     /// A conversation whose agent waits for permission.
     Asking,
+    /// A conversation whose turn ended while two subagents and a command were still running.
+    Background,
+    /// The same conversation with the subagents above the prompt box open.
+    Agents,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
     /// A conversation with the model menu open.
@@ -192,6 +196,10 @@ impl Shot {
             }
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
+            Self::Background => Screen::Workspace(live(Turn::Background)),
+            Self::Agents => {
+                Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
+            }
             Self::Queued => Screen::Workspace(queued()),
             Self::Kept => Screen::Workspace(kept()),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
@@ -305,6 +313,8 @@ enum Turn {
     Asking,
     /// The agent is still on it.
     Working,
+    /// The agent finished it with subagents and a command left running.
+    Background,
 }
 
 /// A conversation on a turn, with two prompts waiting behind it and a third being written.
@@ -354,6 +364,8 @@ fn live(turn: Turn) -> WorkspaceState {
         target: Some(target.to_owned()),
         diff: None,
         output: None,
+        parent: None,
+        agent: None,
     };
     let mut state = WorkspaceState::new(&projects())
         .edited(
@@ -451,6 +463,37 @@ fn live(turn: Turn) -> WorkspaceState {
         }));
     } else if turn == Turn::Finished {
         events.push(Event::Finished(None));
+    } else if turn == Turn::Background {
+        let agent = |id: &str, title: &str| Tool {
+            state: Some(ToolState::Running),
+            agent: Some("explore".to_owned()),
+            ..tool(id, title, Kind::Other, title)
+        };
+        let child = |id: &str, parent: &str, target: &str| Tool {
+            parent: Some(parent.to_owned()),
+            ..tool(id, "Grep", Kind::Search, target)
+        };
+        events.extend([
+            Event::Tool(agent("a1", "Find every caller of Session::new")),
+            Event::Tool(agent(
+                "a2",
+                "Check how worktrees are located from a session root",
+            )),
+            Event::Tool(child("c1", "a1", "Session::new")),
+            Event::Tool(child("c2", "a1", "Session::default")),
+            Event::Tool(child("c3", "a2", "worktree_root")),
+            Event::Tool(Tool {
+                state: Some(ToolState::Running),
+                ..tool("s1", "Terminal", Kind::Execute, "cargo watch -x test")
+            }),
+            Event::Background(Background {
+                id: "s1".to_owned(),
+                label: "cargo watch -x test".to_owned(),
+                running: true,
+                call: Some("s1".to_owned()),
+            }),
+            Event::Finished(None),
+        ]);
     }
     for event in events {
         state = state.heard(0, event);

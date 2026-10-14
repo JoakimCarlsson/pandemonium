@@ -8,17 +8,19 @@
 mod account;
 mod agent;
 mod attachment;
+mod background;
 mod chat;
 mod client;
 mod install;
 mod login;
 mod profile;
 mod standing;
+mod subagent;
 
 pub use account::{account, default_account, skill_names};
 pub use agent::{AGENTS, Agent, Source};
 pub use chat::{
-    Chat, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress, Setting,
-    Slash, Tool, ToolState, Verdict, discover, skills,
+    Background, Chat, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
+    Setting, Slash, Tool, ToolState, Verdict, discover, skills,
 };
 pub use standing::{Login, Standing, Way};

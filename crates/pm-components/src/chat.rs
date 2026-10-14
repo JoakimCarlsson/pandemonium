@@ -164,7 +164,9 @@ fn agent_message(
             Some(_) => "Worked".to_owned(),
             None => "Working".to_owned(),
         };
-        let count = to - from;
+        let count = (from..to)
+            .filter(|position| !crate::steps::is_inside_card(&message.steps, *position))
+            .count();
         node()
             .styles([flex(), flex_col(), gap(1)])
             .child(
@@ -199,8 +201,8 @@ fn agent_message(
             )
             .children(open.then(|| {
                 steps(
-                    &message.steps[from..to],
-                    from,
+                    &message.steps,
+                    from..to,
                     index,
                     |position| page.is_some_and(|open| held.contains(&(open, index, position))),
                     &root,
@@ -325,7 +327,7 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
             border_b(),
             border_color(Role::Border),
         ])
-        .child(status_icon(session.status))
+        .child(status_icon(session.shown()))
         .child(clipped(&session.title, 14, Role::Text).styles([flex_1()]));
     if !session.branch.is_empty() {
         strip = strip.child(
@@ -427,7 +429,7 @@ pub fn chat(
         messages = messages.child(
             node()
                 .styles([flex(), items_center(), gap(2)])
-                .child(status_icon(session.status))
+                .child(status_icon(session.shown()))
                 .child(line("Thinking…", 13, 1.4, Role::Muted)),
         );
     }

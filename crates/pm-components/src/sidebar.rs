@@ -87,7 +87,7 @@ fn session_row(index: usize, session: &Session, selected: bool) -> Node {
         .selected(selected)
         .build()
         .styles([pl(3.5), pr(2)])
-        .child(status_icon(session.status))
+        .child(status_icon(session.shown()))
         .child(clipped(&session.title, 14, Role::Text))
         .child(line(session.age(), 12, 1.4, Role::Subtle))
 }

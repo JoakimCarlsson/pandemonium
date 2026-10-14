@@ -122,6 +122,12 @@ pub const PLAN_CHIP: FocusId = FocusId(4270);
 /// Opens the questions waiting for an answer above the prompt box.
 pub const APPROVALS_CHIP: FocusId = FocusId(4271);
 
+/// Opens the subagents the agent started above the prompt box.
+pub const SUBAGENTS_CHIP: FocusId = FocusId(4272);
+
+/// Opens the commands the agent left running above the prompt box.
+pub const SHELLS_CHIP: FocusId = FocusId(4273);
+
 /// The body of the terminal dock, which takes the keyboard while it has focus.
 pub const TERMINAL_BODY: FocusId = FocusId(323);
 
@@ -419,6 +425,10 @@ pub enum Activity {
     Plan,
     /// The questions waiting for an answer.
     Approvals,
+    /// The subagents the agent started.
+    Subagents,
+    /// The commands the agent left running.
+    Shells,
 }
 
 /// What the main area shows.
@@ -813,7 +823,7 @@ impl WorkspaceState {
     pub fn waiting(&self) -> bool {
         self.sessions
             .iter()
-            .any(|session| session.status == Status::Working)
+            .any(|session| session.status == Status::Working || session.background_running())
     }
 
     /// The state after one of the rows or chips numbered from a base was pressed.

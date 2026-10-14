@@ -149,7 +149,7 @@ impl Client {
     pub(crate) fn initialize(&mut self, patience: Duration) -> Result<Value, String> {
         match self.ask(
             "initialize",
-            &json!({ "protocolVersion": 1, "clientCapabilities": { "terminal": true, "auth": { "terminal": true } } }),
+            &json!({ "protocolVersion": 1, "clientCapabilities": { "terminal": true, "auth": { "terminal": true }, "subagents": {}, "_meta": { "jetbrains": { "air": { "version": 1, "capabilities": ["asyncTasks"] } } } } }),
             patience,
         )? {
             Answer::Result(result) => Ok(result),

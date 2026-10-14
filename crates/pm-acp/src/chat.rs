@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::agent::Agent;
+use crate::background::{self, Shells};
 use crate::client::{Answer, Client, Heard, LOGIN_REQUIRED, answer};
+use crate::subagent::Subagents;
 
 /// How long an agent that is already installed has to start and open a conversation.
 const QUICK: Duration = Duration::from_secs(60);
@@ -81,6 +83,26 @@ pub struct Tool {
     pub diff: Option<Diff>,
     /// What it printed, when it did.
     pub output: Option<String>,
+    /// The call of the subagent whose work this is, when it is a subagent's.
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// The kind of subagent this call starts, when it starts one.
+    #[serde(default)]
+    pub agent: Option<String>,
+}
+
+/// A command or task that goes on running beyond the call that started it.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Background {
+    /// The handle the agent knows it by.
+    pub id: String,
+    /// The command or task that was started.
+    pub label: String,
+    /// Whether it still runs.
+    pub running: bool,
+    /// The call that started it, when the agent said so.
+    #[serde(default)]
+    pub call: Option<String>,
 }
 
 /// What a permission choice amounts to.
@@ -196,6 +218,10 @@ pub enum Event {
     Thought(String),
     /// The agent started using a tool, or said more about one it was using.
     Tool(Tool),
+    /// A command or task left running beyond its call started, or ended.
+    Background(Background),
+    /// The turn was stopped, so that nothing the agent had running goes on.
+    Halted,
     /// The agent's plan, whole, as it stands now.
     Plan(Vec<PlanStep>),
     /// The agent waits for an answer to this.
@@ -600,6 +626,14 @@ struct Waiting {
     images: bool,
     /// Whether the agent takes the contents of files inside a prompt.
     embeds: bool,
+    /// The commands and tasks running beyond the turn, by handle.
+    shells: Shells,
+    /// The commands in the turn that have not ended, by call.
+    running: Shells,
+    /// The subagents the agent announced.
+    subagents: Subagents,
+    /// Whether the reader stopped the turn that is running.
+    cancelled: bool,
 }
 
 /// Passes commands to the agent and what it says back, until the chat is
@@ -619,6 +653,10 @@ fn converse(
         sets: HashSet::new(),
         asked: HashMap::new(),
         tickets: 0,
+        shells: Shells::new(),
+        running: Shells::new(),
+        subagents: Subagents::default(),
+        cancelled: false,
     };
     loop {
         loop {
@@ -633,7 +671,7 @@ fn converse(
             Heard::Silence => continue,
             Heard::Closed => return Err("the agent stopped".to_owned()),
         };
-        hear_agent(client, &mut waiting, &message, events)?;
+        hear_agent(client, session, &mut waiting, &message, events)?;
     }
 }
 
@@ -664,6 +702,7 @@ fn command_agent(
             }
         }
         Command::Cancel => {
+            waiting.cancelled = true;
             for (_, id) in waiting.asked.drain() {
                 client.respond(&id, &outcome(None))?;
             }
@@ -690,6 +729,7 @@ fn command_agent(
 /// Takes in one message the agent wrote.
 fn hear_agent(
     client: &mut Client,
+    session: &str,
     waiting: &mut Waiting,
     message: &Value,
     events: &Sender<Event>,
@@ -702,7 +742,7 @@ fn hear_agent(
         }
         (Some(_), Some(id)) => client.refuse(id, NO_SUCH_METHOD, "not supported")?,
         (Some("session/update"), None) => {
-            for event in update(&message["params"]["update"]) {
+            for event in updated(session, waiting, &message["params"]) {
                 let _ = events.send(event);
             }
         }
@@ -711,10 +751,16 @@ fn hear_agent(
             let id = id.as_u64();
             if id.is_some() && id == waiting.turn {
                 waiting.turn = None;
-                let error = match answer(message) {
-                    Answer::Result(_) => None,
-                    Answer::Error(_, message) => Some(message),
+                let (error, stopped) = match answer(message) {
+                    Answer::Result(result) => {
+                        (None, result["stopReason"].as_str() == Some("cancelled"))
+                    }
+                    Answer::Error(_, message) => (Some(message), true),
                 };
+                for event in turn_ended(waiting, stopped || waiting.cancelled) {
+                    let _ = events.send(event);
+                }
+                waiting.cancelled = false;
                 let _ = events.send(Event::Finished(error));
             } else if id.is_some_and(|id| waiting.sets.remove(&id))
                 && message["result"]["configOptions"].is_array()
@@ -725,6 +771,56 @@ fn hear_agent(
         (None, None) => {}
     }
     Ok(())
+}
+
+/// What an update of the conversation amounts to, the subagents' and the background work's included.
+fn updated(session: &str, waiting: &mut Waiting, params: &Value) -> Vec<Event> {
+    let from = params["sessionId"].as_str().unwrap_or(session);
+    let update = &params["update"];
+    let mut found = waiting.subagents.events(session, from, update);
+    if found.is_empty() && !waiting.subagents.is_child(from) {
+        found = self::update(update);
+    }
+    if from == session {
+        track_commands(waiting, update);
+        found.extend(background::background(update, &mut waiting.shells));
+    }
+    found
+}
+
+/// Keeps count of the commands of the turn that are yet to end.
+fn track_commands(waiting: &mut Waiting, update: &Value) {
+    if !matches!(
+        update["sessionUpdate"].as_str(),
+        Some("tool_call" | "tool_call_update")
+    ) {
+        return;
+    }
+    let Some(id) = update["toolCallId"].as_str() else {
+        return;
+    };
+    if matches!(
+        update["status"].as_str(),
+        Some("completed" | "failed" | "cancelled")
+    ) {
+        waiting.running.remove(id);
+    } else if update["kind"].as_str() == Some("execute") {
+        let label = background::command(&update["rawInput"])
+            .or_else(|| update["title"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| "Command".to_owned());
+        waiting.running.insert(id.to_owned(), label);
+    }
+}
+
+/// What the end of a turn means for the work it left running: all of it ends when the turn was `stopped`, and what is a command still going carries on otherwise.
+fn turn_ended(waiting: &mut Waiting, stopped: bool) -> Vec<Event> {
+    let running = std::mem::take(&mut waiting.running);
+    if stopped {
+        let mut ended = background::abandon(&mut waiting.shells);
+        ended.push(Event::Halted);
+        return ended;
+    }
+    background::outliving(&running, &mut waiting.shells)
 }
 
 /// The answer to a permission request that picks `option`, or declines when there is none.
@@ -817,7 +913,7 @@ fn update(update: &Value) -> Vec<Event> {
 }
 
 /// The tool a `tool_call` or `tool_call_update` describes.
-fn tool(update: &Value) -> Option<Tool> {
+pub(crate) fn tool(update: &Value) -> Option<Tool> {
     let content = update["content"].as_array();
     let diff = content
         .into_iter()
@@ -844,7 +940,9 @@ fn tool(update: &Value) -> Option<Tool> {
         .or_else(|| input["pattern"].as_str())
         .or_else(|| input["query"].as_str())
         .or_else(|| input["url"].as_str())
+        .or_else(|| input["description"].as_str())
         .map(str::to_owned);
+    let agent = subagent_kind(update);
     Some(Tool {
         id: update["toolCallId"].as_str()?.to_owned(),
         title: update["title"].as_str().map(str::to_owned),
@@ -864,5 +962,20 @@ fn tool(update: &Value) -> Option<Tool> {
         target,
         diff,
         output: (!printed.is_empty()).then(|| printed.join("\n")),
+        parent: update["_meta"]["claudeCode"]["parentToolUseId"]
+            .as_str()
+            .map(str::to_owned),
+        agent,
     })
+}
+
+/// The kind of subagent a call starts, when it is one that does.
+fn subagent_kind(update: &Value) -> Option<String> {
+    let names = [
+        update["name"].as_str(),
+        update["_meta"]["claudeCode"]["toolName"].as_str(),
+    ];
+    let named = names.contains(&Some("Task")) || names.contains(&Some("Agent"));
+    let typed = update["rawInput"]["subagent_type"].as_str();
+    (named || typed.is_some()).then(|| typed.unwrap_or("agent").to_owned())
 }

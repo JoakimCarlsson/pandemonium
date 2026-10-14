@@ -4,17 +4,20 @@ use pm_acp::Progress;
 use pm_icon::IconName;
 use pm_style::primitives::{Length, Sides};
 use pm_style::{
-    Radius, Role, absolute, bg, border, border_color, cursor_pointer, flex, flex_col, flex_wrap,
-    gap, h, inset_length, items_center, left, mb, p, px, relative, rounded, rounded_full,
-    shadow_md, size, w_full, z,
+    Radius, Role, absolute, animate_spin, bg, border, border_color, cursor_pointer, flex, flex_col,
+    flex_none, flex_wrap, gap, h, inset_length, items_center, left, mb, p, px, py, relative,
+    rounded, rounded_full, shadow_md, size, w_full, z,
 };
 use pm_ui::{Node, node};
 
 use crate::Chip;
 use crate::Tally;
+use crate::parts::{clipped, glyph, line};
 use crate::sample::{Session, Step};
-use crate::state::{APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, WorkspaceState};
-use crate::steps::{plan, question};
+use crate::state::{
+    APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, SHELLS_CHIP, SUBAGENTS_CHIP, WorkspaceState,
+};
+use crate::steps::{elapsed, plan, question, subagents};
 
 /// The plan the agent keeps, the latest one of its replies, if it keeps one.
 fn latest_plan(session: &Session) -> Option<&[pm_acp::PlanStep]> {
@@ -29,11 +32,83 @@ fn latest_plan(session: &Session) -> Option<&[pm_acp::PlanStep]> {
         })
 }
 
+/// The card of the commands the agent left running, with how long each has gone on.
+fn shells(session: &Session) -> Node {
+    node()
+        .styles([
+            flex(),
+            flex_col(),
+            gap(2),
+            px(3.5),
+            py(3),
+            rounded(Radius::Lg),
+            border(),
+            border_color(Role::Border),
+            bg(Role::Surface),
+        ])
+        .child(line(
+            format!("{} running", session.shells.len()),
+            12,
+            1.4,
+            Role::Muted,
+        ))
+        .children(session.shells.iter().map(|shell| {
+            node()
+                .styles([flex(), items_center(), gap(2.5)])
+                .child(glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]))
+                .child(clipped(&shell.label, 13, Role::Text))
+                .child(
+                    line(
+                        elapsed(shell.started.elapsed().as_secs()),
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    )
+                    .styles([flex_none()]),
+                )
+        }))
+}
+
+/// The card of the subagents of the latest reply that started any, or nothing when none was started.
+fn subagent_panel(state: &WorkspaceState, session: &Session) -> Option<Node> {
+    let (reply, _, _) = *session
+        .subagents()
+        .iter()
+        .rev()
+        .find(|(_, _, tool)| tool.is_working_agent())?;
+    let positions: Vec<usize> = session
+        .subagents()
+        .into_iter()
+        .filter(|(held, _, _)| *held == reply)
+        .map(|(_, position, _)| position)
+        .collect();
+    let page = state.open_index();
+    let held = state.opened.clone();
+    let root = state.projects[session.project].directory();
+    Some(subagents(
+        &session.messages[reply].steps,
+        &positions,
+        reply,
+        &|position| page.is_some_and(|open| held.contains(&(open, reply, position))),
+        &root.to_string_lossy(),
+    ))
+}
+
 /// The chips for `session`, or nothing when there is nothing to sum up.
 pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
     let plan_items = latest_plan(session);
     let awaiting = usize::from(session.ask.is_some());
-    if plan_items.is_none() && awaiting == 0 && session.changes.is_empty() {
+    let working_agents = session
+        .subagents()
+        .iter()
+        .filter(|(_, _, tool)| tool.is_working_agent())
+        .count();
+    if plan_items.is_none()
+        && awaiting == 0
+        && session.changes.is_empty()
+        && working_agents == 0
+        && session.shells.is_empty()
+    {
         return None;
     }
     let mut bar = node().styles([
@@ -48,6 +123,8 @@ pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
         let panel = match open {
             Activity::Plan => plan_items.map(plan),
             Activity::Approvals => session.ask.as_ref().map(question),
+            Activity::Subagents => subagent_panel(state, session),
+            Activity::Shells => (!session.shells.is_empty()).then(|| shells(session)),
         };
         if let Some(panel) = panel {
             bar = bar.child(
@@ -90,6 +167,29 @@ pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
                 .icon(IconName::CheckCircle)
                 .selected(state.activity == Some(Activity::Plan))
                 .build(),
+        );
+    }
+    if working_agents > 0 {
+        bar = bar.child(
+            Chip::new(format!("{working_agents} running"), SUBAGENTS_CHIP)
+                .mark(glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]))
+                .selected(state.activity == Some(Activity::Subagents))
+                .build(),
+        );
+    }
+    if !session.shells.is_empty() {
+        let count = session.shells.len();
+        bar = bar.child(
+            Chip::new(
+                format!(
+                    "{count} {} running",
+                    if count == 1 { "command" } else { "commands" }
+                ),
+                SHELLS_CHIP,
+            )
+            .mark(glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]))
+            .selected(state.activity == Some(Activity::Shells))
+            .build(),
         );
     }
     if !session.changes.is_empty() {

@@ -4,9 +4,10 @@ use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Progress, ToolState, 
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Color, Radius, Role, animate_spin, bg, border, border_color, border_l, cursor_pointer, flex,
-    flex_1, flex_col, flex_none, font_mono, gap, items_center, leading_ratio, min_h, min_w_px, my,
-    overflow_hidden, pl, px, py, rounded, rounded_full, size, text_color, text_px, w_full,
+    Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
+    cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap, h, items_center,
+    leading_ratio, min_h, min_w_px, my, overflow_hidden, pb, pl, pr, px, py, rounded, rounded_full,
+    size, text_color, text_px, w_full,
 };
 use pm_ui::{Node, node, text};
 
@@ -209,6 +210,11 @@ fn tool_detail(tool: &ToolUse) -> Option<Node> {
 
 /// One tool of the steps.
 fn tool_step(tool: &ToolUse, root: &str, id: FocusId, open: bool) -> Node {
+    tool_line(tool, root, id, open, true)
+}
+
+/// One tool of the steps, folding out its detail only when `foldable`.
+fn tool_line(tool: &ToolUse, root: &str, id: FocusId, open: bool, foldable: bool) -> Node {
     let target = tool.target.as_deref().map(|target| relative(target, root));
     let (verb, shown, detail) = match tool.kind {
         ToolKind::Read => ("Read", target, None),
@@ -227,18 +233,30 @@ fn tool_step(tool: &ToolUse, root: &str, id: FocusId, open: bool) -> Node {
         ToolKind::Execute => (
             "Ran",
             target,
-            tool.seconds.map(|seconds| {
-                let (word, tone) = if tool.state == ToolState::Failed {
-                    ("failed", Role::Danger)
-                } else {
-                    ("passed", Role::Success)
-                };
-                line(format!("{word} · {seconds}s"), 11, 1.4, tone).styles([flex_none()])
-            }),
+            match (tool.seconds, tool.state) {
+                (Some(seconds), state) => {
+                    let (word, tone) = if state == ToolState::Failed {
+                        ("failed", Role::Danger)
+                    } else {
+                        ("passed", Role::Success)
+                    };
+                    Some(line(format!("{word} · {seconds}s"), 11, 1.4, tone).styles([flex_none()]))
+                }
+                (None, ToolState::Running) => Some(
+                    line(
+                        format!("running · {}", elapsed(tool.started.elapsed().as_secs())),
+                        11,
+                        1.4,
+                        Role::Muted,
+                    )
+                    .styles([flex_none()]),
+                ),
+                (None, _) => None,
+            },
         ),
         ToolKind::Fetch | ToolKind::Other => (tool.title.as_str(), None, None),
     };
-    let expandable = tool_detail(tool).is_some();
+    let expandable = foldable && tool_detail(tool).is_some();
     let mut step = node()
         .styles([flex(), flex_col(), w_full()])
         .child(step_line(
@@ -253,6 +271,169 @@ fn tool_step(tool: &ToolUse, root: &str, id: FocusId, open: bool) -> Node {
         step = step.child(detail);
     }
     step
+}
+
+/// How long something has gone on, in words: `42s` or `3m 05s`.
+pub fn elapsed(seconds: u64) -> String {
+    if seconds >= 60 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+/// The mark of how a subagent is getting on: a turning ring, a dot once it is done, or a cross.
+fn agent_mark(state: ToolState) -> Node {
+    let slot = node().styles([flex(), items_center(), size(4), flex_none()]);
+    slot.child(match state {
+        ToolState::Running => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
+        ToolState::Done => node().styles([size(1.5), rounded_full(), bg(Role::Subtle)]),
+        ToolState::Failed => glyph(IconName::Close, 3.5, Role::Danger),
+    })
+}
+
+/// The steps of `all` that are the work of the subagent `parent`.
+fn beneath<'a>(all: &'a [Step], parent: &str) -> Vec<&'a ToolUse> {
+    all.iter()
+        .filter_map(|step| match step {
+            Step::Tool(tool) if tool.parent.as_deref() == Some(parent) => Some(tool),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether the step at `position` of `all` is a tool of a subagent that the steps hold, which its card shows.
+pub fn is_inside_card(all: &[Step], position: usize) -> bool {
+    let Step::Tool(tool) = &all[position] else {
+        return false;
+    };
+    tool.parent.as_deref().is_some_and(|parent| {
+        all.iter()
+            .any(|step| matches!(step, Step::Tool(held) if held.id == parent && held.is_subagent()))
+    })
+}
+
+/// The card of subagents: how many there are and how many are at work, then a row for each that folds out the tools it used.
+///
+/// `at` are the positions in `all`, the steps of the reply at `message`, of the tools that start them.
+pub fn subagents(
+    all: &[Step],
+    at: &[usize],
+    message: usize,
+    opened: &dyn Fn(usize) -> bool,
+    root: &str,
+) -> Node {
+    let agents: Vec<(usize, &ToolUse)> = at
+        .iter()
+        .filter_map(|position| match &all[*position] {
+            Step::Tool(tool) => Some((*position, tool)),
+            _ => None,
+        })
+        .collect();
+    let working = agents
+        .iter()
+        .filter(|(_, tool)| tool.is_working_agent())
+        .count();
+    let title = match (agents.len(), working) {
+        (1, 0) => "1 subagent".to_owned(),
+        (count, 0) => format!("{count} subagents"),
+        (1, _) => "1 subagent · running".to_owned(),
+        (count, working) => format!("{count} subagents · {working} running"),
+    };
+    let header = node()
+        .styles([
+            flex(),
+            items_center(),
+            gap(2.5),
+            px(3.5),
+            h(10),
+            border_b(),
+            border_color(Role::Border),
+        ])
+        .child(glyph(IconName::GitFork, 4.0, Role::Muted))
+        .child(line(title, 13, 1.4, Role::Text));
+    let rows = agents.into_iter().map(|(position, tool)| {
+        let used = beneath(all, &tool.id);
+        let open = opened(position);
+        let id = FocusId(STEP_BASE + (message * 1000 + position) as u64);
+        let described = tool.target.as_deref().unwrap_or(&tool.title);
+        let mut row = node().styles([flex(), flex_col(), w_full()]).child(
+            node()
+                .styles([
+                    flex(),
+                    items_center(),
+                    gap(2.5),
+                    px(3.5),
+                    min_h(10),
+                    min_w_px(0),
+                    cursor_pointer(),
+                    bg(Role::SurfaceHover).hover(),
+                ])
+                .child(agent_mark(tool.state))
+                .children((tool.agent.as_deref() != Some("agent")).then(|| {
+                    node()
+                        .styles([
+                            flex(),
+                            flex_none(),
+                            px(1.5),
+                            rounded(Radius::Md),
+                            bg(Role::SurfaceHover),
+                        ])
+                        .child(text(tool.agent.clone().unwrap_or_default()).styles([
+                            text_px(12),
+                            leading_ratio(1.4),
+                            font_mono(),
+                            text_color(Role::Muted),
+                        ]))
+                }))
+                .child(clipped(described, 13, Role::Text))
+                .child(
+                    line(
+                        match used.len() {
+                            1 => "1 tool".to_owned(),
+                            count => format!("{count} tools"),
+                        },
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    )
+                    .styles([flex_none()]),
+                )
+                .child(glyph(
+                    if open {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    },
+                    3.5,
+                    Role::Subtle,
+                ))
+                .focusable(id),
+        );
+        if open && !used.is_empty() {
+            row = row.child(
+                node()
+                    .styles([flex(), flex_col(), gap(1), pl(10), pr(3.5), pb(2)])
+                    .children(
+                        used.into_iter()
+                            .map(|tool| tool_line(tool, root, FocusId(0), false, false)),
+                    ),
+            );
+        }
+        row
+    });
+    node()
+        .styles([
+            flex(),
+            flex_col(),
+            rounded(Radius::Lg),
+            border(),
+            border_color(Role::Border),
+            bg(Role::Surface),
+            overflow_hidden(),
+        ])
+        .child(header)
+        .children(rows)
 }
 
 /// The agent's plan as a checklist with how far it has got.
@@ -310,15 +491,69 @@ pub fn plan(items: &[PlanStep]) -> Node {
         }))
 }
 
-/// The steps of the reply at `message` that start at position `first` of its steps: one line each, the plan as a card.
+/// The steps of the reply at `message`, held in `all`, from position `range.start` to `range.end`: one line each, the plan as a card and the subagents together in one.
 pub fn steps(
-    steps: &[Step],
-    first: usize,
+    all: &[Step],
+    range: std::ops::Range<usize>,
     message: usize,
     opened: impl Fn(usize) -> bool,
     root: &str,
     width: f32,
 ) -> Node {
+    let mut shown: Vec<Node> = Vec::new();
+    let mut agents: Vec<usize> = Vec::new();
+    let flush = |shown: &mut Vec<Node>, agents: &mut Vec<usize>| {
+        if !agents.is_empty() {
+            shown.push(subagents(all, agents, message, &opened, root));
+            agents.clear();
+        }
+    };
+    for position in range {
+        if is_inside_card(all, position) {
+            continue;
+        }
+        let id = FocusId(STEP_BASE + (message * 1000 + position) as u64);
+        let open = opened(position);
+        match &all[position] {
+            Step::Tool(tool) if tool.is_subagent() => agents.push(position),
+            Step::Tool(tool) => {
+                flush(&mut shown, &mut agents);
+                shown.push(tool_step(tool, root, id, open));
+            }
+            Step::Plan(items) => {
+                flush(&mut shown, &mut agents);
+                shown.push(plan(items));
+            }
+            Step::Thought(thought) => {
+                flush(&mut shown, &mut agents);
+                let label = match thought.seconds {
+                    Some(seconds) => format!("Thought for {seconds}s"),
+                    None => "Thinking".to_owned(),
+                };
+                let mut held = node()
+                    .styles([flex(), flex_col(), w_full()])
+                    .child(step_line(
+                        glyph(IconName::Sparkles, 3.5, Role::Subtle),
+                        &label,
+                        None,
+                        None,
+                        Some(id),
+                        open,
+                    ));
+                if open {
+                    held = held.child(
+                        node().styles([flex(), flex_col(), my(1), pl(4)]).children(
+                            wrap(&thought.text, 13, width - 40.0)
+                                .into_iter()
+                                .map(|piece| line(piece, 13, 1.6, Role::Subtle)),
+                        ),
+                    );
+                }
+                shown.push(held);
+            }
+        }
+    }
+    flush(&mut shown, &mut agents);
     node()
         .styles([
             flex(),
@@ -328,41 +563,7 @@ pub fn steps(
             border_l(),
             border_color(Role::Border),
         ])
-        .children(steps.iter().enumerate().map(|(offset, step)| {
-            let position = first + offset;
-            let id = FocusId(STEP_BASE + (message * 1000 + position) as u64);
-            let open = opened(position);
-            match step {
-                Step::Tool(tool) => tool_step(tool, root, id, open),
-                Step::Plan(items) => plan(items),
-                Step::Thought(thought) => {
-                    let label = match thought.seconds {
-                        Some(seconds) => format!("Thought for {seconds}s"),
-                        None => "Thinking".to_owned(),
-                    };
-                    let mut held = node()
-                        .styles([flex(), flex_col(), w_full()])
-                        .child(step_line(
-                            glyph(IconName::Sparkles, 3.5, Role::Subtle),
-                            &label,
-                            None,
-                            None,
-                            Some(id),
-                            open,
-                        ));
-                    if open {
-                        held = held.child(
-                            node().styles([flex(), flex_col(), my(1), pl(4)]).children(
-                                wrap(&thought.text, 13, width - 40.0)
-                                    .into_iter()
-                                    .map(|piece| line(piece, 13, 1.6, Role::Subtle)),
-                            ),
-                        );
-                    }
-                    held
-                }
-            }
-        }))
+        .children(shown)
 }
 
 /// The card that asks whether the agent may go ahead: what it wants to do and a button for each answer.

@@ -203,6 +203,35 @@ pub struct ToolUse {
     pub started: Instant,
     /// How many seconds it took, once it has ended.
     pub seconds: Option<u64>,
+    /// The subagent call whose work this is, when it is one of a subagent's.
+    pub parent: Option<String>,
+    /// The kind of subagent it starts, when it starts one.
+    pub agent: Option<String>,
+}
+
+impl ToolUse {
+    /// Whether it starts a subagent.
+    pub fn is_subagent(&self) -> bool {
+        self.agent.is_some()
+    }
+
+    /// Whether it is a subagent still at work.
+    pub fn is_working_agent(&self) -> bool {
+        self.is_subagent() && self.state == ToolState::Running
+    }
+}
+
+/// A command or task that goes on running beyond the call that started it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shell {
+    /// The handle the agent knows it by.
+    pub id: String,
+    /// The command or task that was started.
+    pub label: String,
+    /// The call that started it, which stays running as long as it does.
+    pub call: Option<String>,
+    /// When it was first heard of.
+    pub started: Instant,
 }
 
 impl Message {
@@ -314,6 +343,8 @@ pub struct Session {
     pub terminals: Vec<TerminalTab>,
     /// Which of the shells shows, by position.
     pub terminal_active: usize,
+    /// The commands and tasks the agent left running beyond its turn.
+    pub shells: Vec<Shell>,
 }
 
 impl Session {
@@ -348,6 +379,7 @@ impl Session {
             closed: false,
             terminals: Vec::new(),
             terminal_active: 0,
+            shells: Vec::new(),
         }
     }
 
@@ -411,6 +443,44 @@ impl Session {
         self.messages
             .iter()
             .rposition(|message| !message.steps.is_empty())
+    }
+
+    /// The tools of every reply that start subagents, oldest first, each with the position of its reply and of its step.
+    pub fn subagents(&self) -> Vec<(usize, usize, &ToolUse)> {
+        self.messages
+            .iter()
+            .enumerate()
+            .flat_map(|(reply, message)| {
+                message
+                    .steps
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(position, step)| match step {
+                        Step::Tool(tool) if tool.is_subagent() => Some((reply, position, tool)),
+                        _ => None,
+                    })
+            })
+            .collect()
+    }
+
+    /// Whether something the agent started is still running, although its turn may be over.
+    pub fn background_running(&self) -> bool {
+        !self.shells.is_empty()
+            || self.messages.iter().any(|message| {
+                message
+                    .steps
+                    .iter()
+                    .any(|step| matches!(step, Step::Tool(tool) if tool.is_working_agent()))
+            })
+    }
+
+    /// Where it stands as the reader should see it: at work while the agent has anything running.
+    pub fn shown(&self) -> Status {
+        if self.status != Status::Working && self.background_running() {
+            Status::Working
+        } else {
+            self.status
+        }
     }
 
     /// How many lines all its changes put in.
