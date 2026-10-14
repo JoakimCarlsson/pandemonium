@@ -272,8 +272,8 @@ pub struct Session {
     pub agent: usize,
     /// Where it stands.
     pub status: Status,
-    /// How long ago it last changed.
-    pub updated: String,
+    /// When it last changed, in milliseconds since the epoch.
+    pub updated_at: u64,
     /// The conversation so far.
     pub messages: Vec<Message>,
     /// The files it changed that are not committed.
@@ -307,7 +307,7 @@ impl Session {
         project: usize,
         branch: &str,
         status: Status,
-        updated: &str,
+        minutes_ago: u64,
         messages: Vec<Message>,
     ) -> Self {
         Self {
@@ -318,7 +318,7 @@ impl Session {
             base: None,
             agent: 0,
             status,
-            updated: updated.to_owned(),
+            updated_at: crate::age::now().saturating_sub(minutes_ago * 60_000),
             messages,
             changes: Vec::new(),
             commits: Vec::new(),
@@ -354,12 +354,17 @@ impl Session {
         agent: usize,
         closed: bool,
     ) -> Self {
-        let mut session = Self::new(title, project, branch, Status::Done, "", Vec::new());
+        let mut session = Self::new(title, project, branch, Status::Done, 0, Vec::new());
         session.closed = closed;
         session.directory = directory.to_owned();
         session.base = base;
         session.agent = agent;
         session
+    }
+
+    /// How long ago it last changed, in the short form the lists show.
+    pub fn age(&self) -> String {
+        crate::age::label(self.updated_at, crate::age::now())
     }
 
     /// A session just handed `prompt`, working on it, called `title`, in `project`.
@@ -369,7 +374,7 @@ impl Session {
             project,
             "task/new",
             Status::Working,
-            "now",
+            0,
             vec![Message::user(prompt)],
         );
         session.echoes = 1;
@@ -412,7 +417,7 @@ pub fn sessions() -> Vec<Session> {
         0,
         "task/227-checkpoints",
         Status::Review,
-        "now",
+        0,
         vec![
             Message::user(
                 "Sessions lose their place when the app restarts. Add checkpoints so I can return to any point in a session.",
@@ -463,7 +468,7 @@ pub fn sessions() -> Vec<Session> {
         0,
         "task/231-titles",
         Status::Review,
-        "12m",
+        12,
         vec![
             Message::user(
                 "New sessions are all called \"Untitled\". Name them from the first prompt.",
@@ -488,7 +493,7 @@ pub fn sessions() -> Vec<Session> {
             0,
             "task/233-worktrees",
             Status::Working,
-            "4m",
+            4,
             vec![
                 Message::user(
                     "Worktrees pile up in .pandemonium after sessions end. Clean them up when a session is closed.",
@@ -505,7 +510,7 @@ pub fn sessions() -> Vec<Session> {
             0,
             "main",
             Status::Working,
-            "18m",
+            18,
             vec![
                 Message::user("Typing in large files feels laggy. Find out why and fix it."),
                 Message::agent(
@@ -520,7 +525,7 @@ pub fn sessions() -> Vec<Session> {
             0,
             "main",
             Status::Done,
-            "2h",
+            120,
             vec![
                 Message::user("Cut the beta release."),
                 Message::agent(
@@ -535,7 +540,7 @@ pub fn sessions() -> Vec<Session> {
             1,
             "main",
             Status::Done,
-            "6m",
+            6,
             vec![
                 Message::user("Hi"),
                 Message::agent(
@@ -550,7 +555,7 @@ pub fn sessions() -> Vec<Session> {
             1,
             "task/12-json-flag",
             Status::Review,
-            "1h",
+            60,
             vec![
                 Message::user("Every command should be able to print machine-readable output."),
                 Message::agent(
@@ -565,7 +570,7 @@ pub fn sessions() -> Vec<Session> {
             2,
             "task/41-chunk-meshing",
             Status::Working,
-            "9m",
+            9,
             vec![
                 Message::user("Chunk meshing stalls the frame. Move it to a worker pool."),
                 Message::agent(

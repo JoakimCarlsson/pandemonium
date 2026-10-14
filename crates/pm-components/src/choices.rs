@@ -722,6 +722,9 @@ impl WorkspaceState {
                 agent,
                 info.closed,
             ));
+            if let Some(session) = self.sessions.last_mut() {
+                session.updated_at = info.updated;
+            }
             added.push((self.sessions.len() - 1, info.session));
         }
         added

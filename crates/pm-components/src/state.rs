@@ -65,6 +65,9 @@ pub const PROMPT: FocusId = FocusId(320);
 /// The commit message field.
 pub const COMMIT_MESSAGE: FocusId = FocusId(321);
 
+/// The field on the history page that narrows the sessions it lists.
+pub const HISTORY_SEARCH: FocusId = FocusId(326);
+
 /// The first of the chips choosing an agent; the rest follow it.
 pub const AGENT_BASE: u64 = 330;
 
@@ -429,6 +432,8 @@ pub struct WorkspaceState {
     pub previews: std::collections::HashMap<String, pm_ui::Picture>,
     /// The commit message being written.
     pub message: Field,
+    /// What the history page is narrowed to.
+    pub history_search: Field,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
     /// The menu open over a field, and where, if one is.
@@ -522,6 +527,7 @@ impl WorkspaceState {
             file: None,
             prompt: prompt_field(""),
             message: Field::default(),
+            history_search: Field::default(),
             sidebar_scroll: 0.0,
             menu: None,
             project_menu: None,
@@ -669,6 +675,7 @@ impl WorkspaceState {
                 self.menu_scroll = 0.0;
             }
             COMMIT_MESSAGE => self.message.apply(edit),
+            HISTORY_SEARCH => self.history_search.apply(edit),
             _ => {}
         }
         self.refresh_files();
@@ -680,18 +687,23 @@ impl WorkspaceState {
         match id {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
+            HISTORY_SEARCH => Some(&self.history_search),
             _ => None,
         }
     }
 
     /// Whether `id` names a text field.
     pub fn is_field(id: FocusId) -> bool {
-        id == PROMPT || id == COMMIT_MESSAGE
+        id == PROMPT || id == COMMIT_MESSAGE || id == HISTORY_SEARCH
     }
 
     /// What pressing the field `id` hands in when Enter is pressed in it.
     pub fn submit_of(id: FocusId) -> FocusId {
-        if id == COMMIT_MESSAGE { COMMIT } else { SEND }
+        match id {
+            COMMIT_MESSAGE => COMMIT,
+            HISTORY_SEARCH => HISTORY,
+            _ => SEND,
+        }
     }
 
     /// The state with a menu open over the field `field` at `at`.
@@ -760,6 +772,7 @@ impl WorkspaceState {
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
             self.page = Page::New(index);
         } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
+            self.sessions[index].closed = false;
             self.page = Page::Session(index);
             self.tab = Tab::Chat;
             self.file = None;
@@ -975,7 +988,7 @@ impl WorkspaceState {
         self.slash = 0;
         let held = &mut self.sessions[session];
         held.status = Status::Working;
-        held.updated = "now".to_owned();
+        held.updated_at = crate::age::now();
         held.turn_started = Some(std::time::Instant::now());
         let outgoing = if self.sessions[session].messages.len() == 1 {
             Outgoing::Start {

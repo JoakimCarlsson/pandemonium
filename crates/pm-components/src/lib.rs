@@ -7,6 +7,7 @@
 //! which holds its `Variant` and `Size`, and is re-exported here.
 
 pub mod activity;
+pub mod age;
 pub mod arrange;
 pub mod avatar;
 pub mod button;

@@ -89,7 +89,7 @@ fn session_row(index: usize, session: &Session, selected: bool) -> Node {
         .styles([pl(3.5), pr(2)])
         .child(status_icon(session.status))
         .child(clipped(&session.title, 14, Role::Text))
-        .child(line(&session.updated, 12, 1.4, Role::Subtle))
+        .child(line(session.age(), 12, 1.4, Role::Subtle))
 }
 
 /// One project: its header, and, unless folded, its sessions and a row to start new work.
