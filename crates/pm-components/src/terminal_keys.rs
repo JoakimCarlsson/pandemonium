@@ -84,9 +84,14 @@ pub fn bytes(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
     })
 }
 
-/// The bytes that paste `text`, wrapped in the markers a program that asked for them expects.
+/// The bytes that paste `text` with its control characters other than tab and line breaks dropped, so it cannot end the paste early, wrapped in the markers a program that asked for them expects.
 pub fn paste(text: &str, bracketed: bool) -> Vec<u8> {
-    let text = text.replace("\r\n", "\r").replace('\n', "\r");
+    let text: String = text
+        .replace("\r\n", "\r")
+        .replace('\n', "\r")
+        .chars()
+        .filter(|character| *character == '\r' || *character == '\t' || !character.is_control())
+        .collect();
     if bracketed {
         format!("\x1b[200~{text}\x1b[201~").into_bytes()
     } else {
