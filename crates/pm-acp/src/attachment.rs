@@ -24,13 +24,14 @@ pub(crate) fn content(path: &Path, images: bool, embeds: bool) -> Option<Value> 
             "mimeType": mime_type,
         }));
     }
-    let embedded = embeds
-        .then(|| text_of(path))
-        .flatten()
-        .map(|text| json!({ "type": "resource", "resource": { "uri": file_uri(path), "text": text } }));
-    Some(embedded.unwrap_or_else(|| {
-        json!({ "type": "resource_link", "uri": file_uri(path), "name": name })
-    }))
+    let embedded = embeds.then(|| text_of(path)).flatten().map(
+        |text| json!({ "type": "resource", "resource": { "uri": file_uri(path), "text": text } }),
+    );
+    Some(
+        embedded.unwrap_or_else(
+            || json!({ "type": "resource_link", "uri": file_uri(path), "name": name }),
+        ),
+    )
 }
 
 /// The MIME type of the picture at `path` when its extension names a format agents take.

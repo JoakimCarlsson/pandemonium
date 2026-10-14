@@ -59,9 +59,7 @@ impl Agent {
         let shaken = client.initialize(std::time::Duration::from_secs(180))?;
         drop(client);
         let logins = crate::client::logins(&shaken["authMethods"]);
-        let login = logins
-            .first()
-            .ok_or("the agent offers no way to sign in")?;
+        let login = logins.first().ok_or("the agent offers no way to sign in")?;
         self.log_in(login)
     }
 }
@@ -108,16 +106,14 @@ fn shared(agent: Agent) -> &'static [&'static str] {
 
 /// Links what an agent's own folder shares into the account folder `home`, leaving what is already there.
 fn share_setup(agent: Agent, home: &std::path::Path) {
-    let Some(source) = std::env::home_dir().map(|own| {
-        match agent.id {
-            "codex" => std::env::var_os("CODEX_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| own.join(".codex")),
-            "grok" => std::env::var_os("GROK_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| own.join(".grok")),
-            _ => own.join(".claude"),
-        }
+    let Some(source) = std::env::home_dir().map(|own| match agent.id {
+        "codex" => std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| own.join(".codex")),
+        "grok" => std::env::var_os("GROK_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| own.join(".grok")),
+        _ => own.join(".claude"),
     }) else {
         return;
     };

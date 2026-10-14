@@ -22,7 +22,21 @@ impl Session {
             Event::Ask(question) => self.ask = Some(question),
             Event::Finished(error) => self.finish(error),
             Event::Failed(reason) => self.finish(Some(reason)),
+            Event::Prompted { text, files } => self.prompted(text, files),
         }
+    }
+
+    /// Adds the turn a reader handed the agent, unless this window handed it and already shows it.
+    fn prompted(&mut self, text: String, files: Vec<String>) {
+        if self.echoes > 0 {
+            self.echoes -= 1;
+            return;
+        }
+        let mut message = Message::user(&text);
+        message.attachments = files;
+        self.messages.push(message);
+        self.status = Status::Working;
+        self.turn_started = Some(Instant::now());
     }
 
     /// Notes how long the agent's latest thought went on, once it moves on to something else.

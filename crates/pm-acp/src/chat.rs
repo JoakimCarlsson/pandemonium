@@ -26,7 +26,7 @@ const COMMANDS_WAIT: Duration = Duration::from_secs(3);
 const NO_SUCH_METHOD: i64 = -32601;
 
 /// How far a tool the agent is using has got.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ToolState {
     /// It is being run.
     Running,
@@ -37,7 +37,7 @@ pub enum ToolState {
 }
 
 /// What a tool does, as far as the agent says.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     /// It reads a file.
     Read,
@@ -54,7 +54,7 @@ pub enum Kind {
 }
 
 /// How a file changed in one edit.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Diff {
     /// The file.
     pub path: String,
@@ -65,7 +65,7 @@ pub struct Diff {
 }
 
 /// A tool the agent is using, as far as it has said.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Tool {
     /// What the agent calls this use of the tool.
     pub id: String,
@@ -84,7 +84,7 @@ pub struct Tool {
 }
 
 /// What a permission choice amounts to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Verdict {
     /// The agent may go ahead this once.
     Allow,
@@ -95,7 +95,7 @@ pub enum Verdict {
 }
 
 /// One answer the reader can give to a permission request.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Choice {
     /// What the agent calls the answer.
     pub id: String,
@@ -106,7 +106,7 @@ pub struct Choice {
 }
 
 /// A question the agent puts to the reader before it goes on.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Permission {
     /// Names this question in the answer.
     pub ticket: u64,
@@ -119,7 +119,7 @@ pub struct Permission {
 }
 
 /// One value a setting can take.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Pick {
     /// What the agent calls the value.
     pub value: String,
@@ -130,7 +130,7 @@ pub struct Pick {
 }
 
 /// Something about the conversation the reader can change: its model, mode or effort.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Setting {
     /// What the agent calls the setting.
     pub id: String,
@@ -155,7 +155,7 @@ impl Setting {
 }
 
 /// How far along the agent's plan one step is.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Progress {
     /// Not begun.
     Pending,
@@ -166,7 +166,7 @@ pub enum Progress {
 }
 
 /// One step of the agent's plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PlanStep {
     /// What the step is.
     pub text: String,
@@ -175,7 +175,7 @@ pub struct PlanStep {
 }
 
 /// A command the agent offers behind a slash.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Slash {
     /// What is typed after the slash.
     pub name: String,
@@ -184,7 +184,7 @@ pub struct Slash {
 }
 
 /// What an agent did, in the order it did it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Event {
     /// What can be changed about the conversation, and how it stands now.
     Settings(Vec<Setting>),
@@ -204,6 +204,13 @@ pub enum Event {
     Finished(Option<String>),
     /// The agent could not be started or stopped, for this reason.
     Failed(String),
+    /// A reader handed the agent a turn: what they wrote and the names of the files they attached.
+    Prompted {
+        /// What the reader wrote.
+        text: String,
+        /// The names of the files attached.
+        files: Vec<String>,
+    },
 }
 
 /// What the reader hands an agent.
@@ -298,7 +305,7 @@ impl Chat {
 }
 
 /// What an agent says about itself when a conversation is opened.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Discovery {
     /// What the reader can change about a conversation.
     pub settings: Vec<Setting>,
@@ -485,7 +492,14 @@ fn drive(
     let settings = settings(&opened);
     let configurable = opened["configOptions"].is_array();
     let _ = events.send(Event::Settings(settings));
-    converse(&mut client, &session, configurable, &prompts, commands, events)
+    converse(
+        &mut client,
+        &session,
+        configurable,
+        &prompts,
+        commands,
+        events,
+    )
 }
 
 /// The settings a `session/new` result or a configuration update offers: its

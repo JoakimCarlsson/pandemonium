@@ -10,8 +10,8 @@ use pm_acp::{AGENTS, Login, Standing};
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
-use pm_pages::{ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PROMPT, Screen};
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
+use pm_pages::{ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PROMPT, Screen};
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
 
@@ -100,10 +100,21 @@ pub struct App {
 impl Default for App {
     /// An application with no window yet, whose clock starts now.
     fn default() -> Self {
-        let saved = pm_store::load_projects();
-        let choices = pm_store::load_choices();
-        let (logins, in_use) = pm_store::load_accounts();
-        crate::work::apply_accounts(&logins, &in_use);
+        let mut work = Work::new();
+        let opened = work.bootstrap();
+        let (saved, choices, logins, in_use) = match opened {
+            Some(held) => (held.projects, held.choices, held.logins, held.in_use),
+            None => {
+                let (logins, in_use) = pm_store::load_accounts();
+                (
+                    pm_store::load_projects(),
+                    pm_store::load_choices(),
+                    logins,
+                    in_use,
+                )
+            }
+        };
+        work.set_accounts(&logins, &in_use);
         let screen = saved
             .as_deref()
             .map_or_else(Screen::default, Screen::opened)
@@ -153,7 +164,7 @@ impl Default for App {
             saved,
             saved_choices: choices,
             logins: Default::default(),
-            work: Work::new(),
+            work,
             autofocused: false,
         }
     }
@@ -300,9 +311,8 @@ impl App {
             return;
         }
         let choices = choices.to_vec();
-        if pm_store::save_choices(&choices).is_ok() {
-            self.saved_choices = choices;
-        }
+        self.work.save_choices(choices.clone());
+        self.saved_choices = choices;
     }
 
     /// Writes the project list to disk when the workspace's differs from what was last written.
@@ -314,9 +324,8 @@ impl App {
         if self.saved.as_ref() == Some(&paths) {
             return;
         }
-        if pm_store::save_projects(&paths).is_ok() {
-            self.saved = Some(paths);
-        }
+        self.work.save_projects(paths.clone());
+        self.saved = Some(paths);
     }
 
     /// Finds out where every agent stands, each on a thread of its own, since

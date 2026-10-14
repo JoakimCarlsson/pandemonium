@@ -7,10 +7,10 @@ use pm_acp::{
     Tool, ToolState, Verdict,
 };
 use pm_components::Project;
+use pm_input::{FocusId, PointerState};
 use pm_pages::{
     HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL, WorkspaceState,
 };
-use pm_input::{FocusId, PointerState};
 use pm_renderer::{DrawList, Renderer};
 use pm_text::Edit;
 use pm_theme::{Appearance, default_family};
@@ -392,7 +392,10 @@ pub fn write(
 fn gradient() -> pm_renderer::Picture {
     let (width, height) = (200u32, 120u32);
     let pixels = (0..height)
-        .flat_map(|y| (0..width).flat_map(move |x| [(255 * x / width) as u8, (255 * y / height) as u8, 200, 255]))
+        .flat_map(|y| {
+            (0..width)
+                .flat_map(move |x| [(255 * x / width) as u8, (255 * y / height) as u8, 200, 255])
+        })
         .collect();
     pm_renderer::Picture {
         key: 1,

@@ -15,7 +15,7 @@ const DIFF_LINES: usize = 2000;
 const SLUG_LENGTH: usize = 40;
 
 /// A file that differs from the last commit.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Change {
     /// Where the file is, from the root of the repository.
     pub path: String,
@@ -26,7 +26,7 @@ pub struct Change {
 }
 
 /// A worktree made for one task.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Worktree {
     /// The folder it is in.
     pub path: PathBuf,

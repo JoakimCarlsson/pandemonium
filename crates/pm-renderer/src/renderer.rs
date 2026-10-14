@@ -702,8 +702,7 @@ impl Renderer {
             };
             pass.set_scissor_rect(x, y, w, h);
             if let Kind::Image(key) = kind {
-                if let (Some(group), Some(buffer)) =
-                    (self.images.get(&key), &self.image_instances)
+                if let (Some(group), Some(buffer)) = (self.images.get(&key), &self.image_instances)
                 {
                     pass.set_pipeline(&self.image_pipeline);
                     pass.set_bind_group(1, group, &[]);

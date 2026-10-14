@@ -1,0 +1,109 @@
+//! What the server answers.
+
+use pm_acp::{Discovery, Slash};
+use pm_git::Change;
+use serde::{Deserialize, Serialize};
+
+/// What the server knows about one session, enough to list it and open it again.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionInfo {
+    /// The session's number.
+    pub session: u64,
+    /// The agent that runs it, by its id.
+    pub agent: String,
+    /// The folder of the project it belongs to.
+    pub repository: String,
+    /// The folder its agent works in.
+    pub directory: String,
+    /// The branch its worktree has, when it was given one of its own.
+    pub branch: Option<String>,
+    /// The branch its worktree was made from, when it has one of its own.
+    pub base: Option<String>,
+    /// What it is called.
+    pub title: String,
+    /// When it last changed, in milliseconds since the epoch.
+    pub updated: u64,
+    /// The number of its latest event.
+    pub last_seq: u64,
+    /// Whether its agent is running now.
+    pub running: bool,
+}
+
+/// The answer to one [`crate::Request`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "response", rename_all = "snake_case")]
+pub enum Response {
+    /// The request was carried out and has nothing to report.
+    Done,
+    /// The request could not be carried out, for this reason.
+    Failed {
+        /// What went wrong.
+        message: String,
+    },
+    /// What an agent said about itself.
+    Discovery(Discovery),
+    /// The skills an agent has in a project.
+    Skills {
+        /// The skills the agent can be asked for by name.
+        skills: Vec<Slash>,
+        /// The names of the skills, for telling them from commands.
+        names: Vec<String>,
+    },
+    /// The files of a folder.
+    Files {
+        /// Their paths, from the root of the repository.
+        paths: Vec<String>,
+    },
+    /// The branches of a repository.
+    Branches {
+        /// Their names, the current one first.
+        names: Vec<String>,
+    },
+    /// Who an agent is signed in as.
+    Identity {
+        /// Who it is signed in as in its own folder.
+        default: Option<String>,
+        /// Who it is signed in as under the login in use.
+        selected: Option<String>,
+    },
+    /// A session was started.
+    Started {
+        /// The session.
+        session: u64,
+        /// The folder its agent works in.
+        directory: String,
+        /// The branch its worktree has, when it was given one of its own.
+        branch: Option<String>,
+    },
+    /// The projects the reader has added.
+    Projects {
+        /// Their addresses, oldest first.
+        paths: Vec<String>,
+        /// Whether they were ever saved; when not, the app has not been set up yet.
+        saved: bool,
+    },
+    /// What the reader chose for each agent's settings.
+    Choices {
+        /// Each choice as agent, setting and value.
+        choices: Vec<(String, String, String)>,
+    },
+    /// The named logins and the one in use for each agent.
+    Accounts {
+        /// The logins there are.
+        logins: Vec<crate::Login>,
+        /// The login in use for each agent, as agent and login id.
+        in_use: Vec<(String, String)>,
+    },
+    /// The sessions the server holds.
+    Sessions {
+        /// Each one, oldest first.
+        sessions: Vec<SessionInfo>,
+    },
+    /// What a folder holds that differs from the last commit.
+    Inspected {
+        /// The changed files.
+        changes: Vec<Change>,
+        /// The commits of the session's own branch, when it has one.
+        commits: Option<Vec<String>>,
+    },
+}

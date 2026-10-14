@@ -91,6 +91,50 @@ pub fn save_text(name: &str, text: &str) -> io::Result<()> {
     fs::write(directory.join(name), text)
 }
 
+/// Saves `text` under `name` so that only the reader can read it, replacing what was saved there.
+pub fn save_private(name: &str, text: &str) -> io::Result<()> {
+    use std::io::Write;
+    let Some(directory) = directory() else {
+        return Err(io::Error::other("the desktop has no data directory"));
+    };
+    fs::create_dir_all(&directory)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+        .open(directory.join(name))?
+        .write_all(text.as_bytes())
+}
+
+/// Makes the folder at `path`, and the ones above it, so that only the reader can open the ones made.
+pub fn create_private_directory(path: &std::path::Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(path)
+}
+
+/// Opens the file at `path` for writing, making it when it is not there so that only the reader can read it, and adding to its end when `append` is set and emptying it otherwise.
+pub fn open_private(path: &std::path::Path, append: bool) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true);
+    if append {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)
+}
+
+/// The folder the app keeps its data in.
+pub fn data_directory() -> Option<PathBuf> {
+    directory()
+}
+
 /// A named login of an agent kept apart from the others: the agent, the folder name it is kept under and what it is called.
 pub type Account = (String, String, String);
 
@@ -138,7 +182,9 @@ pub fn account_directory(agent: &str, id: &str) -> io::Result<PathBuf> {
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     };
     if !safe(agent) || !safe(id) {
-        return Err(io::Error::other("the account name is not a safe folder name"));
+        return Err(io::Error::other(
+            "the account name is not a safe folder name",
+        ));
     }
     let Some(directory) = directory() else {
         return Err(io::Error::other("the desktop has no data directory"));

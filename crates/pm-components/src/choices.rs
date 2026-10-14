@@ -125,28 +125,156 @@ impl WorkspaceState {
             .collect()
     }
 
-    /// The folder the prompt is for: the open session's, or the project being started in.
-    fn prompt_directory(&self) -> Option<String> {
+    /// The machine and folder the prompt is for: the open session's, or the project being started in.
+    fn prompt_place(&self) -> Option<(Option<String>, String)> {
         match self.open() {
-            Some(session) => Some(session.directory.clone()),
-            None => self
-                .projects
-                .get(self.current_project())
-                .map(|project| project.directory().to_string_lossy().into_owned()),
+            Some(session) => Some((
+                self.projects.get(session.project)?.host(),
+                session.directory.clone(),
+            )),
+            None => self.projects.get(self.current_project()).map(|project| {
+                (
+                    project.host(),
+                    project.directory().to_string_lossy().into_owned(),
+                )
+            }),
         }
     }
 
-    /// Reads the files of the folder the prompt is for when it is not the one they were read for.
+    /// Whether the folder the prompt is for is on the computer the window runs on, where the logins this window keeps apply.
+    pub fn on_this_computer(&self) -> bool {
+        self.prompt_place().is_none_or(|(host, _)| host.is_none())
+    }
+
+    /// Asks for the files of the folder the prompt is for when they are not the ones held or already asked for.
     pub fn refresh_files(&mut self) {
-        let wanted = self.prompt_directory();
-        if self.files_of == wanted {
+        let wanted = self.prompt_place();
+        let key = wanted
+            .as_ref()
+            .map(|(host, directory)| format!("{host:?}:{directory}"));
+        if self.files_of == key {
             return;
         }
-        self.files = wanted
-            .as_deref()
-            .map(|directory| pm_git::files(std::path::Path::new(directory), 20_000))
-            .unwrap_or_default();
-        self.files_of = wanted;
+        self.files = Vec::new();
+        self.files_of = key.clone();
+        if let (Some((host, directory)), Some(key)) = (wanted, key) {
+            self.outbox.push(Outgoing::Files {
+                key,
+                host,
+                directory,
+            });
+        }
+    }
+
+    /// The state holding `files` as those listed for `key`, unless the prompt has moved on.
+    pub fn with_files(mut self, key: &str, files: Vec<String>) -> Self {
+        if self.files_of.as_deref() == Some(key) {
+            self.files = files;
+        }
+        self
+    }
+
+    /// The state holding `branches` for the project at `project`, unless the page has moved on.
+    pub fn with_branches(mut self, project: usize, branches: Vec<String>) -> Self {
+        if self.branches_of == Some(project) {
+            self.branches = branches;
+            if self.branches.is_empty() {
+                self.location = Location::Local;
+            }
+        }
+        self
+    }
+
+    /// The state holding the skills found for `agent` in the project at `project`, unless the page has moved on.
+    pub fn with_skills(
+        mut self,
+        agent: usize,
+        project: usize,
+        skills: Vec<pm_acp::Slash>,
+        names: std::collections::HashSet<String>,
+    ) -> Self {
+        if self.skills_of == Some((agent, project)) {
+            self.skills = skills;
+            self.skill_names = names;
+        }
+        self
+    }
+
+    /// The state after the agent at `agent` on the machine `host` told what it lets the reader change, held now when those are the settings showing and kept for later when they are not.
+    pub fn with_discovery_for(
+        mut self,
+        host: Option<String>,
+        agent: usize,
+        found: Discovery,
+    ) -> Self {
+        if host == self.discovery_host {
+            return self.with_discovery(agent, found);
+        }
+        let kept = self.discovered_elsewhere.entry(host).or_insert_with(|| {
+            (
+                vec![Vec::new(); AGENTS.len()],
+                vec![Vec::new(); AGENTS.len()],
+            )
+        });
+        if let Some(held) = kept.0.get_mut(agent) {
+            *held = found.settings;
+        }
+        if let Some(held) = kept.1.get_mut(agent) {
+            *held = found.commands;
+        }
+        self
+    }
+
+    /// Switches the settings and commands showing to those of the machine `host`, asking its agents when it has not been asked.
+    fn sync_discovery(&mut self, host: Option<String>) {
+        if self.discovery_host == host {
+            return;
+        }
+        let now = (
+            std::mem::take(&mut self.agent_settings),
+            std::mem::take(&mut self.agent_commands),
+        );
+        self.discovered_elsewhere
+            .insert(self.discovery_host.clone(), now);
+        self.discovery_host = host.clone();
+        let asked = self.discovered_elsewhere.remove(&host);
+        let known = asked.is_some();
+        let (settings, commands) = asked.unwrap_or_else(|| {
+            (
+                vec![Vec::new(); AGENTS.len()],
+                vec![Vec::new(); AGENTS.len()],
+            )
+        });
+        self.agent_settings = settings;
+        self.agent_commands = commands;
+        if !known {
+            for agent in 0..AGENTS.len() {
+                self.outbox.push(Outgoing::Discover {
+                    agent,
+                    host: host.clone(),
+                });
+            }
+        }
+    }
+
+    /// The state knowing who the agent at `agent` is signed in as, and naming the login in use after it when `naming`.
+    pub fn with_identity(
+        mut self,
+        agent: usize,
+        default: Option<String>,
+        selected: Option<String>,
+        naming: bool,
+    ) -> Self {
+        if let Some(held) = self.defaults.get_mut(agent) {
+            *held = Some(default);
+        }
+        if let Some(held) = self.identities.get_mut(agent) {
+            *held = Some(selected.clone());
+        }
+        if naming {
+            self.name_login(agent, selected);
+        }
+        self
     }
 
     /// The word being typed at the end of the prompt, when it starts with an `@`, without the `@`.
@@ -352,41 +480,49 @@ impl WorkspaceState {
         let Page::New(project) = self.page else {
             return;
         };
+        if let Some(held) = self.projects.get(project) {
+            self.sync_discovery(held.host());
+        }
         if self.skills_of != Some((self.agent, project)) {
             self.skills_of = Some((self.agent, project));
-            self.skills = match (AGENTS.get(self.agent), self.projects.get(project)) {
-                (Some(agent), Some(project)) => pm_acp::skills(*agent, &project.directory()),
-                _ => Vec::new(),
-            };
-            self.skill_names = match (AGENTS.get(self.agent), self.projects.get(project)) {
-                (Some(agent), Some(project)) => pm_acp::skill_names(*agent, &project.directory()),
-                _ => Default::default(),
-            };
+            self.skills = Vec::new();
+            self.skill_names = Default::default();
+            if let Some(held) = self.projects.get(project) {
+                self.outbox.push(Outgoing::Skills {
+                    agent: self.agent,
+                    project,
+                    host: held.host(),
+                    directory: held.directory().to_string_lossy().into_owned(),
+                });
+            }
         }
-        if let (Some(agent), Some(held)) =
-            (AGENTS.get(self.agent), self.defaults.get_mut(self.agent))
-            && held.is_none()
-        {
-            *held = Some(pm_acp::default_account(*agent));
-        }
-        if let (Some(agent), Some(held)) =
-            (AGENTS.get(self.agent), self.identities.get_mut(self.agent))
-            && held.is_none()
-        {
-            *held = Some(pm_acp::account(*agent));
+        let asked = self.defaults.get(self.agent).is_some_and(Option::is_some)
+            && self.identities.get(self.agent).is_some_and(Option::is_some);
+        if !asked && AGENTS.get(self.agent).is_some() {
+            if let Some(held) = self.defaults.get_mut(self.agent) {
+                held.get_or_insert(None);
+            }
+            if let Some(held) = self.identities.get_mut(self.agent) {
+                held.get_or_insert(None);
+            }
+            self.outbox.push(Outgoing::Identity {
+                agent: self.agent,
+                naming: false,
+            });
         }
         if self.branches_of == Some(project) {
             return;
         }
         self.branches_of = Some(project);
         self.base = None;
-        self.branches = self
-            .projects
-            .get(project)
-            .map(|project| pm_git::branches(&project.directory()))
-            .unwrap_or_default();
-        if self.branches.is_empty() {
-            self.location = Location::Local;
+        self.branches = Vec::new();
+        self.location = Location::Local;
+        if let Some(held) = self.projects.get(project) {
+            self.outbox.push(Outgoing::Branches {
+                project,
+                host: held.host(),
+                directory: held.directory().to_string_lossy().into_owned(),
+            });
         }
     }
 
@@ -531,6 +667,35 @@ impl WorkspaceState {
         self.picker = None;
     }
 
+    /// Adds the sessions the server of `host` holds that belong to the projects here, and returns each one's position and the server's number for it.
+    pub fn restore_sessions(
+        &mut self,
+        host: &Option<String>,
+        infos: &[pm_protocol::SessionInfo],
+    ) -> Vec<(usize, u64)> {
+        let mut added = Vec::new();
+        for info in infos {
+            let Some(project) = self.projects.iter().position(|held| {
+                held.host() == *host && held.directory().to_string_lossy() == info.repository
+            }) else {
+                continue;
+            };
+            let Some(agent) = AGENTS.iter().position(|held| held.id == info.agent) else {
+                continue;
+            };
+            self.sessions.push(crate::sample::Session::restored(
+                &info.title,
+                project,
+                info.branch.as_deref().unwrap_or(""),
+                &info.directory,
+                info.base.clone(),
+                agent,
+            ));
+            added.push((self.sessions.len() - 1, info.session));
+        }
+        added
+    }
+
     /// The state with the files at `paths` attached to the prompt, each once.
     pub fn with_attachments(mut self, paths: &[String]) -> Self {
         for path in paths {
@@ -566,11 +731,11 @@ impl WorkspaceState {
     }
 
     /// Names the login in use for the agent after who it is now signed in as, when it still has the name it was given on adding.
-    pub fn name_login(&mut self, agent: usize) {
+    pub fn name_login(&mut self, agent: usize, who: Option<String>) {
         let Some(held) = AGENTS.get(agent) else {
             return;
         };
-        let Some(who) = pm_acp::account(*held) else {
+        let Some(who) = who else {
             return;
         };
         let Some((_, used)) = self
@@ -590,6 +755,14 @@ impl WorkspaceState {
                 in_use: self.in_use.clone(),
             });
         }
+    }
+
+    /// Asks who the agent is signed in as, to name the login in use after it.
+    pub fn outbox_identity(&mut self, agent: usize) {
+        self.outbox.push(Outgoing::Identity {
+            agent,
+            naming: true,
+        });
     }
 
     /// Forgets who the agent is signed in as, so that it is looked up again.

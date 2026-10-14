@@ -1,90 +1,130 @@
-//! The work behind the screen: the agents that run, the worktrees they work in and the git operations on them.
+//! The work behind the screen: asking the servers to run the agents and the git operations, and taking in what they answer.
 
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use pm_acp::{AGENTS, Chat, Discovery, Event};
+use pm_acp::{AGENTS, Discovery, Event};
+use pm_client::{Client, Incoming};
 use pm_pages::{Outgoing, Screen};
+use pm_protocol::{Attachment, Login, Request, Response, Target};
 use pm_renderer::Picture;
 use pm_state::State;
+
+/// The most files listed for the list behind an `@`.
+const FILE_LIMIT: usize = 20_000;
+
+/// What the window opens with, as the server on this machine keeps it.
+pub struct Bootstrap {
+    /// The projects the reader added, or nothing when they were never saved.
+    pub projects: Option<Vec<String>>,
+    /// What the reader chose for each agent's settings.
+    pub choices: Vec<(String, String, String)>,
+    /// The named logins.
+    pub logins: Vec<(String, String, String)>,
+    /// The login in use for each agent.
+    pub in_use: Vec<(String, String)>,
+}
+
+/// How long the window waits for the server on this machine to say what it keeps.
+const BOOTSTRAP_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// A machine the servers run on: nothing for this one, or the destination ssh is given for another.
+type Host = Option<String>;
 
 /// What a thread that did some of the work reports back.
 enum Job {
     /// The picture at this path was decoded, when it is one.
     Previewed(String, Option<Picture>),
+    /// The server on this machine was found or reached, or could not be.
+    Server(Host, Result<Target, String>),
+}
+
+/// What is to be done with the answer to a request.
+#[derive(Clone, Debug)]
+enum Pending {
+    /// Nothing: the answer only matters if it says the request failed.
+    Nothing,
+    /// The agent at this position told what it lets the reader change.
+    Discover(Host, usize),
     /// The agent at this position was signed in, or could not be.
-    SignedIn(usize, Result<(), String>),
-    /// What the agent at this position lets the reader change and offers behind a slash.
-    Discovered(usize, Discovery),
-    /// A worktree for a new session is ready, or could not be made; the agent is started in it with the words.
-    Worktree {
-        /// The session, by position.
-        session: usize,
-        /// What came of making the worktree: where it is and its branch.
-        result: Result<(PathBuf, String), String>,
-        /// What the reader wrote.
-        text: String,
-        /// The files attached, by path.
-        files: Vec<String>,
-        /// The settings the reader changed before starting.
-        settings: Vec<(String, String)>,
-    },
-    /// The folder of a session was looked at again.
-    Refreshed {
-        /// The session, by position.
-        session: usize,
-        /// The files that differ from the last commit.
-        changes: Vec<pm_git::Change>,
-        /// The commits of the session's own branch, when it has one.
-        commits: Option<Vec<String>>,
-    },
-    /// A commit was made in the folder of a session, by position.
-    Committed(usize),
-    /// Something the reader asked for could not be done.
-    Failed {
-        /// The session, by position.
-        session: usize,
-        /// What went wrong.
-        reason: String,
-    },
+    SignIn(usize),
+    /// The skills of an agent in a project.
+    Skills(usize, usize),
+    /// The sessions the server of this machine holds.
+    Sessions(Host),
+    /// The files listed for this key.
+    Files(String),
+    /// The branches of the project at this position.
+    Branches(usize),
+    /// Who an agent is signed in as, and whether that names the login in use.
+    Identity(usize, bool),
+    /// The session at this position was started.
+    Start(usize),
+    /// The folder of the session at this position was looked at.
+    Inspect(usize),
+    /// Files of the session at this position were staged or unstaged.
+    Stage(usize),
+    /// A commit was made in the folder of the session at this position.
+    Commit(usize),
 }
 
 /// Where a session works and what it is made of.
 struct Placement {
+    /// The machine it is on.
+    host: Host,
     /// The folder its agent works in.
-    directory: PathBuf,
+    directory: String,
     /// Which agent runs it, by position.
     agent: usize,
     /// The branch its worktree was made from, when it has one of its own.
     base: Option<String>,
     /// The folder of the project it belongs to.
-    repository: PathBuf,
+    repository: String,
     /// What it is called.
     title: String,
 }
 
-/// The agents that are running and the threads doing work for them.
+/// The connection to the server of one machine, and what is waiting for its answers.
+#[derive(Default)]
+struct Link {
+    /// The connection, once the server is reached.
+    client: Option<Client>,
+    /// Requests made before the server was reached.
+    backlog: Vec<(Request, Pending)>,
+    /// What to do with the answer to each request, by its id.
+    waiting: HashMap<u64, Pending>,
+}
+
+/// The servers and the threads doing work for them.
 pub struct Work {
-    /// The running agent of each session, by the session's position.
-    chats: HashMap<usize, Chat>,
+    /// The link to the server of each machine that has been asked something.
+    links: HashMap<Host, Link>,
+    /// The machine and the server's number of each session, by the session's position.
+    numbers: HashMap<usize, (Host, u64)>,
+    /// The session's position, by the machine and the server's number.
+    positions: HashMap<(Host, u64), usize>,
+    /// What agents did before their session was known by position.
+    early: HashMap<(Host, u64), Vec<Event>>,
     /// What the threads report.
     jobs: Receiver<Job>,
     /// Handed to each thread.
     reporter: Sender<Job>,
-    /// Whether the agents have been asked what they let the reader change.
+    /// Whether the agents on this machine have been asked what they let the reader change.
     discovered: bool,
     /// How many threads have yet to report.
     pending: Cell<usize>,
 }
 
 impl Work {
-    /// No agents running and nothing in progress.
+    /// No servers reached yet: they are looked for when something is first asked of them.
     pub fn new() -> Self {
         let (reporter, jobs) = mpsc::channel();
         Self {
-            chats: HashMap::new(),
+            links: HashMap::new(),
+            numbers: HashMap::new(),
+            positions: HashMap::new(),
+            early: HashMap::new(),
             jobs,
             reporter,
             discovered: false,
@@ -92,17 +132,169 @@ impl Work {
         }
     }
 
-    /// Asks each agent what it lets the reader change, once the workspace is showing.
+    /// Asks the server on this machine what the window opens with, starting the server first when it is not running.
+    ///
+    /// Nothing is returned when the server cannot be reached in time; the window then opens with what is saved on this machine.
+    pub fn bootstrap(&mut self) -> Option<Bootstrap> {
+        let target = pm_client::local().ok()?;
+        let client = Client::connect(target);
+        let projects_id = client.request(Request::Projects);
+        let choices_id = client.request(Request::Choices);
+        let accounts_id = client.request(Request::Accounts);
+        let mut projects = None;
+        let mut choices = None;
+        let mut accounts = None;
+        let started = std::time::Instant::now();
+        while started.elapsed() < BOOTSTRAP_WAIT
+            && (projects.is_none() || choices.is_none() || accounts.is_none())
+        {
+            for item in client.incoming() {
+                let Incoming::Response { id, response } = item else {
+                    continue;
+                };
+                if id == projects_id
+                    && let Response::Projects { paths, saved } = response
+                {
+                    projects = Some(saved.then_some(paths));
+                } else if id == choices_id
+                    && let Response::Choices { choices: held } = response
+                {
+                    choices = Some(held);
+                } else if id == accounts_id
+                    && let Response::Accounts { logins, in_use } = response
+                {
+                    accounts = Some((logins, in_use));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let (projects, choices, (logins, in_use)) = (projects?, choices?, accounts?);
+        self.links.insert(
+            None,
+            Link {
+                client: Some(client),
+                ..Link::default()
+            },
+        );
+        self.ask(&None, Request::Sessions, Pending::Sessions(None));
+        Some(Bootstrap {
+            projects,
+            choices,
+            logins: logins
+                .into_iter()
+                .map(|login| (login.agent, login.id, login.name))
+                .collect(),
+            in_use,
+        })
+    }
+
+    /// Has the server on this machine keep `paths` as the projects the reader added.
+    pub fn save_projects(&mut self, paths: Vec<String>) {
+        self.ask(&None, Request::SaveProjects { paths }, Pending::Nothing);
+    }
+
+    /// Has the server on this machine keep `choices` as what the reader chose for each agent's settings.
+    pub fn save_choices(&mut self, choices: Vec<(String, String, String)>) {
+        self.ask(&None, Request::SaveChoices { choices }, Pending::Nothing);
+    }
+
+    /// Sends `request` to the server on `host`, or keeps it until that server is reached, and remembers what to do with the answer.
+    fn ask(&mut self, host: &Host, request: Request, pending: Pending) {
+        if !self.links.contains_key(host) {
+            self.links.insert(host.clone(), Link::default());
+            let host = host.clone();
+            self.spawn(move |reporter| {
+                let target = match &host {
+                    None => pm_client::local(),
+                    Some(destination) => pm_ssh::remote(destination),
+                };
+                let _ = reporter.send(Job::Server(host, target));
+            });
+        }
+        let Some(link) = self.links.get_mut(host) else {
+            return;
+        };
+        match &link.client {
+            Some(client) => {
+                let id = client.request(request);
+                link.waiting.insert(id, pending);
+            }
+            None => link.backlog.push((request, pending)),
+        }
+    }
+
+    /// Points the agents of the server on this machine at the folder of the login in use for each.
+    pub fn set_accounts(
+        &mut self,
+        logins: &[(String, String, String)],
+        in_use: &[(String, String)],
+    ) {
+        let logins = logins
+            .iter()
+            .map(|(agent, id, name)| Login {
+                agent: agent.clone(),
+                id: id.clone(),
+                name: name.clone(),
+            })
+            .collect();
+        self.ask(
+            &None,
+            Request::SetAccounts {
+                logins,
+                in_use: in_use.to_vec(),
+            },
+            Pending::Nothing,
+        );
+    }
+
+    /// Asks each agent on this machine what it lets the reader change, once the workspace is showing.
     pub fn discover(&mut self, model: &State<Screen>) {
         if self.discovered || !model.get().is_workspace() {
             return;
         }
         self.discovered = true;
-        for (index, agent) in AGENTS.iter().copied().enumerate() {
-            self.spawn(move |reporter| {
-                let found = pm_acp::discover(agent).unwrap_or_default();
-                let _ = reporter.send(Job::Discovered(index, found));
-            });
+        for (index, agent) in AGENTS.iter().enumerate() {
+            self.ask(
+                &None,
+                Request::Discover {
+                    agent: agent.id.to_owned(),
+                },
+                Pending::Discover(None, index),
+            );
+        }
+    }
+
+    /// The files at `paths`, read whole, for a prompt.
+    fn attachments(paths: &[String]) -> Vec<Attachment> {
+        paths
+            .iter()
+            .filter_map(|path| {
+                let name = std::path::Path::new(path)
+                    .file_name()?
+                    .to_string_lossy()
+                    .into_owned();
+                Some(Attachment {
+                    name,
+                    data: std::fs::read(path).ok()?,
+                })
+            })
+            .collect()
+    }
+
+    /// The agent at `position`, by the id the servers know it by.
+    fn agent_id(position: usize) -> Option<String> {
+        AGENTS.get(position).map(|agent| agent.id.to_owned())
+    }
+
+    /// Asks the server that runs the session at `session` to do `request`, when that session is running there.
+    fn ask_session(
+        &mut self,
+        session: usize,
+        build: impl FnOnce(u64) -> Request,
+        pending: Pending,
+    ) {
+        if let Some((host, number)) = self.numbers.get(&session).cloned() {
+            self.ask(&host, build(number), pending);
         }
     }
 
@@ -119,53 +311,164 @@ impl Work {
                     files,
                     settings,
                     base,
-                } => self.start(model, session, text, files, settings, base),
-                Outgoing::Prompt { session, text, files } => {
-                    if !self.chats.contains_key(&session) {
-                        self.begin(model, session, &[]);
-                    }
-                    if let Some(chat) = self.chats.get(&session) {
-                        chat.prompt(&text, &files);
-                    }
+                } => {
+                    let Some(placement) = Self::session_of(model, session) else {
+                        continue;
+                    };
+                    let Some(agent) = Self::agent_id(placement.agent) else {
+                        continue;
+                    };
+                    self.ask(
+                        &placement.host,
+                        Request::StartSession {
+                            agent,
+                            repository: placement.repository,
+                            directory: placement.directory,
+                            title: placement.title,
+                            base,
+                            settings,
+                            text,
+                            attachments: Self::attachments(&files),
+                        },
+                        Pending::Start(session),
+                    );
+                }
+                Outgoing::Prompt {
+                    session,
+                    text,
+                    files,
+                } => {
+                    let attachments = Self::attachments(&files);
+                    self.ask_session(
+                        session,
+                        |number| Request::Prompt {
+                            session: number,
+                            text,
+                            attachments,
+                        },
+                        Pending::Nothing,
+                    );
                 }
                 Outgoing::Choose {
                     session,
                     ticket,
                     option,
-                } => {
-                    if let Some(chat) = self.chats.get(&session) {
-                        chat.choose(ticket, Some(option));
-                    }
-                }
-                Outgoing::Cancel { session } => {
-                    if let Some(chat) = self.chats.get(&session) {
-                        chat.cancel();
-                    }
-                }
+                } => self.ask_session(
+                    session,
+                    |number| Request::Choose {
+                        session: number,
+                        ticket,
+                        option,
+                    },
+                    Pending::Nothing,
+                ),
+                Outgoing::Cancel { session } => self.ask_session(
+                    session,
+                    |number| Request::Cancel { session: number },
+                    Pending::Nothing,
+                ),
                 Outgoing::Set {
                     session,
                     setting,
                     value,
-                } => {
-                    if let Some(chat) = self.chats.get(&session) {
-                        chat.set(&setting, &value);
-                    }
-                }
+                } => self.ask_session(
+                    session,
+                    |number| Request::Set {
+                        session: number,
+                        setting,
+                        value,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Stage {
                     session,
                     paths,
                     stage,
-                } => self.stage(model, session, paths, stage),
-                Outgoing::Commit { session, message } => self.commit(model, session, message),
-                Outgoing::Accounts { logins, in_use } => {
-                    let _ = pm_store::save_accounts(&logins, &in_use);
-                    apply_accounts(&logins, &in_use);
+                } => {
+                    if let Some(placement) = Self::session_of(model, session) {
+                        self.ask(
+                            &placement.host,
+                            Request::Stage {
+                                directory: placement.directory,
+                                paths,
+                                stage,
+                            },
+                            Pending::Stage(session),
+                        );
+                    }
                 }
+                Outgoing::Commit { session, message } => {
+                    if let Some(placement) = Self::session_of(model, session) {
+                        self.ask(
+                            &placement.host,
+                            Request::Commit {
+                                directory: placement.directory,
+                                message,
+                            },
+                            Pending::Commit(session),
+                        );
+                    }
+                }
+                Outgoing::Accounts { logins, in_use } => self.set_accounts(&logins, &in_use),
                 Outgoing::SignIn { agent } => {
-                    if let Some(held) = AGENTS.get(agent).copied() {
-                        self.spawn(move |reporter| {
-                            let _ = reporter.send(Job::SignedIn(agent, held.sign_in()));
-                        });
+                    if let Some(id) = Self::agent_id(agent) {
+                        self.ask(&None, Request::SignIn { agent: id }, Pending::SignIn(agent));
+                    }
+                }
+                Outgoing::Files {
+                    key,
+                    host,
+                    directory,
+                } => self.ask(
+                    &host,
+                    Request::Files {
+                        directory,
+                        limit: FILE_LIMIT,
+                    },
+                    Pending::Files(key),
+                ),
+                Outgoing::Branches {
+                    project,
+                    host,
+                    directory,
+                } => self.ask(
+                    &host,
+                    Request::Branches { directory },
+                    Pending::Branches(project),
+                ),
+                Outgoing::Skills {
+                    agent,
+                    project,
+                    host,
+                    directory,
+                } => {
+                    if let Some(id) = Self::agent_id(agent) {
+                        self.ask(
+                            &host,
+                            Request::Skills {
+                                agent: id,
+                                directory,
+                            },
+                            Pending::Skills(agent, project),
+                        );
+                    }
+                }
+                Outgoing::Discover { agent, host } => {
+                    if let Some(id) = Self::agent_id(agent) {
+                        self.ask(
+                            &host.clone(),
+                            Request::Discover { agent: id },
+                            Pending::Discover(host, agent),
+                        );
+                    }
+                }
+                Outgoing::Identity { agent, naming } => {
+                    if let Some(id) = Self::agent_id(agent) {
+                        self.ask(
+                            &None,
+                            Request::Identity { agent: id },
+                            Pending::Identity(agent, naming),
+                        );
                     }
                 }
                 Outgoing::Copy { text } => copies.push(text),
@@ -174,31 +477,56 @@ impl Work {
         copies
     }
 
-    /// Takes in what the running agents and the threads have reported since the last look.
+    /// Takes in what the servers and the threads have reported since the last look.
     pub fn poll(&mut self, model: &State<Screen>) {
-        let mut heard: Vec<(usize, Event)> = Vec::new();
-        for (session, chat) in &self.chats {
-            heard.extend(chat.events().into_iter().map(|event| (*session, event)));
-        }
-        for (session, event) in heard {
-            let ended = matches!(event, Event::Finished(_) | Event::Failed(_));
-            if matches!(event, Event::Failed(_)) {
-                self.chats.remove(&session);
-            }
-            model.update(|screen| *screen = screen.clone().heard(session, event));
-            if ended {
-                self.refresh(model, session);
-            }
-        }
         while let Ok(job) = self.jobs.try_recv() {
             self.pending.set(self.pending.get().saturating_sub(1));
             self.finish(model, job);
         }
+        let hosts: Vec<Host> = self.links.keys().cloned().collect();
+        for host in hosts {
+            let items = match self.links.get(&host).and_then(|link| link.client.as_ref()) {
+                Some(client) => client.incoming(),
+                None => continue,
+            };
+            for item in items {
+                match item {
+                    Incoming::Connected => {
+                        self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
+                    }
+                    Incoming::Disconnected(reason) => {
+                        eprintln!("the server on {host:?} is out of reach: {reason}");
+                    }
+                    Incoming::Response { id, response } => {
+                        let pending = self
+                            .links
+                            .get_mut(&host)
+                            .and_then(|link| link.waiting.remove(&id));
+                        if let Some(pending) = pending {
+                            self.answered(model, &host, pending, response);
+                        }
+                    }
+                    Incoming::Event { session, event, .. } => {
+                        self.heard(model, &host, session, event);
+                    }
+                    Incoming::SessionAdded(info) => self.adopt(model, &host, vec![info]),
+                    Incoming::ProjectsChanged(paths) => {
+                        if host.is_none() {
+                            Self::projects_changed(model, &paths);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    /// Whether a thread has yet to report, so the screen should keep looking for what it finds.
+    /// Whether something is yet to be answered, so the screen should keep looking for what it finds.
     pub fn busy(&self) -> bool {
         self.pending.get() > 0
+            || self
+                .links
+                .values()
+                .any(|link| link.client.is_none() || !link.waiting.is_empty())
     }
 
     /// Runs `work` on a thread of its own, which reports what it found through the sender it is given.
@@ -226,63 +554,219 @@ impl Work {
                     model.update(|screen| *screen = screen.clone().with_preview(&path, picture));
                 }
             }
-            Job::SignedIn(agent, result) => {
-                model.update(|screen| *screen = screen.clone().signed_in(agent));
-                if let Err(message) = result {
-                    eprintln!("sign-in failed: {message}");
-                } else if let Some(held) = AGENTS.get(agent).copied() {
-                    self.spawn(move |reporter| {
-                        let found = pm_acp::discover(held).unwrap_or_default();
-                        let _ = reporter.send(Job::Discovered(agent, found));
-                    });
+            Job::Server(host, Ok(target)) => {
+                let Some(link) = self.links.get_mut(&host) else {
+                    return;
+                };
+                let client = Client::connect(target);
+                for (request, pending) in std::mem::take(&mut link.backlog) {
+                    let id = client.request(request);
+                    link.waiting.insert(id, pending);
+                }
+                link.client = Some(client);
+            }
+            Job::Server(host, Err(reason)) => {
+                eprintln!("{reason}");
+                let Some(link) = self.links.remove(&host) else {
+                    return;
+                };
+                for (_, pending) in link.backlog {
+                    if let Pending::Start(session) = pending {
+                        let reason = reason.clone();
+                        model.update(|screen| {
+                            *screen = screen.clone().heard(session, Event::Failed(reason));
+                        });
+                    }
                 }
             }
-            Job::Discovered(agent, found) => {
-                if !found.settings.is_empty()
+        }
+    }
+
+    /// Passes what the agent of the session numbered `number` on `host` did on to the screen.
+    fn heard(&mut self, model: &State<Screen>, host: &Host, number: u64, event: Event) {
+        let key = (host.clone(), number);
+        let Some(session) = self.positions.get(&key).copied() else {
+            self.early.entry(key).or_default().push(event);
+            return;
+        };
+        let ended = matches!(event, Event::Finished(_) | Event::Failed(_));
+        model.update(|screen| *screen = screen.clone().heard(session, event));
+        if ended {
+            self.refresh(model, session);
+        }
+    }
+
+    /// Does what the answer to a request calls for.
+    fn answered(
+        &mut self,
+        model: &State<Screen>,
+        host: &Host,
+        pending: Pending,
+        response: Response,
+    ) {
+        let failure = match &response {
+            Response::Failed { message } => Some(message.clone()),
+            _ => None,
+        };
+        match pending {
+            Pending::Nothing => {
+                if let Some(message) = failure {
+                    eprintln!("the server could not do what was asked: {message}");
+                }
+            }
+            Pending::Discover(origin, agent) => {
+                let found = match response {
+                    Response::Discovery(found) => found,
+                    _ => Discovery::default(),
+                };
+                if origin.is_none()
+                    && !found.settings.is_empty()
                     && let Some(held) = AGENTS.get(agent)
                 {
                     let _ =
                         pm_store::save_text(&format!("discovery-{}", held.id), &found.to_text());
                 }
-                model.update(|screen| *screen = screen.clone().with_discovery(agent, found));
+                model.update(|screen| {
+                    *screen = screen.clone().with_discovery_for(origin, agent, found);
+                });
             }
-            Job::Worktree {
-                session,
-                result,
-                text,
-                files,
-                settings,
-            } => match result {
-                Ok((path, branch)) => {
-                    let directory = path.to_string_lossy().into_owned();
+            Pending::SignIn(agent) => {
+                model.update(|screen| *screen = screen.clone().signed_in(agent));
+                if let Some(message) = failure {
+                    eprintln!("sign-in failed: {message}");
+                } else if let Some(id) = Self::agent_id(agent) {
+                    self.ask(
+                        &None,
+                        Request::Discover { agent: id },
+                        Pending::Discover(None, agent),
+                    );
+                }
+            }
+            Pending::Sessions(origin) => {
+                if let Response::Sessions { sessions } = response {
+                    self.adopt(model, &origin, sessions);
+                }
+            }
+            Pending::Skills(agent, project) => {
+                if let Response::Skills { skills, names } = response {
                     model.update(|screen| {
-                        *screen = screen.clone().worktree_ready(session, &directory, &branch);
+                        *screen = screen.clone().with_skills(
+                            agent,
+                            project,
+                            skills,
+                            names.into_iter().collect(),
+                        );
                     });
-                    self.begin(model, session, &settings);
-                    if let Some(chat) = self.chats.get(&session) {
-                        chat.prompt(&text, &files);
+                }
+            }
+            Pending::Files(key) => {
+                if let Response::Files { paths } = response {
+                    model.update(|screen| *screen = screen.clone().with_files(&key, paths));
+                }
+            }
+            Pending::Branches(project) => {
+                if let Response::Branches { names } = response {
+                    model.update(|screen| *screen = screen.clone().with_branches(project, names));
+                }
+            }
+            Pending::Identity(agent, naming) => {
+                if let Response::Identity { default, selected } = response {
+                    model.update(|screen| {
+                        *screen = screen
+                            .clone()
+                            .with_identity(agent, default, selected, naming);
+                    });
+                }
+            }
+            Pending::Start(session) => match response {
+                Response::Started {
+                    session: number,
+                    directory,
+                    branch,
+                } => {
+                    self.numbers.insert(session, (host.clone(), number));
+                    self.positions.insert((host.clone(), number), session);
+                    if let Some(client) = self.links.get(host).and_then(|link| link.client.as_ref())
+                    {
+                        client.watch(number, 0);
+                    }
+                    if let Some(branch) = branch {
+                        model.update(|screen| {
+                            *screen = screen.clone().worktree_ready(session, &directory, &branch);
+                        });
+                    }
+                    for event in self
+                        .early
+                        .remove(&(host.clone(), number))
+                        .unwrap_or_default()
+                    {
+                        self.heard(model, host, number, event);
                     }
                 }
-                Err(reason) => model.update(|screen| {
-                    *screen = screen.clone().heard(
-                        session,
-                        Event::Failed(format!("could not make a worktree: {reason}")),
-                    );
+                Response::Failed { message } => model.update(|screen| {
+                    *screen = screen.clone().heard(session, Event::Failed(message));
                 }),
+                _ => {}
             },
-            Job::Refreshed {
-                session,
-                changes,
-                commits,
-            } => model.update(|screen| {
-                *screen = screen.clone().refreshed(session, &changes, commits);
-            }),
-            Job::Committed(session) => self.refresh(model, session),
-            Job::Failed { session, reason } => {
-                model.update(|screen| *screen = screen.clone().noted(session, &reason));
+            Pending::Inspect(session) => {
+                if let Response::Inspected { changes, commits } = response {
+                    model.update(|screen| {
+                        *screen = screen.clone().refreshed(session, &changes, commits);
+                    });
+                }
+            }
+            Pending::Stage(session) => {
+                if let Some(message) = failure {
+                    let reason = format!("Could not stage the files: {message}");
+                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                }
+                self.refresh(model, session);
+            }
+            Pending::Commit(session) => {
+                if let Some(message) = failure {
+                    let reason = format!("The commit failed: {message}");
+                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                }
                 self.refresh(model, session);
             }
         }
+    }
+
+    /// Adds the sessions of the server of `origin` that the window does not show yet, and starts watching them.
+    fn adopt(
+        &mut self,
+        model: &State<Screen>,
+        origin: &Host,
+        sessions: Vec<pm_protocol::SessionInfo>,
+    ) {
+        let fresh: Vec<_> = sessions
+            .into_iter()
+            .filter(|info| !self.positions.contains_key(&(origin.clone(), info.session)))
+            .collect();
+        let mut added = Vec::new();
+        model.update(|screen| {
+            let (next, mapping) = screen.clone().restored(origin, &fresh);
+            *screen = next;
+            added = mapping;
+        });
+        for (position, number) in added {
+            self.numbers.insert(position, (origin.clone(), number));
+            self.positions.insert((origin.clone(), number), position);
+            if let Some(client) = self.links.get(origin).and_then(|link| link.client.as_ref()) {
+                client.watch(number, 0);
+            }
+        }
+    }
+
+    /// Adds the projects another client added on this machine.
+    fn projects_changed(model: &State<Screen>, paths: &[String]) {
+        model.update(|screen| {
+            let mut next = screen.clone();
+            for path in paths {
+                next = next.with_project(path);
+            }
+            *screen = next;
+        });
     }
 
     /// Where the session at `session` works.
@@ -294,145 +778,36 @@ impl Work {
         let held = state.sessions.get(session)?;
         let project = state.projects.get(held.project)?;
         Some(Placement {
-            directory: PathBuf::from(&held.directory),
+            host: project.host(),
+            directory: held.directory.clone(),
             agent: held.agent,
             base: held.base.clone(),
-            repository: project.directory(),
+            repository: project.directory().to_string_lossy().into_owned(),
             title: held.title.clone(),
         })
     }
 
-    /// Starts the new session at `session`: in a worktree off `base` when one is asked for, otherwise in its folder.
-    fn start(
-        &mut self,
-        model: &State<Screen>,
-        session: usize,
-        text: String,
-        files: Vec<String>,
-        settings: Vec<(String, String)>,
-        base: Option<String>,
-    ) {
-        let Some(placement) = Self::session_of(model, session) else {
-            return;
-        };
-        let (repository, title) = (placement.repository, placement.title);
-        match base {
-            Some(base) => {
-                self.spawn(move |reporter| {
-                    let result = pm_git::add_worktree(&repository, &title, &base)
-                        .map(|made| (made.path, made.branch));
-                    let _ = reporter.send(Job::Worktree {
-                        session,
-                        result,
-                        text,
-                        files,
-                        settings,
-                    });
-                });
-            }
-            None => {
-                self.begin(model, session, &settings);
-                if let Some(chat) = self.chats.get(&session) {
-                    chat.prompt(&text, &files);
-                }
-            }
-        }
-    }
-
-    /// Starts the agent of the session at `session` in its folder, with the settings the reader chose.
-    fn begin(&mut self, model: &State<Screen>, session: usize, settings: &[(String, String)]) {
-        let Some(placement) = Self::session_of(model, session) else {
-            return;
-        };
-        let Some(agent) = AGENTS.get(placement.agent).copied() else {
-            return;
-        };
-        let chat = Chat::start(agent, placement.directory);
-        for (setting, value) in settings {
-            chat.set(setting, value);
-        }
-        self.chats.insert(session, chat);
-    }
-
     /// Looks at the folder of the session at `session` again, for its changes and commits.
-    fn refresh(&self, model: &State<Screen>, session: usize) {
+    fn refresh(&mut self, model: &State<Screen>, session: usize) {
         let Some(placement) = Self::session_of(model, session) else {
             return;
         };
-        self.spawn(move |reporter| {
-            let _ = reporter.send(Self::look(
-                session,
-                &placement.directory,
-                placement.base.as_deref(),
-            ));
+        let inspecting = self.links.get(&placement.host).is_some_and(|link| {
+            link.waiting
+                .values()
+                .any(|pending| matches!(pending, Pending::Inspect(held) if *held == session))
         });
-    }
-
-    /// What the folder at `directory` holds that differs from the last commit.
-    fn look(session: usize, directory: &Path, base: Option<&str>) -> Job {
-        if !pm_git::is_repository(directory) {
-            return Job::Refreshed {
-                session,
-                changes: Vec::new(),
-                commits: None,
-            };
+        if inspecting {
+            return;
         }
-        Job::Refreshed {
-            session,
-            changes: pm_git::changes(directory),
-            commits: base.map(|base| pm_git::commits_since(directory, base)),
-        }
-    }
-
-    /// Stages or unstages `paths` in the folder of the session at `session`.
-    fn stage(&self, model: &State<Screen>, session: usize, paths: Vec<String>, stage: bool) {
-        let Some(placement) = Self::session_of(model, session) else {
-            return;
-        };
-        let (directory, base) = (placement.directory, placement.base);
-        self.spawn(move |reporter| {
-            let done = if stage {
-                pm_git::stage(&directory, &paths)
-            } else {
-                pm_git::unstage(&directory, &paths)
-            };
-            let _ = reporter.send(match done {
-                Ok(()) => Self::look(session, &directory, base.as_deref()),
-                Err(reason) => Job::Failed {
-                    session,
-                    reason: format!("Could not stage the files: {reason}"),
-                },
-            });
-        });
-    }
-
-    /// Commits what is staged in the folder of the session at `session`.
-    fn commit(&self, model: &State<Screen>, session: usize, message: String) {
-        let Some(placement) = Self::session_of(model, session) else {
-            return;
-        };
-        let directory = placement.directory;
-        self.spawn(move |reporter| {
-            let _ = reporter.send(match pm_git::commit(&directory, &message) {
-                Ok(()) => Job::Committed(session),
-                Err(reason) => Job::Failed {
-                    session,
-                    reason: format!("The commit failed: {reason}"),
-                },
-            });
-        });
-    }
-}
-
-/// Points every agent at the folder of the login in use for it, or at its own when none is.
-pub fn apply_accounts(logins: &[(String, String, String)], in_use: &[(String, String)]) {
-    for agent in AGENTS {
-        let home = in_use
-            .iter()
-            .find(|(owner, _)| owner == agent.id)
-            .filter(|(owner, id)| logins.iter().any(|(held, name, _)| held == owner && name == id))
-            .and_then(|(owner, id)| pm_store::account_directory(owner, id).ok());
-        agent.use_home(home);
+        self.ask(
+            &placement.host,
+            Request::Inspect {
+                directory: placement.directory,
+                base: placement.base,
+            },
+            Pending::Inspect(session),
+        );
     }
 }
 
@@ -442,8 +817,12 @@ const PREVIEW_SIDE: u32 = 512;
 /// The picture in the file at `path`, shrunk to a preview, or nothing when the file is not a picture.
 fn decode_preview(path: &str) -> Option<Picture> {
     use std::hash::{Hash, Hasher};
-    let modified = std::fs::metadata(path).and_then(|data| data.modified()).ok();
-    let decoded = image::open(path).ok()?.thumbnail(PREVIEW_SIDE, PREVIEW_SIDE);
+    let modified = std::fs::metadata(path)
+        .and_then(|data| data.modified())
+        .ok();
+    let decoded = image::open(path)
+        .ok()?
+        .thumbnail(PREVIEW_SIDE, PREVIEW_SIDE);
     let rgba = decoded.to_rgba8();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (path, modified).hash(&mut hasher);

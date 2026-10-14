@@ -280,8 +280,84 @@ impl Screen {
         match self {
             Self::Workspace(mut state) => {
                 state.forget_identity(agent);
-                state.name_login(agent);
+                state.outbox_identity(agent);
                 Self::Workspace(state)
+            }
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen holding the settings the agent at `agent` on the machine `host` offers, while the workspace is showing.
+    pub fn with_discovery_for(
+        self,
+        host: Option<String>,
+        agent: usize,
+        found: pm_acp::Discovery,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_discovery_for(host, agent, found)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen with the sessions the server of `host` holds added, and each one's position with the server's number for it.
+    pub fn restored(
+        self,
+        host: &Option<String>,
+        infos: &[pm_protocol::SessionInfo],
+    ) -> (Self, Vec<(usize, u64)>) {
+        match self {
+            Self::Workspace(mut state) => {
+                let added = state.restore_sessions(host, infos);
+                (Self::Workspace(state), added)
+            }
+            onboarding => (onboarding, Vec::new()),
+        }
+    }
+
+    /// The screen holding `files` as those listed for `key`, while the workspace is showing.
+    pub fn with_files(self, key: &str, files: Vec<String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_files(key, files)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen holding `branches` for the project at `project`, while the workspace is showing.
+    pub fn with_branches(self, project: usize, branches: Vec<String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_branches(project, branches)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen holding the skills found for `agent` in the project at `project`, while the workspace is showing.
+    pub fn with_skills(
+        self,
+        agent: usize,
+        project: usize,
+        skills: Vec<pm_acp::Slash>,
+        names: std::collections::HashSet<String>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_skills(agent, project, skills, names))
+            }
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen knowing who the agent at `agent` is signed in as, while the workspace is showing.
+    pub fn with_identity(
+        self,
+        agent: usize,
+        default: Option<String>,
+        selected: Option<String>,
+        naming: bool,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_identity(agent, default, selected, naming))
             }
             onboarding => onboarding,
         }

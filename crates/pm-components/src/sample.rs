@@ -271,6 +271,8 @@ pub struct Session {
     pub ask: Option<Permission>,
     /// When the turn that is running began, if one is.
     pub turn_started: Option<Instant>,
+    /// How many of the prompts this window sent the server has yet to repeat back, so that they are not added twice.
+    pub echoes: usize,
 }
 
 impl Session {
@@ -300,19 +302,38 @@ impl Session {
             skills: Vec::new(),
             ask: None,
             turn_started: None,
+            echoes: 0,
         }
+    }
+
+    /// A session the server held already: it has no messages until its events are replayed, and nothing is under way.
+    pub fn restored(
+        title: &str,
+        project: usize,
+        branch: &str,
+        directory: &str,
+        base: Option<String>,
+        agent: usize,
+    ) -> Self {
+        let mut session = Self::new(title, project, branch, Status::Done, "", Vec::new());
+        session.directory = directory.to_owned();
+        session.base = base;
+        session.agent = agent;
+        session
     }
 
     /// A session just handed `prompt`, working on it, called `title`, in `project`.
     pub fn started(title: &str, project: usize, prompt: &str) -> Self {
-        Self::new(
+        let mut session = Self::new(
             title,
             project,
             "task/new",
             Status::Working,
             "now",
             vec![Message::user(prompt)],
-        )
+        );
+        session.echoes = 1;
+        session
     }
 
     /// The position of the latest reply that has steps, which is the one whose steps show unasked.

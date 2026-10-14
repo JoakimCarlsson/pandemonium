@@ -4,4 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "pandemonium-server"
+path = "src/main.rs"
+
 [dependencies]
+getrandom = "0.4.3"
+pm-acp.workspace = true
+pm-git.workspace = true
+pm-protocol.workspace = true
+pm-store.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tungstenite = "0.30.0"

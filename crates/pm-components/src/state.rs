@@ -177,6 +177,49 @@ pub enum Outgoing {
         /// The login in use for each agent.
         in_use: Vec<(String, String)>,
     },
+    /// Lists the files of the folder `directory` on `host`, for the list behind an `@`.
+    Files {
+        /// What the answer is held under, to tell whether it is still the one wanted.
+        key: String,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The folder.
+        directory: String,
+    },
+    /// Lists the branches of the repository `directory` on `host`, for the project at `project`.
+    Branches {
+        /// The project, by position.
+        project: usize,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The folder.
+        directory: String,
+    },
+    /// Lists the skills of the agent at `agent` in the project at `project`.
+    Skills {
+        /// The agent, by position.
+        agent: usize,
+        /// The project, by position.
+        project: usize,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The project's folder.
+        directory: String,
+    },
+    /// Asks the agent at `agent` on `host` what it lets the reader change and offers behind a slash.
+    Discover {
+        /// The agent, by position.
+        agent: usize,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+    },
+    /// Asks who the agent at `agent` is signed in as, for naming the login in use after it when `naming`.
+    Identity {
+        /// The agent, by position.
+        agent: usize,
+        /// Whether the answer names the login in use.
+        naming: bool,
+    },
     /// Signs the agent, by its position, in under the login now in use.
     SignIn {
         /// The agent, by position.
@@ -311,6 +354,11 @@ pub struct WorkspaceState {
     pub prompt: Field,
     /// The files attached to the prompt, by path.
     pub attachments: Vec<String>,
+    /// The machine, by destination, that the settings and commands held belong to; nothing for this one.
+    pub discovery_host: Option<String>,
+    /// What other machines said about the agents, by destination, while the settings of one machine are showing.
+    pub discovered_elsewhere:
+        std::collections::HashMap<Option<String>, (Vec<Vec<Setting>>, Vec<Vec<Slash>>)>,
     /// What the attached pictures look like, by path, once they are decoded.
     pub previews: std::collections::HashMap<String, pm_ui::Picture>,
     /// The commit message being written.
@@ -416,6 +464,8 @@ impl WorkspaceState {
             skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
             previews: std::collections::HashMap::new(),
+            discovery_host: None,
+            discovered_elsewhere: std::collections::HashMap::new(),
             files: Vec::new(),
             files_of: None,
             identities: vec![None; AGENTS.len()],
@@ -756,6 +806,7 @@ impl WorkspaceState {
                 else {
                     return;
                 };
+                session.echoes += 1;
                 let files = self.attachments.clone();
                 let mut message = Message::user(&text);
                 message.attachments = files.clone();

@@ -35,8 +35,20 @@ impl Project {
         })
     }
 
-    /// The folder on disk the project is, with a leading `~` taken to be the reader's home.
+    /// The machine the project is on when it is not this one: the destination of an `ssh://destination/folder` address.
+    pub fn host(&self) -> Option<String> {
+        pm_protocol::host_of(&self.path).map(|(host, _)| host.to_owned())
+    }
+
+    /// The folder the project is, on its machine, with a leading `~` taken to be the reader's home when the machine is this one.
     pub fn directory(&self) -> std::path::PathBuf {
+        if let Some((_, folder)) = pm_protocol::host_of(&self.path) {
+            return if folder.starts_with('~') {
+                folder.into()
+            } else {
+                format!("/{folder}").into()
+            };
+        }
         match (self.path.strip_prefix("~/"), std::env::home_dir()) {
             (Some(rest), Some(home)) => home.join(rest),
             _ => self.path.clone().into(),
@@ -45,6 +57,9 @@ impl Project {
 
     /// The branch the project's folder has checked out, or nothing when it is not a repository.
     pub fn branch(&self) -> String {
+        if self.host().is_some() {
+            return String::new();
+        }
         std::fs::read_to_string(self.directory().join(".git/HEAD"))
             .ok()
             .and_then(|head| {
