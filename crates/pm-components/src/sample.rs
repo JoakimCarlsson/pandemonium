@@ -67,6 +67,65 @@ pub struct DiffLine {
     pub text: String,
 }
 
+/// How a changed file came to differ from the last commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Fate {
+    /// The file is new.
+    Added,
+    /// The file is gone.
+    Deleted,
+    /// The file has other contents.
+    Modified,
+}
+
+/// Lines of one side of a diff that a comment is about.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Range {
+    /// Whether the lines are numbered in the new file, and in the old one when not.
+    pub new: bool,
+    /// The first line.
+    pub start: usize,
+    /// The last line.
+    pub end: usize,
+}
+
+impl Range {
+    /// The lines as a pull request names them: `line R12`, or `lines L12 to L14` for the old file.
+    pub fn label(&self) -> String {
+        let side = if self.new { 'R' } else { 'L' };
+        if self.start == self.end {
+            format!("line {side}{}", self.start)
+        } else {
+            format!("lines {side}{} to {side}{}", self.start, self.end)
+        }
+    }
+
+    /// The lines as a sentence for the agent: `line 12`, or `lines 12–14 (before the change)`.
+    pub fn describe(&self) -> String {
+        let lines = if self.start == self.end {
+            format!("line {}", self.start)
+        } else {
+            format!("lines {}–{}", self.start, self.end)
+        };
+        if self.new {
+            lines
+        } else {
+            format!("{lines} (before the change)")
+        }
+    }
+}
+
+/// A note on a changed file, or on lines of it, waiting to be sent to the agent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Comment {
+    /// The file it is about.
+    pub path: String,
+    /// The lines it is about, or the whole file when there are none.
+    pub range: Option<Range>,
+    /// What it says.
+    pub text: String,
+}
+
 /// A file an agent changed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Change {
@@ -116,6 +175,22 @@ impl Change {
     /// How many lines the change takes out.
     pub fn removed(&self) -> usize {
         self.count(Kind::Remove)
+    }
+
+    /// Whether the file is new, gone or has other contents, as its first hunk says.
+    pub fn fate(&self) -> Fate {
+        let header = self
+            .diff
+            .first()
+            .filter(|line| line.kind == Kind::Hunk)
+            .map_or("", |line| line.text.as_str());
+        if header.starts_with("@@ -0,0 ") {
+            Fate::Added
+        } else if header.contains(" +0,0 @@") {
+            Fate::Deleted
+        } else {
+            Fate::Modified
+        }
     }
 
     /// The directory the file is in, or nothing when it is at the root.
@@ -349,6 +424,8 @@ pub struct Session {
     pub messages: Vec<Message>,
     /// The files it changed that are not committed.
     pub changes: Vec<Change>,
+    /// The notes on those files that have not been sent to the agent.
+    pub comments: Vec<Comment>,
     /// The messages of the commits made from it, oldest first.
     pub commits: Vec<String>,
     /// What can be changed about the conversation, once the agent has said.
@@ -398,6 +475,7 @@ impl Session {
             updated_at: crate::age::now().saturating_sub(minutes_ago * 60_000),
             messages,
             changes: Vec::new(),
+            comments: Vec::new(),
             commits: Vec::new(),
             settings: Vec::new(),
             commands: Vec::new(),

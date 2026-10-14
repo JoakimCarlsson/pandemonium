@@ -875,6 +875,9 @@ impl WorkspaceState {
         if crate::adder::is_adder(id) {
             return Some(crate::adder::ADDER_FIELD);
         }
+        if (crate::state::COMMENT_FILE_BASE..crate::state::COMMENT_REMOVE_BASE).contains(&number) {
+            return Some(crate::state::COMMENT_FIELD);
+        }
         (slash_row
             || id == SLASH_BUTTON
             || id == SKILL_BUTTON

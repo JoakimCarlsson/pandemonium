@@ -9,13 +9,16 @@ use std::time::{Duration, Instant};
 use pm_acp::{AGENTS, Login, Standing};
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
+use pm_components::diff::gutter_of;
 use pm_components::message_menu::is_message_menu_item;
+use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
-    ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen, TERMINAL_BODY,
+    ATTACH, AgentStatus, BROWSE, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen,
+    TERMINAL_BODY, TREE_SCROLL,
 };
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
@@ -46,6 +49,9 @@ const WIDTH: f32 = 1280.0;
 
 /// Logical height of the window when it opens.
 const HEIGHT: f32 = 800.0;
+
+/// How wide, in logical pixels, the strip along the right edge of a scrolling box is where pressing takes hold of its bar.
+const BAR_GRIP: f32 = 14.0;
 
 /// How far one notch of a mouse wheel scrolls, in logical pixels.
 const WHEEL_LINE: f32 = 48.0;
@@ -84,6 +90,8 @@ pub struct App {
     output: Output,
     /// The element the primary button went down on.
     pressed_on: Option<FocusId>,
+    /// The scrolling box whose bar is held down, and where the pointer last was along it.
+    bar_drag: Option<(FocusId, f32)>,
     /// When the application started, which animations run on.
     started: Instant,
     /// Where the threads that start agents report what they found.
@@ -199,6 +207,7 @@ impl Default for App {
             modifiers: Modifiers::default(),
             output: Output::default(),
             pressed_on: None,
+            bar_drag: None,
             started: Instant::now(),
             standings,
             reporter,
@@ -521,20 +530,62 @@ impl App {
             .rev()
             .find(|scroller| scroller.rect.contains(x, y))
         {
-            let room = scroller.room;
-            let id = scroller.id;
-            self.model.update(|state| {
-                *state = match id {
-                    MENU_SCROLL => state.clone().scrolled_menu(pixels, room),
-                    PLAN_SCROLL => state.clone().scrolled_plan(pixels, room),
-                    _ => state.clone().scrolled_chat(pixels, room),
-                };
-            });
+            let (id, room) = (scroller.id, scroller.room);
+            self.scroll_box(id, pixels, room);
             return;
         }
         let height = renderer.size().1;
         self.model
             .update(|state| *state = state.clone().scrolled(x, pixels, height));
+    }
+
+    /// Scrolls the box `id`, which has `room` pixels to scroll, by `pixels`, downwards when positive.
+    fn scroll_box(&mut self, id: FocusId, pixels: f32, room: f32) {
+        self.model.update(|state| {
+            *state = match id {
+                MENU_SCROLL => state.clone().scrolled_menu(pixels, room),
+                PLAN_SCROLL => state.clone().scrolled_plan(pixels, room),
+                DIFF_SCROLL => state.clone().scrolled_diff(pixels, room),
+                TREE_SCROLL => state.clone().scrolled_tree(pixels, room),
+                _ => state.clone().scrolled_chat(pixels, room),
+            };
+        });
+    }
+
+    /// Takes hold of the bar of the scrolling box under the pointer when it is down on the strip along its right edge, and says whether it did.
+    fn grab_bar(&mut self) -> bool {
+        let Some((x, y)) = self.pointer.position else {
+            return false;
+        };
+        let grabbed = self.output.scrollers.iter().rev().find(|scroller| {
+            scroller.room > 0.0
+                && scroller.rect.contains(x, y)
+                && x >= scroller.rect.x + scroller.rect.width - BAR_GRIP
+        });
+        self.bar_drag = grabbed.map(|scroller| (scroller.id, y));
+        self.bar_drag.is_some()
+    }
+
+    /// Follows the pointer down to `y` while a bar is held: the box moves as far as the bar does along its track.
+    fn drag_bar(&mut self, y: f32) {
+        let Some((id, last)) = self.bar_drag else {
+            return;
+        };
+        let Some(scroller) = self
+            .output
+            .scrollers
+            .iter()
+            .find(|scroller| scroller.id == id)
+        else {
+            return;
+        };
+        let height = scroller.rect.height;
+        let track = (height - 6.0).max(0.0);
+        let thumb = (track * height / (height + scroller.room)).clamp(24.0, track.max(24.0));
+        let travel = (track - thumb).max(1.0);
+        let (room, pixels) = (scroller.room, (y - last) * scroller.room / travel);
+        self.bar_drag = Some((id, y));
+        self.scroll_box(id, pixels, room);
     }
 
     /// Folds a pointer event in, takes focus from the focused element when
@@ -557,9 +608,16 @@ impl App {
                     _ => self.open_message_menu(),
                 }
             }
+            PointerEvent::Pressed(Button::Left) if self.grab_bar() => {
+                self.pressed_on = None;
+            }
             PointerEvent::Pressed(Button::Left) => {
                 self.terminal_press();
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
+                if let Some(id) = on.filter(|id| gutter_of(*id).is_some()) {
+                    self.model
+                        .update(|state| *state = state.clone().comment_drag_begun(id));
+                }
                 let screen = self.model.get();
                 self.project_press = on
                     .and_then(|id| screen.header_of(id))
@@ -595,6 +653,8 @@ impl App {
                 }
             }
             PointerEvent::Moved(x, y) => {
+                self.drag_bar(y);
+                self.drag_comment((x, y));
                 self.drag_project((x, y));
                 self.terminal_drag((x, y));
                 self.text_drag((x, y));
@@ -605,6 +665,8 @@ impl App {
                 }
             }
             PointerEvent::Released(Button::Left) => {
+                self.bar_drag = None;
+                self.end_comment_drag();
                 self.dragging = None;
                 self.terminal_anchor = None;
                 self.text_release();
@@ -690,6 +752,27 @@ impl App {
             .unwrap_or(current);
         self.model
             .update(|state| *state = state.clone().dragged_over(from, over, at));
+    }
+
+    /// Stretches the lines being selected for a comment to the line number under `at`.
+    fn drag_comment(&mut self, at: (f32, f32)) {
+        if !self.model.get().comment_dragging() {
+            return;
+        }
+        if let Some(id) = self.output.hit(at).filter(|id| gutter_of(*id).is_some()) {
+            self.model
+                .update(|state| *state = state.clone().comment_drag_extended(id));
+        }
+    }
+
+    /// Ends a selection of lines, which opens the box for a comment on them and gives it the keyboard.
+    fn end_comment_drag(&mut self) {
+        if !self.model.get().comment_dragging() {
+            return;
+        }
+        self.model
+            .update(|state| *state = state.clone().comment_drag_ended());
+        self.focus.focus(COMMENT_FIELD);
     }
 
     /// Ends a drag of a project header, putting the project where it was let go, and says whether there was a drag.
@@ -905,6 +988,7 @@ impl App {
             }
             Key::Tab if event.modifiers.shift => self.focus.previous(),
             Key::Tab => self.focus.next(),
+            Key::Escape if self.model.get().commenting() => self.activate(COMMENT_CANCEL),
             Key::Escape if self.model.get().menu().is_some() => {
                 self.model
                     .update(|state| *state = state.clone().without_menu());

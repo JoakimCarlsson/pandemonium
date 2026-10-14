@@ -8,7 +8,10 @@ use pm_acp::{
 };
 use pm_components::Project;
 use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
-use pm_components::state::{CHAT_TEXT, DETAILS_BASE, RESTORE_BASE, SUBAGENTS_CHIP};
+use pm_components::diff::gutter_id;
+use pm_components::state::{
+    CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, DETAILS_BASE, RESTORE_BASE, REVIEW_FILES, SUBAGENTS_CHIP,
+};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
     ADD_PROJECT, HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL,
@@ -36,6 +39,10 @@ pub enum Shot {
     Workspace,
     /// The workspace on the diff of its first session.
     Diff,
+    /// The workspace on the diff of its first session with a comment kept and another being written.
+    Commenting,
+    /// The workspace on the diff of its first session with the project's files listed in the review panel.
+    Files,
     /// The workspace with the terminal open.
     Terminal,
     /// The workspace of the projects onboarding added, with no sessions.
@@ -117,6 +124,42 @@ fn workspace_sample() -> WorkspaceState {
     WorkspaceState::sample()
 }
 
+/// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
+fn commenting() -> WorkspaceState {
+    let state = workspace_sample()
+        .after(TAB_DIFF)
+        .comment_drag_begun(gutter_id(1, true, 23))
+        .comment_drag_extended(gutter_id(1, true, 26))
+        .comment_drag_ended()
+        .edited(
+            COMMENT_FIELD,
+            Edit::Paste("Return the id from checkpoint() and drop the unwrap.".to_owned()),
+        )
+        .after(COMMENT_ADD);
+    state
+        .comment_drag_begun(gutter_id(1, false, 18))
+        .comment_drag_extended(gutter_id(1, false, 19))
+        .comment_drag_ended()
+        .scrolled_diff(560.0, 5000.0)
+}
+
+/// The workspace with the project's files listed in the review panel.
+fn files() -> WorkspaceState {
+    let state = workspace_sample().after(REVIEW_FILES);
+    let key = state.files_of.clone().unwrap_or_default();
+    let paths = [
+        "Cargo.toml",
+        "README.md",
+        "docs/protocol.md",
+        "crates/pandemonium/src/main.rs",
+        "crates/pandemonium/src/session.rs",
+        "crates/pandemonium/Cargo.toml",
+        "crates/pm-ui/src/lib.rs",
+        "scripts/install.sh",
+    ];
+    state.with_files(&key, paths.map(str::to_owned).to_vec())
+}
+
 /// The workspace with a shell open that has run a few commands, as the shell would have drawn them.
 fn terminal() -> WorkspaceState {
     let mut state = workspace_sample().after(TERMINAL);
@@ -174,6 +217,8 @@ impl Shot {
             }
             Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
             Self::Diff => Screen::Workspace(workspace().after(TAB_DIFF)),
+            Self::Commenting => Screen::Workspace(commenting()),
+            Self::Files => Screen::Workspace(files()),
             Self::Terminal => Screen::Workspace(terminal()),
             Self::TerminalComposing => {
                 let mut state = terminal();

@@ -319,6 +319,58 @@ impl Screen {
         }
     }
 
+    /// The screen after the diff is scrolled by `delta` logical pixels,
+    /// downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_diff(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_diff(delta, room)),
+            other => other,
+        }
+    }
+
+    /// The screen after the review panel's list is scrolled by `delta`
+    /// logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_tree(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_tree(delta, room)),
+            other => other,
+        }
+    }
+
+    /// The screen after the pointer went down on the line number `id` of the diff.
+    pub fn comment_drag_begun(self, id: FocusId) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.comment_drag_begun(id)),
+            other => other,
+        }
+    }
+
+    /// The screen after the pointer, held down, moved over the line number `id` of the diff.
+    pub fn comment_drag_extended(self, id: FocusId) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.comment_drag_extended(id)),
+            other => other,
+        }
+    }
+
+    /// The screen after the pointer was let go over the diff.
+    pub fn comment_drag_ended(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.comment_drag_ended()),
+            other => other,
+        }
+    }
+
+    /// Whether lines of the diff are being dragged over.
+    pub fn comment_dragging(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.comment_dragging())
+    }
+
+    /// Whether the box for a comment on the diff is open.
+    pub fn commenting(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.commenting())
+    }
+
     /// Whether a list of commands is showing over the prompt.
     pub fn slash_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.slash_open())

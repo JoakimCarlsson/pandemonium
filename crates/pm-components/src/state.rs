@@ -16,7 +16,7 @@ use crate::message_menu::{
     MESSAGE_MENU_SELECT_ALL, MessageMenu,
 };
 use crate::project::Project;
-use crate::sample::{AGENTS, Change, Message, Session, Status, projects, sessions};
+use crate::sample::{AGENTS, Change, Comment, Message, Range, Session, Status, projects, sessions};
 
 /// A prompt holding `text`, which may run to several lines.
 pub fn prompt_field(text: &str) -> Field {
@@ -58,6 +58,48 @@ pub const REVISE: FocusId = FocusId(330);
 
 /// The scrolling body of the plan panel.
 pub const PLAN_SCROLL: FocusId = FocusId(352);
+
+/// Shows the changed files in the review panel.
+pub const REVIEW_CHANGES: FocusId = FocusId(7001);
+
+/// Shows every file of the project in the review panel.
+pub const REVIEW_FILES: FocusId = FocusId(7002);
+
+/// The box the comment on a file or on lines is written in.
+pub const COMMENT_FIELD: FocusId = FocusId(7003);
+
+/// Keeps the comment that was written.
+pub const COMMENT_ADD: FocusId = FocusId(7006);
+
+/// Drops the comment that was being written.
+pub const COMMENT_CANCEL: FocusId = FocusId(7007);
+
+/// Hands the comments to the agent as the next message.
+pub const SEND_COMMENTS: FocusId = FocusId(7008);
+
+/// The first of the buttons that start a comment on a whole file; the rest follow it.
+pub const COMMENT_FILE_BASE: u64 = 7900;
+
+/// The first of the buttons that take a comment back; the rest follow it.
+pub const COMMENT_REMOVE_BASE: u64 = 8100;
+
+/// The scrolling body of the diff.
+pub const DIFF_SCROLL: FocusId = FocusId(7004);
+
+/// The scrolling list of the review panel.
+pub const TREE_SCROLL: FocusId = FocusId(7005);
+
+/// The first of the rows folding a folder of the changed files; the rest follow it.
+pub const FOLDER_BASE: u64 = 7100;
+
+/// The first of the check boxes staging a folder of the changed files; the rest follow it.
+pub const FOLDER_STAGE_BASE: u64 = 7300;
+
+/// The first of the headers folding a file of the diff; the rest follow it.
+pub const DIFF_FOLD_BASE: u64 = 7500;
+
+/// The first of the rows folding a folder of the project's files; the rest follow it.
+pub const TREE_BASE: u64 = 7700;
 
 /// Opens the diff from the summary of changes.
 pub const OPEN_DIFF: FocusId = FocusId(314);
@@ -505,6 +547,28 @@ pub enum Tab {
     Diff,
 }
 
+/// What the review panel lists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReviewTab {
+    /// The files the agent changed, to stage and commit.
+    Changes,
+    /// Every file of the project.
+    Files,
+}
+
+/// What a comment being started or written is about.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommentTarget {
+    /// The changed file, by position.
+    pub change: usize,
+    /// The lines, or the whole file when there are none.
+    pub range: Option<Range>,
+    /// The line the pointer went down on while lines are being dragged over.
+    pub anchor: usize,
+    /// Whether lines are still being dragged over, which is before the box for the comment shows.
+    pub dragging: bool,
+}
+
 /// What one machine said about its agents: the settings and the commands of each.
 pub type Discovered = (Vec<Vec<Setting>>, Vec<Vec<Slash>>);
 
@@ -523,6 +587,22 @@ pub struct WorkspaceState {
     pub folded: Vec<bool>,
     /// Whether the review panel is open.
     pub review: bool,
+    /// What the review panel lists.
+    pub review_tab: ReviewTab,
+    /// The folders of the changed files that are folded away, by path.
+    pub closed_folders: std::collections::HashSet<String>,
+    /// The folders of the project's files that are folded away, by path.
+    pub closed_tree: std::collections::HashSet<String>,
+    /// The changed files folded away in the diff, by path.
+    pub closed_diffs: std::collections::HashSet<String>,
+    /// The lines or file the comment being written or the lines being dragged over are about.
+    pub comment_target: Option<CommentTarget>,
+    /// The comment being written.
+    pub comment_text: Field,
+    /// How far down the diff is scrolled, in logical pixels.
+    pub diff_scroll: f32,
+    /// How far down the review panel's list is scrolled, in logical pixels.
+    pub tree_scroll: f32,
     /// Whether the plan the agent proposed is open in a panel in place of the review.
     pub plan_open: bool,
     /// How far down the plan panel is scrolled, in logical pixels.
@@ -644,6 +724,14 @@ impl WorkspaceState {
             page: Page::New(0),
             tab: Tab::Chat,
             review: true,
+            review_tab: ReviewTab::Changes,
+            closed_folders: std::collections::HashSet::new(),
+            closed_tree: std::collections::HashSet::new(),
+            closed_diffs: std::collections::HashSet::new(),
+            comment_target: None,
+            comment_text: Field::default(),
+            diff_scroll: 0.0,
+            tree_scroll: 0.0,
             plan_open: false,
             plan_scroll: 0.0,
             terminal: false,
@@ -795,6 +883,11 @@ impl WorkspaceState {
                 self.press_terminal(action);
             }
             REVIEW => self.review = !self.review,
+            REVIEW_CHANGES => self.show_review_tab(ReviewTab::Changes),
+            REVIEW_FILES => self.show_review_tab(ReviewTab::Files),
+            COMMENT_ADD => self.add_comment(),
+            COMMENT_CANCEL => self.comment_target = None,
+            SEND_COMMENTS => self.send_comments(),
             OPEN_PLAN => self.plan_open = true,
             CLOSE_PLAN => self.plan_open = false,
             REVISE => self.reject(),
@@ -822,6 +915,7 @@ impl WorkspaceState {
                 }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
+            COMMENT_FIELD => self.comment_text.apply(edit),
             ADDER_FIELD => self.adder_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
             OTHER => {
@@ -843,6 +937,7 @@ impl WorkspaceState {
         match id {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
+            COMMENT_FIELD => Some(&self.comment_text),
             HISTORY_SEARCH => Some(&self.history_search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             OTHER => self.other_field(),
@@ -854,6 +949,7 @@ impl WorkspaceState {
     pub fn is_field(id: FocusId) -> bool {
         id == PROMPT
             || id == COMMIT_MESSAGE
+            || id == COMMENT_FIELD
             || id == HISTORY_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
@@ -863,6 +959,7 @@ impl WorkspaceState {
     pub fn submit_of(id: FocusId) -> FocusId {
         match id {
             COMMIT_MESSAGE => COMMIT,
+            COMMENT_FIELD => COMMENT_ADD,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
             OTHER => NEXT,
@@ -959,6 +1056,9 @@ impl WorkspaceState {
 
     /// The state after one of the rows or chips numbered from a base was pressed.
     fn after_numbered(&mut self, id: u64) {
+        if crate::diff::gutter_of(FocusId(id)).is_some() {
+            return;
+        }
         if self.press_inquiry(FocusId(id)) {
             return;
         }
@@ -985,6 +1085,7 @@ impl WorkspaceState {
             self.page = Page::Session(index);
             self.tab = Tab::Chat;
             self.file = None;
+            self.comment_target = None;
             self.chat_back = 0.0;
         } else if let Some(index) = position(AGENT_BASE, AGENTS.len()) {
             self.agent = index;
@@ -1013,10 +1114,21 @@ impl WorkspaceState {
             let offset = (id - STEP_BASE) as usize;
             self.toggle_step(offset / 1000, offset % 1000);
         } else if let Some(index) = position(FILE_BASE, self.change_count()) {
-            self.file = Some(index);
-            self.tab = Tab::Diff;
+            self.open_change(index);
         } else if let Some(index) = position(STAGE_BASE, self.change_count()) {
-            self.stage_one(index);
+            self.stage_changes(&[index]);
+        } else if let Some(index) = position(FOLDER_BASE, self.change_count()) {
+            self.fold_change_folder(index);
+        } else if let Some(index) = position(FOLDER_STAGE_BASE, self.change_count()) {
+            self.stage_change_folder(index);
+        } else if let Some(index) = position(DIFF_FOLD_BASE, self.change_count()) {
+            self.fold_diff(index);
+        } else if let Some(index) = position(COMMENT_FILE_BASE, self.change_count()) {
+            self.start_comment(index, None, false);
+        } else if let Some(index) = position(COMMENT_REMOVE_BASE, self.comment_count()) {
+            self.remove_comment(index);
+        } else if let Some(index) = position(TREE_BASE, self.files.len()) {
+            self.fold_tree_folder(index);
         } else if let Some(index) = position(VIEWED_BASE, self.change_count()) {
             self.change_at(index, |change| change.viewed = !change.viewed);
         }
@@ -1318,22 +1430,31 @@ impl WorkspaceState {
 
     /// Stages every change of the open session, or unstages them all when all are staged.
     fn stage_all(&mut self) {
+        let all: Vec<usize> = (0..self.change_count()).collect();
+        self.stage_changes(&all);
+    }
+
+    /// Stages the changes at `indices` of the open session, or unstages them when all of them are staged already.
+    fn stage_changes(&mut self, indices: &[usize]) {
         let Page::Session(open) = self.page else {
             return;
         };
         let Some(session) = self.sessions.get_mut(open) else {
             return;
         };
-        let stage = !session.changes.iter().all(|change| change.staged);
-        let paths: Vec<String> = session
-            .changes
-            .iter_mut()
-            .filter(|change| change.staged != stage)
-            .map(|change| {
+        let stage = !indices
+            .iter()
+            .filter_map(|&index| session.changes.get(index))
+            .all(|change| change.staged);
+        let mut paths = Vec::new();
+        for &index in indices {
+            if let Some(change) = session.changes.get_mut(index)
+                && change.staged != stage
+            {
                 change.staged = stage;
-                change.path.clone()
-            })
-            .collect();
+                paths.push(change.path.clone());
+            }
+        }
         if !paths.is_empty() {
             self.outbox.push(Outgoing::Stage {
                 session: open,
@@ -1343,25 +1464,214 @@ impl WorkspaceState {
         }
     }
 
-    /// Stages the change at `index` of the open session, or unstages it when it is staged.
-    fn stage_one(&mut self, index: usize) {
+    /// How many comments the open session has waiting.
+    fn comment_count(&self) -> usize {
+        self.open().map_or(0, |session| session.comments.len())
+    }
+
+    /// Opens the box for a comment on the change at `change`, on `range` or on the whole file.
+    fn start_comment(&mut self, change: usize, range: Option<Range>, dragging: bool) {
+        self.comment_text = Field::default();
+        self.comment_target = Some(CommentTarget {
+            change,
+            range,
+            anchor: range.map_or(0, |range| range.start),
+            dragging,
+        });
+    }
+
+    /// The state after the pointer went down on the line number `id` of the diff, which starts a selection of lines.
+    pub fn comment_drag_begun(mut self, id: FocusId) -> Self {
+        if let Some((change, new, line)) = crate::diff::gutter_of(id) {
+            let range = Range {
+                new,
+                start: line,
+                end: line,
+            };
+            self.start_comment(change, Some(range), true);
+        }
+        self
+    }
+
+    /// The state after the pointer, held down, moved over the line number `id`, which stretches the selection to it when it is on the same side of the same file.
+    pub fn comment_drag_extended(mut self, id: FocusId) -> Self {
+        let Some((change, new, line)) = crate::diff::gutter_of(id) else {
+            return self;
+        };
+        if let Some(target) = self.comment_target.as_mut()
+            && target.dragging
+            && target.change == change
+            && let Some(range) = target.range.as_mut()
+            && range.new == new
+        {
+            range.start = target.anchor.min(line);
+            range.end = target.anchor.max(line);
+        }
+        self
+    }
+
+    /// The state after the pointer was let go, which opens the box for a comment on the lines selected.
+    pub fn comment_drag_ended(mut self) -> Self {
+        if let Some(target) = self.comment_target.as_mut() {
+            target.dragging = false;
+        }
+        self
+    }
+
+    /// Whether lines of the diff are being dragged over.
+    pub fn comment_dragging(&self) -> bool {
+        self.comment_target.is_some_and(|target| target.dragging)
+    }
+
+    /// Whether the box for a comment is open.
+    pub fn commenting(&self) -> bool {
+        self.comment_target.is_some_and(|target| !target.dragging)
+    }
+
+    /// Keeps the comment that was written on what it is about.
+    fn add_comment(&mut self) {
+        let text = self.comment_text.text().trim().to_owned();
+        let Some(target) = self.comment_target else {
+            return;
+        };
         let Page::Session(open) = self.page else {
             return;
         };
-        let Some(change) = self
-            .sessions
-            .get_mut(open)
-            .and_then(|session| session.changes.get_mut(index))
-        else {
+        let Some(session) = self.sessions.get_mut(open) else {
             return;
         };
-        change.staged = !change.staged;
-        let (paths, stage) = (vec![change.path.clone()], change.staged);
-        self.outbox.push(Outgoing::Stage {
-            session: open,
-            paths,
-            stage,
+        let Some(change) = session.changes.get(target.change) else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        session.comments.push(Comment {
+            path: change.path.clone(),
+            range: target.range,
+            text,
         });
+        self.comment_target = None;
+        self.comment_text = Field::default();
+    }
+
+    /// Takes back the comment at `index` of the open session.
+    fn remove_comment(&mut self, index: usize) {
+        if let Page::Session(open) = self.page
+            && let Some(session) = self.sessions.get_mut(open)
+            && index < session.comments.len()
+        {
+            session.comments.remove(index);
+        }
+    }
+
+    /// Hands the comments of the open session to its agent as the next message, and shows the conversation.
+    fn send_comments(&mut self) {
+        let Page::Session(open) = self.page else {
+            return;
+        };
+        let Some(session) = self.sessions.get_mut(open) else {
+            return;
+        };
+        if session.comments.is_empty() {
+            return;
+        }
+        let items: Vec<String> = session
+            .comments
+            .iter()
+            .map(|comment| match comment.range {
+                Some(range) => {
+                    format!("- {}, {}: {}", comment.path, range.describe(), comment.text)
+                }
+                None => format!("- {}: {}", comment.path, comment.text),
+            })
+            .collect();
+        let message = format!(
+            "Please address these review comments:\n\n{}",
+            items.join("\n")
+        );
+        session.comments.clear();
+        let draft = std::mem::replace(&mut self.prompt, prompt_field(&message));
+        let attachments = std::mem::take(&mut self.attachments);
+        self.send(false);
+        self.prompt = draft;
+        self.attachments = attachments;
+        self.comment_target = None;
+        self.tab = Tab::Chat;
+    }
+
+    /// Shows `tab` in the review panel from its top.
+    fn show_review_tab(&mut self, tab: ReviewTab) {
+        self.review_tab = tab;
+        self.tree_scroll = 0.0;
+    }
+
+    /// Opens the diff scrolled to the change at `index`, unfolded.
+    fn open_change(&mut self, index: usize) {
+        self.file = Some(index);
+        self.tab = Tab::Diff;
+        if let Some(path) = self
+            .open()
+            .and_then(|session| session.changes.get(index))
+            .map(|change| change.path.clone())
+        {
+            self.closed_diffs.remove(&path);
+        }
+        self.diff_scroll = self
+            .open()
+            .map_or(0.0, |session| crate::diff::offset_of(self, session, index));
+    }
+
+    /// Folds the folder at `position` of the open session's changes, or unfolds it.
+    fn fold_change_folder(&mut self, position: usize) {
+        let paths: Vec<String> = self
+            .open()
+            .map(|session| crate::change_tree::folder_paths(&session.changes))
+            .unwrap_or_default();
+        if let Some(path) = paths.into_iter().nth(position) {
+            toggle(&mut self.closed_folders, path);
+        }
+    }
+
+    /// Stages the changes under the folder at `position` of the open session's changes, or unstages them when all are staged.
+    fn stage_change_folder(&mut self, position: usize) {
+        let files = self
+            .open()
+            .and_then(|session| crate::change_tree::folder_files(&session.changes, position));
+        if let Some(files) = files {
+            self.stage_changes(&files);
+        }
+    }
+
+    /// Folds the file at `index` of the diff, or unfolds it.
+    fn fold_diff(&mut self, index: usize) {
+        if let Some(path) = self
+            .open()
+            .and_then(|session| session.changes.get(index))
+            .map(|change| change.path.clone())
+        {
+            toggle(&mut self.closed_diffs, path);
+        }
+    }
+
+    /// Folds the folder at `position` of the project's files, or unfolds it.
+    fn fold_tree_folder(&mut self, position: usize) {
+        let paths = crate::file_tree::folder_paths(&self.files);
+        if let Some(path) = paths.into_iter().nth(position) {
+            toggle(&mut self.closed_tree, path);
+        }
+    }
+
+    /// The state after the diff is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_diff(mut self, delta: f32, room: f32) -> Self {
+        self.diff_scroll = (self.diff_scroll + delta).clamp(0.0, room);
+        self
+    }
+
+    /// The state after the review panel's list is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_tree(mut self, delta: f32, room: f32) -> Self {
+        self.tree_scroll = (self.tree_scroll + delta).clamp(0.0, room);
+        self
     }
 
     /// Commits the staged changes of the open session under the message typed.
@@ -1461,5 +1771,12 @@ impl WorkspaceState {
             }
         }
         self
+    }
+}
+
+/// Takes `path` out of `set` when it is in it and puts it in when it is not.
+fn toggle(set: &mut std::collections::HashSet<String>, path: String) {
+    if !set.remove(&path) {
+        set.insert(path);
     }
 }

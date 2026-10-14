@@ -4,16 +4,17 @@ use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Progress, ToolState, 
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, flex_wrap, font_mono, gap, h, items_center,
-    justify_center, leading_ratio, line_through, min_h, min_w_px, my, overflow_hidden, pb, pl, pr,
-    px, py, rounded, rounded_full, size, text_color, text_px, truncate, w_full,
+    Radius, Role, animate_spin, bg, border, border_b, border_color, border_l, cursor_pointer, flex,
+    flex_1, flex_col, flex_none, flex_wrap, font_mono, gap, h, items_center, justify_center,
+    leading_ratio, line_through, min_h, min_w_px, my, overflow_hidden, pb, pl, pr, px, py, rounded,
+    rounded_full, size, text_color, text_px, truncate, w_full,
 };
 use pm_ui::{Node, node, text};
 
 use crate::Button;
 use crate::button::{Size, Variant};
 use crate::diff::diff_line;
+use crate::file_icon::file_icon;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
 use crate::state::{CHOICE_BASE, STEP_BASE};
@@ -130,26 +131,6 @@ fn clipped_mono(content: &str, chip: bool) -> Node {
     )
 }
 
-/// The icon and colour of a file of the kind `path` names, a plain muted file when it is of no known kind.
-fn file_kind(path: &str) -> (IconName, Color) {
-    let rgb = |red, green, blue| Color::rgb(red, green, blue);
-    match path.rsplit('.').next().unwrap_or_default() {
-        "rs" => (IconName::FileRs, rgb(0xe8, 0x95, 0x6a)),
-        "ts" => (IconName::FileTs, rgb(0x5a, 0xa9, 0xe6)),
-        "tsx" => (IconName::FileTsx, rgb(0x5a, 0xa9, 0xe6)),
-        "js" => (IconName::FileJs, rgb(0xe6, 0xc8, 0x4f)),
-        "jsx" => (IconName::FileJsx, rgb(0xe6, 0xc8, 0x4f)),
-        "md" => (IconName::FileMd, rgb(0x7f, 0xb7, 0xe8)),
-        "css" => (IconName::FileCss, rgb(0xb5, 0x8b, 0xe0)),
-        "html" => (IconName::FileHtml, rgb(0xe8, 0x79, 0x5f)),
-        "py" => (IconName::FilePy, rgb(0x6f, 0xb0, 0xe0)),
-        "toml" | "yml" | "yaml" => (IconName::FileText, rgb(0xd9, 0x8b, 0x8b)),
-        "json" => (IconName::FileText, rgb(0xe6, 0xc8, 0x4f)),
-        "lock" => (IconName::FileText, Color::from(Role::Subtle)),
-        _ => (IconName::File, Color::from(Role::Muted)),
-    }
-}
-
 /// The mark of how a tool got on: a turning ring, or the glyph that is its kind.
 fn tool_mark(tool: &ToolUse) -> Node {
     match tool.state {
@@ -162,8 +143,7 @@ fn tool_mark(tool: &ToolUse) -> Node {
                     .as_deref()
                     .or(tool.diff.as_ref().map(|diff| diff.path.as_str()))
                     .unwrap_or_default();
-                let (icon, tone) = file_kind(path);
-                glyph(icon, 4.0, tone)
+                file_icon(path, 4.0)
             }
             ToolKind::Search => glyph(IconName::Search, 4.0, Role::Subtle),
             ToolKind::Execute => glyph(IconName::Terminal, 4.0, Role::Subtle),

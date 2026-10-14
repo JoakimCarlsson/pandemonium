@@ -20,8 +20,8 @@ use pm_components::{adder, chat, diff, history, input, plan, review, sidebar, te
 
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
-    ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL, PROMPT, SEND,
-    STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, WorkspaceState,
+    ADD_PROJECT, ATTACH, CHAT_SCROLL, DIFF_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL,
+    PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, TREE_SCROLL, WorkspaceState,
 };
 
 use pm_components::sample::{AGENTS, Session};
@@ -124,7 +124,7 @@ fn session_page(
     shaper: &mut Shaper,
 ) -> Node {
     let view = match state.tab {
-        Tab::Diff if !session.changes.is_empty() => diff::diff(state, session),
+        Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width),
         _ => chat::chat(state, session, width, above, shaper),
     };
     let mut page = node()

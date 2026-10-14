@@ -11,12 +11,14 @@ use pm_ui::{Node, node, text};
 
 use crate::button::{Size, Variant};
 use crate::parts::{clipped, glyph, line, spacer};
-use crate::sample::{Change, Session};
+use crate::sample::Session;
 use crate::state::{
-    COMMIT, COMMIT_MESSAGE, FILE_BASE, REVIEW, STAGE_ALL, STAGE_BASE, WorkspaceState,
+    COMMIT, COMMIT_MESSAGE, REVIEW, REVIEW_CHANGES, REVIEW_FILES, ReviewTab, STAGE_ALL,
+    TREE_SCROLL, WorkspaceState,
 };
 use crate::{Button, Input};
 use crate::{Checkbox, Tally};
+use crate::{change_tree, file_tree};
 
 /// How wide the review panel is, in logical pixels.
 pub const WIDTH: f32 = 380.0;
@@ -38,54 +40,59 @@ fn band(height: u32) -> Node {
     ])
 }
 
-/// The row of one changed file: whether it is staged, its name and where it is, and what it changed.
-fn change_row(index: usize, change: &Change, selected: bool) -> Node {
+/// The box that holds the rows of the panel's list and scrolls them.
+fn scrolling_list(state: &WorkspaceState) -> Node {
+    node()
+        .styles([
+            flex(),
+            flex_col(),
+            pm_style::flex_1(),
+            min_h(0),
+            overflow_hidden(),
+            pm_style::py(1),
+        ])
+        .scroll_from_start(TREE_SCROLL, state.tree_scroll)
+}
+
+/// A line telling the list has nothing to show.
+fn nothing(message: &str) -> Node {
+    node()
+        .styles([px(4), pm_style::py(3)])
+        .child(line(message, 13, 1.4, Role::Subtle))
+}
+
+/// One of the two tabs at the top of the panel, filled while it is the one shown.
+fn panel_tab(label: &str, id: FocusId, shown: bool) -> Node {
     let mut styles = vec![
         flex(),
         items_center(),
-        gap(2),
         h(8),
-        px(4),
+        px(3),
+        rounded(Radius::Lg),
         cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
     ];
-    if selected {
+    let tone = if shown {
         styles.push(bg(Role::SurfaceSelected));
-    }
-    let tone = if change.viewed {
-        Role::Subtle
-    } else {
         Role::Text
+    } else {
+        styles.push(bg(Role::SurfaceHover).hover());
+        Role::Muted
     };
     node()
         .styles(styles)
-        .child(Checkbox::new(change.staged, FocusId(STAGE_BASE + index as u64)).build())
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(2),
-                    pm_style::flex_1(),
-                    pm_style::min_w_px(0),
-                    overflow_hidden(),
-                ])
-                .focusable(FocusId(FILE_BASE + index as u64))
-                .child(glyph(IconName::FileCode, 3.5, Role::Subtle))
-                .child(line(change.name(), 13, 1.4, tone))
-                .child(text(change.directory().to_owned()).styles([
-                    text_px(11),
-                    leading_ratio(1.4),
-                    font_mono(),
-                    text_color(Role::Subtle),
-                    pm_style::truncate(),
-                ])),
-        )
-        .child(
-            Tally::new(change.added(), change.removed())
-                .size(11)
-                .build(),
-        )
+        .child(line(label, 13, 1.4, tone))
+        .focusable(id)
+}
+
+/// Every file of the project, as a tree.
+fn files(state: &WorkspaceState) -> Node {
+    let mut list = scrolling_list(state).children(file_tree::rows(state));
+    if state.files.is_empty() {
+        list = list.child(nothing("No files yet."));
+    }
+    node()
+        .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
+        .child(list)
 }
 
 /// The changes of `session` and the commits made from it.
@@ -96,29 +103,9 @@ fn changes(state: &WorkspaceState, session: &Session) -> Node {
         .filter(|change| change.staged)
         .count();
     let all = !session.changes.is_empty() && staged == session.changes.len();
-    let mut list = node()
-        .styles([
-            flex(),
-            flex_col(),
-            pm_style::flex_1(),
-            min_h(0),
-            overflow_hidden(),
-            pm_style::py(1),
-        ])
-        .children(
-            session
-                .changes
-                .iter()
-                .enumerate()
-                .map(|(index, change)| change_row(index, change, state.file == Some(index))),
-        );
+    let mut list = scrolling_list(state).children(change_tree::rows(state, session));
     if session.changes.is_empty() {
-        list = list.child(node().styles([px(4), pm_style::py(3)]).child(line(
-            "No uncommitted changes.",
-            13,
-            1.4,
-            Role::Subtle,
-        )));
+        list = list.child(nothing("No uncommitted changes."));
     }
     let mut commits = node()
         .styles([
@@ -151,7 +138,11 @@ fn changes(state: &WorkspaceState, session: &Session) -> Node {
         .child(
             band(10)
                 .styles([px(4), gap(3)])
-                .child(Checkbox::new(all, STAGE_ALL).build())
+                .child(
+                    Checkbox::new(all, STAGE_ALL)
+                        .mixed(staged > 0 && !all)
+                        .build(),
+                )
                 .child(line("Changes", 12, 1.4, Role::Muted))
                 .child(
                     Tally::new(session.added(), session.removed())
@@ -216,18 +207,16 @@ pub fn review(state: &WorkspaceState, session: &Session) -> Node {
         .child(
             band(12)
                 .styles([px(3)])
-                .child(
-                    node()
-                        .styles([
-                            flex(),
-                            items_center(),
-                            h(8),
-                            px(3),
-                            rounded(Radius::Lg),
-                            bg(Role::SurfaceSelected),
-                        ])
-                        .child(line("Changes", 13, 1.4, Role::Text)),
-                )
+                .child(panel_tab(
+                    "Changes",
+                    REVIEW_CHANGES,
+                    state.review_tab == ReviewTab::Changes,
+                ))
+                .child(panel_tab(
+                    "Files",
+                    REVIEW_FILES,
+                    state.review_tab == ReviewTab::Files,
+                ))
                 .child(spacer())
                 .child(
                     Button::icon(IconName::PanelRight, REVIEW)
@@ -252,5 +241,8 @@ pub fn review(state: &WorkspaceState, session: &Session) -> Node {
                         .build(),
                 ),
         )
-        .child(changes(state, session))
+        .child(match state.review_tab {
+            ReviewTab::Changes => changes(state, session),
+            ReviewTab::Files => files(state),
+        })
 }

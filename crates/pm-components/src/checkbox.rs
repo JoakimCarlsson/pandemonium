@@ -28,6 +28,8 @@ pub enum Variant {
 pub struct Checkbox {
     /// Whether it is ticked.
     checked: bool,
+    /// Whether it is dashed, standing for some of what it covers being ticked.
+    mixed: bool,
     /// The name it answers to.
     id: FocusId,
     /// How it looks.
@@ -39,9 +41,16 @@ impl Checkbox {
     pub fn new(checked: bool, id: FocusId) -> Self {
         Self {
             checked,
+            mixed: false,
             id,
             variant: Variant::default(),
         }
+    }
+
+    /// The check box dashed instead of ticked while `mixed` and not `checked`.
+    pub fn mixed(mut self, mixed: bool) -> Self {
+        self.mixed = mixed;
+        self
     }
 
     /// The check box looking like `variant`.
@@ -69,7 +78,8 @@ impl Checkbox {
             border(),
             cursor_pointer(),
         ];
-        if self.checked {
+        let filled = self.checked || self.mixed;
+        if filled {
             styles.extend([bg(Role::Accent), border_color(Role::Accent)]);
         } else {
             styles.push(border_color(Role::Subtle));
@@ -77,6 +87,8 @@ impl Checkbox {
         let boxed = node().styles(styles);
         let boxed = if self.checked {
             boxed.child(glyph(IconName::Check, 3.0, Role::OnAccent))
+        } else if self.mixed {
+            boxed.child(glyph(IconName::Minus, 3.0, Role::OnAccent))
         } else {
             boxed
         };

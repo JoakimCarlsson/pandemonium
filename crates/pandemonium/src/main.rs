@@ -53,6 +53,8 @@ fn main() {
             Some("agents") => Shot::Onboarding(pm_pages::Step::Agents),
             Some("workspace") => Shot::Workspace,
             Some("diff") => Shot::Diff,
+            Some("commenting") => Shot::Commenting,
+            Some("files") => Shot::Files,
             Some("terminal") => Shot::Terminal,
             Some("new") => Shot::New,
             Some("empty") => Shot::Empty,
