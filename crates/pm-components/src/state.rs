@@ -547,6 +547,9 @@ pub enum Tab {
     Diff,
 }
 
+/// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
+const DIFF_WIDTH: f32 = 900.0;
+
 /// What the review panel lists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReviewTab {
@@ -1617,9 +1620,9 @@ impl WorkspaceState {
         {
             self.closed_diffs.remove(&path);
         }
-        self.diff_scroll = self
-            .open()
-            .map_or(0.0, |session| crate::diff::offset_of(self, session, index));
+        self.diff_scroll = self.open().map_or(0.0, |session| {
+            crate::diff::offset_of(self, session, index, DIFF_WIDTH)
+        });
     }
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.

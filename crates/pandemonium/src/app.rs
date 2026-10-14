@@ -264,63 +264,66 @@ impl App {
             selection: self.text_selection,
         };
         let (width, height) = renderer.size();
-        let state = self.model.get();
+        let model = self.model.clone();
         let theme = self.family.variant(self.appearance);
-        self.output = scene::paint(
-            width,
-            height,
-            &state,
-            &input,
-            theme,
-            &mut self.shaper,
-            &mut self.list,
-        );
-        self.focus
-            .set_order(self.output.regions.iter().map(|region| region.id).collect());
-        if std::mem::take(&mut self.focus_terminal) {
-            self.focus.focus(TERMINAL_BODY);
-        }
-        let starting = state.is_starting();
-        if starting && !self.autofocused {
-            self.focus.focus(PROMPT);
-        }
-        self.autofocused = starting;
-        let mut scroll_to = None;
-        if let Some(id) = self.focus.current()
-            && let Some(field) = state.field(id)
-            && field.is_multiline()
-        {
-            let caret = field.to_shown(field.caret());
-            if let Some(held) = self
-                .output
-                .fields
-                .iter()
-                .rfind(|held| held.id == id && held.start <= caret)
+        let scroll_to = model.read(|state| {
+            self.output = scene::paint(
+                width,
+                height,
+                state,
+                &input,
+                theme,
+                &mut self.shaper,
+                &mut self.list,
+            );
+            self.focus
+                .set_order(self.output.regions.iter().map(|region| region.id).collect());
+            if std::mem::take(&mut self.focus_terminal) {
+                self.focus.focus(TERMINAL_BODY);
+            }
+            let starting = state.is_starting();
+            if starting && !self.autofocused {
+                self.focus.focus(PROMPT);
+            }
+            self.autofocused = starting;
+            let mut scroll_to = None;
+            if let Some(id) = self.focus.current()
+                && let Some(field) = state.field(id)
+                && field.is_multiline()
             {
-                let caret_x = held.run.caret_x(caret - held.start);
+                let caret = field.to_shown(field.caret());
+                if let Some(held) = self
+                    .output
+                    .fields
+                    .iter()
+                    .rfind(|held| held.id == id && held.start <= caret)
+                {
+                    let caret_x = held.run.caret_x(caret - held.start);
+                    window.set_ime_cursor_area(
+                        LogicalPosition::new(held.x + caret_x, held.y),
+                        LogicalSize::new(1.0, held.height),
+                    );
+                }
+            } else if let Some(id) = self.focus.current()
+                && let Some(field) = state.field(id)
+                && let Some(held) = self.output.fields.iter().find(|held| held.id == id)
+                && let Some(view) = held.view
+            {
+                let caret_x = held.run.caret_x(field.to_shown(field.caret()));
+                let want = field.scroll_for(caret_x, held.run.width, view.width);
+                if (want - field.scroll()).abs() > 0.5 {
+                    scroll_to = Some((id, want));
+                }
                 window.set_ime_cursor_area(
-                    LogicalPosition::new(held.x + caret_x, held.y),
-                    LogicalSize::new(1.0, held.height),
+                    LogicalPosition::new(held.x + caret_x, view.y),
+                    LogicalSize::new(1.0, view.height),
                 );
             }
-        } else if let Some(id) = self.focus.current()
-            && let Some(field) = state.field(id)
-            && let Some(held) = self.output.fields.iter().find(|held| held.id == id)
-            && let Some(view) = held.view
-        {
-            let caret_x = held.run.caret_x(field.to_shown(field.caret()));
-            let want = field.scroll_for(caret_x, held.run.width, view.width);
-            if (want - field.scroll()).abs() > 0.5 {
-                scroll_to = Some((id, want));
-            }
-            window.set_ime_cursor_area(
-                LogicalPosition::new(held.x + caret_x, view.y),
-                LogicalSize::new(1.0, view.height),
-            );
-        }
+            scroll_to
+        });
         if let Some((id, want)) = scroll_to {
             self.model
-                .update(|state| *state = state.clone().edited(id, Edit::ScrollTo(want)));
+                .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
         }
         if self.output.cursor != self.cursor {
             self.cursor = self.output.cursor;
@@ -356,11 +359,12 @@ impl App {
             self.attach();
             return;
         }
-        if let Some(project) = self.model.get().more_button_of(id) {
+        if let Some(project) = self.model.read(|screen| screen.more_button_of(id)) {
             self.open_project_menu(project);
             return;
         }
-        self.model.update(|state| *state = state.clone().after(id));
+        self.model
+            .update(|state| *state = std::mem::take(state).after(id));
         if let Some(next) = Screen::refocus(id) {
             self.focus.focus(next);
         }
@@ -380,14 +384,15 @@ impl App {
 
     /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
     fn persist_choices(&mut self) {
-        let screen = self.model.get();
-        let Some(choices) = screen.choices() else {
+        let saved = &self.saved_choices;
+        let Some(choices) = self.model.read(|screen| {
+            screen
+                .choices()
+                .filter(|choices| *choices != saved.as_slice())
+                .map(<[_]>::to_vec)
+        }) else {
             return;
         };
-        if choices == self.saved_choices.as_slice() {
-            return;
-        }
-        let choices = choices.to_vec();
         self.work.save_choices(choices.clone());
         self.saved_choices = choices;
     }
@@ -397,10 +402,15 @@ impl App {
         if self.work.resuming() {
             return;
         }
-        let Screen::Workspace(state) = self.model.get() else {
+        let work = &self.work;
+        let Some(view) = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => Some(View::capture(state, |position| {
+                work.server_number(position)
+            })),
+            Screen::Onboarding(_) => None,
+        }) else {
             return;
         };
-        let view = View::capture(&state, |position| self.work.server_number(position));
         if self.saved_view.as_ref() == Some(&view) {
             return;
         }
@@ -411,7 +421,7 @@ impl App {
     /// Writes the project list to disk when the workspace's differs from what was last written.
     fn persist(&mut self) {
         self.persist_choices();
-        let Some(paths) = self.model.get().project_paths() else {
+        let Some(paths) = self.model.read(|screen| screen.project_paths()) else {
             return;
         };
         if self.saved.as_ref() == Some(&paths) {
@@ -438,7 +448,7 @@ impl App {
         let Some(agent) = AGENTS.get(index).copied() else {
             return;
         };
-        let Some(status) = self.model.get().agent(index).cloned() else {
+        let Some(status) = self.model.read(|screen| screen.agent(index).cloned()) else {
             return;
         };
         let login = self.logins[index]
@@ -447,7 +457,7 @@ impl App {
             .or(self.logins[index].first())
             .cloned();
         self.model
-            .update(|state| *state = state.clone().with_agent(index, AgentStatus::Working));
+            .update(|state| *state = std::mem::take(state).with_agent(index, AgentStatus::Working));
         let reporter = self.reporter.clone();
         std::thread::spawn(move || {
             let outcome = match (status, login) {
@@ -477,7 +487,7 @@ impl App {
                 Standing::Failed(reason) => AgentStatus::Failed(reason),
             };
             self.model
-                .update(|state| *state = state.clone().with_agent(index, status));
+                .update(|state| *state = std::mem::take(state).with_agent(index, status));
         }
     }
 
@@ -492,7 +502,7 @@ impl App {
         };
         let path = folder.to_string_lossy().into_owned();
         self.model
-            .update(|state| *state = state.clone().with_project_opened(&path));
+            .update(|state| *state = std::mem::take(state).with_project_opened(&path));
         self.persist();
         self.work.relist();
     }
@@ -510,7 +520,7 @@ impl App {
             .map(|file| file.to_string_lossy().into_owned())
             .collect();
         self.model
-            .update(|state| *state = state.clone().with_attachments(&paths));
+            .update(|state| *state = std::mem::take(state).with_attachments(&paths));
         self.work.preview(paths);
         self.focus.focus(PROMPT);
     }
@@ -536,18 +546,18 @@ impl App {
         }
         let height = renderer.size().1;
         self.model
-            .update(|state| *state = state.clone().scrolled(x, pixels, height));
+            .update(|state| *state = std::mem::take(state).scrolled(x, pixels, height));
     }
 
     /// Scrolls the box `id`, which has `room` pixels to scroll, by `pixels`, downwards when positive.
     fn scroll_box(&mut self, id: FocusId, pixels: f32, room: f32) {
         self.model.update(|state| {
             *state = match id {
-                MENU_SCROLL => state.clone().scrolled_menu(pixels, room),
-                PLAN_SCROLL => state.clone().scrolled_plan(pixels, room),
-                DIFF_SCROLL => state.clone().scrolled_diff(pixels, room),
-                TREE_SCROLL => state.clone().scrolled_tree(pixels, room),
-                _ => state.clone().scrolled_chat(pixels, room),
+                MENU_SCROLL => std::mem::take(state).scrolled_menu(pixels, room),
+                PLAN_SCROLL => std::mem::take(state).scrolled_plan(pixels, room),
+                DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
+                TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
+                _ => std::mem::take(state).scrolled_chat(pixels, room),
             };
         });
     }
@@ -616,7 +626,7 @@ impl App {
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
                 if let Some(id) = on.filter(|id| gutter_of(*id).is_some()) {
                     self.model
-                        .update(|state| *state = state.clone().comment_drag_begun(id));
+                        .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
                 }
                 let screen = self.model.get();
                 self.project_press = on
@@ -631,20 +641,22 @@ impl App {
                     })
                 {
                     self.model
-                        .update(|state| *state = state.clone().without_menu());
+                        .update(|state| *state = std::mem::take(state).without_menu());
                 }
-                if self.model.get().menu().is_some() && !on.is_some_and(is_menu_item) {
+                if self.model.read(|screen| screen.menu().is_some())
+                    && !on.is_some_and(is_menu_item)
+                {
                     self.model
-                        .update(|state| *state = state.clone().without_menu());
+                        .update(|state| *state = std::mem::take(state).without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
                 self.text_press();
                 if self.focus.current() != self.pressed_on {
                     self.focus.clear();
                 }
-                if self.pressed_on.is_none() && self.model.get().picker_open() {
+                if self.pressed_on.is_none() && self.model.read(|screen| screen.picker_open()) {
                     self.model
-                        .update(|state| *state = state.clone().without_picker());
+                        .update(|state| *state = std::mem::take(state).without_picker());
                 }
                 if let Some(id) = self.pressed_on
                     && Screen::is_field(id)
@@ -688,11 +700,11 @@ impl App {
 
     /// Carries out the menu row `row` on the field the menu is open over, and closes the menu.
     fn menu_action(&mut self, row: FocusId) {
-        let Some(open) = self.model.get().menu() else {
+        let Some(open) = self.model.read(|screen| screen.menu()) else {
             return;
         };
         self.model
-            .update(|state| *state = state.clone().without_menu());
+            .update(|state| *state = std::mem::take(state).without_menu());
         let field = open.field;
         self.focus.focus(field);
         match row {
@@ -739,39 +751,38 @@ impl App {
             return;
         }
         self.project_dragging = true;
-        let held = self.model.get();
-        let current = match &held {
-            Screen::Workspace(state) => state.project_drag.map_or(from, |drag| drag.over),
-            Screen::Onboarding(_) => from,
-        };
-        let over = self
-            .output
-            .hit(at)
-            .and_then(|id| held.project_at(id))
-            .filter(|project| *project != from)
-            .unwrap_or(current);
+        let hit = self.output.hit(at);
+        let over = self.model.read(|held| {
+            let current = match held {
+                Screen::Workspace(state) => state.project_drag.map_or(from, |drag| drag.over),
+                Screen::Onboarding(_) => from,
+            };
+            hit.and_then(|id| held.project_at(id))
+                .filter(|project| *project != from)
+                .unwrap_or(current)
+        });
         self.model
-            .update(|state| *state = state.clone().dragged_over(from, over, at));
+            .update(|state| *state = std::mem::take(state).dragged_over(from, over, at));
     }
 
     /// Stretches the lines being selected for a comment to the line number under `at`.
     fn drag_comment(&mut self, at: (f32, f32)) {
-        if !self.model.get().comment_dragging() {
+        if !self.model.read(|screen| screen.comment_dragging()) {
             return;
         }
         if let Some(id) = self.output.hit(at).filter(|id| gutter_of(*id).is_some()) {
             self.model
-                .update(|state| *state = state.clone().comment_drag_extended(id));
+                .update(|state| *state = std::mem::take(state).comment_drag_extended(id));
         }
     }
 
     /// Ends a selection of lines, which opens the box for a comment on them and gives it the keyboard.
     fn end_comment_drag(&mut self) {
-        if !self.model.get().comment_dragging() {
+        if !self.model.read(|screen| screen.comment_dragging()) {
             return;
         }
         self.model
-            .update(|state| *state = state.clone().comment_drag_ended());
+            .update(|state| *state = std::mem::take(state).comment_drag_ended());
         self.focus.focus(COMMENT_FIELD);
     }
 
@@ -781,7 +792,8 @@ impl App {
         if !std::mem::take(&mut self.project_dragging) {
             return false;
         }
-        self.model.update(|state| *state = state.clone().dropped());
+        self.model
+            .update(|state| *state = std::mem::take(state).dropped());
         self.persist();
         self.deliver();
         true
@@ -797,16 +809,18 @@ impl App {
             return;
         };
         self.focus.focus(id);
-        let inside = self.model.get().field(id).is_some_and(|field| {
-            field
-                .selection()
-                .is_some_and(|range| range.contains(&field_text_offset(field, offset)))
+        let inside = self.model.read(|screen| {
+            screen.field(id).is_some_and(|field| {
+                field
+                    .selection()
+                    .is_some_and(|range| range.contains(&field_text_offset(field, offset)))
+            })
         });
         if !inside {
             self.edit_field(id, Edit::Place(offset, false));
         }
         self.model
-            .update(|state| *state = state.clone().with_menu(id, (x, y)));
+            .update(|state| *state = std::mem::take(state).with_menu(id, (x, y)));
     }
 
     /// Takes a press inside the field `id`: focuses it, puts the caret where
@@ -855,7 +869,10 @@ impl App {
     /// Moves the caret of the multiline field `id` to the start, or the end
     /// when `end` is set, of the line it is on as the line is drawn.
     fn move_to_line_edge(&mut self, id: FocusId, end: bool, extend: bool) {
-        let Some(caret) = self.model.get().field(id).map(|field| field.caret()) else {
+        let Some(caret) = self
+            .model
+            .read(|screen| screen.field(id).map(|field| field.caret()))
+        else {
             return;
         };
         if let Some(target) = self.output.line_edge(id, caret, end) {
@@ -892,7 +909,7 @@ impl App {
     /// Makes `edit` to the field `id`.
     fn edit_field(&mut self, id: FocusId, edit: Edit) {
         self.model
-            .update(|state| *state = state.clone().edited(id, edit));
+            .update(|state| *state = std::mem::take(state).edited(id, edit));
     }
 
     /// The system clipboard, opened on first use.
@@ -949,11 +966,17 @@ impl App {
             return;
         }
         match event.key {
-            Key::Escape if self.model.get().adder_open() => self.activate(ADDER_ESCAPE),
-            Key::ArrowUp if self.model.get().adder_open() => self.activate(ADDER_UP),
-            Key::ArrowDown if self.model.get().adder_open() => self.activate(ADDER_DOWN),
-            Key::Enter if self.model.get().adder_open() => {
-                if let Some(id) = self.model.get().adder_enter() {
+            Key::Escape if self.model.read(|screen| screen.adder_open()) => {
+                self.activate(ADDER_ESCAPE)
+            }
+            Key::ArrowUp if self.model.read(|screen| screen.adder_open()) => {
+                self.activate(ADDER_UP)
+            }
+            Key::ArrowDown if self.model.read(|screen| screen.adder_open()) => {
+                self.activate(ADDER_DOWN)
+            }
+            Key::Enter if self.model.read(|screen| screen.adder_open()) => {
+                if let Some(id) = self.model.read(|screen| screen.adder_enter()) {
                     self.activate(id);
                 }
             }
@@ -969,33 +992,37 @@ impl App {
             }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model
-                    .update(|state| *state = state.clone().mode_cycled());
+                    .update(|state| *state = std::mem::take(state).mode_cycled());
                 self.persist();
                 self.deliver();
             }
-            Key::Tab if self.in_prompt() && self.model.get().slash_open() => {
+            Key::Tab if self.in_prompt() && self.model.read(|screen| screen.slash_open()) => {
                 self.model
-                    .update(|state| *state = state.clone().slash_taken());
+                    .update(|state| *state = std::mem::take(state).slash_taken());
             }
-            Key::ArrowUp | Key::ArrowDown if self.in_prompt() && self.model.get().slash_open() => {
+            Key::ArrowUp | Key::ArrowDown
+                if self.in_prompt() && self.model.read(|screen| screen.slash_open()) =>
+            {
                 let delta = if event.key == Key::ArrowUp { -1 } else { 1 };
                 self.model
-                    .update(|state| *state = state.clone().slash_moved(delta));
+                    .update(|state| *state = std::mem::take(state).slash_moved(delta));
             }
-            Key::Enter if self.in_prompt() && self.model.get().slash_open() => {
+            Key::Enter if self.in_prompt() && self.model.read(|screen| screen.slash_open()) => {
                 self.model
-                    .update(|state| *state = state.clone().slash_taken());
+                    .update(|state| *state = std::mem::take(state).slash_taken());
             }
             Key::Tab if event.modifiers.shift => self.focus.previous(),
             Key::Tab => self.focus.next(),
-            Key::Escape if self.model.get().commenting() => self.activate(COMMENT_CANCEL),
-            Key::Escape if self.model.get().menu().is_some() => {
-                self.model
-                    .update(|state| *state = state.clone().without_menu());
+            Key::Escape if self.model.read(|screen| screen.commenting()) => {
+                self.activate(COMMENT_CANCEL)
             }
-            Key::Escape if self.model.get().picker_open() => {
+            Key::Escape if self.model.read(|screen| screen.menu().is_some()) => {
                 self.model
-                    .update(|state| *state = state.clone().without_picker());
+                    .update(|state| *state = std::mem::take(state).without_menu());
+            }
+            Key::Escape if self.model.read(|screen| screen.picker_open()) => {
+                self.model
+                    .update(|state| *state = std::mem::take(state).without_picker());
             }
             Key::Escape => self.focus.clear(),
             _ => match self.focus.current() {
@@ -1093,7 +1120,10 @@ impl ApplicationHandler for App {
             Err(error) => fail_to_start(&error.to_string()),
         }
         self.appearance = appearance(window.theme());
-        if matches!(self.model.get(), Screen::Onboarding(_)) {
+        if self
+            .model
+            .read(|screen| matches!(screen, Screen::Onboarding(_)))
+        {
             self.check_agents();
         }
         window.set_ime_allowed(true);
@@ -1109,7 +1139,7 @@ impl ApplicationHandler for App {
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
-        let waiting = self.model.get().waiting() || self.work.busy();
+        let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
         event_loop.set_control_flow(if waiting {
             ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50))
         } else {

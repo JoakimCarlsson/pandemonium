@@ -29,6 +29,18 @@ const HEADER: f32 = 40.0;
 /// The space above each file and the rules around it, in logical pixels.
 const SECTION_CHROME: f32 = 16.0 + 2.0;
 
+/// How far beyond the view, above and below, rows are still built, so that scrolling shows no gaps, in logical pixels.
+const OVERSCAN: f32 = 100.0;
+
+/// About how tall a note is before its lines of text, in logical pixels.
+const NOTE_CHROME: f32 = 16.0 + 2.0 + 33.0 + 20.0;
+
+/// How tall a line of text of a note is, in logical pixels.
+const NOTE_LINE: f32 = 20.0;
+
+/// About how tall the box for writing a note is, in logical pixels.
+const NOTE_BOX: f32 = 160.0;
+
 /// The first of the numbers of lines, which no other button or row has; each is named by the file, the side and the line.
 const GUTTER_BASE: u64 = 10_000_000_000;
 
@@ -158,20 +170,55 @@ fn rows(change: &Change) -> Vec<Row<'_>> {
     rows
 }
 
-/// How far down the diff the file at `index` starts, in logical pixels, for the files folded away in `state`.
-pub fn offset_of(state: &WorkspaceState, session: &Session, index: usize) -> f32 {
-    session
-        .changes
+/// How many rows the diff of `change` shows, counted without building them.
+fn row_count(change: &Change) -> usize {
+    let (mut rows, mut removed, mut added) = (0, 0, 0);
+    for line in &change.diff {
+        match line.kind {
+            Kind::Remove => removed += 1,
+            Kind::Add => added += 1,
+            Kind::Hunk | Kind::Context => {
+                rows += removed.max(added) + 1;
+                removed = 0;
+                added = 0;
+            }
+        }
+    }
+    rows + removed.max(added)
+}
+
+/// About how tall the notes of `session` on the file at `index` are, in logical pixels, for a column `column` wide; the box for writing one counts as well.
+fn notes_height(state: &WorkspaceState, session: &Session, index: usize, column: f32) -> f32 {
+    let path = &session.changes[index].path;
+    let kept: f32 = session
+        .comments
         .iter()
-        .take(index)
-        .map(|change| {
-            let body = if state.closed_diffs.contains(&change.path) {
-                0.0
-            } else {
-                1.0 + rows(change).len() as f32 * ROW
-            };
-            SECTION_CHROME + HEADER + body
-        })
+        .filter(|comment| &comment.path == path)
+        .map(|comment| NOTE_CHROME + wrap(&comment.text, 13, column).len() as f32 * NOTE_LINE)
+        .sum();
+    let open = state
+        .comment_target
+        .is_some_and(|target| target.change == index && !target.dragging);
+    kept + if open { NOTE_BOX } else { 0.0 }
+}
+
+/// About how tall the file at `index` is with its header, its rows and its notes, in logical pixels, folded away or not.
+fn section_height(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> f32 {
+    let change = &session.changes[index];
+    if state.closed_diffs.contains(&change.path) {
+        return SECTION_CHROME + HEADER;
+    }
+    let column = ((width - 34.0) / 2.0 - 46.0).max(80.0);
+    SECTION_CHROME
+        + HEADER
+        + row_count(change) as f32 * ROW
+        + notes_height(state, session, index, column)
+}
+
+/// How far down the diff the file at `index` starts, in logical pixels, for the files folded away in `state` and a view `width` wide.
+pub fn offset_of(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> f32 {
+    (0..index)
+        .map(|before| section_height(state, session, before, width))
         .sum::<f32>()
 }
 
@@ -457,7 +504,18 @@ fn viewed_button(viewed: bool, id: FocusId) -> Node {
 }
 
 /// One changed file: its header, and, unless it is folded away, its lines with the notes on them.
-fn file(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> Node {
+fn file(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    width: f32,
+    top: f32,
+    window: (f32, f32),
+) -> Node {
+    let height = section_height(state, session, index, width);
+    if top + height < window.0 || top > window.1 {
+        return node().styles([h(height / 4.0), flex_none()]);
+    }
     let change = &session.changes[index];
     let open = !state.closed_diffs.contains(&change.path);
     let column = ((width - 34.0) / 2.0 - 46.0).max(80.0);
@@ -556,32 +614,58 @@ fn file(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> 
         section = section.child(comment_card(*at, comment, width));
     }
     let selected = target.and_then(|target| target.range);
+    let mut at = top + SECTION_CHROME + HEADER;
+    let mut skipped = 0;
     for row in rows(change) {
-        section = section.child(row_node(&row, index, selected));
-        let Row::Pair(old, new) = &row else {
-            continue;
-        };
-        for (side_new, entry) in [(false, old), (true, new)] {
-            let number = entry
-                .as_ref()
-                .and_then(|entry| if side_new { entry.new } else { entry.old });
-            let Some(number) = number else {
-                continue;
-            };
-            let ends_here = |range: Option<Range>| {
-                range.is_some_and(|range| range.new == side_new && range.end == number)
-            };
-            if let Some(target) =
-                target.filter(|target| !target.dragging && ends_here(target.range))
-            {
-                section = section.child(comment_box(state, target));
-            }
-            for (at, comment) in mine.iter().filter(|(_, comment)| ends_here(comment.range)) {
-                section = section.child(comment_card(*at, comment, column));
+        let mut blocks = Vec::new();
+        if let Row::Pair(old, new) = &row {
+            for (side_new, entry) in [(false, old), (true, new)] {
+                let number = entry
+                    .as_ref()
+                    .and_then(|entry| if side_new { entry.new } else { entry.old });
+                let Some(number) = number else {
+                    continue;
+                };
+                let ends_here = |range: Option<Range>| {
+                    range.is_some_and(|range| range.new == side_new && range.end == number)
+                };
+                if let Some(target) =
+                    target.filter(|target| !target.dragging && ends_here(target.range))
+                {
+                    blocks.push((comment_box(state, target), NOTE_BOX));
+                }
+                for (nth, comment) in mine.iter().filter(|(_, comment)| ends_here(comment.range)) {
+                    blocks.push((
+                        comment_card(*nth, comment, column),
+                        NOTE_CHROME + wrap(&comment.text, 13, column).len() as f32 * NOTE_LINE,
+                    ));
+                }
             }
         }
+        let near = at + ROW >= window.0 && at <= window.1;
+        if blocks.is_empty() && !near {
+            skipped += 1;
+            at += ROW;
+            continue;
+        }
+        section = skip(section, &mut skipped);
+        section = section.child(row_node(&row, index, selected));
+        at += ROW;
+        for (block, tall) in blocks {
+            section = section.child(block);
+            at += tall;
+        }
     }
-    section
+    skip(section, &mut skipped)
+}
+
+/// `section` with a blank as tall as the `rows` rows left out since the last one built, which are taken as counted.
+fn skip(section: Node, rows: &mut usize) -> Node {
+    let blank = std::mem::take(rows);
+    if blank == 0 {
+        return section;
+    }
+    section.child(node().styles([h(blank as f32 * ROW / 4.0), flex_none()]))
 }
 
 /// The strip above the files: how many changed, how many are read, and the button that sends the notes to the agent.
@@ -637,17 +721,27 @@ fn summary(session: &Session) -> Node {
         )
 }
 
-/// The diff of `session` in a view `width` logical pixels wide: a summary strip, then each changed file.
-pub fn diff(state: &WorkspaceState, session: &Session, width: f32) -> Node {
+/// The diff of `session` in a view `width` by `height` logical pixels: a summary strip, then each changed file, of which only those in or near the view are built.
+pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) -> Node {
+    let window = (
+        state.diff_scroll - OVERSCAN,
+        state.diff_scroll + height + OVERSCAN,
+    );
+    let mut top = 0.0;
+    let files: Vec<Node> = (0..session.changes.len())
+        .map(|index| {
+            let node = file(state, session, index, width, top, window);
+            top += section_height(state, session, index, width);
+            node
+        })
+        .collect();
     let body = node()
         .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
         .scroll_from_start(DIFF_SCROLL, state.diff_scroll)
         .child(
             node()
                 .styles([flex(), flex_col(), flex_none(), pb(4)])
-                .children(
-                    (0..session.changes.len()).map(|index| file(state, session, index, width)),
-                ),
+                .children(files),
         );
     node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])

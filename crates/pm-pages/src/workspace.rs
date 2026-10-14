@@ -124,7 +124,7 @@ fn session_page(
     shaper: &mut Shaper,
 ) -> Node {
     let view = match state.tab {
-        Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width),
+        Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width, height),
         _ => chat::chat(state, session, width, above, shaper),
     };
     let mut page = node()

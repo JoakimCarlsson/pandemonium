@@ -149,7 +149,7 @@ impl App {
             .map(|(_, message)| message);
         let selected = self.text_selection.is_some_and(|held| !held.is_empty());
         self.model.update(|state| {
-            let closed = state.clone().without_menu();
+            let closed = std::mem::take(state).without_menu();
             *state = match message {
                 Some(message) => closed.with_message_menu(message, at, selected),
                 None => closed,
@@ -164,7 +164,8 @@ impl App {
             MESSAGE_MENU_SELECT_ALL => self.select_all_text(),
             _ => {}
         }
-        self.model.update(|state| *state = state.clone().after(row));
+        self.model
+            .update(|state| *state = std::mem::take(state).after(row));
         self.deliver();
     }
 }

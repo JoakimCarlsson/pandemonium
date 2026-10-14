@@ -1194,7 +1194,7 @@ impl Work {
             .and_then(|key| self.positions.get(&key).copied());
         model.update(|screen| {
             if let Screen::Workspace(state) = screen {
-                *state = view.reopen(state.clone(), position);
+                *state = view.reopen(std::mem::replace(state, WorkspaceState::new(&[])), position);
             }
         });
     }
@@ -1211,7 +1211,7 @@ impl Work {
     fn in_workspace(model: &State<Screen>, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
         model.update(|screen| {
             if let Screen::Workspace(state) = screen {
-                *state = change(state.clone());
+                *state = change(std::mem::replace(state, WorkspaceState::new(&[])));
             }
         });
     }
