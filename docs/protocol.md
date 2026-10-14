@@ -144,7 +144,7 @@ request with exactly one `response` carrying the same `id`.
   numbered after `after`. See [Events](#events).
 - **`inspect`:** the files that differ from the last commit, with their diffs,
   and, when `base` is given, the messages of the commits the branch has that
-  `base` has not.
+  `base` has not, plus the branch and abbreviated head commit the folder is on.
 - **`set_accounts`:** keeps the logins and the login in use for each agent on
   the server's machine, and points the agents at them. `accounts` reads them
   back.
@@ -180,7 +180,7 @@ embedded context, and anything else as a link to the stored file.
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
-| `inspected`  | `changes`: `[{path, diff, staged}]`, `commits`: `[string]` or null |
+| `inspected`  | `changes`: `[{path, diff, staged}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |

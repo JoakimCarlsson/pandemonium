@@ -4,8 +4,8 @@ use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Progress, ToolState, 
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, animate_spin, bg, border, border_color, border_l, cursor_pointer, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, items_center, leading_ratio, min_w_px, my,
+    Color, Radius, Role, animate_spin, bg, border, border_color, border_l, cursor_pointer, flex,
+    flex_1, flex_col, flex_none, font_mono, gap, items_center, leading_ratio, min_h, min_w_px, my,
     overflow_hidden, pl, px, py, rounded, rounded_full, size, text_color, text_px, w_full,
 };
 use pm_ui::{Node, node, text};
@@ -73,7 +73,14 @@ fn step_line(
     open: bool,
 ) -> Node {
     let mut row = node()
-        .styles([flex(), items_center(), gap(2.5), w_full(), min_w_px(0)])
+        .styles([
+            flex(),
+            items_center(),
+            gap(2.5),
+            w_full(),
+            min_h(8),
+            min_w_px(0),
+        ])
         .child(
             node()
                 .styles([flex(), items_center(), size(4), flex_none()])
@@ -81,7 +88,7 @@ fn step_line(
         )
         .child(line(verb, 13, 1.4, Role::Muted).styles([flex_none()]));
     if let Some(target) = target {
-        row = row.child(clipped_mono(target));
+        row = row.child(clipped_mono(target, verb == "Ran"));
     } else {
         row = row.child(node().styles([flex_1()]));
     }
@@ -103,17 +110,43 @@ fn step_line(
     row
 }
 
-/// A box that takes the room left in its row and cuts a line of code short at its edge.
-fn clipped_mono(content: &str) -> Node {
-    node()
-        .styles([flex_1(), min_w_px(0), overflow_hidden()])
-        .child(text(content.to_owned()).styles([
-            text_px(12),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(Role::Text),
-            pm_style::truncate(),
-        ]))
+/// A box that takes the room left in its row and cuts a line of code short at its edge, on a chip when `chip` is set.
+fn clipped_mono(content: &str, chip: bool) -> Node {
+    let code = text(content.to_owned()).styles([
+        text_px(12),
+        leading_ratio(1.4),
+        font_mono(),
+        text_color(Role::Text),
+        pm_style::truncate(),
+    ]);
+    let holder = node().styles([flex(), min_w_px(0), overflow_hidden()]);
+    node().styles([flex(), flex_1(), min_w_px(0)]).child(
+        match chip {
+            true => holder.styles([px(1.5), rounded(Radius::Md), bg(Role::Surface)]),
+            false => holder,
+        }
+        .child(code),
+    )
+}
+
+/// The icon and colour of a file of the kind `path` names, a plain muted file when it is of no known kind.
+fn file_kind(path: &str) -> (IconName, Color) {
+    let rgb = |red, green, blue| Color::rgb(red, green, blue);
+    match path.rsplit('.').next().unwrap_or_default() {
+        "rs" => (IconName::FileRs, rgb(0xe8, 0x95, 0x6a)),
+        "ts" => (IconName::FileTs, rgb(0x5a, 0xa9, 0xe6)),
+        "tsx" => (IconName::FileTsx, rgb(0x5a, 0xa9, 0xe6)),
+        "js" => (IconName::FileJs, rgb(0xe6, 0xc8, 0x4f)),
+        "jsx" => (IconName::FileJsx, rgb(0xe6, 0xc8, 0x4f)),
+        "md" => (IconName::FileMd, rgb(0x7f, 0xb7, 0xe8)),
+        "css" => (IconName::FileCss, rgb(0xb5, 0x8b, 0xe0)),
+        "html" => (IconName::FileHtml, rgb(0xe8, 0x79, 0x5f)),
+        "py" => (IconName::FilePy, rgb(0x6f, 0xb0, 0xe0)),
+        "toml" | "yml" | "yaml" => (IconName::FileText, rgb(0xd9, 0x8b, 0x8b)),
+        "json" => (IconName::FileText, rgb(0xe6, 0xc8, 0x4f)),
+        "lock" => (IconName::FileText, Color::from(Role::Subtle)),
+        _ => (IconName::File, Color::from(Role::Muted)),
+    }
 }
 
 /// The mark of how a tool got on: a turning ring, or the glyph that is its kind.
@@ -121,16 +154,20 @@ fn tool_mark(tool: &ToolUse) -> Node {
     match tool.state {
         ToolState::Running => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
         ToolState::Failed => glyph(IconName::Close, 3.5, Role::Danger),
-        ToolState::Done => glyph(
-            match tool.kind {
-                ToolKind::Read | ToolKind::Edit => IconName::FileCode,
-                ToolKind::Search => IconName::Search,
-                ToolKind::Execute => IconName::Terminal,
-                ToolKind::Fetch | ToolKind::Other => IconName::Check,
-            },
-            3.5,
-            Role::Subtle,
-        ),
+        ToolState::Done => match tool.kind {
+            ToolKind::Read | ToolKind::Edit => {
+                let path = tool
+                    .target
+                    .as_deref()
+                    .or(tool.diff.as_ref().map(|diff| diff.path.as_str()))
+                    .unwrap_or_default();
+                let (icon, tone) = file_kind(path);
+                glyph(icon, 4.0, tone)
+            }
+            ToolKind::Search => glyph(IconName::Search, 4.0, Role::Subtle),
+            ToolKind::Execute => glyph(IconName::Terminal, 4.0, Role::Subtle),
+            ToolKind::Fetch | ToolKind::Other => glyph(IconName::Check, 4.0, Role::Subtle),
+        },
     }
 }
 
@@ -273,9 +310,10 @@ pub fn plan(items: &[PlanStep]) -> Node {
         }))
 }
 
-/// The steps of the reply at `message`: one line each, the plan as a card.
+/// The steps of the reply at `message` that start at position `first` of its steps: one line each, the plan as a card.
 pub fn steps(
     steps: &[Step],
+    first: usize,
     message: usize,
     opened: impl Fn(usize) -> bool,
     root: &str,
@@ -290,7 +328,8 @@ pub fn steps(
             border_l(),
             border_color(Role::Border),
         ])
-        .children(steps.iter().enumerate().map(|(position, step)| {
+        .children(steps.iter().enumerate().map(|(offset, step)| {
+            let position = first + offset;
             let id = FocusId(STEP_BASE + (message * 1000 + position) as u64);
             let open = opened(position);
             match step {

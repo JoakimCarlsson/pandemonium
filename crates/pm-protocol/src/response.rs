@@ -127,6 +127,12 @@ pub enum Response {
         changes: Vec<Change>,
         /// The commits of the session's own branch, when it has one.
         commits: Option<Vec<String>>,
+        /// The branch the folder has checked out, when it is a repository and on one.
+        #[serde(default)]
+        branch: Option<String>,
+        /// The commit the folder is at, abbreviated, when it is a repository with one.
+        #[serde(default)]
+        head: Option<String>,
     },
     /// A shell was started.
     Terminal {

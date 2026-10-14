@@ -29,6 +29,9 @@ use crate::steps::{question, steps};
 /// How wide the column holding the conversation is at most, in logical pixels.
 const COLUMN: f32 = 760.0;
 
+/// How many fold-outs one piece of a reply may have before the next piece's numbering begins.
+const FOLDS_PER_PIECE: usize = 100;
+
 /// The sideways room the column keeps free on each side, in logical pixels.
 const GUTTER: f32 = 24.0;
 
@@ -80,70 +83,87 @@ fn agent_message(
 ) -> Node {
     let message = &session.messages[index];
     let mut reply = node().styles([flex(), flex_col(), gap(3)]);
-    if !message.steps.is_empty() {
-        let open = message
+    let open = !message.steps.is_empty()
+        && message
             .open
             .unwrap_or(session.latest_steps() == Some(index));
+    let root = state.projects[session.project].directory();
+    let root = root.to_string_lossy();
+    let held = state.opened.clone();
+    let page = state.open_index();
+    let run = |from: usize, to: usize| {
         let label = match message.duration.as_deref() {
+            _ if to < message.steps.len() => "Worked".to_owned(),
             Some(took) if !took.is_empty() => took.to_owned(),
             Some(_) => "Worked".to_owned(),
             None => "Working".to_owned(),
         };
-        let root = state.projects[session.project].directory();
-        let root = root.to_string_lossy();
-        let count = message.steps.len();
-        let held = state.opened.clone();
-        let page = state.open_index();
-        reply = reply.child(
-            node()
-                .styles([flex(), flex_col(), gap(1)])
-                .child(
-                    node()
-                        .styles([
-                            flex(),
-                            items_center(),
-                            gap(1.5),
-                            h(7),
-                            cursor_pointer(),
-                            self_start(),
-                        ])
-                        .child(glyph(
-                            if open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
-                            },
-                            3.5,
-                            Role::Subtle,
-                        ))
-                        .child(line(
-                            format!(
-                                "{label} · {count} step{}",
-                                if count == 1 { "" } else { "s" }
-                            ),
-                            12,
-                            1.4,
-                            Role::Subtle,
-                        ))
-                        .focusable(FocusId(TURN_BASE + index as u64)),
+        let count = to - from;
+        node()
+            .styles([flex(), flex_col(), gap(1)])
+            .child(
+                node()
+                    .styles([
+                        flex(),
+                        items_center(),
+                        gap(1.5),
+                        h(7),
+                        cursor_pointer(),
+                        self_start(),
+                    ])
+                    .child(glyph(
+                        if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        },
+                        3.5,
+                        Role::Subtle,
+                    ))
+                    .child(line(
+                        format!(
+                            "{label} · {count} step{}",
+                            if count == 1 { "" } else { "s" }
+                        ),
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    ))
+                    .focusable(FocusId(TURN_BASE + index as u64)),
+            )
+            .children(open.then(|| {
+                steps(
+                    &message.steps[from..to],
+                    from,
+                    index,
+                    |position| page.is_some_and(|open| held.contains(&(open, index, position))),
+                    &root,
+                    width,
                 )
-                .children(open.then(|| {
-                    steps(
-                        &message.steps,
-                        index,
-                        |position| page.is_some_and(|open| held.contains(&(open, index, position))),
-                        &root,
-                        width,
-                    )
-                })),
-        );
-    }
-    if !message.text.is_empty() {
+            }))
+    };
+    let mut shown = 0;
+    for (number, (before, piece)) in message.chunks().into_iter().enumerate() {
+        let before = before.min(message.steps.len());
+        if before > shown {
+            reply = reply.child(run(shown, before));
+        }
+        shown = shown.max(before);
+        let base = number * FOLDS_PER_PIECE;
+        let unfolded = state
+            .unfolded_in(index)
+            .into_iter()
+            .filter(|place| (base..base + FOLDS_PER_PIECE).contains(place))
+            .map(|place| place - base)
+            .collect();
         reply = reply.child(
-            Markdown::new(&message.text, width)
-                .details(DETAILS_BASE + index as u64 * 1000, state.unfolded_in(index))
+            Markdown::new(piece, width)
+                .details(DETAILS_BASE + (index * 1000 + base) as u64, unfolded)
                 .build(shaper),
         );
+    }
+    if shown < message.steps.len() {
+        reply = reply.child(run(shown, message.steps.len()));
     }
     if !message.bullets.is_empty() {
         reply = reply.child(node().styles([flex(), flex_col(), gap(1.5)]).children(
@@ -200,7 +220,7 @@ fn summary(session: &Session) -> Node {
             bg(Role::SurfaceHover).hover(),
             cursor_pointer(),
         ])
-        .child(glyph(IconName::GitCompare, 4.0, Role::Accent))
+        .child(glyph(IconName::GitCompare, 4.0, Role::Muted))
         .child(node().styles([flex_1()]).child(line(
             format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
             13,
@@ -212,7 +232,7 @@ fn summary(session: &Session) -> Node {
                 .size(12)
                 .build(),
         )
-        .child(line("Review", 12, 1.4, Role::Accent))
+        .child(line("Review", 13, 1.4, Role::Text))
         .focusable(OPEN_DIFF)
 }
 

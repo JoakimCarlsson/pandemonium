@@ -479,6 +479,14 @@ impl Screen {
         }
     }
 
+    /// The screen after the folder of the session at `session` was seen to have `branch` checked out, or a detached `head`.
+    pub fn checked_out(self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.checked_out(session, branch, head)),
+            onboarding => onboarding,
+        }
+    }
+
     /// The screen after `text` is said in the conversation of the session at `session` by the app.
     pub fn noted(self, session: usize, text: &str) -> Self {
         match self {

@@ -873,9 +873,18 @@ impl Work {
                 _ => {}
             },
             Pending::Inspect(session) => {
-                if let Response::Inspected { changes, commits } = response {
+                if let Response::Inspected {
+                    changes,
+                    commits,
+                    branch,
+                    head,
+                } = response
+                {
                     model.update(|screen| {
-                        *screen = screen.clone().refreshed(session, &changes, commits);
+                        *screen = screen
+                            .clone()
+                            .refreshed(session, &changes, commits)
+                            .checked_out(session, branch.as_deref(), head.as_deref());
                     });
                 }
             }

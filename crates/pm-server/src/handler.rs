@@ -364,11 +364,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 return Response::Inspected {
                     changes: Vec::new(),
                     commits: None,
+                    branch: None,
+                    head: None,
                 };
             }
             Response::Inspected {
                 changes: pm_git::changes(directory),
                 commits: base.map(|base| pm_git::commits_since(directory, &base)),
+                branch: pm_git::current_branch(directory),
+                head: pm_git::resolve(directory, "HEAD"),
             }
         }
         Request::Stage {

@@ -490,18 +490,18 @@ impl WorkspaceState {
         if let Some(held) = self.projects.get(project) {
             self.sync_discovery(held.host());
         }
-        if self.skills_of != Some((self.agent, project)) {
+        if self.skills_of != Some((self.agent, project))
+            && let Some(held) = self.projects.get(project)
+        {
             self.skills_of = Some((self.agent, project));
             self.skills = Vec::new();
             self.skill_names = Default::default();
-            if let Some(held) = self.projects.get(project) {
-                self.outbox.push(Outgoing::Skills {
-                    agent: self.agent,
-                    project,
-                    host: held.host(),
-                    directory: held.directory().to_string_lossy().into_owned(),
-                });
-            }
+            self.outbox.push(Outgoing::Skills {
+                agent: self.agent,
+                project,
+                host: held.host(),
+                directory: held.directory().to_string_lossy().into_owned(),
+            });
         }
         let asked = self.defaults.get(self.agent).is_some_and(Option::is_some)
             && self.identities.get(self.agent).is_some_and(Option::is_some);
@@ -517,20 +517,22 @@ impl WorkspaceState {
                 naming: false,
             });
         }
+        let Some(held) = self.projects.get(project) else {
+            return;
+        };
         if self.branches_of == Some(project) {
             return;
         }
+        let ask = Outgoing::Branches {
+            project,
+            host: held.host(),
+            directory: held.directory().to_string_lossy().into_owned(),
+        };
         self.branches_of = Some(project);
         self.base = None;
         self.branches = Vec::new();
         self.location = Location::Local;
-        if let Some(held) = self.projects.get(project) {
-            self.outbox.push(Outgoing::Branches {
-                project,
-                host: held.host(),
-                directory: held.directory().to_string_lossy().into_owned(),
-            });
-        }
+        self.outbox.push(ask);
     }
 
     /// Asks again which branches the project being started in has, so that the list is never older than the menu showing it.

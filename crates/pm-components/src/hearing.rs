@@ -74,7 +74,12 @@ impl Session {
             reply.text.push_str("\n\n");
         }
         reply.text.push_str(text);
-        reply.said_after = reply.steps.len();
+        let before = reply.steps.len();
+        match reply.said.last_mut() {
+            Some((at, piece)) if *at == before => piece.push_str(text),
+            _ => reply.said.push((before, text.to_owned())),
+        }
+        reply.said_after = before;
     }
 
     /// Adds `text` to what the agent is thinking, or starts a thought.

@@ -98,6 +98,26 @@ pub enum IconName {
     Terminal,
     /// A file with a plus: new file.
     FilePlus,
+    /// A file marked RS.
+    FileRs,
+    /// A file marked TS.
+    FileTs,
+    /// A file marked TSX.
+    FileTsx,
+    /// A file marked JS.
+    FileJs,
+    /// A file marked JSX.
+    FileJsx,
+    /// A file marked MD.
+    FileMd,
+    /// A file marked CSS.
+    FileCss,
+    /// A file marked HTML.
+    FileHtml,
+    /// A file marked PY.
+    FilePy,
+    /// A file with lines of text.
+    FileText,
     /// A folder with a plus: new folder.
     FolderPlus,
     /// A bin: delete.
@@ -159,6 +179,16 @@ impl IconName {
             Self::SquareSlash => Svg::new("square_slash", include_icon!("square_slash")),
             Self::Terminal => Svg::new("terminal", include_icon!("terminal")),
             Self::FilePlus => Svg::new("file_plus", include_icon!("file_plus")),
+            Self::FileRs => Svg::new("file_rs", include_icon!("file_rs")),
+            Self::FileTs => Svg::new("file_ts", include_icon!("file_ts")),
+            Self::FileTsx => Svg::new("file_tsx", include_icon!("file_tsx")),
+            Self::FileJs => Svg::new("file_js", include_icon!("file_js")),
+            Self::FileJsx => Svg::new("file_jsx", include_icon!("file_jsx")),
+            Self::FileMd => Svg::new("file_md", include_icon!("file_md")),
+            Self::FileCss => Svg::new("file_css", include_icon!("file_css")),
+            Self::FileHtml => Svg::new("file_html", include_icon!("file_html")),
+            Self::FilePy => Svg::new("file_py", include_icon!("file_py")),
+            Self::FileText => Svg::new("file_text", include_icon!("file_text")),
             Self::FolderPlus => Svg::new("folder_plus", include_icon!("folder_plus")),
             Self::Trash => Svg::new("trash", include_icon!("trash")),
             Self::Pencil => Svg::new("pencil", include_icon!("pencil")),

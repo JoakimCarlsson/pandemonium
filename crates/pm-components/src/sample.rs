@@ -152,6 +152,8 @@ pub struct Message {
     pub open: Option<bool>,
     /// How many steps the reply had when its text last grew, to tell when new words follow a step.
     pub said_after: usize,
+    /// The pieces of the text as the agent said them, each with how many steps came before it.
+    pub said: Vec<(usize, String)>,
     /// The files the reader sent with it, by path.
     pub attachments: Vec<String>,
 }
@@ -232,8 +234,24 @@ impl Message {
             steps: Vec::new(),
             open: None,
             said_after: 0,
+            said: Vec::new(),
             attachments: Vec::new(),
         }
+    }
+
+    /// The pieces of the text in the order the agent said them among its steps, each with how many steps came before it; the whole text after every step when it was not told piece by piece.
+    pub fn chunks(&self) -> Vec<(usize, &str)> {
+        if self.said.is_empty() {
+            return if self.text.is_empty() {
+                Vec::new()
+            } else {
+                vec![(self.steps.len(), self.text.as_str())]
+            };
+        }
+        self.said
+            .iter()
+            .map(|(before, piece)| (*before, piece.as_str()))
+            .collect()
     }
 }
 

@@ -1083,6 +1083,17 @@ impl WorkspaceState {
         self
     }
 
+    /// The state after the folder of the session at `session` was seen to have
+    /// `branch` checked out, or a detached `head`; a folder that is no repository leaves the label as it was.
+    pub fn checked_out(mut self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
+        if let Some(held) = self.sessions.get_mut(session)
+            && (branch.is_some() || head.is_some())
+        {
+            held.branch = Session::checkout_label(branch, head, held.base.as_deref());
+        }
+        self
+    }
+
     /// The state after the folder of the session at `session` was looked at
     /// again: these files differ from the last commit, and these commits are its own.
     pub fn refreshed(
