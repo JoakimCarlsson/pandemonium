@@ -1,4 +1,4 @@
-//! The empty page of a new workspace: pick an agent, then describe the work.
+//! The empty page of a new session: pick an agent, then describe the work.
 
 use pm_input::FocusId;
 use pm_style::{

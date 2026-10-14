@@ -432,7 +432,7 @@ impl App {
         };
         let path = folder.to_string_lossy().into_owned();
         self.model
-            .update(|state| *state = state.clone().with_project(&path));
+            .update(|state| *state = state.clone().with_project_opened(&path));
         self.persist();
     }
 

@@ -13,9 +13,6 @@ pub fn prompt_field(text: &str) -> Field {
     Field::new(text).multiline(true)
 }
 
-/// Starts a workspace in the project that is current.
-pub const NEW: FocusId = FocusId(300);
-
 /// Lists every session.
 pub const HISTORY: FocusId = FocusId(301);
 
@@ -500,6 +497,22 @@ impl WorkspaceState {
         self
     }
 
+    /// The state with `source` added as a project, or found if it is there already, and open on the page for starting a session in it.
+    pub fn with_project_opened(mut self, source: &str) -> Self {
+        self = self.with_project(source);
+        let path = Project::from_source(source).map(|project| project.path);
+        if let Some(index) = self
+            .projects
+            .iter()
+            .position(|held| Some(&held.path) == path.as_ref())
+        {
+            self.folded[index] = false;
+            self.page = Page::New(index);
+            self.sync_context();
+        }
+        self
+    }
+
     /// The state after the sidebar's list is scrolled by `delta` logical
     /// pixels, in a window `height` logical pixels tall, kept within the list.
     pub fn scrolled(mut self, delta: f32, height: f32) -> Self {
@@ -545,7 +558,6 @@ impl WorkspaceState {
             self.activity = None;
         }
         match action {
-            NEW => self.page = Page::New(self.current_project()),
             HISTORY => self.page = Page::History,
             TAB_CHAT => self.tab = Tab::Chat,
             TAB_DIFF => self.tab = Tab::Diff,

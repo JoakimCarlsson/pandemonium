@@ -15,8 +15,8 @@ use pm_components::{chat, diff, history, input, review, sidebar, terminal, welco
 
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
-    ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, NEW, Outgoing, PROMPT, SEND, STOP,
-    TAB_DIFF, TERMINAL, WorkspaceState,
+    ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PROMPT, SEND, STOP, TAB_DIFF,
+    TERMINAL, WorkspaceState,
 };
 
 use pm_components::sample::{AGENTS, Session};

@@ -142,7 +142,15 @@ impl Screen {
         }
     }
 
-    /// The screen after the folder at `path` is chosen as a project.
+    /// The screen after the reader chose the folder at `path` as a project: added, and open on a new session in it.
+    pub fn with_project_opened(self, path: &str) -> Self {
+        match self {
+            Self::Onboarding(state) => Self::Onboarding(state.with_project(path)),
+            Self::Workspace(state) => Self::Workspace(state.with_project_opened(path)),
+        }
+    }
+
+    /// The screen with the project at `path` added, which the reader did not ask to see.
     pub fn with_project(self, path: &str) -> Self {
         match self {
             Self::Onboarding(state) => Self::Onboarding(state.with_project(path)),

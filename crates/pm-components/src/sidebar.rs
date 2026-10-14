@@ -15,7 +15,7 @@ use crate::Tile;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
 use crate::state::{
-    ADD_PROJECT, HISTORY, NEW, NEW_IN_BASE, PROJECT_BASE, Page, SEARCH, SESSION_BASE, SETTINGS,
+    ADD_PROJECT, HISTORY, NEW_IN_BASE, PROJECT_BASE, Page, SEARCH, SESSION_BASE, SETTINGS,
     WorkspaceState,
 };
 
@@ -137,7 +137,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
                     if starting { Role::Text } else { Role::Muted },
                 ))
                 .child(line(
-                    "New workspace",
+                    "New session",
                     14,
                     1.4,
                     if starting { Role::Text } else { Role::Muted },
@@ -164,7 +164,7 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
             node()
                 .styles([flex(), flex_col(), gap(0.5), p(2), pt(3)])
                 .children([
-                    entry(IconName::Plus, "New workspace", NEW, false),
+                    entry(IconName::Plus, "New workspace", ADD_PROJECT, false),
                     entry(
                         IconName::History,
                         "History",
@@ -202,7 +202,6 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
                     border_t(),
                     border_color(Role::Border),
                 ])
-                .child(Button::icon(IconName::Plus, ADD_PROJECT).build())
                 .child(spacer())
                 .child(Button::icon(IconName::Settings, SETTINGS).build()),
         )
