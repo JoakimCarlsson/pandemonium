@@ -2,8 +2,9 @@
 
 use pm_input::{Key, KeyEvent, Modifiers};
 use pm_text::{Edit, Motion};
-use winit::event::ElementState;
+use winit::event::{ElementState, KeyEvent as WindowKeyEvent};
 use winit::keyboard::{Key as WindowKey, ModifiersState, NamedKey};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 /// The app's modifiers for the window's.
 pub fn modifiers(state: ModifiersState) -> Modifiers {
@@ -17,8 +18,8 @@ pub fn modifiers(state: ModifiersState) -> Modifiers {
 
 /// The app's key event for a key the window reported, or nothing for a key
 /// the app has no name for.
-pub fn key_event(key: &WindowKey, state: ElementState, modifiers: Modifiers) -> Option<KeyEvent> {
-    let key = match key {
+pub fn key_event(event: &WindowKeyEvent, modifiers: Modifiers) -> Option<KeyEvent> {
+    let key = match &event.logical_key {
         WindowKey::Named(NamedKey::Enter) => Key::Enter,
         WindowKey::Named(NamedKey::Escape) => Key::Escape,
         WindowKey::Named(NamedKey::Tab) => Key::Tab,
@@ -38,9 +39,31 @@ pub fn key_event(key: &WindowKey, state: ElementState, modifiers: Modifiers) -> 
     };
     Some(KeyEvent {
         key,
-        modifiers,
-        pressed: state == ElementState::Pressed,
+        modifiers: unspent(event, modifiers),
+        pressed: event.state == ElementState::Pressed,
     })
+}
+
+/// `modifiers` without the ones the keyboard layout spent composing the
+/// character `event` typed, such as Option turning `a` into `å` on a Mac or
+/// AltGr turning `2` into `@` elsewhere, so the character is typed rather
+/// than taken for a shortcut.
+fn unspent(event: &WindowKeyEvent, modifiers: Modifiers) -> Modifiers {
+    let composed = modifiers.alt
+        && matches!(
+            (&event.logical_key, event.key_without_modifiers()),
+            (WindowKey::Character(typed), WindowKey::Character(bare))
+                if !typed.eq_ignore_ascii_case(&bare)
+        );
+    if composed {
+        Modifiers {
+            alt: false,
+            control: false,
+            ..modifiers
+        }
+    } else {
+        modifiers
+    }
 }
 
 /// The edit a key event asks of a text field, or nothing for a key that does

@@ -75,6 +75,8 @@ fn main() {
             Some("missing") => Shot::Missing,
             Some("attached") => Shot::Attached,
             Some("unfolded") => Shot::Unfolded,
+            Some("composing") => Shot::Composing,
+            Some("terminalcomposing") => Shot::TerminalComposing,
             _ => Shot::Onboarding(pm_pages::Step::Welcome),
         };
         if let Err(error) = snapshot::write(

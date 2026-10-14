@@ -95,6 +95,8 @@ pub struct App {
     dragging: Option<FocusId>,
     /// The last press that landed in a field, for noticing a double click.
     last_press: Option<(Instant, FocusId, u8)>,
+    /// The field or shell showing what an input method is composing, while it composes something.
+    composing_in: Option<FocusId>,
     /// The project paths last written to disk, so only changes are written.
     saved: Option<Vec<String>>,
     /// The choices for the agents' settings last written to disk, so only changes are written.
@@ -195,6 +197,7 @@ impl Default for App {
             clipboard: None,
             dragging: None,
             last_press: None,
+            composing_in: None,
             saved,
             saved_view,
             project_press: None,
@@ -266,7 +269,7 @@ impl App {
             && let Some(field) = state.field(id)
             && field.is_multiline()
         {
-            let caret = field.caret();
+            let caret = field.to_shown(field.caret());
             if let Some(held) = self
                 .output
                 .fields
@@ -756,6 +759,32 @@ impl App {
         }
     }
 
+    /// Shows `text` an input method is composing in the field or shell holding
+    /// the keyboard, taking it away from the one that showed it before.
+    fn compose(&mut self, text: String) {
+        let target = self
+            .focus
+            .current()
+            .filter(|id| *id == TERMINAL_BODY || Screen::is_field(*id));
+        if let Some(held) = self.composing_in.filter(|held| Some(*held) != target) {
+            self.show_composing(held, String::new());
+        }
+        self.composing_in = target.filter(|_| !text.is_empty());
+        if let Some(id) = target {
+            self.show_composing(id, text);
+        }
+    }
+
+    /// Shows `text` as being composed in the field or shell `id`.
+    fn show_composing(&mut self, id: FocusId, text: String) {
+        if id == TERMINAL_BODY {
+            self.model
+                .update(|screen| screen.compose_in_terminal(&text));
+        } else {
+            self.edit_field(id, Edit::Compose(text));
+        }
+    }
+
     /// Makes `edit` to the field `id`.
     fn edit_field(&mut self, id: FocusId, edit: Edit) {
         self.model
@@ -1018,6 +1047,8 @@ impl ApplicationHandler for App {
                     ElementState::Released => PointerEvent::Released(button),
                 });
             }
+            WindowEvent::Ime(Ime::Preedit(composing, _)) => self.compose(composing),
+            WindowEvent::Ime(Ime::Disabled) => self.compose(String::new()),
             WindowEvent::Ime(Ime::Commit(committed)) => {
                 if self.commit_to_terminal(&committed) {
                 } else if let Some(id) = self.focus.current()
@@ -1030,9 +1061,7 @@ impl ApplicationHandler for App {
                 self.modifiers = keys::modifiers(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some(event) =
-                    keys::key_event(&event.logical_key, event.state, self.modifiers)
-                {
+                if let Some(event) = keys::key_event(&event, self.modifiers) {
                     self.key(event);
                 }
             }

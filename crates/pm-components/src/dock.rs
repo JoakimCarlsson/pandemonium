@@ -75,6 +75,8 @@ pub struct TerminalTab {
     pub back: usize,
     /// Whether the shell has ended.
     pub exited: bool,
+    /// Text an input method is composing at the cursor, shown but not yet sent to the shell.
+    pub composing: String,
 }
 
 impl TerminalTab {
@@ -102,6 +104,7 @@ impl WorkspaceState {
             emulator: Shared::new(columns, rows),
             back: 0,
             exited: false,
+            composing: String::new(),
         });
         held.terminal_active = held.terminals.len() - 1;
         self.next_terminal += 1;
@@ -219,6 +222,13 @@ impl WorkspaceState {
             tab.emulator.write().clear_selection();
             let id = tab.id;
             self.outbox.push(Outgoing::TerminalInput { tab: id, data });
+        }
+    }
+
+    /// Shows `text` an input method is composing at the cursor of the shell showing, or stops showing it when empty.
+    pub fn compose_in_terminal(&mut self, text: &str) {
+        if let Some(tab) = self.active_terminal_mut() {
+            tab.composing = text.chars().filter(|c| !c.is_control()).collect();
         }
     }
 

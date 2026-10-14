@@ -78,6 +78,10 @@ pub enum Shot {
     Attached,
     /// The workspace on its first session with the fold-out of its last reply open.
     Unfolded,
+    /// The page for starting work with a dead key's accent waiting for its letter in the prompt.
+    Composing,
+    /// The workspace with the terminal open and a dead key's accent waiting for its letter at the cursor.
+    TerminalComposing,
 }
 
 /// The workspace of made-up sessions.
@@ -131,6 +135,16 @@ impl Shot {
             Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
             Self::Diff => Screen::Workspace(workspace().after(TAB_DIFF)),
             Self::Terminal => Screen::Workspace(terminal()),
+            Self::TerminalComposing => {
+                let mut state = terminal();
+                state.compose_in_terminal("¨");
+                Screen::Workspace(state)
+            }
+            Self::Composing => Screen::Workspace(
+                welcome()
+                    .edited(PROMPT, Edit::Paste("Varför försvinner sm".to_owned()))
+                    .edited(PROMPT, Edit::Compose("¨".to_owned())),
+            ),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::Workspace(WorkspaceState::new(&[])),
             Self::History => Screen::Workspace(workspace().after(HISTORY)),

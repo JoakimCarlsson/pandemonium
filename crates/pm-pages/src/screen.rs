@@ -570,6 +570,13 @@ impl Screen {
         }
     }
 
+    /// Shows `text` an input method is composing at the cursor of the shell showing, or stops showing it when empty.
+    pub fn compose_in_terminal(&mut self, text: &str) {
+        if let Self::Workspace(state) = self {
+            state.compose_in_terminal(text);
+        }
+    }
+
     /// Scrolls the shell showing `lines` lines back up, or down when negative.
     pub fn scroll_terminal(&mut self, lines: isize) {
         if let Self::Workspace(state) = self {

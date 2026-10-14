@@ -32,6 +32,9 @@ pub struct Node {
     /// A highlighted byte range of this node's text, shown while the named
     /// box holds focus.
     pub(crate) selection: Option<(std::ops::Range<usize>, FocusId)>,
+    /// A byte range of this node's text an input method is still composing,
+    /// underlined while the named box holds focus.
+    pub(crate) marked: Option<(std::ops::Range<usize>, FocusId)>,
     /// How far the contents are shifted left, in logical pixels, to scroll them.
     pub(crate) scroll_x: f32,
     /// How far the contents are shifted up, in logical pixels, to scroll them.
@@ -138,6 +141,13 @@ impl Node {
     /// named `owner` holds focus.
     pub fn selection(mut self, range: std::ops::Range<usize>, owner: FocusId) -> Self {
         self.selection = Some((range, owner));
+        self
+    }
+
+    /// Underlines the byte range `range` of this node's text, which an input
+    /// method is still composing, while the box named `owner` holds focus.
+    pub fn marked(mut self, range: std::ops::Range<usize>, owner: FocusId) -> Self {
+        self.marked = Some((range, owner));
         self
     }
 

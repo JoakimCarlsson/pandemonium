@@ -560,6 +560,22 @@ impl Frame<'_> {
                 tint,
             ));
         }
+        if let Some((range, owner)) = &node.marked
+            && self.input.focused == Some(*owner)
+        {
+            let left = run.caret_x(range.start);
+            let right = run.caret_x(range.end);
+            let thickness = (computed.typography.size / 14.0).max(1.0);
+            self.list.push(Quad::filled(
+                Rect::new(
+                    x + left,
+                    y + run.baseline + computed.typography.size * 0.12,
+                    right - left,
+                    thickness,
+                ),
+                color,
+            ));
+        }
         if let Some((byte, owner)) = node.caret
             && self.input.focused == Some(owner)
         {

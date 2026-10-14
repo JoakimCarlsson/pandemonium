@@ -51,6 +51,10 @@ pub enum Edit {
     /// Scroll the line so it starts this many logical pixels left of the
     /// view; negative offsets are taken as none.
     ScrollTo(f32),
+    /// Show text an input method is still composing at the caret, such as
+    /// the accent of a dead key waiting for its letter, or stop showing it
+    /// when empty. The text is not typed until the input method commits it.
+    Compose(String),
 }
 
 /// Text with a caret between two of its characters and, when the
@@ -80,6 +84,9 @@ pub struct Field {
     future: Vec<Snapshot>,
     /// Whether the last change was typing, which the next typing joins.
     typing: bool,
+    /// Text an input method is composing at the caret: shown, but not part
+    /// of the text until it is committed.
+    composing: String,
 }
 
 /// What a field held at one moment, for undoing back to it.
@@ -189,17 +196,45 @@ impl Field {
         self.scroll
     }
 
-    /// What the line looks like: its text, or a dot for each character when masked.
+    /// What the line looks like: its text with what is being composed at the
+    /// caret, or a dot for each character of that when masked.
     pub fn shown(&self) -> std::borrow::Cow<'_, str> {
+        if self.composing.is_empty() && !self.masked {
+            return std::borrow::Cow::Borrowed(&self.text);
+        }
+        let mut composed = self.text.clone();
+        composed.insert_str(self.caret, &self.composing);
         if self.masked {
-            std::borrow::Cow::Owned(MASK.to_string().repeat(self.text.chars().count()))
+            std::borrow::Cow::Owned(MASK.to_string().repeat(composed.chars().count()))
         } else {
-            std::borrow::Cow::Borrowed(&self.text)
+            std::borrow::Cow::Owned(composed)
         }
     }
 
-    /// The offset in what is shown that matches the byte offset `byte` of the text.
+    /// The offset in what is shown that matches the byte offset `byte` of the
+    /// text; offsets from the caret on fall after what is being composed.
     pub fn to_shown(&self, byte: usize) -> usize {
+        let after_composing = !self.composing.is_empty() && byte >= self.caret;
+        self.to_shown_uncomposed(byte)
+            + if after_composing {
+                self.composing_width()
+            } else {
+                0
+            }
+    }
+
+    /// The range of what is shown that an input method is still composing,
+    /// or nothing while it composes nothing.
+    pub fn marked(&self) -> Option<Range<usize>> {
+        (!self.composing.is_empty()).then(|| {
+            let start = self.to_shown_uncomposed(self.caret);
+            start..start + self.composing_width()
+        })
+    }
+
+    /// The offset in what is shown that matches the byte offset `byte` of the
+    /// text, leaving out what is being composed.
+    fn to_shown_uncomposed(&self, byte: usize) -> usize {
         if self.masked {
             self.text[..byte.min(self.text.len())].chars().count() * MASK.len_utf8()
         } else {
@@ -207,8 +242,25 @@ impl Field {
         }
     }
 
-    /// The byte offset of the text that matches the offset `shown` in what is shown.
+    /// How many bytes of what is shown the text being composed takes.
+    fn composing_width(&self) -> usize {
+        if self.masked {
+            self.composing.chars().count() * MASK.len_utf8()
+        } else {
+            self.composing.len()
+        }
+    }
+
+    /// The byte offset of the text that matches the offset `shown` in what is
+    /// shown; an offset inside what is being composed is the caret's.
     fn to_text(&self, shown: usize) -> usize {
+        let start = self.to_shown_uncomposed(self.caret);
+        let width = self.composing_width();
+        let shown = if shown >= start + width {
+            shown - width
+        } else {
+            shown.min(start)
+        };
         if !self.masked {
             return self.boundary(shown);
         }
@@ -266,6 +318,14 @@ impl Field {
                 self.scroll = offset.max(0.0);
                 return;
             }
+            Edit::Compose(text) => {
+                self.composing = if self.read_only {
+                    String::new()
+                } else {
+                    text.chars().filter(|c| !c.is_control()).collect()
+                };
+                return;
+            }
             _ => {}
         }
         let changes = matches!(
@@ -317,7 +377,7 @@ impl Field {
                 self.anchor = self.word_before(self.after(byte).unwrap_or(byte));
                 self.caret = self.word_after(self.before(byte).unwrap_or(byte));
             }
-            Edit::Undo | Edit::Redo | Edit::ScrollTo(_) => {}
+            Edit::Undo | Edit::Redo | Edit::ScrollTo(_) | Edit::Compose(_) => {}
         }
         if let Some(before) = before
             && before != self.snapshot()

@@ -168,10 +168,11 @@ fn tab_button(index: usize, tab: &TerminalTab, shown: bool) -> Node {
 fn window(tab: &TerminalTab, width: f32, shaper: &mut Shaper) -> Node {
     let emulator = tab.emulator.clone();
     let back = tab.back;
+    let composing = tab.composing.clone();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (tab.id, emulator.read().version(), back).hash(&mut hasher);
+    (tab.id, emulator.read().version(), back, &composing).hash(&mut hasher);
     let grid = retained(hasher.finish(), width, shaper, move |_| {
-        lines(&emulator.read(), back)
+        lines(&emulator.read(), back, &composing)
     });
     node()
         .styles([
@@ -204,8 +205,8 @@ struct Look {
     cursor: bool,
 }
 
-/// The lines of the window of `emulator` scrolled `back` lines up.
-fn lines(emulator: &Emulator, back: usize) -> Node {
+/// The lines of the window of `emulator` scrolled `back` lines up, with `composing` shown at the cursor.
+fn lines(emulator: &Emulator, back: usize, composing: &str) -> Node {
     let first = emulator.first_line(back);
     let cursor = emulator.cursor(back);
     let selection = emulator.selection().map(|marked| marked.ordered());
@@ -216,7 +217,7 @@ fn lines(emulator: &Emulator, back: usize) -> Node {
                 .filter(|(line, _)| *line == row)
                 .map(|(_, column)| column);
             let marked = selection.and_then(|range| marked_columns(range, first + row));
-            line_of(emulator.line(row, back), at_cursor, marked)
+            line_of(emulator.line(row, back), at_cursor, marked, composing)
         }))
 }
 
@@ -233,8 +234,13 @@ fn marked_columns(
     Some((from, to))
 }
 
-/// One line of the window: its cells grouped into runs of the same look.
-fn line_of(cells: &[Cell], cursor: Option<usize>, marked: Option<(usize, usize)>) -> Node {
+/// One line of the window: its cells grouped into runs of the same look, with `composing` drawn just before the cursor.
+fn line_of(
+    cells: &[Cell],
+    cursor: Option<usize>,
+    marked: Option<(usize, usize)>,
+    composing: &str,
+) -> Node {
     let used = cells
         .iter()
         .rposition(|cell| !cell.is_blank())
@@ -266,6 +272,9 @@ fn line_of(cells: &[Cell], cursor: Option<usize>, marked: Option<(usize, usize)>
                 if let Some((held, content)) = run.take() {
                     row = row.child(run_node(held, content));
                 }
+                if look.cursor && !composing.is_empty() {
+                    row = row.child(composing_node(composing));
+                }
                 run = Some((look, character.to_string()));
             }
         }
@@ -274,6 +283,18 @@ fn line_of(cells: &[Cell], cursor: Option<usize>, marked: Option<(usize, usize)>
         row = row.child(run_node(held, content));
     }
     row
+}
+
+/// The node drawing `composing`, text an input method has not committed yet, underlined in the default colours.
+fn composing_node(composing: &str) -> Node {
+    text(composing).styles([
+        flex_none(),
+        text_px(FONT as u32),
+        leading_ratio(LEADING),
+        font_mono(),
+        text_color(Role::Text),
+        underline(),
+    ])
 }
 
 /// How a paint is shown: a colour, or the default one of `role`.

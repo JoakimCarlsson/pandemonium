@@ -106,7 +106,7 @@ impl<'a> Input<'a> {
 
     /// The multiline input with its text wrapped to `width` logical pixels.
     pub fn wrap(mut self, width: f32, shaper: &mut Shaper) -> Self {
-        self.lines = wrap(shaper, self.field.text(), typography(), width);
+        self.lines = wrap(shaper, &self.field.shown(), typography(), width);
         self
     }
 
@@ -172,6 +172,9 @@ impl<'a> Input<'a> {
                 self.id,
             );
         }
+        if let Some(range) = self.field.marked() {
+            line = line.marked(range, self.id);
+        }
         let mut styles = vec![
             flex(),
             items_center(),
@@ -223,15 +226,19 @@ impl<'a> Input<'a> {
 
     /// The node that draws a multiline input: its wrapped lines in a column, the caret and selection placed in them.
     fn build_multiline(self) -> Node {
-        let content = self.field.text();
-        let caret = self.field.caret();
+        let content = self.field.shown();
+        let caret = self.field.to_shown(self.field.caret());
         let caret_line = self
             .lines
             .iter()
             .position(|line| caret < line.next)
             .unwrap_or(self.lines.len().saturating_sub(1));
         let first = (caret_line + 1).saturating_sub(MAX_LINES);
-        let selection = self.field.selection();
+        let selection = self
+            .field
+            .selection()
+            .map(|range| self.field.to_shown(range.start)..self.field.to_shown(range.end));
+        let marked = self.field.marked();
         let column = node()
             .styles([
                 flex(),
@@ -268,16 +275,24 @@ impl<'a> Input<'a> {
                     if index == caret_line {
                         row = row.caret(caret - line.start, self.id);
                     }
-                    if let Some(range) = &selection {
-                        let (low, high) = (range.start.max(line.start), range.end.min(line.end));
-                        if low < high {
-                            row = row.selection(low - line.start..high - line.start, self.id);
-                        }
+                    if let Some(range) = clipped(&selection, line) {
+                        row = row.selection(range, self.id);
+                    }
+                    if let Some(range) = clipped(&marked, line) {
+                        row = row.marked(range, self.id);
                     }
                     row
                 }),
         )
     }
+}
+
+/// The part of `range` that falls on `line`, as offsets into the line, or
+/// nothing when none of it does.
+fn clipped(range: &Option<std::ops::Range<usize>>, line: &Line) -> Option<std::ops::Range<usize>> {
+    let range = range.as_ref()?;
+    let (low, high) = (range.start.max(line.start), range.end.min(line.end));
+    (low < high).then(|| low - line.start..high - line.start)
 }
 
 impl From<Input<'_>> for Node {
