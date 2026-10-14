@@ -15,6 +15,8 @@ pub enum State {
     Disabled,
     /// The window uses the dark appearance.
     Dark,
+    /// The pointer is over the nearest enclosing group.
+    GroupHover,
 }
 
 impl State {
@@ -26,6 +28,7 @@ impl State {
             Self::Active => 1 << 2,
             Self::Disabled => 1 << 3,
             Self::Dark => 1 << 4,
+            Self::GroupHover => 1 << 5,
         }
     }
 }

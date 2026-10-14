@@ -5,8 +5,8 @@ use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1,
     flex_col, flex_none, font_mono, gap, h, items_center, leading_ratio, max_w_px, min_h, min_w_px,
-    mt, overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size, text_color,
-    text_px, w_full,
+    mt, opacity, overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size,
+    text_color, text_px, w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
@@ -186,7 +186,12 @@ fn agent_message(
             node().styles([self_start(), mt(-1.0)]).child(
                 Button::icon(IconName::Copy, FocusId(COPY_BASE + index as u64))
                     .build()
-                    .styles([text_color(Role::Subtle)]),
+                    .styles([
+                        text_color(Role::Subtle),
+                        opacity(0),
+                        opacity(100).group_hover(),
+                        opacity(100).focus(),
+                    ]),
             ),
         );
     }
@@ -200,7 +205,7 @@ fn agent_message(
                 .child(line(duration, 12, 1.4, Role::Subtle)),
         );
     }
-    reply
+    reply.group()
 }
 
 /// The card that sums up the changes and opens them for review.

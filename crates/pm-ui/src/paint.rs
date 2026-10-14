@@ -182,6 +182,7 @@ pub fn draw(
         clip: None,
         origin: (0.0, 0.0),
         culling: true,
+        group_hovered: false,
     };
     frame.node(
         root,
@@ -216,6 +217,8 @@ struct Frame<'a> {
     origin: (f32, f32),
     /// Whether boxes wholly outside the clip are passed over rather than painted.
     culling: bool,
+    /// Whether the pointer is over the nearest group enclosing the boxes now being painted.
+    group_hovered: bool,
 }
 
 impl Frame<'_> {
@@ -241,8 +244,13 @@ impl Frame<'_> {
             return;
         }
         let seen = intersect(self.clip, shown);
+        let outer_group = self.group_hovered;
+        if node.group {
+            self.group_hovered = self.pointer_in(seen);
+        }
         let computed = self.resolve(node, seen);
         if computed.layout.display.display == Display::None {
+            self.group_hovered = outer_group;
             return;
         }
 
@@ -250,12 +258,7 @@ impl Frame<'_> {
             Cursor::Default => inherited,
             own => own,
         };
-        if self
-            .input
-            .pointer
-            .position
-            .is_some_and(|(x, y)| seen.contains(x, y))
-        {
+        if self.pointer_in(seen) {
             self.output.cursor = cursor;
         }
         if let Some(id) = node.focus {
@@ -334,6 +337,15 @@ impl Frame<'_> {
             self.clip = outer;
             self.list.set_clip(outer);
         }
+        self.group_hovered = outer_group;
+    }
+
+    /// Whether the pointer is inside `rect`.
+    fn pointer_in(&self, rect: Rect) -> bool {
+        self.input
+            .pointer
+            .position
+            .is_some_and(|(x, y)| rect.contains(x, y))
     }
 
     /// Walks `node`, which lies wholly outside the clip and so shows nothing,
@@ -432,9 +444,11 @@ impl Frame<'_> {
     /// The node's style for the pointer and the viewport.
     fn resolve(&self, node: &Node, rect: Rect) -> ComputedStyle {
         let pointer = self.input.pointer;
-        let hovered = pointer.position.is_some_and(|(x, y)| rect.contains(x, y));
         let mut states = StateSet::EMPTY;
-        if hovered {
+        if self.group_hovered {
+            states = states.with(State::GroupHover);
+        }
+        if self.pointer_in(rect) {
             states = states.with(State::Hover);
             if pointer.left {
                 states = states.with(State::Active);

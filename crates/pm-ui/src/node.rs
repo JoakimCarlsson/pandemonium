@@ -48,6 +48,9 @@ pub struct Node {
     /// A subtree laid out before, which the box holds at its laid-out size
     /// instead of children.
     pub(crate) retained: Option<Arc<Retained>>,
+    /// Whether the box is a group: the group-hover styles of the boxes inside
+    /// it apply while the pointer is over it.
+    pub(crate) group: bool,
 }
 
 /// The end of a box's contents that a scroll position is measured from.
@@ -107,6 +110,13 @@ impl Node {
     /// tree order.
     pub fn focusable(mut self, id: FocusId) -> Self {
         self.focus = Some(id);
+        self
+    }
+
+    /// Makes the box a group: the boxes inside it take on their group-hover
+    /// styles while the pointer is over it.
+    pub fn group(mut self) -> Self {
+        self.group = true;
         self
     }
 

@@ -518,7 +518,8 @@ impl App {
             .update(|state| *state = state.clone().scrolled(x, pixels, height));
     }
 
-    /// Folds a pointer event in, and acts on a press that ends on the
+    /// Folds a pointer event in, takes focus from the focused element when
+    /// a press lands anywhere else, and acts on a press that ends on the
     /// element it began on.
     fn pointer(&mut self, event: PointerEvent) {
         self.pointer.apply(event);
@@ -558,6 +559,9 @@ impl App {
                         .update(|state| *state = state.clone().without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                if self.focus.current() != self.pressed_on {
+                    self.focus.clear();
+                }
                 if self.pressed_on.is_none() && self.model.get().picker_open() {
                     self.model
                         .update(|state| *state = state.clone().without_picker());

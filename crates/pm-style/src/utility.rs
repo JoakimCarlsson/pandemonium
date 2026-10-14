@@ -61,6 +61,11 @@ impl Utility {
         self.when(State::Hover)
     }
 
+    /// Applies only while the pointer is over the nearest enclosing group.
+    pub const fn group_hover(self) -> Self {
+        self.when(State::GroupHover)
+    }
+
     /// Applies only while the element has keyboard focus.
     pub const fn focus(self) -> Self {
         self.when(State::Focus)
