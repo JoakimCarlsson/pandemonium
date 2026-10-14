@@ -869,7 +869,11 @@ impl WorkspaceState {
     pub fn refocus(id: FocusId) -> Option<FocusId> {
         let FocusId(number) = id;
         let slash_row = (SLASH_BASE..SLASH_BASE + 50).contains(&number);
-        (slash_row || id == SLASH_BUTTON || id == SKILL_BUTTON || id == MENTION)
+        (slash_row
+            || id == SLASH_BUTTON
+            || id == SKILL_BUTTON
+            || id == MENTION
+            || id == crate::state::REVISE)
             .then_some(crate::state::PROMPT)
     }
 

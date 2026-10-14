@@ -97,7 +97,7 @@ fn subagent_panel(state: &WorkspaceState, session: &Session) -> Option<Node> {
 /// The chips for `session`, or nothing when there is nothing to sum up.
 pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
     let plan_items = latest_plan(session);
-    let awaiting = usize::from(session.ask.is_some());
+    let awaiting = usize::from(session.ask.as_ref().is_some_and(|ask| ask.plan.is_none()));
     let working_agents = session
         .subagents()
         .iter()

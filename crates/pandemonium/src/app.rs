@@ -13,7 +13,8 @@ use pm_components::{
 };
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
-    ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PROMPT, Screen, TERMINAL_BODY,
+    ADD_PROJECT, ATTACH, AgentStatus, BROWSE, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen,
+    TERMINAL_BODY,
 };
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
@@ -506,12 +507,12 @@ impl App {
             .find(|scroller| scroller.rect.contains(x, y))
         {
             let room = scroller.room;
-            let menu = scroller.id == MENU_SCROLL;
+            let id = scroller.id;
             self.model.update(|state| {
-                *state = if menu {
-                    state.clone().scrolled_menu(pixels, room)
-                } else {
-                    state.clone().scrolled_chat(pixels, room)
+                *state = match id {
+                    MENU_SCROLL => state.clone().scrolled_menu(pixels, room),
+                    PLAN_SCROLL => state.clone().scrolled_plan(pixels, room),
+                    _ => state.clone().scrolled_chat(pixels, room),
                 };
             });
             return;

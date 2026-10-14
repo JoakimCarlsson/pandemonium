@@ -26,6 +26,7 @@ pub mod input;
 pub mod markdown;
 pub mod menu;
 pub mod parts;
+pub mod plan;
 pub mod popover;
 pub mod progress;
 pub mod project;

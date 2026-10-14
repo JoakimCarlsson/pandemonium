@@ -41,6 +41,18 @@ pub const TERMINAL: FocusId = FocusId(312);
 /// Shows or hides the review panel.
 pub const REVIEW: FocusId = FocusId(313);
 
+/// Opens the plan the agent proposed in the panel beside the conversation.
+pub const OPEN_PLAN: FocusId = FocusId(328);
+
+/// Closes the panel showing the plan.
+pub const CLOSE_PLAN: FocusId = FocusId(329);
+
+/// Turns the proposed plan down and gives the prompt the keyboard, to say what to change.
+pub const REVISE: FocusId = FocusId(330);
+
+/// The scrolling body of the plan panel.
+pub const PLAN_SCROLL: FocusId = FocusId(352);
+
 /// Opens the diff from the summary of changes.
 pub const OPEN_DIFF: FocusId = FocusId(314);
 
@@ -469,6 +481,10 @@ pub struct WorkspaceState {
     pub folded: Vec<bool>,
     /// Whether the review panel is open.
     pub review: bool,
+    /// Whether the plan the agent proposed is open in a panel in place of the review.
+    pub plan_open: bool,
+    /// How far down the plan panel is scrolled, in logical pixels.
+    pub plan_scroll: f32,
     /// Whether the terminal is open.
     pub terminal: bool,
     /// Whether the terminal is taller than usual.
@@ -582,6 +598,8 @@ impl WorkspaceState {
             page: Page::New(0),
             tab: Tab::Chat,
             review: true,
+            plan_open: false,
+            plan_scroll: 0.0,
             terminal: false,
             terminal_maximized: false,
             terminal_size: crate::dock::FIRST_SIZE,
@@ -721,6 +739,9 @@ impl WorkspaceState {
                 self.press_terminal(action);
             }
             REVIEW => self.review = !self.review,
+            OPEN_PLAN => self.plan_open = true,
+            CLOSE_PLAN => self.plan_open = false,
+            REVISE => self.reject(),
             OPEN_DIFF => self.tab = Tab::Diff,
             SEND => self.send(false),
             SEND_NOW => self.send(true),
@@ -813,10 +834,43 @@ impl WorkspaceState {
 
     /// The state after the agent of the session at `session` did `event`.
     pub fn heard(mut self, session: usize, event: Event) -> Self {
+        if matches!(&event, Event::Ask(ask) if ask.plan.is_some()) {
+            self.plan_open = true;
+            self.plan_scroll = 0.0;
+        }
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
         }
         self
+    }
+
+    /// The plan the open session's agent proposed, while the panel for it is open.
+    pub fn plan_shown(&self) -> Option<&str> {
+        self.open()
+            .and_then(|session| session.ask.as_ref())
+            .and_then(|ask| ask.plan.as_deref())
+            .filter(|_| self.plan_open)
+    }
+
+    /// The state after the plan panel is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_plan(mut self, delta: f32, room: f32) -> Self {
+        self.plan_scroll = (self.plan_scroll + delta).clamp(0.0, room);
+        self
+    }
+
+    /// Answers the question with its first refusal, if it offers one.
+    fn reject(&mut self) {
+        let refusal = self
+            .open()
+            .and_then(|session| session.ask.as_ref())
+            .and_then(|ask| {
+                ask.choices
+                    .iter()
+                    .position(|choice| choice.verdict == pm_acp::Verdict::Reject)
+            });
+        if let Some(index) = refusal {
+            self.choose(index);
+        }
     }
 
     /// Whether an agent is at work, so the window should keep looking for what it says.

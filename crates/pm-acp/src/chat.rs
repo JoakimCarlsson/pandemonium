@@ -136,6 +136,9 @@ pub struct Permission {
     pub title: String,
     /// The command it wants to run, when it is one.
     pub command: Option<String>,
+    /// The plan it wants approved before it starts, when it is in plan mode.
+    #[serde(default)]
+    pub plan: Option<String>,
     /// The answers on offer.
     pub choices: Vec<Choice>,
 }
@@ -855,6 +858,7 @@ fn permission(ticket: u64, params: &Value) -> Permission {
         ticket,
         title: call["title"].as_str().unwrap_or("Use a tool").to_owned(),
         command: call["rawInput"]["command"].as_str().map(str::to_owned),
+        plan: call["rawInput"]["plan"].as_str().map(str::to_owned),
         choices,
     }
 }

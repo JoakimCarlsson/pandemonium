@@ -441,22 +441,26 @@ fn live(turn: Turn) -> WorkspaceState {
     if turn == Turn::Asking {
         events.push(Event::Ask(Permission {
             ticket: 1,
-            title: "Run cargo clippy".to_owned(),
-            command: Some("cargo clippy --workspace".to_owned()),
+            title: "Plan ready for review".to_owned(),
+            command: None,
+            plan: Some(
+                "## Export a session as Markdown\n\nAdd an export that writes the conversation to a Markdown file. Nothing is edited until you approve.\n\n1. Render the transcript\n   - Add a Markdown writer that streams messages to any `io::Write`.\n2. Wire it to the UI\n   - Add an export item to the session menu.\n\n### Files to change\n\n- `crates/pandemonium/src/export.rs`\n- `crates/pandemonium/src/session.rs`"
+                    .to_owned(),
+            ),
             choices: vec![
                 Choice {
                     id: "a".to_owned(),
-                    name: "Allow once".to_owned(),
+                    name: "Approve and ask before each edit".to_owned(),
                     verdict: Verdict::Allow,
                 },
                 Choice {
                     id: "b".to_owned(),
-                    name: "Always allow".to_owned(),
+                    name: "Approve and start".to_owned(),
                     verdict: Verdict::Always,
                 },
                 Choice {
                     id: "c".to_owned(),
-                    name: "Deny".to_owned(),
+                    name: "Keep planning".to_owned(),
                     verdict: Verdict::Reject,
                 },
             ],

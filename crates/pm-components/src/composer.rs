@@ -13,6 +13,7 @@ use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
 use crate::parts::{line, spacer};
+use crate::plan::proposal;
 use crate::popover::{anchored, heading, row};
 use crate::sample::Session;
 use crate::state::{
@@ -489,6 +490,12 @@ pub fn composer(
     text_width: f32,
     shaper: &mut Shaper,
 ) -> Node {
+    if let Some(proposed) = session
+        .and_then(|session| session.ask.as_ref())
+        .and_then(proposal)
+    {
+        return proposed;
+    }
     let working = session.is_some_and(|session| session.status == crate::sample::Status::Working);
     let empty = state.prompt.text().trim().is_empty() && state.attachments.is_empty();
     let settings = state.settings_now();
@@ -581,6 +588,11 @@ pub fn composer(
             shadow_layers(&COMPOSER_SHADOW),
         ])
         .focused_with(PROMPT)
+        .children(
+            session
+                .and_then(|session| session.ask.as_ref())
+                .and_then(proposal),
+        )
         .children(slash_list(state))
         .children(attachment_row(state))
         .child(

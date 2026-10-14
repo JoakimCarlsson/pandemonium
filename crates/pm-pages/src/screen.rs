@@ -285,6 +285,15 @@ impl Screen {
         }
     }
 
+    /// The screen after the plan panel is scrolled by `delta` logical
+    /// pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_plan(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_plan(delta, room)),
+            other => other,
+        }
+    }
+
     /// Whether a list of commands is showing over the prompt.
     pub fn slash_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.slash_open())

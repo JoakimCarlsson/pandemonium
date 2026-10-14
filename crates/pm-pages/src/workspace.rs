@@ -15,12 +15,12 @@ use pm_components::arrange::{
 };
 use pm_components::context_menu::field_menu;
 use pm_components::parts::{glyph, line, spacer};
-use pm_components::{chat, diff, history, input, review, sidebar, terminal, welcome};
+use pm_components::{chat, diff, history, input, plan, review, sidebar, terminal, welcome};
 
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
-    ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PROMPT, SEND, STOP, TAB_DIFF,
-    TERMINAL, TERMINAL_BODY, WorkspaceState,
+    ADD_PROJECT, ATTACH, CHAT_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL, PROMPT, SEND,
+    STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, WorkspaceState,
 };
 
 use pm_components::sample::{AGENTS, Session};
@@ -139,8 +139,15 @@ fn session_page(
 /// The whole workspace screen for `state` in a window `width` logical pixels wide.
 pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
     let open = state.open();
+    let planning = state.plan_shown().is_some();
     let reviewing = open.is_some() && state.review;
-    let main_width = width - sidebar::WIDTH - if reviewing { review::WIDTH } else { 0.0 };
+    let review_width = if reviewing { review::WIDTH } else { 0.0 };
+    let plan_width = if planning {
+        plan::width_in(width - sidebar::WIDTH - review_width)
+    } else {
+        0.0
+    };
+    let main_width = width - sidebar::WIDTH - review_width - plan_width;
     let main = match (state.page, open) {
         _ if state.projects.is_empty() => welcome::no_project(),
         (Page::Session(_), Some(session)) => session_page(
@@ -163,6 +170,9 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Background)])
         .child(sidebar::sidebar(state))
         .child(main);
+    if let Some(source) = state.plan_shown() {
+        root = root.child(plan::panel(state, source, plan_width, shaper));
+    }
     if let Some(session) = open.filter(|_| reviewing) {
         root = root.child(review::review(state, session));
     }

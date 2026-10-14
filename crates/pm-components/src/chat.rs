@@ -423,9 +423,10 @@ pub fn chat(
                 agent_message(state, session, index, column, shaper)
             }
         }));
-    if let Some(ask) = &session.ask {
+    let asking = session.ask.as_ref();
+    if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask));
-    } else if session.status == Status::Working {
+    } else if asking.is_none() && session.status == Status::Working {
         messages = messages.child(
             node()
                 .styles([flex(), items_center(), gap(2)])

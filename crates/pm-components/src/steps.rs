@@ -5,9 +5,9 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap, h, items_center,
-    leading_ratio, min_h, min_w_px, my, overflow_hidden, pb, pl, pr, px, py, rounded, rounded_full,
-    size, text_color, text_px, w_full,
+    cursor_pointer, flex, flex_1, flex_col, flex_none, flex_wrap, font_mono, gap, h, items_center,
+    justify_center, leading_ratio, line_through, min_h, min_w_px, my, overflow_hidden, pb, pl, pr,
+    px, py, rounded, rounded_full, size, text_color, text_px, truncate, w_full,
 };
 use pm_ui::{Node, node, text};
 
@@ -436,59 +436,95 @@ pub fn subagents(
         .children(rows)
 }
 
-/// The agent's plan as a checklist with how far it has got.
+/// The mark in front of a plan step: a filled check when done, a spinner while under way, an empty ring when not begun.
+fn plan_mark(progress: Progress) -> Node {
+    match progress {
+        Progress::Done => node()
+            .styles([
+                flex(),
+                items_center(),
+                justify_center(),
+                size(4),
+                rounded_full(),
+                bg(Role::Success),
+            ])
+            .child(glyph(IconName::Check, 3.0, Role::OnSuccess)),
+        Progress::Doing => glyph(IconName::Loading, 4.0, Role::Muted).styles([animate_spin()]),
+        Progress::Pending => node().styles([
+            size(4),
+            rounded_full(),
+            border(),
+            border_color(Role::Subtle),
+        ]),
+    }
+}
+
+/// The agent's plan as a card: a header saying how far it has got over a checklist that strikes through what is done.
 pub fn plan(items: &[PlanStep]) -> Node {
     let done = items
         .iter()
         .filter(|item| item.progress == Progress::Done)
         .count();
+    let finished = done == items.len();
+    let header = node()
+        .styles([
+            flex(),
+            items_center(),
+            gap(3),
+            px(4),
+            h(12),
+            border_b(),
+            border_color(Role::Border),
+        ])
+        .child(glyph(
+            IconName::CheckCircle,
+            4.5,
+            if finished { Role::Success } else { Role::Muted },
+        ))
+        .child(line(
+            format!("Plan · {done} of {} done", items.len()),
+            14,
+            1.4,
+            Role::Text,
+        ));
+    let rows = node()
+        .styles([flex(), flex_col(), gap(3), px(4), py(3.5)])
+        .children(items.iter().map(|item| {
+            let (tone, struck) = match item.progress {
+                Progress::Done => (Role::Subtle, true),
+                Progress::Doing => (Role::Text, false),
+                Progress::Pending => (Role::Muted, false),
+            };
+            let label = line(&item.text, 13, 1.4, tone).styles([truncate()]);
+            node()
+                .styles([flex(), items_center(), gap(3)])
+                .child(
+                    node()
+                        .styles([flex(), items_center(), size(4), flex_none()])
+                        .child(plan_mark(item.progress)),
+                )
+                .child(
+                    node()
+                        .styles([flex_1(), min_w_px(0), overflow_hidden()])
+                        .child(if struck {
+                            label.styles([line_through()])
+                        } else {
+                            label
+                        }),
+                )
+        }));
     node()
         .styles([
             flex(),
             flex_col(),
-            gap(1.5),
-            px(3.5),
-            py(2.5),
-            rounded(Radius::Lg),
+            rounded(Radius::Xl),
             border(),
             border_color(Role::Border),
             bg(Role::Surface),
+            overflow_hidden(),
         ])
-        .child(line(
-            format!("Plan · {done} of {} done", items.len()),
-            12,
-            1.4,
-            Role::Muted,
-        ))
-        .children(items.iter().map(|item| {
-            let (mark, tone) = match item.progress {
-                Progress::Done => (
-                    glyph(IconName::CheckCircle, 3.5, Role::Success),
-                    Role::Subtle,
-                ),
-                Progress::Doing => (
-                    glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
-                    Role::Text,
-                ),
-                Progress::Pending => (
-                    node().styles([
-                        size(3),
-                        rounded_full(),
-                        border(),
-                        border_color(Role::Subtle),
-                    ]),
-                    Role::Muted,
-                ),
-            };
-            node()
-                .styles([flex(), items_center(), gap(2.5)])
-                .child(
-                    node()
-                        .styles([flex(), items_center(), size(4), flex_none()])
-                        .child(mark),
-                )
-                .child(clipped(&item.text, 13, tone))
-        }))
+        .child(header)
+        .child(rows)
 }
 
 /// The steps of the reply at `message`, held in `all`, from position `range.start` to `range.end`: one line each, the plan as a card and the subagents together in one.
@@ -600,6 +636,11 @@ pub fn question(ask: &Permission) -> Node {
                 ])),
         );
     }
+    card.child(answers(ask))
+}
+
+/// A button for each answer on offer, the refusal first and the boldest last, wrapping when they do not fit one line.
+fn answers(ask: &Permission) -> Node {
     let order = |verdict: &Verdict| match verdict {
         Verdict::Reject => 0,
         Verdict::Allow => 1,
@@ -607,18 +648,22 @@ pub fn question(ask: &Permission) -> Node {
     };
     let mut choices: Vec<(usize, &pm_acp::Choice)> = ask.choices.iter().enumerate().collect();
     choices.sort_by_key(|(_, choice)| order(&choice.verdict));
-    card.child(
-        node()
-            .styles([flex(), items_center(), pm_style::justify_end(), gap(2)])
-            .children(choices.into_iter().map(|(index, choice)| {
-                Button::new(&choice.name, FocusId(CHOICE_BASE + index as u64))
-                    .variant(match choice.verdict {
-                        Verdict::Reject => Variant::Ghost,
-                        Verdict::Allow => Variant::Outline,
-                        Verdict::Always => Variant::Default,
-                    })
-                    .size(Size::Sm)
-                    .build()
-            })),
-    )
+    node()
+        .styles([
+            flex(),
+            flex_wrap(),
+            items_center(),
+            pm_style::justify_end(),
+            gap(2),
+        ])
+        .children(choices.into_iter().map(|(index, choice)| {
+            Button::new(&choice.name, FocusId(CHOICE_BASE + index as u64))
+                .variant(match choice.verdict {
+                    Verdict::Reject => Variant::Ghost,
+                    Verdict::Allow => Variant::Outline,
+                    Verdict::Always => Variant::Default,
+                })
+                .size(Size::Sm)
+                .build()
+        }))
 }

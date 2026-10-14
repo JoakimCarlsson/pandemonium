@@ -314,7 +314,7 @@ Shapes used above:
   `{path, old, new}`.
 - **PlanStep:** `{text, progress}` with `progress` one of `Pending`, `Doing`,
   `Done`.
-- **Permission:** `{ticket, title, command, choices: [{id, name, verdict}]}`
+- **Permission:** `{ticket, title, command, plan?, choices: [{id, name, verdict}]}`
   with `verdict` one of `Allow`, `Always`, `Reject`.
 
 ## Terminals
