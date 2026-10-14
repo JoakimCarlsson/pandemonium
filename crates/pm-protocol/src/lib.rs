@@ -8,7 +8,7 @@ mod request;
 mod response;
 
 pub use address::{SSH_SCHEME, host_of, is_destination};
-pub use credential::{Credential, Target};
+pub use credential::{Build, Credential, Target};
 pub use message::{ClientMessage, ServerMessage};
 pub use request::{Attachment, Login, Request};
 pub use response::{Response, SessionInfo};

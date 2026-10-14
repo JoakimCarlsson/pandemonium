@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::connection::serve;
 use crate::core::Core;
 use crate::credential::write_credential;
-use pm_protocol::Credential;
+use pm_protocol::{Build, Credential};
 
 /// How often the agents are looked at for what they did.
 const PUMP: Duration = Duration::from_millis(25);
@@ -38,6 +38,7 @@ pub fn run(settings: Settings) -> std::io::Result<()> {
         port: listener.local_addr()?.port(),
         token: token.clone(),
         pid: std::process::id(),
+        build: Build::current(),
     })?;
     let core = Core::new();
     core.load();

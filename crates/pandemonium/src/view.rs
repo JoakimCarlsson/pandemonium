@@ -134,9 +134,10 @@ impl View {
         state
     }
 
-    /// `state` open on the session at `position`, on the tab it was left on, with the sidebar scrolled as it was.
+    /// `state` open on the session at `position`, on the tab it was left on, unless it was closed since, with the sidebar scrolled as it was.
     pub fn reopen(&self, state: WorkspaceState, position: Option<usize>) -> WorkspaceState {
-        let mut state = match position {
+        let open = position.filter(|at| state.sessions.get(*at).is_some_and(|held| !held.closed));
+        let mut state = match open {
             Some(position) => {
                 let mut opened = state.after(FocusId(SESSION_BASE + position as u64));
                 opened.tab = if self.diff { Tab::Diff } else { Tab::Chat };

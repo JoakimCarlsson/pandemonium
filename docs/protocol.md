@@ -31,10 +31,20 @@ Written by the server when it starts, in the app's data folder (on Linux
 `~/.local/share/pandemonium/server.json`), readable by its owner only:
 
 ```json
-{ "port": 34407, "token": "94cca7ed…", "pid": 4171030 }
+{
+  "port": 34407,
+  "token": "94cca7ed…",
+  "pid": 4171030,
+  "build": { "program": "/usr/bin/pandemonium", "modified": 1791968806502 }
+}
 ```
 
-A client treats the file as stale when nothing listens on the port.
+`build` is the program file the server runs and when that file was last
+written, in milliseconds since the epoch. A client treats the file as stale
+when nothing listens on the port. A local client stops the server (sending
+`pid` a termination signal) and starts its own when `build` is missing, or names
+the client's own program file with another `modified`: the program was rebuilt
+since the server started.
 
 ## Handshake
 
