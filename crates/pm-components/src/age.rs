@@ -2,6 +2,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::{DateTime, Datelike, Local};
+
 /// Milliseconds in a minute.
 const MINUTE: u64 = 60_000;
 
@@ -14,9 +16,9 @@ const DAY: u64 = 24 * HOUR;
 /// The stretch of time a session last changed in, newest first.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Span {
-    /// Within the last day.
+    /// On the current calendar day.
     Today,
-    /// The day before that.
+    /// On the calendar day before that.
     Yesterday,
     /// Longer ago.
     Earlier,
@@ -26,11 +28,11 @@ impl Span {
     /// Every span, newest first.
     pub const ALL: [Span; 3] = [Span::Today, Span::Yesterday, Span::Earlier];
 
-    /// The span a change at `then` falls in when it is `now`.
+    /// The span a change at `then` falls in when it is `now`, by local calendar day.
     pub fn of(then: u64, now: u64) -> Self {
-        match now.saturating_sub(then) {
-            elapsed if elapsed < DAY => Self::Today,
-            elapsed if elapsed < 2 * DAY => Self::Yesterday,
+        match local_day(now).saturating_sub(local_day(then)) {
+            0 => Self::Today,
+            1 => Self::Yesterday,
             _ => Self::Earlier,
         }
     }
@@ -43,6 +45,13 @@ impl Span {
             Self::Earlier => "Earlier",
         }
     }
+}
+
+/// The number of the local calendar day `millis` since the epoch falls on.
+fn local_day(millis: u64) -> i64 {
+    DateTime::from_timestamp_millis(millis as i64).map_or(0, |moment| {
+        moment.with_timezone(&Local).date_naive().num_days_from_ce() as i64
+    })
 }
 
 /// The time now, in milliseconds since the epoch.
