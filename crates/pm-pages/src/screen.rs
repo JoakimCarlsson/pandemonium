@@ -131,6 +131,11 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.adder_open())
     }
 
+    /// Whether the settings panel is open.
+    pub fn settings_open(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.settings_open())
+    }
+
     /// What pressing Enter presses while the panel for adding a project is open.
     pub fn adder_enter(&self) -> Option<FocusId> {
         match self {

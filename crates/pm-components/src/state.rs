@@ -752,6 +752,8 @@ pub struct WorkspaceState {
     pub sidebar_scroll: f32,
     /// The panel for adding a project, if it is open.
     pub adder: Option<Adder>,
+    /// The section showing in the settings panel, if it is open.
+    pub settings: Option<crate::settings::Section>,
     /// The menu open over a field, and where, if one is.
     pub menu: Option<ContextMenu>,
     /// The menu open over a project, and where, if one is.
@@ -861,6 +863,7 @@ impl WorkspaceState {
             history_search: Field::default(),
             sidebar_scroll: 0.0,
             adder: None,
+            settings: None,
             menu: None,
             restoring: None,
             project_menu: None,
@@ -996,6 +999,10 @@ impl WorkspaceState {
             | MESSAGE_MENU_SELECT_ALL => return self.message_menu_pressed(action),
             PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
             ADD_PROJECT => return self.with_adder(),
+            SETTINGS => return self.with_settings(),
+            action if crate::settings::is_settings(action) => {
+                return self.settings_pressed(action);
+            }
             action if is_adder(action) && action.0 < ADDER_ROW_BASE => {
                 return self.adder_pressed(action);
             }

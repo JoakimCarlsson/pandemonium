@@ -12,6 +12,7 @@ use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
+use pm_components::state::SETTINGS;
 use pm_components::state::{
     CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
     REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP,
@@ -131,6 +132,8 @@ pub enum Shot {
     MessageMenu,
     /// The page for starting work with the panel for adding a project open on its choices.
     Adding,
+    /// The workspace with the settings panel open.
+    Settings,
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -483,6 +486,7 @@ impl Shot {
             Self::Missing => {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
+            Self::Settings => Screen::Workspace(welcome().after(SETTINGS)),
             Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
             Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
             Self::Owning => Screen::Workspace(

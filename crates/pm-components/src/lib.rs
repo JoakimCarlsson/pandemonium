@@ -47,6 +47,7 @@ pub mod project;
 pub mod queued;
 pub mod review;
 pub mod sample;
+pub mod settings;
 pub mod sidebar;
 pub mod state;
 pub mod stepper;

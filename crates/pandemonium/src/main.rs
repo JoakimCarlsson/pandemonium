@@ -97,6 +97,7 @@ fn main() {
             Some("selecting") => Shot::Selecting,
             Some("messagemenu") => Shot::MessageMenu,
             Some("adding") => Shot::Adding,
+            Some("settings") => Shot::Settings,
             Some("loading") => Shot::Loading,
             Some("owning") => Shot::Owning,
             Some("cloning") => Shot::Cloning,

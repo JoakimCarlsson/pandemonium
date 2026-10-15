@@ -20,7 +20,8 @@ use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::{
-    Button, adder, chat, diff, history, input, plan, review, sidebar, terminal, viewer, welcome,
+    Button, adder, chat, diff, history, input, plan, review, settings, sidebar, terminal, viewer,
+    welcome,
 };
 
 pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
@@ -232,6 +233,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(state.session_menu.map(session_menu))
     .children(state.message_menu.map(message_menu))
     .children(adder::adder(state))
+    .children(settings::settings(state))
     .children(state.git_menu_node().filter(|_| reviewing))
     .children(
         state

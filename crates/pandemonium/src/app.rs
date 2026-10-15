@@ -13,6 +13,7 @@ use pm_components::diff::gutter_of;
 use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
+use pm_components::settings::SETTINGS_CLOSE;
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
@@ -1073,6 +1074,9 @@ impl App {
         match event.key {
             Key::ArrowLeft if event.modifiers.alt => self.navigate(-1),
             Key::ArrowRight if event.modifiers.alt => self.navigate(1),
+            Key::Escape if self.model.read(|screen| screen.settings_open()) => {
+                self.activate(SETTINGS_CLOSE)
+            }
             Key::Escape if self.model.read(|screen| screen.adder_open()) => {
                 self.activate(ADDER_ESCAPE)
             }
