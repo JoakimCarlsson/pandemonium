@@ -55,6 +55,7 @@ pub mod tally;
 pub mod terminal;
 pub mod terminal_keys;
 pub mod tile;
+pub mod trail;
 pub mod tree;
 pub mod viewer;
 pub mod welcome;

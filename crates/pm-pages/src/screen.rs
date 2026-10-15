@@ -244,6 +244,30 @@ impl Screen {
         }
     }
 
+    /// The screen moved `delta` places along the pages and views visited, towards the past when negative.
+    pub fn navigated(self, delta: isize) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.navigated(delta)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen with the page showing recorded among the pages visited.
+    pub fn with_place_recorded(self) -> Self {
+        match self {
+            Self::Workspace(mut state) => {
+                state.track();
+                Self::Workspace(state)
+            }
+            onboarding => onboarding,
+        }
+    }
+
+    /// Whether the page showing is yet to be recorded among the pages visited.
+    pub fn place_unrecorded(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.untracked())
+    }
+
     /// The screen with no menu open.
     pub fn without_menu(self) -> Self {
         match self {

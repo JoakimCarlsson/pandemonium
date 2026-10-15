@@ -1055,6 +1055,12 @@ impl App {
         self.focus.current() == Some(PROMPT)
     }
 
+    /// Moves `delta` pages or views along the ones visited, towards the past when negative.
+    fn navigate(&mut self, delta: isize) {
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).navigated(delta));
+    }
+
     /// Acts on a key: Tab walks the focus, Enter and Space press the focused
     /// element, Escape lets go of focus.
     fn key(&mut self, event: KeyEvent) {
@@ -1065,6 +1071,8 @@ impl App {
             return;
         }
         match event.key {
+            Key::ArrowLeft if event.modifiers.alt => self.navigate(-1),
+            Key::ArrowRight if event.modifiers.alt => self.navigate(1),
             Key::Escape if self.model.read(|screen| screen.adder_open()) => {
                 self.activate(ADDER_ESCAPE)
             }
@@ -1246,6 +1254,10 @@ impl ApplicationHandler for App {
         } else {
             ControlFlow::Wait
         });
+        if self.model.read(Screen::place_unrecorded) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_place_recorded());
+        }
         if self.dirty.get() {
             self.persist_view();
         }
@@ -1294,6 +1306,13 @@ impl ApplicationHandler for App {
                 let button = match button {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,
+                    MouseButton::Back | MouseButton::Forward => {
+                        if state == ElementState::Pressed {
+                            self.navigate(if button == MouseButton::Back { -1 } else { 1 });
+                        }
+                        window.request_redraw();
+                        return;
+                    }
                     _ => return,
                 };
                 self.pointer(match state {

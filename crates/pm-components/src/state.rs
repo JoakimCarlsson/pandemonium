@@ -694,6 +694,8 @@ pub struct WorkspaceState {
     pub page: Page,
     /// Which view of the open session shows.
     pub tab: Tab,
+    /// The pages and views visited, walked back and forward.
+    pub trail: crate::trail::Trail,
     /// Whether each project's sessions are folded away.
     pub folded: Vec<bool>,
     /// Whether the review panel is open.
@@ -894,6 +896,7 @@ impl WorkspaceState {
             slash: 0,
             opened: Vec::new(),
             unfolded: Vec::new(),
+            trail: crate::trail::Trail::default(),
         };
         state.sync_context();
         state
