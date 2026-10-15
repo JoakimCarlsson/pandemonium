@@ -807,6 +807,8 @@ pub struct WorkspaceState {
     /// The files open for each session other than the one whose tabs are showing, by its position, kept so that switching away does not lose them or what was typed in them.
     pub file_stash:
         std::collections::HashMap<usize, (Vec<crate::open_files::Viewer>, Option<usize>)>,
+    /// The view each session was left on, by its position, so that coming back to it shows the same view.
+    pub tab_stash: std::collections::HashMap<usize, Tab>,
     /// How far the conversation is scrolled back from its end, in logical pixels.
     pub chat_back: f32,
     /// The menu open over the prompt box, if one is.
@@ -921,6 +923,7 @@ impl WorkspaceState {
             outbox: Vec::new(),
             files_owner: None,
             file_stash: std::collections::HashMap::new(),
+            tab_stash: std::collections::HashMap::new(),
             chat_back: 0.0,
             picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
@@ -1300,6 +1303,11 @@ impl WorkspaceState {
             self.page = Page::New(index);
         } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
             self.sessions[index].closed = false;
+            if let Page::Session(before) = self.page
+                && before != index
+            {
+                self.tab_stash.insert(before, self.tab);
+            }
             self.page = Page::Session(index);
             self.tab = Tab::Chat;
             self.file = None;

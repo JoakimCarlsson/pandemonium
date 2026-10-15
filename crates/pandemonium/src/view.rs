@@ -26,6 +26,17 @@ enum Saved {
     First,
 }
 
+/// A file that was open in a tab of the session.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedFile {
+    /// The file, from the root of the repository.
+    path: String,
+    /// Whether it was read from the last commit.
+    head: bool,
+    /// Whether its tab was only a preview.
+    preview: bool,
+}
+
 /// What the reader had on screen: the page, the panels and the prompt being written.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct View {
@@ -33,6 +44,15 @@ pub struct View {
     page: Saved,
     /// Whether the files the agent changed showed instead of the conversation.
     diff: bool,
+    /// The files open in the session's tabs, in order.
+    #[serde(default)]
+    files: Vec<SavedFile>,
+    /// The tab of the file shown, if one was.
+    #[serde(default)]
+    shown: Option<usize>,
+    /// Whether a file was what the main area showed.
+    #[serde(default)]
+    file_tab: bool,
     /// Whether the review panel was open.
     review: bool,
     /// Whether the terminal was open.
@@ -83,8 +103,26 @@ impl View {
             Page::New(project) => Saved::New(path(project)),
             Page::History => Saved::History,
         };
+        let in_session = matches!(state.page, Page::Session(_));
+        let files = if in_session {
+            state
+                .git
+                .viewers
+                .iter()
+                .map(|viewer| SavedFile {
+                    path: viewer.path.clone(),
+                    head: viewer.head,
+                    preview: viewer.preview,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Self {
             page,
+            files,
+            shown: state.git.shown.filter(|_| in_session),
+            file_tab: in_session && state.tab == Tab::File,
             diff: state.tab == Tab::Diff,
             review: state.review,
             terminal: state.terminal,
@@ -129,6 +167,22 @@ impl View {
             Some(position) => {
                 let mut opened = state.after(FocusId(SESSION_BASE + position as u64));
                 opened.tab = if self.diff { Tab::Diff } else { Tab::Chat };
+                opened.sync_context();
+                for file in &self.files {
+                    opened.open_viewer(file.path.clone(), file.head);
+                    if let Some(viewer) = opened.git.viewers.last_mut() {
+                        viewer.preview = false;
+                    }
+                }
+                for (viewer, file) in opened.git.viewers.iter_mut().zip(&self.files) {
+                    viewer.preview = file.preview;
+                }
+                opened.git.shown = self.shown.filter(|shown| *shown < opened.git.viewers.len());
+                opened.tab = match (self.file_tab, opened.git.shown) {
+                    (true, Some(_)) => Tab::File,
+                    _ if self.diff => Tab::Diff,
+                    _ => Tab::Chat,
+                };
                 opened
             }
             None => state,

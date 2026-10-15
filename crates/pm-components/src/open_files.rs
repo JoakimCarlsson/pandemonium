@@ -5,7 +5,7 @@ use pm_text::Edit;
 
 use crate::document::Document;
 use crate::git_prompts::Prompt;
-use crate::state::{Outgoing, Tab, WorkspaceState};
+use crate::state::{Outgoing, Page, Tab, WorkspaceState};
 
 /// The text of the file being edited.
 pub const EDITOR_FIELD: FocusId = FocusId(7083);
@@ -145,6 +145,13 @@ impl WorkspaceState {
             self.git.shown = shown;
         }
         self.files_owner = now;
+        if let (Page::Session(session), Some(tab)) =
+            (self.page, now.and_then(|now| self.tab_stash.remove(&now)))
+            && Some(session) == now
+            && (tab != Tab::File || self.git.shown.is_some())
+        {
+            self.tab = tab;
+        }
     }
 
     /// The open files of the session at `session`, whether they are showing or kept aside.
