@@ -13,7 +13,7 @@ use pm_components::diff::gutter_of;
 use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
-use pm_components::settings::SETTINGS_CLOSE;
+use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
@@ -578,6 +578,7 @@ impl App {
                 PLAN_SCROLL => std::mem::take(state).scrolled_plan(pixels, room),
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
+                SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
                 _ => std::mem::take(state).scrolled_chat(pixels, room),

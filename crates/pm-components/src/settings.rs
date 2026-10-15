@@ -4,53 +4,107 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Role, border_b, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_px,
-    items_center, justify_between, p, px, w_px,
+    items_center, justify_between, min_w_px, p, pl, px, w_px,
 };
 use pm_ui::{Node, node};
 
 use crate::button::{Size, Variant};
 use crate::parts::{glyph, line};
+use crate::settings_servers;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
 use crate::{Button, Modal};
 
 /// Closes the panel, which is what pressing outside it does.
-pub const SETTINGS_SCRIM: FocusId = FocusId(7100);
+pub const SETTINGS_SCRIM: FocusId = FocusId(20_000_000);
 
 /// The panel itself, which keeps a press on it from counting as outside.
-pub const SETTINGS_BODY: FocusId = FocusId(7101);
+pub const SETTINGS_BODY: FocusId = FocusId(20_000_001);
 
 /// Closes the panel.
-pub const SETTINGS_CLOSE: FocusId = FocusId(7102);
+pub const SETTINGS_CLOSE: FocusId = FocusId(20_000_002);
+
+/// Opens the form for adding a server to the list showing.
+pub const SETTINGS_ADD: FocusId = FocusId(20_000_003);
+
+/// Keeps what the form holds.
+pub const SETTINGS_SAVE: FocusId = FocusId(20_000_004);
+
+/// Puts the form away without keeping it.
+pub const SETTINGS_CANCEL: FocusId = FocusId(20_000_005);
+
+/// The box the form's name is written in.
+pub const SETTINGS_NAME: FocusId = FocusId(20_000_006);
+
+/// The box the form's command or address is written in.
+pub const SETTINGS_TARGET: FocusId = FocusId(20_000_007);
+
+/// The box the form's environment is written in.
+pub const SETTINGS_ENV: FocusId = FocusId(20_000_008);
+
+/// The box the list showing is searched with.
+pub const SETTINGS_SEARCH: FocusId = FocusId(20_000_030);
+
+/// Searches the registry for the words in the search box, which is what Enter in the box does.
+pub const SETTINGS_SEARCH_GO: FocusId = FocusId(20_000_031);
+
+/// The scrolling page of the section showing.
+pub const SETTINGS_SCROLL: FocusId = FocusId(20_000_040);
 
 /// The first of the sections down the left side; the rest follow it.
-pub const SETTINGS_SECTION_BASE: u64 = 7110;
+pub const SETTINGS_SECTION_BASE: u64 = 20_000_010;
+
+/// The first of the buttons editing a server of the list showing; the rest follow it.
+pub const SETTINGS_EDIT_BASE: u64 = 20_000_100;
+
+/// The first of the buttons removing a server of the list showing; the rest follow it.
+pub const SETTINGS_REMOVE_BASE: u64 = 20_000_200;
+
+/// The first of the buttons installing what a registry offers; the rest follow it.
+pub const SETTINGS_INSTALL_BASE: u64 = 20_000_300;
+
+/// One past the last name the panel answers to.
+const SETTINGS_END: u64 = 20_000_500;
 
 /// How wide the panel is, in logical pixels.
-const WIDTH: f32 = 1080.0;
+const WIDTH: f32 = 1240.0;
 
 /// How tall the panel is, in logical pixels.
-const HEIGHT: f32 = 700.0;
+const HEIGHT: f32 = 780.0;
 
 /// How wide the list of sections is, in logical pixels.
 const NAVIGATION_WIDTH: f32 = 220.0;
 
-/// A group of settings, named down the left side of the panel.
+/// A group of settings, named down the left side of the panel; some sit inside another.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Section {
     /// How the window looks and behaves.
     #[default]
     General,
+    /// What agents are started with, with the groups below it.
+    Agents,
+    /// The agents that can be started, and the ones added by hand.
+    AgentServers,
+    /// The tool servers every agent is started with.
+    McpServers,
 }
 
 impl Section {
-    /// Every section, in the order the list shows them.
-    pub const ALL: [Section; 1] = [Section::General];
+    /// Every section, in the order the list shows them, each followed by the ones inside it.
+    pub const ALL: [Section; 4] = [
+        Section::General,
+        Section::Agents,
+        Section::AgentServers,
+        Section::McpServers,
+    ];
 
     /// What the list and the heading call it.
-    fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Agents => "Agents",
+            Self::AgentServers => "Agent Servers",
+            Self::McpServers => "MCP Servers",
         }
     }
 
@@ -58,11 +112,22 @@ impl Section {
     fn icon(self) -> IconName {
         match self {
             Self::General => IconName::Settings,
+            Self::Agents => IconName::Sparkles,
+            Self::AgentServers => IconName::Folder,
+            Self::McpServers => IconName::Plug,
+        }
+    }
+
+    /// The section it sits inside, if it sits inside one.
+    pub(crate) fn parent(self) -> Option<Section> {
+        match self {
+            Self::AgentServers | Self::McpServers => Some(Self::Agents),
+            Self::General | Self::Agents => None,
         }
     }
 
     /// The name of pressing its row in the list.
-    fn id(self) -> FocusId {
+    pub(crate) fn id(self) -> FocusId {
         let position = Self::ALL.iter().position(|section| *section == self);
         FocusId(SETTINGS_SECTION_BASE + position.unwrap_or_default() as u64)
     }
@@ -71,7 +136,7 @@ impl Section {
 /// Whether `id` names something of the panel.
 pub fn is_settings(id: FocusId) -> bool {
     let FocusId(number) = id;
-    (SETTINGS_SCRIM.0..SETTINGS_SECTION_BASE + Section::ALL.len() as u64).contains(&number)
+    (SETTINGS_SCRIM.0..SETTINGS_END).contains(&number)
 }
 
 impl WorkspaceState {
@@ -85,19 +150,31 @@ impl WorkspaceState {
         self.menu = None;
         self.picker = None;
         self.settings = Some(Section::default());
+        self.settings_servers = settings_servers::ServerSettings::opening();
+        self.outbox.push(crate::state::Outgoing::LoadServers);
         self
     }
 
     /// The state after something of the settings panel was pressed: `action` is the name of what.
     pub(crate) fn settings_pressed(mut self, action: FocusId) -> Self {
         match action {
+            SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
+                self.settings_servers.form = None;
+            }
             SETTINGS_SCRIM | SETTINGS_CLOSE => self.settings = None,
             action => {
                 if let Some(section) = Section::ALL
                     .into_iter()
                     .find(|section| section.id() == action)
                 {
+                    if section == Section::Agents {
+                        let showing = self.settings == Some(section);
+                        self.settings_servers.folded = showing && !self.settings_servers.folded;
+                    }
                     self.settings = Some(section);
+                    self.section_changed();
+                } else {
+                    return self.servers_pressed(action);
                 }
             }
         }
@@ -108,21 +185,22 @@ impl WorkspaceState {
 /// The node that draws the settings panel, when it is open.
 pub fn settings(state: &WorkspaceState) -> Option<Node> {
     let section = state.settings?;
+    let folded = state.settings_servers.folded;
     Some(
         Modal::new(SETTINGS_SCRIM, SETTINGS_BODY)
             .width(WIDTH)
             .child(
                 node()
                     .styles([flex(), h_px(HEIGHT)])
-                    .child(navigation(section))
-                    .child(content(section)),
+                    .child(navigation(section, folded))
+                    .child(content(state, section)),
             )
             .build(),
     )
 }
 
 /// The list of sections, with the one showing marked.
-fn navigation(showing: Section) -> Node {
+fn navigation(showing: Section, folded: bool) -> Node {
     node()
         .styles([
             flex(),
@@ -139,24 +217,41 @@ fn navigation(showing: Section) -> Node {
                 .styles([flex(), items_center(), h(9), px(2)])
                 .child(line("Settings", 13, 1.4, Role::Subtle)),
         )
-        .children(Section::ALL.map(|section| entry(section, section == showing)))
+        .children(
+            Section::ALL
+                .into_iter()
+                .filter(|section| !(folded && section.parent().is_some()))
+                .map(|section| entry(section, section == showing, folded)),
+        )
 }
 
-/// One row of the list of sections.
-fn entry(section: Section, showing: bool) -> Node {
+/// One row of the list of sections: General has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside it only their name, set in under it.
+fn entry(section: Section, showing: bool, folded: bool) -> Node {
     let tone = if showing { Role::Text } else { Role::Muted };
-    Tile::new(section.id())
+    let row = Tile::new(section.id())
         .selected(showing)
         .build()
-        .styles([px(2)])
-        .child(glyph(section.icon(), 4.0, tone))
-        .child(line(section.title(), 13, 1.4, tone))
+        .styles([px(2)]);
+    let row = match section {
+        Section::General => row.child(glyph(section.icon(), 4.0, tone)),
+        Section::Agents => row.child(glyph(
+            if folded {
+                IconName::ChevronRight
+            } else {
+                IconName::ChevronDown
+            },
+            4.0,
+            tone,
+        )),
+        Section::AgentServers | Section::McpServers => row.styles([pl(8)]),
+    };
+    row.child(line(section.title(), 13, 1.4, tone))
 }
 
 /// The settings of `section` under its heading and the button that closes the panel.
-fn content(section: Section) -> Node {
+fn content(state: &WorkspaceState, section: Section) -> Node {
     node()
-        .styles([flex(), flex_col(), flex_1()])
+        .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
         .child(
             node()
                 .styles([
@@ -177,5 +272,5 @@ fn content(section: Section) -> Node {
                         .build(),
                 ),
         )
-        .child(node().styles([flex_1()]))
+        .child(settings_servers::body(state, section))
 }

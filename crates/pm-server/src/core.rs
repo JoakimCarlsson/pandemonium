@@ -63,7 +63,8 @@ impl Session {
 
     /// Starts the agent in the session's folder and gives it the settings the reader chose.
     pub(crate) fn start_agent(&mut self, settings: &[(String, String)]) {
-        let chat = Chat::start(self.agent, self.directory.clone());
+        let tools = pm_acp::mcp_servers(&pm_store::load_text("mcp-servers").unwrap_or_default());
+        let chat = Chat::start(self.agent, self.directory.clone(), tools);
         for (setting, value) in settings {
             chat.set(setting, value);
         }

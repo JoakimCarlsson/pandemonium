@@ -48,6 +48,7 @@ pub mod queued;
 pub mod review;
 pub mod sample;
 pub mod settings;
+pub mod settings_servers;
 pub mod sidebar;
 pub mod state;
 pub mod stepper;

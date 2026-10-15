@@ -360,6 +360,15 @@ impl Screen {
         }
     }
 
+    /// The screen after the page showing in the settings panel is scrolled by `delta`
+    /// logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_settings(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_settings(delta, room)),
+            other => other,
+        }
+    }
+
     /// The screen after the review panel's list is scrolled by `delta`
     /// logical pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_tree(self, delta: f32, room: f32) -> Self {

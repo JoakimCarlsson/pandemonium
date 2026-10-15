@@ -51,6 +51,14 @@ enum Job {
 enum Pending {
     /// Nothing: the answer only matters if it says the request failed.
     Nothing,
+    /// The agents the reader added by hand.
+    AgentServers,
+    /// The tool servers every agent is started with.
+    McpServers,
+    /// The agents the public registry offers.
+    RegistryAgents,
+    /// The tool servers the public registry offered for this search.
+    Tools(String),
     /// The agent at this position told what it lets the reader change.
     Discover(Host, usize),
     /// The agent at this position was signed in, or could not be.
@@ -765,6 +773,33 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::LoadServers => {
+                    self.ask(&None, Request::AgentServers, Pending::AgentServers);
+                    self.ask(&None, Request::McpServers, Pending::McpServers);
+                    self.ask(&None, Request::RegistryAgents, Pending::RegistryAgents);
+                    self.ask(
+                        &None,
+                        Request::SearchTools {
+                            query: String::new(),
+                        },
+                        Pending::Tools(String::new()),
+                    );
+                }
+                Outgoing::SearchTools { query } => self.ask(
+                    &None,
+                    Request::SearchTools {
+                        query: query.clone(),
+                    },
+                    Pending::Tools(query),
+                ),
+                Outgoing::SaveAgentServers(servers) => self.ask(
+                    &None,
+                    Request::SaveAgentServers { servers },
+                    Pending::Nothing,
+                ),
+                Outgoing::SaveMcpServers(servers) => {
+                    self.ask(&None, Request::SaveMcpServers { servers }, Pending::Nothing)
+                }
                 Outgoing::Owners => self.ask(&None, Request::Owners, Pending::Owners),
                 Outgoing::Repositories {
                     login,
@@ -1069,6 +1104,30 @@ impl Work {
                         );
                     });
                 }
+            }
+            Pending::AgentServers => {
+                if let Response::AgentServers { servers } = response {
+                    Self::in_workspace(model, |state| state.with_agent_servers(servers));
+                }
+            }
+            Pending::McpServers => {
+                if let Response::McpServers { servers } = response {
+                    Self::in_workspace(model, |state| state.with_mcp_servers(servers));
+                }
+            }
+            Pending::RegistryAgents => {
+                let answer = match response {
+                    Response::RegistryAgents { agents } => Ok(agents),
+                    other => Err(Self::trouble_of(other)),
+                };
+                Self::in_workspace(model, |state| state.with_registry_agents(answer));
+            }
+            Pending::Tools(query) => {
+                let answer = match response {
+                    Response::ToolListings { listings } => Ok(listings),
+                    other => Err(Self::trouble_of(other)),
+                };
+                Self::in_workspace(model, |state| state.with_tool_listings(&query, answer));
             }
             Pending::Owners => {
                 let listed = match response {

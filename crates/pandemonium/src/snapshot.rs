@@ -12,6 +12,7 @@ use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
+use pm_components::settings::{SETTINGS_ADD, SETTINGS_SECTION_BASE};
 use pm_components::state::SETTINGS;
 use pm_components::state::{
     CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
@@ -134,6 +135,10 @@ pub enum Shot {
     Adding,
     /// The workspace with the settings panel open.
     Settings,
+    /// The settings panel on Agents, which opens the sections inside it.
+    SettingsAgents,
+    /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
+    SettingsForm,
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -487,6 +492,17 @@ impl Shot {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
             Self::Settings => Screen::Workspace(welcome().after(SETTINGS)),
+            Self::SettingsAgents => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(FocusId(SETTINGS_SECTION_BASE + 1)),
+            ),
+            Self::SettingsForm => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(FocusId(SETTINGS_SECTION_BASE + 2))
+                    .after(SETTINGS_ADD),
+            ),
             Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
             Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
             Self::Owning => Screen::Workspace(

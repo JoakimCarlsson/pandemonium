@@ -126,6 +126,26 @@ pub enum Response {
         /// Each choice as agent, setting and value.
         choices: Vec<(String, String, String)>,
     },
+    /// The agents the reader added by hand.
+    AgentServers {
+        /// Every agent, in the order they are kept.
+        servers: Vec<crate::AgentServer>,
+    },
+    /// The agents the public registry offers.
+    RegistryAgents {
+        /// The well known ones first.
+        agents: Vec<crate::RegistryAgent>,
+    },
+    /// The tool servers the public registry offers for a search.
+    ToolListings {
+        /// The best match first.
+        listings: Vec<crate::ToolListing>,
+    },
+    /// The tool servers every agent is started with.
+    McpServers {
+        /// Every server, in the order they are kept.
+        servers: Vec<crate::McpServer>,
+    },
     /// The named logins and the one in use for each agent.
     Accounts {
         /// The logins there are.

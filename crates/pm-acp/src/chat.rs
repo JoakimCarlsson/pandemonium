@@ -322,12 +322,12 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Starts `agent` in the folder `directory` and opens a conversation with it.
-    pub fn start(agent: Agent, directory: PathBuf) -> Self {
+    /// Starts `agent` in the folder `directory` and opens a conversation with it that has the tool servers `tools`.
+    pub fn start(agent: Agent, directory: PathBuf, tools: Vec<serde_json::Value>) -> Self {
         let (commands, received) = mpsc::channel();
         let (sender, events) = mpsc::channel();
         std::thread::spawn(move || {
-            if let Err(reason) = drive(agent, &directory, &received, &sender) {
+            if let Err(reason) = drive(agent, &directory, &tools, &received, &sender) {
                 let _ = sender.send(Event::Failed(reason));
             }
         });
@@ -535,6 +535,7 @@ pub fn skills(agent: Agent, directory: &Path) -> Vec<Slash> {
 fn drive(
     agent: Agent,
     directory: &std::path::Path,
+    tools: &[serde_json::Value],
     commands: &Receiver<Command>,
     events: &Sender<Event>,
 ) -> Result<(), String> {
@@ -550,7 +551,7 @@ fn drive(
     let prompts = shaken["agentCapabilities"]["promptCapabilities"].clone();
     let opened = match client.ask(
         "session/new",
-        &json!({ "cwd": directory, "mcpServers": [] }),
+        &json!({ "cwd": directory, "mcpServers": tools }),
         patience,
     )? {
         Answer::Result(result) => result,

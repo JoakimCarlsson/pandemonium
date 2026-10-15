@@ -98,6 +98,8 @@ fn main() {
             Some("messagemenu") => Shot::MessageMenu,
             Some("adding") => Shot::Adding,
             Some("settings") => Shot::Settings,
+            Some("settings-agents") => Shot::SettingsAgents,
+            Some("settings-form") => Shot::SettingsForm,
             Some("loading") => Shot::Loading,
             Some("owning") => Shot::Owning,
             Some("cloning") => Shot::Cloning,

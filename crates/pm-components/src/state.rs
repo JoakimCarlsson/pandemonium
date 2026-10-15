@@ -277,6 +277,17 @@ pub const CHOICE_BASE: u64 = 3600;
 /// Something the window has to do or tell an agent, taken off the state by whoever runs the agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outgoing {
+    /// Asks the server for the agents added by hand and the tool servers every agent is started with.
+    LoadServers,
+    /// Asks the public registry of tool servers for what matches `query`.
+    SearchTools {
+        /// What to look for; the well known servers when blank.
+        query: String,
+    },
+    /// Has the server keep these as the agents added by hand.
+    SaveAgentServers(Vec<pm_protocol::AgentServer>),
+    /// Has the server keep these as the tool servers every agent is started with.
+    SaveMcpServers(Vec<pm_protocol::McpServer>),
     /// Starts a shell for the tab, in the folder of the session at this position.
     OpenTerminal {
         /// The session, by position.
@@ -754,6 +765,8 @@ pub struct WorkspaceState {
     pub adder: Option<Adder>,
     /// The section showing in the settings panel, if it is open.
     pub settings: Option<crate::settings::Section>,
+    /// The lists and the form of the settings pages that list servers.
+    pub settings_servers: crate::settings_servers::ServerSettings,
     /// The menu open over a field, and where, if one is.
     pub menu: Option<ContextMenu>,
     /// The menu open over a project, and where, if one is.
@@ -864,6 +877,7 @@ impl WorkspaceState {
             sidebar_scroll: 0.0,
             adder: None,
             settings: None,
+            settings_servers: crate::settings_servers::ServerSettings::default(),
             menu: None,
             restoring: None,
             project_menu: None,
@@ -1055,6 +1069,7 @@ impl WorkspaceState {
             STASH_FIELD => self.git.stash_message.apply(edit),
             ADDER_FIELD => self.adder_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
+            id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
             OTHER => {
                 if let Page::Session(open) = self.page
                     && let Some(draft) =
@@ -1079,6 +1094,7 @@ impl WorkspaceState {
             STASH_FIELD => Some(&self.git.stash_message),
             HISTORY_SEARCH => Some(&self.history_search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
+            id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
             OTHER => self.other_field(),
             _ => None,
         }
@@ -1094,6 +1110,7 @@ impl WorkspaceState {
             || id == HISTORY_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
+            || crate::settings_servers::is_form_field(id)
     }
 
     /// What pressing the field `id` hands in when Enter is pressed in it.
@@ -1105,6 +1122,8 @@ impl WorkspaceState {
             STASH_FIELD => PROMPT_CONFIRM,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
+            crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
+            id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
             OTHER => NEXT,
             _ => SEND,
         }

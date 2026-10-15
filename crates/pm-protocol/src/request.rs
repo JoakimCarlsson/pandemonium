@@ -12,6 +12,70 @@ pub struct Attachment {
     pub data: Vec<u8>,
 }
 
+/// An agent the reader added by hand: how to start it, beside the ones the app ships.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentServer {
+    /// What the app keeps it under.
+    pub id: String,
+    /// What a row calls it.
+    pub name: String,
+    /// The command that starts it in protocol mode, program and arguments.
+    pub command: String,
+    /// The environment it is started with, over the one it inherits.
+    pub env: Vec<(String, String)>,
+}
+
+/// A tool server every agent is started with.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpServer {
+    /// What a row calls it.
+    pub name: String,
+    /// The command that starts it, or the address it listens at when that begins with `http://` or `https://`.
+    pub target: String,
+    /// The environment it is started with, or the headers it is sent when it is an address.
+    pub env: Vec<(String, String)>,
+}
+
+/// An agent the public registry offers, as the command that runs it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RegistryAgent {
+    /// What the registry knows it by.
+    pub id: String,
+    /// What a row calls it.
+    pub name: String,
+    /// The version the registry lists.
+    pub version: String,
+    /// What it is, as its publisher says.
+    pub description: String,
+    /// Where its publisher describes it.
+    pub website: String,
+    /// The command that runs it, program and arguments.
+    pub command: String,
+    /// The environment it is started in, over the one it inherits.
+    pub env: Vec<(String, String)>,
+}
+
+/// A tool server the public registry offers.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolListing {
+    /// What the registry knows it by.
+    pub id: String,
+    /// What a row calls it.
+    pub title: String,
+    /// What it does, as its publisher says.
+    pub description: String,
+    /// What it is called once installed.
+    pub name: String,
+    /// The command that starts it, or the address it listens at.
+    pub target: String,
+    /// The environment it is started with, or the headers it is sent, still to be filled in.
+    pub env: Vec<(String, String)>,
+    /// What it lists as taking, whether or not it runs without.
+    pub inputs: Vec<String>,
+    /// Whether installing it has to ask for something first.
+    pub asks: bool,
+}
+
 /// A named login of an agent: which agent, its id and what the reader calls it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Login {
@@ -237,6 +301,27 @@ pub enum Request {
     SaveChoices {
         /// Each choice as agent, setting and value.
         choices: Vec<(String, String, String)>,
+    },
+    /// The agents the reader added by hand.
+    AgentServers,
+    /// Replaces the agents the reader added by hand.
+    SaveAgentServers {
+        /// Every agent, in the order they are kept.
+        servers: Vec<AgentServer>,
+    },
+    /// The agents the public registry offers that are run from a package.
+    RegistryAgents,
+    /// The tool servers of the public registry that match `query`, or the well known ones when it is blank.
+    SearchTools {
+        /// What to look for.
+        query: String,
+    },
+    /// The tool servers every agent is started with.
+    McpServers,
+    /// Replaces the tool servers every agent is started with.
+    SaveMcpServers {
+        /// Every server, in the order they are kept.
+        servers: Vec<McpServer>,
     },
     /// The named logins and the one in use for each agent.
     Accounts,

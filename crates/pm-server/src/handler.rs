@@ -12,6 +12,26 @@ use crate::queue::Prompt;
 use crate::sessions::{self, Meta};
 use crate::uploads;
 
+/// The list kept under `name`, empty when none was ever saved.
+fn stored_list<T: serde::de::DeserializeOwned>(name: &str) -> Result<Vec<T>, String> {
+    match pm_store::load_text(name) {
+        Some(text) => serde_json::from_str(&text).map_err(|error| error.to_string()),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// The answer to saving `list` under `name`.
+fn saved_list<T: serde::Serialize>(name: &str, list: &[T]) -> Response {
+    let text = match serde_json::to_string(list) {
+        Ok(text) => text,
+        Err(error) => return failed(error.to_string()),
+    };
+    match pm_store::save_text(name, &text) {
+        Ok(()) => Response::Done,
+        Err(error) => failed(error.to_string()),
+    }
+}
+
 /// The agent whose id is `id`.
 fn agent_named(id: &str) -> Option<Agent> {
     AGENTS.iter().copied().find(|agent| agent.id == id)
@@ -360,6 +380,51 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(()) => Response::Done,
             Err(error) => failed(error.to_string()),
         },
+        Request::AgentServers => match stored_list("agent-servers") {
+            Ok(servers) => Response::AgentServers { servers },
+            Err(reason) => failed(reason),
+        },
+        Request::SaveAgentServers { servers } => saved_list("agent-servers", &servers),
+        Request::RegistryAgents => match pm_acp::registry_agents() {
+            Ok(agents) => Response::RegistryAgents {
+                agents: agents
+                    .into_iter()
+                    .map(|agent| pm_protocol::RegistryAgent {
+                        id: agent.id,
+                        name: agent.name,
+                        version: agent.version,
+                        description: agent.description,
+                        website: agent.website,
+                        command: agent.command,
+                        env: agent.env,
+                    })
+                    .collect(),
+            },
+            Err(reason) => failed(reason),
+        },
+        Request::SearchTools { query } => match pm_acp::search_tools(&query) {
+            Ok(listings) => Response::ToolListings {
+                listings: listings
+                    .into_iter()
+                    .map(|listing| pm_protocol::ToolListing {
+                        id: listing.id,
+                        title: listing.title,
+                        description: listing.description,
+                        name: listing.name,
+                        target: listing.target,
+                        env: listing.env,
+                        inputs: listing.inputs,
+                        asks: listing.asks,
+                    })
+                    .collect(),
+            },
+            Err(reason) => failed(reason),
+        },
+        Request::McpServers => match stored_list("mcp-servers") {
+            Ok(servers) => Response::McpServers { servers },
+            Err(reason) => failed(reason),
+        },
+        Request::SaveMcpServers { servers } => saved_list("mcp-servers", &servers),
         Request::Sessions => Response::Sessions {
             sessions: core.infos(),
         },

@@ -111,6 +111,12 @@ request with exactly one `response` carrying the same `id`.
 | `save_projects`| `paths`                                                                                          | `done`          |
 | `choices`      | none                                                                                             | `choices`       |
 | `save_choices` | `choices`: `[[agent, setting, value]]`                                                           | `done`          |
+| `agent_servers`| none                                                                                             | `agent_servers` |
+| `save_agent_servers`| `servers`: `[{id, name, command, env}]`, `env`: `[[name, value]]`                                | `done`          |
+| `mcp_servers`  | none                                                                                             | `mcp_servers`   |
+| `save_mcp_servers`| `servers`: `[{name, target, env}]`, `env`: `[[name, value]]`                                     | `done`          |
+| `registry_agents`| none                                                                                             | `registry_agents`|
+| `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
 | `sessions`     | none                                                                                             | `sessions`      |
 | `stage`        | `directory`, `paths`, `stage`                                                                    | `done`          |
@@ -214,6 +220,17 @@ request with exactly one `response` carrying the same `id`.
   every client sees the same. `projects` says `saved: false` when the list was
   never saved, which means the app has not been set up yet. A project is an
   address of a folder on the server's machine, such as `~/code/app`.
+- **`agent_servers`, `mcp_servers`:** the agents the reader added by hand and
+  the tool servers every agent is started with, kept by the server and replaced
+  whole by the matching `save_` request. A tool server's `target` is an address
+  when it begins with `http://` or `https://`, and `env` is then the headers it
+  is sent; otherwise it is the command that starts it, and `env` its environment.
+  Every new session is started with the tool servers saved at that moment.
+- **`registry_agents`, `search_tools`:** what the public registries of agents and
+  of tool servers offer, read by the server so that a client needs no access to
+  the internet. Only agents that are a package a runner fetches are listed.
+  `search_tools` with a blank `query` lists the well known servers; `asks` says
+  that installing a listing has to ask for something first.
 - **`sessions`:** every session the server holds, running or not, with enough
   to list it. To open one, send `attach` with `after: 0`: the log replays the
   whole conversation.
@@ -296,6 +313,10 @@ embedded context, and anything else as a link to the stored file.
 | `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
+| `agent_servers` | `servers`: `[{id, name, command, env}]`                |
+| `mcp_servers` | `servers`: `[{name, target, env}]`                       |
+| `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
+| `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |
 | `sessions`   | `sessions`: `[SessionInfo]`                               |
 | `terminal`   | `terminal`: the number of the shell that was started      |
