@@ -55,7 +55,7 @@ jobs:
             exit 1
           fi
           channel=stable
-          case "$TAG" in *-* | nightly) channel=insiders ;; esac
+          case "$TAG" in *-* | nightly) channel=nightly ;; esac
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "PANDEMONIUM_CHANNEL=$channel" >> "$GITHUB_ENV"
 
@@ -76,10 +76,10 @@ jobs:
       - name: Package
         run: |
           target="${{ matrix.target }}"
-          if [ "$PANDEMONIUM_CHANNEL" = "insiders" ]; then
-            slug=pandemonium-insiders
-            label="Pandemonium Insiders"
-            identifier=io.github.joakimcarlsson.pandemonium.insiders
+          if [ "$PANDEMONIUM_CHANNEL" = "nightly" ]; then
+            slug=pandemonium-nightly
+            label="Pandemonium Nightly"
+            identifier=io.github.joakimcarlsson.pandemonium.nightly
             editor="$slug-$target"
             server="$slug-server-$target"
           else

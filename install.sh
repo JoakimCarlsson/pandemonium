@@ -5,8 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | sh
 #
 # Environment:
-#   PANDEMONIUM_CHANNEL   stable or insiders                  (default: stable)
-#   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: latest, or the nightly build for insiders)
+#   PANDEMONIUM_CHANNEL   stable or nightly                  (default: stable)
+#   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: latest, or the nightly build for nightly)
 #   PANDEMONIUM_COMPONENT editor or server                    (default: editor)
 #   PANDEMONIUM_BIN_DIR   where the binary goes              (default: ~/.local/bin)
 #   PANDEMONIUM_APP_DIR   where the macOS app goes           (default: ~/Applications)
@@ -22,7 +22,7 @@ APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
 MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
 
-# Sets the names the chosen channel installs under, so that insiders sits beside the stable app.
+# Sets the names the chosen channel installs under, so that nightly sits beside the stable app.
 choose_channel() {
     case "$CHANNEL" in
         stable)
@@ -30,12 +30,12 @@ choose_channel() {
             label="Pandemonium"
             VERSION="${VERSION:-latest}"
             ;;
-        insiders)
-            slug="pandemonium-insiders"
-            label="Pandemonium Insiders"
+        nightly)
+            slug="pandemonium-nightly"
+            label="Pandemonium Nightly"
             VERSION="${VERSION:-nightly}"
             ;;
-        *) fail "PANDEMONIUM_CHANNEL must be stable or insiders" ;;
+        *) fail "PANDEMONIUM_CHANNEL must be stable or nightly" ;;
     esac
 }
 
@@ -146,7 +146,7 @@ main() {
     [ "$VERSION" = "latest" ] && VERSION="$(latest_version)"
     VERSION="${VERSION#v}"
 
-    if [ "$CHANNEL" = "insiders" ]; then
+    if [ "$CHANNEL" = "nightly" ]; then
         name="$binary-$target"
     else
         name="$binary-$VERSION-$target"
