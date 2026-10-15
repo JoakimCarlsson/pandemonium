@@ -47,11 +47,17 @@ use crate::{keys, scene};
 #[cfg(target_os = "linux")]
 const APP_ID: &str = "pandemonium";
 
-/// Logical width of the window when it opens.
+/// Logical width of the window when it opens on a machine that tells nothing of its screens.
 const WIDTH: f32 = 1280.0;
 
-/// Logical height of the window when it opens.
+/// Logical height of the window when it opens on a machine that tells nothing of its screens.
 const HEIGHT: f32 = 800.0;
+
+/// The name of the file the window's size is kept in.
+const WINDOW_SIZE_FILE: &str = "window-size";
+
+/// The least logical width or height of a size worth keeping, which leaves out a window that is minimized.
+const MIN_SAVED: f32 = 320.0;
 
 /// How wide, in logical pixels, the strip along the right edge of a scrolling box is where pressing takes hold of its bar.
 const BAR_GRIP: f32 = 14.0;
@@ -240,12 +246,11 @@ impl Default for App {
 }
 
 impl App {
-    /// The attributes the window is opened with.
-    fn attributes() -> winit::window::WindowAttributes {
+    /// The attributes the window is opened with, `size` logical pixels across.
+    fn attributes(size: LogicalSize<f32>) -> winit::window::WindowAttributes {
         let attributes = Window::default_attributes()
             .with_title("Pandemonium")
-            .with_inner_size(LogicalSize::new(WIDTH, HEIGHT))
-            .with_maximized(true);
+            .with_inner_size(size);
         #[cfg(target_os = "linux")]
         let attributes = {
             use winit::platform::wayland::WindowAttributesExtWayland;
@@ -255,6 +260,36 @@ impl App {
             WindowAttributesExtX11::with_name(attributes, APP_ID, APP_ID)
         };
         attributes
+    }
+
+    /// How large the window opens: as large as it was when it was last closed, or as the screen it opens on is.
+    fn opening_size(event_loop: &ActiveEventLoop) -> LogicalSize<f32> {
+        let saved = pm_store::load_text(WINDOW_SIZE_FILE).and_then(|text| {
+            let (width, height) = text.trim().split_once(' ')?;
+            Some(LogicalSize::new(width.parse().ok()?, height.parse().ok()?))
+        });
+        let screen = || {
+            let monitor = event_loop
+                .primary_monitor()
+                .or_else(|| event_loop.available_monitors().next())?;
+            let size = monitor.size().to_logical::<f32>(monitor.scale_factor());
+            Some(LogicalSize::new(size.width, size.height))
+        };
+        saved
+            .filter(|size: &LogicalSize<f32>| size.width >= MIN_SAVED && size.height >= MIN_SAVED)
+            .or_else(screen)
+            .unwrap_or(LogicalSize::new(WIDTH, HEIGHT))
+    }
+
+    /// Keeps how large the window is for the next launch.
+    fn remember_size(window: &Window) {
+        let size = window.inner_size().to_logical::<f32>(window.scale_factor());
+        if size.width >= MIN_SAVED && size.height >= MIN_SAVED {
+            let _ = pm_store::save_text(
+                WINDOW_SIZE_FILE,
+                &format!("{} {}", size.width.round(), size.height.round()),
+            );
+        }
     }
 
     /// Draws one frame and asks for the next one while anything is moving or
@@ -1238,10 +1273,11 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
-        let window = match event_loop.create_window(Self::attributes()) {
-            Ok(window) => Arc::new(window),
-            Err(error) => fail_to_start(&format!("could not open a window: {error}")),
-        };
+        let window =
+            match event_loop.create_window(Self::attributes(Self::opening_size(event_loop))) {
+                Ok(window) => Arc::new(window),
+                Err(error) => fail_to_start(&format!("could not open a window: {error}")),
+            };
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
         match Renderer::new(window.clone(), size.width, size.height, scale) {
@@ -1301,6 +1337,7 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height, scale);
                 }
+                Self::remember_size(&window);
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 let size = window.inner_size();
