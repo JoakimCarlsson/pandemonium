@@ -217,6 +217,50 @@ fn start_session(
     }
 }
 
+/// Stops the agent of session `number`, removes the worktree it made when no other open session works in it, and marks it closed.
+///
+/// A worktree with changes that are not committed is kept and the request fails, unless `discard` is set.
+fn close_session(core: &Core, number: u64, discard: bool) -> Response {
+    let told = {
+        let Ok(mut sessions) = core.sessions.lock() else {
+            return failed("the server is shutting down");
+        };
+        let Some(held) = sessions.get(&number) else {
+            return failed(format!("no session is numbered {number}"));
+        };
+        let folder = place(&held.meta.directory);
+        let shared = sessions.iter().any(|(other, session)| {
+            *other != number
+                && !session.meta.closed
+                && session.meta.directory == held.meta.directory
+        });
+        let worktree = held.meta.head.is_some() && !shared;
+        if worktree && !discard && !pm_git::changes(&folder).is_empty() {
+            return failed(format!(
+                "{} has changes that are not committed",
+                held.meta.title
+            ));
+        }
+        let held = sessions
+            .get_mut(&number)
+            .expect("the session was just found");
+        if let Some(chat) = held.chat.take() {
+            chat.cancel();
+        }
+        held.busy = false;
+        if worktree
+            && let Err(reason) = pm_git::remove_worktree(&place(&held.meta.repository), &folder)
+        {
+            return failed(format!("could not remove the worktree: {reason}"));
+        }
+        held.meta.closed = true;
+        sessions::save_meta(number, &held.meta);
+        held.drop_queue(number)
+    };
+    core.tell_all(told);
+    Response::Done
+}
+
 /// Starts a session that branches off the conversation of session `source` after the reader's turn `turn`, counted from nought, and its reply: it works in the same folder, its agent is not started until it is handed a prompt, and that agent is then told the conversation so far.
 fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u64) -> Response {
     let branch = {
@@ -483,20 +527,22 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             &text,
             &attachments,
         ),
-        Request::CloseSession { session } => {
-            let closed = telling(core, session, |held| {
-                if let Some(chat) = held.chat.take() {
-                    chat.cancel();
-                }
-                held.busy = false;
-                held.meta.closed = true;
-                sessions::save_meta(session, &held.meta);
-                held.drop_queue(session)
-            });
+        Request::CloseSession { session, discard } => {
+            let closed = close_session(core, session, discard);
             if matches!(closed, Response::Done) {
                 core.broadcast(&ServerMessage::SessionClosed { session }, Some(connection));
             }
             closed
+        }
+        Request::RenameSession { session, title } => {
+            let title = title.trim().to_owned();
+            trying(core, session, |held| {
+                if title.is_empty() {
+                    return Err("a session needs a title".to_owned());
+                }
+                let event = pm_acp::Event::Titled(title);
+                Ok(vec![(session, held.note(session, &event), event)])
+            })
         }
         Request::Prompt {
             session,
@@ -505,7 +551,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             now,
         } => {
             let next = prompt(session, &text, &attachments);
-            telling(core, session, |held| held.submit(session, next, now))
+            trying(core, session, |held| {
+                if held.meta.closed && !place(&held.meta.directory).is_dir() {
+                    return Err(format!(
+                        "the folder of {} was removed when it was closed",
+                        held.meta.title
+                    ));
+                }
+                Ok(held.submit(session, next, now))
+            })
         }
         Request::Hurry { session, queued } => {
             let mut found = true;

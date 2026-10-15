@@ -103,7 +103,8 @@ request with exactly one `response` carrying the same `id`.
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
-| `close_session`| `session`                                                                                        | `done`          |
+| `close_session`| `session`, `discard`?                                                                           | `done`          |
+| `rename_session`| `session`, `title`                                                                              | `done`          |
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
 | `attach`       | `session`, `after`                                                                               | `done`          |
 | `inspect`      | `directory`, `base`                                                                              | `inspected`     |
@@ -163,9 +164,15 @@ request with exactly one `response` carrying the same `id`.
   prompt. The response gives the session number, the folder the agent works in
   and, for a worktree, the abbreviated commit it has checked out (`head`). The connection is attached to the session already.
 - **`close_session`:** stops the session's agent, drops its queued prompts and marks it `closed`. The
-  folder and the log are kept, so the session still shows in `sessions` (with
-  `closed: true`) and can be opened with `attach`. A later `prompt` opens it
-  again. Other clients are told with `session_closed`.
+  log is kept, so the session still shows in `sessions` (with `closed: true`)
+  and can be opened with `attach`. A session that has a worktree of its own
+  has the worktree removed, unless another open session works in the same
+  folder; while the worktree has changes that are not committed the request
+  fails, unless `discard` is `true`. A later `prompt` opens a closed session
+  again, and fails when its folder was removed. Other clients are told with `session_closed`.
+- **`rename_session`:** keeps `title` as the session's title, trimmed, and fails when it is empty.
+  Every client watching the session is told with a `Titled` event, the one that asked included. The
+  agent may name the session again later.
 - **`prompt`:** hands the agent its next turn. If the agent has stopped (after
   a `failed` event) the server starts it again first. A prompt sent while a
   turn is running waits in the session's queue, which the server keeps, and is

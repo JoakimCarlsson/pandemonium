@@ -137,6 +137,8 @@ pub struct GitControls {
     pub prompt: Option<Prompt>,
     /// The box a stash is named in.
     pub stash_message: Field,
+    /// The box a session is given a new title in.
+    pub rename: Field,
     /// The box a new or renamed file or folder is named in, and what it is for, while the tree is asking.
     pub naming: Option<(crate::tree_actions::Naming, Field)>,
     /// The row of the tree last picked, where new files and folders go.
@@ -191,6 +193,7 @@ impl Default for GitControls {
             menu: None,
             prompt: None,
             stash_message: Field::default(),
+            rename: Field::default(),
             naming: None,
             tree_selected: None,
             tree_target: None,

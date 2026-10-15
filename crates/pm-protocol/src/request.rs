@@ -177,10 +177,20 @@ pub enum Request {
         /// The files attached.
         attachments: Vec<Attachment>,
     },
-    /// Closes a session: stops its agent and marks it finished. Its folder and its log are kept, and a later prompt opens it again.
+    /// Closes a session: stops its agent and marks it finished. Its log is kept; a worktree it made is removed, and without `discard` that is refused while the worktree has changes that are not committed.
     CloseSession {
         /// The session.
         session: u64,
+        /// Whether to remove the worktree even though it has changes that are not committed.
+        #[serde(default)]
+        discard: bool,
+    },
+    /// Gives a session a new title, which every client watching it is told of as a `Titled` event.
+    RenameSession {
+        /// The session.
+        session: u64,
+        /// What it is called now.
+        title: String,
     },
     /// Hands a session's agent its next turn, or queues it while the agent is on one.
     Prompt {

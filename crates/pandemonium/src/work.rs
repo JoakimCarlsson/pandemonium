@@ -519,9 +519,27 @@ impl Work {
                     self.ask_terminal(tab, Held::Resize(columns, rows));
                 }
                 Outgoing::CloseTerminal { tab } => self.ask_terminal(tab, Held::Close),
-                Outgoing::Close { session } => self.ask_session(
+                Outgoing::Rename { session, title } => self.ask_session(
                     session,
-                    |number| Request::CloseSession { session: number },
+                    |number| Request::RenameSession {
+                        session: number,
+                        title,
+                    },
+                    Pending::Nothing,
+                ),
+                Outgoing::OpenFolder { session } => {
+                    if let Some(placement) = Self::session_of(model, session)
+                        && placement.host.is_none()
+                    {
+                        show_in_file_manager(&placement.directory);
+                    }
+                }
+                Outgoing::Close { session, discard } => self.ask_session(
+                    session,
+                    |number| Request::CloseSession {
+                        session: number,
+                        discard,
+                    },
                     Pending::Nothing,
                 ),
                 Outgoing::Start {
@@ -1730,4 +1748,20 @@ fn decode_preview(path: &str) -> Option<Picture> {
         height: rgba.height(),
         pixels: std::sync::Arc::new(rgba.into_raw()),
     })
+}
+
+/// Shows `directory` in the file manager of this machine.
+fn show_in_file_manager(directory: &str) {
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    let _ = std::process::Command::new(opener)
+        .arg(directory)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }

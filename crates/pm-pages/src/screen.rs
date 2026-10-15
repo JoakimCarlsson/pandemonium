@@ -269,7 +269,7 @@ impl Screen {
     /// The screen with the session at `position` closed by another client.
     pub fn closed_elsewhere(self, position: usize) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.closed_session(position, false)),
+            Self::Workspace(state) => Self::Workspace(state.closed_session(position, false, false)),
             onboarding => onboarding,
         }
     }

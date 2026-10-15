@@ -23,6 +23,9 @@ pub const PROMPT_CONFIRM: FocusId = FocusId(7017);
 /// Does not.
 pub const PROMPT_CANCEL: FocusId = FocusId(7018);
 
+/// The box a session is renamed in.
+pub const RENAME_FIELD: FocusId = FocusId(7085);
+
 /// The box a stash is named in.
 pub const STASH_FIELD: FocusId = FocusId(7075);
 
@@ -85,6 +88,10 @@ pub enum Prompt {
     Remove(TreeTarget),
     /// Whether to close the tab at this position of the open files, which has changes that were not saved.
     Unsaved(usize),
+    /// Whether to close the session at this position, which has changes that are not committed, and remove its worktree with them.
+    Close(usize),
+    /// What to call the session at this position now.
+    Rename(usize),
 }
 
 impl WorkspaceState {
@@ -130,6 +137,25 @@ impl WorkspaceState {
         let Some(prompt) = self.git.prompt.take() else {
             return;
         };
+        if let Prompt::Close(position) = prompt {
+            self.close_session(position, true, true);
+            return;
+        }
+        if let Prompt::Rename(position) = prompt {
+            let title = self.git.rename.text().trim().to_owned();
+            if let Some(held) = self
+                .sessions
+                .get_mut(position)
+                .filter(|_| !title.is_empty())
+            {
+                held.title = title.clone();
+                self.outbox.push(Outgoing::Rename {
+                    session: position,
+                    title,
+                });
+            }
+            return;
+        }
         let Some(session) = self.review_index() else {
             return;
         };
@@ -153,7 +179,7 @@ impl WorkspaceState {
                     message: Some(message).filter(|message| !message.is_empty()),
                 });
             }
-            Prompt::Stashes(_) => {}
+            Prompt::Stashes(_) | Prompt::Close(_) | Prompt::Rename(_) => {}
             Prompt::Unsaved(index) => self.discard_file(index),
             Prompt::Remove(target) => {
                 self.drop_viewer_of(&target.path);
@@ -216,7 +242,9 @@ fn question(title: String, words: &str, confirm: &str, variant: Variant) -> Node
         .child(
             node()
                 .styles([flex(), flex_col(), gap(2), p(5)])
-                .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
+                .children(wrap(&title, 15, WIDTH - 40.0).iter().map(|title| {
+                    line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()])
+                }))
                 .children(
                     wrap(words, 13, WIDTH - 40.0)
                         .iter()
@@ -233,17 +261,23 @@ fn question(title: String, words: &str, confirm: &str, variant: Variant) -> Node
         .build()
 }
 
-/// The box a stash is named in, with the button that makes it.
-fn stash_message(state: &WorkspaceState) -> Node {
+/// A box named `title` for `field` to be typed in, with the button `confirm` that accepts it.
+fn naming_box(
+    title: &str,
+    field: &pm_text::Field,
+    id: FocusId,
+    placeholder: &str,
+    confirm: &str,
+) -> Node {
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
         .child(
             node()
                 .styles([flex(), flex_col(), gap(3), p(5)])
-                .child(line("Stash changes", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
+                .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
                 .child(
-                    Input::new(&state.git.stash_message, STASH_FIELD)
-                        .placeholder("Message (optional)")
+                    Input::new(field, id)
+                        .placeholder(placeholder)
                         .size(InputSize::Default)
                         .build(),
                 ),
@@ -253,7 +287,7 @@ fn stash_message(state: &WorkspaceState) -> Node {
                 .styles([flex(), items_center(), gap(2), px(5), pb(5)])
                 .child(spacer())
                 .child(button("Cancel", PROMPT_CANCEL, Variant::Ghost))
-                .child(button("Stash", PROMPT_CONFIRM, Variant::Default)),
+                .child(button(confirm, PROMPT_CONFIRM, Variant::Default)),
         )
         .build()
 }
@@ -347,7 +381,20 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
             "Skip",
             Variant::Destructive,
         ),
-        Prompt::StashMessage => stash_message(state),
+        Prompt::StashMessage => naming_box(
+            "Stash changes",
+            &state.git.stash_message,
+            STASH_FIELD,
+            "Message (optional)",
+            "Stash",
+        ),
+        Prompt::Rename(_) => naming_box(
+            "Rename session",
+            &state.git.rename,
+            RENAME_FIELD,
+            "Title",
+            "Rename",
+        ),
         Prompt::Unsaved(index) => {
             let name = state
                 .git
@@ -358,6 +405,18 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
                 format!("Close {name} without saving?"),
                 "It has changes that are not saved. They are lost when it is closed.",
                 "Discard",
+                Variant::Destructive,
+            )
+        }
+        Prompt::Close(position) => {
+            let title = state
+                .sessions
+                .get(*position)
+                .map_or("this session", |session| session.title.as_str());
+            question(
+                format!("Close {title} with changes that are not committed?"),
+                "Its worktree is removed with the changes in it. They are lost when it is closed.",
+                "Close",
                 Variant::Destructive,
             )
         }

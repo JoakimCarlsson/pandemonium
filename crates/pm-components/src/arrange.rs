@@ -2,6 +2,7 @@
 
 use pm_input::FocusId;
 
+use crate::git_prompts::Prompt;
 use crate::state::{NEW_IN_BASE, Outgoing, PROJECT_BASE, Page, SESSION_BASE, WorkspaceState};
 
 /// The first of the buttons opening the menu of a project; the rest follow it.
@@ -15,6 +16,18 @@ pub const PROJECT_MENU_REMOVE: FocusId = FocusId(306);
 
 /// The row of a session's menu that closes it.
 pub const SESSION_MENU_CLOSE: FocusId = FocusId(307);
+
+/// The row of a session's menu that copies the folder it works in.
+pub const SESSION_MENU_COPY_PATH: FocusId = FocusId(7086);
+
+/// The row of a session's menu that copies the branch it is on.
+pub const SESSION_MENU_COPY_BRANCH: FocusId = FocusId(7087);
+
+/// The row of a session's menu that asks for a new title.
+pub const SESSION_MENU_RENAME: FocusId = FocusId(7088);
+
+/// The row of a session's menu that shows its folder in the file manager.
+pub const SESSION_MENU_OPEN_FOLDER: FocusId = FocusId(7089);
 
 /// The menu open over a session, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -47,7 +60,14 @@ pub struct ProjectDrag {
 
 /// Whether `id` names the row of a session's menu.
 pub fn is_session_menu_item(id: FocusId) -> bool {
-    id == SESSION_MENU_CLOSE
+    [
+        SESSION_MENU_CLOSE,
+        SESSION_MENU_COPY_PATH,
+        SESSION_MENU_COPY_BRANCH,
+        SESSION_MENU_RENAME,
+        SESSION_MENU_OPEN_FOLDER,
+    ]
+    .contains(&id)
 }
 
 /// Whether `id` names a row of a project's menu.
@@ -103,18 +123,72 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the row of the open session menu was pressed: the session is closed.
-    pub(crate) fn session_menu_pressed(mut self) -> Self {
-        match self.session_menu.take() {
-            Some(open) => self.closed_session(open.session, true),
-            None => self,
+    /// Whether the session at `position` works on a machine other than this one.
+    pub fn is_remote_session(&self, position: usize) -> bool {
+        self.sessions
+            .get(position)
+            .and_then(|held| self.projects.get(held.project))
+            .is_some_and(|project| project.host().is_some())
+    }
+
+    /// The state after the row `row` of the open session menu was pressed.
+    pub(crate) fn session_menu_pressed(mut self, row: FocusId) -> Self {
+        let Some(open) = self.session_menu.take() else {
+            return self;
+        };
+        let Some(held) = self.sessions.get(open.session) else {
+            return self;
+        };
+        match row {
+            SESSION_MENU_COPY_PATH => {
+                let text = held.directory.clone();
+                self.outbox.push(Outgoing::Copy { text });
+                self
+            }
+            SESSION_MENU_COPY_BRANCH => {
+                let text = held.branch.clone();
+                self.outbox.push(Outgoing::Copy { text });
+                self
+            }
+            SESSION_MENU_RENAME => {
+                self.git.rename = pm_text::Field::new(held.title.clone());
+                self.ask(Prompt::Rename(open.session));
+                self
+            }
+            SESSION_MENU_OPEN_FOLDER => {
+                self.outbox.push(Outgoing::OpenFolder {
+                    session: open.session,
+                });
+                self
+            }
+            _ => self.close_after_asking(open.session),
         }
     }
 
-    /// The state with the session at `position` closed, and, when `ask` is set, the server told to close it.
-    pub fn closed_session(mut self, position: usize, ask: bool) -> Self {
+    /// The state with the session at `session` closed, or, when its worktree has changes that are not committed, the reader asked first.
+    fn close_after_asking(mut self, session: usize) -> Self {
+        let uncommitted = self
+            .sessions
+            .get(session)
+            .is_some_and(|held| held.base.is_some() && !held.changes.is_empty());
+        if uncommitted {
+            self.ask(Prompt::Close(session));
+            self
+        } else {
+            self.closed_session(session, true, false)
+        }
+    }
+
+    /// The state with the session at `position` closed, and, when `ask` is set, the server told to close it, removing the worktree even with changes that are not committed when `discard` is set.
+    pub fn closed_session(mut self, position: usize, ask: bool, discard: bool) -> Self {
+        self.close_session(position, ask, discard);
+        self
+    }
+
+    /// Closes the session at `position`, and, when `ask` is set, tells the server to close it, removing the worktree even with changes that are not committed when `discard` is set.
+    pub(crate) fn close_session(&mut self, position: usize, ask: bool, discard: bool) {
         let Some(held) = self.sessions.get_mut(position) else {
-            return self;
+            return;
         };
         held.closed = true;
         let project = held.project;
@@ -123,9 +197,11 @@ impl WorkspaceState {
             self.sync_context();
         }
         if ask {
-            self.outbox.push(Outgoing::Close { session: position });
+            self.outbox.push(Outgoing::Close {
+                session: position,
+                discard,
+            });
         }
-        self
     }
 
     /// The state with the menu of the project at `project` open at `at`.

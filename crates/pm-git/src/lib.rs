@@ -276,6 +276,17 @@ pub fn add_worktree(repository: &Path, title: &str, base: &str) -> Result<Worktr
     Ok(Worktree { path, head })
 }
 
+/// Removes the worktree at `path` of `repository` with every file in it, and forgets it.
+///
+/// A folder that is already gone is only forgotten.
+pub fn remove_worktree(repository: &Path, path: &Path) -> Result<(), String> {
+    let place = path.to_string_lossy().into_owned();
+    if path.exists() {
+        run(repository, &["worktree", "remove", "--force", &place])?;
+    }
+    run(repository, &["worktree", "prune"]).map(|_| ())
+}
+
 /// The lines of the diff `text` holds, from the first hunk on.
 fn hunks(text: &str) -> String {
     text.lines()

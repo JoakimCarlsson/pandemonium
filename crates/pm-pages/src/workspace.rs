@@ -11,7 +11,9 @@ use pm_ui::{Node, node};
 
 use pm_components::Menu;
 use pm_components::arrange::{
-    PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE, SessionMenu,
+    PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
+    SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
+    SESSION_MENU_RENAME, SessionMenu,
 };
 use pm_components::context_menu::field_menu;
 use pm_components::file_icon::file_icon;
@@ -285,7 +287,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     )
     .children(sidebar::drag_ghost(state))
     .children(state.project_menu.map(project_menu))
-    .children(state.session_menu.map(session_menu))
+    .children(state.session_menu.map(|open| session_menu(state, open)))
     .children(state.message_menu.map(message_menu))
     .children(adder::adder(state))
     .children(settings::settings(state, width, height))
@@ -309,9 +311,27 @@ fn project_menu(open: ProjectMenu) -> Node {
         .build()
 }
 
-/// The menu of a session: close it.
-fn session_menu(open: SessionMenu) -> Node {
+/// The menu of a session: copy where it works, rename it, show its folder, or archive it.
+fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
+    let on_branch = state
+        .sessions
+        .get(open.session)
+        .is_some_and(|held| held.on_branch);
     Menu::new(open.at.0, open.at.1)
-        .item("Close session", None, SESSION_MENU_CLOSE, false)
+        .item("Copy path", None, SESSION_MENU_COPY_PATH, false)
+        .item(
+            "Copy branch name",
+            None,
+            SESSION_MENU_COPY_BRANCH,
+            !on_branch,
+        )
+        .item("Rename session", None, SESSION_MENU_RENAME, false)
+        .item(
+            "Open in file manager",
+            None,
+            SESSION_MENU_OPEN_FOLDER,
+            state.is_remote_session(open.session),
+        )
+        .item("Archive", None, SESSION_MENU_CLOSE, false)
         .build()
 }

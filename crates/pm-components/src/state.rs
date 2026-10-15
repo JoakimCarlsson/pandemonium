@@ -6,13 +6,13 @@ use pm_text::{Edit, Field};
 
 use crate::adder::{ADDER_FIELD, ADDER_ROW_BASE, ADDER_SUBMIT, Adder, is_adder};
 use crate::arrange::{
-    PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectDrag, ProjectMenu, SESSION_MENU_CLOSE,
-    SessionMenu,
+    PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectDrag, ProjectMenu, SessionMenu,
+    is_session_menu_item,
 };
 use crate::context_menu::ContextMenu;
 use crate::draft::{NEXT, OTHER};
 use crate::git_controls::{BRANCH_FILTER, BRANCH_SUBMIT, GitControls, OPEN_ARROW_BASE};
-use crate::git_prompts::{PROMPT_CONFIRM, STASH_FIELD};
+use crate::git_prompts::{PROMPT_CONFIRM, RENAME_FIELD, STASH_FIELD};
 use crate::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_COPY_MARKDOWN, MESSAGE_MENU_COPY_REPLY,
     MESSAGE_MENU_SELECT_ALL, MessageMenu,
@@ -327,10 +327,24 @@ pub enum Outgoing {
         /// The tab.
         tab: u64,
     },
-    /// Closes the session at this position: its agent is stopped and it leaves the sidebar, the server keeping it.
+    /// Shows the folder of the session at this position in the file manager, when it is on this machine.
+    OpenFolder {
+        /// The session, by position.
+        session: usize,
+    },
+    /// Gives the session at this position a new title.
+    Rename {
+        /// The session, by position.
+        session: usize,
+        /// What it is called now.
+        title: String,
+    },
+    /// Closes the session at this position: its agent is stopped, its worktree is removed and it leaves the sidebar, the server keeping its log.
     Close {
         /// The session, by position.
         session: usize,
+        /// Whether the worktree goes even though it has changes that are not committed.
+        discard: bool,
     },
     /// Tells the window's own bookkeeping that the sessions moved: for each old position, the new one, or nothing for a session that is gone.
     Reindexed(Vec<Option<usize>>),
@@ -1047,7 +1061,7 @@ impl WorkspaceState {
         let restoring = self.restoring.take();
         match action {
             RESTORE_FILES => self.restore(restoring),
-            SESSION_MENU_CLOSE => return self.session_menu_pressed(),
+            row if is_session_menu_item(row) => return self.session_menu_pressed(row),
             MESSAGE_MENU_COPY
             | MESSAGE_MENU_COPY_REPLY
             | MESSAGE_MENU_COPY_MARKDOWN
@@ -1108,6 +1122,7 @@ impl WorkspaceState {
             COMMENT_FIELD => self.comment_text.apply(edit),
             BRANCH_FILTER => self.git.filter.apply(edit),
             STASH_FIELD => self.git.stash_message.apply(edit),
+            RENAME_FIELD => self.git.rename.apply(edit),
             EDITOR_FIELD => self.file_edited(edit),
             ENTRY_FIELD => {
                 if let Some((_, field)) = self.git.naming.as_mut() {
@@ -1139,6 +1154,7 @@ impl WorkspaceState {
             COMMENT_FIELD => Some(&self.comment_text),
             BRANCH_FILTER => Some(&self.git.filter),
             STASH_FIELD => Some(&self.git.stash_message),
+            RENAME_FIELD => Some(&self.git.rename),
             ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
             EDITOR_FIELD => self.shown_document().map(|document| &document.field),
             HISTORY_SEARCH => Some(&self.history_search),
@@ -1156,6 +1172,7 @@ impl WorkspaceState {
             || id == COMMENT_FIELD
             || id == BRANCH_FILTER
             || id == STASH_FIELD
+            || id == RENAME_FIELD
             || id == ENTRY_FIELD
             || id == EDITOR_FIELD
             || id == HISTORY_SEARCH
@@ -1170,7 +1187,7 @@ impl WorkspaceState {
             COMMIT_MESSAGE => COMMIT,
             COMMENT_FIELD => COMMENT_ADD,
             BRANCH_FILTER => BRANCH_SUBMIT,
-            STASH_FIELD => PROMPT_CONFIRM,
+            STASH_FIELD | RENAME_FIELD => PROMPT_CONFIRM,
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
             EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
             HISTORY_SEARCH => HISTORY,
