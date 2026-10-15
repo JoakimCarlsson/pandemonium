@@ -224,7 +224,7 @@ impl Default for GitControls {
             filter: Field::default(),
             viewer: None,
             changes_open: true,
-            graph_open: true,
+            graph_open: false,
             graph_all: false,
             history: Vec::new(),
             graph_scroll: 0.0,
