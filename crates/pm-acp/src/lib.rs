@@ -29,6 +29,7 @@ pub use chat::{
     Setting, Slash, Tool, ToolState, Verdict, discover, skills,
 };
 pub use inquiry::{Alternative, Inquiry, Question, Reply};
+pub use install::{is_web_address, open as open_address};
 pub use mcp::{command_line, command_words, mcp_servers};
 pub use standing::{Login, Standing, Way};
 pub use tool_registry::{Listing, search as search_tools};

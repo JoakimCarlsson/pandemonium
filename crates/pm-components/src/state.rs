@@ -279,6 +279,11 @@ pub const CHOICE_BASE: u64 = 3600;
 pub enum Outgoing {
     /// Asks the server for the agents added by hand and the tool servers every agent is started with.
     LoadServers,
+    /// Opens `address` in the reader's browser.
+    Open {
+        /// The page to open.
+        address: String,
+    },
     /// Asks the public registry of tool servers for what matches `query`.
     SearchTools {
         /// What to look for; the well known servers when blank.
@@ -1003,6 +1008,9 @@ impl WorkspaceState {
         if !self.is_menu_row(action) {
             self.git.menu = None;
         }
+        if !self.settings_menu_row(action) {
+            self.settings_servers.menu = None;
+        }
         let restoring = self.restoring.take();
         match action {
             RESTORE_FILES => self.restore(restoring),
@@ -1151,6 +1159,7 @@ impl WorkspaceState {
         self.session_menu = None;
         self.message_menu = None;
         self.git.menu = None;
+        self.settings_servers.menu = None;
         self
     }
 

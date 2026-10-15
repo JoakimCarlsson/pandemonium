@@ -1913,6 +1913,7 @@ dependencies = [
  "pm-terminal",
  "pm-text",
  "pm-ui",
+ "serde_json",
 ]
 
 [[package]]

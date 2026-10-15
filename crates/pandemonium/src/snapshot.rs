@@ -137,6 +137,8 @@ pub enum Shot {
     Settings,
     /// The settings panel on Agents, which opens the sections inside it.
     SettingsAgents,
+    /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
+    SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
     SettingsForm,
     /// The same panel waiting for the accounts and organizations to clone from.
@@ -496,6 +498,27 @@ impl Shot {
                 welcome()
                     .after(SETTINGS)
                     .after(FocusId(SETTINGS_SECTION_BASE + 1)),
+            ),
+            Self::SettingsMcp => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(FocusId(SETTINGS_SECTION_BASE + 3))
+                    .with_mcp_servers(vec![pm_protocol::McpServer {
+                        name: "context7".to_owned(),
+                        target: "https://mcp.context7.com/mcp".to_owned(),
+                        env: vec![("API_KEY".to_owned(), "abc".to_owned())],
+                        description: "Up-to-date code docs for any prompt".to_owned(),
+                        website: "https://context7.com".to_owned(),
+                        enabled: true,
+                    }])
+                    .with_tool_listings(
+                        "",
+                        Ok(vec![
+                            tool_listing("Context7", "context7", "https://mcp.context7.com/mcp"),
+                            tool_listing("GitHub", "github", "https://api.githubcopilot.com/mcp/"),
+                        ]),
+                    )
+                    .with_settings_menu(0, (800.0, 380.0)),
             ),
             Self::SettingsForm => Screen::Workspace(
                 welcome()
@@ -967,5 +990,20 @@ fn gradient() -> pm_renderer::Picture {
         width,
         height,
         pixels: std::sync::Arc::new(pixels),
+    }
+}
+
+/// A listing of the registry of tool servers, for a snapshot.
+fn tool_listing(title: &str, name: &str, target: &str) -> pm_protocol::ToolListing {
+    pm_protocol::ToolListing {
+        id: name.to_owned(),
+        title: title.to_owned(),
+        description: "Up-to-date code docs for any prompt".to_owned(),
+        name: name.to_owned(),
+        target: target.to_owned(),
+        env: Vec::new(),
+        inputs: Vec::new(),
+        asks: false,
+        website: String::new(),
     }
 }

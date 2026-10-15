@@ -3,8 +3,8 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Role, border_b, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_px,
-    items_center, justify_between, min_w_px, p, pl, px, w_px,
+    Role, bg, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_px,
+    items_center, justify_end, min_w_px, p, pl, px, w_px,
 };
 use pm_ui::{Node, node};
 
@@ -51,6 +51,36 @@ pub const SETTINGS_SEARCH_GO: FocusId = FocusId(20_000_031);
 /// The scrolling page of the section showing.
 pub const SETTINGS_SCROLL: FocusId = FocusId(20_000_040);
 
+/// Folds the list of what is installed away, or shows it again.
+pub const SETTINGS_TOGGLE_INSTALLED: FocusId = FocusId(20_000_032);
+
+/// Folds the list of what the registry offers away, or shows it again.
+pub const SETTINGS_TOGGLE_AVAILABLE: FocusId = FocusId(20_000_033);
+
+/// Switches the server the open menu is over on or off.
+pub const SETTINGS_MENU_TOGGLE: FocusId = FocusId(20_000_050);
+
+/// Opens the form for the server the open menu is over.
+pub const SETTINGS_MENU_EDIT: FocusId = FocusId(20_000_051);
+
+/// Copies the configuration of the server the open menu is over.
+pub const SETTINGS_MENU_COPY: FocusId = FocusId(20_000_052);
+
+/// Opens the page of the publisher of the server the open menu is over.
+pub const SETTINGS_MENU_WEBSITE: FocusId = FocusId(20_000_053);
+
+/// Takes the server the open menu is over away.
+pub const SETTINGS_MENU_REMOVE: FocusId = FocusId(20_000_054);
+
+/// Opens the page that explains tool servers.
+pub const SETTINGS_DOCS: FocusId = FocusId(20_000_055);
+
+/// The first of the switches turning a server on or off; the rest follow it.
+pub const SETTINGS_SWITCH_BASE: u64 = 20_000_500;
+
+/// The first of the buttons opening the menu of a server; the rest follow it.
+pub const SETTINGS_MORE_BASE: u64 = 20_000_600;
+
 /// The first of the sections down the left side; the rest follow it.
 pub const SETTINGS_SECTION_BASE: u64 = 20_000_010;
 
@@ -64,13 +94,27 @@ pub const SETTINGS_REMOVE_BASE: u64 = 20_000_200;
 pub const SETTINGS_INSTALL_BASE: u64 = 20_000_300;
 
 /// One past the last name the panel answers to.
-const SETTINGS_END: u64 = 20_000_500;
+const SETTINGS_END: u64 = 20_000_700;
 
-/// How wide the panel is, in logical pixels.
-const WIDTH: f32 = 1240.0;
+/// How far the panel keeps from every edge of the window, in logical pixels.
+const MARGIN: f32 = 14.0;
 
-/// How tall the panel is, in logical pixels.
-const HEIGHT: f32 = 780.0;
+/// How much of the window's width the panel takes, at least as wide as [`MIN_WIDTH`] where the window has room.
+const WIDTH_SHARE: f32 = 0.8;
+
+/// How much of the window's height the panel takes, at least as tall as [`MIN_HEIGHT`] where the window has room.
+const HEIGHT_SHARE: f32 = 0.85;
+
+/// The least wide the panel is made, in logical pixels, in a window that has room for it.
+const MIN_WIDTH: f32 = 1240.0;
+
+/// The least tall the panel is made, in logical pixels, in a window that has room for it.
+const MIN_HEIGHT: f32 = 780.0;
+
+/// `share` of a window `window` logical pixels across, no less than `least` and never past the margins.
+fn panel_extent(window: f32, share: f32, least: f32) -> f32 {
+    (window * share).max(least).min(window - 2.0 * MARGIN)
+}
 
 /// How wide the list of sections is, in logical pixels.
 const NAVIGATION_WIDTH: f32 = 220.0;
@@ -182,16 +226,16 @@ impl WorkspaceState {
     }
 }
 
-/// The node that draws the settings panel, when it is open.
-pub fn settings(state: &WorkspaceState) -> Option<Node> {
+/// The node that draws the settings panel, when it is open, sized from a window `width` by `height` logical pixels.
+pub fn settings(state: &WorkspaceState, width: f32, height: f32) -> Option<Node> {
     let section = state.settings?;
     let folded = state.settings_servers.folded;
     Some(
         Modal::new(SETTINGS_SCRIM, SETTINGS_BODY)
-            .width(WIDTH)
+            .width(panel_extent(width, WIDTH_SHARE, MIN_WIDTH))
             .child(
                 node()
-                    .styles([flex(), h_px(HEIGHT)])
+                    .styles([flex(), h_px(panel_extent(height, HEIGHT_SHARE, MIN_HEIGHT))])
                     .child(navigation(section, folded))
                     .child(content(state, section)),
             )
@@ -248,23 +292,26 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
     row.child(line(section.title(), 13, 1.4, tone))
 }
 
-/// The settings of `section` under its heading and the button that closes the panel.
+/// The settings of `section` under the button that closes the panel.
 fn content(state: &WorkspaceState, section: Section) -> Node {
     node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
+        .styles([
+            flex(),
+            flex_col(),
+            flex_1(),
+            min_w_px(0),
+            bg(Role::Background),
+        ])
         .child(
             node()
                 .styles([
                     flex(),
                     items_center(),
-                    justify_between(),
-                    h(14),
-                    px(6),
+                    justify_end(),
+                    h(12),
+                    px(4),
                     flex_none(),
-                    border_b(),
-                    border_color(Role::Border),
                 ])
-                .child(line(section.title(), 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
                 .child(
                     Button::icon(IconName::Close, SETTINGS_CLOSE)
                         .variant(Variant::Ghost)

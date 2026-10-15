@@ -244,7 +244,8 @@ impl App {
     fn attributes() -> winit::window::WindowAttributes {
         let attributes = Window::default_attributes()
             .with_title("Pandemonium")
-            .with_inner_size(LogicalSize::new(WIDTH, HEIGHT));
+            .with_inner_size(LogicalSize::new(WIDTH, HEIGHT))
+            .with_maximized(true);
         #[cfg(target_os = "linux")]
         let attributes = {
             use winit::platform::wayland::WindowAttributesExtWayland;
@@ -363,6 +364,10 @@ impl App {
         }
         if id == ATTACH {
             self.attach();
+            return;
+        }
+        if let Some(index) = self.model.read(|screen| screen.settings_more_of(id)) {
+            self.open_settings_menu(index);
             return;
         }
         if let Some(project) = self.model.read(|screen| screen.more_button_of(id)) {
@@ -784,6 +789,16 @@ impl App {
             MENU_SELECT_ALL => self.edit_field(field, Edit::SelectAll),
             _ => {}
         }
+    }
+
+    /// Opens the menu of the `index`-th server of the settings page, just under the pointer and inside the window.
+    fn open_settings_menu(&mut self, index: usize) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        self.model.update(|state| {
+            *state = std::mem::take(state).with_settings_menu(index, (x - 190.0, y + 14.0))
+        });
     }
 
     /// Opens the menu of the project at `project`, just under the pointer.

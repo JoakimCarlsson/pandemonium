@@ -773,6 +773,11 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::Open { address } => {
+                    if let Err(reason) = pm_acp::open_address(&address) {
+                        eprintln!("{reason}");
+                    }
+                }
                 Outgoing::LoadServers => {
                     self.ask(&None, Request::AgentServers, Pending::AgentServers);
                     self.ask(&None, Request::McpServers, Pending::McpServers);

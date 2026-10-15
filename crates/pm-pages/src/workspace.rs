@@ -233,7 +233,8 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(state.session_menu.map(session_menu))
     .children(state.message_menu.map(message_menu))
     .children(adder::adder(state))
-    .children(settings::settings(state))
+    .children(settings::settings(state, width, height))
+    .children(pm_components::settings_servers::server_menu(state))
     .children(state.git_menu_node().filter(|_| reviewing))
     .children(
         state

@@ -415,6 +415,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                         env: listing.env,
                         inputs: listing.inputs,
                         asks: listing.asks,
+                        website: listing.website,
                     })
                     .collect(),
             },

@@ -66,6 +66,8 @@ pub struct Listing {
     /// What the server lists as taking, a key or a token for instance,
     /// whether or not it will run without.
     pub inputs: Vec<String>,
+    /// Where its publisher describes it, when they say.
+    pub website: String,
     /// Whether installing it has to ask for something first: a listed input
     /// is required, or is a secret such as a key.
     pub asks: bool,
@@ -234,6 +236,12 @@ fn listing(entry: &Value) -> Option<Listing> {
         name: slug,
         target: reach.target,
         env: reach.env,
+        website: entry["websiteUrl"]
+            .as_str()
+            .or_else(|| entry["repository"]["url"].as_str())
+            .filter(|address| crate::install::is_web_address(address))
+            .unwrap_or_default()
+            .to_owned(),
         title,
         id,
         inputs: inputs.names,

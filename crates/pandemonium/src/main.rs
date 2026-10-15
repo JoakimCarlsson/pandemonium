@@ -100,6 +100,7 @@ fn main() {
             Some("settings") => Shot::Settings,
             Some("settings-agents") => Shot::SettingsAgents,
             Some("settings-form") => Shot::SettingsForm,
+            Some("settings-mcp") => Shot::SettingsMcp,
             Some("loading") => Shot::Loading,
             Some("owning") => Shot::Owning,
             Some("cloning") => Shot::Cloning,

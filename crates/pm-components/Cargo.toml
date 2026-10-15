@@ -16,3 +16,4 @@ pm-style.workspace = true
 pm-terminal.workspace = true
 pm-text.workspace = true
 pm-ui.workspace = true
+serde_json = "1.0.154"

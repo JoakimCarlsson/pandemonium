@@ -131,6 +131,22 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.adder_open())
     }
 
+    /// Which server's menu button `id` is, while the settings panel is open.
+    pub fn settings_more_of(&self, id: FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.settings_more_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the menu of the `index`-th server of the settings page open at `at`.
+    pub fn with_settings_menu(self, index: usize, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_settings_menu(index, at)),
+            other => other,
+        }
+    }
+
     /// Whether the settings panel is open.
     pub fn settings_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.settings_open())
@@ -210,7 +226,7 @@ impl Screen {
 
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.git.menu.is_some())
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some())
     }
 
     /// Which session the row `id` of the sidebar opens, while the workspace is showing.

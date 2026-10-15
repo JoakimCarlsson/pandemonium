@@ -12,6 +12,14 @@ struct Kept {
     target: String,
     /// The environment it is started with, or the headers it is sent.
     env: Vec<(String, String)>,
+    /// Whether agents are given it; a server switched off stays listed.
+    #[serde(default = "given")]
+    enabled: bool,
+}
+
+/// Servers are given to agents unless they were switched off.
+fn given() -> bool {
+    true
 }
 
 /// The pairs of `env` as the protocol writes them: a name and a value each.
@@ -47,19 +55,25 @@ pub fn mcp_servers(kept: &str) -> Vec<Value> {
     serde_json::from_str::<Vec<Kept>>(kept)
         .unwrap_or_default()
         .into_iter()
+        .filter(|kept| kept.enabled)
         .filter_map(described)
         .collect()
 }
 
-/// `line` split into words at spaces, keeping what is in double quotes whole.
+/// `line` split into words at spaces, keeping what is in double quotes whole; inside quotes a backslash makes the character after it part of the word.
 #[must_use]
 pub fn command_words(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut started = false;
     let mut quoted = false;
-    for character in line.chars() {
+    let mut characters = line.chars();
+    while let Some(character) = characters.next() {
         match (character, quoted) {
+            ('\\', true) => {
+                word.extend(characters.next());
+                started = true;
+            }
             ('"', _) => {
                 quoted = !quoted;
                 started = true;
@@ -88,10 +102,10 @@ pub fn command_line<'a>(words: impl IntoIterator<Item = &'a str>) -> String {
     words.into_iter().map(quoted).collect::<Vec<_>>().join(" ")
 }
 
-/// `word` as [`command_words`] reads it back: in quotes when it holds a space or is empty.
+/// `word` as [`command_words`] reads it back: in quotes, with quotes and backslashes escaped, when it holds a space, a quote, a backslash or is empty.
 fn quoted(word: &str) -> String {
-    match word.is_empty() || word.contains(char::is_whitespace) {
-        true => format!("\"{word}\""),
+    match word.is_empty() || word.contains(|c: char| c.is_whitespace() || c == '"' || c == '\\') {
+        true => format!("\"{}\"", word.replace('\\', "\\\\").replace('"', "\\\"")),
         false => word.to_owned(),
     }
 }

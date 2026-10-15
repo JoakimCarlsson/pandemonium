@@ -114,7 +114,7 @@ request with exactly one `response` carrying the same `id`.
 | `agent_servers`| none                                                                                             | `agent_servers` |
 | `save_agent_servers`| `servers`: `[{id, name, command, env}]`, `env`: `[[name, value]]`                                | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
-| `save_mcp_servers`| `servers`: `[{name, target, env}]`, `env`: `[[name, value]]`                                     | `done`          |
+| `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled}]`, `env`: `[[name, value]]`                                     | `done`          |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
@@ -225,7 +225,7 @@ request with exactly one `response` carrying the same `id`.
   whole by the matching `save_` request. A tool server's `target` is an address
   when it begins with `http://` or `https://`, and `env` is then the headers it
   is sent; otherwise it is the command that starts it, and `env` its environment.
-  Every new session is started with the tool servers saved at that moment.
+  Every new session is started with the tool servers saved at that moment that are `enabled`; `description` and `website` are optional and `enabled` is true when missing.
 - **`registry_agents`, `search_tools`:** what the public registries of agents and
   of tool servers offer, read by the server so that a client needs no access to
   the internet. Only agents that are a package a runner fetches are listed.
@@ -314,9 +314,9 @@ embedded context, and anything else as a link to the stored file.
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env}]`                |
-| `mcp_servers` | `servers`: `[{name, target, env}]`                       |
+| `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled}]`                     |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
-| `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks}]` |
+| `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |
 | `sessions`   | `sessions`: `[SessionInfo]`                               |
 | `terminal`   | `terminal`: the number of the shell that was started      |

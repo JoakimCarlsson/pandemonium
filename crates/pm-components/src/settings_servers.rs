@@ -5,9 +5,10 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::{AgentServer, McpServer, RegistryAgent, ToolListing};
 use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, gap, h,
-    items_center, items_start, justify_between, min_h, min_w_px, overflow_hidden, p, rounded,
-    w_full,
+    Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
+    flex_none, gap, h, items_center, items_start, justify_between, justify_end, max_w_px, min_h,
+    min_w_px, mx_auto, overflow_hidden, p, px, rounded, rounded_full, self_start, size, w_full,
+    w_px,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
@@ -15,17 +16,27 @@ use pm_ui::{Node, node};
 use crate::Button;
 use crate::button::{Size, Variant};
 use crate::input::{self, Input};
-use crate::parts::{clipped, line, wrap};
+use crate::menu::Menu;
+use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings::{
-    SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_EDIT_BASE, SETTINGS_ENV, SETTINGS_INSTALL_BASE,
-    SETTINGS_NAME, SETTINGS_REMOVE_BASE, SETTINGS_SAVE, SETTINGS_SCROLL, SETTINGS_SEARCH,
-    SETTINGS_SEARCH_GO, SETTINGS_TARGET, Section,
+    SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_EDIT_BASE, SETTINGS_ENV,
+    SETTINGS_INSTALL_BASE, SETTINGS_MENU_COPY, SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE,
+    SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE, SETTINGS_MORE_BASE, SETTINGS_NAME,
+    SETTINGS_REMOVE_BASE, SETTINGS_SAVE, SETTINGS_SCROLL, SETTINGS_SEARCH, SETTINGS_SEARCH_GO,
+    SETTINGS_SWITCH_BASE, SETTINGS_TARGET, SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED,
+    Section,
 };
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tile::Tile;
 
 /// How wide a paragraph of the pages may be, in logical pixels, so that it breaks before it reaches the button beside it.
 const PARAGRAPH_WIDTH: f32 = 600.0;
+
+/// How wide the content of a page may be, in logical pixels, however wide the panel is.
+const PAGE_WIDTH: f32 = 960.0;
+
+/// The page that explains tool servers.
+const TOOL_SERVERS_DOCS: &str = "https://modelcontextprotocol.io/";
 
 /// What a registry last answered: the entries, whether it is being asked, and why it could not answer.
 #[derive(Clone, Debug, PartialEq)]
@@ -92,6 +103,12 @@ pub struct ServerSettings {
     pub form: Option<ServerForm>,
     /// How far the page showing is scrolled, in logical pixels.
     pub scroll: f32,
+    /// Whether the list of what is installed is folded away.
+    pub installed_folded: bool,
+    /// Whether the list of what the registry offers is folded away.
+    pub available_folded: bool,
+    /// The menu open over a server, and where, if one is.
+    pub menu: Option<ServerMenu>,
 }
 
 impl ServerSettings {
@@ -106,6 +123,15 @@ impl ServerSettings {
     }
 }
 
+/// The menu of a server of the list showing: which one, and where it opens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ServerMenu {
+    /// The place of the server in its list.
+    pub index: usize,
+    /// Where its top-left corner is, in logical pixels.
+    pub at: (f32, f32),
+}
+
 /// A server being described: which one of its list it replaces, and the boxes it is written in.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerForm {
@@ -117,6 +143,10 @@ pub struct ServerForm {
     target: Field,
     /// The environment it is started with, as `NAME=value` pairs.
     env: Field,
+    /// What it is for, kept from the registry listing it was opened from.
+    description: String,
+    /// Where its publisher describes it, kept from the registry listing it was opened from.
+    website: String,
 }
 
 impl ServerForm {
@@ -127,6 +157,8 @@ impl ServerForm {
             name: Field::new(name),
             target: Field::new(target),
             env: Field::new(written(env)),
+            description: String::new(),
+            website: String::new(),
         }
     }
 
@@ -237,6 +269,12 @@ impl WorkspaceState {
                 self.settings_servers.form = Some(ServerForm::holding(None, "", "", &[]))
             }
             SETTINGS_CANCEL => self.settings_servers.form = None,
+            SETTINGS_TOGGLE_INSTALLED => {
+                self.settings_servers.installed_folded = !self.settings_servers.installed_folded;
+            }
+            SETTINGS_TOGGLE_AVAILABLE => {
+                self.settings_servers.available_folded = !self.settings_servers.available_folded;
+            }
             SETTINGS_SAVE => self.save_form(),
             SETTINGS_SEARCH_GO if self.settings == Some(Section::McpServers) => {
                 let query = self.settings_servers.search.text().trim().to_owned();
@@ -249,9 +287,20 @@ impl WorkspaceState {
             _ if (SETTINGS_REMOVE_BASE..SETTINGS_INSTALL_BASE).contains(&number) => {
                 self.remove_server((number - SETTINGS_REMOVE_BASE) as usize);
             }
-            _ if number >= SETTINGS_INSTALL_BASE => {
+            _ if (SETTINGS_INSTALL_BASE..SETTINGS_SWITCH_BASE).contains(&number) => {
                 self.install((number - SETTINGS_INSTALL_BASE) as usize);
             }
+            _ if (SETTINGS_SWITCH_BASE..SETTINGS_MORE_BASE).contains(&number) => {
+                self.toggle_server((number - SETTINGS_SWITCH_BASE) as usize);
+            }
+            SETTINGS_DOCS => self.outbox.push(Outgoing::Open {
+                address: TOOL_SERVERS_DOCS.to_owned(),
+            }),
+            SETTINGS_MENU_TOGGLE
+            | SETTINGS_MENU_EDIT
+            | SETTINGS_MENU_COPY
+            | SETTINGS_MENU_WEBSITE
+            | SETTINGS_MENU_REMOVE => self.menu_pressed(action),
             _ => {}
         }
         self
@@ -327,10 +376,20 @@ impl WorkspaceState {
             }
             Some(Section::McpServers) => {
                 let servers = &mut self.settings_servers.tools;
-                let tool = McpServer { name, target, env };
                 match form.index.filter(|index| *index < servers.len()) {
-                    Some(index) => servers[index] = tool,
-                    None => servers.push(tool),
+                    Some(index) => {
+                        servers[index].name = name;
+                        servers[index].target = target;
+                        servers[index].env = env;
+                    }
+                    None => servers.push(McpServer {
+                        name,
+                        target,
+                        env,
+                        description: form.description,
+                        website: form.website,
+                        enabled: true,
+                    }),
                 }
                 self.outbox.push(Outgoing::SaveMcpServers(servers.clone()));
             }
@@ -352,22 +411,88 @@ impl WorkspaceState {
                     return;
                 };
                 if offered.asks {
-                    self.settings_servers.form = Some(ServerForm::holding(
-                        None,
-                        &offered.name,
-                        &offered.target,
-                        &offered.env,
-                    ));
+                    let mut form =
+                        ServerForm::holding(None, &offered.name, &offered.target, &offered.env);
+                    form.description = offered.description;
+                    form.website = offered.website;
+                    self.settings_servers.form = Some(form);
                     return;
                 }
                 self.settings_servers.tools.push(McpServer {
                     name: offered.name,
                     target: offered.target,
                     env: offered.env,
+                    description: offered.description,
+                    website: offered.website,
+                    enabled: true,
                 });
                 self.outbox.push(Outgoing::SaveMcpServers(
                     self.settings_servers.tools.clone(),
                 ));
+            }
+            _ => {}
+        }
+    }
+
+    /// The state with the menu of the `index`-th server of the list showing open at `at`.
+    pub fn with_settings_menu(mut self, index: usize, at: (f32, f32)) -> Self {
+        self.settings_servers.menu = Some(ServerMenu { index, at });
+        self
+    }
+
+    /// Which server's menu button `id` is, if it is one.
+    pub fn settings_more_of(&self, id: FocusId) -> Option<usize> {
+        let FocusId(number) = id;
+        (self.settings.is_some()
+            && (SETTINGS_MORE_BASE..SETTINGS_MORE_BASE + 100).contains(&number))
+        .then(|| (number - SETTINGS_MORE_BASE) as usize)
+    }
+
+    /// Whether `id` names a row of the menu of a server that is open.
+    pub(crate) fn settings_menu_row(&self, id: FocusId) -> bool {
+        self.settings_servers.menu.is_some()
+            && [
+                SETTINGS_MENU_TOGGLE,
+                SETTINGS_MENU_EDIT,
+                SETTINGS_MENU_COPY,
+                SETTINGS_MENU_WEBSITE,
+                SETTINGS_MENU_REMOVE,
+            ]
+            .contains(&id)
+    }
+
+    /// Switches the `index`-th tool server on or off, and has the server keep the list.
+    fn toggle_server(&mut self, index: usize) {
+        if let Some(tool) = self.settings_servers.tools.get_mut(index) {
+            tool.enabled = !tool.enabled;
+            self.outbox.push(Outgoing::SaveMcpServers(
+                self.settings_servers.tools.clone(),
+            ));
+        }
+    }
+
+    /// The state after the row `row` of the open menu of a server was pressed, and the menu closed.
+    fn menu_pressed(&mut self, row: FocusId) {
+        let Some(open) = self.settings_servers.menu.take() else {
+            return;
+        };
+        match row {
+            SETTINGS_MENU_TOGGLE => self.toggle_server(open.index),
+            SETTINGS_MENU_EDIT => self.settings_servers.form = self.form_for(open.index),
+            SETTINGS_MENU_REMOVE => self.remove_server(open.index),
+            SETTINGS_MENU_COPY => {
+                if let Some(tool) = self.settings_servers.tools.get(open.index) {
+                    self.outbox.push(Outgoing::Copy {
+                        text: configuration_of(tool),
+                    });
+                }
+            }
+            SETTINGS_MENU_WEBSITE => {
+                if let Some(tool) = self.settings_servers.tools.get(open.index) {
+                    self.outbox.push(Outgoing::Open {
+                        address: tool.website.clone(),
+                    });
+                }
             }
             _ => {}
         }
@@ -430,6 +555,63 @@ impl WorkspaceState {
     }
 }
 
+/// `tool` written the way other tools keep theirs: an `mcpServers` object holding it under its name, as JSON.
+fn configuration_of(tool: &McpServer) -> String {
+    let table = |pairs: &[(String, String)]| {
+        pairs
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(name, value)| (name.clone(), serde_json::json!(value)))
+            .collect::<serde_json::Map<_, _>>()
+    };
+    let entry = if tool.target.starts_with("http://") || tool.target.starts_with("https://") {
+        serde_json::json!({ "type": "http", "url": tool.target, "headers": table(&tool.env) })
+    } else {
+        let mut words = pm_acp::command_words(&tool.target).into_iter();
+        serde_json::json!({
+            "command": words.next().unwrap_or_default(),
+            "args": words.collect::<Vec<_>>(),
+            "env": table(&tool.env),
+        })
+    };
+    serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": { tool.name.clone(): entry } }))
+        .unwrap_or_default()
+}
+
+/// The menu of a server of the list showing, when one is open.
+pub fn server_menu(state: &WorkspaceState) -> Option<Node> {
+    let open = state.settings_servers.menu?;
+    let menu = Menu::new(open.at.0, open.at.1);
+    Some(match state.settings? {
+        Section::McpServers => {
+            let tool = state.settings_servers.tools.get(open.index)?;
+            menu.item(
+                if tool.enabled { "Disable" } else { "Enable" },
+                None,
+                SETTINGS_MENU_TOGGLE,
+                false,
+            )
+            .item("Edit…", None, SETTINGS_MENU_EDIT, false)
+            .separator()
+            .item("Copy Configuration (JSON)", None, SETTINGS_MENU_COPY, false)
+            .item(
+                "Open Website",
+                None,
+                SETTINGS_MENU_WEBSITE,
+                tool.website.is_empty(),
+            )
+            .separator()
+            .item("Uninstall", None, SETTINGS_MENU_REMOVE, false)
+            .build()
+        }
+        _ => menu
+            .item("Edit…", None, SETTINGS_MENU_EDIT, false)
+            .separator()
+            .item("Remove", None, SETTINGS_MENU_REMOVE, false)
+            .build(),
+    })
+}
+
 /// Whether `id` names a box of the pages.
 pub(crate) fn is_form_field(id: FocusId) -> bool {
     [
@@ -449,10 +631,10 @@ fn summary(section: Section) -> &'static str {
             "Tailor how agents work in your projects: the agents that can be started, and the tools they are given."
         }
         Section::AgentServers => {
-            "The agents that can be started, and the ones you add. Any program that speaks the Agent Client Protocol can be added."
+            "Agents that speak the Agent Client Protocol. The editor starts them in a worktree and talks to them over it."
         }
         Section::McpServers => {
-            "Tool servers every new session is started with. Give a command to run, or the address of one that is already running."
+            "An open standard that lets AI use external tools and services. MCP servers provide tools for file operations, databases, APIs, and more."
         }
     }
 }
@@ -466,7 +648,19 @@ fn paragraph(content: &str) -> Node {
     )
 }
 
-/// What the right side of the panel holds under the heading of `section`.
+/// The breadcrumb over the title of `section`'s page, and the title.
+fn page_title(section: Section) -> Node {
+    node()
+        .styles([flex(), flex_col(), gap(1), flex_none()])
+        .children(
+            section
+                .parent()
+                .map(|parent| line(parent.title(), 12, 1.4, Role::Muted)),
+        )
+        .child(line(section.title(), 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
+}
+
+/// What the right side of the panel holds: the title of `section` and what it is for, then its settings.
 pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
     let page = node().styles([
         flex(),
@@ -475,17 +669,32 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
         min_w_px(0),
         min_h(0),
         overflow_hidden(),
-        gap(4),
-        p(6),
-        bg(Role::Background),
+        px(8),
+        pm_style::pb(6),
     ]);
+    let inner = node().styles([
+        flex(),
+        flex_col(),
+        gap(4),
+        flex_none(),
+        w_full(),
+        max_w_px(PAGE_WIDTH),
+        mx_auto(),
+    ]);
+    let inner = inner.child(page_title(section));
     match section {
-        Section::General => page,
-        Section::Agents => page.child(paragraph(summary(section))).children(
-            [Section::AgentServers, Section::McpServers]
-                .map(|inner| card(inner, count_of(state, inner))),
+        Section::General => page.child(inner),
+        Section::Agents => page.child(
+            inner
+                .child(paragraph(summary(section)))
+                .child(line("Explore", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
+                .children(
+                    [Section::AgentServers, Section::McpServers]
+                        .map(|part| card(part, count_of(state, part))),
+                ),
         ),
-        Section::AgentServers | Section::McpServers => list(state, section, page)
+        Section::AgentServers | Section::McpServers => page
+            .child(list(state, section, inner))
             .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
     }
 }
@@ -502,6 +711,29 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
     }
 }
 
+/// A box with an outline around rows that have a hairline between each and the next.
+fn boxed(rows: Vec<Node>) -> Node {
+    let last = rows.len().saturating_sub(1);
+    node()
+        .styles([
+            flex(),
+            flex_col(),
+            flex_none(),
+            rounded(Radius::Lg),
+            border(),
+            border_color(Role::Border),
+            bg(Role::Surface),
+            overflow_hidden(),
+        ])
+        .children(rows.into_iter().enumerate().map(|(place, row)| {
+            if place == last {
+                row
+            } else {
+                row.styles([border_b(), border_color(Role::Border)])
+            }
+        }))
+}
+
 /// A card of the overview: what `section` is called and for, and how much is set in it; pressing it opens it.
 fn card(section: Section, count: String) -> Node {
     Tile::new(section.id())
@@ -509,6 +741,7 @@ fn card(section: Section, count: String) -> Node {
         .styles([
             flex_col(),
             items_start(),
+            flex_none(),
             h(20),
             p(4),
             gap(1),
@@ -534,55 +767,97 @@ fn card(section: Section, count: String) -> Node {
         ))
 }
 
-/// The page of one list: what it is for, the button that adds to it, the search box, the form while one is open, the servers that are installed and what the registry offers.
+/// A row of a boxed list: its contents side by side, with room around them.
+fn flat_row() -> Node {
+    node().styles([
+        flex(),
+        items_center(),
+        justify_between(),
+        gap(3),
+        flex_none(),
+        px(3),
+        pm_style::py(3),
+    ])
+}
+
+/// The page of one list: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
 fn list(state: &WorkspaceState, section: Section, page: Node) -> Node {
-    let form = state.settings_servers.form.as_ref();
+    let settings = &state.settings_servers;
+    let form = settings.form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
-    let mut page = page
-        .child(
-            node()
-                .styles([flex(), items_center(), justify_between()])
-                .child(
-                    node()
-                        .styles([flex_1(), min_w_px(0)])
-                        .child(paragraph(summary(section))),
-                )
-                .child(
-                    Button::new(
-                        match section {
-                            Section::AgentServers => "Add agent",
-                            _ => "Add server",
-                        },
-                        SETTINGS_ADD,
-                    )
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .with_icon(IconName::Plus)
-                    .disabled(adding)
-                    .build(),
-                ),
-        )
-        .child(search_box(state, section));
+    let needle = state.needle();
+    let mut page = page.child(paragraph(summary(section)));
+    if section == Section::McpServers {
+        page = page.child(
+            Button::new("Learn more about MCP servers", SETTINGS_DOCS)
+                .variant(Variant::Ghost)
+                .size(Size::Sm)
+                .build()
+                .styles([flex_none(), self_start()]),
+        );
+    }
+    let mut page = page.child(search_box(state, section));
     if let (Some(form), true) = (form, adding) {
         page = page.child(form_node(form, section));
     }
-    let needle = state.needle();
     let installed: Vec<Node> = installed_rows(state, section, &needle)
         .into_iter()
-        .map(|(title, detail, editable)| {
-            let editing = form.is_some_and(|form| form.index == editable);
-            match (editable, editing, form) {
-                (Some(_), true, Some(form)) => form_node(form, section),
-                _ => row(title, detail, editable),
+        .map(|shown| {
+            let editing =
+                form.is_some_and(|form| shown.place.is_some() && form.index == shown.place);
+            match (editing, form) {
+                (true, Some(form)) => form_node(form, section),
+                _ => row(shown),
             }
         })
         .collect();
     let offers = offered_rows(state, section, &needle);
-    page.child(heading("Installed", installed.len()))
-        .children(installed)
-        .child(heading("Available", offers.rows.len()))
-        .children(offers.rows)
-        .children(offers.status.map(|status| note(&status)))
+    let add_label = match section {
+        Section::AgentServers => "Add Agent",
+        _ => "Add Server",
+    };
+    page = page.child(
+        node()
+            .styles([flex(), items_center(), justify_between(), flex_none()])
+            .child(heading(
+                "Installed",
+                installed.len(),
+                !settings.installed_folded,
+                SETTINGS_TOGGLE_INSTALLED,
+            ))
+            .child(
+                Button::new(add_label, SETTINGS_ADD)
+                    .variant(Variant::Outline)
+                    .size(Size::Sm)
+                    .disabled(adding)
+                    .build(),
+            ),
+    );
+    if !settings.installed_folded {
+        page = page.child(if installed.is_empty() {
+            note("Nothing installed matches.")
+        } else {
+            boxed(installed)
+        });
+    }
+    page = page
+        .child(heading(
+            "Available",
+            offers.rows.len(),
+            !settings.available_folded,
+            SETTINGS_TOGGLE_AVAILABLE,
+        ))
+        .child(note(match section {
+            Section::AgentServers => "Agents from the Agent Client Protocol registry.",
+            _ => "Featured MCP servers from the marketplace. Search to find more.",
+        }));
+    if !settings.available_folded {
+        if !offers.rows.is_empty() {
+            page = page.child(boxed(offers.rows));
+        }
+        page = page.children(offers.status.map(|status| note(&status)));
+    }
+    page
 }
 
 /// The box the list is narrowed with, and, for tool servers, the registry searched with.
@@ -592,57 +867,128 @@ fn search_box(state: &WorkspaceState, section: Section) -> Node {
         _ => "Search MCP servers, then press Enter to search the registry",
     };
     Input::new(&state.settings_servers.search, SETTINGS_SEARCH)
-        .size(input::Size::Sm)
         .placeholder(placeholder)
         .build()
         .styles([flex_none()])
 }
 
-/// The name of a list over its rows, with how many there are.
-fn heading(title: &str, count: usize) -> Node {
+/// The name of a list that opens and folds it, with how many rows it holds.
+fn heading(title: &str, count: usize, open: bool, toggle: FocusId) -> Node {
+    let chevron = if open {
+        IconName::ChevronDown
+    } else {
+        IconName::ChevronRight
+    };
     node()
-        .styles([flex(), items_center(), gap(2), flex_none()])
+        .styles([
+            flex(),
+            items_center(),
+            gap(2),
+            flex_none(),
+            h(9),
+            cursor_pointer(),
+        ])
+        .focusable(toggle)
+        .child(glyph(chevron, 4.0, Role::Muted))
         .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-        .child(line(count.to_string(), 12, 1.4, Role::Muted))
+        .child(
+            node()
+                .styles([flex(), px(2), rounded_full(), bg(Role::SurfaceSelected)])
+                .child(line(count.to_string(), 12, 1.4, Role::Muted)),
+        )
 }
 
 /// A line that only says something.
 fn note(message: &str) -> Node {
-    line(message, 12, 1.4, Role::Muted)
+    line(message, 12, 1.4, Role::Muted).styles([flex_none()])
 }
 
-/// The rows of the servers already there: for the agents the ones the app ships, which cannot be changed, then the ones added by hand; each as its name, what runs it and the place of the ones that can be changed.
-fn installed_rows(
-    state: &WorkspaceState,
-    section: Section,
-    needle: &str,
-) -> Vec<(String, String, Option<usize>)> {
-    let matching = |name: &str, detail: &str| {
+/// How a tool server is reached, in the words of its row: what kind it is, where, and how many variables it takes.
+fn reach_of(target: &str, variables: usize) -> String {
+    let kind = if target.starts_with("http://") || target.starts_with("https://") {
+        "http"
+    } else {
+        "command"
+    };
+    match variables {
+        0 => format!("{kind} · {target}"),
+        1 => format!("{kind} · {target} · 1 variable"),
+        many => format!("{kind} · {target} · {many} variables"),
+    }
+}
+
+/// One server already there, as its row shows it.
+struct InstalledRow {
+    /// What it is called.
+    title: String,
+    /// How it stands, as small labels beside its name.
+    badges: Vec<(&'static str, Role)>,
+    /// What it is for.
+    description: String,
+    /// What runs it, in the code font.
+    detail: String,
+    /// Its place in the list of the ones that can be changed, when it can be.
+    place: Option<usize>,
+    /// Whether it is switched on, when it can be switched.
+    enabled: Option<bool>,
+}
+
+/// The rows of the servers already there: for the agents the ones the app ships, which cannot be changed, then the ones added by hand.
+fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec<InstalledRow> {
+    let matching = |row: &InstalledRow| {
         needle.is_empty()
-            || name.to_lowercase().contains(needle)
-            || detail.to_lowercase().contains(needle)
+            || row.title.to_lowercase().contains(needle)
+            || row.detail.to_lowercase().contains(needle)
+            || row.description.to_lowercase().contains(needle)
     };
     match section {
         Section::AgentServers => AGENTS
             .iter()
-            .map(|agent| (agent.name.to_owned(), "Built in".to_owned(), None))
+            .map(|agent| InstalledRow {
+                title: agent.name.to_owned(),
+                badges: vec![("Built in", Role::Muted)],
+                description: String::new(),
+                detail: pm_acp::command_line(
+                    std::iter::once(agent.program).chain(agent.arguments.iter().copied()),
+                ),
+                place: None,
+                enabled: None,
+            })
             .chain(
                 state
                     .settings_servers
                     .agents
                     .iter()
                     .enumerate()
-                    .map(|(index, agent)| (agent.name.clone(), agent.command.clone(), Some(index))),
+                    .map(|(index, agent)| InstalledRow {
+                        title: agent.name.clone(),
+                        badges: vec![("Custom", Role::Muted)],
+                        description: String::new(),
+                        detail: agent.command.clone(),
+                        place: Some(index),
+                        enabled: None,
+                    }),
             )
-            .filter(|(name, detail, _)| matching(name, detail))
+            .filter(matching)
             .collect(),
         _ => state
             .settings_servers
             .tools
             .iter()
             .enumerate()
-            .map(|(index, tool)| (tool.name.clone(), tool.target.clone(), Some(index)))
-            .filter(|(name, detail, _)| matching(name, detail))
+            .map(|(index, tool)| InstalledRow {
+                title: tool.name.clone(),
+                badges: if tool.enabled {
+                    Vec::new()
+                } else {
+                    vec![("Disabled", Role::Subtle)]
+                },
+                description: tool.description.clone(),
+                detail: reach_of(&tool.target, tool.env.len()),
+                place: Some(index),
+                enabled: Some(tool.enabled),
+            })
+            .filter(matching)
             .collect(),
     }
 }
@@ -655,7 +1001,7 @@ struct Offered {
     status: Option<String>,
 }
 
-/// The rows of what the registry offers that is not installed yet and matches `needle`.
+/// The rows of what the registry offers that matches `needle`, with the ones already installed marked.
 fn offered_rows(state: &WorkspaceState, section: Section, needle: &str) -> Offered {
     let settings = &state.settings_servers;
     let (rows, loading, error): (Vec<Node>, bool, &Option<String>) = match section {
@@ -665,7 +1011,6 @@ fn offered_rows(state: &WorkspaceState, section: Section, needle: &str) -> Offer
                 .items
                 .iter()
                 .enumerate()
-                .filter(|(_, offered)| !installed_agent(settings, offered))
                 .filter(|(_, offered)| {
                     needle.is_empty()
                         || offered.name.to_lowercase().contains(needle)
@@ -673,7 +1018,14 @@ fn offered_rows(state: &WorkspaceState, section: Section, needle: &str) -> Offer
                         || offered.description.to_lowercase().contains(needle)
                 })
                 .map(|(index, offered)| {
-                    offer(index, &offered.name, &offered.description, "Install")
+                    offer(
+                        index,
+                        &offered.name,
+                        &offered.description,
+                        &how_run(offered),
+                        "Install",
+                        installed_agent(settings, offered),
+                    )
                 })
                 .collect(),
             settings.registry.loading,
@@ -685,15 +1037,20 @@ fn offered_rows(state: &WorkspaceState, section: Section, needle: &str) -> Offer
                 .items
                 .iter()
                 .enumerate()
-                .filter(|(_, offered)| {
-                    !settings
+                .map(|(index, offered)| {
+                    let installed = settings
                         .tools
                         .iter()
-                        .any(|tool| tool.name == offered.name && tool.target == offered.target)
-                })
-                .map(|(index, offered)| {
+                        .any(|tool| tool.name == offered.name && tool.target == offered.target);
                     let button = if offered.asks { "Configure" } else { "Install" };
-                    offer(index, &offered.title, &offered.description, button)
+                    offer(
+                        index,
+                        &offered.title,
+                        &offered.description,
+                        "",
+                        button,
+                        installed,
+                    )
                 })
                 .collect(),
             settings.listings.loading,
@@ -720,56 +1077,147 @@ fn installed_agent(settings: &ServerSettings, offered: &RegistryAgent) -> bool {
     })
 }
 
-/// One row of what a registry offers: its name over what it is, and the button that installs it.
-fn offer(index: usize, title: &str, description: &str, action: &str) -> Node {
-    Tile::strip(14)
-        .build()
-        .styles([justify_between(), gap(3), flex_none(), bg(Role::Surface)])
+/// One row of what a registry offers: its name over what it is, and the button that installs it, or says that it is installed.
+fn offer(
+    index: usize,
+    title: &str,
+    description: &str,
+    how: &str,
+    action: &str,
+    installed: bool,
+) -> Node {
+    let button = if installed {
+        Button::new("Installed", FocusId(SETTINGS_INSTALL_BASE + index as u64))
+            .variant(Variant::Outline)
+            .size(Size::Sm)
+            .disabled(true)
+    } else {
+        Button::new(action, FocusId(SETTINGS_INSTALL_BASE + index as u64)).size(Size::Sm)
+    };
+    flat_row()
         .child(
             node()
-                .styles([flex(), flex_col(), flex_1(), min_w_px(0), overflow_hidden()])
+                .styles([
+                    flex(),
+                    flex_col(),
+                    gap(1),
+                    flex_1(),
+                    min_w_px(0),
+                    overflow_hidden(),
+                ])
                 .child(line(title, 13, 1.4, Role::Text).styles([pm_style::font_medium()]))
                 .child(clipped(description, 12, Role::Muted)),
         )
         .child(
-            Button::new(action, FocusId(SETTINGS_INSTALL_BASE + index as u64))
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .build(),
+            node()
+                .styles([flex(), items_center(), gap(3), flex_none()])
+                .children(
+                    (!how.is_empty())
+                        .then(|| line(how, 11, 1.5, Role::Subtle).styles([pm_style::font_mono()])),
+                )
+                .child(button.build()),
         )
 }
 
-/// One row of a list: a name over what it runs, and, for a server that can be changed, the buttons that change it.
-fn row(title: String, detail: String, editable: Option<usize>) -> Node {
-    let strip = Tile::strip(14)
-        .build()
-        .styles([justify_between(), gap(3), flex_none(), bg(Role::Surface)])
+/// What an agent of the registry is, and how it is run, in a few words: its version and the program that runs it.
+fn how_run(offered: &RegistryAgent) -> String {
+    let program = pm_acp::command_words(&offered.command)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    match offered.version.is_empty() {
+        true => format!("runs through {program}"),
+        false => format!("{} · runs through {program}", offered.version),
+    }
+}
+
+/// A small label in a rounded wash, in `tone`.
+fn badge(label: &str, tone: Role) -> Node {
+    node()
+        .styles([
+            flex(),
+            flex_none(),
+            px(2),
+            rounded_full(),
+            bg(Role::SurfaceSelected),
+        ])
+        .child(line(label, 11, 1.5, tone))
+}
+
+/// A switch that is on while `on` is true, answering to `id`.
+fn switch(on: bool, id: FocusId) -> Node {
+    let knob = node().styles([size(4), rounded_full(), bg(Role::Text)]);
+    let track = node()
+        .styles([
+            flex(),
+            items_center(),
+            flex_none(),
+            w_px(36),
+            h(5),
+            p(0.5),
+            rounded_full(),
+            cursor_pointer(),
+            bg(if on { Role::Success } else { Role::Border }),
+        ])
+        .focusable(id);
+    if on {
+        track.styles([justify_end()]).child(knob)
+    } else {
+        track.child(knob)
+    }
+}
+
+/// One row of a list: a name with its labels over what it is for and what runs it, and, for a server that can be changed, its switch and menu.
+fn row(shown: InstalledRow) -> Node {
+    let dim = shown.enabled == Some(false);
+    let mut text_column = node()
+        .styles([
+            flex(),
+            flex_col(),
+            gap(1),
+            flex_1(),
+            min_w_px(0),
+            overflow_hidden(),
+        ])
         .child(
             node()
-                .styles([flex(), flex_col(), flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(title, 13, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .child(clipped(detail, 12, Role::Muted)),
-        );
-    let Some(index) = editable else {
-        return strip;
-    };
-    strip.child(
-        node()
-            .styles([flex(), items_center(), gap(1), flex_none()])
-            .child(
-                Button::icon(IconName::Pencil, FocusId(SETTINGS_EDIT_BASE + index as u64))
-                    .size(Size::Icon)
-                    .build(),
-            )
-            .child(
-                Button::icon(
-                    IconName::Trash,
-                    FocusId(SETTINGS_REMOVE_BASE + index as u64),
+                .styles([flex(), items_center(), gap(2)])
+                .child(
+                    line(
+                        shown.title,
+                        13,
+                        1.4,
+                        if dim { Role::Muted } else { Role::Text },
+                    )
+                    .styles([pm_style::font_medium()]),
                 )
+                .children(
+                    shown
+                        .badges
+                        .into_iter()
+                        .map(|(label, tone)| badge(label, tone)),
+                ),
+        );
+    if !shown.description.is_empty() {
+        text_column = text_column.child(clipped(shown.description, 12, Role::Muted));
+    }
+    let mut actions = node().styles([flex(), items_center(), gap(2), flex_none()]);
+    if let (Some(place), Some(on)) = (shown.place, shown.enabled) {
+        actions = actions.child(switch(on, FocusId(SETTINGS_SWITCH_BASE + place as u64)));
+    }
+    if let Some(place) = shown.place {
+        actions = actions.child(
+            Button::icon(IconName::More, FocusId(SETTINGS_MORE_BASE + place as u64))
                 .size(Size::Icon)
                 .build(),
-            ),
-    )
+        );
+    }
+    flat_row()
+        .child(
+            text_column
+                .child(clipped(shown.detail, 11, Role::Subtle).styles([pm_style::font_mono()])),
+        )
+        .child(actions)
 }
 
 /// The form: a labelled box for each part of a server, and the buttons that keep it or put it away.

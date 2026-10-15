@@ -34,6 +34,20 @@ pub struct McpServer {
     pub target: String,
     /// The environment it is started with, or the headers it is sent when it is an address.
     pub env: Vec<(String, String)>,
+    /// What it is for, where its publisher says.
+    #[serde(default)]
+    pub description: String,
+    /// Where its publisher describes it, when they say.
+    #[serde(default)]
+    pub website: String,
+    /// Whether agents are given it; a server switched off stays listed.
+    #[serde(default = "enabled")]
+    pub enabled: bool,
+}
+
+/// Servers are given to agents unless they were switched off.
+fn enabled() -> bool {
+    true
 }
 
 /// An agent the public registry offers, as the command that runs it.
@@ -74,6 +88,9 @@ pub struct ToolListing {
     pub inputs: Vec<String>,
     /// Whether installing it has to ask for something first.
     pub asks: bool,
+    /// Where its publisher describes it, when they say.
+    #[serde(default)]
+    pub website: String,
 }
 
 /// A named login of an agent: which agent, its id and what the reader calls it.
