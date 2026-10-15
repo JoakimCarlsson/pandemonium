@@ -45,11 +45,11 @@ use crate::view::View;
 use crate::work::Work;
 use crate::{keys, scene};
 
-/// The name the desktop knows the application by.
-#[cfg(target_os = "linux")]
 /// How tall the strip of tabs above an open file is, in logical pixels.
 const TABS: f32 = 48.0;
 
+/// The name the desktop knows the application by.
+#[cfg(target_os = "linux")]
 const APP_ID: &str = "pandemonium";
 
 /// Logical width of the window when it opens on a machine that tells nothing of its screens.
