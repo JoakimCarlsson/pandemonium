@@ -38,6 +38,39 @@ driver; macOS and Windows build and should work, but get less love.
 
 The protocol between clients and a server is in [docs/protocol.md](docs/protocol.md).
 
+## Agents and accounts
+
+Any agent that speaks ACP can be added under Settings, Agents, Agent Servers:
+a name and the command that starts it in protocol mode. Claude Code, Codex and
+Grok Build are in the list from the start and can be edited or removed like any
+other. Model and mode pickers, slash commands and sign-in come from what the
+agent reports over ACP, so they need nothing from pandemonium.
+
+Every agent can keep more than one login. An agent that has a variable for its
+login folder, such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, is started with that
+variable pointing at the account's folder; the add form takes it as an optional
+box. Any other agent is started with `HOME` set to a folder of its own for the
+account. That folder links to everything in your home folder except the agent's
+own folders, which are found by matching words from its name and command, so
+the agent starts signed out while git, ssh and npm keep working. Skills, rules
+and agents from the agent's own folder are linked in.
+
+Limits:
+
+- Showing who an agent is signed in as, and sharing a new account's setup,
+  work only for the agents whose files pandemonium knows: Claude Code, Codex,
+  Grok Build and, for sharing only, Copilot. Other agents show "Account N".
+- An agent that keeps its config under a name unrelated to its own name will
+  see your normal login folder. Give it its login folder variable in the add
+  form.
+- Separate accounts for agents without a login folder variable work on Linux
+  and macOS only. On Windows they need `USERPROFILE` and `AppData` instead of
+  `HOME`, junctions instead of symlinks and a Windows terminal for logins that
+  need one, none of which is built. There the agents run, but every account
+  shares the one login.
+- Logins that need a terminal look for a Linux terminal emulator, so they do
+  not open on macOS or Windows.
+
 ## Installing
 
 Prebuilt binaries for Linux, macOS and Windows are attached to each

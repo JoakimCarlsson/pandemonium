@@ -5,24 +5,15 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::agent::Agent;
+use crate::product::Product;
 
 /// The home folder in use for each agent, by the agent's id; an agent that has none uses its own default.
 static ACTIVE: Mutex<Option<HashMap<&'static str, PathBuf>>> = Mutex::new(None);
 
-/// The variable that moves an agent's config and login to another folder, when it has one.
-fn variable(agent: Agent) -> Option<&'static str> {
-    match agent.id {
-        "claude-code" => Some("CLAUDE_CONFIG_DIR"),
-        "codex" => Some("CODEX_HOME"),
-        "grok" => Some("GROK_HOME"),
-        _ => None,
-    }
-}
-
 impl Agent {
-    /// Whether the agent can keep more than one login.
+    /// Whether the agent can keep more than one login, which every agent can: one that has no variable for its login folder is run in a home folder of its own.
     pub fn has_accounts(self) -> bool {
-        variable(self).is_some()
+        true
     }
 
     /// Makes every agent started from now on use `home` for its config and login, or its default one when there is none.
@@ -45,9 +36,9 @@ impl Agent {
         ACTIVE.lock().ok()?.as_ref()?.get(self.id).cloned()
     }
 
-    /// The environment to start the agent with: its home variable pointing at the folder in use.
+    /// The environment to start the agent with: its home variable pointing at the folder in use, or, when it has none, the home folder itself.
     pub(crate) fn environment(self) -> Option<(&'static str, PathBuf)> {
-        Some((variable(self)?, self.home()?))
+        Some((self.home.unwrap_or("HOME"), self.home()?))
     }
 
     /// Signs the agent in under the home folder in use, by the first way it offers, and returns once that is over.
@@ -66,8 +57,8 @@ impl Agent {
 
 /// What of an agent's own folder an account folder shares, so that a new account has the skills and plugins the reader already has.
 fn shared(agent: Agent) -> &'static [&'static str] {
-    match agent.id {
-        "claude-code" => &[
+    match agent.product() {
+        Some(Product::Claude) => &[
             "CLAUDE.md",
             "AGENTS.md",
             "rules",
@@ -80,7 +71,7 @@ fn shared(agent: Agent) -> &'static [&'static str] {
             "plugins/cache",
             "plugins/marketplaces",
         ],
-        "codex" => &[
+        Some(Product::Codex) => &[
             "AGENTS.md",
             "AGENTS.override.md",
             "skills",
@@ -89,7 +80,7 @@ fn shared(agent: Agent) -> &'static [&'static str] {
             "plugins/cache",
             "plugins/marketplaces",
         ],
-        "grok" => &[
+        Some(Product::Grok) => &[
             "AGENTS.md",
             "GROK.md",
             "skills",
@@ -100,20 +91,55 @@ fn shared(agent: Agent) -> &'static [&'static str] {
             "plugins",
             "installed-plugins",
         ],
-        _ => &[],
+        Some(Product::Copilot) => &[
+            "agents",
+            "skills",
+            "instructions",
+            "copilot-instructions.md",
+            "installed-plugins",
+        ],
+        None => &[],
+    }
+}
+
+/// Puts into an account folder what the agent needs to sign in on its own and keep its login there, unless the folder has it already.
+fn seed(agent: Agent, home: &std::path::Path) {
+    let (file, contents) = match agent.product() {
+        Some(Product::Claude) => ("settings.json", r#"{"forceLoginMethod":"claudeai"}"#),
+        Some(Product::Codex) => ("config.toml", "cli_auth_credentials_store = \"file\"\n"),
+        _ => return,
+    };
+    let path = home.join(file);
+    if !path.exists() {
+        let _ = std::fs::write(path, contents);
     }
 }
 
 /// Links what an agent's own folder shares into the account folder `home`, leaving what is already there.
 fn share_setup(agent: Agent, home: &std::path::Path) {
-    let Some(source) = std::env::home_dir().map(|own| match agent.id {
-        "codex" => std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| own.join(".codex")),
-        "grok" => std::env::var_os("GROK_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| own.join(".grok")),
-        _ => own.join(".claude"),
+    seed(agent, home);
+    if agent.home.is_none() {
+        crate::overlay::build(agent, home);
+        return;
+    }
+    let Some(source) = std::env::home_dir().and_then(|own| match agent.product() {
+        Some(Product::Codex) => Some(
+            std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| own.join(".codex")),
+        ),
+        Some(Product::Grok) => Some(
+            std::env::var_os("GROK_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| own.join(".grok")),
+        ),
+        Some(Product::Copilot) => Some(
+            std::env::var_os("COPILOT_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| own.join(".copilot")),
+        ),
+        Some(Product::Claude) => Some(own.join(".claude")),
+        None => None,
     }) else {
         return;
     };

@@ -129,7 +129,7 @@ impl View {
         }
         state.review = self.review;
         state.terminal = self.terminal;
-        state.agent = self.agent.min(pm_acp::AGENTS.len().saturating_sub(1));
+        state.agent = self.agent.min(state.agent_slots().saturating_sub(1));
         state.prompt = prompt_field(&self.prompt);
         state
     }

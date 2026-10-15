@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pm_acp::{AGENTS, Agent};
+use pm_acp::Agent;
 use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
 use crate::conversation;
@@ -32,9 +32,31 @@ fn saved_list<T: serde::Serialize>(name: &str, list: &[T]) -> Response {
     }
 }
 
-/// The agent whose id is `id`.
-fn agent_named(id: &str) -> Option<Agent> {
-    AGENTS.iter().copied().find(|agent| agent.id == id)
+/// Every agent the server can start: the ones saved, or the ones the app ships and those saved by an earlier version when none were.
+pub(crate) fn saved_agents() -> Vec<pm_protocol::AgentServer> {
+    match stored_list("agents") {
+        Ok(agents) if pm_store::load_text("agents").is_some() => agents,
+        _ => {
+            let mut agents = pm_protocol::builtin_agents();
+            agents.extend(stored_list("agent-servers").unwrap_or_default());
+            agents
+        }
+    }
+}
+
+/// The agent whose id is `id`: one in the list, or one the app ships that was taken out of it, so that sessions it ran keep running.
+pub(crate) fn agent_named(id: &str) -> Option<Agent> {
+    let agents = saved_agents();
+    let record = agents
+        .iter()
+        .find(|record| record.id == id)
+        .cloned()
+        .or_else(|| {
+            pm_protocol::builtin_agents()
+                .into_iter()
+                .find(|record| record.id == id)
+        })?;
+    record.agent()
 }
 
 /// The folder `path` names on this machine, with a leading `~` taken to be the reader's home folder.
@@ -81,7 +103,10 @@ fn terminal_done(found: bool, terminal: u64) -> Response {
 
 /// Points every agent at the folder of the login in use for it, or at its own when none is.
 fn apply_accounts(logins: &[pm_protocol::Login], in_use: &[(String, String)]) {
-    for agent in AGENTS {
+    for agent in saved_agents()
+        .iter()
+        .filter_map(|record| agent_named(&record.id))
+    {
         let home = in_use
             .iter()
             .find(|(owner, _)| owner == agent.id)
@@ -380,11 +405,11 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(()) => Response::Done,
             Err(error) => failed(error.to_string()),
         },
-        Request::AgentServers => match stored_list("agent-servers") {
+        Request::AgentServers => match Ok::<_, String>(saved_agents()) {
             Ok(servers) => Response::AgentServers { servers },
             Err(reason) => failed(reason),
         },
-        Request::SaveAgentServers { servers } => saved_list("agent-servers", &servers),
+        Request::SaveAgentServers { servers } => saved_list("agents", &servers),
         Request::RegistryAgents => match pm_acp::registry_agents() {
             Ok(agents) => Response::RegistryAgents {
                 agents: agents

@@ -30,7 +30,7 @@ pub use pm_components::state::{
     PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, TREE_SCROLL, WorkspaceState,
 };
 
-use pm_components::sample::{AGENTS, Session};
+use pm_components::sample::Session;
 use pm_components::state::{Page, TAB_CHAT, Tab};
 
 /// How much of a window's height the conversation page keeps for something other than the room above the prompt box, in logical pixels.
@@ -105,7 +105,7 @@ fn viewer_tab(viewer: &Viewer, shown: bool) -> Node {
 
 /// The strip above a session: its views, and the button for the terminal.
 fn tabs(state: &WorkspaceState, session: &Session) -> Node {
-    let agent = &AGENTS[session.agent.min(AGENTS.len() - 1)];
+    let agent = state.agent_look(session.agent);
     let mut strip = node()
         .styles([
             flex(),
@@ -119,7 +119,7 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
         ])
         .child(tab(
             IconName::Sparkles,
-            agent.name,
+            &agent.name,
             TAB_CHAT,
             state.tab == Tab::Chat,
         ));

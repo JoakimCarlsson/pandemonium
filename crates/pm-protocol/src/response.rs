@@ -126,7 +126,7 @@ pub enum Response {
         /// Each choice as agent, setting and value.
         choices: Vec<(String, String, String)>,
     },
-    /// The agents the reader added by hand.
+    /// The agents the server can start.
     AgentServers {
         /// Every agent, in the order they are kept.
         servers: Vec<crate::AgentServer>,

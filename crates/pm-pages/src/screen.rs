@@ -40,6 +40,14 @@ impl Screen {
         Self::Workspace(WorkspaceState::new(&projects))
     }
 
+    /// The screen listing `agents` as the ones that can be started.
+    pub fn with_agent_list(self, agents: Vec<pm_protocol::AgentServer>) -> Self {
+        match self {
+            Self::Onboarding(state) => Self::Onboarding(state.listing(&agents)),
+            Self::Workspace(state) => Self::Workspace(state.with_agent_servers(agents)),
+        }
+    }
+
     /// The screen with what the reader chose for the agents' settings before.
     pub fn with_choices(self, choices: Vec<(String, String, String)>) -> Self {
         match self {
@@ -740,6 +748,19 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery_for(host, agent, found)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen holding the settings the agent `id` on the machine `host` offers, while the workspace is showing.
+    pub fn with_discovery_of(
+        self,
+        host: Option<String>,
+        id: &str,
+        found: pm_acp::Discovery,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_discovery_of(host, id, found)),
             onboarding => onboarding,
         }
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use pm_acp::{AGENTS, Login, Standing};
+use pm_acp::{Login, Standing};
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::diff::gutter_of;
@@ -123,8 +123,10 @@ pub struct App {
     saved: Option<Vec<String>>,
     /// The choices for the agents' settings last written to disk, so only changes are written.
     saved_choices: Vec<pm_store::Choice>,
-    /// The logins each agent last offered.
-    logins: [Vec<Login>; AGENTS.len()],
+    /// The agents the server can start, which onboarding checks.
+    agents: Vec<pm_protocol::AgentServer>,
+    /// The logins each agent last offered, in the order of `agents`.
+    logins: Vec<Vec<Login>>,
     /// The agents that run, and the work done for them.
     work: Work,
     /// What was last written as the view, which is what the window opened with until it changes.
@@ -155,8 +157,14 @@ impl Default for App {
         let mut work = Work::new();
         let opened = work.bootstrap();
         let connected = opened.is_some();
-        let (saved, choices, logins, in_use) = match opened {
-            Some(held) => (held.projects, held.choices, held.logins, held.in_use),
+        let (saved, choices, logins, in_use, agents) = match opened {
+            Some(held) => (
+                held.projects,
+                held.choices,
+                held.logins,
+                held.in_use,
+                held.agents,
+            ),
             None => {
                 let (logins, in_use) = pm_store::load_accounts();
                 (
@@ -164,6 +172,7 @@ impl Default for App {
                     pm_store::load_choices(),
                     logins,
                     in_use,
+                    pm_protocol::builtin_agents(),
                 )
             }
         };
@@ -171,9 +180,10 @@ impl Default for App {
         let screen = saved
             .as_deref()
             .map_or_else(Screen::default, Screen::opened)
+            .with_agent_list(agents.clone())
             .with_choices(choices.clone())
             .with_accounts(logins, in_use);
-        let screen = AGENTS
+        let screen = agents
             .iter()
             .enumerate()
             .fold(
@@ -233,7 +243,8 @@ impl Default for App {
             project_press: None,
             project_dragging: false,
             saved_choices: choices,
-            logins: Default::default(),
+            logins: vec![Vec::new(); agents.len()],
+            agents,
             work,
             autofocused: false,
             focus_terminal: false,
@@ -495,7 +506,12 @@ impl App {
     /// Finds out where every agent stands, each on a thread of its own, since
     /// starting one can take a while.
     fn check_agents(&self) {
-        for (index, agent) in AGENTS.iter().copied().enumerate() {
+        for (index, agent) in self
+            .agents
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| Some((index, record.agent()?)))
+        {
             let reporter = self.reporter.clone();
             std::thread::spawn(move || {
                 let _ = reporter.send((index, agent.probe()));
@@ -506,7 +522,7 @@ impl App {
     /// Does what the row of the agent at `index` offers: signs it in,
     /// installs it or looks at it again, and reports where it ends up.
     fn agent_action(&mut self, index: usize) {
-        let Some(agent) = AGENTS.get(index).copied() else {
+        let Some(agent) = self.agents.get(index).and_then(|record| record.agent()) else {
             return;
         };
         let Some(status) = self.model.read(|screen| screen.agent(index).cloned()) else {

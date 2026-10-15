@@ -85,13 +85,6 @@ pub enum AgentStatus {
     Failed(String),
 }
 
-/// The agents onboarding offers, in the order the app lists them.
-const AGENTS: [(IconName, &str); 3] = [
-    (IconName::Sparkles, "Claude Code"),
-    (IconName::Terminal, "Codex"),
-    (IconName::Zap, "Grok Build"),
-];
-
 /// A step of onboarding.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Step {
@@ -134,7 +127,9 @@ pub struct OnboardingState {
     /// The projects added, in the order they were added.
     pub projects: Vec<Project>,
     /// Where each of the agents stands.
-    pub agents: [AgentStatus; 3],
+    pub agents: Vec<AgentStatus>,
+    /// The glyph and name of each of them, in the order the server lists them.
+    pub listed: Vec<(IconName, String)>,
     /// Whether the reader has left onboarding.
     pub finished: bool,
     /// The menu open over a field, and where, if one is.
@@ -148,14 +143,31 @@ impl Default for OnboardingState {
             step: Step::Welcome,
             path: Field::default(),
             projects: Vec::new(),
-            agents: AGENTS.map(|_| AgentStatus::Checking),
+            agents: Vec::new(),
+            listed: Vec::new(),
             finished: false,
             menu: None,
         }
+        .listing(&pm_protocol::builtin_agents())
     }
 }
 
 impl OnboardingState {
+    /// The state listing `agents` to connect, each still being checked.
+    pub fn listing(mut self, agents: &[pm_protocol::AgentServer]) -> Self {
+        self.listed = agents
+            .iter()
+            .map(|agent| {
+                (
+                    pm_components::agent_list::agent_icon(agent),
+                    agent.name.clone(),
+                )
+            })
+            .collect();
+        self.agents = vec![AgentStatus::Checking; agents.len()];
+        self
+    }
+
     /// The state after `action` was pressed.
     pub fn after(mut self, action: FocusId) -> Self {
         match action {
@@ -196,7 +208,8 @@ impl OnboardingState {
     /// Which agent the button `id` acts on, if it is one of theirs.
     pub fn agent_of(id: FocusId) -> Option<usize> {
         let FocusId(id) = id;
-        (id >= AGENT_BASE && id < AGENT_BASE + AGENTS.len() as u64)
+        (AGENT_BASE..AGENT_BASE + 100)
+            .contains(&id)
             .then(|| (id - AGENT_BASE) as usize)
     }
 
@@ -399,7 +412,7 @@ fn agents(state: &OnboardingState) -> Node {
         .child(
             node()
                 .styles([flex(), flex_col(), gap(2), w_full()])
-                .children(AGENTS.iter().zip(&state.agents).enumerate().map(
+                .children(state.listed.iter().zip(&state.agents).enumerate().map(
                     |(index, ((icon, name), status))| {
                         let (detail, action) = match status {
                             AgentStatus::Checking => ("Checking…".to_owned(), None),
@@ -416,7 +429,7 @@ fn agents(state: &OnboardingState) -> Node {
                         Tile::strip(14).build().children([
                             glyph(*icon, 5.0, Role::Muted),
                             node().styles([flex(), flex_col(), flex_1()]).children([
-                                line(*name, 14, 1.4, Role::Text),
+                                line(name, 14, 1.4, Role::Text),
                                 line(detail, 12, 1.4, Role::Subtle),
                             ]),
                             match (action, status) {

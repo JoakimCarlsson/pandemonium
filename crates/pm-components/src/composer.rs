@@ -560,11 +560,7 @@ pub fn composer(
             open.then(|| location_menu(state)),
         ));
     }
-    if state.on_this_computer()
-        && pm_acp::AGENTS
-            .get(state.agent)
-            .is_some_and(|agent| agent.has_accounts())
-    {
+    if state.on_this_computer() && state.agent_has_accounts(state.agent) {
         let account = state.account().unwrap_or("Account");
         let open = state.picker == Some(Picker::Account);
         let label = account.to_owned();

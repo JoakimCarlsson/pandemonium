@@ -199,22 +199,6 @@ pub fn account_directory(agent: &str, id: &str) -> io::Result<PathBuf> {
             builder.mode(0o700);
         }
         builder.create(&folder)?;
-        seed(agent, &folder)?;
     }
     Ok(folder)
-}
-
-/// Puts into a new account folder what the agent needs to sign in on its own and keep its login there.
-fn seed(agent: &str, folder: &std::path::Path) -> io::Result<()> {
-    match agent {
-        "claude-code" => fs::write(
-            folder.join("settings.json"),
-            r#"{"forceLoginMethod":"claudeai"}"#,
-        ),
-        "codex" => fs::write(
-            folder.join("config.toml"),
-            "cli_auth_credentials_store = \"file\"\n",
-        ),
-        _ => Ok(()),
-    }
 }

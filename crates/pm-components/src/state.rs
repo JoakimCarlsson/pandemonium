@@ -18,7 +18,7 @@ use crate::message_menu::{
     MESSAGE_MENU_SELECT_ALL, MessageMenu,
 };
 use crate::project::Project;
-use crate::sample::{AGENTS, Change, Comment, Message, Range, Session, Status, projects, sessions};
+use crate::sample::{Change, Comment, Message, Range, Session, Status, projects, sessions};
 
 /// A prompt holding `text`, which may run to several lines.
 pub fn prompt_field(text: &str) -> Field {
@@ -146,7 +146,7 @@ pub const COMMIT_MESSAGE: FocusId = FocusId(321);
 pub const HISTORY_SEARCH: FocusId = FocusId(326);
 
 /// The first of the chips choosing an agent; the rest follow it.
-pub const AGENT_BASE: u64 = 330;
+pub const AGENT_BASE: u64 = 4000;
 
 /// The first of the rows folding a project; the rest follow it.
 pub const PROJECT_BASE: u64 = 1000;
@@ -289,7 +289,7 @@ pub enum Outgoing {
         /// What to look for; the well known servers when blank.
         query: String,
     },
-    /// Has the server keep these as the agents added by hand.
+    /// Has the server keep these as the agents that can be started.
     SaveAgentServers(Vec<pm_protocol::AgentServer>),
     /// Has the server keep these as the tool servers every agent is started with.
     SaveMcpServers(Vec<pm_protocol::McpServer>),
@@ -852,6 +852,7 @@ impl WorkspaceState {
 
     /// A workspace of `projects` and `sessions`, open on the page for starting work.
     fn with(projects: Vec<Project>, sessions: Vec<Session>) -> Self {
+        let builtin = pm_protocol::builtin_agents();
         let mut state = Self {
             folded: vec![false; projects.len()],
             projects,
@@ -882,7 +883,10 @@ impl WorkspaceState {
             sidebar_scroll: 0.0,
             adder: None,
             settings: None,
-            settings_servers: crate::settings_servers::ServerSettings::default(),
+            settings_servers: crate::settings_servers::ServerSettings {
+                agents: builtin.clone(),
+                ..Default::default()
+            },
             menu: None,
             restoring: None,
             project_menu: None,
@@ -892,7 +896,7 @@ impl WorkspaceState {
             outbox: Vec::new(),
             chat_back: 0.0,
             picker: None,
-            agent_settings: vec![Vec::new(); AGENTS.len()],
+            agent_settings: vec![Vec::new(); builtin.len()],
             touched: Vec::new(),
             choices: Vec::new(),
             location: Location::Local,
@@ -900,7 +904,7 @@ impl WorkspaceState {
             branches: Vec::new(),
             branches_of: None,
             activity: None,
-            agent_commands: vec![Vec::new(); AGENTS.len()],
+            agent_commands: vec![Vec::new(); builtin.len()],
             skills: Vec::new(),
             skills_of: None,
             skill_names: std::collections::HashSet::new(),
@@ -910,8 +914,8 @@ impl WorkspaceState {
             discovered_elsewhere: std::collections::HashMap::new(),
             files: Vec::new(),
             files_of: None,
-            identities: vec![None; AGENTS.len()],
-            defaults: vec![None; AGENTS.len()],
+            identities: vec![None; builtin.len()],
+            defaults: vec![None; builtin.len()],
             logins: Vec::new(),
             in_use: Vec::new(),
             menu_scroll: 0.0,
@@ -1264,7 +1268,7 @@ impl WorkspaceState {
             self.comment_target = None;
             self.git = GitControls::default();
             self.chat_back = 0.0;
-        } else if let Some(index) = position(AGENT_BASE, AGENTS.len()) {
+        } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
         } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
             self.choose(index);

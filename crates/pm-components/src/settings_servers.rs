@@ -1,6 +1,5 @@
 //! The pages of the settings panel that list servers: the agents that can be started and the tool servers every agent is started with, each with the ones added, a form to add or change one, and what the public registry offers.
 
-use pm_acp::{AGENTS, Source};
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::{AgentServer, McpServer, RegistryAgent, ToolListing};
@@ -19,12 +18,12 @@ use crate::input::{self, Input};
 use crate::menu::Menu;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings::{
-    SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_EDIT_BASE, SETTINGS_ENV,
-    SETTINGS_INSTALL_BASE, SETTINGS_MENU_COPY, SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE,
-    SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE, SETTINGS_MORE_BASE, SETTINGS_NAME,
-    SETTINGS_REMOVE_BASE, SETTINGS_SAVE, SETTINGS_SCROLL, SETTINGS_SEARCH, SETTINGS_SEARCH_GO,
-    SETTINGS_SWITCH_BASE, SETTINGS_TARGET, SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED,
-    Section,
+    SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_EDIT_BASE, SETTINGS_ENV, SETTINGS_HOME,
+    SETTINGS_INSTALL_BASE, SETTINGS_INSTALLER, SETTINGS_MENU_COPY, SETTINGS_MENU_EDIT,
+    SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE, SETTINGS_MORE_BASE,
+    SETTINGS_NAME, SETTINGS_PACKAGE, SETTINGS_REMOVE_BASE, SETTINGS_SAVE, SETTINGS_SCROLL,
+    SETTINGS_SEARCH, SETTINGS_SEARCH_GO, SETTINGS_SWITCH_BASE, SETTINGS_TARGET,
+    SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
 };
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tile::Tile;
@@ -87,8 +86,10 @@ impl<T> Offers<T> {
 pub struct ServerSettings {
     /// Whether the sections inside Agents are hidden from the list.
     pub folded: bool,
-    /// The agents added by hand.
+    /// The agents that can be started.
     pub agents: Vec<AgentServer>,
+    /// The agents taken out of the list that sessions still run, kept so those sessions can still be named.
+    pub retired: Vec<AgentServer>,
     /// The tool servers every agent is started with.
     pub tools: Vec<McpServer>,
     /// The agents the registry offers.
@@ -112,9 +113,11 @@ pub struct ServerSettings {
 }
 
 impl ServerSettings {
-    /// What the pages hold as the panel opens: nothing yet, Agents folded, and both registries being asked.
-    pub fn opening() -> Self {
+    /// What the pages hold as the panel opens: the `agents` the window already lists, Agents folded, and both registries being asked.
+    pub fn opening(agents: Vec<AgentServer>, retired: Vec<AgentServer>) -> Self {
         Self {
+            agents,
+            retired,
             folded: true,
             registry: Offers::asking(),
             listings: Offers::asking(),
@@ -143,6 +146,12 @@ pub struct ServerForm {
     target: Field,
     /// The environment it is started with, as `NAME=value` pairs.
     env: Field,
+    /// For an agent, the package the runner fetches when it is not installed.
+    package: Field,
+    /// For an agent, the shell command that installs it when it is missing.
+    installer: Field,
+    /// For an agent, the variable that moves its config and login to another folder.
+    home: Field,
     /// What it is for, kept from the registry listing it was opened from.
     description: String,
     /// Where its publisher describes it, kept from the registry listing it was opened from.
@@ -157,9 +166,20 @@ impl ServerForm {
             name: Field::new(name),
             target: Field::new(target),
             env: Field::new(written(env)),
+            package: Field::default(),
+            installer: Field::default(),
+            home: Field::default(),
             description: String::new(),
             website: String::new(),
         }
+    }
+
+    /// The form with the parts only an agent has filled in from `agent`.
+    fn with_agent(mut self, agent: &AgentServer) -> Self {
+        self.package = Field::new(agent.package.as_deref().unwrap_or_default());
+        self.installer = Field::new(agent.installer.as_deref().unwrap_or_default());
+        self.home = Field::new(agent.home.as_deref().unwrap_or_default());
+        self
     }
 
     /// Whether the form holds enough to be kept.
@@ -208,12 +228,6 @@ fn identifier(name: &str, taken: &[&str]) -> String {
 }
 
 impl WorkspaceState {
-    /// The state with `servers` as the agents added by hand.
-    pub fn with_agent_servers(mut self, servers: Vec<AgentServer>) -> Self {
-        self.settings_servers.agents = servers;
-        self
-    }
-
     /// The state with `servers` as the tool servers every agent is started with.
     pub fn with_mcp_servers(mut self, servers: Vec<McpServer>) -> Self {
         self.settings_servers.tools = servers;
@@ -311,12 +325,10 @@ impl WorkspaceState {
         match self.settings? {
             Section::AgentServers => {
                 let agent = self.settings_servers.agents.get(index)?;
-                Some(ServerForm::holding(
-                    Some(index),
-                    &agent.name,
-                    &agent.command,
-                    &agent.env,
-                ))
+                Some(
+                    ServerForm::holding(Some(index), &agent.name, &agent.command, &agent.env)
+                        .with_agent(agent),
+                )
             }
             Section::McpServers => {
                 let tool = self.settings_servers.tools.get(index)?;
@@ -331,23 +343,18 @@ impl WorkspaceState {
         }
     }
 
-    /// Adds the agent `name` run by `command` to the ones added by hand, and has the server keep them.
-    fn keep_agent(&mut self, name: String, command: String, env: Vec<(String, String)>) {
-        let servers = &mut self.settings_servers.agents;
-        let taken = AGENTS
+    /// Adds `agent` to the list under an id made from its name, and has the server keep it.
+    fn keep_agent(&mut self, mut agent: AgentServer) {
+        let mut servers = self.settings_servers.agents.clone();
+        let taken = servers
             .iter()
-            .map(|agent| agent.id)
-            .chain(servers.iter().map(|agent| agent.id.as_str()))
+            .map(|held| held.id.as_str())
             .collect::<Vec<_>>();
-        let id = identifier(&name, &taken);
-        servers.push(AgentServer {
-            id,
-            name,
-            command,
-            env,
-        });
+        agent.id = identifier(&agent.name, &taken);
+        servers.push(agent);
         self.outbox
             .push(Outgoing::SaveAgentServers(servers.clone()));
+        self.set_agents(servers);
     }
 
     /// Keeps what the form holds in the list showing, and has the server keep the list.
@@ -360,18 +367,38 @@ impl WorkspaceState {
             form.target.text().trim().to_owned(),
             parsed(form.env.text()),
         );
+        let extras = (
+            optional(form.package.text()),
+            optional(form.installer.text()),
+            optional(form.home.text()),
+        );
         match self.settings {
             Some(Section::AgentServers) => {
                 let servers = &mut self.settings_servers.agents;
                 match form.index.filter(|index| *index < servers.len()) {
                     Some(index) => {
+                        let (package, installer, home) = extras;
                         servers[index].name = name;
+                        servers[index].home = home.or_else(|| known_home(&target, &package));
                         servers[index].command = target;
                         servers[index].env = env;
+                        servers[index].package = package;
+                        servers[index].installer = installer;
                         self.outbox
                             .push(Outgoing::SaveAgentServers(servers.clone()));
                     }
-                    None => self.keep_agent(name, target, env),
+                    None => {
+                        let (package, installer, home) = extras;
+                        self.keep_agent(AgentServer {
+                            id: String::new(),
+                            name,
+                            home: home.or_else(|| known_home(&target, &package)),
+                            command: target,
+                            env,
+                            package,
+                            installer,
+                        });
+                    }
                 }
             }
             Some(Section::McpServers) => {
@@ -404,7 +431,15 @@ impl WorkspaceState {
                 let Some(offered) = self.settings_servers.registry.items.get(index).cloned() else {
                     return;
                 };
-                self.keep_agent(offered.name, offered.command, offered.env);
+                self.keep_agent(AgentServer {
+                    id: String::new(),
+                    name: offered.name,
+                    home: known_home(&offered.command, &None),
+                    command: offered.command,
+                    env: offered.env,
+                    package: None,
+                    installer: None,
+                });
             }
             Some(Section::McpServers) => {
                 let Some(offered) = self.settings_servers.listings.items.get(index).cloned() else {
@@ -503,10 +538,11 @@ impl WorkspaceState {
         self.settings_servers.form = None;
         match self.settings {
             Some(Section::AgentServers) if index < self.settings_servers.agents.len() => {
-                self.settings_servers.agents.remove(index);
-                self.outbox.push(Outgoing::SaveAgentServers(
-                    self.settings_servers.agents.clone(),
-                ));
+                let mut servers = self.settings_servers.agents.clone();
+                servers.remove(index);
+                self.outbox
+                    .push(Outgoing::SaveAgentServers(servers.clone()));
+                self.set_agents(servers);
             }
             Some(Section::McpServers) if index < self.settings_servers.tools.len() => {
                 self.settings_servers.tools.remove(index);
@@ -531,6 +567,9 @@ impl WorkspaceState {
             SETTINGS_NAME => form.name.apply(edit),
             SETTINGS_TARGET => form.target.apply(edit),
             SETTINGS_ENV => form.env.apply(edit),
+            SETTINGS_PACKAGE => form.package.apply(edit),
+            SETTINGS_INSTALLER => form.installer.apply(edit),
+            SETTINGS_HOME => form.home.apply(edit),
             _ => {}
         }
     }
@@ -545,6 +584,9 @@ impl WorkspaceState {
             SETTINGS_NAME => Some(&form.name),
             SETTINGS_TARGET => Some(&form.target),
             SETTINGS_ENV => Some(&form.env),
+            SETTINGS_PACKAGE => Some(&form.package),
+            SETTINGS_INSTALLER => Some(&form.installer),
+            SETTINGS_HOME => Some(&form.home),
             _ => None,
         }
     }
@@ -618,6 +660,9 @@ pub(crate) fn is_form_field(id: FocusId) -> bool {
         SETTINGS_NAME,
         SETTINGS_TARGET,
         SETTINGS_ENV,
+        SETTINGS_PACKAGE,
+        SETTINGS_INSTALLER,
+        SETTINGS_HOME,
         SETTINGS_SEARCH,
     ]
     .contains(&id)
@@ -702,10 +747,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
 /// How many servers `section` lists, in words.
 fn count_of(state: &WorkspaceState, section: Section) -> String {
     match section {
-        Section::AgentServers => format!(
-            "{} available",
-            AGENTS.len() + state.settings_servers.agents.len()
-        ),
+        Section::AgentServers => format!("{} available", state.offered_agents().len()),
         Section::McpServers => format!("{} installed", state.settings_servers.tools.len()),
         Section::General | Section::Agents => String::new(),
     }
@@ -942,33 +984,19 @@ fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec
             || row.description.to_lowercase().contains(needle)
     };
     match section {
-        Section::AgentServers => AGENTS
+        Section::AgentServers => state
+            .settings_servers
+            .agents
             .iter()
-            .map(|agent| InstalledRow {
-                title: agent.name.to_owned(),
-                badges: vec![("Built in", Role::Muted)],
+            .enumerate()
+            .map(|(index, agent)| InstalledRow {
+                title: agent.name.clone(),
+                badges: Vec::new(),
                 description: String::new(),
-                detail: pm_acp::command_line(
-                    std::iter::once(agent.program).chain(agent.arguments.iter().copied()),
-                ),
-                place: None,
+                detail: agent.command.clone(),
+                place: Some(index),
                 enabled: None,
             })
-            .chain(
-                state
-                    .settings_servers
-                    .agents
-                    .iter()
-                    .enumerate()
-                    .map(|(index, agent)| InstalledRow {
-                        title: agent.name.clone(),
-                        badges: vec![("Custom", Role::Muted)],
-                        description: String::new(),
-                        detail: agent.command.clone(),
-                        place: Some(index),
-                        enabled: None,
-                    }),
-            )
             .filter(matching)
             .collect(),
         _ => state
@@ -1066,14 +1094,15 @@ fn offered_rows(state: &WorkspaceState, section: Section, needle: &str) -> Offer
     Offered { rows, status }
 }
 
-/// Whether `offered` is already an agent of the app: one it ships, or one added from the registry before.
+/// Whether `offered` is already in the list of agents: its command is, or the agent has its name.
 fn installed_agent(settings: &ServerSettings, offered: &RegistryAgent) -> bool {
-    settings
-        .agents
-        .iter()
-        .any(|agent| agent.command == offered.command) || AGENTS.iter().any(|agent| {
-        agent.name.eq_ignore_ascii_case(&offered.name)
-            || matches!(agent.source, Source::Package(package) if offered.command.contains(package))
+    settings.agents.iter().any(|agent| {
+        agent.command == offered.command
+            || agent.name.eq_ignore_ascii_case(&offered.name)
+            || agent
+                .package
+                .as_deref()
+                .is_some_and(|package| offered.command.contains(package))
     })
 }
 
@@ -1250,6 +1279,7 @@ fn form_node(form: &ServerForm, section: Section) -> Node {
             "npx my-server",
         ))
         .child(labelled(environment, &form.env, SETTINGS_ENV, "TOKEN=abc"))
+        .children((section == Section::AgentServers).then(|| agent_extras(form)))
         .child(
             node()
                 .styles([flex(), items_center(), gap(2)])
@@ -1266,6 +1296,44 @@ fn form_node(form: &ServerForm, section: Section) -> Node {
                         .build(),
                 ),
         )
+}
+
+/// The boxes only an agent has: where it is fetched from when missing, and how it keeps logins apart.
+fn agent_extras(form: &ServerForm) -> Node {
+    node()
+        .styles([flex(), flex_col(), gap(3)])
+        .child(labelled(
+            "Package to fetch when it is not installed (optional)",
+            &form.package,
+            SETTINGS_PACKAGE,
+            "@scope/my-agent",
+        ))
+        .child(labelled(
+            "Command that installs it (optional)",
+            &form.installer,
+            SETTINGS_INSTALLER,
+            "curl -fsSL https://example.com/install.sh | bash",
+        ))
+        .child(labelled(
+            "Variable that moves its login folder (optional)",
+            &form.home,
+            SETTINGS_HOME,
+            "MY_AGENT_HOME",
+        ))
+}
+
+/// `text` without the space around it, or nothing when that leaves nothing.
+fn optional(text: &str) -> Option<String> {
+    Some(text.trim().to_owned()).filter(|text| !text.is_empty())
+}
+
+/// The variable that moves the login folder of the product that `command` and `package` start, when it is one the app knows.
+fn known_home(command: &str, package: &Option<String>) -> Option<String> {
+    pm_acp::Product::of(&format!(
+        "{command} {}",
+        package.as_deref().unwrap_or_default()
+    ))
+    .map(|product| product.home_variable().to_owned())
 }
 
 /// A box under the words that say what is written in it.

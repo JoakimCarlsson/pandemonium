@@ -494,7 +494,7 @@ pub fn discover(agent: Agent) -> Result<Discovery, String> {
 
 /// The skills `agent` can be asked for by name, found in the folders it keeps them in, when it has skills.
 pub fn skills(agent: Agent, directory: &Path) -> Vec<Slash> {
-    if agent.id != "codex" {
+    if agent.product() != Some(crate::product::Product::Codex) {
         return Vec::new();
     }
     let home = std::env::home_dir();

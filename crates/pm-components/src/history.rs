@@ -12,7 +12,7 @@ use pm_ui::{Node, node};
 use crate::age::{self, Span};
 use crate::input::{self, Input};
 use crate::parts::{clipped, glyph, line};
-use crate::sample::{AGENTS, Session};
+use crate::sample::Session;
 use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
 
 /// How wide the search box is.
@@ -118,7 +118,7 @@ fn searchable(state: &WorkspaceState, index: usize) -> String {
     format!(
         "{} {} {} {} {}",
         session.title,
-        AGENTS[session.agent].name,
+        state.agent_look(session.agent).name,
         project.name,
         project.host().unwrap_or_default(),
         session.branch,
@@ -152,7 +152,7 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) -> Option
 fn row(state: &WorkspaceState, index: usize) -> Node {
     let session: &Session = &state.sessions[index];
     let project = &state.projects[session.project];
-    let agent = &AGENTS[session.agent];
+    let agent = state.agent_look(session.agent);
     node()
         .styles([
             flex(),

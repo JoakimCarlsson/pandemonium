@@ -15,8 +15,8 @@ use pm_components::git_prompts::Prompt;
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_SECTION_BASE};
 use pm_components::state::SETTINGS;
 use pm_components::state::{
-    CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
-    REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP,
+    AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
+    RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP,
 };
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
@@ -442,7 +442,7 @@ impl Shot {
             ),
             Self::Dollar => Screen::Workspace(
                 welcome()
-                    .after(FocusId(331))
+                    .after(FocusId(AGENT_BASE + 1))
                     .edited(PROMPT, Edit::Paste("$r".to_owned())),
             ),
             Self::Scrolling => {

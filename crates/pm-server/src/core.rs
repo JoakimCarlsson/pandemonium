@@ -140,11 +140,7 @@ impl Core {
         let mut highest = 0;
         if let Ok(mut sessions) = self.sessions.lock() {
             for (number, meta, log) in sessions::load_all() {
-                let Some(agent) = pm_acp::AGENTS
-                    .iter()
-                    .copied()
-                    .find(|held| held.id == meta.agent)
-                else {
+                let Some(agent) = crate::handler::agent_named(&meta.agent) else {
                     continue;
                 };
                 highest = highest.max(number);

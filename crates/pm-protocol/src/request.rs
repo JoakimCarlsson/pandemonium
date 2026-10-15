@@ -12,7 +12,7 @@ pub struct Attachment {
     pub data: Vec<u8>,
 }
 
-/// An agent the reader added by hand: how to start it, beside the ones the app ships.
+/// An agent the server can start: how to start it, how to fetch it when it is missing and how it keeps logins apart. The ones the app ships are in the list from the start and can be changed or removed like any other.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AgentServer {
     /// What the app keeps it under.
@@ -23,6 +23,15 @@ pub struct AgentServer {
     pub command: String,
     /// The environment it is started with, over the one it inherits.
     pub env: Vec<(String, String)>,
+    /// The package the runner fetches when the program is not installed.
+    #[serde(default)]
+    pub package: Option<String>,
+    /// The shell pipeline that installs the program when it is missing.
+    #[serde(default)]
+    pub installer: Option<String>,
+    /// The variable that moves its config and login to another folder, for an agent that can keep more than one login.
+    #[serde(default)]
+    pub home: Option<String>,
 }
 
 /// A tool server every agent is started with.
@@ -319,9 +328,9 @@ pub enum Request {
         /// Each choice as agent, setting and value.
         choices: Vec<(String, String, String)>,
     },
-    /// The agents the reader added by hand.
+    /// The agents the server can start.
     AgentServers,
-    /// Replaces the agents the reader added by hand.
+    /// Replaces the agents the server can start.
     SaveAgentServers {
         /// Every agent, in the order they are kept.
         servers: Vec<AgentServer>,

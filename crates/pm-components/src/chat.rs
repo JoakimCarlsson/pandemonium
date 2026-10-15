@@ -21,7 +21,7 @@ use crate::input;
 use crate::inquiry::{answered, inquiry};
 use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::queued::queued;
-use crate::sample::{AGENTS, Session, Status};
+use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
 use crate::state::{
     CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, OPEN_DIFF,
@@ -371,7 +371,7 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
                 ])),
         );
     }
-    let agent = AGENTS[session.agent.min(AGENTS.len() - 1)].name;
+    let agent = state.agent_look(session.agent).name;
     let model = session
         .settings
         .iter()
@@ -382,7 +382,7 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
             line(
                 match model {
                     Some(model) => format!("{agent} · {model}"),
-                    None => agent.to_owned(),
+                    None => agent.clone(),
                 },
                 12,
                 1.4,

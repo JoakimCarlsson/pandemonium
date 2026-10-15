@@ -3,36 +3,10 @@
 use std::time::Instant;
 
 use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState};
-use pm_icon::IconName;
 
 use crate::dock::TerminalTab;
 use crate::draft::Draft;
 use crate::project::Project;
-
-/// An agent a workspace can be started with, in the same order as [`pm_acp::AGENTS`].
-#[derive(Clone, Copy, Debug)]
-pub struct AgentChoice {
-    /// The glyph on its chip.
-    pub icon: IconName,
-    /// What it is called.
-    pub name: &'static str,
-}
-
-/// The agents offered when starting work, in the order the chips show them.
-pub const AGENTS: [AgentChoice; 3] = [
-    AgentChoice {
-        icon: IconName::Sparkles,
-        name: "Claude Code",
-    },
-    AgentChoice {
-        icon: IconName::Terminal,
-        name: "Codex",
-    },
-    AgentChoice {
-        icon: IconName::Zap,
-        name: "Grok Build",
-    },
-];
 
 /// Where a session stands in the agent, review, code flow.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -472,7 +446,7 @@ pub struct Session {
     pub directory: String,
     /// The branch its worktree was made from, when it has one of its own.
     pub base: Option<String>,
-    /// Which agent, by position in [`AGENTS`], runs it.
+    /// Which agent, by position in the list of agents, runs it.
     pub agent: usize,
     /// Where it stands.
     pub status: Status,

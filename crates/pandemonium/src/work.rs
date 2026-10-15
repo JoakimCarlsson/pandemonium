@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use pm_acp::{AGENTS, Discovery, Event};
+use pm_acp::{Discovery, Event};
 use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
 use pm_components::git_controls::GRAPH_LIMIT;
@@ -30,6 +30,8 @@ pub struct Bootstrap {
     pub logins: Vec<(String, String, String)>,
     /// The login in use for each agent.
     pub in_use: Vec<(String, String)>,
+    /// The agents the server can start.
+    pub agents: Vec<pm_protocol::AgentServer>,
 }
 
 /// How long the window waits for the server on this machine to say what it keeps.
@@ -59,8 +61,8 @@ enum Pending {
     RegistryAgents,
     /// The tool servers the public registry offered for this search.
     Tools(String),
-    /// The agent at this position told what it lets the reader change.
-    Discover(Host, usize),
+    /// The agent with this id told what it lets the reader change.
+    Discover(Host, String),
     /// The agent at this position was signed in, or could not be.
     SignIn(usize),
     /// The skills of an agent in a project.
@@ -184,6 +186,8 @@ pub struct Work {
     reporter: Sender<Job>,
     /// Whether the agents on this machine have been asked what they let the reader change.
     discovered: bool,
+    /// The ids of the agents the server lists, in the order the window lists them.
+    agents: Vec<String>,
     /// The machine and the server's number of the shell of each tab.
     tabs: HashMap<u64, (Host, u64)>,
     /// The tab, by the machine and the server's number of its shell.
@@ -215,6 +219,10 @@ impl Work {
             jobs,
             reporter,
             discovered: false,
+            agents: pm_protocol::builtin_agents()
+                .into_iter()
+                .map(|agent| agent.id)
+                .collect(),
             resume: None,
             pending: Cell::new(0),
         }
@@ -229,12 +237,14 @@ impl Work {
         let projects_id = client.request(Request::Projects);
         let choices_id = client.request(Request::Choices);
         let accounts_id = client.request(Request::Accounts);
+        let agents_id = client.request(Request::AgentServers);
         let mut projects = None;
         let mut choices = None;
         let mut accounts = None;
+        let mut agents = None;
         let started = std::time::Instant::now();
         while started.elapsed() < BOOTSTRAP_WAIT
-            && (projects.is_none() || choices.is_none() || accounts.is_none())
+            && (projects.is_none() || choices.is_none() || accounts.is_none() || agents.is_none())
         {
             for item in client.incoming() {
                 let Incoming::Response { id, response } = item else {
@@ -252,11 +262,17 @@ impl Work {
                     && let Response::Accounts { logins, in_use } = response
                 {
                     accounts = Some((logins, in_use));
+                } else if id == agents_id
+                    && let Response::AgentServers { servers } = response
+                {
+                    agents = Some(servers);
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let (projects, choices, (logins, in_use)) = (projects?, choices?, accounts?);
+        let (projects, choices, (logins, in_use), agents) =
+            (projects?, choices?, accounts?, agents?);
+        self.agents = agents.iter().map(|agent| agent.id.clone()).collect();
         self.links.insert(
             None,
             Link {
@@ -273,6 +289,7 @@ impl Work {
                 .map(|login| (login.agent, login.id, login.name))
                 .collect(),
             in_use,
+            agents,
         })
     }
 
@@ -356,13 +373,14 @@ impl Work {
             return;
         }
         self.discovered = true;
-        for (index, agent) in AGENTS.iter().enumerate() {
+        self.ask(&None, Request::AgentServers, Pending::AgentServers);
+        for agent in self.agents.clone() {
             self.ask(
                 &None,
                 Request::Discover {
-                    agent: agent.id.to_owned(),
+                    agent: agent.clone(),
                 },
-                Pending::Discover(None, index),
+                Pending::Discover(None, agent),
             );
         }
     }
@@ -384,9 +402,31 @@ impl Work {
             .collect()
     }
 
+    /// Takes `ids` as the agents the server lists, and asks the ones this window had not heard of what they let the reader change, once the others were asked.
+    fn listed(&mut self, ids: Vec<String>) {
+        let new: Vec<String> = ids
+            .iter()
+            .filter(|id| !self.agents.contains(id))
+            .cloned()
+            .collect();
+        self.agents = ids;
+        if !self.discovered {
+            return;
+        }
+        for agent in new {
+            self.ask(
+                &None,
+                Request::Discover {
+                    agent: agent.clone(),
+                },
+                Pending::Discover(None, agent),
+            );
+        }
+    }
+
     /// The agent at `position`, by the id the servers know it by.
-    fn agent_id(position: usize) -> Option<String> {
-        AGENTS.get(position).map(|agent| agent.id.to_owned())
+    fn agent_id(&self, position: usize) -> Option<String> {
+        self.agents.get(position).cloned()
     }
 
     /// Asks the server that runs the session at `session` to do `request`, when that session is running there.
@@ -456,7 +496,7 @@ impl Work {
                     let Some(placement) = Self::session_of(model, session) else {
                         continue;
                     };
-                    let Some(agent) = Self::agent_id(placement.agent) else {
+                    let Some(agent) = self.agent_id(placement.agent) else {
                         continue;
                     };
                     self.ask(
@@ -713,7 +753,7 @@ impl Work {
                 }
                 Outgoing::Accounts { logins, in_use } => self.set_accounts(&logins, &in_use),
                 Outgoing::SignIn { agent } => {
-                    if let Some(id) = Self::agent_id(agent) {
+                    if let Some(id) = self.agent_id(agent) {
                         self.ask(&None, Request::SignIn { agent: id }, Pending::SignIn(agent));
                     }
                 }
@@ -744,7 +784,7 @@ impl Work {
                     host,
                     directory,
                 } => {
-                    if let Some(id) = Self::agent_id(agent) {
+                    if let Some(id) = self.agent_id(agent) {
                         self.ask(
                             &host,
                             Request::Skills {
@@ -756,16 +796,16 @@ impl Work {
                     }
                 }
                 Outgoing::Discover { agent, host } => {
-                    if let Some(id) = Self::agent_id(agent) {
+                    if let Some(id) = self.agent_id(agent) {
                         self.ask(
                             &host.clone(),
-                            Request::Discover { agent: id },
-                            Pending::Discover(host, agent),
+                            Request::Discover { agent: id.clone() },
+                            Pending::Discover(host, id),
                         );
                     }
                 }
                 Outgoing::Identity { agent, naming } => {
-                    if let Some(id) = Self::agent_id(agent) {
+                    if let Some(id) = self.agent_id(agent) {
                         self.ask(
                             &None,
                             Request::Identity { agent: id },
@@ -797,11 +837,14 @@ impl Work {
                     },
                     Pending::Tools(query),
                 ),
-                Outgoing::SaveAgentServers(servers) => self.ask(
-                    &None,
-                    Request::SaveAgentServers { servers },
-                    Pending::Nothing,
-                ),
+                Outgoing::SaveAgentServers(servers) => {
+                    self.listed(servers.iter().map(|server| server.id.clone()).collect());
+                    self.ask(
+                        &None,
+                        Request::SaveAgentServers { servers },
+                        Pending::Nothing,
+                    );
+                }
                 Outgoing::SaveMcpServers(servers) => {
                     self.ask(&None, Request::SaveMcpServers { servers }, Pending::Nothing)
                 }
@@ -1046,31 +1089,27 @@ impl Work {
                     eprintln!("the server could not do what was asked: {message}");
                 }
             }
-            Pending::Discover(origin, agent) => {
+            Pending::Discover(origin, id) => {
                 let found = match response {
                     Response::Discovery(found) => found,
                     _ => Discovery::default(),
                 };
-                if origin.is_none()
-                    && !found.settings.is_empty()
-                    && let Some(held) = AGENTS.get(agent)
-                {
-                    let _ =
-                        pm_store::save_text(&format!("discovery-{}", held.id), &found.to_text());
+                if origin.is_none() && !found.settings.is_empty() {
+                    let _ = pm_store::save_text(&format!("discovery-{id}"), &found.to_text());
                 }
                 model.update(|screen| {
-                    *screen = screen.clone().with_discovery_for(origin, agent, found);
+                    *screen = screen.clone().with_discovery_of(origin, &id, found);
                 });
             }
             Pending::SignIn(agent) => {
                 model.update(|screen| *screen = screen.clone().signed_in(agent));
                 if let Some(message) = failure {
                     eprintln!("sign-in failed: {message}");
-                } else if let Some(id) = Self::agent_id(agent) {
+                } else if let Some(id) = self.agent_id(agent) {
                     self.ask(
                         &None,
-                        Request::Discover { agent: id },
-                        Pending::Discover(None, agent),
+                        Request::Discover { agent: id.clone() },
+                        Pending::Discover(None, id),
                     );
                 }
             }
@@ -1112,6 +1151,7 @@ impl Work {
             }
             Pending::AgentServers => {
                 if let Response::AgentServers { servers } = response {
+                    self.listed(servers.iter().map(|server| server.id.clone()).collect());
                     Self::in_workspace(model, |state| state.with_agent_servers(servers));
                 }
             }

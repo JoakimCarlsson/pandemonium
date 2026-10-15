@@ -1,6 +1,7 @@
 //! The messages between a window, or any other client, and the server that owns the agents.
 
 mod address;
+mod agents;
 mod bytes;
 mod credential;
 mod message;
@@ -8,6 +9,7 @@ mod request;
 mod response;
 
 pub use address::{SSH_SCHEME, host_of, is_destination};
+pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use message::{ClientMessage, ServerMessage};
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::agent::Agent;
+use crate::product::Product;
 
 /// How deep under an agent's plugin folder skills are looked for.
 const PLUGIN_DEPTH: usize = 7;
@@ -24,8 +25,9 @@ pub fn default_account(agent: Agent) -> Option<String> {
 /// Who `agent` is signed in as in the home folder `own`, or in its default one when there is none.
 fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
     let home = std::env::home_dir()?;
-    match agent.id {
-        "claude-code" => {
+    match agent.product()? {
+        Product::Copilot => None,
+        Product::Claude => {
             let file = match own {
                 Some(own) => own.join(".claude.json"),
                 None => home.join(".claude.json"),
@@ -37,7 +39,7 @@ fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
                 .or_else(|| account["emailAddress"].as_str())
                 .map(str::to_owned)
         }
-        "codex" => {
+        Product::Codex => {
             let codex = own
                 .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
                 .unwrap_or_else(|| home.join(".codex"));
@@ -48,7 +50,7 @@ fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
             let claims: Value = serde_json::from_slice(&payload).ok()?;
             claims["email"].as_str().map(str::to_owned)
         }
-        "grok" => {
+        Product::Grok => {
             let grok = own
                 .or_else(|| std::env::var_os("GROK_HOME").map(PathBuf::from))
                 .unwrap_or_else(|| home.join(".grok"));
@@ -59,14 +61,13 @@ fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
                 .find_map(|entry| entry["email"].as_str())
                 .map(str::to_owned)
         }
-        _ => None,
     }
 }
 
 /// The names of the skills installed for `agent`, for telling a skill from a command in what it offers behind a slash.
 pub fn skill_names(agent: Agent, directory: &Path) -> HashSet<String> {
     let mut names = HashSet::new();
-    if agent.id != "claude-code" {
+    if agent.product() != Some(Product::Claude) {
         return names;
     }
     if let Some(home) = std::env::home_dir() {

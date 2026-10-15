@@ -30,6 +30,7 @@ impl Agent {
                 }
             }
             Source::Package(_) => open(NODE),
+            Source::Manual => Err("an agent added by hand has to be installed by hand".to_owned()),
         }
     }
 }

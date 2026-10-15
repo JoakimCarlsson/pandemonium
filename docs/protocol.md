@@ -112,7 +112,7 @@ request with exactly one `response` carrying the same `id`.
 | `choices`      | none                                                                                             | `choices`       |
 | `save_choices` | `choices`: `[[agent, setting, value]]`                                                           | `done`          |
 | `agent_servers`| none                                                                                             | `agent_servers` |
-| `save_agent_servers`| `servers`: `[{id, name, command, env}]`, `env`: `[[name, value]]`                                | `done`          |
+| `save_agent_servers`| `servers`: `[{id, name, command, env, package, installer, home}]`, `env`: `[[name, value]]`                                | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
 | `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled}]`, `env`: `[[name, value]]`                                     | `done`          |
 | `registry_agents`| none                                                                                             | `registry_agents`|
@@ -220,9 +220,9 @@ request with exactly one `response` carrying the same `id`.
   every client sees the same. `projects` says `saved: false` when the list was
   never saved, which means the app has not been set up yet. A project is an
   address of a folder on the server's machine, such as `~/code/app`.
-- **`agent_servers`, `mcp_servers`:** the agents the reader added by hand and
+- **`agent_servers`, `mcp_servers`:** the agents the server can start and
   the tool servers every agent is started with, kept by the server and replaced
-  whole by the matching `save_` request. A tool server's `target` is an address
+  whole by the matching `save_` request. The agents the app ships are in the list the first time it is asked for, and are changed or removed like any other; `package`, `installer` and `home` are optional. A tool server's `target` is an address
   when it begins with `http://` or `https://`, and `env` is then the headers it
   is sent; otherwise it is the command that starts it, and `env` its environment.
   Every new session is started with the tool servers saved at that moment that are `enabled`; `description` and `website` are optional and `enabled` is true when missing.
@@ -313,7 +313,7 @@ embedded context, and anything else as a link to the stored file.
 | `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
-| `agent_servers` | `servers`: `[{id, name, command, env}]`                |
+| `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled}]`                     |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |

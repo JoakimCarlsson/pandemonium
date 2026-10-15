@@ -10,17 +10,16 @@ use pm_ui::{Node, node, text};
 
 use crate::composer::composer;
 use crate::parts::line;
-use crate::sample::AGENTS;
 use crate::state::{ADD_PROJECT, AGENT_BASE, WorkspaceState};
 use crate::{Button, Chip, chip};
 
 /// A chip naming one agent, filled while it is the one chosen.
-fn chip(index: usize, chosen: bool) -> Node {
-    let agent = &AGENTS[index];
+fn chip(state: &WorkspaceState, index: usize) -> Node {
+    let agent = state.agent_look(index);
     Chip::new(agent.name, FocusId(AGENT_BASE + index as u64))
         .icon(agent.icon)
         .size(chip::Size::Md)
-        .selected(chosen)
+        .selected(index == state.agent)
         .build()
 }
 
@@ -58,9 +57,12 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
                     ]),
                 )
                 .child(
-                    node()
-                        .styles([flex(), justify_center(), gap(2)])
-                        .children((0..AGENTS.len()).map(|index| chip(index, index == state.agent))),
+                    node().styles([flex(), justify_center(), gap(2)]).children(
+                        state
+                            .offered_agents()
+                            .into_iter()
+                            .map(|index| chip(state, index)),
+                    ),
                 )
                 .child(composer(
                     state,

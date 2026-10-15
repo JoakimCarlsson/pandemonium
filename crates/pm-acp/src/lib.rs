@@ -16,13 +16,15 @@ mod inquiry;
 mod install;
 mod login;
 mod mcp;
+mod overlay;
+mod product;
 mod profile;
 mod standing;
 mod subagent;
 mod tool_registry;
 
 pub use account::{account, default_account, skill_names};
-pub use agent::{AGENTS, Agent, Source};
+pub use agent::{AGENTS, Agent, Definition, Source};
 pub use agent_registry::{Available, fetch as registry_agents};
 pub use chat::{
     Background, Chat, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
@@ -31,5 +33,6 @@ pub use chat::{
 pub use inquiry::{Alternative, Inquiry, Question, Reply};
 pub use install::{is_web_address, open as open_address};
 pub use mcp::{command_line, command_words, mcp_servers};
+pub use product::Product;
 pub use standing::{Login, Standing, Way};
 pub use tool_registry::{Listing, search as search_tools};

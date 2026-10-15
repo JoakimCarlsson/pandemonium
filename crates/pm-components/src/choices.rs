@@ -1,6 +1,6 @@
 //! What the reader picks around the prompt box: the agent's settings, a command behind a slash, and where new work is done.
 
-use pm_acp::{AGENTS, Discovery, Setting, Slash};
+use pm_acp::{Discovery, Setting, Slash};
 use pm_input::FocusId;
 
 use crate::state::{
@@ -73,9 +73,7 @@ impl WorkspaceState {
 
     /// Whether the agent the prompt is for offers skills behind a dollar sign.
     pub fn has_skills(&self) -> bool {
-        AGENTS
-            .get(self.agent_now())
-            .is_some_and(|agent| agent.id == "codex")
+        self.agent_has_skills(self.agent_now())
     }
 
     /// Who the chosen agent is signed in as: the name of the login in use, or the one in its own default folder.
@@ -221,12 +219,11 @@ impl WorkspaceState {
         if host == self.discovery_host {
             return self.with_discovery(agent, found);
         }
-        let kept = self.discovered_elsewhere.entry(host).or_insert_with(|| {
-            (
-                vec![Vec::new(); AGENTS.len()],
-                vec![Vec::new(); AGENTS.len()],
-            )
-        });
+        let slots = self.agent_slots();
+        let kept = self
+            .discovered_elsewhere
+            .entry(host)
+            .or_insert_with(|| (vec![Vec::new(); slots], vec![Vec::new(); slots]));
         if let Some(held) = kept.0.get_mut(agent) {
             *held = found.settings;
         }
@@ -250,16 +247,13 @@ impl WorkspaceState {
         self.discovery_host = host.clone();
         let asked = self.discovered_elsewhere.remove(&host);
         let known = asked.is_some();
-        let (settings, commands) = asked.unwrap_or_else(|| {
-            (
-                vec![Vec::new(); AGENTS.len()],
-                vec![Vec::new(); AGENTS.len()],
-            )
-        });
+        let slots = self.agent_slots();
+        let (settings, commands) =
+            asked.unwrap_or_else(|| (vec![Vec::new(); slots], vec![Vec::new(); slots]));
         self.agent_settings = settings;
         self.agent_commands = commands;
         if !known {
-            for agent in 0..AGENTS.len() {
+            for agent in 0..slots {
                 self.outbox.push(Outgoing::Discover {
                     agent,
                     host: host.clone(),
@@ -432,18 +426,16 @@ impl WorkspaceState {
 
     /// Keeps `value` as what the reader chose for the setting `id` of the agent at `agent`.
     fn remember(&mut self, agent: usize, id: &str, value: &str) {
-        let Some(agent) = AGENTS.get(agent) else {
+        let Some(agent) = self.agent_id_at(agent) else {
             return;
         };
         let held = self
             .choices
             .iter_mut()
-            .find(|(held_agent, setting, _)| held_agent == agent.id && setting == id);
+            .find(|(held_agent, setting, _)| *held_agent == agent && setting == id);
         match held {
             Some(held) => held.2 = value.to_owned(),
-            None => self
-                .choices
-                .push((agent.id.to_owned(), id.to_owned(), value.to_owned())),
+            None => self.choices.push((agent, id.to_owned(), value.to_owned())),
         }
     }
 
@@ -462,12 +454,20 @@ impl WorkspaceState {
             .collect()
     }
 
+    /// The state after the agent `id` on the machine `host` told what it lets the reader change and what commands it offers, when the list still has it.
+    pub fn with_discovery_of(self, host: Option<String>, id: &str, found: Discovery) -> Self {
+        match self.agent_position(id) {
+            Some(agent) => self.with_discovery_for(host, agent, found),
+            None => self,
+        }
+    }
+
     /// The state after the agent at `agent` told what it lets the reader change and what commands it offers.
     pub fn with_discovery(mut self, agent: usize, found: Discovery) -> Self {
+        let id = self.agent_id_at(agent).unwrap_or_default();
         if let Some(held) = self.agent_settings.get_mut(agent) {
             *held = found.settings;
-            let id = AGENTS.get(agent).map_or("", |agent| agent.id);
-            for (_, setting, value) in self.choices.iter().filter(|(held, ..)| held == id) {
+            for (_, setting, value) in self.choices.iter().filter(|(held, ..)| *held == id) {
                 let Some(held) = held.iter_mut().find(|held| held.id == *setting) else {
                     continue;
                 };
@@ -509,7 +509,7 @@ impl WorkspaceState {
         }
         let asked = self.defaults.get(self.agent).is_some_and(Option::is_some)
             && self.identities.get(self.agent).is_some_and(Option::is_some);
-        if !asked && AGENTS.get(self.agent).is_some() {
+        if !asked && self.agent < self.agent_slots() {
             if let Some(held) = self.defaults.get_mut(self.agent) {
                 held.get_or_insert(None);
             }
@@ -638,8 +638,8 @@ impl WorkspaceState {
     }
 
     /// The agent's id the account menu is for.
-    fn agent_id(&self) -> Option<&'static str> {
-        AGENTS.get(self.agent).map(|agent| agent.id)
+    fn agent_id(&self) -> Option<String> {
+        self.agent_id_at(self.agent)
     }
 
     /// The named logins of the chosen agent: the folder name and what each is called.
@@ -649,7 +649,7 @@ impl WorkspaceState {
         };
         self.logins
             .iter()
-            .filter(|(owner, _, _)| owner == agent)
+            .filter(|(owner, _, _)| *owner == agent)
             .map(|(_, id, name)| (id.as_str(), name.as_str()))
             .collect()
     }
@@ -659,7 +659,7 @@ impl WorkspaceState {
         let agent = self.agent_id()?;
         self.in_use
             .iter()
-            .find(|(owner, _)| owner == agent)
+            .find(|(owner, _)| *owner == agent)
             .map(|(_, id)| id.as_str())
     }
 
@@ -673,7 +673,7 @@ impl WorkspaceState {
             .into_iter()
             .map(|(id, _)| id.to_owned())
             .collect();
-        self.in_use.retain(|(owner, _)| owner != agent);
+        self.in_use.retain(|(owner, _)| *owner != agent);
         if index == 0 {
         } else if let Some(id) = logins.get(index - 1) {
             self.in_use.push((agent.to_owned(), id.clone()));
@@ -715,9 +715,7 @@ impl WorkspaceState {
             }) else {
                 continue;
             };
-            let Some(agent) = AGENTS.iter().position(|held| held.id == info.agent) else {
-                continue;
-            };
+            let agent = self.agent_position_or_retire(&info.agent);
             self.sessions.push(crate::sample::Session::restored(
                 &info.title,
                 project,
@@ -775,7 +773,7 @@ impl WorkspaceState {
 
     /// Names the login in use for the agent after who it is now signed in as, when it still has the name it was given on adding.
     pub fn name_login(&mut self, agent: usize, who: Option<String>) {
-        let Some(held) = AGENTS.get(agent) else {
+        let Some(held) = self.agent_id_at(agent) else {
             return;
         };
         let Some(who) = who else {
@@ -784,14 +782,16 @@ impl WorkspaceState {
         let Some((_, used)) = self
             .in_use
             .iter()
-            .find(|(owner, _)| owner == held.id)
+            .find(|(owner, _)| *owner == held)
             .cloned()
         else {
             return;
         };
-        if let Some(login) = self.logins.iter_mut().find(|(owner, id, name)| {
-            owner == held.id && *id == used && name.starts_with("Account ")
-        }) {
+        if let Some(login) = self
+            .logins
+            .iter_mut()
+            .find(|(owner, id, name)| *owner == held && *id == used && name.starts_with("Account "))
+        {
             login.2 = who;
             self.outbox.push(Outgoing::Accounts {
                 logins: self.logins.clone(),
