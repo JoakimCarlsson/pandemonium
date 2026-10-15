@@ -5,7 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | sh
 #
 # Environment:
-#   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: latest)
+#   PANDEMONIUM_CHANNEL   stable or nightly                  (default: stable)
+#   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: latest, or the nightly build for nightly)
 #   PANDEMONIUM_COMPONENT editor or server                    (default: editor)
 #   PANDEMONIUM_BIN_DIR   where the binary goes              (default: ~/.local/bin)
 #   PANDEMONIUM_APP_DIR   where the macOS app goes           (default: ~/Applications)
@@ -13,12 +14,30 @@
 set -eu
 
 REPO="JoakimCarlsson/pandemonium"
-VERSION="${PANDEMONIUM_VERSION:-latest}"
+CHANNEL="${PANDEMONIUM_CHANNEL:-stable}"
+VERSION="${PANDEMONIUM_VERSION:-}"
 COMPONENT="${PANDEMONIUM_COMPONENT:-editor}"
 BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
 MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
+
+# Sets the names the chosen channel installs under, so that nightly sits beside the stable app.
+choose_channel() {
+    case "$CHANNEL" in
+        stable)
+            slug="pandemonium"
+            label="Pandemonium"
+            VERSION="${VERSION:-latest}"
+            ;;
+        nightly)
+            slug="pandemonium-nightly"
+            label="Pandemonium Nightly"
+            VERSION="${VERSION:-nightly}"
+            ;;
+        *) fail "PANDEMONIUM_CHANNEL must be stable or nightly" ;;
+    esac
+}
 
 # Prints an error and exits.
 fail() {
@@ -78,10 +97,10 @@ install_icons() {
         size="${size%.png}"
         [ "$size" -le 512 ] || continue
         mkdir -p "$ICONS_DIR/${size}x${size}/apps"
-        install -m 0644 "$png" "$ICONS_DIR/${size}x${size}/apps/pandemonium.png"
+        install -m 0644 "$png" "$ICONS_DIR/${size}x${size}/apps/$slug.png"
     done
     mkdir -p "$ICONS_DIR/scalable/apps"
-    install -m 0644 "$svg" "$ICONS_DIR/scalable/apps/pandemonium.svg"
+    install -m 0644 "$svg" "$ICONS_DIR/scalable/apps/$slug.svg"
     command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$ICONS_DIR" >/dev/null 2>&1 || true
 }
 
@@ -89,7 +108,7 @@ install_icons() {
 install_desktop_entry() {
     source="$1"
     mkdir -p "$APPS_DIR"
-    sed "s|^Exec=pandemonium|Exec=$BIN_DIR/pandemonium|" "$source" > "$APPS_DIR/pandemonium.desktop"
+    sed "s|^Exec=.*|Exec=$BIN_DIR/$slug|" "$source" > "$APPS_DIR/$slug.desktop"
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 }
 
@@ -105,10 +124,10 @@ install_app_bundle() {
     verify "$tmp" "$name.app.zip"
     ditto -x -k "$tmp/$name.app.zip" "$tmp/app"
     mkdir -p "$MAC_APPS_DIR"
-    rm -rf "$MAC_APPS_DIR/Pandemonium.app"
-    mv "$tmp/app/Pandemonium.app" "$MAC_APPS_DIR/Pandemonium.app"
-    xattr -dr com.apple.quarantine "$MAC_APPS_DIR/Pandemonium.app" 2>/dev/null || true
-    echo "installed $MAC_APPS_DIR/Pandemonium.app"
+    rm -rf "$MAC_APPS_DIR/$label.app"
+    mv "$tmp/app/$label.app" "$MAC_APPS_DIR/$label.app"
+    xattr -dr com.apple.quarantine "$MAC_APPS_DIR/$label.app" 2>/dev/null || true
+    echo "installed $MAC_APPS_DIR/$label.app"
 }
 
 # Downloads, verifies and installs the release.
@@ -116,9 +135,10 @@ main() {
     need curl
     need tar
     command -v sha256sum >/dev/null 2>&1 || need shasum
+    choose_channel
     case "$COMPONENT" in
-        editor) binary="pandemonium" ;;
-        server) binary="pandemonium-server" ;;
+        editor) binary="$slug" ;;
+        server) binary="$slug-server" ;;
         *) fail "PANDEMONIUM_COMPONENT must be editor or server" ;;
     esac
 
@@ -126,8 +146,14 @@ main() {
     [ "$VERSION" = "latest" ] && VERSION="$(latest_version)"
     VERSION="${VERSION#v}"
 
-    name="$binary-$VERSION-$target"
-    base="https://github.com/$REPO/releases/download/v$VERSION"
+    if [ "$CHANNEL" = "nightly" ]; then
+        name="$binary-$target"
+    else
+        name="$binary-$VERSION-$target"
+    fi
+    tag="v$VERSION"
+    [ "$VERSION" = "nightly" ] && tag="nightly"
+    base="https://github.com/$REPO/releases/download/$tag"
     scratch="${XDG_CACHE_HOME:-$HOME/.cache}/scratch/pandemonium"
     mkdir -p "$scratch"
     tmp="$(mktemp -d "$scratch/install.XXXXXXXX")"
@@ -146,7 +172,7 @@ main() {
     [ "$(uname -s)" = "Darwin" ] && xattr -d com.apple.quarantine "$BIN_DIR/$binary" 2>/dev/null || true
     if [ "$COMPONENT" = "editor" ]; then
         [ -d "$tmp/$name/icons" ] && [ "$(uname -s)" = "Linux" ] && install_icons "$tmp/$name/icons" "$tmp/$name/icons/pandemonium.svg"
-        [ -f "$tmp/$name/pandemonium.desktop" ] && install_desktop_entry "$tmp/$name/pandemonium.desktop"
+        [ -f "$tmp/$name/$slug.desktop" ] && install_desktop_entry "$tmp/$name/$slug.desktop"
         [ "$(uname -s)" = "Darwin" ] && install_app_bundle "$base" "$name" "$tmp"
     fi
 

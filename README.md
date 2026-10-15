@@ -65,6 +65,22 @@ Set `PANDEMONIUM_VERSION` to pin a release. The script checks the download
 against the release's `SHA256SUMS`, puts the binary in `~/.local/bin`, and adds
 a launcher entry on Linux or `Pandemonium.app` in `~/Applications` on macOS.
 
+### Nightly
+
+Pre-releases and the nightly build are a separate channel, Pandemonium
+Nightly. It installs beside the stable app as `pandemonium-nightly`, with its
+own launcher entry, window class, server and data folder, so it never replaces
+or reads from the stable one. Without `PANDEMONIUM_VERSION` it installs the
+latest nightly build.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | PANDEMONIUM_CHANNEL=nightly sh
+```
+
+```powershell
+$env:PANDEMONIUM_CHANNEL = "nightly"; irm https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.ps1 | iex
+```
+
 For remote projects and phone control, see the [SSH guide](docs/ssh.md). For
 projects and agent worktrees that run in containers, see the
 [dev container guide](docs/devcontainer.md).
