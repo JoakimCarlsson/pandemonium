@@ -66,6 +66,8 @@ fn main() {
             Some("discarding") => Shot::Discarding,
             Some("branching") => Shot::Branching,
             Some("reading") => Shot::Reading,
+            Some("editing") => Shot::Editing,
+            Some("newfile") => Shot::NewFile,
             Some("terminal") => Shot::Terminal,
             Some("new") => Shot::New,
             Some("empty") => Shot::Empty,

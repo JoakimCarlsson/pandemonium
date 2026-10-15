@@ -135,6 +135,7 @@ request with exactly one `response` carrying the same `id`.
 | `rename_entry` | `directory`, `from`, `to`                                                                        | `done`          |
 | `copy_entry`   | `directory`, `from`, `into`                                                                      | `done`          |
 | `remove_entry` | `directory`, `path`                                                                              | `done`          |
+| `write_file`   | `directory`, `path`, `text`                                                                      | `done`          |
 | `read_file`    | `directory`, `path`, `head`                                                                      | `file`          |
 | `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
@@ -300,6 +301,9 @@ request with exactly one `response` carrying the same `id`.
   is taken.
 - **`remove_entry`:** takes `path` and everything in it off the disk. Every
   path of these four must stay inside `directory`.
+- **`write_file`:** replaces the contents of `path` (from the root of
+  `directory`, which must stay inside it) with `text`, making the file when it is
+  not there. A folder is refused.
 - **`read_file`:** reads `path` from the working folder or, when `head`, from
   the last commit. The response holds no text for a file that is not text.
 

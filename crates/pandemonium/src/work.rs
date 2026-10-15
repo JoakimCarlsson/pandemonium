@@ -127,6 +127,8 @@ enum Pending {
     Git(usize, &'static str),
     /// A file or folder of the folder of the session at this position was made, renamed, copied or removed, with what failing at it is called.
     Entry(usize, &'static str),
+    /// A file of the folder of the session at this position was written, at this path.
+    Write(usize, String),
     /// The branches of the folder of the session at this position.
     SessionBranches(usize),
     /// The file of the session at this position, at this path, and whether it was read from the last commit.
@@ -746,6 +748,23 @@ impl Work {
                     |directory| Request::Discard { directory, paths },
                     Pending::Git(session, "discard the changes"),
                 ),
+                Outgoing::Write {
+                    session,
+                    path,
+                    text,
+                } => {
+                    let written = path.clone();
+                    self.ask_in_folder(
+                        model,
+                        session,
+                        |directory| Request::WriteFile {
+                            directory,
+                            path,
+                            text,
+                        },
+                        Pending::Write(session, written),
+                    );
+                }
                 Outgoing::Entry { session, change } => {
                     let what = entry_failure(&change);
                     self.ask_in_folder(
@@ -1363,6 +1382,17 @@ impl Work {
                     let reason = format!("Could not {what}: {message}");
                     model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
                 }
+                self.refresh(model, session);
+            }
+            Pending::Write(session, path) => {
+                let failed = failure.is_some();
+                if let Some(message) = failure {
+                    let reason = format!("Could not save {path}: {message}");
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                }
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_file_written(session, &path, failed);
+                });
                 self.refresh(model, session);
             }
             Pending::Entry(session, what) => {

@@ -13,6 +13,7 @@ use pm_components::diff::gutter_of;
 use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
+use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
@@ -46,6 +47,9 @@ use crate::{keys, scene};
 
 /// The name the desktop knows the application by.
 #[cfg(target_os = "linux")]
+/// How tall the strip of tabs above an open file is, in logical pixels.
+const TABS: f32 = 48.0;
+
 const APP_ID: &str = "pandemonium";
 
 /// Logical width of the window when it opens on a machine that tells nothing of its screens.
@@ -140,6 +144,8 @@ pub struct App {
     autofocused: bool,
     /// Whether the tree was asking for a name when the last frame was drawn.
     naming: bool,
+    /// The last press that activated a control, for noticing a file pressed twice.
+    last_activation: Option<(FocusId, Instant)>,
     /// Whether the shell is to take the keyboard once it is drawn.
     focus_terminal: bool,
     /// The cell of the shell's window a press began in, while the button is held, so dragging marks text.
@@ -251,6 +257,7 @@ impl Default for App {
             work,
             autofocused: false,
             naming: false,
+            last_activation: None,
             focus_terminal: false,
             terminal_anchor: None,
             terminal_scroll_rest: 0.0,
@@ -401,6 +408,14 @@ impl App {
 
     /// Carries out what pressing the element `id` means.
     fn activate(&mut self, id: FocusId) {
+        let again = self
+            .last_activation
+            .is_some_and(|(last, at)| last == id && at.elapsed() < DOUBLE_CLICK);
+        self.last_activation = Some((id, Instant::now()));
+        if again {
+            self.model
+                .update(|state| *state = std::mem::take(state).with_file_kept(id));
+        }
         if is_menu_item(id) {
             self.menu_action(id);
             return;
@@ -1106,6 +1121,12 @@ impl App {
     fn edit_field(&mut self, id: FocusId, edit: Edit) {
         self.model
             .update(|state| *state = std::mem::take(state).edited(id, edit));
+        if id == EDITOR_FIELD
+            && let Some(height) = self.renderer.as_ref().map(|renderer| renderer.size().1)
+        {
+            self.model
+                .update(|state| *state = std::mem::take(state).with_caret_shown(height - TABS));
+        }
     }
 
     /// The system clipboard, opened on first use.
@@ -1196,6 +1217,15 @@ impl App {
                         .inquiry_hotkey(digit.to_digit(10).unwrap_or_default() as usize) =>
             {
                 self.activate(id);
+            }
+            Key::Character('s' | 'S')
+                if (event.modifiers.control || event.modifiers.logo)
+                    && self.focus.current() == Some(EDITOR_FIELD) =>
+            {
+                self.activate(EDITOR_SAVE);
+            }
+            Key::Tab if self.focus.current() == Some(EDITOR_FIELD) && !event.modifiers.shift => {
+                self.edit_field(EDITOR_FIELD, Edit::Paste("    ".to_owned()));
             }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model

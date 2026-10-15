@@ -2,9 +2,8 @@
 
 use pm_input::FocusId;
 
-use crate::git_controls::Viewer;
 use crate::git_prompts::Prompt;
-use crate::state::{Outgoing, Tab, WorkspaceState};
+use crate::state::{Outgoing, WorkspaceState};
 
 /// Asks for a name for a new file at the root of the project.
 pub const TREE_NEW_FILE: FocusId = FocusId(7077);
@@ -406,23 +405,6 @@ impl WorkspaceState {
                     from: target.path,
                     to,
                 });
-            }
-        }
-    }
-
-    /// The viewer to close when the file it shows is renamed or deleted, so that it does not show what is gone.
-    pub(crate) fn drop_viewer_of(&mut self, path: &str) {
-        let shows = |viewer: &Viewer| {
-            viewer.path == path
-                || viewer
-                    .path
-                    .strip_prefix(path)
-                    .is_some_and(|rest| rest.starts_with('/'))
-        };
-        if self.git.viewer.as_ref().is_some_and(shows) {
-            self.git.viewer = None;
-            if self.tab == Tab::File {
-                self.tab = Tab::Diff;
             }
         }
     }

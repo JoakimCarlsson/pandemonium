@@ -427,6 +427,32 @@ impl Screen {
         }
     }
 
+    /// The screen after the server answered a write of the file at `path` of the session at `session`.
+    pub fn with_file_written(self, session: usize, path: &str, failed: bool) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_file_written(session, path, failed))
+            }
+            other => other,
+        }
+    }
+
+    /// The screen with the file shown scrolled to show its caret, in a view `height` logical pixels tall.
+    pub fn with_caret_shown(self, height: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_caret_shown(height)),
+            other => other,
+        }
+    }
+
+    /// The screen after a file's tab or row was pressed twice in quick succession, which keeps the file open.
+    pub fn with_file_kept(self, id: FocusId) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_file_kept(id)),
+            other => other,
+        }
+    }
+
     /// Whether the tree is asking for a name in a field.
     pub fn is_naming(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.is_naming())
@@ -632,7 +658,7 @@ impl Screen {
 
     /// Whether pressing Enter in the field `id` puts a line break in it rather than pressing its button.
     pub fn enter_breaks_line(id: FocusId) -> bool {
-        id == pm_components::state::COMMIT_MESSAGE
+        id == pm_components::state::COMMIT_MESSAGE || id == pm_components::open_files::EDITOR_FIELD
     }
 
     /// Whether the menu on changed files, the question of whether to discard or the list of branches is open.

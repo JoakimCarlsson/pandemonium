@@ -83,6 +83,8 @@ pub enum Prompt {
     Stashes(StashAction),
     /// Whether to take a file or folder off the disk.
     Remove(TreeTarget),
+    /// Whether to close the tab at this position of the open files, which has changes that were not saved.
+    Unsaved(usize),
 }
 
 impl WorkspaceState {
@@ -152,6 +154,7 @@ impl WorkspaceState {
                 });
             }
             Prompt::Stashes(_) => {}
+            Prompt::Unsaved(index) => self.discard_file(index),
             Prompt::Remove(target) => {
                 self.drop_viewer_of(&target.path);
                 self.send_entry(EntryChange::Remove { path: target.path });
@@ -345,6 +348,19 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
             Variant::Destructive,
         ),
         Prompt::StashMessage => stash_message(state),
+        Prompt::Unsaved(index) => {
+            let name = state
+                .git
+                .viewers
+                .get(*index)
+                .map_or("this file", |viewer| name_of(&viewer.path));
+            question(
+                format!("Close {name} without saving?"),
+                "It has changes that are not saved. They are lost when it is closed.",
+                "Discard",
+                Variant::Destructive,
+            )
+        }
         Prompt::Remove(target) => {
             let name = name_of(&target.path);
             let (title, words) = if target.folder {

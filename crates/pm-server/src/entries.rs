@@ -9,7 +9,23 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-/// `relative` joined onto `root`, refused when it is empty, absolute or steps upward.
+/// Fails unless the nearest existing folder at or above `start`, with its links followed, is inside `root`.
+fn contained(root: &Path, start: &Path) -> Result<(), String> {
+    let real_root = root
+        .canonicalize()
+        .map_err(|error| refused("open", root, &error))?;
+    let nearest = start
+        .ancestors()
+        .find_map(|ancestor| ancestor.canonicalize().ok())
+        .ok_or_else(|| format!("{} is not inside the folder", start.display()))?;
+    if nearest.starts_with(&real_root) {
+        Ok(())
+    } else {
+        Err(format!("{} leads outside the folder", start.display()))
+    }
+}
+
+/// `relative` joined onto `root`, refused when it is empty, absolute, steps upward or goes through a link that leaves `root`; a link at its last part is not followed.
 fn inside(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let path = Path::new(relative);
     let clean = !relative.is_empty()
@@ -17,20 +33,22 @@ fn inside(root: &Path, relative: &str) -> Result<PathBuf, String> {
         && path
             .components()
             .all(|part| matches!(part, Component::Normal(_)));
-    if clean {
-        Ok(root.join(path))
-    } else {
-        Err(format!("{relative:?} is not a path inside the folder"))
+    if !clean {
+        return Err(format!("{relative:?} is not a path inside the folder"));
     }
+    let joined = root.join(path);
+    contained(root, joined.parent().unwrap_or(root))?;
+    Ok(joined)
 }
 
-/// `relative` joined onto `root`, where an empty `relative` is the root itself.
+/// `relative` joined onto `root`, where an empty `relative` is the root itself, refused like [`inside`] and when the folder it names is a link that leaves `root`.
 fn inside_or_root(root: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative.is_empty() {
-        Ok(root.to_path_buf())
-    } else {
-        inside(root, relative)
+        return Ok(root.to_path_buf());
     }
+    let joined = inside(root, relative)?;
+    contained(root, &joined)?;
+    Ok(joined)
 }
 
 /// A failure of `action` on `path`, worded for the reader.
@@ -151,4 +169,16 @@ pub fn remove(root: &Path, relative: &str) -> Result<(), String> {
         fs::remove_file(&path)
     };
     removed.map_err(|error| refused("remove", &path, &error))
+}
+
+/// Replaces the contents of the file at `relative` with `text`, making it when it is not there and refusing a folder.
+pub fn write(root: &Path, relative: &str, text: &str) -> Result<(), String> {
+    let path = inside(root, relative)?;
+    if path.is_dir() {
+        return Err(format!("{} is a folder", path.display()));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| refused("create", parent, &error))?;
+    }
+    fs::write(&path, text).map_err(|error| refused("write", &path, &error))
 }

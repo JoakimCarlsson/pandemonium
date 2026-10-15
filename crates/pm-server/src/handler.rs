@@ -638,6 +638,11 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             },
             Err(reason) => failed(reason),
         },
+        Request::WriteFile {
+            directory,
+            path,
+            text,
+        } => done(crate::entries::write(&place(&directory), &path, &text)),
         Request::OpenTerminal {
             directory,
             columns,

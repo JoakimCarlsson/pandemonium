@@ -12,6 +12,7 @@ use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
+use pm_components::open_files::EDITOR_FIELD;
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_SECTION_BASE};
 use pm_components::state::SETTINGS;
 use pm_components::state::{
@@ -70,6 +71,8 @@ pub enum Shot {
     Branching,
     /// The workspace reading a file as it is in the last commit.
     Reading,
+    Editing,
+    NewFile,
     /// The workspace with the terminal open.
     Terminal,
     /// The workspace of the projects onboarding added, with no sessions.
@@ -317,6 +320,43 @@ fn reading() -> WorkspaceState {
     )
 }
 
+/// The workspace with one file kept open after an edit and another being looked at.
+fn editing() -> WorkspaceState {
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer("crates/pandemonium/src/session.rs".to_owned(), false);
+    let text = "use std::path::PathBuf;\n\n/// A session of an agent.\npub struct Session {\n    pub id: SessionId,\n    pub root: PathBuf,\n}\n\nimpl Session {\n    pub fn new(id: SessionId) -> Self {\n        let name = \"main\"; // 42\n\tlet tabbed = 1;\n        Self { id, root: PathBuf::from(name) }\n    }\n}\n";
+    let state = state.with_file(
+        0,
+        "crates/pandemonium/src/session.rs",
+        false,
+        Ok((Some(text.to_owned()), false)),
+    );
+    let mut state = state.edited(EDITOR_FIELD, Edit::Paste("// edited\n".to_owned()));
+    state.open_viewer("crates/pandemonium/src/lib.rs".to_owned(), false);
+    state.with_file(
+        0,
+        "crates/pandemonium/src/lib.rs",
+        false,
+        Ok((Some("pub mod session;\n".to_owned()), false)),
+    )
+}
+
+/// The page for starting work with a file of the project open beside it.
+fn new_file() -> WorkspaceState {
+    let mut state = workspace_sample().after(FocusId(pm_components::state::PROJECT_BASE));
+    state.open_viewer("src/main.rs".to_owned(), false);
+    let session = state.review_index().unwrap_or_default();
+    state.with_file(
+        session,
+        "src/main.rs",
+        false,
+        Ok((
+            Some("fn main() {\n    println!(\"hi\");\n}\n".to_owned()),
+            false,
+        )),
+    )
+}
+
 /// The workspace with the project's files listed in the review panel.
 fn files() -> WorkspaceState {
     let state = workspace_sample().after(REVIEW_FILES);
@@ -424,6 +464,8 @@ impl Shot {
             Self::Discarding => Screen::Workspace(picked().asked(Prompt::Discard(vec![0, 2]))),
             Self::Branching => Screen::Workspace(branching()),
             Self::Reading => Screen::Workspace(reading()),
+            Self::Editing => Screen::Workspace(editing()),
+            Self::NewFile => Screen::Workspace(new_file()),
             Self::Terminal => Screen::Workspace(terminal()),
             Self::TerminalComposing => {
                 let mut state = terminal();

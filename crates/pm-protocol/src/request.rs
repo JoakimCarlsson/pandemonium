@@ -348,6 +348,15 @@ pub enum Request {
         /// Whether to read it from the last commit rather than from the working folder.
         head: bool,
     },
+    /// Replaces the contents of a file of a folder with text, making the file when it is not there.
+    WriteFile {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+        /// What the file holds afterwards.
+        text: String,
+    },
     /// The projects the reader has added on the server's machine.
     Projects,
     /// Replaces the projects the reader has added.

@@ -15,9 +15,9 @@ use pm_components::arrange::{
 };
 use pm_components::context_menu::field_menu;
 use pm_components::file_icon::file_icon;
-use pm_components::git_controls::{TAB_VIEWER, VIEWER_CLOSE, Viewer};
 use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
+use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::{
     Button, adder, chat, diff, history, input, plan, review, settings, sidebar, terminal, viewer,
@@ -67,8 +67,8 @@ fn tab(icon: IconName, label: &str, id: FocusId, shown: bool) -> Node {
         .focusable(id)
 }
 
-/// The tab of the file being read: its icon and name, and a button that closes it.
-fn viewer_tab(viewer: &Viewer, shown: bool) -> Node {
+/// The tab of the open file at `index`: its icon and name, set slanted while the file is only being looked at, a dot while it has changes that are not saved, and a button that closes it.
+fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
     let tone = if shown { Role::Text } else { Role::Muted };
     let name = viewer.path.rsplit('/').next().unwrap_or(&viewer.path);
     let label = if viewer.head {
@@ -91,16 +91,27 @@ fn viewer_tab(viewer: &Viewer, shown: bool) -> Node {
     } else {
         styles.push(bg(Role::SurfaceHover).hover());
     }
-    node()
+    let mut name_line = line(&label, 13, 1.4, tone);
+    if viewer.preview {
+        name_line = name_line.styles([pm_style::italic()]);
+    }
+    let mut tab = node()
         .styles(styles)
         .child(file_icon(&viewer.path, 3.5))
-        .child(line(&label, 13, 1.4, tone))
-        .child(
-            Button::icon(IconName::Close, VIEWER_CLOSE)
-                .size(pm_components::button::Size::Icon)
-                .build(),
-        )
-        .focusable(TAB_VIEWER)
+        .child(name_line);
+    if viewer.is_dirty() {
+        tab = tab.child(node().styles([
+            pm_style::size(2.0),
+            pm_style::rounded(pm_style::Radius::Xs),
+            bg(Role::Muted),
+        ]));
+    }
+    tab.child(
+        Button::icon(IconName::Close, FocusId(FILE_CLOSE_BASE + index as u64))
+            .size(pm_components::button::Size::Icon)
+            .build(),
+    )
+    .focusable(FocusId(FILE_TAB_BASE + index as u64))
 }
 
 /// The strip above a session: its views, and the button for the terminal.
@@ -131,8 +142,9 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
             state.tab == Tab::Diff,
         ));
     }
-    if let Some(viewer) = &state.git.viewer {
-        strip = strip.child(viewer_tab(viewer, state.tab == Tab::File));
+    for (index, viewer) in state.git.viewers.iter().enumerate() {
+        let shown = state.tab == Tab::File && state.git.shown == Some(index);
+        strip = strip.child(viewer_tab(viewer, index, shown));
     }
     let on = state.terminal;
     let mut toggle = vec![
@@ -159,6 +171,46 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
     )
 }
 
+/// What fills the main area on the page for starting work while a file of the project is open: the tabs, the page itself under the first of them, and the file under the others.
+fn home_page(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
+    let mut strip = node()
+        .styles([
+            flex(),
+            items_end(),
+            gap(1),
+            h(12),
+            px(3),
+            flex_none(),
+            border_b(),
+            border_color(Role::Border),
+        ])
+        .child(tab(
+            IconName::Plus,
+            "New Session",
+            TAB_CHAT,
+            state.tab != Tab::File,
+        ));
+    for (index, viewer) in state.git.viewers.iter().enumerate() {
+        let shown = state.tab == Tab::File && state.git.shown == Some(index);
+        strip = strip.child(viewer_tab(viewer, index, shown));
+    }
+    node()
+        .styles([flex(), flex_col(), flex_1(), min_w_px(0), h_full()])
+        .child(strip)
+        .child(
+            if state.tab == Tab::File && state.shown_viewer().is_some() {
+                viewer::viewer(state, height)
+            } else {
+                welcome::welcome(
+                    state,
+                    ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
+                    input::inner_width((width - 48.0).min(680.0)),
+                    shaper,
+                )
+            },
+        )
+}
+
 /// What fills the main area while a session is open.
 fn session_page(
     state: &WorkspaceState,
@@ -170,7 +222,7 @@ fn session_page(
 ) -> Node {
     let view = match state.tab {
         Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width, height),
-        Tab::File if state.git.viewer.is_some() => viewer::viewer(state, height),
+        Tab::File if state.shown_viewer().is_some() => viewer::viewer(state, height),
         _ => chat::chat(state, session, width, above, shaper),
     };
     let mut page = node()
@@ -205,6 +257,9 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             height,
             shaper,
         ),
+        (Page::New(_), _) if !state.git.viewers.is_empty() => {
+            home_page(state, main_width, height, shaper)
+        }
         (Page::History, _) => history::history(state),
         _ => welcome::welcome(
             state,

@@ -7,7 +7,7 @@ use crate::change_list::Group;
 use crate::git_menus::{MENU_ROW_BASE, MenuKind, OpenMenu};
 use crate::git_prompts::Prompt;
 use crate::sample::{Change, Session};
-use crate::state::{Outgoing, Page, Tab, WorkspaceState};
+use crate::state::{Outgoing, Page, WorkspaceState};
 
 /// The button that opens the list of branches.
 pub const BRANCH_BUTTON: FocusId = FocusId(7020);
@@ -29,12 +29,6 @@ pub const BRANCH_PICK_BASE: u64 = 8300;
 
 /// How many branches the list shows at once.
 pub const BRANCH_ROWS: usize = 12;
-
-/// The button that closes the file being read.
-pub const VIEWER_CLOSE: FocusId = FocusId(7030);
-
-/// Shows the file being read.
-pub const TAB_VIEWER: FocusId = FocusId(7031);
 
 /// The scrolling body of the file being read.
 pub const VIEWER_SCROLL: FocusId = FocusId(7032);
@@ -128,35 +122,6 @@ pub enum Pick {
     Range,
 }
 
-/// What a file being read shows.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Contents {
-    /// The server has not answered yet.
-    Loading,
-    /// The lines of the file.
-    Text {
-        /// The lines.
-        lines: Vec<String>,
-        /// Whether the file was longer than could be shown.
-        truncated: bool,
-    },
-    /// Why there is nothing to show.
-    Message(String),
-}
-
-/// A file being read in the window.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Viewer {
-    /// The file, from the root of the repository.
-    pub path: String,
-    /// Whether it is read from the last commit rather than from the folder.
-    pub head: bool,
-    /// What it holds.
-    pub contents: Contents,
-    /// How far down it is scrolled, in logical pixels.
-    pub scroll: f32,
-}
-
 /// What the reader has picked and opened among the changes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GitControls {
@@ -192,8 +157,10 @@ pub struct GitControls {
     pub branches: Vec<String>,
     /// What branches are searched for and a new one is named by.
     pub filter: Field,
-    /// The file being read, if one is.
-    pub viewer: Option<Viewer>,
+    /// The files open in the window, one tab each, in the order the tabs are in.
+    pub viewers: Vec<crate::open_files::Viewer>,
+    /// The tab of the file shown when a file is what the main area shows.
+    pub shown: Option<usize>,
     /// Whether the changes section is open.
     pub changes_open: bool,
     /// Whether the graph is open.
@@ -234,7 +201,8 @@ impl Default for GitControls {
             branch_menu: false,
             branches: Vec::new(),
             filter: Field::default(),
-            viewer: None,
+            viewers: Vec::new(),
+            shown: None,
             changes_open: true,
             graph_open: false,
             graph_all: false,
@@ -695,7 +663,7 @@ impl WorkspaceState {
             self.press_menu_row(row as usize);
             return true;
         }
-        if self.press_prompt(action) || self.press_tree(action) {
+        if self.press_prompt(action) || self.press_tree(action) || self.press_files(action) {
             return true;
         }
         match action {
@@ -733,13 +701,6 @@ impl WorkspaceState {
             }
             BRANCH_BUTTON => self.toggle_branch_menu(),
             BRANCH_CREATE | BRANCH_SUBMIT => self.submit_branch(action == BRANCH_CREATE),
-            VIEWER_CLOSE => {
-                self.git.viewer = None;
-                if self.tab == Tab::File {
-                    self.tab = Tab::Diff;
-                }
-            }
-            TAB_VIEWER => self.tab = Tab::File,
             _ => return self.press_branch_row(action),
         }
         true
@@ -826,60 +787,6 @@ impl WorkspaceState {
     pub fn with_session_branches(mut self, session: usize, names: Vec<String>) -> Self {
         if self.review_index() == Some(session) {
             self.git.branches = names;
-        }
-        self
-    }
-
-    /// Opens the file at `path` in the window, as it is in the last commit when `head`, and asks the server for it.
-    pub fn open_viewer(&mut self, path: String, head: bool) {
-        let Some(open) = self.review_index() else {
-            return;
-        };
-        self.git.viewer = Some(Viewer {
-            path: path.clone(),
-            head,
-            contents: Contents::Loading,
-            scroll: 0.0,
-        });
-        self.tab = Tab::File;
-        self.outbox.push(Outgoing::ReadFile {
-            session: open,
-            path,
-            head,
-        });
-    }
-
-    /// The state after the server answered for the file at `path` of the session at `session`: its text and whether it was cut short, or why there is none.
-    pub fn with_file(
-        mut self,
-        session: usize,
-        path: &str,
-        head: bool,
-        read: Result<(Option<String>, bool), String>,
-    ) -> Self {
-        if self.review_index() != Some(session) {
-            return self;
-        }
-        if let Some(viewer) = self.git.viewer.as_mut()
-            && viewer.path == path
-            && viewer.head == head
-        {
-            viewer.contents = match read {
-                Ok((Some(text), truncated)) => Contents::Text {
-                    lines: text.lines().map(str::to_owned).collect(),
-                    truncated,
-                },
-                Ok((None, _)) => Contents::Message("This file is not text.".to_owned()),
-                Err(reason) => Contents::Message(reason),
-            };
-        }
-        self
-    }
-
-    /// The state after the viewer is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_viewer(mut self, delta: f32, room: f32) -> Self {
-        if let Some(viewer) = self.git.viewer.as_mut() {
-            viewer.scroll = (viewer.scroll + delta).clamp(0.0, room);
         }
         self
     }

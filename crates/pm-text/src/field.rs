@@ -63,7 +63,7 @@ pub enum Edit {
 /// reader has selected some, the other end of the selection.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Field {
-    /// The text being edited, which holds no control characters but line breaks, and those only in a multiline field.
+    /// The text being edited, which holds no control characters but line breaks and tabs, and those only in a multiline field.
     text: String,
     /// The caret, as a byte offset on a character boundary.
     caret: usize,
@@ -322,7 +322,7 @@ impl Field {
         let typed = matches!(&edit, Edit::Insert(c) if !c.is_whitespace());
         match edit {
             Edit::Insert(character) => {
-                if !character.is_control() || (character == '\n' && self.multiline) {
+                if !character.is_control() || (matches!(character, '\n' | '\t') && self.multiline) {
                     self.replace_selection(character.encode_utf8(&mut [0; 4]));
                 }
             }
@@ -331,7 +331,7 @@ impl Field {
                 let clean: String = text
                     .replace("\r\n", "\n")
                     .chars()
-                    .filter(|c| !c.is_control() || (multiline && *c == '\n'))
+                    .filter(|c| !c.is_control() || (multiline && matches!(*c, '\n' | '\t')))
                     .collect();
                 self.replace_selection(&clean);
             }

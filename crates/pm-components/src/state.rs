@@ -17,6 +17,7 @@ use crate::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_COPY_MARKDOWN, MESSAGE_MENU_COPY_REPLY,
     MESSAGE_MENU_SELECT_ALL, MessageMenu,
 };
+use crate::open_files::EDITOR_FIELD;
 use crate::project::Project;
 use crate::sample::{Change, Comment, Message, Range, Session, Status, projects, sessions};
 use crate::tree_actions::{ENTRY_FIELD, TreeTarget};
@@ -587,6 +588,15 @@ pub enum Outgoing {
         /// The session, by position.
         session: usize,
     },
+    /// Writes a file in the folder of a session.
+    Write {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the folder.
+        path: String,
+        /// What it holds afterwards.
+        text: String,
+    },
     /// Makes, renames, copies or removes a file or folder in the folder of a session.
     Entry {
         /// The session, by position.
@@ -792,6 +802,11 @@ pub struct WorkspaceState {
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
     pub outbox: Vec<Outgoing>,
+    /// The session, by position, whose files are the ones open now.
+    pub files_owner: Option<usize>,
+    /// The files open for each session other than the one whose tabs are showing, by its position, kept so that switching away does not lose them or what was typed in them.
+    pub file_stash:
+        std::collections::HashMap<usize, (Vec<crate::open_files::Viewer>, Option<usize>)>,
     /// How far the conversation is scrolled back from its end, in logical pixels.
     pub chat_back: f32,
     /// The menu open over the prompt box, if one is.
@@ -904,6 +919,8 @@ impl WorkspaceState {
             message_menu: None,
             project_drag: None,
             outbox: Vec::new(),
+            files_owner: None,
+            file_stash: std::collections::HashMap::new(),
             chat_back: 0.0,
             picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
@@ -1088,6 +1105,7 @@ impl WorkspaceState {
             COMMENT_FIELD => self.comment_text.apply(edit),
             BRANCH_FILTER => self.git.filter.apply(edit),
             STASH_FIELD => self.git.stash_message.apply(edit),
+            EDITOR_FIELD => self.file_edited(edit),
             ENTRY_FIELD => {
                 if let Some((_, field)) = self.git.naming.as_mut() {
                     field.apply(edit);
@@ -1119,6 +1137,7 @@ impl WorkspaceState {
             BRANCH_FILTER => Some(&self.git.filter),
             STASH_FIELD => Some(&self.git.stash_message),
             ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
+            EDITOR_FIELD => self.shown_document().map(|document| &document.field),
             HISTORY_SEARCH => Some(&self.history_search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
@@ -1135,6 +1154,7 @@ impl WorkspaceState {
             || id == BRANCH_FILTER
             || id == STASH_FIELD
             || id == ENTRY_FIELD
+            || id == EDITOR_FIELD
             || id == HISTORY_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
@@ -1149,6 +1169,7 @@ impl WorkspaceState {
             BRANCH_FILTER => BRANCH_SUBMIT,
             STASH_FIELD => PROMPT_CONFIRM,
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
+            EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
@@ -1283,7 +1304,7 @@ impl WorkspaceState {
             self.tab = Tab::Chat;
             self.file = None;
             self.comment_target = None;
-            self.git = GitControls::default();
+            self.fresh_git();
             self.chat_back = 0.0;
         } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
