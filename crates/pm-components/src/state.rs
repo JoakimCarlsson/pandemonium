@@ -257,9 +257,6 @@ pub const MENU_BODY: FocusId = FocusId(4299);
 /// The chip naming the account the agent is signed in as.
 pub const ACCOUNT: FocusId = FocusId(4291);
 
-/// The ring in the prompt box that opens how full the context is.
-pub const CONTEXT: FocusId = FocusId(4292);
-
 /// The first of the rows choosing the account; the rest follow it.
 pub const ACCOUNT_BASE: u64 = 4700;
 
@@ -628,8 +625,6 @@ pub enum Picker {
     Location,
     /// Which login of the agent is used.
     Account,
-    /// How full the context is.
-    Context,
 }
 
 /// Where new work is done.

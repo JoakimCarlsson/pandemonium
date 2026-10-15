@@ -5,7 +5,7 @@ use pm_input::FocusId;
 
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
-    CONTEXT, DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, Outgoing,
+    DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, Outgoing,
     PICK_BASE, PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP, SKILL_BUTTON,
     SLASH_BASE, SLASH_BUTTON, STEP_BASE, SUBAGENTS_CHIP, WorkspaceState, prompt_field,
 };
@@ -26,7 +26,6 @@ impl WorkspaceState {
         action == LOCATION
             || action == MENU_BODY
             || action == ACCOUNT
-            || action == CONTEXT
             || (ACCOUNT_BASE..ACCOUNT_BASE + 50).contains(&id)
             || (SETTING_BASE..SETTING_BASE + 10).contains(&id)
             || (PICK_BASE..PICK_BASE + 100).contains(&id)
@@ -594,8 +593,6 @@ impl WorkspaceState {
             if self.picker.is_some() {
                 self.reread_branches();
             }
-        } else if id == CONTEXT.0 {
-            self.picker = (self.picker != Some(Picker::Context)).then_some(Picker::Context);
         } else if id == ACCOUNT.0 {
             self.picker = (self.picker != Some(Picker::Account)).then_some(Picker::Account);
         } else if let Some(index) = within(ACCOUNT_BASE, 50) {

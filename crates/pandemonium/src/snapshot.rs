@@ -107,7 +107,7 @@ pub enum Shot {
     Agents,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
-    /// A conversation with its usage menu open over the prompt box.
+    /// A conversation with the context ring in the prompt box.
     Usage,
     /// A conversation with the model menu open.
     Picking,
@@ -487,7 +487,6 @@ impl Shot {
                             size: 200_000,
                         }),
                     )
-                    .after(pm_components::state::CONTEXT),
             ),
             Self::Queued => Screen::Workspace(queued()),
             Self::Kept => Screen::Workspace(kept()),

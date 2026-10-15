@@ -571,16 +571,7 @@ pub fn composer(
         ));
     }
     let strip = strip.child(spacer());
-    let strip = match session {
-        Some(session) => {
-            let open = state.picker == Some(Picker::Context);
-            strip.children(
-                usage::context_button(session, open)
-                    .map(|button| anchored(button, open.then(|| usage::context_menu(session)))),
-            )
-        }
-        None => strip,
-    };
+    let strip = strip.children(session.and_then(usage::context_ring));
     let strip = strip.children(send_buttons(working, empty));
     node()
         .styles([
