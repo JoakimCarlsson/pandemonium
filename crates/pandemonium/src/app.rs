@@ -48,10 +48,6 @@ use crate::{keys, scene};
 /// How tall the strip of tabs above an open file is, in logical pixels.
 const TABS: f32 = 48.0;
 
-/// The name the desktop knows the application by.
-#[cfg(target_os = "linux")]
-const APP_ID: &str = "pandemonium";
-
 /// Logical width of the window when it opens on a machine that tells nothing of its screens.
 const WIDTH: f32 = 1280.0;
 
@@ -278,8 +274,9 @@ impl App {
             use winit::platform::wayland::WindowAttributesExtWayland;
             use winit::platform::x11::WindowAttributesExtX11;
 
-            let attributes = WindowAttributesExtWayland::with_name(attributes, APP_ID, "");
-            WindowAttributesExtX11::with_name(attributes, APP_ID, APP_ID)
+            let app_id = pm_store::app_name();
+            let attributes = WindowAttributesExtWayland::with_name(attributes, app_id, "");
+            WindowAttributesExtX11::with_name(attributes, app_id, app_id)
         };
         attributes
     }

@@ -4,9 +4,20 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+/// The release channel this build was made for, as `PANDEMONIUM_CHANNEL` said when it was built.
+const CHANNEL: Option<&str> = option_env!("PANDEMONIUM_CHANNEL");
+
+/// The name this build goes by to the desktop and the file system: the launcher entry, the window class and the data folder. The nightly channel has its own, so that it installs and keeps its data beside the stable app and never replaces it.
+pub fn app_name() -> &'static str {
+    match CHANNEL {
+        Some("nightly") => "pandemonium-nightly",
+        _ => "pandemonium",
+    }
+}
+
 /// The folder the app keeps its data in, under the desktop's data directory.
 fn directory() -> Option<PathBuf> {
-    dirs::data_dir().map(|data| data.join("pandemonium"))
+    dirs::data_dir().map(|data| data.join(app_name()))
 }
 
 /// The file the project list is kept in.
