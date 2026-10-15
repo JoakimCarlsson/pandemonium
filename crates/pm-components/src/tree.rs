@@ -121,7 +121,7 @@ impl Draft {
     }
 }
 
-/// The tree of `paths`, split at slashes, laid out as `layout` says.
+/// The tree of `paths`, split at slashes, laid out as `layout` says; a path that ends in a slash is a folder with nothing in it.
 pub fn build(paths: &[&str], layout: Layout) -> Vec<Entry> {
     let mut root = Draft::new("", String::new(), None);
     for (index, path) in paths.iter().enumerate() {
@@ -129,14 +129,14 @@ pub fn build(paths: &[&str], layout: Layout) -> Vec<Entry> {
         let mut at = &mut root;
         for (depth, part) in parts.iter().enumerate() {
             let here = parts[..=depth].join("/");
-            let last = depth + 1 == parts.len();
+            let file = depth + 1 == parts.len() && !path.ends_with('/');
             let found = at
                 .children
                 .iter()
-                .position(|child| child.path == here && child.file.is_some() == last);
+                .position(|child| child.path == here && child.file.is_some() == file);
             let found = found.unwrap_or_else(|| {
                 at.children
-                    .push(Draft::new(part, here, last.then_some(index)));
+                    .push(Draft::new(part, here, file.then_some(index)));
                 at.children.len() - 1
             });
             at = &mut at.children[found];

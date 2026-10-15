@@ -15,6 +15,7 @@ use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
+use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
     MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
 };
@@ -137,6 +138,8 @@ pub struct App {
     project_dragging: bool,
     /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
     autofocused: bool,
+    /// Whether the tree was asking for a name when the last frame was drawn.
+    naming: bool,
     /// Whether the shell is to take the keyboard once it is drawn.
     focus_terminal: bool,
     /// The cell of the shell's window a press began in, while the button is held, so dragging marks text.
@@ -247,6 +250,7 @@ impl Default for App {
             agents,
             work,
             autofocused: false,
+            naming: false,
             focus_terminal: false,
             terminal_anchor: None,
             terminal_scroll_rest: 0.0,
@@ -339,6 +343,11 @@ impl App {
                 self.focus.focus(PROMPT);
             }
             self.autofocused = starting;
+            let naming = state.is_naming();
+            if naming && !self.naming {
+                self.focus.focus(ENTRY_FIELD);
+            }
+            self.naming = naming;
             let mut scroll_to = None;
             if let Some(id) = self.focus.current()
                 && let Some(field) = state.field(id)
@@ -727,6 +736,10 @@ impl App {
                         let position = screen.change_folder_row_of(id).unwrap_or_default();
                         self.open_folder_change_menu(position);
                     }
+                    Some(id) if screen.tree_row_of(id).is_some() => {
+                        let target = screen.tree_row_of(id).unwrap_or_else(TreeTarget::root);
+                        self.open_tree_menu(target);
+                    }
                     Some(id) if screen.history_row_of(id).is_some() => {
                         let row = screen.history_row_of(id).unwrap_or_default();
                         self.open_git_menu(MenuKind::History(row));
@@ -771,6 +784,12 @@ impl App {
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
                 self.text_press();
+                if self.pressed_on != Some(ENTRY_FIELD)
+                    && self.model.read(|screen| screen.is_naming())
+                {
+                    self.model
+                        .update(|state| *state = std::mem::take(state).without_naming());
+                }
                 if self.focus.current() != self.pressed_on {
                     self.focus.clear();
                 }
@@ -881,6 +900,16 @@ impl App {
         };
         self.model.update(|state| {
             *state = std::mem::take(state).with_folder_change_menu(position, (x - 8.0, y + 12.0));
+        });
+    }
+
+    /// Opens the menu on the project's files, just under the pointer, over `target`.
+    fn open_tree_menu(&mut self, target: TreeTarget) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        self.model.update(|state| {
+            *state = std::mem::take(state).with_tree_menu(target, (x - 8.0, y + 12.0));
         });
     }
 
@@ -1204,6 +1233,11 @@ impl App {
             Key::Escape if self.model.read(|screen| screen.picker_open()) => {
                 self.model
                     .update(|state| *state = std::mem::take(state).without_picker());
+            }
+            Key::Escape if self.model.read(|screen| screen.is_naming()) => {
+                self.model
+                    .update(|state| *state = std::mem::take(state).without_naming());
+                self.focus.clear();
             }
             Key::Escape => self.focus.clear(),
             _ => match self.focus.current() {

@@ -169,9 +169,10 @@ impl WorkspaceState {
     }
 
     /// The state holding `files` as those listed for `key`, unless the prompt has moved on.
-    pub fn with_files(mut self, key: &str, files: Vec<String>) -> Self {
+    pub fn with_files(mut self, key: &str, files: Vec<String>, folders: Vec<String>) -> Self {
         if self.files_of.as_deref() == Some(key) {
             self.files = files;
+            self.tree_folders = folders;
         }
         self
     }

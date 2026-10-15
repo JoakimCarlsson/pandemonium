@@ -305,6 +305,40 @@ pub enum Request {
         /// What the branch is called.
         name: String,
     },
+    /// Makes an empty file or a folder, and the folders above it, inside a folder.
+    CreateEntry {
+        /// The folder.
+        directory: String,
+        /// The path of the new entry, from the root of the folder.
+        path: String,
+        /// Whether to make a folder rather than a file.
+        folder: bool,
+    },
+    /// Renames or moves a file or folder inside a folder, refusing a name that is taken.
+    RenameEntry {
+        /// The folder.
+        directory: String,
+        /// Where the entry is, from the root of the folder.
+        from: String,
+        /// Where it goes, from the root of the folder.
+        to: String,
+    },
+    /// Copies a file or folder into another folder inside a folder, under a free name when its own is taken.
+    CopyEntry {
+        /// The folder.
+        directory: String,
+        /// Where the entry is, from the root of the folder.
+        from: String,
+        /// The folder the copy goes into, from the root of the folder; empty for the root itself.
+        into: String,
+    },
+    /// Takes a file or folder, and everything in it, off the disk.
+    RemoveEntry {
+        /// The folder.
+        directory: String,
+        /// Where the entry is, from the root of the folder.
+        path: String,
+    },
     /// Reads a file of a folder, as it is in the working folder or in the last commit.
     ReadFile {
         /// The folder.

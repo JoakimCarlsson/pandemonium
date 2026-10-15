@@ -75,7 +75,7 @@ pub fn members(changes: &[Change], group: Group) -> Vec<usize> {
 }
 
 /// The colour the letter that says how `change` came to differ is written in.
-fn mark_color(letter: &str) -> Color {
+pub(crate) fn mark_color(letter: &str) -> Color {
     match letter {
         "A" | "U" => Color::from(Role::Success),
         "D" => Color::from(Role::Subtle),

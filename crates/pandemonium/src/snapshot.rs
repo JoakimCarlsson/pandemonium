@@ -18,6 +18,7 @@ use pm_components::state::{
     AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
     RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP,
 };
+use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
     ADD_PROJECT, HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL,
@@ -61,6 +62,8 @@ pub enum Shot {
     Stashing,
     /// The workspace on the diff with two changed files picked and the menu on them open.
     ChangeMenu,
+    TreeMenu,
+    Naming,
     /// The workspace on the diff with the question of whether to discard two changed files open.
     Discarding,
     /// The workspace with the list of branches open and a name being typed.
@@ -324,11 +327,17 @@ fn files() -> WorkspaceState {
         "docs/protocol.md",
         "crates/pandemonium/src/main.rs",
         "crates/pandemonium/src/session.rs",
+        "crates/pandemonium/src/checkpoint.rs",
+        "crates/pandemonium/src/lib.rs",
         "crates/pandemonium/Cargo.toml",
         "crates/pm-ui/src/lib.rs",
         "scripts/install.sh",
     ];
-    state.with_files(&key, paths.map(str::to_owned).to_vec())
+    state.with_files(
+        &key,
+        paths.map(str::to_owned).to_vec(),
+        vec!["crates/pandemonium/src/empty".to_owned()],
+    )
 }
 
 /// The workspace with a shell open that has run a few commands, as the shell would have drawn them.
@@ -404,6 +413,14 @@ impl Shot {
                 source().git_failed("Could not switch branch: fatal: a branch named 'main' already exists"),
             ),
             Self::ChangeMenu => Screen::Workspace(picked().with_change_menu(0, (1000.0, 250.0))),
+            Self::TreeMenu => Screen::Workspace(files().with_tree_menu(
+                TreeTarget {
+                    path: "crates/pandemonium/src/session.rs".to_owned(),
+                    folder: false,
+                },
+                (1000.0, 250.0),
+            )),
+            Self::Naming => Screen::Workspace(files().after(TREE_NEW_FOLDER)),
             Self::Discarding => Screen::Workspace(picked().asked(Prompt::Discard(vec![0, 2]))),
             Self::Branching => Screen::Workspace(branching()),
             Self::Reading => Screen::Workspace(reading()),

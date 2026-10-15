@@ -24,6 +24,9 @@ use crate::state::{
     COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW, REVIEW_CHANGES, REVIEW_FILES, ReviewTab,
     TREE_SCROLL, WorkspaceState,
 };
+use crate::tree_actions::{
+    TREE_COLLAPSE, TREE_NEW_FILE, TREE_NEW_FOLDER, TREE_REFRESH, TREE_SPACE,
+};
 use crate::{Button, Input, input};
 use crate::{change_list, file_tree};
 
@@ -88,14 +91,47 @@ fn panel_tab(label: &str, id: FocusId, shown: bool) -> Node {
         .focusable(id)
 }
 
-/// Every file of the project, as a tree.
+/// The line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
+fn files_header(state: &WorkspaceState) -> Node {
+    band(10)
+        .child(line("Files", 13, 1.4, Role::Subtle).styles([pm_style::flex_1()]))
+        .child(
+            Button::icon(IconName::FilePlus, TREE_NEW_FILE)
+                .size(Size::Icon)
+                .build()
+                .tooltip("New File…"),
+        )
+        .child(
+            Button::icon(IconName::FolderPlus, TREE_NEW_FOLDER)
+                .size(Size::Icon)
+                .build()
+                .tooltip("New Folder…"),
+        )
+        .child(
+            Button::icon(IconName::Refresh, TREE_REFRESH)
+                .size(Size::Icon)
+                .spinning(state.git.working)
+                .build()
+                .tooltip("Refresh"),
+        )
+        .child(
+            Button::icon(IconName::Collapse, TREE_COLLAPSE)
+                .size(Size::Icon)
+                .build()
+                .tooltip("Collapse Folders"),
+        )
+}
+
+/// Every file of the project, as a tree, under the buttons that act on it.
 fn files(state: &WorkspaceState) -> Node {
     let mut list = scrolling_list(state).children(file_tree::rows(state));
     if state.files.is_empty() {
         list = list.child(nothing("No files yet."));
     }
+    list = list.child(node().styles([flex_1(), min_h(32.0)]).focusable(TREE_SPACE));
     node()
         .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
+        .child(files_header(state))
         .child(list)
 }
 

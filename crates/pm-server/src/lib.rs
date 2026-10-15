@@ -9,6 +9,7 @@ mod connection;
 mod conversation;
 mod core;
 mod credential;
+mod entries;
 mod handler;
 mod listener;
 mod queue;

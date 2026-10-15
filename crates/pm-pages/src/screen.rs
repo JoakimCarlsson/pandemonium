@@ -12,6 +12,7 @@ use pm_components::git_controls::Pick;
 use pm_components::git_menus::MenuKind;
 use pm_components::graph;
 use pm_components::project::Project;
+use pm_components::tree_actions::TreeTarget;
 
 /// Which screen is showing, with what it remembers.
 #[derive(Clone, Debug, PartialEq)]
@@ -410,6 +411,43 @@ impl Screen {
         }
     }
 
+    /// The file or folder of the project's files row `id` is, while the workspace is showing.
+    pub fn tree_row_of(&self, id: FocusId) -> Option<TreeTarget> {
+        match self {
+            Self::Workspace(state) => state.tree_row_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the menu on the project's files open at `at` over `target`.
+    pub fn with_tree_menu(self, target: TreeTarget, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_tree_menu(target, at)),
+            other => other,
+        }
+    }
+
+    /// Whether the tree is asking for a name in a field.
+    pub fn is_naming(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.is_naming())
+    }
+
+    /// The screen with the name being typed in the tree given up.
+    pub fn without_naming(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.without_naming()),
+            other => other,
+        }
+    }
+
+    /// The screen after files were made, renamed, copied or removed and must be listed again.
+    pub fn with_tree_stale(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_tree_stale()),
+            other => other,
+        }
+    }
+
     /// Which folder of the changed files' tree row `id` is, while the workspace is showing.
     pub fn change_folder_row_of(&self, id: FocusId) -> Option<usize> {
         match self {
@@ -781,9 +819,9 @@ impl Screen {
     }
 
     /// The screen holding `files` as those listed for `key`, while the workspace is showing.
-    pub fn with_files(self, key: &str, files: Vec<String>) -> Self {
+    pub fn with_files(self, key: &str, files: Vec<String>, folders: Vec<String>) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.with_files(key, files)),
+            Self::Workspace(state) => Self::Workspace(state.with_files(key, files, folders)),
             onboarding => onboarding,
         }
     }

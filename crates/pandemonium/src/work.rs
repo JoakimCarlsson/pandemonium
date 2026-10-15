@@ -9,6 +9,7 @@ use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
 use pm_components::git_controls::GRAPH_LIMIT;
 use pm_components::state::SESSION_BASE;
+use pm_components::tree_actions::EntryChange;
 use pm_input::FocusId;
 use pm_pages::{Outgoing, Screen, WorkspaceState};
 use pm_protocol::{Attachment, Login, Request, Response, Target};
@@ -19,6 +20,39 @@ use crate::view::View;
 
 /// The most files listed for the list behind an `@`.
 const FILE_LIMIT: usize = 20_000;
+
+/// What failing to carry out `change` is called.
+fn entry_failure(change: &EntryChange) -> &'static str {
+    match change {
+        EntryChange::Create { folder: true, .. } => "make the folder",
+        EntryChange::Create { folder: false, .. } => "make the file",
+        EntryChange::Rename { .. } => "rename it",
+        EntryChange::Copy { .. } => "copy it",
+        EntryChange::Remove { .. } => "delete it",
+    }
+}
+
+/// The request that carries out `change` in `directory`.
+fn entry_request(change: EntryChange, directory: String) -> Request {
+    match change {
+        EntryChange::Create { path, folder } => Request::CreateEntry {
+            directory,
+            path,
+            folder,
+        },
+        EntryChange::Rename { from, to } => Request::RenameEntry {
+            directory,
+            from,
+            to,
+        },
+        EntryChange::Copy { from, into } => Request::CopyEntry {
+            directory,
+            from,
+            into,
+        },
+        EntryChange::Remove { path } => Request::RemoveEntry { directory, path },
+    }
+}
 
 /// What the window opens with, as the server on this machine keeps it.
 pub struct Bootstrap {
@@ -91,6 +125,8 @@ enum Pending {
     Stashes(usize),
     /// Something was done to the files or branches of the folder of the session at this position, with what failing at it is called.
     Git(usize, &'static str),
+    /// A file or folder of the folder of the session at this position was made, renamed, copied or removed, with what failing at it is called.
+    Entry(usize, &'static str),
     /// The branches of the folder of the session at this position.
     SessionBranches(usize),
     /// The file of the session at this position, at this path, and whether it was read from the last commit.
@@ -710,6 +746,15 @@ impl Work {
                     |directory| Request::Discard { directory, paths },
                     Pending::Git(session, "discard the changes"),
                 ),
+                Outgoing::Entry { session, change } => {
+                    let what = entry_failure(&change);
+                    self.ask_in_folder(
+                        model,
+                        session,
+                        |directory| entry_request(change, directory),
+                        Pending::Entry(session, what),
+                    );
+                }
                 Outgoing::Ignore { session, paths } => self.ask_in_folder(
                     model,
                     session,
@@ -1231,8 +1276,10 @@ impl Work {
                 _ => {}
             },
             Pending::Files(key) => {
-                if let Response::Files { paths } = response {
-                    model.update(|screen| *screen = screen.clone().with_files(&key, paths));
+                if let Response::Files { paths, folders } = response {
+                    model.update(|screen| {
+                        *screen = screen.clone().with_files(&key, paths, folders);
+                    });
                 }
             }
             Pending::Branches(project) => {
@@ -1316,6 +1363,14 @@ impl Work {
                     let reason = format!("Could not {what}: {message}");
                     model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
                 }
+                self.refresh(model, session);
+            }
+            Pending::Entry(session, what) => {
+                if let Some(message) = failure {
+                    let reason = format!("Could not {what}: {message}");
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                }
+                model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
                 self.refresh(model, session);
             }
             Pending::SessionBranches(session) => {

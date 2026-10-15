@@ -19,6 +19,7 @@ use crate::message_menu::{
 };
 use crate::project::Project;
 use crate::sample::{Change, Comment, Message, Range, Session, Status, projects, sessions};
+use crate::tree_actions::{ENTRY_FIELD, TreeTarget};
 
 /// A prompt holding `text`, which may run to several lines.
 pub fn prompt_field(text: &str) -> Field {
@@ -106,7 +107,7 @@ pub const FOLDER_STAGE_BASE: u64 = 7300;
 pub const DIFF_FOLD_BASE: u64 = 7500;
 
 /// The first of the rows folding a folder of the project's files; the rest follow it.
-pub const TREE_BASE: u64 = 7700;
+pub const TREE_BASE: u64 = 2_000_000;
 
 /// Opens the diff from the summary of changes.
 pub const OPEN_DIFF: FocusId = FocusId(314);
@@ -586,6 +587,13 @@ pub enum Outgoing {
         /// The session, by position.
         session: usize,
     },
+    /// Makes, renames, copies or removes a file or folder in the folder of a session.
+    Entry {
+        /// The session, by position.
+        session: usize,
+        /// What is done.
+        change: crate::tree_actions::EntryChange,
+    },
     /// Lists the GitHub accounts and organizations on this machine, for the panel for adding a project.
     Owners,
     /// Lists the GitHub repositories of the account `login` on this machine, for the panel for adding a project.
@@ -816,6 +824,8 @@ pub struct WorkspaceState {
     pub skill_names: std::collections::HashSet<String>,
     /// The files of the folder the prompt is for, which an `@` in the prompt offers.
     pub files: Vec<String>,
+    /// The folders among `files` that hold no tracked file, by path.
+    pub tree_folders: Vec<String>,
     /// The folder `files` was read for.
     pub files_of: Option<String>,
     /// Who each agent is signed in as, by the agent's position, once it has been looked up.
@@ -913,6 +923,7 @@ impl WorkspaceState {
             discovery_host: None,
             discovered_elsewhere: std::collections::HashMap::new(),
             files: Vec::new(),
+            tree_folders: Vec::new(),
             files_of: None,
             identities: vec![None; builtin.len()],
             defaults: vec![None; builtin.len()],
@@ -1077,6 +1088,11 @@ impl WorkspaceState {
             COMMENT_FIELD => self.comment_text.apply(edit),
             BRANCH_FILTER => self.git.filter.apply(edit),
             STASH_FIELD => self.git.stash_message.apply(edit),
+            ENTRY_FIELD => {
+                if let Some((_, field)) = self.git.naming.as_mut() {
+                    field.apply(edit);
+                }
+            }
             ADDER_FIELD => self.adder_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
@@ -1102,6 +1118,7 @@ impl WorkspaceState {
             COMMENT_FIELD => Some(&self.comment_text),
             BRANCH_FILTER => Some(&self.git.filter),
             STASH_FIELD => Some(&self.git.stash_message),
+            ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
             HISTORY_SEARCH => Some(&self.history_search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
@@ -1117,6 +1134,7 @@ impl WorkspaceState {
             || id == COMMENT_FIELD
             || id == BRANCH_FILTER
             || id == STASH_FIELD
+            || id == ENTRY_FIELD
             || id == HISTORY_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
@@ -1130,6 +1148,7 @@ impl WorkspaceState {
             COMMENT_FIELD => COMMENT_ADD,
             BRANCH_FILTER => BRANCH_SUBMIT,
             STASH_FIELD => PROMPT_CONFIRM,
+            ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
@@ -1308,7 +1327,8 @@ impl WorkspaceState {
             self.start_comment(index, None, false);
         } else if let Some(index) = position(COMMENT_REMOVE_BASE, self.comment_count()) {
             self.remove_comment(index);
-        } else if let Some(index) = position(TREE_BASE, self.files.len()) {
+        } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
+        {
             self.fold_tree_folder(index);
         } else if let Some(index) = position(VIEWED_BASE, self.change_count()) {
             self.change_at(index, |change| change.viewed = !change.viewed);
@@ -1867,8 +1887,12 @@ impl WorkspaceState {
 
     /// Folds the folder at `position` of the project's files, or unfolds it.
     fn fold_tree_folder(&mut self, position: usize) {
-        let paths = crate::file_tree::folder_paths(&self.files);
+        let paths = crate::file_tree::folder_paths(&self.files, &self.tree_folders);
         if let Some(path) = paths.into_iter().nth(position) {
+            self.git.tree_selected = Some(TreeTarget {
+                path: path.clone(),
+                folder: true,
+            });
             toggle(&mut self.closed_tree, path);
         }
     }

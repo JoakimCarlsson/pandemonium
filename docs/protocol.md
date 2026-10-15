@@ -131,6 +131,10 @@ request with exactly one `response` carrying the same `id`.
 | `ignore`       | `directory`, `paths`                                                                             | `done`          |
 | `checkout`     | `directory`, `branch`                                                                            | `done`          |
 | `create_branch`| `directory`, `name`                                                                              | `done`          |
+| `create_entry` | `directory`, `path`, `folder`                                                                    | `done`          |
+| `rename_entry` | `directory`, `from`, `to`                                                                        | `done`          |
+| `copy_entry`   | `directory`, `from`, `into`                                                                      | `done`          |
+| `remove_entry` | `directory`, `path`                                                                              | `done`          |
 | `read_file`    | `directory`, `path`, `head`                                                                      | `file`          |
 | `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
@@ -286,6 +290,16 @@ request with exactly one `response` carrying the same `id`.
   for instance while the branch is checked out in another worktree.
 - **`create_branch`:** makes the branch `name` at the commit the folder is at
   and checks it out.
+- **`create_entry`:** makes an empty file, or a folder when `folder`, at
+  `path` (from the root of `directory`) and the folders above it; a name that
+  is taken is refused.
+- **`rename_entry`:** renames or moves `from` to `to`, both from the root of
+  `directory`; a name that is taken is refused.
+- **`copy_entry`:** copies `from` into the folder `into` (empty for the root of
+  `directory`), under `name copy.ext`, `name copy 2.ext` and so on when the name
+  is taken.
+- **`remove_entry`:** takes `path` and everything in it off the disk. Every
+  path of these four must stay inside `directory`.
 - **`read_file`:** reads `path` from the working folder or, when `head`, from
   the last commit. The response holds no text for a file that is not text.
 
@@ -303,7 +317,7 @@ embedded context, and anything else as a link to the stored file.
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
-| `files`      | `paths`: repository-relative, tracked or not ignored      |
+| `files`      | `paths`: repository-relative, tracked or not ignored, `folders` (optional): untracked folders, which may hold no file yet |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |

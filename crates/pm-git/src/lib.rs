@@ -143,6 +143,26 @@ pub fn files(directory: &Path, limit: usize) -> Vec<String> {
     .unwrap_or_default()
 }
 
+/// The untracked folders of the repository `directory` is in, as paths from it, at most `limit` of them: those that hold no tracked file, which is how a folder with nothing in it yet is told of.
+pub fn untracked_folders(directory: &Path, limit: usize) -> Vec<String> {
+    if !is_repository(directory) {
+        return Vec::new();
+    }
+    run(
+        directory,
+        &["ls-files", "--others", "--directory", "--exclude-standard"],
+    )
+    .map(|listed| {
+        listed
+            .lines()
+            .filter_map(|line| line.strip_suffix('/'))
+            .take(limit)
+            .map(str::to_owned)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 /// The branch `directory` has checked out, or nothing when it has none or is not a repository.
 pub fn current_branch(directory: &Path) -> Option<String> {
     let name = run(directory, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;

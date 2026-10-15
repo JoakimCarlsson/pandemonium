@@ -72,6 +72,9 @@ pub enum Response {
     Files {
         /// Their paths, from the root of the repository.
         paths: Vec<String>,
+        /// The folders that hold no tracked file, which have no file to be told of by.
+        #[serde(default)]
+        folders: Vec<String>,
     },
     /// The branches of a repository.
     Branches {

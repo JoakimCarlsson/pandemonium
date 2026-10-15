@@ -8,6 +8,7 @@ use crate::button::{Size, Variant};
 use crate::input::Size as InputSize;
 use crate::parts::{line, spacer, wrap};
 use crate::state::{Outgoing, WorkspaceState};
+use crate::tree_actions::{EntryChange, TreeTarget, name_of};
 use crate::{Button, Input, Modal};
 
 /// The dimmed window behind a question.
@@ -80,6 +81,8 @@ pub enum Prompt {
     StashMessage,
     /// Which stash to apply, pop or drop.
     Stashes(StashAction),
+    /// Whether to take a file or folder off the disk.
+    Remove(TreeTarget),
 }
 
 impl WorkspaceState {
@@ -149,6 +152,10 @@ impl WorkspaceState {
                 });
             }
             Prompt::Stashes(_) => {}
+            Prompt::Remove(target) => {
+                self.drop_viewer_of(&target.path);
+                self.send_entry(EntryChange::Remove { path: target.path });
+            }
         }
     }
 
@@ -338,6 +345,21 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
             Variant::Destructive,
         ),
         Prompt::StashMessage => stash_message(state),
+        Prompt::Remove(target) => {
+            let name = name_of(&target.path);
+            let (title, words) = if target.folder {
+                (
+                    format!("Delete {name}?"),
+                    "The folder and everything in it is taken off the disk. This cannot be undone.",
+                )
+            } else {
+                (
+                    format!("Delete {name}?"),
+                    "The file is taken off the disk. This cannot be undone.",
+                )
+            };
+            question(title, words, "Delete", Variant::Destructive)
+        }
         Prompt::Stashes(action) => stash_list(state, *action),
     }
 }

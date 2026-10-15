@@ -172,6 +172,14 @@ pub struct GitControls {
     pub prompt: Option<Prompt>,
     /// The box a stash is named in.
     pub stash_message: Field,
+    /// The box a new or renamed file or folder is named in, and what it is for, while the tree is asking.
+    pub naming: Option<(crate::tree_actions::Naming, Field)>,
+    /// The row of the tree last picked, where new files and folders go.
+    pub tree_selected: Option<crate::tree_actions::TreeTarget>,
+    /// The file or folder of the tree the open menu or question is about.
+    pub tree_target: Option<crate::tree_actions::TreeTarget>,
+    /// What was cut or copied out of the tree.
+    pub tree_clipboard: Option<crate::tree_actions::Clipboard>,
     /// The stashes of the open session's repository, newest first.
     pub stashes: Vec<pm_git::Stash>,
     /// The merge, rebase or cherry-pick the open session's folder is stopped in, if it is in one.
@@ -216,6 +224,10 @@ impl Default for GitControls {
             menu: None,
             prompt: None,
             stash_message: Field::default(),
+            naming: None,
+            tree_selected: None,
+            tree_target: None,
+            tree_clipboard: None,
             stashes: Vec::new(),
             operation: None,
             graph_height: crate::graph::HEIGHT,
@@ -683,7 +695,7 @@ impl WorkspaceState {
             self.press_menu_row(row as usize);
             return true;
         }
-        if self.press_prompt(action) {
+        if self.press_prompt(action) || self.press_tree(action) {
             return true;
         }
         match action {

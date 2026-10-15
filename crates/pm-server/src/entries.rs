@@ -1,0 +1,154 @@
+//! The files and folders of a project folder, made, renamed, copied and removed for a client.
+//!
+//! Every path is taken from the root of the folder the client names and is
+//! refused when it would leave it. Nothing is overwritten: a name that is
+//! taken is an error, except for a copy, which is given a free name beside
+//! the original.
+
+use std::fs;
+use std::io;
+use std::path::{Component, Path, PathBuf};
+
+/// `relative` joined onto `root`, refused when it is empty, absolute or steps upward.
+fn inside(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    let clean = !relative.is_empty()
+        && !relative.contains(['\0', '\n', '\r'])
+        && path
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)));
+    if clean {
+        Ok(root.join(path))
+    } else {
+        Err(format!("{relative:?} is not a path inside the folder"))
+    }
+}
+
+/// `relative` joined onto `root`, where an empty `relative` is the root itself.
+fn inside_or_root(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    if relative.is_empty() {
+        Ok(root.to_path_buf())
+    } else {
+        inside(root, relative)
+    }
+}
+
+/// A failure of `action` on `path`, worded for the reader.
+fn refused(action: &str, path: &Path, error: &io::Error) -> String {
+    format!("could not {action} {}: {error}", path.display())
+}
+
+/// Fails when something is already at `path`.
+fn refuse_taken(path: &Path) -> Result<(), String> {
+    if path.symlink_metadata().is_ok() {
+        Err(format!("{} already exists", path.display()))
+    } else {
+        Ok(())
+    }
+}
+
+/// Makes an empty file at `relative`, or a folder when `folder`, and the folders above it.
+pub fn create(root: &Path, relative: &str, folder: bool) -> Result<(), String> {
+    let path = inside(root, relative)?;
+    refuse_taken(&path)?;
+    let made = match (folder, path.parent()) {
+        (true, _) => fs::create_dir_all(&path),
+        (false, Some(parent)) => fs::create_dir_all(parent).and_then(|()| fs::write(&path, b"")),
+        (false, None) => fs::write(&path, b""),
+    };
+    made.map_err(|error| refused("create", &path, &error))
+}
+
+/// Renames `from` to `to`, refusing a name that is taken and a folder moved into itself.
+pub fn rename(root: &Path, from: &str, to: &str) -> Result<(), String> {
+    let (from, to) = (inside(root, from)?, inside(root, to)?);
+    if from == to {
+        return Ok(());
+    }
+    if to.starts_with(&from) {
+        return Err("a folder cannot be moved into itself".to_owned());
+    }
+    let only_case = from.to_string_lossy().to_lowercase() == to.to_string_lossy().to_lowercase();
+    if !only_case {
+        refuse_taken(&to)?;
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|error| refused("create", parent, &error))?;
+    }
+    fs::rename(&from, &to).map_err(|error| refused("rename", &from, &error))
+}
+
+/// Splits `name` before its extension, keeping the dot with the extension; a leading dot starts no extension.
+fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(0) | None => (name, ""),
+        Some(at) => name.split_at(at),
+    }
+}
+
+/// The first name in `directory` built from `name` that nothing holds yet.
+fn free_name(directory: &Path, name: &str) -> PathBuf {
+    let plain = directory.join(name);
+    if plain.symlink_metadata().is_err() {
+        return plain;
+    }
+    let (stem, extension) = split_extension(name);
+    (1..)
+        .map(|count| match count {
+            1 => format!("{stem} copy{extension}"),
+            count => format!("{stem} copy {count}{extension}"),
+        })
+        .map(|candidate| directory.join(candidate))
+        .find(|candidate| candidate.symlink_metadata().is_err())
+        .unwrap_or(plain)
+}
+
+/// Copies `from` to `to`, and everything under it when it is a folder; a link is copied as a link.
+fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
+    let metadata = from.symlink_metadata()?;
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(from)?;
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, to);
+        #[cfg(windows)]
+        return std::os::windows::fs::symlink_file(target, to);
+    }
+    if !metadata.is_dir() {
+        return fs::copy(from, to).map(drop);
+    }
+    fs::create_dir_all(to)?;
+    for child in fs::read_dir(from)? {
+        let child = child?;
+        copy_all(&child.path(), &to.join(child.file_name()))?;
+    }
+    Ok(())
+}
+
+/// Copies `from` into the folder `into`, under a name nothing there holds yet.
+pub fn copy(root: &Path, from: &str, into: &str) -> Result<(), String> {
+    let from = inside(root, from)?;
+    let directory = inside_or_root(root, into)?;
+    if directory.starts_with(&from) && from.is_dir() {
+        return Err("a folder cannot be copied into itself".to_owned());
+    }
+    let name = from
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("{} has no name", from.display()))?;
+    let to = free_name(&directory, name);
+    copy_all(&from, &to).map_err(|error| refused("copy", &from, &error))
+}
+
+/// Takes `relative` off the disk, and everything in it when it is a folder.
+pub fn remove(root: &Path, relative: &str) -> Result<(), String> {
+    let path = inside(root, relative)?;
+    let metadata = path
+        .symlink_metadata()
+        .map_err(|error| refused("find", &path, &error))?;
+    let removed = if metadata.is_dir() {
+        fs::remove_dir_all(&path)
+    } else {
+        fs::remove_file(&path)
+    };
+    removed.map_err(|error| refused("remove", &path, &error))
+}

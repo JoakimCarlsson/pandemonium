@@ -7,6 +7,7 @@ use crate::Menu;
 use crate::git_controls::{BRANCH_BUTTON, CHANGES_MORE, COMMIT_CHEVRON, GRAPH_REFS};
 use crate::git_prompts::{Prompt, StashAction};
 use crate::state::{ADD_PROJECT, Outgoing, WorkspaceState};
+use crate::tree_actions::TreeTarget;
 
 /// The first of the rows of the menu that is open; the rest follow it.
 pub const MENU_ROW_BASE: u64 = 9000;
@@ -24,6 +25,8 @@ pub enum MenuKind {
     Refs,
     /// What can be done to a commit of the graph, by its place in the list.
     History(usize),
+    /// What can be done to the file or folder of the project's files the menu was opened on, or to the tree itself.
+    Tree,
 }
 
 /// A menu that is open, and where.
@@ -96,6 +99,32 @@ enum Command {
     CherryPick,
     /// Copies the commit's name.
     CopyHash,
+    /// Asks what to call a new file in the folder.
+    TreeNewFile,
+    /// Asks what to call a new folder in the folder.
+    TreeNewFolder,
+    /// Reads the file in the window.
+    TreeOpen,
+    /// Holds the entry to be moved by a paste.
+    TreeCut,
+    /// Holds the entry to be copied by a paste.
+    TreeCopy,
+    /// Moves or copies what is held into the folder.
+    TreePaste,
+    /// Copies the entry beside itself.
+    TreeDuplicate,
+    /// Copies the path of the entry on its machine.
+    TreeCopyPath,
+    /// Copies the path of the entry from the root of the project.
+    TreeCopyRelativePath,
+    /// Asks what to rename the entry to.
+    TreeRename,
+    /// Asks whether to delete the entry.
+    TreeDelete,
+    /// Folds every folder of the tree.
+    TreeCollapse,
+    /// Reads the files and changes again.
+    TreeRefresh,
 }
 
 /// One entry of a menu.
@@ -277,6 +306,7 @@ impl WorkspaceState {
                 ]);
                 entries
             }
+            MenuKind::Tree => self.tree_entries(),
             MenuKind::Refs => vec![row("Auto", Command::Auto), row("All", Command::All)],
             MenuKind::History(commit) => {
                 let branch = self
@@ -300,6 +330,47 @@ impl WorkspaceState {
                 ]
             }
         }
+    }
+
+    /// The entries of the menu on an entry of the tree, or on the tree itself.
+    fn tree_entries(&self) -> Vec<Entry> {
+        let target = self
+            .git
+            .tree_target
+            .clone()
+            .unwrap_or_else(TreeTarget::root);
+        let pasting = self.git.tree_clipboard.is_some();
+        if target.is_root() {
+            return vec![
+                row("New File…", Command::TreeNewFile),
+                row("New Folder…", Command::TreeNewFolder),
+                Entry::Rule,
+                row_if("Paste", Command::TreePaste, pasting),
+                Entry::Rule,
+                row("Copy Path", Command::TreeCopyPath),
+                row("Copy Relative Path", Command::TreeCopyRelativePath),
+                Entry::Rule,
+                row("Collapse All", Command::TreeCollapse),
+                row("Refresh", Command::TreeRefresh),
+            ];
+        }
+        vec![
+            row("New File…", Command::TreeNewFile),
+            row("New Folder…", Command::TreeNewFolder),
+            Entry::Rule,
+            row_if("Open", Command::TreeOpen, !target.folder),
+            Entry::Rule,
+            row("Cut", Command::TreeCut),
+            row("Copy", Command::TreeCopy),
+            row_if("Paste", Command::TreePaste, pasting),
+            row("Duplicate", Command::TreeDuplicate),
+            Entry::Rule,
+            row("Copy Path", Command::TreeCopyPath),
+            row("Copy Relative Path", Command::TreeCopyRelativePath),
+            Entry::Rule,
+            row("Rename…", Command::TreeRename),
+            row("Delete", Command::TreeDelete),
+        ]
     }
 
     /// The node that draws the menu that is open.
@@ -436,6 +507,23 @@ impl WorkspaceState {
                     self.git.trouble = None;
                     self.outbox.push(Outgoing::CherryPick { session, commit });
                 }
+            }
+            Command::TreeNewFile => self.tree_new(false),
+            Command::TreeNewFolder => self.tree_new(true),
+            Command::TreeOpen => self.tree_open(),
+            Command::TreeCut => self.tree_hold(true),
+            Command::TreeCopy => self.tree_hold(false),
+            Command::TreePaste => self.tree_paste(),
+            Command::TreeDuplicate => self.tree_duplicate(),
+            Command::TreeCopyPath => self.tree_copy_path(false),
+            Command::TreeCopyRelativePath => self.tree_copy_path(true),
+            Command::TreeRename => self.tree_rename(),
+            Command::TreeDelete => self.tree_delete(),
+            Command::TreeCollapse => {
+                self.press_tree(crate::tree_actions::TREE_COLLAPSE);
+            }
+            Command::TreeRefresh => {
+                self.press_tree(crate::tree_actions::TREE_REFRESH);
             }
             Command::CopyHash => {
                 if let MenuKind::History(row) = kind

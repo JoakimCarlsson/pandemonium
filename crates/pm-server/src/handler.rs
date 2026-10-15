@@ -330,6 +330,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         },
         Request::Files { directory, limit } => Response::Files {
             paths: pm_git::files(&place(&directory), limit),
+            folders: pm_git::untracked_folders(&place(&directory), limit),
         },
         Request::Branches { directory } => Response::Branches {
             names: pm_git::branches(&place(&directory)),
@@ -595,6 +596,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             } else {
                 pm_git::unstage(directory, &paths)
             })
+        }
+        Request::CreateEntry {
+            directory,
+            path,
+            folder,
+        } => done(crate::entries::create(&place(&directory), &path, folder)),
+        Request::RenameEntry {
+            directory,
+            from,
+            to,
+        } => done(crate::entries::rename(&place(&directory), &from, &to)),
+        Request::CopyEntry {
+            directory,
+            from,
+            into,
+        } => done(crate::entries::copy(&place(&directory), &from, &into)),
+        Request::RemoveEntry { directory, path } => {
+            done(crate::entries::remove(&place(&directory), &path))
         }
         Request::Discard { directory, paths } => done(pm_git::discard(&place(&directory), &paths)),
         Request::Ignore { directory, paths } => done(pm_git::ignore(&place(&directory), &paths)),
