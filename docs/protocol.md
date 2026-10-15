@@ -382,6 +382,7 @@ Events use serde's default form, one key naming the type.
 | ----------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `{"Settings": [Setting]}`     | What can be changed and how it stands now. Replaces the earlier list.                                     |
 | `{"Commands": [Slash]}`       | The commands offered behind a slash. Replaces the earlier list.                                           |
+| `{"Used": {"used", "size"}}`  | How many tokens the context holds and how many it takes in all. Replaces the earlier count.               |
 | `{"Said": "text"}`            | More of the agent's reply. Append it to the reply so far.                                                 |
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |

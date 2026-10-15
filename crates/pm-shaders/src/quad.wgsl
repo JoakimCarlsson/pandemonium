@@ -17,6 +17,7 @@ struct Instance {
     @location(3) radii: vec4<f32>,
     @location(4) matrix: vec4<f32>,
     @location(5) params: vec4<f32>,
+    @location(6) arc: vec4<f32>,
 }
 
 struct Fragment {
@@ -27,6 +28,7 @@ struct Fragment {
     @location(3) border_color: vec4<f32>,
     @location(4) radii: vec4<f32>,
     @location(5) params: vec4<f32>,
+    @location(6) arc: vec4<f32>,
 }
 
 fn unit_corner(index: u32) -> vec2<f32> {
@@ -52,6 +54,24 @@ fn corner_radius(radii: vec4<f32>, point: vec2<f32>) -> f32 {
 fn rounded_box(point: vec2<f32>, half_size: vec2<f32>, radius: f32) -> f32 {
     let inner = abs(point) - half_size + vec2<f32>(radius);
     return length(max(inner, vec2<f32>(0.0))) + min(max(inner.x, inner.y), 0.0) - radius;
+}
+
+// The distance from `point` to a ring of radius `ring` and thickness
+// `thickness` that covers `sweep` of the way round, clockwise from the top,
+// with round ends: negative inside.
+fn arc_distance(point: vec2<f32>, ring: f32, thickness: f32, sweep: f32) -> f32 {
+    let half_angle = sweep * 3.14159265;
+    let middle = vec2<f32>(sin(half_angle), -cos(half_angle));
+    let across = vec2<f32>(-middle.y, middle.x);
+    var turned = vec2<f32>(dot(point, across), dot(point, middle));
+    turned.x = abs(turned.x);
+    let ends = vec2<f32>(sin(half_angle), cos(half_angle));
+    let to_ring = select(
+        abs(length(turned) - ring),
+        length(turned - ends * ring),
+        ends.y * turned.x > ends.x * turned.y,
+    );
+    return to_ring - thickness * 0.5;
 }
 
 @vertex
@@ -82,11 +102,19 @@ fn vertex(@builtin(vertex_index) index: u32, instance: Instance) -> Fragment {
     out.border_color = instance.border_color;
     out.radii = instance.radii;
     out.params = instance.params;
+    out.arc = instance.arc;
     return out;
 }
 
 @fragment
 fn fragment(in: Fragment) -> @location(0) vec4<f32> {
+    if in.arc.y > 0.0 {
+        let ring = min(in.half_size.x, in.half_size.y) - in.arc.y * 0.5;
+        let distance = arc_distance(in.local, ring, in.arc.y, in.arc.x);
+        let edge = 0.5 / viewport.scale;
+        let coverage = 1.0 - smoothstep(-edge, edge, distance);
+        return vec4<f32>(in.fill.rgb * in.fill.a, in.fill.a) * coverage;
+    }
     let limit = min(in.half_size.x, in.half_size.y);
     let radius = min(corner_radius(in.radii, in.local), limit);
     let distance = rounded_box(in.local, in.half_size, radius);

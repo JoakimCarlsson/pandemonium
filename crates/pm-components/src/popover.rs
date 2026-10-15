@@ -6,8 +6,8 @@ use pm_style::primitives::{Length, Sides};
 use pm_style::{
     Radius, Role, ShadowLayer, absolute, bg, border, border_color, cursor_pointer, flex, flex_1,
     flex_col, flex_none, font_mono, gap, h, inset_length, items_center, justify_between,
-    leading_ratio, left, max_w_px, mb, min_w_px, p, px, py, relative, rounded, shadow_layers,
-    text_color, text_px, truncate, w_full, w_px, z,
+    leading_ratio, left, max_w_px, mb, min_w_px, p, px, py, relative, right, rounded,
+    shadow_layers, text_color, text_px, truncate, w_full, w_px, z,
 };
 use pm_ui::{Node, node, text};
 
@@ -97,6 +97,12 @@ impl Popover {
         placed_above(self.body).focusable(id)
     }
 
+    /// The popover placed above the button it is a child of, a little way off, with their right edges together,
+    /// and answering to `id` so that pressing it does not count as pressing outside.
+    pub fn over_button_end(self, id: FocusId) -> Node {
+        placed_above_end(self.body).focusable(id)
+    }
+
     /// The popover placed just above the box it is a child of, across its width.
     pub fn above_box(self) -> Node {
         placed_above(self.body)
@@ -109,6 +115,17 @@ fn placed_above(body: Node) -> Node {
         absolute(),
         inset_length(Sides::Bottom, Length::Fraction(1.0)),
         left(0),
+        mb(2),
+        z(40),
+    ])
+}
+
+/// `body` hanging above the box it is a child of, with their right edges together.
+fn placed_above_end(body: Node) -> Node {
+    body.styles([
+        absolute(),
+        inset_length(Sides::Bottom, Length::Fraction(1.0)),
+        right(0),
         mb(2),
         z(40),
     ])

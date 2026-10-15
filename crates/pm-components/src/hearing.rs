@@ -16,6 +16,7 @@ impl Session {
         match event {
             Event::Settings(settings) => self.settings = settings,
             Event::Commands(commands) => self.commands = commands,
+            Event::Used(usage) => self.context = Some(usage),
             Event::Said(text) => self.say(&text),
             Event::Thought(text) => self.think(text),
             Event::Tool(tool) => self.use_tool(tool),

@@ -30,17 +30,20 @@ pub(crate) struct QuadInstance {
     matrix: [f32; 4],
     /// The transform's `tx` and `ty`, the border width and the softness.
     params: [f32; 4],
+    /// The arc's sweep and ring width; a width of nought is a rectangle.
+    arc: [f32; 4],
 }
 
 impl QuadInstance {
     /// The vertex attributes the quad shader expects, in declaration order.
-    pub(crate) const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    pub(crate) const ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         0 => Float32x4,
         1 => Float32x4,
         2 => Float32x4,
         3 => Float32x4,
         4 => Float32x4,
         5 => Float32x4,
+        6 => Float32x4,
     ];
 
     /// The instance that draws `quad`.
@@ -58,6 +61,7 @@ impl QuadInstance {
             radii: quad.radii,
             matrix: [transform.a, transform.b, transform.c, transform.d],
             params: [transform.tx, transform.ty, quad.border_width, quad.softness],
+            arc: [quad.arc_sweep, quad.arc_width, 0.0, 0.0],
         }
     }
 }

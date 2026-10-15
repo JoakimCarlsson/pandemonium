@@ -84,6 +84,7 @@ fn main() {
             Some("background") => Shot::Background,
             Some("subagents") => Shot::Agents,
             Some("queued") => Shot::Queued,
+            Some("usage") => Shot::Usage,
             Some("kept") => Shot::Kept,
             Some("restoring") => Shot::Restoring,
             Some("picking") => Shot::Picking,

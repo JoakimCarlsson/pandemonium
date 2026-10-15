@@ -76,6 +76,17 @@ impl Session {
         self.log.last().map_or(0, |(seq, _)| *seq) + 1
     }
 
+    /// Whether `event` only says again what the last context usage in the log said.
+    pub(crate) fn repeats(&self, event: &Event) -> bool {
+        matches!(event, Event::Used(_))
+            && self
+                .log
+                .iter()
+                .rev()
+                .find(|(_, held)| matches!(held, Event::Used(_)))
+                .is_some_and(|(_, held)| held == event)
+    }
+
     /// Adds `event` to the log of this session, numbered `number`, keeps it on disk and returns the number it got.
     pub(crate) fn note(&mut self, number: u64, event: &Event) -> u64 {
         let seq = self.next_seq();
@@ -236,6 +247,9 @@ impl Core {
                     continue;
                 };
                 for event in chat.events() {
+                    if session.repeats(&event) {
+                        continue;
+                    }
                     told.push((*number, session.note(*number, &event), event.clone()));
                     match event {
                         Event::Failed(_) => {

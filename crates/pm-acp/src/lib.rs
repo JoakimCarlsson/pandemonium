@@ -28,7 +28,7 @@ pub use agent::{AGENTS, Agent, Definition, Source};
 pub use agent_registry::{Available, fetch as registry_agents};
 pub use chat::{
     Background, Chat, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
-    Setting, Slash, Tool, ToolState, Verdict, discover, skills,
+    Setting, Slash, Tool, ToolState, Usage, Verdict, discover, skills,
 };
 pub use inquiry::{Alternative, Inquiry, Question, Reply};
 pub use install::{is_web_address, open as open_address};

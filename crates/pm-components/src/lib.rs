@@ -60,6 +60,7 @@ pub mod terminal_keys;
 pub mod tile;
 pub mod trail;
 pub mod tree;
+pub mod usage;
 pub mod viewer;
 pub mod welcome;
 

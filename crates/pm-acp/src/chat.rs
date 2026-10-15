@@ -209,6 +209,15 @@ pub struct Slash {
     pub description: String,
 }
 
+/// How full the agent's context is: what a conversation holds of what it can.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Usage {
+    /// How many tokens the conversation holds.
+    pub used: u64,
+    /// How many tokens the context window takes in all.
+    pub size: u64,
+}
+
 /// What an agent did, in the order it did it.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Event {
@@ -216,6 +225,8 @@ pub enum Event {
     Settings(Vec<Setting>),
     /// The commands the agent offers behind a slash.
     Commands(Vec<Slash>),
+    /// How full the conversation's context is now.
+    Used(Usage),
     /// The agent said this much more of its reply.
     Said(String),
     /// The agent thought this much more.
@@ -963,6 +974,10 @@ fn update(update: &Value) -> Vec<Event> {
             .as_str()
             .filter(|title| !title.trim().is_empty())
             .map(|title| Event::Titled(title.trim().to_owned())),
+        "usage_update" => update["used"]
+            .as_u64()
+            .zip(update["size"].as_u64())
+            .map(|(used, size)| Event::Used(Usage { used, size })),
         "config_option_update" => update["configOptions"]
             .is_array()
             .then(|| Event::Settings(settings(update))),

@@ -332,6 +332,15 @@ impl Frame<'_> {
         if let Some(name) = node.icon {
             self.icon(name, &computed, rect, content, opacity);
         }
+        if let Some((share, width, color, track)) = node.arc {
+            self.arc(
+                (share, width, color, track),
+                &computed,
+                rect,
+                content,
+                opacity,
+            );
+        }
         if let Some(picture) = &node.picture {
             let inset = computed.layout.spacing.padding;
             let (x, y) = content.apply(rect.x + inset.left, rect.y + inset.top);
@@ -624,6 +633,38 @@ impl Frame<'_> {
         match animation.sample(self.input.elapsed_ms) {
             Some(pose) => (fixed.then(about(pose.transform, rect)), pose.opacity),
             None => (fixed, 1.0),
+        }
+    }
+
+    /// Paints a ring in the largest square that fits the content area of the box at `rect`: the track all round, and over it the filled part.
+    fn arc(
+        &mut self,
+        arc: (f32, f32, Color, Color),
+        computed: &ComputedStyle,
+        rect: Rect,
+        world: Affine,
+        opacity: f32,
+    ) {
+        let (share, width, color, track) = arc;
+        let inset = computed.layout.spacing.padding;
+        let across =
+            (rect.width - inset.left - inset.right).min(rect.height - inset.top - inset.bottom);
+        let (x, y) = world.apply(rect.x + inset.left, rect.y + inset.top);
+        let bounds = Rect::new(x, y, across, across);
+        let theme = self.theme;
+        self.list.push(Quad::arc(
+            bounds,
+            track.resolve(theme).alpha(opacity),
+            width,
+            1.0,
+        ));
+        if share > 0.0 {
+            self.list.push(Quad::arc(
+                bounds,
+                color.resolve(theme).alpha(opacity),
+                width,
+                share,
+            ));
         }
     }
 

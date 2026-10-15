@@ -26,6 +26,8 @@ pub struct Node {
     pub(crate) icon: Option<IconName>,
     /// A picture the box draws in its own colours, cropped to fill its content area.
     pub(crate) picture: Option<pm_renderer::Picture>,
+    /// A ring the box draws in its content area: how much of it is filled, how thick it is, the colour of the filled part and the colour of the rest.
+    pub(crate) arc: Option<(f32, f32, pm_style::Color, pm_style::Color)>,
     /// A blinking caret at this byte offset of the text, shown while the
     /// named box holds focus.
     pub(crate) caret: Option<(usize, FocusId)>,
@@ -86,6 +88,18 @@ impl Node {
     /// Makes the box draw `name` in the text colour; size the box to size the icon.
     pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name);
+        self
+    }
+
+    /// Makes the box draw a ring `width` logical pixels thick, `share` of it, from nought to one, filled clockwise from the top in `color` and the rest in `track`.
+    pub fn arc(
+        mut self,
+        share: f32,
+        width: f32,
+        color: impl Into<pm_style::Color>,
+        track: impl Into<pm_style::Color>,
+    ) -> Self {
+        self.arc = Some((share.clamp(0.0, 1.0), width, color.into(), track.into()));
         self
     }
 

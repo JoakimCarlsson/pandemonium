@@ -21,6 +21,7 @@ use crate::state::{
     Location, MENTION, MENU_BODY, MENU_SCROLL, PICK_BASE, PLACE_BASE, PROMPT, Picker, SEND,
     SEND_NOW, SETTING_BASE, SKILL_BUTTON, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
 };
+use crate::usage;
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
 use crate::{Chip, Popover, chip};
 
@@ -569,7 +570,18 @@ pub fn composer(
             open.then(|| account_menu(state)),
         ));
     }
-    let strip = strip.child(spacer()).children(send_buttons(working, empty));
+    let strip = strip.child(spacer());
+    let strip = match session {
+        Some(session) => {
+            let open = state.picker == Some(Picker::Context);
+            strip.children(
+                usage::context_button(session, open)
+                    .map(|button| anchored(button, open.then(|| usage::context_menu(session)))),
+            )
+        }
+        None => strip,
+    };
+    let strip = strip.children(send_buttons(working, empty));
     node()
         .styles([
             relative(),

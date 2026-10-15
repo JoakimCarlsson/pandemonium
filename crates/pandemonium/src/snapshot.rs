@@ -107,6 +107,8 @@ pub enum Shot {
     Agents,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
+    /// A conversation with its usage menu open over the prompt box.
+    Usage,
     /// A conversation with the model menu open.
     Picking,
     /// A finished conversation scrolled back to its first message, whose files were kept before it.
@@ -476,6 +478,17 @@ impl Shot {
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
             }
+            Self::Usage => Screen::Workspace(
+                live(Turn::Finished)
+                    .heard(
+                        0,
+                        Event::Used(pm_acp::Usage {
+                            used: 84_000,
+                            size: 200_000,
+                        }),
+                    )
+                    .after(pm_components::state::CONTEXT),
+            ),
             Self::Queued => Screen::Workspace(queued()),
             Self::Kept => Screen::Workspace(kept()),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),

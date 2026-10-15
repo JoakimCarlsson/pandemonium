@@ -24,6 +24,10 @@ pub struct Quad {
     pub softness: f32,
     /// The transform applied to the finished rectangle.
     pub transform: Affine,
+    /// The thickness of the ring when the quad is an arc, which draws a ring inside the bounds instead of a rectangle; zero for a rectangle.
+    pub arc_width: f32,
+    /// How much of the ring an arc covers, from nought to one, clockwise from the top.
+    pub arc_sweep: f32,
 }
 
 impl Quad {
@@ -37,7 +41,17 @@ impl Quad {
             radii: [0.0; 4],
             softness: 0.0,
             transform: Affine::IDENTITY,
+            arc_width: 0.0,
+            arc_sweep: 1.0,
         }
+    }
+
+    /// A ring `width` thick inside `bounds`, in `color`, covering `sweep` of the way round clockwise from the top, with round ends.
+    pub const fn arc(bounds: Rect, color: Srgba, width: f32, sweep: f32) -> Self {
+        let mut quad = Self::filled(bounds, color);
+        quad.arc_width = width;
+        quad.arc_sweep = sweep;
+        quad
     }
 
     /// This quad with a border `width` thick in `color`.

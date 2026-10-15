@@ -484,6 +484,8 @@ pub struct Session {
     pub terminal_active: usize,
     /// The commands and tasks the agent left running beyond its turn.
     pub shells: Vec<Shell>,
+    /// How full the context is, once the agent has said.
+    pub context: Option<pm_acp::Usage>,
 }
 
 impl Session {
@@ -512,6 +514,7 @@ impl Session {
             comments: Vec::new(),
             commits: Vec::new(),
             settings: Vec::new(),
+            context: None,
             commands: Vec::new(),
             skills: Vec::new(),
             ask: None,
