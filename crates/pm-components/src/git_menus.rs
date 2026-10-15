@@ -6,7 +6,7 @@ use pm_ui::Node;
 use crate::Menu;
 use crate::git_controls::{BRANCH_BUTTON, CHANGES_MORE, COMMIT_CHEVRON, GRAPH_REFS};
 use crate::git_prompts::{Prompt, StashAction};
-use crate::state::{ADD_PROJECT, Outgoing, Page, WorkspaceState};
+use crate::state::{ADD_PROJECT, Outgoing, WorkspaceState};
 
 /// The first of the rows of the menu that is open; the rest follow it.
 pub const MENU_ROW_BASE: u64 = 9000;
@@ -142,7 +142,7 @@ impl WorkspaceState {
 
     /// The state with the menu `kind` open at `at`, and the others closed.
     pub fn with_git_menu(mut self, kind: MenuKind, at: (f32, f32)) -> Self {
-        if self.open().is_none() {
+        if self.review_session().is_none() {
             return self;
         }
         self.menu = None;
@@ -159,14 +159,14 @@ impl WorkspaceState {
 
     /// Asks for the stashes, which the menu over the panel's actions offers to take.
     pub(crate) fn ask_stashes(&mut self) {
-        if let Page::Session(session) = self.page {
+        if let Some(session) = self.review_index() {
             self.outbox.push(Outgoing::Stashes { session });
         }
     }
 
     /// The state after the server listed the stashes of the repository of the session at `session`.
     pub fn with_stashes(mut self, session: usize, stashes: Vec<pm_git::Stash>) -> Self {
-        if self.page == Page::Session(session) {
+        if self.review_index() == Some(session) {
             self.git.stashes = stashes;
         }
         self
@@ -369,7 +369,7 @@ impl WorkspaceState {
                 self.set_staged(&all, command == Command::StageAll);
             }
             Command::CopyPath | Command::CopyRelativePath => {
-                let copied = self.open().and_then(|session| {
+                let copied = self.review_session().and_then(|session| {
                     let [index] = acting.as_slice() else {
                         return None;
                     };
@@ -392,7 +392,7 @@ impl WorkspaceState {
                 self.git.busy = Some("Updating .gitignore…");
                 self.git.trouble = None;
                 let paths = self.paths_of(&acting);
-                if let Page::Session(session) = self.page {
+                if let Some(session) = self.review_index() {
                     self.outbox.push(Outgoing::Ignore { session, paths });
                 }
             }
@@ -413,7 +413,7 @@ impl WorkspaceState {
                 *self = std::mem::replace(self, WorkspaceState::new(&[])).after(BRANCH_BUTTON);
             }
             Command::Refresh => {
-                if let Page::Session(session) = self.page {
+                if let Some(session) = self.review_index() {
                     self.outbox.push(Outgoing::Refresh { session });
                 }
             }
@@ -428,7 +428,7 @@ impl WorkspaceState {
                 self.ask_log();
             }
             Command::CherryPick => {
-                if let (MenuKind::History(row), Page::Session(session)) = (kind, self.page)
+                if let (MenuKind::History(row), Some(session)) = (kind, self.review_index())
                     && let Some(commit) = self.git.history.get(row)
                 {
                     let commit = commit.id.clone();

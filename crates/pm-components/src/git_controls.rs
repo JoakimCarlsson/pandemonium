@@ -6,7 +6,7 @@ use pm_text::Field;
 use crate::change_list::Group;
 use crate::git_menus::{MENU_ROW_BASE, MenuKind, OpenMenu};
 use crate::git_prompts::Prompt;
-use crate::sample::Change;
+use crate::sample::{Change, Session};
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
 
 /// The button that opens the list of branches.
@@ -271,7 +271,7 @@ impl WorkspaceState {
 
     /// The state with the menu on changed files open at `at` over the folder at `position` of the tree, acting on every file in it.
     pub fn with_folder_change_menu(mut self, position: usize, at: (f32, f32)) -> Self {
-        let files = self.open().and_then(|session| {
+        let files = self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes)
                 .into_iter()
                 .nth(position)
@@ -308,9 +308,46 @@ impl WorkspaceState {
         self
     }
 
+    /// The position of the session the review panel is about: the open one, or, on the page for starting work, the stand-in for the project's own folder.
+    pub fn review_index(&self) -> Option<usize> {
+        match self.page {
+            Page::Session(index) => Some(index),
+            Page::New(project) => self
+                .sessions
+                .iter()
+                .position(|session| session.home && session.project == project),
+            Page::History => None,
+        }
+    }
+
+    /// The session the review panel is about, if there is one.
+    pub fn review_session(&self) -> Option<&Session> {
+        self.review_index()
+            .and_then(|index| self.sessions.get(index))
+    }
+
+    /// Makes the stand-in for the folder of the project at `project` when there is none, and asks for what its folder holds the first time the page of that project is shown.
+    pub(crate) fn read_home(&mut self, project: usize) {
+        let Some(held) = self.projects.get(project) else {
+            return;
+        };
+        let directory = held.directory().to_string_lossy().into_owned();
+        let position = match self.review_index() {
+            Some(position) => position,
+            None => {
+                self.sessions.push(Session::home(project, &directory));
+                self.sessions.len() - 1
+            }
+        };
+        if self.homed != Some(project) {
+            self.homed = Some(project);
+            self.outbox.push(Outgoing::Refresh { session: position });
+        }
+    }
+
     /// The files in the order the list shows them, group by group.
     fn listed(&self) -> Vec<usize> {
-        self.open().map_or_else(Vec::new, |session| {
+        self.review_session().map_or_else(Vec::new, |session| {
             crate::change_list::order_shown(&session.changes, &self.closed_folders)
         })
     }
@@ -338,7 +375,7 @@ impl WorkspaceState {
 
     /// The changed files a command acts on, in the order the list shows them.
     pub fn marked_changes(&self) -> Vec<&Change> {
-        let Some(session) = self.open() else {
+        let Some(session) = self.review_session() else {
             return Vec::new();
         };
         self.acting_on()
@@ -447,7 +484,7 @@ impl WorkspaceState {
         if let Some(doing) = self.git.busy {
             return Primary::Busy(doing);
         }
-        let Some(session) = self.open() else {
+        let Some(session) = self.review_session() else {
             return Primary::Commit {
                 title: "Commit",
                 stopped: Some(NOTHING_TO_COMMIT),
@@ -532,7 +569,7 @@ impl WorkspaceState {
 
     /// Takes the next step of what is stopped, finishing it under `message` when there is one.
     fn step_with(&mut self, action: &'static str, doing: &'static str, message: Option<String>) {
-        if let Page::Session(session) = self.page {
+        if let Some(session) = self.review_index() {
             self.git.busy = Some(doing);
             self.git.trouble = None;
             self.outbox.push(Outgoing::Step {
@@ -545,7 +582,7 @@ impl WorkspaceState {
 
     /// Asks the server to do `operation` with the remote of the open session's repository, and shows `doing` until it has.
     pub(crate) fn remote(&mut self, operation: &'static str, doing: &'static str) {
-        if let Page::Session(session) = self.page
+        if let Some(session) = self.review_index()
             && self.git.busy.is_none()
         {
             self.git.busy = Some(doing);
@@ -556,7 +593,7 @@ impl WorkspaceState {
 
     /// Asks for the commits of the graph the first time the graph is open for the open session.
     pub(crate) fn ask_log_once(&mut self) {
-        if let Page::Session(session) = self.page
+        if let Some(session) = self.review_index()
             && self.git.graph_open
             && self.git.logged != Some(session)
         {
@@ -567,7 +604,7 @@ impl WorkspaceState {
 
     /// Asks for the commits of the graph, of what every reference reaches or only the checked out branch.
     pub(crate) fn ask_log(&mut self) {
-        if let Page::Session(session) = self.page {
+        if let Some(session) = self.review_index() {
             self.outbox.push(Outgoing::Log {
                 session,
                 all: self.git.graph_all,
@@ -577,12 +614,12 @@ impl WorkspaceState {
 
     /// Whether the graph is open for the open session, and whether it lists every reference.
     pub fn graph_wanted(&self) -> Option<bool> {
-        (self.open().is_some() && self.git.graph_open).then_some(self.git.graph_all)
+        (self.review_session().is_some() && self.git.graph_open).then_some(self.git.graph_all)
     }
 
     /// The state after the server listed the `commits` of the repository of the session at `session`.
     pub fn with_history(mut self, session: usize, commits: Vec<pm_git::Commit>) -> Self {
-        if self.page == Page::Session(session) {
+        if self.review_index() == Some(session) {
             self.git.history = commits;
         }
         self
@@ -661,7 +698,7 @@ impl WorkspaceState {
                     GROUP_TRACKED => Group::Tracked,
                     _ => Group::Untracked,
                 };
-                let members = self.open().map_or_else(Vec::new, |session| {
+                let members = self.review_session().map_or_else(Vec::new, |session| {
                     crate::change_list::members(&session.changes, group)
                 });
                 self.stage_changes(&members);
@@ -678,7 +715,7 @@ impl WorkspaceState {
             GRAPH_PULL => self.remote("pull", "Pulling…"),
             GRAPH_PUSH => self.remote("push", "Pushing…"),
             CHANGES_REFRESH => {
-                if let Page::Session(session) = self.page {
+                if let Some(session) = self.review_index() {
                     self.outbox.push(Outgoing::Refresh { session });
                 }
             }
@@ -702,7 +739,7 @@ impl WorkspaceState {
             self.git.branch_menu = false;
             return;
         }
-        let Page::Session(open) = self.page else {
+        let Some(open) = self.review_index() else {
             return;
         };
         self.close_other_menus();
@@ -714,7 +751,7 @@ impl WorkspaceState {
 
     /// Checks out the branch typed, or makes it when `create` is set or none is called that.
     fn submit_branch(&mut self, create: bool) {
-        let Page::Session(open) = self.page else {
+        let Some(open) = self.review_index() else {
             return;
         };
         let typed = self.git.filter.text().trim().to_owned();
@@ -757,7 +794,7 @@ impl WorkspaceState {
         else {
             return false;
         };
-        let Page::Session(open) = self.page else {
+        let Some(open) = self.review_index() else {
             return true;
         };
         let name = self.git.matching().get(row).map(|name| (*name).clone());
@@ -775,7 +812,7 @@ impl WorkspaceState {
 
     /// The state after the server listed the branches of the folder of the session at `session`.
     pub fn with_session_branches(mut self, session: usize, names: Vec<String>) -> Self {
-        if self.page == Page::Session(session) {
+        if self.review_index() == Some(session) {
             self.git.branches = names;
         }
         self
@@ -783,7 +820,7 @@ impl WorkspaceState {
 
     /// Opens the file at `path` in the window, as it is in the last commit when `head`, and asks the server for it.
     pub fn open_viewer(&mut self, path: String, head: bool) {
-        let Page::Session(open) = self.page else {
+        let Some(open) = self.review_index() else {
             return;
         };
         self.git.viewer = Some(Viewer {
@@ -808,7 +845,7 @@ impl WorkspaceState {
         head: bool,
         read: Result<(Option<String>, bool), String>,
     ) -> Self {
-        if self.page != Page::Session(session) {
+        if self.review_index() != Some(session) {
             return self;
         }
         if let Some(viewer) = self.git.viewer.as_mut()
@@ -837,7 +874,7 @@ impl WorkspaceState {
 
     /// Keeps the files marked, and the one the keyboard is on, by path, after the changes were read again.
     pub(crate) fn remarked(&mut self, kept: &(Vec<String>, Option<String>)) {
-        let (marked, selected) = match self.open() {
+        let (marked, selected) = match self.review_session() {
             Some(session) => (
                 session
                     .changes
@@ -862,7 +899,7 @@ impl WorkspaceState {
 
     /// The paths of the files marked and of the one the keyboard is on, for [`WorkspaceState::remarked`].
     pub(crate) fn marked_by_path(&self) -> (Vec<String>, Option<String>) {
-        let Some(session) = self.open() else {
+        let Some(session) = self.review_session() else {
             return (Vec::new(), None);
         };
         let path = |index: &usize| {

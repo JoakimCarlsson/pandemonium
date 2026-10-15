@@ -7,7 +7,7 @@ use pm_ui::{Node, node};
 use crate::button::{Size, Variant};
 use crate::input::Size as InputSize;
 use crate::parts::{line, spacer, wrap};
-use crate::state::{Outgoing, Page, WorkspaceState};
+use crate::state::{Outgoing, WorkspaceState};
 use crate::{Button, Input, Modal};
 
 /// The dimmed window behind a question.
@@ -125,7 +125,7 @@ impl WorkspaceState {
         let Some(prompt) = self.git.prompt.take() else {
             return;
         };
-        let Page::Session(session) = self.page else {
+        let Some(session) = self.review_index() else {
             return;
         };
         self.git.trouble = None;
@@ -157,7 +157,7 @@ impl WorkspaceState {
         let Some(Prompt::Stashes(action)) = self.git.prompt else {
             return;
         };
-        let Page::Session(session) = self.page else {
+        let Some(session) = self.review_index() else {
             return;
         };
         let Some(stash) = self.git.stashes.get(row) else {
@@ -181,7 +181,7 @@ impl WorkspaceState {
 
     /// The paths of the files at `indices` of the open session's changes.
     pub(crate) fn paths_of(&self, indices: &[usize]) -> Vec<String> {
-        self.open().map_or_else(Vec::new, |session| {
+        self.review_session().map_or_else(Vec::new, |session| {
             indices
                 .iter()
                 .filter_map(|&index| session.changes.get(index))

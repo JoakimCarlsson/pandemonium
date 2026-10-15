@@ -478,6 +478,8 @@ pub struct Session {
     pub queued: Vec<Queued>,
     /// Whether the reader closed it, which takes it out of the sidebar but not out of the history.
     pub closed: bool,
+    /// Whether it stands for the project's own folder rather than for work an agent does: it is never listed, and holds what the git panel shows while no session is open.
+    pub home: bool,
     /// The shells in its terminal dock.
     pub terminals: Vec<TerminalTab>,
     /// Which of the shells shows, by position.
@@ -523,6 +525,7 @@ impl Session {
             echoes: 0,
             queued: Vec::new(),
             closed: false,
+            home: false,
             terminals: Vec::new(),
             terminal_active: 0,
             shells: Vec::new(),
@@ -554,6 +557,15 @@ impl Session {
         session.directory = directory.to_owned();
         session.base = base;
         session.agent = agent;
+        session
+    }
+
+    /// The stand-in for the folder of the project at `project`, kept out of every list, that the git panel reads while no session is open.
+    pub fn home(project: usize, directory: &str) -> Self {
+        let mut session = Self::new("", project, "", Status::Done, 0, Vec::new());
+        session.closed = true;
+        session.home = true;
+        session.directory = directory.to_owned();
         session
     }
 

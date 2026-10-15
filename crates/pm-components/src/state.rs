@@ -732,6 +732,8 @@ pub struct WorkspaceState {
     pub diff_scroll: f32,
     /// How far down the review panel's list is scrolled, in logical pixels.
     pub tree_scroll: f32,
+    /// The project whose folder the review panel was last asked to read while no session was open.
+    pub homed: Option<usize>,
     /// Whether the plan the agent proposed is open in a panel in place of the review.
     pub plan_open: bool,
     /// How far down the plan panel is scrolled, in logical pixels.
@@ -866,6 +868,7 @@ impl WorkspaceState {
             comment_text: Field::default(),
             diff_scroll: 0.0,
             tree_scroll: 0.0,
+            homed: None,
             plan_open: false,
             plan_scroll: 0.0,
             terminal: false,
@@ -1965,7 +1968,7 @@ impl WorkspaceState {
             held.on_branch = branch.is_some();
             held.tracking = tracking;
         }
-        if self.page == Page::Session(session) {
+        if self.review_index() == Some(session) {
             self.git.operation = operation;
         }
         self

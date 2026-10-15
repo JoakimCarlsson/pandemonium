@@ -187,7 +187,7 @@ fn session_page(
 pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
     let open = state.open();
     let planning = state.plan_shown().is_some();
-    let reviewing = open.is_some() && state.review;
+    let reviewing = state.review_session().is_some() && state.review;
     let review_width = if reviewing { review::WIDTH } else { 0.0 };
     let plan_width = if planning {
         plan::width_in(width - sidebar::WIDTH - review_width)
@@ -220,7 +220,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     if let Some(source) = state.plan_shown() {
         root = root.child(plan::panel(state, source, plan_width, shaper));
     }
-    if let Some(session) = open.filter(|_| reviewing) {
+    if let Some(session) = state.review_session().filter(|_| reviewing) {
         root = root.child(review::review(state, session, shaper));
     }
     root.children(

@@ -141,7 +141,12 @@ impl WorkspaceState {
             .cloned()
             .collect();
         let listed = self.settings_servers.agents.len();
-        let used: Vec<usize> = self.sessions.iter().map(|session| session.agent).collect();
+        let used: Vec<usize> = self
+            .sessions
+            .iter()
+            .filter(|session| !session.home)
+            .map(|session| session.agent)
+            .collect();
         let retired: Vec<AgentServer> = before
             .iter()
             .enumerate()

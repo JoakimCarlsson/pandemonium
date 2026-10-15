@@ -356,7 +356,8 @@ impl WorkspaceState {
     /// The position of a session on the machine `host` that works in `directory`.
     pub fn session_in(&self, host: &Option<String>, directory: &str) -> Option<usize> {
         self.sessions.iter().position(|session| {
-            session.directory == directory
+            !session.home
+                && session.directory == directory
                 && self
                     .projects
                     .get(session.project)

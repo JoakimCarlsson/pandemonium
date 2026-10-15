@@ -105,6 +105,7 @@ fn search(state: &WorkspaceState) -> Node {
 fn matching(state: &WorkspaceState) -> Vec<usize> {
     let needle = state.history_search.text().to_lowercase();
     let mut found: Vec<usize> = (0..state.sessions.len())
+        .filter(|&index| !state.sessions[index].home)
         .filter(|&index| needle.is_empty() || searchable(state, index).contains(&needle))
         .collect();
     found.sort_by_key(|&index| std::cmp::Reverse(state.sessions[index].updated_at));

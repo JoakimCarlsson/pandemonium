@@ -1,16 +1,18 @@
 //! The empty page of a new session: pick an agent, then describe the work.
 
+use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Role, flex, flex_1, flex_col, font_semibold, gap, items_center, justify_center, leading_ratio,
-    max_w_px, min_h, px, py, text_color, text_px, tracking_tight, w_full,
+    Role, absolute, flex, flex_1, flex_col, font_semibold, gap, items_center, justify_center,
+    leading_ratio, max_w_px, min_h, px, py, relative, right, text_color, text_px, top,
+    tracking_tight, w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
 use crate::composer::composer;
 use crate::parts::line;
-use crate::state::{ADD_PROJECT, AGENT_BASE, WorkspaceState};
+use crate::state::{ADD_PROJECT, AGENT_BASE, REVIEW, WorkspaceState};
 use crate::{Button, Chip, chip};
 
 /// A chip naming one agent, filled while it is the one chosen.
@@ -36,7 +38,15 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
             min_h(0),
             px(6),
             py(10),
+            relative(),
         ])
+        .children((!state.review).then(|| {
+            Button::icon(IconName::PanelRight, REVIEW).build().styles([
+                absolute(),
+                top(2),
+                right(2),
+            ])
+        }))
         .child(
             node()
                 .styles([
