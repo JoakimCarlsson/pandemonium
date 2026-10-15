@@ -79,8 +79,6 @@ pub enum Shot {
     ProjectMenu,
     /// The workspace with a project dragged over another.
     Dragging,
-    /// The workspace with every project folded, showing how many sessions each has.
-    Folded,
     /// The page for starting work in this repository, with the agent's settings known.
     Welcome,
     /// The page for starting work with a long prompt that wraps and has a line break.
@@ -427,9 +425,6 @@ impl Shot {
                 Screen::Workspace(workspace().with_project_menu(1, (236.0, 250.0)))
             }
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
-            Self::Folded => Screen::Workspace(
-                (1000..1004).fold(workspace(), |state, id| state.after(FocusId(id))),
-            ),
             Self::Welcome => Screen::Workspace(welcome()),
             Self::Wrapped => Screen::Workspace(welcome().edited(
                 PROMPT,

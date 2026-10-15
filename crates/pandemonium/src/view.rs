@@ -26,7 +26,7 @@ enum Saved {
     First,
 }
 
-/// What the reader had on screen: the page, the folded projects, the panels and the prompt being written.
+/// What the reader had on screen: the page, the panels and the prompt being written.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct View {
     /// The page the main area showed.
@@ -37,8 +37,6 @@ pub struct View {
     review: bool,
     /// Whether the terminal was open.
     terminal: bool,
-    /// The paths of the projects whose sessions were folded away.
-    folded: Vec<String>,
     /// How far the sidebar's list was scrolled, in logical pixels.
     scroll: f32,
     /// The agent chosen for new work, by position.
@@ -90,13 +88,6 @@ impl View {
             diff: state.tab == Tab::Diff,
             review: state.review,
             terminal: state.terminal,
-            folded: state
-                .projects
-                .iter()
-                .zip(&state.folded)
-                .filter(|(_, folded)| **folded)
-                .map(|(project, _)| project.path.clone())
-                .collect(),
             scroll: state.sidebar_scroll,
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
@@ -116,16 +107,13 @@ impl View {
         self.session().and_then(|(host, _)| host)
     }
 
-    /// `state` with what does not wait for the server put back: the page for starting work or the history, the folded projects, the panels, the agent and the prompt.
+    /// `state` with what does not wait for the server put back: the page for starting work or the history, the panels, the agent and the prompt.
     pub fn apply(&self, mut state: WorkspaceState) -> WorkspaceState {
         let project_at = |path: &String| state.projects.iter().position(|held| held.path == *path);
         match &self.page {
             Saved::New(path) => state.page = Page::New(project_at(path).unwrap_or(0)),
             Saved::History => state.page = Page::History,
             Saved::Session { .. } | Saved::First => {}
-        }
-        for (project, folded) in state.projects.iter().zip(state.folded.iter_mut()) {
-            *folded = self.folded.contains(&project.path);
         }
         state.review = self.review;
         state.terminal = self.terminal;

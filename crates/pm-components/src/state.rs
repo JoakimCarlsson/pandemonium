@@ -712,8 +712,6 @@ pub struct WorkspaceState {
     pub tab: Tab,
     /// The pages and views visited, walked back and forward.
     pub trail: crate::trail::Trail,
-    /// Whether each project's sessions are folded away.
-    pub folded: Vec<bool>,
     /// Whether the review panel is open.
     pub review: bool,
     /// What the reader picked and opened among the changes.
@@ -854,7 +852,6 @@ impl WorkspaceState {
     fn with(projects: Vec<Project>, sessions: Vec<Session>) -> Self {
         let builtin = pm_protocol::builtin_agents();
         let mut state = Self {
-            folded: vec![false; projects.len()],
             projects,
             sessions,
             page: Page::New(0),
@@ -940,7 +937,6 @@ impl WorkspaceState {
             && !self.projects.iter().any(|held| held.path == project.path)
         {
             self.projects.push(project);
-            self.folded.push(false);
         }
         self.sync_context();
         self
@@ -955,7 +951,6 @@ impl WorkspaceState {
             .iter()
             .position(|held| Some(&held.path) == path.as_ref())
         {
-            self.folded[index] = false;
             self.page = Page::New(index);
             self.sync_context();
         }
@@ -1257,7 +1252,7 @@ impl WorkspaceState {
         if let Some(index) = position(ADDER_ROW_BASE, rows) {
             self.adder_chosen(index);
         } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
-            self.folded[index] = !self.folded[index];
+            self.page = Page::New(index);
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
             self.page = Page::New(index);
         } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {

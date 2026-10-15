@@ -4,11 +4,10 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, absolute, animate_spin, bg, border, border_color, border_r, border_t, flex,
-    flex_col, flex_none, font_mono, gap, h, h_full, items_center, justify_center, leading_ratio,
-    left, mb, min_h, opacity, overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md,
-    size, text_color, text_px, top, w_px, z,
+    flex_col, flex_none, gap, h, h_full, items_center, justify_center, left, mb, min_h, opacity,
+    overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md, size, top, w_px, z,
 };
-use pm_ui::{Node, node, text};
+use pm_ui::{Node, node};
 
 use crate::Avatar;
 use crate::Button;
@@ -41,16 +40,12 @@ pub fn list_viewport(height: f32) -> f32 {
 
 /// How tall the project at `index` is with its sessions, in logical pixels.
 pub fn project_height(state: &WorkspaceState, index: usize) -> f32 {
-    let rows = if state.folded[index] {
-        1
-    } else {
-        state
-            .sessions
-            .iter()
-            .filter(|session| session.project == index && !session.closed)
-            .count()
-            + 2
-    };
+    let rows = state
+        .sessions
+        .iter()
+        .filter(|session| session.project == index && !session.closed)
+        .count()
+        + 2;
     rows as f32 * ROW + SECTION_GAP
 }
 
@@ -92,7 +87,7 @@ fn session_row(index: usize, session: &Session, selected: bool) -> Node {
         .child(line(session.age(), 12, 1.4, Role::Subtle))
 }
 
-/// One project: its header, and, unless folded, its sessions and a row to start new work.
+/// One project: its header, and, its sessions and a row to start new work.
 fn project(state: &WorkspaceState, index: usize) -> Node {
     let project = &state.projects[index];
     let members: Vec<(usize, &Session)> = state
@@ -101,7 +96,6 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .enumerate()
         .filter(|(_, session)| session.project == index && !session.closed)
         .collect();
-    let folded = state.folded[index];
     let dragged = state.project_drag.is_some_and(|drag| drag.from == index);
     let mut header = Tile::new(FocusId(PROJECT_BASE + index as u64))
         .selected(false)
@@ -109,49 +103,39 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .styles([px(2)])
         .child(Avatar::of(project).build())
         .child(clipped(&project.name, 14, Role::Text));
-    if folded {
-        header = header.child(text(members.len().to_string()).styles([
-            text_px(11),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(Role::Subtle),
-        ]));
-    }
     header = header
         .child(Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64)).build());
     let mut section = node().styles([flex(), flex_col(), mb(3)]).child(header);
     if dragged {
         section = section.styles([opacity(35)]);
     }
-    if !folded {
-        let open = match state.page {
-            Page::Session(open) => Some(open),
-            _ => None,
-        };
-        section = section.children(
-            members
-                .into_iter()
-                .map(|(position, session)| session_row(position, session, open == Some(position))),
-        );
-        let starting = state.page == Page::New(index);
-        section = section.child(
-            Tile::new(FocusId(NEW_IN_BASE + index as u64))
-                .selected(starting)
-                .build()
-                .styles([pl(3)])
-                .child(glyph(
-                    IconName::Plus,
-                    4.0,
-                    if starting { Role::Text } else { Role::Muted },
-                ))
-                .child(line(
-                    "New session",
-                    14,
-                    1.4,
-                    if starting { Role::Text } else { Role::Muted },
-                )),
-        );
-    }
+    let open = match state.page {
+        Page::Session(open) => Some(open),
+        _ => None,
+    };
+    section = section.children(
+        members
+            .into_iter()
+            .map(|(position, session)| session_row(position, session, open == Some(position))),
+    );
+    let starting = state.page == Page::New(index);
+    section = section.child(
+        Tile::new(FocusId(NEW_IN_BASE + index as u64))
+            .selected(starting)
+            .build()
+            .styles([pl(3)])
+            .child(glyph(
+                IconName::Plus,
+                4.0,
+                if starting { Role::Text } else { Role::Muted },
+            ))
+            .child(line(
+                "New session",
+                14,
+                1.4,
+                if starting { Role::Text } else { Role::Muted },
+            )),
+    );
     section
 }
 

@@ -145,7 +145,6 @@ impl WorkspaceState {
             return self;
         };
         if row == PROJECT_MENU_NEW {
-            self.folded[open.project] = false;
             self.page = Page::New(open.project);
             self.sync_context();
             self
@@ -200,7 +199,6 @@ impl WorkspaceState {
             .iter()
             .map(|old| self.projects[*old].clone())
             .collect();
-        self.folded = order.iter().map(|old| self.folded[*old]).collect();
         self.remap_projects(&map);
         self
     }
@@ -212,7 +210,6 @@ impl WorkspaceState {
             return self;
         }
         self.projects.remove(index);
-        self.folded.remove(index);
         let map: Vec<Option<usize>> = (0..count)
             .map(|old| match old.cmp(&index) {
                 std::cmp::Ordering::Less => Some(old),
