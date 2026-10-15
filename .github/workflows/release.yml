@@ -3,6 +3,18 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch or commit to build.
+        type: string
+        required: true
+      tag:
+        description: Release tag to publish to.
+        type: string
+        required: true
+
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -10,6 +22,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -29,12 +42,16 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
-      - name: Check the tag matches the workspace version
+      - name: Resolve the version
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match workspace version $version"
+          if [ "$TAG" = "nightly" ]; then
+            version="$version-nightly"
+          elif [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match workspace version $version"
             exit 1
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
@@ -101,6 +118,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -116,9 +135,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prerelease=""
-          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" build/dist/* \
-            --verify-tag \
-            --generate-notes \
-            --title "$GITHUB_REF_NAME" \
-            $prerelease
+          case "$TAG" in *-* | nightly) prerelease="--prerelease" ;; esac
+          if [ "$TAG" = "nightly" ]; then
+            gh release delete nightly --cleanup-tag --yes || true
+            gh release create nightly build/dist/* \
+              --target "$(git rev-parse HEAD)" \
+              --notes "Built from $(git rev-parse --short HEAD) on ${{ inputs.ref }}." \
+              --title "nightly" \
+              $prerelease
+          else
+            gh release create "$TAG" build/dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$TAG" \
+              $prerelease
+          fi
