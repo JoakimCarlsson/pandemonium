@@ -109,10 +109,14 @@ fn share(own: &Path, target: &Path) {
 }
 
 /// Makes `to` a link to `from`.
+#[cfg(unix)]
 fn symlink(from: &Path, to: &Path) {
-    #[cfg(unix)]
     let _ = std::os::unix::fs::symlink(from, to);
 }
+
+/// Leaves `to` alone, as links need privileges on this platform.
+#[cfg(not(unix))]
+fn symlink(_from: &Path, _to: &Path) {}
 
 /// Fills `overlay` as the home folder an account of `agent` runs it in.
 pub(crate) fn build(agent: Agent, overlay: &Path) {

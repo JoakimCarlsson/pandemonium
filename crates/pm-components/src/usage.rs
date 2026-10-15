@@ -2,8 +2,8 @@
 
 use pm_acp::Usage;
 use pm_style::{
-    Color, Role, bg, cursor_default, flex, flex_none, h_px, items_center, justify_center, rounded_full,
-    w_px,
+    Color, Role, bg, cursor_default, flex, flex_none, h_px, items_center, justify_center,
+    rounded_full, w_px,
 };
 use pm_ui::{Node, node};
 
@@ -23,8 +23,7 @@ const FULL_HUE: f32 = 25.0;
 
 /// How full the context is, as a whole percentage, when the agent has said.
 fn context_percent(context: &Usage) -> Option<u32> {
-    (context.size > 0)
-        .then(|| (context.used.saturating_mul(100) / context.size).min(100) as u32)
+    (context.size > 0).then(|| (context.used.saturating_mul(100) / context.size).min(100) as u32)
 }
 
 /// The colour of a ring that is `used` percent full: green when empty, through amber, to red when full.

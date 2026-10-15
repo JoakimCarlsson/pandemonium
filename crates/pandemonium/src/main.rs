@@ -16,11 +16,16 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use app::App;
 use snapshot::Shot;
 
-/// Opens the window and runs the event loop until it is closed, or, given `--server`, runs the server
+/// Opens the window and runs the event loop until it is closed, or, given `--version`, prints the version
+/// and leaves, or, given `--server`, runs the server
 /// on this machine with the options that follow, or, given
 /// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("--version") {
+        println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     if arguments.first().map(String::as_str) == Some("--server") {
         std::process::exit(pm_server::run_with_arguments(
             "pandemonium --server",
