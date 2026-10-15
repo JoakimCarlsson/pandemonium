@@ -45,7 +45,7 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
-      - name: Resolve the version
+      - name: Resolve the version and channel
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           if [ "$TAG" = "nightly" ]; then
@@ -54,7 +54,10 @@ jobs:
             echo "::error::tag $TAG does not match workspace version $version"
             exit 1
           fi
+          channel=stable
+          case "$TAG" in *-* | nightly) channel=insiders ;; esac
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "PANDEMONIUM_CHANNEL=$channel" >> "$GITHUB_ENV"
 
       - name: Install system libraries
         if: runner.os == 'Linux'
@@ -72,19 +75,33 @@ jobs:
 
       - name: Package
         run: |
-          editor="pandemonium-$VERSION-${{ matrix.target }}"
-          server="pandemonium-server-$VERSION-${{ matrix.target }}"
+          target="${{ matrix.target }}"
+          if [ "$PANDEMONIUM_CHANNEL" = "insiders" ]; then
+            slug=pandemonium-insiders
+            label="Pandemonium Insiders"
+            identifier=io.github.joakimcarlsson.pandemonium.insiders
+            editor="$slug-$target"
+            server="$slug-server-$target"
+          else
+            slug=pandemonium
+            label=Pandemonium
+            identifier=io.github.joakimcarlsson.pandemonium
+            editor="$slug-$VERSION-$target"
+            server="$slug-server-$VERSION-$target"
+          fi
           mkdir -p "build/dist/$editor" "build/dist/$server"
           for package in "$editor" "$server"; do
             cp LICENSE README.md "build/dist/$package/"
           done
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/dist/pandemonium.exe" "build/dist/$editor/"
-            cp "target/${{ matrix.target }}/dist/pandemonium-server.exe" "build/dist/$server/"
+            cp "target/$target/dist/pandemonium.exe" "build/dist/$editor/$slug.exe"
+            cp "target/$target/dist/pandemonium-server.exe" "build/dist/$server/$slug-server.exe"
           else
-            cp "target/${{ matrix.target }}/dist/pandemonium" "build/dist/$editor/"
-            cp "target/${{ matrix.target }}/dist/pandemonium-server" "build/dist/$server/"
-            cp packaging/pandemonium.desktop "build/dist/$editor/"
+            cp "target/$target/dist/pandemonium" "build/dist/$editor/$slug"
+            cp "target/$target/dist/pandemonium-server" "build/dist/$server/$slug-server"
+            sed -e "s|^Name=.*|Name=$label|" -e "s|^Exec=.*|Exec=$slug|" \
+              -e "s|^Icon=.*|Icon=$slug|" -e "s|^StartupWMClass=.*|StartupWMClass=$slug|" \
+              packaging/pandemonium.desktop > "build/dist/$editor/$slug.desktop"
             mkdir -p "build/dist/$editor/icons"
             cp assets/brand/pandemonium.svg assets/brand/png/pandemonium-*.png "build/dist/$editor/icons/"
             rm "build/dist/$editor/icons/pandemonium-1024.png"
@@ -98,9 +115,8 @@ jobs:
             tar -czf "$server.tar.gz" "$server"
           fi
           if [ "${{ runner.os }}" = "macOS" ]; then
-            ../../scripts/bundle-macos.sh "$editor/pandemonium" Pandemonium.app \
-              Pandemonium io.github.joakimcarlsson.pandemonium
-            ditto -c -k --keepParent Pandemonium.app "$editor.app.zip"
+            ../../scripts/bundle-macos.sh "$editor/$slug" "$label.app" "$label" "$identifier"
+            ditto -c -k --keepParent "$label.app" "$editor.app.zip"
           fi
 
       - uses: actions/upload-artifact@v7

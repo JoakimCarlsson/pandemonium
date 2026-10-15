@@ -3,7 +3,8 @@
 #   irm https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.ps1 | iex
 #
 # Environment:
-#   PANDEMONIUM_VERSION       release to install, e.g. 0.2.0   (default: latest)
+#   PANDEMONIUM_CHANNEL       stable or insiders               (default: stable)
+#   PANDEMONIUM_VERSION       release to install, e.g. 0.2.0   (default: latest, or the nightly build for insiders)
 #   PANDEMONIUM_COMPONENT     editor or server                 (default: editor)
 #   PANDEMONIUM_INSTALL_DIR   where the binary goes            (default: %LOCALAPPDATA%\Programs\pandemonium)
 
@@ -12,12 +13,20 @@ $ProgressPreference = 'SilentlyContinue'
 
 $Repo = 'JoakimCarlsson/pandemonium'
 $Target = 'x86_64-pc-windows-msvc'
-$Version = if ($env:PANDEMONIUM_VERSION) { $env:PANDEMONIUM_VERSION } else { 'latest' }
+$Channel = if ($env:PANDEMONIUM_CHANNEL) { $env:PANDEMONIUM_CHANNEL } else { 'stable' }
+$Slug = switch ($Channel) {
+    'stable' { 'pandemonium' }
+    'insiders' { 'pandemonium-insiders' }
+    default { throw 'PANDEMONIUM_CHANNEL must be stable or insiders' }
+}
+$Label = if ($Channel -eq 'insiders') { 'Pandemonium Insiders' } else { 'Pandemonium' }
+$DefaultVersion = if ($Channel -eq 'insiders') { 'nightly' } else { 'latest' }
+$Version = if ($env:PANDEMONIUM_VERSION) { $env:PANDEMONIUM_VERSION } else { $DefaultVersion }
 $Component = if ($env:PANDEMONIUM_COMPONENT) { $env:PANDEMONIUM_COMPONENT } else { 'editor' }
-$InstallDir = if ($env:PANDEMONIUM_INSTALL_DIR) { $env:PANDEMONIUM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\pandemonium' }
+$InstallDir = if ($env:PANDEMONIUM_INSTALL_DIR) { $env:PANDEMONIUM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\$Slug" }
 $Binary = switch ($Component) {
-    'editor' { 'pandemonium' }
-    'server' { 'pandemonium-server' }
+    'editor' { $Slug }
+    'server' { "$Slug-server" }
     default { throw 'PANDEMONIUM_COMPONENT must be editor or server' }
 }
 
@@ -63,7 +72,7 @@ function Add-ToUserPath([string]$Dir) {
 Creates a Start menu shortcut to the editor.
 #>
 function Add-StartMenuShortcut([string]$Exe) {
-    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Pandemonium.lnk'
+    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "$Label.lnk"
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
     $link.TargetPath = $Exe
     $link.Save()
@@ -73,8 +82,9 @@ if (-not [Environment]::Is64BitOperatingSystem) { throw 'pandemonium needs 64-bi
 if ($Version -eq 'latest') { $Version = Get-LatestVersion }
 $Version = $Version.TrimStart('v')
 
-$name = "$Binary-$Version-$Target"
-$base = "https://github.com/$Repo/releases/download/v$Version"
+$name = if ($Channel -eq 'insiders') { "$Binary-$Target" } else { "$Binary-$Version-$Target" }
+$tag = if ($Version -eq 'nightly') { 'nightly' } else { "v$Version" }
+$base = "https://github.com/$Repo/releases/download/$tag"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
