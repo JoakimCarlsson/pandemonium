@@ -35,9 +35,6 @@ pub fn commit_field() -> Field {
 /// Lists every session.
 pub const HISTORY: FocusId = FocusId(301);
 
-/// Searches the workspace.
-pub const SEARCH: FocusId = FocusId(302);
-
 /// Adds a project.
 pub const ADD_PROJECT: FocusId = FocusId(303);
 
