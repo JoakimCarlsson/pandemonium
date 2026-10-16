@@ -1701,6 +1701,9 @@ impl WorkspaceState {
             self.restoring = Some(index);
         } else if let Some(index) = position(TURN_BASE, self.messages_open()) {
             self.toggle_turn(index);
+        } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
+        {
+            self.fold_tree_folder(index);
         } else if id >= DETAILS_BASE {
             let offset = (id - DETAILS_BASE) as usize;
             self.toggle_details(offset / 1000, offset % 1000);
@@ -1723,9 +1726,6 @@ impl WorkspaceState {
             self.start_comment(index, None, false);
         } else if let Some(index) = position(COMMENT_REMOVE_BASE, self.comment_count()) {
             self.remove_comment(index);
-        } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
-        {
-            self.fold_tree_folder(index);
         } else if let Some(index) = position(VIEWED_BASE, self.change_count()) {
             self.change_at(index, |change| change.viewed = !change.viewed);
         }

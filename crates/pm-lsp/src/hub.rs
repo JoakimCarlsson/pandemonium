@@ -746,7 +746,7 @@ impl Hub {
                     }),
                 }
             } else {
-                change_on_disk(&root.join(&relative), &changes)?;
+                change_on_disk(&inside_root(root, &relative)?, &changes)?;
             }
         }
         Ok(open)
@@ -760,6 +760,24 @@ fn relative_to(root: &Path, file: &Path) -> Option<String> {
         .or_else(|_| file.strip_prefix(&canonical))
         .ok()
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+}
+
+/// The file at `relative` under the project at `root`, refused when the path steps out of the project, by `..` or through a link that leads elsewhere.
+fn inside_root(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let stays = Path::new(relative)
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    let refused = || format!("{relative} is not a file inside the project");
+    if !stays {
+        return Err(refused());
+    }
+    let canonical_root = root.canonicalize().map_err(|_| refused())?;
+    let file = root.join(relative).canonicalize().map_err(|_| refused())?;
+    if file.starts_with(&canonical_root) {
+        Ok(file)
+    } else {
+        Err(refused())
+    }
 }
 
 /// Makes `changes`, each a stretch of the file as it is before any of them and what replaces it, to the file at `file` on disk.

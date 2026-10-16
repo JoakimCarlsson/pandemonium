@@ -111,8 +111,8 @@ fn row(
     let mut styles = vec![
         flex(),
         items_center(),
-        gap(2),
-        h(8),
+        gap(1.5),
+        h(6),
         pl(3.0 + depth as f32 * INDENT),
         pr(3),
         cursor_pointer(),
@@ -150,7 +150,7 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> Vec<Node> {
                 flex(),
                 items_center(),
                 gap(2),
-                h(8),
+                h(6),
                 pl(3.0 + depth as f32 * INDENT),
                 pr(3),
             ])
