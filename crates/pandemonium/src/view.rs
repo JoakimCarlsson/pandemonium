@@ -24,6 +24,8 @@ enum Saved {
     New(String),
     /// Every session.
     History,
+    /// The overview of the project at this path.
+    Project(String),
     /// The extensions there are to install.
     Extensions,
     /// The page for starting work in the first project.
@@ -108,6 +110,18 @@ pub struct View {
     /// Whether the terminal was taller than usual.
     #[serde(default)]
     terminal_maximized: bool,
+    /// How tall the terminal was while it was not maximized, in logical pixels.
+    #[serde(default)]
+    terminal_height: f32,
+    /// How wide the sidebar was, in logical pixels.
+    #[serde(default)]
+    sidebar_width: f32,
+    /// How wide the review panel was, in logical pixels.
+    #[serde(default)]
+    review_width: f32,
+    /// How wide the plan panel was dragged to be, in logical pixels, or zero while it took the width it would by itself.
+    #[serde(default)]
+    plan_width: f32,
     /// Whether the terminal was open.
     terminal: bool,
     /// How far the sidebar's list was scrolled, in logical pixels.
@@ -163,11 +177,15 @@ impl View {
                 )),
             },
             Page::New(project) => Saved::New(path(project)),
+            Page::Project(project) => Saved::Project(path(project)),
             Page::History => Saved::History,
             Page::Extensions => Saved::Extensions,
         };
         let with_files = matches!(page, Saved::Session { .. })
-            || matches!((&page, state.page), (Saved::New(_), Page::New(_)));
+            || matches!(
+                (&page, state.page),
+                (Saved::New(_), Page::New(_)) | (Saved::Project(_), Page::Project(_))
+            );
         let files = if with_files {
             state
                 .git
@@ -215,6 +233,10 @@ impl View {
             graph_all: state.git.graph_all,
             graph_height: state.git.graph_height,
             terminal_maximized: state.terminal_maximized,
+            terminal_height: state.terminal_height,
+            sidebar_width: state.sidebar_width,
+            review_width: state.review_width,
+            plan_width: state.plan_width,
             terminal: state.terminal,
             scroll: state.sidebar_scroll,
             agent: state.agent,
@@ -258,6 +280,7 @@ impl View {
         let project_at = |path: &String| state.projects.iter().position(|held| held.path == *path);
         match &self.page {
             Saved::New(path) => state.page = Page::New(project_at(path).unwrap_or(0)),
+            Saved::Project(path) => state.page = Page::Project(project_at(path).unwrap_or(0)),
             Saved::History => state.page = Page::History,
             Saved::Extensions => state.page = Page::Extensions,
             Saved::Session { .. } | Saved::First => {}
@@ -268,6 +291,16 @@ impl View {
         state.closed_folders = self.closed_folders.iter().cloned().collect();
         state.terminal = self.terminal;
         state.terminal_maximized = self.terminal_maximized;
+        if self.terminal_height > 0.0 {
+            state.terminal_height = self.terminal_height;
+        }
+        if self.sidebar_width > 0.0 {
+            state.sidebar_width = self.sidebar_width;
+        }
+        if self.review_width > 0.0 {
+            state.review_width = self.review_width;
+        }
+        state.plan_width = self.plan_width;
         state.agent = self.agent.min(state.agent_slots().saturating_sub(1));
         state.prompt = prompt_field(&self.prompt);
         state
@@ -283,7 +316,9 @@ impl View {
                 opened.sync_context();
                 self.reopen_files(opened)
             }
-            (None, Page::New(_)) if matches!(self.page, Saved::New(_)) => {
+            (None, Page::New(_) | Page::Project(_))
+                if matches!(self.page, Saved::New(_) | Saved::Project(_)) =>
+            {
                 let mut opened = state;
                 opened.sync_context();
                 self.reopen_files(opened)

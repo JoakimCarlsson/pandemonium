@@ -12,10 +12,12 @@ use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::assist::HOVER_SCROLL;
 use pm_components::diff::gutter_of;
 use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
-use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
+use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::open_files::EDITOR_FIELD;
+use pm_components::overview::OVERVIEW_SCROLL;
+use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
@@ -33,7 +35,7 @@ use pm_state::State;
 
 use pm_text::{Edit, Shaper};
 use pm_theme::{Appearance, ThemeFamily};
-use pm_ui::{Cursor, Input, Output, TextPoint, TextSelection, Unit};
+use pm_ui::{Cursor, Input, Output, SCROLLBAR_GRIP, TextPoint, TextSelection, Unit};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -64,9 +66,6 @@ const WINDOW_SIZE_FILE: &str = "window-size";
 
 /// The least logical width or height of a size worth keeping, which leaves out a window that is minimized.
 const MIN_SAVED: f32 = 320.0;
-
-/// How wide, in logical pixels, the strip along the right edge of a scrolling box is where pressing takes hold of its bar.
-const BAR_GRIP: f32 = 14.0;
 
 /// How far one notch of a mouse wheel scrolls, in logical pixels.
 const WHEEL_LINE: f32 = 48.0;
@@ -119,8 +118,8 @@ pub struct App {
     pressed_on: Option<FocusId>,
     /// The scrolling box whose bar is held down, and where the pointer last was along it.
     bar_drag: Option<(FocusId, f32)>,
-    /// Where the pointer went down on the handle above the graph, and how tall the graph was.
-    sash_drag: Option<(f32, f32)>,
+    /// The handle on the edge of a panel being dragged, where the pointer went down on it, how big the panel was, and which way the handle grows it.
+    sash_drag: Option<(FocusId, (f32, f32), f32, Grows)>,
     /// The settings window and what it keeps, while settings are open and it is not standing in for the main window.
     settings_surface: Option<settings_window::Surface>,
     /// Whether the settings window stands in for the main one, while one of its events is handled.
@@ -416,6 +415,7 @@ impl App {
             focused: self.focus.current(),
             elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
             selection: self.text_selection,
+            held_bar: self.bar_drag.map(|(id, _)| id),
         };
         let (width, height) = renderer.size();
         let model = self.model.clone();
@@ -491,10 +491,11 @@ impl App {
             self.model
                 .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
         }
-        let cursor = if reaching {
-            Cursor::Pointer
-        } else {
-            self.output.cursor
+        let cursor = match self.sash_drag {
+            Some((.., Grows::Up)) => Cursor::RowResize,
+            Some(_) => Cursor::ColResize,
+            None if reaching => Cursor::Pointer,
+            None => self.output.cursor,
         };
         if cursor != self.cursor {
             self.cursor = cursor;
@@ -890,6 +891,7 @@ impl App {
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
                 SETTINGS_NAV_SCROLL => std::mem::take(state).scrolled_settings_nav(pixels, room),
                 EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
+                OVERVIEW_SCROLL => std::mem::take(state).scrolled_overview(pixels, room),
                 HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
@@ -898,27 +900,33 @@ impl App {
         });
     }
 
-    /// Takes hold of the handle above the graph when the pointer is down on it, and says whether it did.
-    fn grab_sash(&mut self) -> bool {
-        let Some((_, y)) = self.pointer.position else {
-            return false;
-        };
-        let on = self
-            .pointer
-            .position
-            .and_then(|at| self.output.hit(at))
-            .is_some_and(|id| id == GRAPH_SASH);
-        if on {
-            self.sash_drag = Some((y, self.model.read(|screen| screen.graph_height())));
-        }
-        on
+    /// How wide and tall the window is, in logical pixels.
+    fn window_size(&self) -> (f32, f32) {
+        self.renderer
+            .as_ref()
+            .map_or((1280.0, 800.0), |renderer| renderer.size())
     }
 
-    /// Makes the graph as tall as the handle being held says, which is as far up as the pointer went.
-    fn drag_sash(&mut self, y: f32) {
-        if let Some((from, height)) = self.sash_drag {
+    /// Takes hold of the handle on the edge of a panel when the pointer is down on it, and says whether it did.
+    fn grab_sash(&mut self) -> bool {
+        let Some(at) = self.pointer.position else {
+            return false;
+        };
+        let window = self.window_size();
+        self.sash_drag = self.output.hit(at).and_then(|id| {
+            self.model
+                .read(|screen| screen.sash(id, window))
+                .map(|(size, grows)| (id, at, size, grows))
+        });
+        self.sash_drag.is_some()
+    }
+
+    /// Makes the panel whose handle is held as big as the handle says, which is as far as the pointer went from where it took hold.
+    fn drag_sash(&mut self, at: (f32, f32)) {
+        let window = self.window_size();
+        if let Some((id, from, size, grows)) = self.sash_drag {
             self.model.update(|state| {
-                *state = std::mem::take(state).with_graph_height(height - (y - from))
+                *state = std::mem::take(state).with_sash_size(id, size + grows.by(from, at), window)
             });
         }
     }
@@ -931,7 +939,7 @@ impl App {
         let grabbed = self.output.scrollers.iter().rev().find(|scroller| {
             scroller.room > 0.0
                 && scroller.rect.contains(x, y)
-                && x >= scroller.rect.x + scroller.rect.width - BAR_GRIP
+                && x >= scroller.rect.x + scroller.rect.width - SCROLLBAR_GRIP
         });
         self.bar_drag = grabbed.map(|scroller| (scroller.id, y));
         self.bar_drag.is_some()
@@ -1061,7 +1069,7 @@ impl App {
             PointerEvent::Moved(x, y) => {
                 self.editor_pointer_moved(x, y);
                 self.drag_bar(y);
-                self.drag_sash(y);
+                self.drag_sash((x, y));
                 self.drag_comment((x, y));
                 self.drag_project((x, y));
                 self.terminal_drag((x, y));
@@ -1139,10 +1147,7 @@ impl App {
         let Some((x, y)) = self.pointer.position else {
             return;
         };
-        let (width, height) = self
-            .renderer
-            .as_ref()
-            .map_or((1280.0, 800.0), |renderer| renderer.size());
+        let (width, height) = self.window_size();
         let at = (
             (x - 8.0).min(width - 256.0).max(0.0),
             (y + 12.0)
@@ -1298,10 +1303,7 @@ impl App {
             self.edit_field(id, Edit::Place(offset, false));
         }
         let (x, y) = if id == EDITOR_FIELD {
-            let (width, height) = self
-                .renderer
-                .as_ref()
-                .map_or((1280.0, 800.0), |renderer| renderer.size());
+            let (width, height) = self.window_size();
             (
                 x.min(width - 272.0).max(0.0),
                 y.min(height - EDITOR_MENU_HEIGHT - 8.0).max(0.0),

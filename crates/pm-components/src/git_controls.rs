@@ -291,11 +291,11 @@ impl WorkspaceState {
         self
     }
 
-    /// The position of the session the review panel is about: the open one, or, on the page for starting work, the stand-in for the project's own folder.
+    /// The position of the session the review panel is about: the open one, or, on the page for starting work or a project's overview, the stand-in for the project's own folder.
     pub fn review_index(&self) -> Option<usize> {
         match self.page {
             Page::Session(index) => Some(index),
-            Page::New(project) => self
+            Page::New(project) | Page::Project(project) => self
                 .sessions
                 .iter()
                 .position(|session| session.home && session.project == project),
@@ -595,9 +595,11 @@ impl WorkspaceState {
         }
     }
 
-    /// Whether the graph is open for the open session, and whether it lists every reference.
+    /// Whether the commits of the open session's repository are wanted, for the graph or a project's overview, and whether they take in every reference.
     pub fn graph_wanted(&self) -> Option<bool> {
-        (self.review_session().is_some() && self.git.graph_open).then_some(self.git.graph_all)
+        (self.review_session().is_some()
+            && (self.git.graph_open || matches!(self.page, Page::Project(_))))
+        .then_some(self.git.graph_all)
     }
 
     /// The state after the server listed the `commits` of the repository of the session at `session`.

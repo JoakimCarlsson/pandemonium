@@ -326,6 +326,10 @@ impl WorkspaceState {
                 None => Page::New(0),
             },
             Page::New(project) => Page::New(map.get(project).copied().flatten().unwrap_or(0)),
+            Page::Project(project) => match map.get(project).copied().flatten() {
+                Some(project) => Page::Project(project),
+                None => Page::New(0),
+            },
             Page::History => Page::History,
             Page::Extensions => Page::Extensions,
         };

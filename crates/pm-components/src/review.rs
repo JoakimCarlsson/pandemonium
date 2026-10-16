@@ -30,8 +30,11 @@ use crate::tree_actions::{
 use crate::{Button, Input, input};
 use crate::{change_list, file_tree};
 
-/// How wide the review panel is, in logical pixels.
+/// How wide the review panel is until it is dragged wider or narrower, in logical pixels.
 pub const WIDTH: f32 = 380.0;
+
+/// How narrow and how wide the review panel can be dragged, in logical pixels.
+pub const WIDTHS: (f32, f32) = (260.0, 760.0);
 
 /// A row of the panel `height` steps tall, with a rule beneath it.
 fn band(height: u32) -> Node {
@@ -240,7 +243,7 @@ fn message_box(state: &WorkspaceState, shaper: &mut Shaper) -> Node {
                     .variant(input::Variant::Multiline)
                     .placeholder("Message (Ctrl+Enter to commit)")
                     .rows(4)
-                    .wrap(input::inner_width(WIDTH - 24.0), shaper)
+                    .wrap(input::inner_width(state.review_width - 24.0), shaper)
                     .build(),
             ),
     )
@@ -296,8 +299,8 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) -> Node {
         )
 }
 
-/// The banner saying what git refused to do, with a button that dismisses it.
-fn trouble(said: &str) -> Node {
+/// The banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
+fn trouble(said: &str, width: f32) -> Node {
     node().styles([px(3), pb(2), flex_none()]).child(
         node()
             .styles([
@@ -312,7 +315,7 @@ fn trouble(said: &str) -> Node {
                 node()
                     .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
                     .children(
-                        wrap(said, 12, WIDTH - 24.0 - 56.0)
+                        wrap(said, 12, width - 24.0 - 56.0)
                             .iter()
                             .map(|words| line(words, 12, 1.5, Role::Danger)),
                     ),
@@ -342,7 +345,13 @@ fn changes(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) -> No
     let mut section = node()
         .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
         .child(section_heading(state, &primary))
-        .children(state.git.trouble.as_deref().map(trouble));
+        .children(
+            state
+                .git
+                .trouble
+                .as_deref()
+                .map(|said| trouble(said, state.review_width)),
+        );
     if state.git.changes_open {
         section = section
             .child(message_box(state, shaper))
@@ -392,7 +401,7 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
             flex(),
             flex_col(),
             flex_none(),
-            w_px(WIDTH),
+            w_px(state.review_width),
             h_full(),
             bg(Role::Background),
             border_l(),
