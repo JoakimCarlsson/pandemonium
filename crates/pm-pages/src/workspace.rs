@@ -110,9 +110,16 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
         ]));
     }
     tab.child(
-        Button::icon(IconName::Close, FocusId(FILE_CLOSE_BASE + index as u64))
-            .size(pm_components::button::Size::Icon)
-            .build(),
+        Button::icon(
+            if viewer.pinned {
+                IconName::Pin
+            } else {
+                IconName::Close
+            },
+            FocusId(FILE_CLOSE_BASE + index as u64),
+        )
+        .size(pm_components::button::Size::Icon)
+        .build(),
     )
     .focusable(FocusId(FILE_TAB_BASE + index as u64))
 }
@@ -298,6 +305,16 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(settings::settings(state, width, height))
     .children(pm_components::settings_servers::server_menu(state))
     .children(state.git_menu_node().filter(|_| reviewing))
+    .children(state.tab_menu.and_then(|open| {
+        state.git.viewers.get(open.index).map(|viewer| {
+            pm_components::tab_menu::tab_menu(
+                viewer,
+                open,
+                state.git.viewers.len(),
+                state.review_is_local(),
+            )
+        })
+    }))
     .children(
         state
             .git

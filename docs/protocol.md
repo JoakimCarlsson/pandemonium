@@ -170,7 +170,7 @@ request with exactly one `response` carrying the same `id`.
 | `code_actions` | `directory`, `path`, `version`, `span`                                                           | `code_actions`  |
 | `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
 | `file_history` | `directory`, `path`                                                                              | `file_history`  |
-| `permalink`    | `directory`, `path`, `line`                                                                      | `address`       |
+| `permalink`    | `directory`, `path`, `line` (optional)                                                           | `address`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -479,7 +479,7 @@ embedded context, and anything else as a link to the stored file.
 | `signature`  | `signature`: `{label, active, documentation, others}` or null; `active` is the byte range of `label` naming the parameter the place is at, `others` how many more signatures there are |
 | `edited`     | `files`: `[{path, changes: [{span, text}]}]` |
 | `file_history` | `commits`: `[{object, id, author, when, summary, path}]`, newest first, following the file back through moves; `path` is what it was called in that commit |
-| `address`    | `url`: the web address of the line on the host of the repository's remote, at the commit checked out |
+| `address`    | `url`: the web address of the file, at the line when one is given, on the host of the repository's remote, at the commit checked out |
 
 ## Changes other clients make
 

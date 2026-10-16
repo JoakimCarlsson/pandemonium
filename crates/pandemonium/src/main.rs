@@ -71,6 +71,7 @@ fn main() {
             Some("cursors") => Shot::Cursors,
             Some("folded") => Shot::Folded,
             Some("finder") => Shot::Finder,
+            Some("tabmenu") => Shot::TabMenu,
             Some("extensions") => Shot::Extensions,
             Some("workspace") => Shot::Workspace,
             Some("diff") => Shot::Diff,

@@ -368,14 +368,15 @@ pub enum Request {
         /// The path, from the root of the folder.
         path: String,
     },
-    /// The web address of a line of a file of a folder on the host of its repository, at the commit checked out.
+    /// The web address of a file of a folder, or of a line of it, on the host of its repository, at the commit checked out.
     Permalink {
         /// The folder.
         directory: String,
         /// The path, from the root of the folder.
         path: String,
-        /// The line, counted from 1.
-        line: usize,
+        /// The line, counted from 1, or nothing for the whole file.
+        #[serde(default)]
+        line: Option<usize>,
     },
     /// Replaces the contents of a file of a folder with text, making the file when it is not there.
     WriteFile {

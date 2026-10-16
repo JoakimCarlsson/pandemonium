@@ -647,6 +647,7 @@ impl WorkspaceState {
             preview: true,
             left: None,
             jump: None,
+            pinned: false,
         };
         let index = match self.git.viewers.iter().position(|held| held.preview) {
             Some(index) => {

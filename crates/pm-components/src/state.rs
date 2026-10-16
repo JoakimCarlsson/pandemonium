@@ -453,14 +453,16 @@ pub enum Outgoing {
         /// The file.
         path: String,
     },
-    /// Copies the web address of a line of a file of the session at this position on the host of its repository.
+    /// Copies or opens the web address of a file of the session at this position, or of a line of it, on the host of its repository.
     Permalink {
         /// The session, by position.
         session: usize,
         /// The file.
         path: String,
-        /// The line, counted from 1.
-        line: usize,
+        /// The line, counted from 1, or nothing for the whole file.
+        line: Option<usize>,
+        /// Whether the address is opened in the browser rather than copied.
+        open: bool,
     },
     /// Asks for the commits that changed a file of the session at this position.
     FileHistory {
@@ -1124,6 +1126,8 @@ pub struct WorkspaceState {
     pub signature_at: (f32, f32),
     /// The bar for finding and replacing in the file shown, when open.
     pub finding: Option<crate::find::Finding>,
+    /// The menu on the tab of an open file, when open.
+    pub tab_menu: Option<crate::tab_menu::TabMenu>,
     /// Who last changed the line of the caret of a file, once asked: the session, the file, the line counted from 1, and the answer.
     pub blame: Option<(usize, String, usize, pm_git::Blame)>,
 }
@@ -1227,6 +1231,7 @@ impl WorkspaceState {
             signature_at: (0.0, 0.0),
             finding: None,
             blame: None,
+            tab_menu: None,
             trail: crate::trail::Trail::default(),
         };
         state.sync_context();
@@ -1350,6 +1355,12 @@ impl WorkspaceState {
         if action == crate::navigate::RENAME_SYMBOL_SUBMIT {
             return self.rename_submitted();
         }
+        if let Some(command) =
+            crate::tab_menu::TabCommand::of(action).filter(|_| self.tab_menu.is_some())
+        {
+            return self.tab_command(command);
+        }
+        self.tab_menu = None;
         if crate::find::is_find_part(action) {
             return self.find_pressed(action);
         }
@@ -1572,6 +1583,7 @@ impl WorkspaceState {
         self.message_menu = None;
         self.git.menu = None;
         self.settings_servers.menu = None;
+        self.tab_menu = None;
         self
     }
 
@@ -2223,7 +2235,7 @@ impl WorkspaceState {
     }
 
     /// Shows `tab` in the review panel from its top.
-    fn show_review_tab(&mut self, tab: ReviewTab) {
+    pub(crate) fn show_review_tab(&mut self, tab: ReviewTab) {
         self.review_tab = tab;
         self.tree_scroll = 0.0;
     }

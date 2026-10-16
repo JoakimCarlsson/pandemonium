@@ -411,6 +411,28 @@ impl Screen {
         self.in_workspace(WorkspaceState::permalink_requested)
     }
 
+    /// The screen opening `address` in the browser.
+    pub fn with_address_opened(self, address: String) -> Self {
+        self.in_workspace(|state| state.with_address_opened(address))
+    }
+
+    /// The screen with the menu on the tab of the open file at `index` open at `at`.
+    pub fn with_tab_menu(self, index: usize, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.with_tab_menu(index, at))
+    }
+
+    /// The tab of an open file the element `id` is, when it is one.
+    pub fn file_tab_of(&self, id: pm_input::FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => {
+                id.0.checked_sub(pm_components::open_files::FILE_TAB_BASE)
+                    .map(|index| index as usize)
+                    .filter(|index| *index < state.git.viewers.len())
+            }
+            Self::Onboarding(_) => None,
+        }
+    }
+
     /// The screen with `text` put on the clipboard.
     pub fn with_copied(self, text: String) -> Self {
         self.in_workspace(|state| state.with_copied(text))

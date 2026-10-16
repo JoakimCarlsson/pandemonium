@@ -54,6 +54,8 @@ pub struct Viewer {
     pub left: Option<Left>,
     /// The place the caret goes to once the text arrives, as when the file was opened to show where something is defined.
     pub jump: Option<pm_protocol::Position>,
+    /// Whether the tab is pinned: kept at the start of the strip, and left open when the tabs around it are closed.
+    pub pinned: bool,
 }
 
 /// Where a file was left when the window closed: what it held that was not saved, and the caret.
@@ -134,6 +136,7 @@ impl WorkspaceState {
                     preview: true,
                     left: None,
                     jump: None,
+                    pinned: false,
                 };
                 self.outbox.push(Outgoing::ReadFile {
                     session,
@@ -348,7 +351,7 @@ impl WorkspaceState {
     }
 
     /// Closes the tab at `index`, first asking when its file has changes that were not saved.
-    fn close_file(&mut self, index: usize) {
+    pub(crate) fn close_file(&mut self, index: usize) {
         if self.git.viewers.get(index).is_some_and(Viewer::is_dirty) {
             self.git.shown = Some(index);
             self.tab = Tab::File;
@@ -416,7 +419,12 @@ impl WorkspaceState {
             .checked_sub(FILE_CLOSE_BASE)
             .filter(|index| *index < count)
         {
-            self.close_file(index as usize);
+            let index = index as usize;
+            if self.git.viewers[index].pinned {
+                self.git.viewers[index].pinned = false;
+            } else {
+                self.close_file(index);
+            }
             return true;
         }
         match action {

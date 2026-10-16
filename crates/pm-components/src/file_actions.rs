@@ -82,8 +82,15 @@ impl WorkspaceState {
         self.outbox.push(Outgoing::Permalink {
             session,
             path,
-            line,
+            line: Some(line),
+            open: false,
         });
+        self
+    }
+
+    /// Opens `address` in the browser.
+    pub fn with_address_opened(mut self, address: String) -> Self {
+        self.outbox.push(Outgoing::Open { address });
         self
     }
 

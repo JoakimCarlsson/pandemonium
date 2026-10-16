@@ -183,6 +183,8 @@ pub enum Shot {
     Folded,
     /// The finder for the files of the project, narrowed by what is typed.
     Finder,
+    /// The same file with the menu on its tab open.
+    TabMenu,
     /// The extensions page, some installed, one being installed, one that failed and one of the reader's own.
     Extensions,
 }
@@ -861,6 +863,7 @@ impl Shot {
             Self::CodeActions => Screen::Workspace(code_actions()),
             Self::FileHistory => Screen::Workspace(file_history()),
             Self::Signing => Screen::Workspace(signing()),
+            Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
             Self::Finder => {
                 let mut state = code();
                 state.files = [

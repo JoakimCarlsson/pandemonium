@@ -389,6 +389,7 @@ impl Work {
                 session,
                 path,
                 line,
+                open,
             } => self.ask_in_folder(
                 model,
                 session,
@@ -397,7 +398,7 @@ impl Work {
                     path,
                     line,
                 },
-                Pending::Permalink,
+                Pending::Permalink(open),
             ),
             Outgoing::FileHistory { session, path } => {
                 let asked = path.clone();
@@ -614,8 +615,15 @@ impl Work {
                         std::mem::take(screen).with_signature(session, &path, version, signature);
                 });
             }
-            (Pending::Permalink, Response::Address { url }) => {
-                model.update(|screen| *screen = std::mem::take(screen).with_copied(url));
+            (Pending::Permalink(open), Response::Address { url }) => {
+                model.update(|screen| {
+                    let taken = std::mem::take(screen);
+                    *screen = if open {
+                        taken.with_address_opened(url)
+                    } else {
+                        taken.with_copied(url)
+                    };
+                });
             }
             (Pending::FileHistory(session, path), Response::FileHistory { commits }) => {
                 model.update(|screen| {
@@ -642,7 +650,7 @@ impl Work {
                 let problem = format!("{label}: {}", Self::trouble_of(other));
                 model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
             }
-            (Pending::Permalink, other) => {
+            (Pending::Permalink(_), other) => {
                 eprintln!("no permalink: {}", Self::trouble_of(other));
             }
             (Pending::Extensions, Response::Extensions { extensions }) => {

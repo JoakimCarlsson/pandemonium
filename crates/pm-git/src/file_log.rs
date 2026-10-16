@@ -91,8 +91,8 @@ fn web_address(remote: &str) -> Option<String> {
     Some(format!("https://{host}/{rest}"))
 }
 
-/// The web address of line `line`, counted from 1, of `path` in the repository `directory` is in, at the commit checked out, on the host its remote is on: the remote the branch follows, `origin`, or the first there is.
-pub fn permalink(directory: &Path, path: &str, line: usize) -> Result<String, String> {
+/// The web address of `path`, at line `line` counted from 1 when one is given, in the repository `directory` is in, at the commit checked out, on the host its remote is on: the remote the branch follows, `origin`, or the first there is.
+pub fn permalink(directory: &Path, path: &str, line: Option<usize>) -> Result<String, String> {
     let path = inside(path)?;
     let followed = run(
         directory,
@@ -133,14 +133,18 @@ pub fn permalink(directory: &Path, path: &str, line: usize) -> Result<String, St
         .strip_prefix("https://")
         .and_then(|rest| rest.split('/').next())
         .unwrap_or_default();
-    Ok(if host.contains("gitlab") {
-        format!("{web}/-/blob/{commit}/{file}#L{line}")
+    let (page, anchor) = if host.contains("gitlab") {
+        (format!("{web}/-/blob/{commit}/{file}"), "#L")
     } else if host.contains("bitbucket") {
-        format!("{web}/src/{commit}/{file}#lines-{line}")
+        (format!("{web}/src/{commit}/{file}"), "#lines-")
     } else if host.contains("codeberg") || host.contains("gitea") || host.contains("forgejo") {
-        format!("{web}/src/commit/{commit}/{file}#L{line}")
+        (format!("{web}/src/commit/{commit}/{file}"), "#L")
     } else {
-        format!("{web}/blob/{commit}/{file}#L{line}")
+        (format!("{web}/blob/{commit}/{file}"), "#L")
+    };
+    Ok(match line {
+        Some(line) => format!("{page}{anchor}{line}"),
+        None => page,
     })
 }
 

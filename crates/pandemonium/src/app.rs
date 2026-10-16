@@ -831,6 +831,10 @@ impl App {
                         let position = screen.change_folder_row_of(id).unwrap_or_default();
                         self.open_folder_change_menu(position);
                     }
+                    Some(id) if screen.file_tab_of(id).is_some() => {
+                        let index = screen.file_tab_of(id).unwrap_or_default();
+                        self.open_tab_menu(index);
+                    }
                     Some(id) if screen.tree_row_of(id).is_some() => {
                         let target = screen.tree_row_of(id).unwrap_or_else(TreeTarget::root);
                         self.open_tree_menu(target);
@@ -973,6 +977,25 @@ impl App {
         self.model.update(|state| {
             *state = std::mem::take(state).with_settings_menu(index, (x - 190.0, y + 14.0))
         });
+    }
+
+    /// Opens the menu on the tab of the open file at `index`, just under the pointer and inside the window.
+    fn open_tab_menu(&mut self, index: usize) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        let (width, height) = self
+            .renderer
+            .as_ref()
+            .map_or((1280.0, 800.0), |renderer| renderer.size());
+        let at = (
+            (x - 8.0).min(width - 256.0).max(0.0),
+            (y + 12.0)
+                .min(height - pm_components::tab_menu::TAB_MENU_HEIGHT - 8.0)
+                .max(0.0),
+        );
+        self.model
+            .update(|state| *state = std::mem::take(state).with_tab_menu(index, at));
     }
 
     /// Opens the menu of the project at `project`, just under the pointer.

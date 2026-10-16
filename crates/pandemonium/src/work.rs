@@ -183,8 +183,8 @@ enum Pending {
     CodeActions(usize, String),
     /// The edits a change the language server offered makes across the project of the session at this position.
     TookAction(usize),
-    /// The web address of a line, to copy.
-    Permalink,
+    /// The web address of a file or a line, opened in the browser when true and copied otherwise.
+    Permalink(bool),
     /// The commits that changed the file of the session at this position, at this path.
     FileHistory(usize, String),
     /// A file of the session at this position as a commit left it, shown under this name.
@@ -1601,7 +1601,7 @@ impl Work {
             | Pending::Renamed(_)
             | Pending::CodeActions(..)
             | Pending::TookAction(_)
-            | Pending::Permalink
+            | Pending::Permalink(_)
             | Pending::FileHistory(..)
             | Pending::Revision(..)
             | Pending::Formatted(..)

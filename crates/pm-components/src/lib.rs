@@ -65,6 +65,7 @@ pub mod sidebar;
 pub mod state;
 pub mod stepper;
 pub mod steps;
+pub mod tab_menu;
 pub mod tally;
 pub mod terminal;
 pub mod terminal_keys;
