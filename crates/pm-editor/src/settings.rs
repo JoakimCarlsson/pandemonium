@@ -96,6 +96,10 @@ pub struct EditorSettings {
     pub scroll_beyond_last_line: bool,
     /// How many lines are kept between the caret and the top and bottom of the view.
     pub vertical_scroll_margin: usize,
+    /// The bindings of keys the keymap starts from.
+    pub keymap: crate::keymap::Preset,
+    /// The reader's own bindings over the preset, by the name each action is kept under; an empty list leaves the action without keys.
+    pub keys: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for EditorSettings {
@@ -133,6 +137,8 @@ impl Default for EditorSettings {
             smartcase: false,
             scroll_beyond_last_line: true,
             vertical_scroll_margin: 3,
+            keymap: crate::keymap::Preset::default(),
+            keys: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -146,6 +152,11 @@ impl EditorSettings {
     /// The settings written down.
     pub fn write(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// The keys bound to each action.
+    pub fn keymap(&self) -> crate::keymap::Keymap {
+        crate::keymap::Keymap::new(self.keymap, &self.keys)
     }
 
     /// How tall a line of a file is, in logical pixels.

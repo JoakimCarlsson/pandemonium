@@ -145,6 +145,8 @@ pub enum Shot {
     SettingsAgents,
     /// The settings panel on the Editor, which opens the pages inside it.
     SettingsEditor,
+    /// The settings panel on the keymap.
+    SettingsKeymap,
     /// The settings panel on how files look.
     SettingsAppearance,
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
@@ -1060,6 +1062,11 @@ impl Shot {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
             Self::Settings => Screen::Workspace(welcome().after(SETTINGS)),
+            Self::SettingsKeymap => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::Keymap.id()),
+            ),
             Self::SettingsEditor => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)

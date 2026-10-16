@@ -292,7 +292,13 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     root.children(state.menu.and_then(|menu| {
         let field = state.field(menu.field)?;
         Some(if menu.field == EDITOR_FIELD {
-            editor_menu(field, menu, state.coding(), state.review_is_local())
+            editor_menu(
+                field,
+                menu,
+                state.coding(),
+                state.review_is_local(),
+                &state.editor.keymap(),
+            )
         } else {
             field_menu(field, menu)
         })

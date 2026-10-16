@@ -279,6 +279,21 @@ impl Screen {
         self.in_workspace(|state| state.with_edited_files(session, files))
     }
 
+    /// Whether keys are being recorded for an action on the keymap page.
+    pub fn recording_keys(&self) -> bool {
+        self.workspace_is(WorkspaceState::recording_keys)
+    }
+
+    /// The screen showing the chords pressed so far while keys are recorded.
+    pub fn with_recorded(self, chords: Vec<String>) -> Self {
+        self.in_workspace(|state| state.with_recorded(chords))
+    }
+
+    /// The screen after keys were recorded for the action being recorded, or the recording was given up.
+    pub fn keys_recorded(self, binding: Option<String>) -> Self {
+        self.in_workspace(|state| state.keys_recorded(binding))
+    }
+
     /// The screen with the editor's settings `settings` put to work.
     pub fn with_editor_settings(self, settings: pm_editor::EditorSettings) -> Self {
         self.in_workspace(|state| state.with_editor_settings(settings))

@@ -98,7 +98,9 @@ servers found in the project (Ctrl+Shift+M), go to line (Ctrl+G) and folding.
 Indent guides are drawn, marks beside the line numbers show how each line
 differs from the last commit, and the caret's line says who last changed it.
 Settings → Editor changes how files look, are edited and saved, what the
-language server shows while you write, and searching and scrolling.
+language server shows while you write, and searching and scrolling. Settings →
+Keymap starts the keys from Pandemonium's own, VS Code's, JetBrains' or
+Sublime Text's, and any action can be given keys of your own by pressing them.
 
 A language is a folder in [`languages/`](languages): a `config.toml` manifest,
 five queries (`highlights`, `indents`, `outline`, `injections`, `brackets`)

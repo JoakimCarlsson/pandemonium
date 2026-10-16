@@ -15,7 +15,7 @@ use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
 use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
-use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
+use pm_components::open_files::EDITOR_FIELD;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
@@ -169,8 +169,12 @@ pub struct App {
     hover_leaving: Option<Instant>,
     /// Whether the pointer has been on the card about a word since it opened, so leaving it takes it away at once.
     hover_entered: bool,
-    /// Whether Ctrl+K was pressed in the file shown, so the next key finishes a pair.
-    paired: bool,
+    /// The chords pressed so far of a binding of more than one.
+    pending: Vec<pm_editor::Chord>,
+    /// The chords pressed so far while keys are recorded on the keymap page, as they are written.
+    recorded: Vec<String>,
+    /// When recording keeps what was pressed so far, unless another chord comes first.
+    record_deadline: Option<Instant>,
     /// The file, version and caret the language server was last asked about for where the thing at the caret is used.
     highlighted: Option<(String, i32, usize)>,
     /// The file, version and caret waiting to settle before the language server is asked about them, and since when.
@@ -293,7 +297,9 @@ impl Default for App {
             hover_rest: None,
             hover_leaving: None,
             hover_entered: false,
-            paired: false,
+            pending: Vec::new(),
+            recorded: Vec::new(),
+            record_deadline: None,
             highlighted: None,
             highlight_wait: None,
         }
@@ -1377,14 +1383,14 @@ impl App {
         if !event.pressed {
             return;
         }
-        if self.terminal_key(event)
+        if self.recording_key(event)
+            || self.terminal_key(event)
             || self.text_key(event)
             || self.card_key(event)
             || self.rename_key(event)
             || self.find_key(event)
             || self.listing_key(event)
-            || self.finder_key(event)
-            || self.search_key(event)
+            || self.keymap_key(event)
             || self.editor_key(event)
         {
             return;
@@ -1418,12 +1424,6 @@ impl App {
                         .inquiry_hotkey(digit.to_digit(10).unwrap_or_default() as usize) =>
             {
                 self.activate(id);
-            }
-            Key::Character('s' | 'S')
-                if (event.modifiers.control || event.modifiers.logo)
-                    && self.focus.current() == Some(EDITOR_FIELD) =>
-            {
-                self.activate(EDITOR_SAVE);
             }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model
@@ -1593,6 +1593,7 @@ impl ApplicationHandler for App {
             self.editor_hover_due(),
             self.editor_highlight_due(),
             self.editor_autosave_due(),
+            self.recording_due(),
         ]
         .into_iter()
         .flatten()

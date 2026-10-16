@@ -1128,6 +1128,10 @@ pub struct WorkspaceState {
     pub finding: Option<crate::find::Finding>,
     /// How the editor looks and behaves.
     pub editor: pm_editor::EditorSettings,
+    /// The action keys are being recorded for on the keymap page, when they are.
+    pub recording: Option<pm_editor::Action>,
+    /// The chords pressed so far while keys are recorded, as they are written.
+    pub recorded: Vec<String>,
     /// Whether the editor's settings kept between runs were put in, so that what is shown is not mistaken for them before.
     pub editor_loaded: bool,
     /// The menu on the tab of an open file, when open.
@@ -1238,6 +1242,8 @@ impl WorkspaceState {
             tab_menu: None,
             editor: pm_editor::EditorSettings::default(),
             editor_loaded: false,
+            recording: None,
+            recorded: Vec::new(),
             trail: crate::trail::Trail::default(),
         };
         state.sync_context();

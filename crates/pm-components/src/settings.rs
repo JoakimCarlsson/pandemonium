@@ -103,7 +103,7 @@ pub const SETTINGS_REMOVE_BASE: u64 = 20_000_200;
 pub const SETTINGS_INSTALL_BASE: u64 = 20_000_300;
 
 /// One past the last name the panel answers to.
-const SETTINGS_END: u64 = 20_001_500;
+const SETTINGS_END: u64 = 20_002_400;
 
 /// How far the panel keeps from every edge of the window, in logical pixels.
 const MARGIN: f32 = 14.0;
@@ -146,6 +146,8 @@ pub enum Section {
     EditorIntelligence,
     /// Finding and scrolling.
     EditorSearch,
+    /// The keys that work the editor.
+    Keymap,
     /// What agents are started with, with the groups below it.
     Agents,
     /// The agents that can be started, and the ones added by hand.
@@ -156,7 +158,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 10] = [
+    pub const ALL: [Section; 11] = [
         Section::General,
         Section::Editor,
         Section::EditorAppearance,
@@ -164,6 +166,7 @@ impl Section {
         Section::EditorSaving,
         Section::EditorIntelligence,
         Section::EditorSearch,
+        Section::Keymap,
         Section::Agents,
         Section::AgentServers,
         Section::McpServers,
@@ -179,6 +182,7 @@ impl Section {
             Self::EditorSaving => "Saving",
             Self::EditorIntelligence => "Code Intelligence",
             Self::EditorSearch => "Search & Scrolling",
+            Self::Keymap => "Keymap",
             Self::Agents => "Agents",
             Self::AgentServers => "Agent Servers",
             Self::McpServers => "MCP Servers",
@@ -195,6 +199,7 @@ impl Section {
             | Self::EditorSaving
             | Self::EditorIntelligence
             | Self::EditorSearch => IconName::FileCode,
+            Self::Keymap => IconName::SquareSlash,
             Self::Agents => IconName::Sparkles,
             Self::AgentServers => IconName::Folder,
             Self::McpServers => IconName::Plug,
@@ -210,7 +215,7 @@ impl Section {
             | Self::EditorSaving
             | Self::EditorIntelligence
             | Self::EditorSearch => Some(Self::Editor),
-            Self::General | Self::Agents | Self::Editor => None,
+            Self::General | Self::Agents | Self::Editor | Self::Keymap => None,
         }
     }
 
@@ -252,8 +257,12 @@ impl WorkspaceState {
             SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
                 self.settings_servers.form = None;
             }
-            SETTINGS_SCRIM | SETTINGS_CLOSE => self.settings = None,
+            SETTINGS_SCRIM | SETTINGS_CLOSE => {
+                self.settings = None;
+                self.recording = None;
+            }
             action if self.editor_setting_pressed(action) => {}
+            action if self.keymap_pressed(action) => {}
             action => {
                 if let Some(section) = Section::ALL
                     .into_iter()
@@ -264,6 +273,7 @@ impl WorkspaceState {
                         self.settings_servers.folded = showing && !self.settings_servers.folded;
                     }
                     self.settings = Some(section);
+                    self.recording = None;
                     self.section_changed();
                 } else {
                     return self.servers_pressed(action);
@@ -329,7 +339,9 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
         .build()
         .styles([px(2)]);
     let row = match section {
-        Section::General | Section::Editor => row.child(glyph(section.icon(), 4.0, tone)),
+        Section::General | Section::Editor | Section::Keymap => {
+            row.child(glyph(section.icon(), 4.0, tone))
+        }
         Section::Agents => row.child(glyph(
             if folded {
                 IconName::ChevronRight

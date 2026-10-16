@@ -91,6 +91,24 @@ impl EditorCommand {
         FocusId(EDITOR_MENU_BASE + place as u64)
     }
 
+    /// The action of the keymap that does the same, when there is one.
+    fn action(self) -> Option<pm_editor::Action> {
+        use pm_editor::Action;
+        Some(match self {
+            Self::Definition => Action::GoToDefinition,
+            Self::Declaration => Action::GoToDeclaration,
+            Self::TypeDefinition => Action::GoToTypeDefinition,
+            Self::Implementation => Action::GoToImplementation,
+            Self::References => Action::FindReferences,
+            Self::IncomingCalls => Action::IncomingCalls,
+            Self::Rename => Action::Rename,
+            Self::Format => Action::Format,
+            Self::CodeActions => Action::CodeActions,
+            Self::Reveal => Action::RevealInFileManager,
+            _ => return None,
+        })
+    }
+
     /// The command whose row `id` names.
     pub fn of(id: FocusId) -> Option<Self> {
         let place = id.0.checked_sub(EDITOR_MENU_BASE)?;
@@ -125,10 +143,17 @@ pub fn is_menu_item(id: FocusId) -> bool {
 pub const EDITOR_MENU_HEIGHT: f32 = 18.0 * 26.0 + 3.0 * 9.0 + 10.0;
 
 /// The menu over the file shown, opened at `open`: the language server's ways around the code when `coding`, what the selection allows, and the file's place on this machine when it is on this machine, `local`.
-pub fn editor_menu(field: &Field, open: ContextMenu, coding: bool, local: bool) -> Node {
+pub fn editor_menu(
+    field: &Field,
+    open: ContextMenu,
+    coding: bool,
+    local: bool,
+    keymap: &pm_editor::Keymap,
+) -> Node {
     let editable = !field.is_read_only();
-    let command = |menu: Menu, label: &str, keys: Option<&str>, which: EditorCommand, on: bool| {
-        menu.item(label, keys, which.id(), !on)
+    let command = |menu: Menu, label: &str, _: Option<&str>, which: EditorCommand, on: bool| {
+        let keys = which.action().and_then(|action| keymap.label(action));
+        menu.item(label, keys.as_deref(), which.id(), !on)
     };
     let menu = Menu::new(open.at.0, open.at.1).width(66.0).row_height(6.5);
     let menu = command(

@@ -672,6 +672,9 @@ pub(crate) fn is_form_field(id: FocusId) -> bool {
 fn summary(section: Section) -> &'static str {
     match section {
         Section::General => "",
+        Section::Keymap => {
+            "Pick the editor your hands know, or press a binding to give an action keys of your own."
+        }
         Section::Editor
         | Section::EditorAppearance
         | Section::EditorEditing
@@ -750,6 +753,13 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
                     .map(|part| card(part, String::new())),
                 ),
         ),
+        Section::Keymap => page
+            .child(
+                inner
+                    .child(paragraph(summary(section)))
+                    .children(crate::settings_keymap::rows(state)),
+            )
+            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         Section::EditorAppearance
         | Section::EditorEditing
         | Section::EditorSaving
