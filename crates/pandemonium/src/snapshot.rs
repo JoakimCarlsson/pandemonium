@@ -161,8 +161,8 @@ pub enum Shot {
     Completing,
     /// The same file with the card about a place that has something wrong with it.
     Hovering,
-    /// The settings panel on the languages, some installed and one being installed.
-    SettingsLanguages,
+    /// The extensions page, some installed, one being installed, one that failed and one of the reader's own.
+    Extensions,
 }
 
 /// Loads the grammar of the language `id` installed on this machine, if it is, so a snapshot can highlight with it.
@@ -297,7 +297,7 @@ fn hovering() -> WorkspaceState {
         .shown_document()
         .and_then(|document| document.field.text().find("main\";"))
         .unwrap_or_default();
-    let state = state.hover_requested(offset, (330.0, 470.0));
+    let state = state.hover_requested(offset, (330.0, 440.0));
     let position = state
         .shown_document()
         .map(|document| document.position_of(offset))
@@ -307,46 +307,62 @@ fn hovering() -> WorkspaceState {
         CODE_PATH,
         position,
         Some(pm_protocol::Hover {
-            text: "```rust\n&'static str\n```\n\nA string slice, borrowed for the whole program."
-                .to_owned(),
+            text: "\n```rust\npandemonium::session\n```\n\n```rust\npub fn new(id: u64, root: PathBuf) -> Self\n```\n\n---\n\nMakes a session working in `root`, with no names yet. See [the session docs](https://example.com/session).\n\n```rust\npub fn with_a_very_long_signature(first_argument: HashMap<String, Vec<PathBuf>>, second_argument: Option<&mut Session>) -> Result<Self, std::io::Error>\n```\n\nParagraph 1 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 2 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 3 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 4 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 5 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 6 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 7 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 8 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.".to_owned(),
             span: None,
         }),
     )
 }
 
 /// The languages a server on this machine could list: some installed, one being installed and one that failed.
-fn sample_languages() -> Vec<pm_protocol::LanguageInfo> {
+fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
     let language =
-        |id: &str, name: &str, suffix: &str, installed: bool| pm_protocol::LanguageInfo {
+        |id: &str, name: &str, suffix: &str, installed: bool| pm_protocol::ExtensionInfo {
             id: id.to_owned(),
             name: name.to_owned(),
+            kind: "language".to_owned(),
+            version: "0.1.0".to_owned(),
+            description: format!("{name} support."),
+            icon: std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../languages")
+                    .join(id)
+                    .join("icon.svg"),
+            )
+            .ok(),
+            color: Some("#8fb8e8".to_owned()),
             hidden: false,
             suffixes: vec![suffix.to_owned()],
             installed,
             busy: None,
             problem: None,
             server: None,
+            local: false,
         };
     vec![
-        pm_protocol::LanguageInfo {
+        pm_protocol::ExtensionInfo {
             server: Some("gopls v0.24.0".to_owned()),
             ..language("go", "Go", "go", true)
         },
         language("javascript", "JavaScript", "js", false),
         language("json", "JSON", "json", false),
-        pm_protocol::LanguageInfo {
+        pm_protocol::ExtensionInfo {
             busy: Some("Installing the language server".to_owned()),
             ..language("markdown", "Markdown", "md", false)
         },
-        pm_protocol::LanguageInfo {
+        pm_protocol::ExtensionInfo {
             problem: Some("Python: installing this language server needs Node.js and npm, which is not on this machine".to_owned()),
             ..language("python", "Python", "py", true)
         },
-        pm_protocol::LanguageInfo {
+        pm_protocol::ExtensionInfo {
             server: Some("Uses /usr/bin/rust-analyzer".to_owned()),
             ..language("rust", "Rust", "rs", true)
         },
         language("toml", "TOML", "toml", false),
+        pm_protocol::ExtensionInfo {
+            local: true,
+            server: Some("zls 0.14.0".to_owned()),
+            ..language("zig", "Zig", "zig", true)
+        },
         language("typescript", "TypeScript", "ts", false),
     ]
 }
@@ -623,11 +639,10 @@ impl Shot {
             Self::Code => Screen::Workspace(code()),
             Self::Completing => Screen::Workspace(completing()),
             Self::Hovering => Screen::Workspace(hovering()),
-            Self::SettingsLanguages => Screen::Workspace(
+            Self::Extensions => Screen::Workspace(
                 welcome()
-                    .after(SETTINGS)
-                    .after(Section::Languages.id())
-                    .with_languages(sample_languages()),
+                    .after(pm_components::extensions::EXTENSIONS)
+                    .with_extensions(sample_languages()),
             ),
             Self::Onboarding(step) => Screen::Onboarding(OnboardingState {
                 step,

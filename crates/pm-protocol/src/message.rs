@@ -98,9 +98,9 @@ pub enum ServerMessage {
         /// What is wrong.
         diagnostics: Vec<pm_lsp::Diagnostic>,
     },
-    /// The languages changed: one was installed or removed, or installing one moved on. Sent to every client.
-    LanguagesChanged {
-        /// Every language, as `languages` lists them.
-        languages: Vec<crate::LanguageInfo>,
+    /// The extensions changed: one was installed or removed, or installing one moved on. Sent to every client.
+    ExtensionsChanged {
+        /// Every extension, as `extensions` lists them.
+        extensions: Vec<crate::ExtensionInfo>,
     },
 }

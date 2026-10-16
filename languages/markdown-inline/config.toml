@@ -3,6 +3,8 @@
 # installed only as part of Markdown and has no language server.
 
 name = "Inline markdown"
+version = "0.1.0"
+description = "The text inside Markdown blocks."
 grammar = "markdown_inline"
 aliases = ["markdown_inline"]
 hidden = true

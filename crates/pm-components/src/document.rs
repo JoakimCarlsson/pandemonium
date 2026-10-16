@@ -38,12 +38,14 @@ pub struct Completions {
 pub struct HoverCard {
     /// The place, as a byte offset of the text.
     pub offset: usize,
-    /// Where the card hangs, in logical pixels of the window.
+    /// Where the place's line is, in logical pixels of the window: the left edge of the place and the top of its line; the card hangs below the line, or above it when there is more room there.
     pub at: (f32, f32),
     /// What the language server said, in markdown, once it answered.
     pub text: Option<String>,
     /// What the language server finds wrong there.
     pub diagnostics: Vec<Diagnostic>,
+    /// How far down the card is scrolled, in logical pixels.
+    pub scroll: f32,
 }
 
 /// The highlights of a window of lines, kept until the text is parsed again.

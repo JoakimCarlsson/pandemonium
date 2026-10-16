@@ -9,6 +9,13 @@ pub(crate) fn languages_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "this machine has no data folder".to_owned())
 }
 
+/// The folder you put language folders of your own in, which are listed beside the ones the list offers.
+pub fn local_root() -> Result<PathBuf, String> {
+    pm_store::data_directory()
+        .map(|data| data.join("local-languages"))
+        .ok_or_else(|| "this machine has no data folder".to_owned())
+}
+
 /// The folder the language `id` is installed in.
 pub fn language_folder(id: &str) -> Result<PathBuf, String> {
     if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\']) {

@@ -13,6 +13,8 @@ pub struct Inline {
     pub strike: bool,
     /// The text of a link.
     pub link: bool,
+    /// Which link of the source it is the text of, counted from one in the order [`crate::links`] gives their addresses; nought for none, or a link with no address.
+    pub target: u16,
 }
 
 /// A run of text set one way. A hard line break is a span of `"\n"`.

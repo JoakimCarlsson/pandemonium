@@ -161,8 +161,8 @@ enum Pending {
     Completions(usize, String, i32),
     /// What the language server says about this place of the file of the session at this position, at this path.
     Hovered(usize, String, pm_protocol::Position),
-    /// The languages the server on this machine can install.
-    Languages,
+    /// The extensions the server on this machine can install.
+    Extensions,
 }
 
 impl Pending {
@@ -336,7 +336,7 @@ impl Work {
             },
         );
         self.ask(&None, Request::Sessions, Pending::Sessions(None));
-        self.ask(&None, Request::Languages, Pending::Languages);
+        self.ask(&None, Request::Extensions, Pending::Extensions);
         Some(Bootstrap {
             projects,
             choices,
@@ -999,7 +999,7 @@ impl Work {
                 match item {
                     Incoming::Connected => {
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
-                        self.share_languages(model, &host);
+                        self.share_extensions(model, &host);
                         model.update(|screen| {
                             *screen = std::mem::take(screen).reopen_documents(&host);
                         });
@@ -1066,13 +1066,14 @@ impl Work {
                             diagnostics,
                         );
                     }),
-                    Incoming::LanguagesChanged(languages) => {
+                    Incoming::ExtensionsChanged(extensions) => {
                         model.update(|screen| {
-                            *screen = std::mem::take(screen).with_host_languages(&host, &languages);
+                            *screen =
+                                std::mem::take(screen).with_host_extensions(&host, &extensions);
                         });
                         if host.is_none() {
                             model.update(|screen| {
-                                *screen = std::mem::take(screen).with_languages(languages);
+                                *screen = std::mem::take(screen).with_extensions(extensions);
                             });
                         }
                     }
@@ -1555,7 +1556,7 @@ impl Work {
             | Pending::Opened(..)
             | Pending::Completions(..)
             | Pending::Hovered(..)
-            | Pending::Languages => self.answered_code(model, host, pending, response),
+            | Pending::Extensions => self.answered_code(model, host, pending, response),
             Pending::Back(session, failing) => {
                 if let Some(message) = failure {
                     let reason = format!("{failing}: {message}");

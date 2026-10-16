@@ -10,5 +10,5 @@ mod parse;
 mod plain;
 
 pub use block::{Block, Inline, Span};
-pub use parse::parse;
+pub use parse::{links, parse};
 pub use plain::plain;

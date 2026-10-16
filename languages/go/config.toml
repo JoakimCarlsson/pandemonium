@@ -2,6 +2,10 @@
 # that reads them.
 
 name = "Go"
+version = "0.1.0"
+description = "Go with gopls."
+icon = "icon.svg"
+color = "#6fc7d9"
 grammar = "go"
 suffixes = ["go"]
 aliases = ["golang"]

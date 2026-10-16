@@ -53,6 +53,8 @@ pub struct Markdown<'a> {
     details: Option<u64>,
     /// The fold-outs that are open, by their place in the source; all are when none can be pressed.
     unfolded: Vec<usize>,
+    /// The name of the first link, the rest following it in the order [`pm_markdown::links`] gives their addresses, when they can be pressed.
+    links: Option<u64>,
 }
 
 impl<'a> Markdown<'a> {
@@ -65,6 +67,7 @@ impl<'a> Markdown<'a> {
             tone: Role::Text,
             details: None,
             unfolded: Vec::new(),
+            links: None,
         }
     }
 
@@ -77,6 +80,12 @@ impl<'a> Markdown<'a> {
     /// Running text drawn in `tone`.
     pub fn tone(mut self, tone: Role) -> Self {
         self.tone = tone;
+        self
+    }
+
+    /// Links that can be pressed, the first answering to `base` and the rest following it in the order [`pm_markdown::links`] gives their addresses.
+    pub fn links(mut self, base: u64) -> Self {
+        self.links = Some(base);
         self
     }
 
@@ -100,6 +109,7 @@ impl<'a> Markdown<'a> {
             self.tone,
             self.details,
             &self.unfolded,
+            self.links,
         ));
         retained(whole, width, shaper, |shaper| {
             let blocks = pm_markdown::parse(self.source);
@@ -122,6 +132,7 @@ impl<'a> Markdown<'a> {
                         self.details,
                         first,
                         &unfolded,
+                        self.links,
                     ));
                     retained(key, width, shaper, |shaper| {
                         Layout {
@@ -130,6 +141,7 @@ impl<'a> Markdown<'a> {
                             details: self.details,
                             unfolded,
                             seen: first,
+                            links: self.links,
                         }
                         .block(block, self.tone, width)
                     })
@@ -157,6 +169,8 @@ struct Layout<'s> {
     unfolded: Vec<usize>,
     /// How many fold-outs were laid out or passed over so far.
     seen: usize,
+    /// The name of the first link, when links can be pressed.
+    links: Option<u64>,
 }
 
 impl Layout<'_> {
@@ -410,10 +424,15 @@ impl Layout<'_> {
             .children(lines.into_iter().map(|runs| {
                 node()
                     .styles([flex(), items_center(), h_px(height)])
-                    .children(
-                        runs.into_iter()
-                            .map(|(content, inline)| run(content, inline, pixels, strong, tone)),
-                    )
+                    .children(runs.into_iter().map(|(content, inline)| {
+                        let piece = run(content, inline, pixels, strong, tone);
+                        match (self.links, inline.target) {
+                            (Some(base), target) if target > 0 => piece
+                                .styles([cursor_pointer()])
+                                .focusable(FocusId(base + u64::from(target) - 1)),
+                            _ => piece,
+                        }
+                    }))
             }))
     }
 

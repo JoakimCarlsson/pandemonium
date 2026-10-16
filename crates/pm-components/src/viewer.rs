@@ -36,7 +36,7 @@ fn clipped(range: &Option<Range<usize>>, line: &Range<usize>) -> Option<Range<us
 }
 
 /// The colour a highlighted stretch of `kind` is drawn in, or nothing for plain text.
-fn kind_role(kind: Kind) -> Option<Role> {
+pub(crate) fn kind_role(kind: Kind) -> Option<Role> {
     match kind {
         Kind::Keyword | Kind::Markup => Some(Role::SyntaxKeyword),
         Kind::Function | Kind::Link => Some(Role::SyntaxFunction),

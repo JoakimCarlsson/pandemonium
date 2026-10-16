@@ -21,6 +21,8 @@ enum Saved {
     New(String),
     /// Every session.
     History,
+    /// The extensions there are to install.
+    Extensions,
     /// The page for starting work in the first project.
     #[default]
     First,
@@ -102,6 +104,7 @@ impl View {
             },
             Page::New(project) => Saved::New(path(project)),
             Page::History => Saved::History,
+            Page::Extensions => Saved::Extensions,
         };
         let in_session = matches!(state.page, Page::Session(_));
         let files = if in_session {
@@ -151,6 +154,7 @@ impl View {
         match &self.page {
             Saved::New(path) => state.page = Page::New(project_at(path).unwrap_or(0)),
             Saved::History => state.page = Page::History,
+            Saved::Extensions => state.page = Page::Extensions,
             Saved::Session { .. } | Saved::First => {}
         }
         state.review = self.review;

@@ -263,6 +263,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             home_page(state, main_width, height, shaper)
         }
         (Page::History, _) => history::history(state),
+        (Page::Extensions, _) => pm_components::extensions::extensions(state),
         _ => welcome::welcome(
             state,
             ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
@@ -300,7 +301,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             .as_ref()
             .map(|open| git_prompts::prompt(state, open)),
     )
-    .children(pm_components::assist::assist(state, shaper))
+    .children(pm_components::assist::assist(state, height, shaper))
 }
 
 /// The menu of a project: start a session in it, or take it out of the window.

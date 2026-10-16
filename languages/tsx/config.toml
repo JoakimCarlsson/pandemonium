@@ -3,6 +3,10 @@
 # installed with the server.
 
 name = "TSX"
+version = "0.1.0"
+description = "TSX, installed with TypeScript."
+icon = "icon.svg"
+color = "#5aa9e6"
 grammar = "tsx"
 suffixes = ["tsx"]
 aliases = ["typescriptreact"]

@@ -700,14 +700,21 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             text,
         } => done(crate::entries::write(&place(&directory), &path, &text)),
-        Request::Languages => Response::Languages {
-            languages: core.language_infos(true),
+        Request::Extensions => Response::Extensions {
+            extensions: core.extension_infos(true),
         },
-        Request::InstallLanguages { ids } => {
-            core.install_languages(ids);
+        Request::InstallExtensions { ids } => {
+            core.install_extensions(ids);
             Response::Done
         }
-        Request::RemoveLanguage { id } => done(core.remove_language(&id)),
+        Request::RemoveExtension { id } => done(core.remove_extension(&id)),
+        Request::InstallExtension { path } => match pm_lsp::add_extension(&place(&path)) {
+            Ok(id) => {
+                core.install_extensions(vec![id]);
+                Response::Done
+            }
+            Err(reason) => failed(reason),
+        },
         Request::Grammar { language } => match languages::grammar(&language) {
             Ok(bundle) => Response::Grammar(bundle),
             Err(reason) => failed(reason),

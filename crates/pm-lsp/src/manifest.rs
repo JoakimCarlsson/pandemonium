@@ -109,6 +109,21 @@ pub struct ServerSpec {
 pub struct Manifest {
     /// What the reader calls it.
     pub name: String,
+    /// What kind of extension it is; `language` is the only kind so far.
+    #[serde(default = "language_kind")]
+    pub kind: String,
+    /// Its version.
+    #[serde(default)]
+    pub version: String,
+    /// What it is for, in a line.
+    #[serde(default)]
+    pub description: String,
+    /// The file in its folder holding the icon its files are shown with, an SVG.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// The colour its icon is tinted, as `#rrggbb`.
+    #[serde(default)]
+    pub color: Option<String>,
     /// The name the grammar was built under.
     pub grammar: String,
     /// The endings of the file names that are written in it, without the dot.
@@ -135,11 +150,17 @@ pub struct Manifest {
     /// Whether it is installed only as part of another, and so left out of the list the reader picks from.
     #[serde(default)]
     pub hidden: bool,
-    /// The grammar.
+    /// The grammar, which a folder of your own may hold as `grammar.wasm` instead.
+    #[serde(default)]
     pub grammar_file: Pinned,
     /// The language server, when it has one.
     #[serde(default)]
     pub server: Option<ServerSpec>,
+}
+
+/// An extension is a language unless its manifest says otherwise.
+fn language_kind() -> String {
+    "language".to_owned()
 }
 
 /// One level of indentation is four columns unless a manifest says otherwise.

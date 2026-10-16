@@ -15,12 +15,12 @@ use pm_components::Button;
 use pm_components::Input;
 use pm_components::button::{Size, Variant};
 use pm_components::context_menu::{ContextMenu, field_menu};
+use pm_components::extensions::{endings, pickable, standing};
 use pm_components::parts::{glyph, line};
 use pm_components::project::Project;
-use pm_components::settings_languages::{endings, pickable, standing};
 use pm_components::state::Outgoing;
 use pm_components::{Avatar, Checkbox, Progress, Tile};
-use pm_protocol::LanguageInfo;
+use pm_protocol::ExtensionInfo;
 
 /// Moves to the step after the current one.
 pub const CONTINUE: FocusId = FocusId(100);
@@ -148,7 +148,7 @@ pub struct OnboardingState {
     /// The menu open over a field, and where, if one is.
     pub menu: Option<ContextMenu>,
     /// The languages the server on this machine can install, once it has said.
-    pub languages: Vec<LanguageInfo>,
+    pub languages: Vec<ExtensionInfo>,
     /// The languages ticked to install, by folder name.
     pub chosen: Vec<String>,
     /// What the server has yet to be asked.
@@ -195,7 +195,7 @@ impl OnboardingState {
         match action {
             CONTINUE if self.step == Step::Languages => {
                 if !self.chosen.is_empty() {
-                    self.outbox.push(Outgoing::InstallLanguages {
+                    self.outbox.push(Outgoing::InstallExtensions {
                         ids: self.chosen.clone(),
                     });
                 }
@@ -204,13 +204,13 @@ impl OnboardingState {
             CONTINUE => {
                 self.step = self.step.next();
                 if self.step == Step::Languages {
-                    self.outbox.push(Outgoing::Languages);
+                    self.outbox.push(Outgoing::Extensions);
                 }
             }
             BACK => self.step = self.step.previous(),
             SKIP => {
                 self.step = Step::Languages;
-                self.outbox.push(Outgoing::Languages);
+                self.outbox.push(Outgoing::Extensions);
             }
             FocusId(id) if (LANGUAGE_PICK_BASE..LANGUAGE_PICK_END).contains(&id) => {
                 let place = (id - LANGUAGE_PICK_BASE) as usize;
@@ -294,7 +294,7 @@ impl OnboardingState {
     }
 
     /// The state after the server on this machine said which languages there are; the ones a project's files are written in start ticked the first time.
-    pub fn with_languages(mut self, languages: Vec<LanguageInfo>) -> Self {
+    pub fn with_extensions(mut self, languages: Vec<ExtensionInfo>) -> Self {
         if self.languages.is_empty() && self.chosen.is_empty() {
             self.chosen = languages
                 .iter()

@@ -59,7 +59,7 @@ pub enum Incoming {
         diagnostics: Vec<pm_protocol::Diagnostic>,
     },
     /// The languages changed; these are all of them now.
-    LanguagesChanged(Vec<pm_protocol::LanguageInfo>),
+    ExtensionsChanged(Vec<pm_protocol::ExtensionInfo>),
     /// Something an agent did, numbered within its session.
     Event {
         /// The session.
@@ -407,8 +407,8 @@ fn converse(
                             diagnostics,
                         });
                     }
-                    ServerMessage::LanguagesChanged { languages } => {
-                        let _ = reporter.send(Incoming::LanguagesChanged(languages));
+                    ServerMessage::ExtensionsChanged { extensions } => {
+                        let _ = reporter.send(Incoming::ExtensionsChanged(extensions));
                     }
                     ServerMessage::Ready { .. } | ServerMessage::Denied { .. } => {}
                 }

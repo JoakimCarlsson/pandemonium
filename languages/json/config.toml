@@ -2,6 +2,10 @@
 # server that reads them.
 
 name = "JSON"
+version = "0.1.0"
+description = "JSON with the VS Code JSON language server."
+icon = "icon.svg"
+color = "#e6c84f"
 grammar = "json"
 suffixes = ["json", "jsonc", "json5"]
 names = [".prettierrc", ".eslintrc", "flake.lock"]

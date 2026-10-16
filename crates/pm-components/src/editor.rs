@@ -122,11 +122,12 @@ impl WorkspaceState {
     }
 
     /// The state after the server of `host` said how its languages stand: an open file of a project on that machine that was read before the language it is written in was installed there takes that language now.
-    pub fn with_host_languages(
+    pub fn with_host_extensions(
         mut self,
         host: &Option<String>,
-        languages: &[pm_protocol::LanguageInfo],
+        languages: &[pm_protocol::ExtensionInfo],
     ) -> Self {
+        crate::file_icon::learn_icons(host, languages);
         let owners: Vec<usize> = self
             .sessions
             .iter()
@@ -602,6 +603,7 @@ impl WorkspaceState {
             at,
             text: None,
             diagnostics,
+            scroll: 0.0,
         });
         if document.synced {
             let request = Outgoing::Hover {
@@ -634,6 +636,17 @@ impl WorkspaceState {
                     document.hover = None;
                 }
             }
+        }
+        self
+    }
+
+    /// The state after the card about a place is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_hover(mut self, delta: f32, room: f32) -> Self {
+        if let Some((_, viewer)) = self.shown_mut()
+            && let Some(document) = document_of(viewer)
+            && let Some(card) = &mut document.hover
+        {
+            card.scroll = (card.scroll + delta).clamp(0.0, room);
         }
         self
     }

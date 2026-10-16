@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::fetch::{fetch_checked, sha256};
 use crate::index::{Index, source};
 use crate::manifest::Manifest;
-use crate::paths::{grammar_file, language_folder, languages_root};
+use crate::paths::{grammar_file, language_folder, languages_root, local_root};
 use crate::resolve::ensure_server;
 
 /// The manifest of the installed language `id`, or nothing when it is not installed.
@@ -68,7 +68,11 @@ fn fetch_folder(index: &Index, id: &str, staging: &Path) -> Result<Manifest, Str
     let listing = index
         .find(id)
         .ok_or_else(|| format!("no language is called {id}"))?;
-    let place = source();
+    let place = if listing.local {
+        local_root()?.to_string_lossy().into_owned()
+    } else {
+        source()
+    };
     std::fs::create_dir_all(staging).map_err(|error| error.to_string())?;
     for (name, checksum) in &listing.files {
         if name.contains(['/', '\\']) || name.starts_with('.') {
@@ -81,6 +85,14 @@ fn fetch_folder(index: &Index, id: &str, staging: &Path) -> Result<Manifest, Str
         &std::fs::read_to_string(staging.join("config.toml"))
             .map_err(|error| format!("{id} has no config.toml: {error}"))?,
     )?;
+    if staging.join("grammar.wasm").is_file() {
+        return Ok(manifest);
+    }
+    if manifest.grammar_file.url.is_empty() {
+        return Err(format!(
+            "{id} has no grammar: give it a grammar_file or put grammar.wasm in its folder"
+        ));
+    }
     let grammar = fetch_checked(&manifest.grammar_file.url, &manifest.grammar_file.sha256)?;
     std::fs::write(staging.join("grammar.wasm"), grammar).map_err(|error| error.to_string())?;
     Ok(manifest)
@@ -100,7 +112,7 @@ fn is_current(index: &Index, id: &str) -> bool {
 /// Installs the language `id` and the languages it needs, as the index lists them, then their language servers, telling `progress` what it is doing; returns why a language server could not be installed, if one could not, while the languages themselves are.
 pub fn install(id: &str, progress: &dyn Fn(&str, &str)) -> Result<Vec<String>, String> {
     progress(id, "Reading the list of languages");
-    let index = Index::load()?;
+    let index = Index::load_with_local()?;
     let ids = with_requirements(&index, id)?;
     let root = languages_root()?;
     let mut manifests = Vec::new();
@@ -134,6 +146,33 @@ pub fn install(id: &str, progress: &dyn Fn(&str, &str)) -> Result<Vec<String>, S
         }
     }
     Ok(problems)
+}
+
+/// Copies the extension in the folder `source` into the folder of extensions of your own, under the folder's name and in place of one of the same name, and returns that name; the folder is a language when it holds a `config.toml` that reads as one.
+pub fn add_extension(source: &Path) -> Result<String, String> {
+    let id = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty() && !name.starts_with('.'))
+        .ok_or_else(|| format!("{} is not a folder to install", source.display()))?;
+    Manifest::read(source)?;
+    let root = local_root()?;
+    let staging = root.join(format!(".{id}.partial"));
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
+    let entries = std::fs::read_dir(source)
+        .map_err(|error| format!("could not read {}: {error}", source.display()))?;
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        if entry.path().is_file() && !name.to_string_lossy().starts_with('.') {
+            std::fs::copy(entry.path(), staging.join(&name))
+                .map_err(|error| format!("could not copy {}: {error}", entry.path().display()))?;
+        }
+    }
+    let folder = root.join(&id);
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::rename(&staging, &folder).map_err(|error| error.to_string())?;
+    Ok(id)
 }
 
 /// Takes the language `id` off this machine; its language server stays, for other languages that use it.

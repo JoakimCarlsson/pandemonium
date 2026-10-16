@@ -210,10 +210,10 @@ pub enum Response {
         /// The names of the folders inside it, in order, hidden ones left out.
         names: Vec<String>,
     },
-    /// The languages there are to install and those installed.
-    Languages {
+    /// The extensions there are to install and those installed.
+    Extensions {
         /// Each one, by name; hidden ones included.
-        languages: Vec<crate::LanguageInfo>,
+        extensions: Vec<crate::ExtensionInfo>,
     },
     /// An installed language's grammar and queries.
     Grammar(crate::GrammarBundle),

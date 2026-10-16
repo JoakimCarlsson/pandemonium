@@ -60,7 +60,7 @@ fn main() {
             Some("code") => Shot::Code,
             Some("completing") => Shot::Completing,
             Some("hovering") => Shot::Hovering,
-            Some("settings-languages") => Shot::SettingsLanguages,
+            Some("extensions") => Shot::Extensions,
             Some("workspace") => Shot::Workspace,
             Some("diff") => Shot::Diff,
             Some("commenting") => Shot::Commenting,

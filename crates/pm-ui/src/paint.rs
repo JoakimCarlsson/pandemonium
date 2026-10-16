@@ -1,6 +1,5 @@
 //! Painting a laid-out node tree into a draw list.
 
-use pm_icon::IconName;
 use pm_input::{FocusId, PointerState};
 use pm_renderer::{Affine, DrawList, Icon, Quad, Rect, Text};
 use pm_style::color::Srgba;
@@ -674,7 +673,7 @@ impl Frame<'_> {
     /// Paints `name` in the largest square that fits the content area of the box at `rect`.
     fn icon(
         &mut self,
-        name: IconName,
+        svg: pm_icon::Svg,
         computed: &ComputedStyle,
         rect: Rect,
         world: Affine,
@@ -696,7 +695,7 @@ impl Frame<'_> {
             .resolve(self.theme)
             .alpha(opacity);
         self.list.push_icon(Icon {
-            svg: name.svg(),
+            svg,
             x: middle_x - size / 2.0,
             y: middle_y - size / 2.0,
             size,

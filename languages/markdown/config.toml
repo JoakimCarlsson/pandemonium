@@ -3,6 +3,10 @@
 # markdown, a grammar of its own installed with this one.
 
 name = "Markdown"
+version = "0.1.0"
+description = "Markdown with marksman."
+icon = "icon.svg"
+color = "#7fb7e8"
 grammar = "markdown"
 suffixes = ["md", "markdown", "mdx"]
 aliases = ["md"]

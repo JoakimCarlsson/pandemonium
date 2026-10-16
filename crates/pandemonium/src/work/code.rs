@@ -1,4 +1,4 @@
-//! The work behind writing code: grammars fetched from the server that holds a file and compiled away from the window, open files kept in step with their language servers, and the languages installed on this machine.
+//! The work behind writing code: grammars fetched from the server that holds a file and compiled away from the window, open files kept in step with their language servers, and the extensions installed on this machine.
 
 use std::sync::Arc;
 
@@ -40,14 +40,14 @@ impl Work {
         hosts
     }
 
-    /// Has the server of another machine, `host`, install the languages installed on this one, so the files of its projects are read in them too.
-    pub(super) fn share_languages(&mut self, model: &State<Screen>, host: &Host) {
+    /// Has the server of another machine, `host`, install the extensions installed on this one, so the files of its projects are read in them too.
+    pub(super) fn share_extensions(&mut self, model: &State<Screen>, host: &Host) {
         if host.is_none() {
             return;
         }
         let ids = model.read(|screen| match screen {
             Screen::Workspace(state) => state
-                .languages
+                .extensions
                 .iter()
                 .filter(|language| language.installed && !language.hidden)
                 .map(|language| language.id.clone())
@@ -55,7 +55,7 @@ impl Work {
             Screen::Onboarding(_) => Vec::new(),
         });
         if !ids.is_empty() {
-            self.ask(host, Request::InstallLanguages { ids }, Pending::Nothing);
+            self.ask(host, Request::InstallExtensions { ids }, Pending::Nothing);
         }
     }
 
@@ -174,21 +174,24 @@ impl Work {
                     Pending::Hovered(session, asked, position),
                 );
             }
-            Outgoing::Languages => self.ask(&None, Request::Languages, Pending::Languages),
-            Outgoing::InstallLanguages { ids } => {
+            Outgoing::Extensions => self.ask(&None, Request::Extensions, Pending::Extensions),
+            Outgoing::InstallExtensions { ids } => {
                 for host in self.hosts() {
                     self.ask(
                         &host,
-                        Request::InstallLanguages { ids: ids.clone() },
+                        Request::InstallExtensions { ids: ids.clone() },
                         Pending::Nothing,
                     );
                 }
             }
-            Outgoing::RemoveLanguage { id } => {
+            Outgoing::InstallExtension { path } => {
+                self.ask(&None, Request::InstallExtension { path }, Pending::Nothing);
+            }
+            Outgoing::RemoveExtension { id } => {
                 for host in self.hosts() {
                     self.ask(
                         &host,
-                        Request::RemoveLanguage { id: id.clone() },
+                        Request::RemoveExtension { id: id.clone() },
                         Pending::Nothing,
                     );
                 }
@@ -261,10 +264,12 @@ impl Work {
                     *screen = std::mem::take(screen).with_hover(session, &path, position, None);
                 });
             }
-            (Pending::Languages, Response::Languages { languages }) => {
-                model.update(|screen| *screen = std::mem::take(screen).with_languages(languages));
+            (Pending::Extensions, Response::Extensions { extensions }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_extensions(extensions);
+                });
                 for remote in self.hosts().into_iter().filter(Option::is_some) {
-                    self.share_languages(model, &remote);
+                    self.share_extensions(model, &remote);
                 }
             }
             _ => {}

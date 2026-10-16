@@ -84,8 +84,9 @@ One crate per layer, each depending only on the layers below it.
   servers for the files clients have open; the server uses it). A language is a
   folder in `languages/`: a `config.toml` manifest and five tree-sitter queries.
   `make languages` writes `languages/languages.json` with every file's checksum
-  after a folder changes; a build reads the folders from the repository at its
-  own release tag, or from `PANDEMONIUM_LANGUAGES`.
+  after a folder changes; a release build reads the folders from the repository
+  at its own release tag, a debug build from its checkout, and either from
+  `PANDEMONIUM_LANGUAGES` when it is set.
 - **Domain:** `pm-acp` (agents over the Agent Client Protocol), `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.

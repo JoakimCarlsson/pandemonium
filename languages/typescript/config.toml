@@ -3,6 +3,10 @@
 # installed with the server.
 
 name = "TypeScript"
+version = "0.1.0"
+description = "TypeScript with typescript-language-server."
+icon = "icon.svg"
+color = "#5aa9e6"
 grammar = "typescript"
 suffixes = ["ts", "mts", "cts"]
 aliases = ["ts"]

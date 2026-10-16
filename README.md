@@ -71,18 +71,20 @@ Limits:
 - Logins that need a terminal look for a Linux terminal emulator, so they do
   not open on macOS or Windows.
 
-## Languages
+## Extensions and languages
 
-Nothing language-specific ships in the binary. You pick languages on first
-launch, or later under Settings, Languages, and the server installs each one
+Nothing language-specific ships in the binary. Languages are extensions: you
+pick them on first launch, or later on the Extensions page in the sidebar,
+and the server installs each one
 on the machine that holds the project: its tree-sitter grammar, its queries
 and its language server. A file of an installed language gets syntax
 highlighting, indentation, bracket pairs and an outline in the window, and
 completion, diagnostics and hover from its language server.
 
-A language is a folder in [`languages/`](languages): a `config.toml` manifest
-and five queries (`highlights`, `indents`, `outline`, `injections`,
-`brackets`). The manifest pins the grammar and says how the language server is
+A language is a folder in [`languages/`](languages): a `config.toml` manifest,
+five queries (`highlights`, `indents`, `outline`, `injections`, `brackets`)
+and the icon its files are shown with, so no file icon ships with the app
+either. The manifest pins the grammar and says how the language server is
 found and installed: a program you already have is used first, in the project
 (`.venv/bin`, `node_modules/.bin`) and then on your path; otherwise it is
 downloaded, built with `go install` or installed with `npm ci`, into a folder
@@ -90,9 +92,16 @@ per version. `languages/languages.json` lists the folders with a checksum for
 every file, every download is checked against the checksum it is pinned to,
 an npm install is pinned by the lockfile in the language's folder and a Go one
 by Go's checksum database. A
-build reads the list from this repository at its own release tag; point
+release build reads the list from this repository at its own release tag, and a debug build such as `make run` from the checkout it was built from; point
 `PANDEMONIUM_LANGUAGES` at a folder or address to read it from elsewhere, and
 run `make languages` after changing a folder.
+
+A language of your own needs no release: Install Extension… on the Extensions
+page takes its folder and installs it, copying it into `local-languages`
+in the server's data folder, where you can also put it by hand. It holds a
+`config.toml` and its queries like any other, and either a `grammar.wasm` or a
+`grammar_file` pinned by checksum. It is listed beside the others, marked as
+your own, and takes the place of a listed language with the same name.
 
 ## Installing
 

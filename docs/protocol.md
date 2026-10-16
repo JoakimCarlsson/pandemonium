@@ -148,9 +148,10 @@ request with exactly one `response` carrying the same `id`.
 | `repositories` | `owner`, `organization`                                                                          | `repositories`  |
 | `folders`      | `path`                                                                                           | `folders`       |
 | `clone`        | `url`, `under` (optional)                                                                        | `directory`     |
-| `languages`    | none                                                                                             | `languages`     |
-| `install_languages` | `ids`                                                                                       | `done`          |
-| `remove_language` | `id`                                                                                          | `done`          |
+| `extensions`   | none                                                                                             | `extensions`    |
+| `install_extensions` | `ids`                                                                                       | `done`          |
+| `remove_extension` | `id`                                                                                          | `done`          |
+| `install_extension` | `path`                                                                                      | `done`          |
 | `grammar`      | `language`                                                                                       | `grammar`       |
 | `open_document`| `directory`, `path`, `language`, `version`, `text`                                               | `opened`        |
 | `change_document` | `directory`, `path`, `version`, `changes`: `[{span, text}]`                                   | `done`          |
@@ -324,18 +325,27 @@ request with exactly one `response` carrying the same `id`.
   the last commit. The response holds no text for a file that is not text, and
   names the installed language the file is written in, by the endings and names
   of files its manifest lists.
-- **`languages`:** every language the list of languages offers, then those
+- **`extensions`:** every extension the list offers, then those
   installed on the server's machine that it does not, each as `{id, name,
-  hidden, suffixes, installed, busy, problem, server}`. `hidden` languages are
+  kind, version, description, icon, color, hidden, suffixes, installed, busy,
+  problem, server, local}`. `kind` is what the extension is; `language` is the
+  only kind so far. `icon` is the SVG an installed language's files are shown
+  with and `color` its tint as `#rrggbb`; a client shows a file of no installed
+  language as a plain file. `hidden` languages are
   installed only as part of another and left out of what a reader picks from;
   `busy` says what installing it is doing now, `problem` why installing it or
   its language server last failed, and `server` what the machine has of its
   language server, in words. The list is `languages.json` read from
   `https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/<tag>/languages`,
-  where the tag is the server's own release (`v<version>`) or `nightly`, or from
-  the folder or address `PANDEMONIUM_LANGUAGES` names. It is fetched again only
-  when it changed, and the copy kept is used when it cannot be fetched.
-- **`install_languages`:** installs each language of `ids`, the languages it
+  where the tag is the server's own release (`v<version>`) or `nightly`; a debug
+  build reads the `languages` folder of its checkout instead, and
+  `PANDEMONIUM_LANGUAGES` names another folder or address for either. It is fetched again only
+  when it changed, and the copy kept is used when it cannot be fetched. The
+  language folders in `local-languages` in the server's data folder are listed
+  as well, with `local: true`, each in place of a listed language with the same
+  name; their files are not checked against `languages.json`, and a folder may
+  hold its own `grammar.wasm` in place of a pinned `grammar_file`.
+- **`install_extensions`:** installs each extension of `ids`, the extensions it
   `requires` first, and their language servers, on a thread of the server's
   own, and answers at once. Every file of a language's folder is checked against
   the checksum `languages.json` gives it, and the grammar and a downloaded
@@ -347,8 +357,13 @@ request with exactly one `response` carrying the same `id`.
   from the `package-lock.json` in the language's folder, which pins the
   checksum of every package, and `go install` runs with Go's checksum database
   enforced. Every client is
-  told how it goes with `languages_changed`.
-- **`remove_language`:** takes the language off the machine; its language
+  told how it goes with `extensions_changed`.
+- **`install_extension`:** copies the files of the folder at `path` on the
+  server's machine into `local-languages`, under the folder's name and in place
+  of one of the same name, and installs it as `install_extensions` does. Fails
+  when the folder holds no `config.toml` that reads as a language, the only kind
+  of extension so far.
+- **`remove_extension`:** takes the language off the machine; its language
   server stays, for other languages that use it.
 - **`grammar`:** the grammar and queries of an installed language, found by its
   folder name or a name a code fence calls it, as `{id, symbol, aliases, wasm,
@@ -414,7 +429,7 @@ embedded context, and anything else as a link to the stored file.
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `languages`  | `languages`: `[{id, name, hidden, suffixes, installed, busy, problem, server}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local}]` |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
 | `opened`     | `triggers`: the characters after which the server offers completions |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
@@ -541,19 +556,19 @@ keeps its own emulator for them.
   emulator gives to the shell's queries.
 - A shell started in a session's folder belongs to that session in the window.
 
-## Languages
+## Extensions
 
 ```json
 { "type": "diagnostics", "directory": "~/code/app", "path": "src/main.rs", "version": 4, "diagnostics": [{ "span": { "start": { "line": 3, "character": 8 }, "end": { "line": 3, "character": 12 } }, "severity": "error", "message": "…", "source": "rustc" }] }
-{ "type": "languages_changed", "languages": [{ "id": "rust", "name": "Rust", "installed": true, … }] }
+{ "type": "extensions_changed", "extensions": [{ "id": "rust", "name": "Rust", "kind": "language", "installed": true, … }] }
 ```
 
 - `diagnostics`: what a language server finds wrong with a file the connection
   opened, replacing what it found before. `severity` is `error`, `warning`,
   `information` or `hint`; `version` is the version of the text it is about,
   when the server says.
-- `languages_changed`: sent to every client when a language was installed or
-  removed, or installing one moved on, with every language as `languages`
+- `extensions_changed`: sent to every client when a language was installed or
+  removed, or installing one moved on, with every extension as `extensions`
   lists them.
 
 ## Compatibility

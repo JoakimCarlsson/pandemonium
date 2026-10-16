@@ -1,6 +1,6 @@
 //! What the screen does for writing code: the file shown edited as its language says, what its language server answers, and the languages installed on this machine.
 
-use pm_protocol::{Completion, Diagnostic, Hover, LanguageInfo, Position};
+use pm_protocol::{Completion, Diagnostic, ExtensionInfo, Hover, Position};
 
 use crate::screen::Screen;
 use crate::workspace::WorkspaceState;
@@ -112,6 +112,11 @@ impl Screen {
         self.in_workspace(|state| state.hover_requested(offset, at))
     }
 
+    /// The screen after the card about a place is scrolled by `delta` logical pixels, with `room` pixels to scroll.
+    pub fn scrolled_hover(self, delta: f32, room: f32) -> Self {
+        self.in_workspace(|state| state.scrolled_hover(delta, room))
+    }
+
     /// The screen with the card about a place taken away.
     pub fn hover_closed(self) -> Self {
         self.in_workspace(WorkspaceState::hover_closed)
@@ -137,16 +142,26 @@ impl Screen {
         self.in_workspace(|state| state.editor_typed(character))
     }
 
+    /// The screen after the reader chose the folder at `path` to install as an extension.
+    pub fn extension_picked(self, path: String) -> Self {
+        self.in_workspace(|state| state.extension_picked(path))
+    }
+
+    /// The screen after the extensions page is scrolled by `delta` logical pixels, with `room` pixels to scroll.
+    pub fn scrolled_extensions(self, delta: f32, room: f32) -> Self {
+        self.in_workspace(|state| state.scrolled_extensions(delta, room))
+    }
+
     /// The screen after the server of `host` said how its languages stand.
-    pub fn with_host_languages(self, host: &Option<String>, languages: &[LanguageInfo]) -> Self {
-        self.in_workspace(|state| state.with_host_languages(host, languages))
+    pub fn with_host_extensions(self, host: &Option<String>, languages: &[ExtensionInfo]) -> Self {
+        self.in_workspace(|state| state.with_host_extensions(host, languages))
     }
 
     /// The screen after the server on this machine said which languages there are.
-    pub fn with_languages(self, languages: Vec<LanguageInfo>) -> Self {
+    pub fn with_extensions(self, languages: Vec<ExtensionInfo>) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.with_languages(languages)),
-            Self::Workspace(state) => Self::Workspace(state.with_languages(languages)),
+            Self::Onboarding(state) => Self::Onboarding(state.with_extensions(languages)),
+            Self::Workspace(state) => Self::Workspace(state.with_extensions(languages)),
         }
     }
 }

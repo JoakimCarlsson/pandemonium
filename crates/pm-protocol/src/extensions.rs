@@ -1,14 +1,29 @@
-//! What a client is told about the languages a server can install, and the grammar it highlights a file with.
+//! What a client is told about the extensions a server can install, and the grammar it highlights a file with.
 
 use serde::{Deserialize, Serialize};
 
-/// One language: whether it is installed on the server's machine and what installing it is doing.
+/// One extension: what it is, whether it is installed on the server's machine and what installing it is doing.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct LanguageInfo {
+pub struct ExtensionInfo {
     /// Its folder's name, which requests name it by.
     pub id: String,
     /// What the reader calls it.
     pub name: String,
+    /// What kind of extension it is, such as `language`.
+    #[serde(default)]
+    pub kind: String,
+    /// Its version, as its manifest gives it.
+    #[serde(default)]
+    pub version: String,
+    /// What it is for, in a line.
+    #[serde(default)]
+    pub description: String,
+    /// The icon the files it reads are shown with, as an SVG document, once it is installed.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// The colour that icon is tinted, as `#rrggbb`.
+    #[serde(default)]
+    pub color: Option<String>,
     /// Whether it is installed only as part of another, and so left out of the list the reader picks from.
     #[serde(default)]
     pub hidden: bool,
@@ -26,6 +41,9 @@ pub struct LanguageInfo {
     /// What the machine has of its language server, in words for the reader, when it has one.
     #[serde(default)]
     pub server: Option<String>,
+    /// Whether it is a folder of the reader's own rather than one the list offers.
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// An installed language's grammar and queries, which a client highlights its files with.

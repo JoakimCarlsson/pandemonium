@@ -341,16 +341,21 @@ pub enum Outgoing {
         /// The place.
         position: pm_protocol::Position,
     },
-    /// Asks the server on this machine for the languages there are to install.
-    Languages,
-    /// Has the server on this machine install languages.
-    InstallLanguages {
-        /// The languages, by folder name.
+    /// Asks the server on this machine for the extensions there are to install.
+    Extensions,
+    /// Has the server on this machine install extensions.
+    InstallExtensions {
+        /// The extensions, by folder name.
         ids: Vec<String>,
     },
-    /// Has the server on this machine take a language off.
-    RemoveLanguage {
-        /// The language, by folder name.
+    /// Has the server on this machine install the extension in a folder of this machine.
+    InstallExtension {
+        /// The folder.
+        path: String,
+    },
+    /// Has the server on this machine take an extension off.
+    RemoveExtension {
+        /// The extension, by folder name.
         id: String,
     },
     /// Asks the server for the agents added by hand and the tool servers every agent is started with.
@@ -764,6 +769,8 @@ pub enum Page {
     New(usize),
     /// Every session.
     History,
+    /// The extensions there are to install.
+    Extensions,
 }
 
 /// Which view of a session is showing.
@@ -950,7 +957,9 @@ pub struct WorkspaceState {
     /// The fold-outs of replies that are open, by session, reply and place in the reply.
     pub unfolded: Vec<(usize, usize, usize)>,
     /// The languages the server on this machine has installed and can install, once it has said.
-    pub languages: Vec<pm_protocol::LanguageInfo>,
+    pub extensions: Vec<pm_protocol::ExtensionInfo>,
+    /// What the extensions page remembers.
+    pub extensions_page: crate::extensions::ExtensionsPage,
 }
 
 impl WorkspaceState {
@@ -1043,7 +1052,8 @@ impl WorkspaceState {
             slash: 0,
             opened: Vec::new(),
             unfolded: Vec::new(),
-            languages: Vec::new(),
+            extensions: Vec::new(),
+            extensions_page: crate::extensions::ExtensionsPage::default(),
             trail: crate::trail::Trail::default(),
         };
         state.sync_context();
@@ -1145,6 +1155,17 @@ impl WorkspaceState {
         if action == crate::assist::COMPLETION_BODY || action == crate::assist::HOVER_CARD {
             return self;
         }
+        if let Some(address) = self
+            .shown_document()
+            .and_then(|document| document.hover.as_ref())
+            .and_then(|card| card.text.as_deref())
+            .and_then(|said| crate::assist::hover_link(said, action))
+        {
+            if pm_acp::is_web_address(&address) {
+                self.outbox.push(Outgoing::Open { address });
+            }
+            return self;
+        }
         let restoring = self.restoring.take();
         match action {
             RESTORE_FILES => self.restore(restoring),
@@ -1163,6 +1184,10 @@ impl WorkspaceState {
                 return self.adder_pressed(action);
             }
             HISTORY => self.page = Page::History,
+            crate::extensions::EXTENSIONS => return self.with_extensions_page(),
+            action if crate::extensions::is_extensions(action) => {
+                return self.extensions_pressed(action);
+            }
             TAB_CHAT => self.tab = Tab::Chat,
             TAB_DIFF => self.tab = Tab::Diff,
             TERMINAL | NEW_TERMINAL | MAXIMIZE_TERMINAL => {
@@ -1218,6 +1243,7 @@ impl WorkspaceState {
             }
             ADDER_FIELD => self.adder_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
+            crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
             OTHER => {
                 if let Page::Session(open) = self.page
@@ -1245,6 +1271,7 @@ impl WorkspaceState {
             ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
             EDITOR_FIELD => self.shown_document().map(|document| &document.field),
             HISTORY_SEARCH => Some(&self.history_search),
+            crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
             OTHER => self.other_field(),
@@ -1263,6 +1290,7 @@ impl WorkspaceState {
             || id == ENTRY_FIELD
             || id == EDITOR_FIELD
             || id == HISTORY_SEARCH
+            || id == crate::extensions::EXTENSIONS_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
             || crate::settings_servers::is_form_field(id)
@@ -1715,7 +1743,7 @@ impl WorkspaceState {
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
             }
-            Page::History => return,
+            Page::History | Page::Extensions => return,
         };
         let files = self.take_prompt();
         let held = &mut self.sessions[session];

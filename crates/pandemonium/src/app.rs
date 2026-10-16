@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use pm_acp::{Login, Standing};
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
+use pm_components::assist::HOVER_SCROLL;
 use pm_components::diff::gutter_of;
+use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
 use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
@@ -153,6 +155,10 @@ pub struct App {
     text_selection: Option<TextSelection>,
     /// The word of the file shown the pointer rests on, by where it starts, and since when.
     hover_rest: Option<(usize, Instant)>,
+    /// When the pointer left both the card about a word and the word, while the card is still showing.
+    hover_leaving: Option<Instant>,
+    /// Whether the pointer has been on the card about a word since it opened, so leaving it takes it away at once.
+    hover_entered: bool,
     /// What a press on selectable text took, from its start to its end, and
     /// how much it takes at a time, while the button is held, so dragging
     /// selects from it.
@@ -263,6 +269,8 @@ impl Default for App {
             text_selection: None,
             text_held: None,
             hover_rest: None,
+            hover_leaving: None,
+            hover_entered: false,
         }
     }
 }
@@ -438,6 +446,10 @@ impl App {
             self.attach();
             return;
         }
+        if id == INSTALL_EXTENSION {
+            self.install_extension();
+            return;
+        }
         if let Some(index) = self.model.read(|screen| screen.settings_more_of(id)) {
             self.open_settings_menu(index);
             return;
@@ -610,6 +622,20 @@ impl App {
         self.work.relist();
     }
 
+    /// Asks the desktop for a folder and installs the extension in it, unless the dialog is dismissed.
+    fn install_extension(&mut self) {
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title("Choose an extension folder")
+            .pick_folder()
+        else {
+            return;
+        };
+        let path = folder.to_string_lossy().into_owned();
+        self.model
+            .update(|state| *state = std::mem::take(state).extension_picked(path));
+        self.deliver();
+    }
+
     /// Asks the desktop for files and mentions them in the prompt, unless the dialog is dismissed.
     fn attach(&mut self) {
         let Some(files) = rfd::FileDialog::new()
@@ -661,6 +687,8 @@ impl App {
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
+                EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
+                HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
                 _ => std::mem::take(state).scrolled_chat(pixels, room),
@@ -1193,7 +1221,11 @@ impl App {
         if !event.pressed {
             return;
         }
-        if self.terminal_key(event) || self.text_key(event) || self.editor_key(event) {
+        if self.terminal_key(event)
+            || self.text_key(event)
+            || self.card_key(event)
+            || self.editor_key(event)
+        {
             return;
         }
         match event.key {

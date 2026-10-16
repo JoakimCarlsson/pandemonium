@@ -2,6 +2,10 @@
 # server that reads them.
 
 name = "Rust"
+version = "0.1.0"
+description = "Rust with rust-analyzer."
+icon = "icon.svg"
+color = "#e8956a"
 grammar = "rust"
 suffixes = ["rs"]
 aliases = ["rs"]

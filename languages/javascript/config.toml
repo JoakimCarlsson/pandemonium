@@ -3,6 +3,10 @@
 # installed with the server.
 
 name = "JavaScript"
+version = "0.1.0"
+description = "JavaScript and JSX with typescript-language-server."
+icon = "icon.svg"
+color = "#e6c84f"
 grammar = "javascript"
 suffixes = ["js", "mjs", "cjs", "jsx"]
 aliases = ["js", "jsx"]

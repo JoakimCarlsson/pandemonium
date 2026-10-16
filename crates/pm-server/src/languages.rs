@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use pm_lsp::{Index, Manifest};
-use pm_protocol::{GrammarBundle, LanguageInfo, ServerMessage};
+use pm_protocol::{ExtensionInfo, GrammarBundle, ServerMessage};
 
 use crate::core::Core;
 
@@ -63,12 +63,28 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
     })
 }
 
+/// The icon of the installed language `id`, whose manifest is `manifest`, as an SVG document, when it has one.
+fn icon_of(id: &str, manifest: &Manifest) -> Option<String> {
+    let file = manifest.icon.as_deref()?;
+    if file.contains(['/', '\\']) || file.starts_with('.') {
+        return None;
+    }
+    std::fs::read_to_string(pm_lsp::language_folder(id).ok()?.join(file)).ok()
+}
+
 impl Core {
-    /// Every language: those the list offers, then those installed that it does not, each with what the server knows of installing it; the list is read again when `fresh`.
-    pub(crate) fn language_infos(&self, fresh: bool) -> Vec<LanguageInfo> {
+    /// Every extension: those the list offers, then those installed that it does not, each with what the server knows of installing it; the list is read again when `fresh`.
+    pub(crate) fn extension_infos(&self, fresh: bool) -> Vec<ExtensionInfo> {
         let installs = &self.installs;
         if fresh || installs.index.lock().is_ok_and(|held| held.is_none()) {
-            let loaded = Index::load();
+            let loaded = Index::load().or_else(|reason| {
+                let local = Index::default().with_local();
+                if local.languages.is_empty() {
+                    Err(reason)
+                } else {
+                    Ok(local)
+                }
+            });
             if let (Ok(index), Ok(mut held)) = (loaded, installs.index.lock()) {
                 *held = Some(index);
             }
@@ -89,29 +105,39 @@ impl Core {
             .lock()
             .ok()
             .and_then(|held| held.clone())
-            .map(|index| index.languages)
-            .unwrap_or_default();
-        let mut infos: Vec<LanguageInfo> = listed
+            .unwrap_or_default()
+            .with_local()
+            .languages;
+        let mut infos: Vec<ExtensionInfo> = listed
             .iter()
-            .map(|listing| LanguageInfo {
+            .map(|listing| ExtensionInfo {
                 id: listing.id.clone(),
                 name: listing.name.clone(),
+                kind: listing.kind.clone(),
+                version: listing.version.clone(),
+                description: listing.description.clone(),
+                icon: None,
+                color: None,
                 hidden: listing.hidden,
                 suffixes: listing.suffixes.clone(),
                 installed: false,
                 busy: None,
                 problem: None,
                 server: None,
+                local: listing.local,
             })
             .collect();
         for (id, manifest) in &installed {
             if !infos.iter().any(|info| info.id == *id) {
-                infos.push(LanguageInfo {
+                infos.push(ExtensionInfo {
                     id: id.clone(),
                     name: manifest.name.clone(),
+                    kind: manifest.kind.clone(),
+                    version: manifest.version.clone(),
+                    description: manifest.description.clone(),
                     hidden: manifest.hidden,
                     suffixes: manifest.suffixes.clone(),
-                    ..LanguageInfo::default()
+                    ..ExtensionInfo::default()
                 });
             }
         }
@@ -119,6 +145,8 @@ impl Core {
             if let Some(manifest) = installed.get(&info.id) {
                 info.installed = true;
                 info.server = manifest.server.as_ref().map(pm_lsp::server_state);
+                info.icon = icon_of(&info.id, manifest);
+                info.color = manifest.color.clone();
             }
             info.busy = busy.get(&info.id).cloned();
             info.problem = problems.get(&info.id).cloned();
@@ -127,10 +155,10 @@ impl Core {
         infos
     }
 
-    /// Tells every client how the languages stand now.
-    pub(crate) fn tell_languages(&self) {
-        let languages = self.language_infos(false);
-        self.broadcast(&ServerMessage::LanguagesChanged { languages }, None);
+    /// Tells every client how the extensions stand now.
+    pub(crate) fn tell_extensions(&self) {
+        let extensions = self.extension_infos(false);
+        self.broadcast(&ServerMessage::ExtensionsChanged { extensions }, None);
     }
 
     /// Notes that installing `id` is doing `step`, or nothing once it is over, and tells every client.
@@ -141,7 +169,7 @@ impl Core {
                 None => busy.remove(id),
             };
         }
-        self.tell_languages();
+        self.tell_extensions();
     }
 
     /// Notes why installing `id` went wrong, or that it did not.
@@ -155,7 +183,7 @@ impl Core {
     }
 
     /// Installs the languages `ids` one after another on a thread of their own, telling every client how it goes; a language being installed already is left to that install.
-    pub(crate) fn install_languages(self: &Arc<Self>, ids: Vec<String>) {
+    pub(crate) fn install_extensions(self: &Arc<Self>, ids: Vec<String>) {
         let wanted: Vec<String> = {
             let Ok(mut busy) = self.installs.busy.lock() else {
                 return;
@@ -172,7 +200,7 @@ impl Core {
         if wanted.is_empty() {
             return;
         }
-        self.tell_languages();
+        self.tell_extensions();
         let core = self.clone();
         std::thread::spawn(move || {
             for id in wanted {
@@ -196,10 +224,10 @@ impl Core {
     }
 
     /// Takes the language `id` off this machine and tells every client.
-    pub(crate) fn remove_language(&self, id: &str) -> Result<(), String> {
+    pub(crate) fn remove_extension(&self, id: &str) -> Result<(), String> {
         pm_lsp::remove(id)?;
         self.note_problem(id, None);
-        self.tell_languages();
+        self.tell_extensions();
         Ok(())
     }
 }

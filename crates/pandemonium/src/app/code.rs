@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use pm_components::assist::{HOVER_CARD, list_height};
+use pm_components::assist::{HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height};
 use pm_components::open_files::EDITOR_FIELD;
 use pm_input::{Key, KeyEvent};
 use pm_pages::Screen;
@@ -14,11 +14,11 @@ use crate::keys;
 /// How long the pointer rests on a word before the language server is asked about it.
 const HOVER_REST: Duration = Duration::from_millis(450);
 
+/// How long a card stays after the pointer left both it and its word, so the pointer can cross the gap between them.
+const HOVER_GRACE: Duration = Duration::from_millis(350);
+
 /// How far below the line it is about the list or card hangs, in logical pixels.
 const GAP: f32 = 2.0;
-
-/// How tall a card about a place is taken to be when deciding whether it fits under the line, in logical pixels.
-const CARD_ROOM: f32 = 220.0;
 
 impl App {
     /// Where the byte `offset` of the file shown was drawn in the last frame: its left edge, and the top and height of its line.
@@ -92,15 +92,10 @@ impl App {
         }
     }
 
-    /// Where a card about the byte `offset` hangs: under its line, or above it near the bottom of the window.
+    /// Where the card about the byte `offset` is placed from: the left edge of the byte and the top of its line, as the last frame drew them.
     fn card_at(&self, offset: usize) -> Option<(f32, f32)> {
-        let (x, top, line) = self.editor_point(offset)?;
-        let below = top + line + GAP;
-        Some(if below + CARD_ROOM > self.window_height() {
-            (x, (top - CARD_ROOM).max(0.0))
-        } else {
-            (x, below)
-        })
+        let (x, top, _) = self.editor_point(offset)?;
+        Some((x, top))
     }
 
     /// Asks for completions at the caret of the file shown.
@@ -130,6 +125,18 @@ impl App {
             self.model
                 .update(|screen| *screen = std::mem::take(screen).hover_requested(caret, at));
         }
+    }
+
+    /// Copies the text selected in the card about a place when the keys that copy are pressed, and says whether they were.
+    pub(super) fn card_key(&mut self, event: KeyEvent) -> bool {
+        let selected = self
+            .text_selection
+            .is_some_and(|held| held.id == HOVER_TEXT && !held.is_empty());
+        if !selected || keys::clip(&event) != Some(keys::Clip::Copy) {
+            return false;
+        }
+        self.copy_selection();
+        true
     }
 
     /// Takes a key pressed while the file shown has the keyboard, when it is one of the keys for writing code, and says whether it was.
@@ -188,11 +195,20 @@ impl App {
         taken
     }
 
-    /// Notes where the pointer rests over the file shown, so the language server is asked about the word there once it has rested long enough, and takes away a card about a word it left.
+    /// Notes where the pointer rests over the file shown, so the language server is asked about the word there once it has rested long enough. A card about a word stays while the pointer is on the word or on the card; it is taken away a moment after the pointer left the word, so the pointer can cross to the card, and at once when the pointer leaves the card itself.
     pub(super) fn editor_pointer_moved(&mut self, x: f32, y: f32) {
         let over = self.output.hit((x, y));
-        if over == Some(HOVER_CARD) {
+        let on_card = over.is_some_and(|id| {
+            id == HOVER_CARD || (HOVER_LINK_BASE..HOVER_LINK_END).contains(&id.0)
+        });
+        let selecting = self.text_held.is_some()
+            && self
+                .text_selection
+                .is_some_and(|held| held.id == HOVER_TEXT);
+        if on_card || selecting {
             self.hover_rest = None;
+            self.hover_leaving = None;
+            self.hover_entered |= on_card;
             return;
         }
         let word = (over == Some(EDITOR_FIELD))
@@ -208,29 +224,60 @@ impl App {
                         .then_some(word.start)
                 })
             });
-        if self.model.read(Screen::hover_open) && word.is_none() {
+        let shown = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state
+                .shown_document()
+                .and_then(|document| document.hover.as_ref())
+                .map(|card| card.offset),
+            Screen::Onboarding(_) => None,
+        });
+        let left = shown.is_some_and(|offset| word != Some(offset));
+        if left && std::mem::take(&mut self.hover_entered) {
+            self.hover_leaving = None;
             self.model
                 .update(|screen| *screen = std::mem::take(screen).hover_closed());
+        } else {
+            self.hover_leaving = left.then(|| self.hover_leaving.unwrap_or_else(Instant::now));
+        }
+        if shown.is_none() {
+            self.hover_entered = false;
         }
         self.hover_rest = match (word, self.hover_rest) {
+            (Some(start), _) if Some(start) == shown => None,
             (Some(start), Some((held, since))) if held == start => Some((held, since)),
             (Some(start), _) => Some((start, Instant::now())),
             (None, _) => None,
         };
     }
 
-    /// Asks about the word the pointer has rested on long enough, and says when to look again while it has not yet.
+    /// Takes away a card the pointer left long enough ago, asks about the word the pointer has rested on long enough, and says when to look again while either has yet to happen.
     pub(super) fn editor_hover_due(&mut self) -> Option<Instant> {
-        let (start, since) = self.hover_rest?;
-        let due = since + HOVER_REST;
-        if Instant::now() < due {
-            return Some(due);
+        let now = Instant::now();
+        let mut next: Option<Instant> = None;
+        if let Some(left) = self.hover_leaving {
+            let due = left + HOVER_GRACE;
+            if now >= due {
+                self.hover_leaving = None;
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).hover_closed());
+            } else {
+                next = Some(due);
+            }
         }
-        self.hover_rest = None;
-        if let Some(at) = self.card_at(start) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).hover_requested(start, at));
+        if let Some((start, since)) = self.hover_rest {
+            let due = since + HOVER_REST;
+            if now >= due {
+                self.hover_rest = None;
+                self.hover_leaving = None;
+                if let Some(at) = self.card_at(start) {
+                    self.model.update(|screen| {
+                        *screen = std::mem::take(screen).hover_requested(start, at)
+                    });
+                }
+            } else {
+                next = Some(next.map_or(due, |held| held.min(due)));
+            }
         }
-        None
+        next
     }
 }

@@ -2,6 +2,10 @@
 # server that reads them.
 
 name = "TOML"
+version = "0.1.0"
+description = "TOML with taplo."
+icon = "icon.svg"
+color = "#d98b8b"
 grammar = "toml"
 suffixes = ["toml"]
 names = ["Cargo.lock", "uv.lock", "poetry.lock"]

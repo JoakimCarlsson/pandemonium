@@ -23,7 +23,7 @@ pub struct Node {
     pub(crate) focus: Option<FocusId>,
     /// An icon the box draws, tinted with the text colour, in the largest
     /// square that fits its content area.
-    pub(crate) icon: Option<IconName>,
+    pub(crate) icon: Option<pm_icon::Svg>,
     /// A picture the box draws in its own colours, cropped to fill its content area.
     pub(crate) picture: Option<pm_renderer::Picture>,
     /// A ring the box draws in its content area: how much of it is filled, how thick it is, the colour of the filled part and the colour of the rest.
@@ -111,7 +111,13 @@ pub fn text(content: impl Into<String>) -> Node {
 impl Node {
     /// Makes the box draw `name` in the text colour; size the box to size the icon.
     pub fn icon(mut self, name: IconName) -> Self {
-        self.icon = Some(name);
+        self.icon = Some(name.svg());
+        self
+    }
+
+    /// Makes the box draw the artwork `svg` in the text colour, as an icon is drawn.
+    pub fn artwork(mut self, svg: pm_icon::Svg) -> Self {
+        self.icon = Some(svg);
         self
     }
 

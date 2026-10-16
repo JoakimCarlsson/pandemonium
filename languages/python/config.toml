@@ -3,6 +3,10 @@
 # first, so the server sees the packages installed there.
 
 name = "Python"
+version = "0.1.0"
+description = "Python with pyright, using the project's virtual environment."
+icon = "icon.svg"
+color = "#6fb0e0"
 grammar = "python"
 suffixes = ["py", "pyi"]
 aliases = ["py", "python3"]

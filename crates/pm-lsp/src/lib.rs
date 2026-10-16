@@ -30,8 +30,8 @@ mod uri;
 
 pub use hub::{Hub, Published, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
-pub use install::{install, installed, installed_manifest, remove};
+pub use install::{add_extension, install, installed, installed_manifest, remove};
 pub use manifest::{Archive, Download, Install, InstallKind, Manifest, Pinned, ServerSpec};
-pub use paths::{grammar_file, language_folder};
+pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::server_state;
 pub use types::{Completion, CompletionKind, Diagnostic, Hover, Severity, TextChange};

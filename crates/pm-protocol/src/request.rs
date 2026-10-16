@@ -522,16 +522,21 @@ pub enum Request {
         /// The folder; a leading `~` is the home folder, and nothing is the home folder itself.
         path: String,
     },
-    /// The languages there are to install and those installed on the server's machine.
-    Languages,
-    /// Installs languages, with the languages they need and their language servers, on the server's machine; every client is told how it goes with `languages_changed`.
-    InstallLanguages {
-        /// The languages, by folder name.
+    /// The extensions there are to install and those installed on the server's machine.
+    Extensions,
+    /// Installs extensions, with the extensions they need and, for a language, its language server, on the server's machine; every client is told how it goes with `extensions_changed`.
+    InstallExtensions {
+        /// The extensions, by folder name.
         ids: Vec<String>,
     },
-    /// Takes a language off the server's machine.
-    RemoveLanguage {
-        /// The language, by folder name.
+    /// Installs the extension in a folder of the server's machine: copies the folder into the server's own folder of extensions, replacing one of the same name, and installs it; every client is told how it goes with `extensions_changed`.
+    InstallExtension {
+        /// The folder.
+        path: String,
+    },
+    /// Takes an extension off the server's machine.
+    RemoveExtension {
+        /// The extension, by folder name.
         id: String,
     },
     /// The grammar and queries of an installed language, found by its folder name or by a name a code fence calls it.
