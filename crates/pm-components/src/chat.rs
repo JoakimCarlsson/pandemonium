@@ -24,8 +24,9 @@ use crate::queued::queued;
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
 use crate::state::{
-    CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, OPEN_DIFF,
-    RESTORE_BASE, RESTORE_FILES, REVIEW, REWIND_BASE, TURN_BASE, WorkspaceState,
+    CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE,
+    LINKS_PER_PIECE, LINKS_PER_REPLY, OPEN_DIFF, RESTORE_BASE, RESTORE_FILES, REVIEW, REWIND_BASE,
+    TURN_BASE, WorkspaceState,
 };
 use crate::steps::{question, steps};
 
@@ -245,6 +246,7 @@ fn agent_message(
         reply = reply.child(
             Markdown::new(piece, width)
                 .details(DETAILS_BASE + (index * 1000 + base) as u64, unfolded)
+                .links(LINK_BASE + index as u64 * LINKS_PER_REPLY + number as u64 * LINKS_PER_PIECE)
                 .build(shaper),
         );
     }

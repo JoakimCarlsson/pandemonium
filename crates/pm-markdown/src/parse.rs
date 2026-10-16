@@ -25,6 +25,7 @@ fn read(source: &str) -> Builder {
     for event in Parser::new_ext(source, options) {
         builder.event(event);
     }
+    builder.flush_prose();
     builder.close_text();
     builder.fold_details();
     builder
@@ -102,18 +103,23 @@ struct Builder {
     open_links: Vec<u16>,
     /// How many HTML code or key tags are open.
     monospace: u32,
+    /// Running text read but not yet added, gathered so that a web address the parser split is found whole.
+    prose: String,
 }
 
 impl Builder {
     /// Takes one event of the parser into the blocks.
     fn event(&mut self, event: Event) {
+        if let Event::Text(text) = &event
+            && !matches!(self.open, Some(Open::Code(_)))
+        {
+            return self.prose.push_str(text);
+        }
+        self.flush_prose();
         match event {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
-            Event::Text(text) => match self.open {
-                Some(Open::Code(_)) => self.code.push_str(&text),
-                _ => self.text(&text, self.inline()),
-            },
+            Event::Text(text) => self.code.push_str(&text),
             Event::Code(text) => self.text(
                 &text,
                 Inline {
@@ -376,6 +382,29 @@ impl Builder {
         };
     }
 
+    /// Adds the running text gathered to the open block, each bare web
+    /// address in it outside a link made a link to itself.
+    fn flush_prose(&mut self) {
+        let text = std::mem::take(&mut self.prose);
+        let mut rest = text.as_str();
+        while self.link == 0
+            && let Some((start, end)) = bare_address(rest)
+        {
+            self.text(&rest[..start], self.inline());
+            self.targets.push(rest[start..end].to_owned());
+            let inline = Inline {
+                link: true,
+                target: self.targets.len() as u16,
+                ..self.inline()
+            };
+            self.text(&rest[start..end], inline);
+            rest = &rest[end..];
+        }
+        if !rest.is_empty() {
+            self.text(rest, self.inline());
+        }
+    }
+
     /// Adds `text` set as `inline` to the open block, opening a paragraph
     /// when none is, as a tight list item's text needs.
     fn text(&mut self, text: &str, inline: Inline) {
@@ -440,4 +469,35 @@ impl Builder {
             _ => self.root.push(block),
         }
     }
+}
+
+/// Where the first bare `http://` or `https://` address of `text` starts and
+/// ends, the punctuation after it and a closing bracket it did not open left out.
+fn bare_address(text: &str) -> Option<(usize, usize)> {
+    let start = [text.find("https://"), text.find("http://")]
+        .into_iter()
+        .flatten()
+        .min()?;
+    let length = text[start..]
+        .find(|character: char| character.is_whitespace() || "<>\"`".contains(character))
+        .unwrap_or(text.len() - start);
+    let mut address = &text[start..start + length];
+    loop {
+        let trimmed = address.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '*', '_']);
+        let unopened =
+            trimmed.ends_with(')') && trimmed.matches('(').count() < trimmed.matches(')').count();
+        address = match unopened {
+            true => &trimmed[..trimmed.len() - 1],
+            false => trimmed,
+        };
+        if address.len() == trimmed.len() {
+            break;
+        }
+    }
+    let scheme = if address.starts_with("https://") {
+        8
+    } else {
+        7
+    };
+    (address.len() > scheme).then_some((start, start + address.len()))
 }

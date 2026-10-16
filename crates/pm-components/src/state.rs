@@ -228,6 +228,15 @@ pub const RESTORE_BASE: u64 = 2_000_000_000_000;
 /// The first of the buttons starting a session that branches off the conversation after one of the agent's replies; the rest follow it.
 pub const FORK_BASE: u64 = 3_000_000_000_000;
 
+/// The first of the links in the agent's replies; each reply has [`LINKS_PER_REPLY`] after its own base and each piece of it [`LINKS_PER_PIECE`].
+pub const LINK_BASE: u64 = 4_000_000_000_000;
+
+/// How many links one reply has room for, its pieces following one another.
+pub const LINKS_PER_REPLY: u64 = 100_000;
+
+/// How many links one piece of a reply has room for.
+pub const LINKS_PER_PIECE: u64 = 1000;
+
 /// Puts the files back as they were before the message whose offer is open.
 pub const RESTORE_FILES: FocusId = FocusId(4273);
 
@@ -1822,6 +1831,8 @@ impl WorkspaceState {
         } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
         {
             self.fold_tree_folder(index);
+        } else if id >= LINK_BASE {
+            self.open_link(id - LINK_BASE);
         } else if id >= DETAILS_BASE {
             let offset = (id - DETAILS_BASE) as usize;
             self.toggle_details(offset / 1000, offset % 1000);
@@ -1869,6 +1880,23 @@ impl WorkspaceState {
         };
         let text = message.markdown_text();
         self.outbox.push(Outgoing::Copy { text });
+    }
+
+    /// Opens in the browser the web address of the link that sits `offset` past [`LINK_BASE`] in the open session's replies.
+    fn open_link(&mut self, offset: u64) {
+        let (message, rest) = (offset / LINKS_PER_REPLY, offset % LINKS_PER_REPLY);
+        let (piece, link) = (rest / LINKS_PER_PIECE, rest % LINKS_PER_PIECE);
+        let address = self
+            .open()
+            .and_then(|session| session.messages.get(message as usize))
+            .and_then(|message| {
+                let (_, piece) = *message.chunks().get(piece as usize)?;
+                pm_markdown::links(piece).into_iter().nth(link as usize)
+            })
+            .filter(|address| pm_acp::is_web_address(address));
+        if let Some(address) = address {
+            self.outbox.push(Outgoing::Open { address });
+        }
     }
 
     /// Takes the open session's conversation back to before the reader's message at `index`, which goes back into the prompt box to be written again.

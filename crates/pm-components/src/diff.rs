@@ -50,6 +50,9 @@ const GUTTER_BASE: u64 = 10_000_000_000;
 /// How many lines of a file a side of it can number.
 const LINES: u64 = 500_000;
 
+/// How many changes can have their lines numbered, keeping the numbers clear of the names past them.
+const CHANGES: u64 = 10_000;
+
 /// The name of the number of line `line` of the change at `change`, on the new side when `new`.
 pub fn gutter_id(change: usize, new: bool, line: usize) -> FocusId {
     FocusId(GUTTER_BASE + change as u64 * 2 * LINES + u64::from(new) * LINES + line as u64)
@@ -57,7 +60,9 @@ pub fn gutter_id(change: usize, new: bool, line: usize) -> FocusId {
 
 /// Which change, side and line the number named `id` is, if it is one.
 pub fn gutter_of(id: FocusId) -> Option<(usize, bool, usize)> {
-    let offset = id.0.checked_sub(GUTTER_BASE)?;
+    let offset =
+        id.0.checked_sub(GUTTER_BASE)
+            .filter(|offset| *offset < CHANGES * 2 * LINES)?;
     let side = offset / LINES;
     Some((
         (side / 2) as usize,
