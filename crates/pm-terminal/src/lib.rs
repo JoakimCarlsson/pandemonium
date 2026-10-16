@@ -10,5 +10,5 @@ mod grid;
 mod palette;
 
 pub use cell::{Cell, Color, Flags};
-pub use emulator::{Emulator, Selection};
+pub use emulator::{Emulator, Link, Selection};
 pub use palette::{ANSI, indexed};

@@ -82,6 +82,7 @@ pub mod tab_menu;
 pub mod tally;
 pub mod terminal;
 pub mod terminal_keys;
+pub mod terminal_menu;
 pub mod tile;
 pub mod trail;
 pub mod tree;

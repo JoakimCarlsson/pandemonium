@@ -11,7 +11,7 @@ use pm_style::{
     h_px, italic, items_center, leading_ratio, line_through, min_h, overflow_hidden, pr, px,
     rounded, text_color, underline, w_full,
 };
-use pm_terminal::{Cell, Color as Paint, Emulator, Flags};
+use pm_terminal::{Cell, Color as Paint, Emulator, Flags, Link};
 use pm_text::Shaper;
 use pm_ui::{Node, node, retained, text};
 
@@ -207,18 +207,20 @@ fn window(tab: &TerminalTab, width: f32, look: Look, shaper: &mut Shaper) -> Nod
     let emulator = tab.emulator.clone();
     let back = tab.back;
     let composing = tab.composing.clone();
+    let link = tab.link.clone();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (
         tab.id,
         emulator.read().version(),
         back,
         &composing,
+        &link,
         look.font.to_bits(),
         look.cursor as u8,
     )
         .hash(&mut hasher);
     let grid = retained(hasher.finish(), width, shaper, move |_| {
-        lines(&emulator.read(), back, &composing, look)
+        lines(&emulator.read(), back, &composing, link.as_ref(), look)
     });
     node()
         .styles([
@@ -249,10 +251,18 @@ struct Run {
     selected: bool,
     /// Whether the cursor is on the cell.
     cursor: bool,
+    /// Whether the cell is part of the link a press opens.
+    linked: bool,
 }
 
-/// The lines of the window of `emulator` scrolled `back` lines up, with `composing` shown at the cursor, drawn as `look` says.
-fn lines(emulator: &Emulator, back: usize, composing: &str, look: Look) -> Node {
+/// The lines of the window of `emulator` scrolled `back` lines up, with `composing` shown at the cursor and `link` underlined, drawn as `look` says.
+fn lines(
+    emulator: &Emulator,
+    back: usize,
+    composing: &str,
+    link: Option<&Link>,
+    look: Look,
+) -> Node {
     let first = emulator.first_line(back);
     let cursor = emulator.cursor(back);
     let selection = emulator.selection().map(|marked| marked.ordered());
@@ -263,7 +273,14 @@ fn lines(emulator: &Emulator, back: usize, composing: &str, look: Look) -> Node 
                 .filter(|(line, _)| *line == row)
                 .map(|(_, column)| column);
             let marked = selection.and_then(|range| marked_columns(range, first + row));
-            line_of(emulator.line(row, back), at_cursor, marked, composing, look)
+            let linked = link.and_then(|link| linked_columns(link, first + row));
+            line_of(
+                emulator.line(row, back),
+                at_cursor,
+                Marks { marked, linked },
+                composing,
+                look,
+            )
         }))
 }
 
@@ -280,11 +297,25 @@ fn marked_columns(
     Some((from, to))
 }
 
+/// The columns of line `line` that `link` covers, when it covers any.
+fn linked_columns(link: &Link, line: usize) -> Option<(usize, usize)> {
+    marked_columns((link.start, link.end), line)
+}
+
+/// The columns of one line that are drawn apart from the rest, each from one column to another inclusive.
+#[derive(Clone, Copy, Debug, Default)]
+struct Marks {
+    /// The columns the reader marked.
+    marked: Option<(usize, usize)>,
+    /// The columns of the link a press opens.
+    linked: Option<(usize, usize)>,
+}
+
 /// One line of the window: its cells grouped into runs of the same look, with `composing` drawn just before the cursor, drawn as `look` says.
 fn line_of(
     cells: &[Cell],
     cursor: Option<usize>,
-    marked: Option<(usize, usize)>,
+    Marks { marked, linked }: Marks,
     composing: &str,
     look: Look,
 ) -> Node {
@@ -307,6 +338,7 @@ fn line_of(
             flags: cell.flags,
             selected: marked.is_some_and(|(from, to)| column >= from && column <= to),
             cursor: cursor == Some(column),
+            linked: linked.is_some_and(|(from, to)| column >= from && column <= to),
         };
         let character = if cell.flags.has(Flags::HIDDEN) {
             ' '
@@ -392,7 +424,7 @@ fn run_node(look: Run, content: String, drawn: Look) -> Node {
     if look.flags.has(Flags::ITALIC) {
         styles.push(italic());
     }
-    if look.flags.has(Flags::UNDERLINE) {
+    if look.flags.has(Flags::UNDERLINE) || look.linked {
         styles.push(underline());
     }
     if look.flags.has(Flags::STRIKE) {

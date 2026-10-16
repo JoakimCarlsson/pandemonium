@@ -348,6 +348,11 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(state.project_menu.map(project_menu))
     .children(state.session_menu.map(|open| session_menu(state, open)))
     .children(state.message_menu.map(message_menu))
+    .children(
+        state
+            .terminal_menu
+            .map(|open| pm_components::terminal_menu::terminal_menu(open, &state.editor.keymap())),
+    )
     .children(adder::adder(state))
     .children(state.git_menu_node().filter(|_| reviewing))
     .children(state.tab_menu.and_then(|open| {

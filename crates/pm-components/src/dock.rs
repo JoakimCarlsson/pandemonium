@@ -4,7 +4,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
 use pm_input::FocusId;
-use pm_terminal::Emulator;
+use pm_terminal::{Emulator, Link};
 
 use crate::state::{
     MAXIMIZE_TERMINAL, NEW_TERMINAL, Outgoing, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE,
@@ -77,6 +77,8 @@ pub struct TerminalTab {
     pub exited: bool,
     /// Text an input method is composing at the cursor, shown but not yet sent to the shell.
     pub composing: String,
+    /// The link under the pointer while Ctrl is held, underlined as what a press opens.
+    pub link: Option<Link>,
 }
 
 impl TerminalTab {
@@ -110,6 +112,7 @@ impl WorkspaceState {
             back: 0,
             exited: false,
             composing: String::new(),
+            link: None,
         });
         held.terminal_active = held.terminals.len() - 1;
         self.next_terminal += 1;
@@ -175,7 +178,7 @@ impl WorkspaceState {
     }
 
     /// Ends the shell at `index` of the open session, hiding the dock when it was the last.
-    fn close_terminal_tab(&mut self, index: usize) {
+    pub(crate) fn close_terminal_tab(&mut self, index: usize) {
         let Some(position) = self.open_position() else {
             return;
         };
@@ -229,7 +232,7 @@ impl WorkspaceState {
     }
 
     /// The shell showing in the open session, to change.
-    fn active_terminal_mut(&mut self) -> Option<&mut TerminalTab> {
+    pub(crate) fn active_terminal_mut(&mut self) -> Option<&mut TerminalTab> {
         let position = self.open_position()?;
         let session = &mut self.sessions[position];
         session.terminals.get_mut(session.terminal_active)
@@ -337,6 +340,40 @@ impl WorkspaceState {
         }
         self.terminal = showing;
         Some(id)
+    }
+
+    /// The web address the cell at `at` of the window of the shell showing is part of, as a line of the window and a column.
+    fn terminal_link_at(&self, at: (usize, usize)) -> Option<Link> {
+        let tab = self.active_terminal()?;
+        let emulator = tab.emulator.read();
+        let line = emulator.first_line(tab.back) + at.0;
+        emulator
+            .link_at((line, at.1), pm_markdown::bare_address)
+            .filter(|link| pm_acp::is_web_address(&link.target))
+    }
+
+    /// Underlines the web address at `at` of the window of the shell showing, or none when `at` is nothing or holds none.
+    pub fn reach_terminal_link(&mut self, at: Option<(usize, usize)>) {
+        let link = at.and_then(|at| self.terminal_link_at(at));
+        if let Some(tab) = self.active_terminal_mut() {
+            tab.link = link;
+        }
+    }
+
+    /// Whether a web address of the shell showing is underlined as what a press opens.
+    pub fn reaching_terminal_link(&self) -> bool {
+        self.active_terminal().is_some_and(|tab| tab.link.is_some())
+    }
+
+    /// Opens in the browser the web address at `at` of the window of the shell showing, and says whether there was one.
+    pub fn open_terminal_link(&mut self, at: (usize, usize)) -> bool {
+        let Some(link) = self.terminal_link_at(at) else {
+            return false;
+        };
+        self.outbox.push(Outgoing::Open {
+            address: link.target,
+        });
+        true
     }
 
     /// The marked text of the shell showing.
