@@ -143,6 +143,10 @@ pub enum Shot {
     Settings,
     /// The settings panel on Agents, which opens the sections inside it.
     SettingsAgents,
+    /// The settings panel on the Editor, which opens the pages inside it.
+    SettingsEditor,
+    /// The settings panel on how files look.
+    SettingsAppearance,
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
@@ -1056,6 +1060,16 @@ impl Shot {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
             Self::Settings => Screen::Workspace(welcome().after(SETTINGS)),
+            Self::SettingsEditor => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::Editor.id()),
+            ),
+            Self::SettingsAppearance => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::EditorAppearance.id()),
+            ),
             Self::SettingsAgents => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)

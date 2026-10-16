@@ -78,6 +78,16 @@ impl Document {
 
     /// The edit that selects the match after the selection or the caret among `matches`, or the one before it when `back`, going round the end of the text; nothing when there are none.
     pub fn next_match_edit(&self, matches: &[Range<usize>], back: bool) -> Option<Edit> {
+        self.next_match_edit_with(matches, back, true)
+    }
+
+    /// The edit that selects the match after the selection or the caret among `matches`, or the one before it when `back`, going round the end of the text only when `wrap`.
+    pub fn next_match_edit_with(
+        &self,
+        matches: &[Range<usize>],
+        back: bool,
+        wrap: bool,
+    ) -> Option<Edit> {
         let caret = self.field.caret();
         let range = self.field.selection().unwrap_or(caret..caret);
         let found = if back {
@@ -85,12 +95,12 @@ impl Document {
                 .iter()
                 .rev()
                 .find(|found| found.start < range.start)
-                .or(matches.last())
+                .or(matches.last().filter(|_| wrap))
         } else {
             matches
                 .iter()
                 .find(|found| found.start >= range.end && *found != &range)
-                .or(matches.first())
+                .or(matches.first().filter(|_| wrap))
         }?;
         Some(Edit::Select(found.start, found.end))
     }

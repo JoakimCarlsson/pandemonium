@@ -76,6 +76,9 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// How far the pointer has to move, in logical pixels, with a project header held down for it to be a drag.
 const DRAG_DISTANCE: f32 = 6.0;
 
+/// The file the editor's settings are kept in.
+const EDITOR_SETTINGS: &str = "editor-settings.json";
+
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
     /// The window, once it is open.
@@ -128,6 +131,10 @@ pub struct App {
     saved: Option<Vec<String>>,
     /// The choices for the agents' settings last written to disk, so only changes are written.
     saved_choices: Vec<pm_store::Choice>,
+    /// The editor's settings as they were last written to disk.
+    saved_editor: pm_editor::EditorSettings,
+    /// The file shown and its version while it waits to be saved by itself, and since when.
+    autosave_wait: Option<((String, i32), Instant)>,
     /// The agents the server can start, which onboarding checks.
     agents: Vec<pm_protocol::AgentServer>,
     /// The logins each agent last offered, in the order of `agents`.
@@ -232,7 +239,10 @@ impl Default for App {
         {
             work.resume(view);
         }
-        let model = State::new(screen);
+        let editor = pm_store::load_text(EDITOR_SETTINGS)
+            .map(|text| pm_editor::EditorSettings::read(&text))
+            .unwrap_or_default();
+        let model = State::new(screen.with_editor_settings(editor.clone()));
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
@@ -267,6 +277,8 @@ impl Default for App {
             project_press: None,
             project_dragging: false,
             saved_choices: choices,
+            saved_editor: editor,
+            autosave_wait: None,
             logins: vec![Vec::new(); agents.len()],
             agents,
             work,
@@ -524,6 +536,19 @@ impl App {
         }
     }
 
+    /// Writes the editor's settings to disk when they differ from what was last written.
+    fn persist_editor(&mut self) {
+        let Some(settings) = self
+            .model
+            .read(Screen::editor_settings)
+            .filter(|settings| *settings != self.saved_editor)
+        else {
+            return;
+        };
+        let _ = pm_store::save_text(EDITOR_SETTINGS, &settings.write());
+        self.saved_editor = settings;
+    }
+
     /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
     fn persist_choices(&mut self) {
         let saved = &self.saved_choices;
@@ -581,6 +606,7 @@ impl App {
     /// Writes the project list to disk when the workspace's differs from what was last written.
     fn persist(&mut self) {
         self.persist_choices();
+        self.persist_editor();
         let Some(paths) = self.model.read(|screen| screen.project_paths()) else {
             return;
         };
@@ -1554,14 +1580,23 @@ impl ApplicationHandler for App {
         self.work.discover(&self.model);
         self.work.poll(&self.model);
         self.settle_rename_focus();
+        if self.model.read(Screen::editor_settings_wanted) {
+            let settings = self.saved_editor.clone();
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_editor_settings(settings));
+        }
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
-        let hover = [self.editor_hover_due(), self.editor_highlight_due()]
-            .into_iter()
-            .flatten()
-            .min();
+        let hover = [
+            self.editor_hover_due(),
+            self.editor_highlight_due(),
+            self.editor_autosave_due(),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }

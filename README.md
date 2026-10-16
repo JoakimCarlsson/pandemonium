@@ -97,6 +97,8 @@ search across the project's files (Ctrl+Shift+F), every problem the language
 servers found in the project (Ctrl+Shift+M), go to line (Ctrl+G) and folding.
 Indent guides are drawn, marks beside the line numbers show how each line
 differs from the last commit, and the caret's line says who last changed it.
+Settings → Editor changes how files look, are edited and saved, what the
+language server shows while you write, and searching and scrolling.
 
 A language is a folder in [`languages/`](languages): a `config.toml` manifest,
 five queries (`highlights`, `indents`, `outline`, `injections`, `brackets`)

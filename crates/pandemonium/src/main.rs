@@ -125,6 +125,8 @@ fn main() {
             Some("adding") => Shot::Adding,
             Some("settings") => Shot::Settings,
             Some("settings-agents") => Shot::SettingsAgents,
+            Some("settings-editor") => Shot::SettingsEditor,
+            Some("settings-appearance") => Shot::SettingsAppearance,
             Some("settings-form") => Shot::SettingsForm,
             Some("settings-mcp") => Shot::SettingsMcp,
             Some("loading") => Shot::Loading,

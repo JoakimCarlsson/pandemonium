@@ -7,6 +7,9 @@ use crate::state::{Outgoing, WorkspaceState};
 impl WorkspaceState {
     /// Asks the language server where the thing at the caret of the file shown is used in it, unless it was asked for this place of this version already.
     pub fn highlights_requested(mut self) -> Self {
+        if !self.editor.occurrence_highlights {
+            return self;
+        }
         let Some(session) = self.review_index() else {
             return self;
         };
@@ -120,6 +123,9 @@ impl WorkspaceState {
 
     /// Asks who last changed the line of the caret of the file shown, when the file is as the folder holds it.
     pub fn blame_requested(mut self) -> Self {
+        if !self.editor.inline_blame {
+            return self;
+        }
         let Some(session) = self.review_index() else {
             return self;
         };
@@ -165,6 +171,9 @@ impl WorkspaceState {
 
     /// What is said after the line at `index` of the file shown about who last changed it: for the line of the caret, when the file is as the folder holds it and the answer is about it.
     pub fn blame_of_line(&self, index: usize) -> Option<String> {
+        if !self.editor.inline_blame {
+            return None;
+        }
         let session = self.review_index()?;
         let viewer = self.shown_viewer()?;
         let document = self.shown_document()?;

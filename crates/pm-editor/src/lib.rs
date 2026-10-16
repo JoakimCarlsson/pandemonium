@@ -22,6 +22,7 @@ mod jumps;
 mod lines;
 mod marks;
 mod pairs;
+mod settings;
 
 pub use document::{Completions, Document, HoverCard};
 pub use edit::Edited;
@@ -29,3 +30,4 @@ pub use find::Query;
 pub use fold::Fold;
 pub use gutter::LineChange;
 pub use jumps::{Jumps, Spot};
+pub use settings::{DiagnosticsShown, EditorSettings};

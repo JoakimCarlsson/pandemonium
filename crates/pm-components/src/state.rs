@@ -1126,6 +1126,10 @@ pub struct WorkspaceState {
     pub signature_at: (f32, f32),
     /// The bar for finding and replacing in the file shown, when open.
     pub finding: Option<crate::find::Finding>,
+    /// How the editor looks and behaves.
+    pub editor: pm_editor::EditorSettings,
+    /// Whether the editor's settings kept between runs were put in, so that what is shown is not mistaken for them before.
+    pub editor_loaded: bool,
     /// The menu on the tab of an open file, when open.
     pub tab_menu: Option<crate::tab_menu::TabMenu>,
     /// Who last changed the line of the caret of a file, once asked: the session, the file, the line counted from 1, and the answer.
@@ -1232,6 +1236,8 @@ impl WorkspaceState {
             finding: None,
             blame: None,
             tab_menu: None,
+            editor: pm_editor::EditorSettings::default(),
+            editor_loaded: false,
             trail: crate::trail::Trail::default(),
         };
         state.sync_context();

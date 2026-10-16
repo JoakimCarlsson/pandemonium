@@ -10,7 +10,7 @@ use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_
 use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
 use pm_components::listing::{LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, listing_row_of};
 use pm_components::navigate::{RENAME_BOX, RENAME_SYMBOL};
-use pm_components::open_files::EDITOR_FIELD;
+use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
 use pm_input::{Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::Seek;
@@ -19,11 +19,11 @@ use pm_text::Edit;
 use super::App;
 use crate::keys;
 
-/// How long the pointer rests on a word before the language server is asked about it.
-const HOVER_REST: Duration = Duration::from_millis(450);
-
 /// How long a card stays after the pointer left both it and its word, so the pointer can cross the gap between them.
 const HOVER_GRACE: Duration = Duration::from_millis(350);
+
+/// How long a file waits after it was last changed before it saves itself, when the editor saves by itself.
+const AUTOSAVE_REST: Duration = Duration::from_millis(1000);
 
 /// How long the caret rests before the language server is asked where the thing at it is used.
 const HIGHLIGHT_REST: Duration = Duration::from_millis(250);
@@ -137,6 +137,45 @@ impl App {
         }
     }
 
+    /// Saves the file shown once it has gone unchanged long enough with changes to save, when the editor saves by itself, and says when to look again while it has yet to.
+    pub(super) fn editor_autosave_due(&mut self) -> Option<Instant> {
+        let waiting = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen else {
+                return None;
+            };
+            let document = state.shown_document()?;
+            let dirty = state.editor.autosave && screen.shown_dirty();
+            dirty.then(|| {
+                (
+                    state
+                        .shown_viewer()
+                        .map(|viewer| viewer.path.clone())
+                        .unwrap_or_default(),
+                    document.version,
+                )
+            })
+        });
+        let Some(here) = waiting else {
+            self.autosave_wait = None;
+            return None;
+        };
+        let since = match &self.autosave_wait {
+            Some((held, since)) if *held == here => *since,
+            _ => {
+                let now = Instant::now();
+                self.autosave_wait = Some((here, now));
+                return Some(now + AUTOSAVE_REST);
+            }
+        };
+        let due = since + AUTOSAVE_REST;
+        if Instant::now() < due {
+            return Some(due);
+        }
+        self.autosave_wait = None;
+        self.activate(EDITOR_SAVE);
+        None
+    }
+
     /// Asks the language server where the thing at the caret of the file shown is used once the caret has rested there long enough, and says when to look again while it has yet to.
     pub(super) fn editor_highlight_due(&mut self) -> Option<Instant> {
         if self.focus.current() != Some(EDITOR_FIELD) {
@@ -217,6 +256,24 @@ impl App {
         }
         self.copy_selection();
         true
+    }
+
+    /// Whether resting the pointer on a name shows what the language server says about it.
+    fn hover_wanted(&self) -> bool {
+        self.model.read(|screen| {
+            screen
+                .editor_settings()
+                .is_none_or(|settings| settings.hover)
+        })
+    }
+
+    /// How long the pointer rests on a word before the language server is asked about it.
+    fn hover_rest_time(&self) -> Duration {
+        Duration::from_millis(self.model.read(|screen| {
+            screen
+                .editor_settings()
+                .map_or(450, |settings| settings.hover_delay)
+        }))
     }
 
     /// The caret of the file shown.
@@ -738,6 +795,7 @@ impl App {
         if shown.is_none() {
             self.hover_entered = false;
         }
+        let word = word.filter(|_| self.hover_wanted());
         self.hover_rest = match (word, self.hover_rest) {
             (Some(start), _) if Some(start) == shown => None,
             (Some(start), Some((held, since))) if held == start => Some((held, since)),
@@ -838,7 +896,7 @@ impl App {
             }
         }
         if let Some((start, since)) = self.hover_rest {
-            let due = since + HOVER_REST;
+            let due = since + self.hover_rest_time();
             if now >= due {
                 self.hover_rest = None;
                 self.hover_leaving = None;

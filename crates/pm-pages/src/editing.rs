@@ -279,6 +279,34 @@ impl Screen {
         self.in_workspace(|state| state.with_edited_files(session, files))
     }
 
+    /// The screen with the editor's settings `settings` put to work.
+    pub fn with_editor_settings(self, settings: pm_editor::EditorSettings) -> Self {
+        self.in_workspace(|state| state.with_editor_settings(settings))
+    }
+
+    /// How the editor looks and behaves, while the workspace is showing and its settings kept between runs are in.
+    pub fn editor_settings(&self) -> Option<pm_editor::EditorSettings> {
+        match self {
+            Self::Workspace(state) if state.editor_loaded => Some(state.editor.clone()),
+            _ => None,
+        }
+    }
+
+    /// Whether the workspace is showing without the editor's settings kept between runs put in yet.
+    pub fn editor_settings_wanted(&self) -> bool {
+        matches!(self, Self::Workspace(state) if !state.editor_loaded)
+    }
+
+    /// Whether the file shown has changes that are not saved.
+    pub fn shown_dirty(&self) -> bool {
+        match self {
+            Self::Workspace(state) => state
+                .shown_document()
+                .is_some_and(|document| document.is_dirty() && !document.field.is_read_only()),
+            Self::Onboarding(_) => false,
+        }
+    }
+
     /// The screen with the bar for finding in the file shown open, with the row for replacing when `replacing`.
     pub fn find_opened(self, replacing: bool) -> Self {
         self.in_workspace(|state| state.find_opened(replacing))

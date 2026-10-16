@@ -31,6 +31,11 @@ impl Document {
 
     /// The edit that types `character` as the language pairs it, or nothing when it is typed as it is: a selection is wrapped in the pair it opens, an opening character is written with its closing one, and a closing character is typed over when it is already next.
     pub fn typed_edit(&self, character: char) -> Option<Edit> {
+        self.typed_edit_with(character, true, true)
+    }
+
+    /// The edit that types `character` as the language pairs it, closing what it opens only when `close` and going around a selection only when `surround`, or nothing when it is typed as it is.
+    pub fn typed_edit_with(&self, character: char, close: bool, surround: bool) -> Option<Edit> {
         let caret = self.field.caret();
         let pair = self
             .editing
@@ -38,7 +43,9 @@ impl Document {
             .iter()
             .find(|(open, _)| *open == character)
             .copied();
-        if let (Some((open, close)), Some(range)) = (pair, self.field.selection()) {
+        if let (Some((open, close)), Some(range)) =
+            (pair.filter(|_| surround), self.field.selection())
+        {
             let selected = &self.field.text()[range.clone()];
             let wrapped = format!("{open}{selected}{close}");
             let start = range.start + open.len_utf8();
@@ -57,7 +64,7 @@ impl Document {
         if closes && next == Some(character) {
             return Some(Edit::Place(caret + character.len_utf8(), false));
         }
-        let (open, close) = pair?;
+        let (open, close) = pair.filter(|_| close)?;
         if self.caret_in_text() || !opens_before(next) {
             return None;
         }

@@ -78,11 +78,12 @@ pub struct Finding {
 }
 
 impl Finding {
-    /// What the bar looks for.
-    pub fn query(&self) -> Query {
+    /// What the bar looks for; case matters when it is switched on, or with `smartcase` when what is typed holds a capital letter.
+    pub fn query(&self, smartcase: bool) -> Query {
+        let capital = self.query.text().chars().any(char::is_uppercase);
         Query {
             text: self.query.text().to_owned(),
-            case: self.case,
+            case: self.case || (smartcase && capital),
             word: self.word,
             regex: self.regex,
         }
@@ -99,7 +100,7 @@ impl WorkspaceState {
     fn found(&self) -> Option<(Matches, Query)> {
         let finding = self.finding.as_ref()?;
         let document = self.shown_document()?;
-        let query = finding.query();
+        let query = finding.query(self.editor.smartcase);
         Some((document.find_all(&query), query))
     }
 
@@ -108,7 +109,8 @@ impl WorkspaceState {
         let selected = self
             .shown_document()
             .map(|document| document.field.selected().to_owned())
-            .filter(|selected| !selected.is_empty() && !selected.contains('\n'));
+            .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
+            .filter(|_| self.editor.seed_search_from_selection);
         let mut finding = self.finding.take().unwrap_or(Finding {
             query: Field::new(""),
             replacement: Field::new(""),
@@ -142,9 +144,9 @@ impl WorkspaceState {
         let Some((Ok(matches), _)) = self.found() else {
             return self;
         };
-        let edit = self
-            .shown_document()
-            .and_then(|document| document.next_match_edit(&matches, back));
+        let edit = self.shown_document().and_then(|document| {
+            document.next_match_edit_with(&matches, back, self.editor.search_wrap)
+        });
         if let Some(edit) = edit {
             self.file_edited(edit);
         }
@@ -320,8 +322,8 @@ fn tally(found: &Matches, selected: Option<usize>, empty: bool) -> (String, Role
 }
 
 /// The bar for finding and replacing in `document`, over the top right corner of the file.
-pub fn find_bar(finding: &Finding, document: &Document) -> Node {
-    let query = finding.query();
+pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node {
+    let query = finding.query(smartcase);
     let found = document.find_all(&query);
     let selected = found
         .as_ref()

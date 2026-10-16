@@ -16,17 +16,17 @@ use crate::Button;
 use crate::button::{Size, Variant};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
-use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, ROW, STRIP, Viewer};
+use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, STRIP, Viewer};
 use crate::parts::{line, spacer};
 use crate::state::WorkspaceState;
-use pm_editor::{Document, LineChange};
+use pm_editor::{Document, EditorSettings, LineChange};
 
 /// How far beyond the view, above and below, lines are still built, in logical pixels.
 const OVERSCAN: f32 = 100.0;
 
-/// A box as tall as `lines` lines, standing in for those left out.
-fn blank(lines: usize) -> Node {
-    node().styles([h(lines as f32 * ROW / 4.0), flex_none()])
+/// A box as tall as `lines` lines `row` logical pixels tall, standing in for those left out.
+fn blank(lines: usize, row: f32) -> Node {
+    node().styles([h_px(lines as f32 * row), flex_none()])
 }
 
 /// The part of `range` that falls on the line at `line`, as offsets into the line, or nothing when none of it does.
@@ -67,6 +67,7 @@ fn line_marks(
     spans: Vec<(Range<usize>, Kind)>,
     pair: &[Range<usize>],
     found: &(Vec<Range<usize>>, Option<usize>),
+    settings: &EditorSettings,
 ) -> Vec<Mark> {
     let line = document.line(index);
     let (matches, selected) = found;
@@ -150,6 +151,7 @@ fn line_marks(
         document
             .diagnostics_on(index)
             .into_iter()
+            .filter(|(_, diagnostic)| settings.diagnostics.shows(diagnostic.severity))
             .map(|(range, diagnostic)| Mark {
                 range,
                 color: severity_role(diagnostic.severity).into(),
@@ -160,8 +162,8 @@ fn line_marks(
 }
 
 /// The mark beside a line number saying how the line differs from the last commit: a bar for a line added or changed, and a short bar at its top where lines were taken out before it.
-fn change_bar(change: Option<LineChange>) -> Node {
-    let holder = node().styles([flex(), flex_col(), flex_none(), w_px(3.0), h(5)]);
+fn change_bar(change: Option<LineChange>, height: f32) -> Node {
+    let holder = node().styles([flex(), flex_col(), flex_none(), w_px(3.0), h_px(height)]);
     match change {
         Some(LineChange::Added) => holder.styles([bg(Role::Success)]),
         Some(LineChange::Modified) => holder.styles([bg(Role::Warning)]),
@@ -173,18 +175,32 @@ fn change_bar(change: Option<LineChange>) -> Node {
 }
 
 /// One numbered line of the file, with the caret and selection placed in it, coloured by `marks`.
-fn file_line(document: &Document, index: usize, marks: Vec<Mark>, blamed: Option<String>) -> Node {
+fn file_line(
+    document: &Document,
+    index: usize,
+    marks: Vec<Mark>,
+    blamed: Option<String>,
+    settings: &EditorSettings,
+) -> Node {
     let line = document.line(index);
     let text_of = &document.field.text()[line.clone()];
     let caret = document.field.caret();
+    let caret_line = document.line_of(caret);
     let worst = document
         .diagnostics_on(index)
         .iter()
         .map(|(_, diagnostic)| diagnostic.severity)
+        .filter(|severity| settings.diagnostics.shows(*severity))
         .min();
+    let font = settings.font_size;
+    let number = if settings.relative_line_numbers && index != caret_line {
+        index.abs_diff(caret_line)
+    } else {
+        index + 1
+    };
     let mut content = text(text_of)
         .styles([
-            text_px(12),
+            text_px(font),
             leading_ratio(1.4),
             font_mono(),
             text_color(Role::Text),
@@ -201,44 +217,59 @@ fn file_line(document: &Document, index: usize, marks: Vec<Mark>, blamed: Option
     if let Some(range) = clipped(&document.field.marked(), &line) {
         content = content.marked(range, EDITOR_FIELD);
     }
-    node()
-        .styles([flex(), h(5), flex_none(), overflow_hidden()])
-        .child(change_bar(document.line_change(index)))
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    justify_end(),
-                    flex_none(),
-                    w(13),
-                    pr(3),
-                ])
-                .child(text((index + 1).to_string()).styles([
-                    text_px(12),
+    let mut row = node()
+        .styles([
+            flex(),
+            h_px(settings.row_height()),
+            flex_none(),
+            overflow_hidden(),
+        ])
+        .child(change_bar(
+            document.line_change(index).filter(|_| settings.git_gutter),
+            settings.row_height(),
+        ));
+    if settings.current_line_highlight
+        && index == caret_line
+        && document.field.selection().is_none()
+    {
+        row = row.styles([bg(Role::Surface)]);
+    }
+    let number_tone = if index == caret_line {
+        Role::Muted
+    } else {
+        Role::Subtle
+    };
+    row.child(
+        node()
+            .styles([flex(), items_center(), justify_end(), flex_none(), pr(3)])
+            .styles([if settings.line_numbers { w(13) } else { w(2) }])
+            .children(settings.line_numbers.then(|| {
+                text(number.to_string()).styles([
+                    text_px(font),
                     leading_ratio(1.4),
                     font_mono(),
-                    text_color(worst.map_or(Role::Subtle, severity_role)),
-                ])),
-        )
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    flex_1(),
-                    min_w_px(0),
-                    overflow_hidden(),
-                    px(2),
+                    text_color(worst.map_or(number_tone, severity_role)),
                 ])
-                .child(content)
-                .children(document.is_folded_at(index).then(|| fold_chip(index)))
-                .children(blamed.map(|said| {
-                    node()
-                        .styles([flex_none(), ml(8), min_w_px(0), overflow_hidden()])
-                        .child(crate::parts::line(said, 12, 1.4, Role::Subtle))
-                })),
-        )
+            })),
+    )
+    .child(
+        node()
+            .styles([
+                flex(),
+                items_center(),
+                flex_1(),
+                min_w_px(0),
+                overflow_hidden(),
+                px(2),
+            ])
+            .child(content)
+            .children(document.is_folded_at(index).then(|| fold_chip(index)))
+            .children(blamed.map(|said| {
+                node()
+                    .styles([flex_none(), ml(8), min_w_px(0), overflow_hidden()])
+                    .child(crate::parts::line(said, font, 1.4, Role::Subtle))
+            })),
+    )
 }
 
 /// The first of the marks standing for folded lines, each following it by the index of the line it is on.
@@ -317,10 +348,12 @@ fn visible(
     height: f32,
     found: &(Vec<Range<usize>>, Option<usize>),
     blamed: &dyn Fn(usize) -> Option<String>,
+    settings: &EditorSettings,
 ) -> Vec<Node> {
+    let row = settings.row_height();
     let total = document.rows();
-    let first = (((scroll - OVERSCAN) / ROW).floor().max(0.0) as usize).min(total);
-    let last = ((((scroll + height + OVERSCAN) / ROW).ceil()) as usize).min(total);
+    let first = (((scroll - OVERSCAN) / row).floor().max(0.0) as usize).min(total);
+    let last = ((((scroll + height + OVERSCAN) / row).ceil()) as usize).min(total);
     let shown = document.shown_lines(first, last - first);
     let pair: Vec<Range<usize>> = document
         .syntax
@@ -328,25 +361,37 @@ fn visible(
         .and_then(|syntax| syntax.bracket_pair(document.field.text(), document.field.caret()))
         .map(|(open, close)| vec![open, close])
         .unwrap_or_default();
-    let mut rows = vec![blank(first)];
+    let mut rows = vec![blank(first, row)];
     for run in runs(&shown) {
         let painted = document.highlights(run.clone());
-        let standing = guides(document, run.clone());
+        let mut standing = if settings.indent_guides {
+            guides(document, run.clone())
+        } else {
+            vec![Vec::new(); run.len()]
+        };
+        if settings.wrap_guide {
+            for columns in &mut standing {
+                columns.push(settings.preferred_line_length);
+            }
+        }
         rows.extend(
             run.zip(painted)
                 .zip(standing)
                 .map(|((index, spans), columns)| {
-                    let mut marks = line_marks(document, index, spans, &pair, found);
+                    let mut marks = line_marks(document, index, spans, &pair, found, settings);
                     marks.extend(columns.into_iter().map(|column| Mark {
                         range: column..column,
                         color: Role::Border.into(),
                         paint: Paint::Guide,
                     }));
-                    file_line(document, index, marks, blamed(index))
+                    file_line(document, index, marks, blamed(index), settings)
                 }),
         );
     }
-    rows.push(blank(total - last));
+    rows.push(blank(total - last, row));
+    if settings.scroll_beyond_last_line {
+        rows.push(node().styles([h_px((height - row * 2.0).max(0.0)), flex_none()]));
+    }
     rows
 }
 
@@ -496,6 +541,7 @@ pub fn viewer(state: &WorkspaceState, height: f32) -> Node {
                     lines_height,
                     &state.find_marks(),
                     &|index| state.blame_of_line(index),
+                    &state.editor,
                 ));
             if document.truncated {
                 rows = rows.child(node().styles([px(4), py(2)]).child(line(
@@ -539,9 +585,11 @@ pub fn viewer(state: &WorkspaceState, height: f32) -> Node {
                         .finding
                         .as_ref()
                         .and_then(|finding| match &viewer.contents {
-                            Contents::Text(document) => {
-                                Some(crate::find::find_bar(finding, document))
-                            }
+                            Contents::Text(document) => Some(crate::find::find_bar(
+                                finding,
+                                document,
+                                state.editor.smartcase,
+                            )),
                             _ => None,
                         }),
                 ),

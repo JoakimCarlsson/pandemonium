@@ -96,8 +96,12 @@ pub struct Document {
     pub language: Option<String>,
     /// The text parsed with the language's grammar, once the grammar is loaded.
     pub syntax: Option<Syntax>,
-    /// How the language's files are edited.
+    /// How the language's files are edited, with the reader's own indentation put over the language's.
     pub editing: Editing,
+    /// How the language's own files are edited.
+    language_editing: Editing,
+    /// The columns a level of indentation is and whether it is a tab, when the reader chose them over the language's.
+    indentation: (Option<usize>, Option<bool>),
     /// Whether the language server was told the file is open.
     pub synced: bool,
     /// The version of the text the language server was last told of.
@@ -162,6 +166,8 @@ impl Document {
             language: None,
             syntax: None,
             editing: Editing::default(),
+            language_editing: Editing::default(),
+            indentation: (None, None),
             synced: false,
             version: 0,
             triggers: Vec::new(),
@@ -268,8 +274,22 @@ impl Document {
 
     /// Takes in `syntax`, the text parsed with the grammar of the document's language.
     pub fn with_syntax(&mut self, syntax: Syntax) {
-        self.editing = syntax.grammar().editing().clone();
+        self.language_editing = syntax.grammar().editing().clone();
         self.syntax = Some(syntax);
+        self.set_indentation(self.indentation.0, self.indentation.1);
+    }
+
+    /// Indents with `columns` columns a level and with tabs when `tabs`, each in place of the language's own when given.
+    pub fn set_indentation(&mut self, columns: Option<usize>, tabs: Option<bool>) {
+        self.indentation = (columns, tabs);
+        let mut editing = self.language_editing.clone();
+        if let Some(columns) = columns {
+            editing.indent = columns;
+        }
+        if let Some(tabs) = tabs {
+            editing.tabs = tabs;
+        }
+        self.editing = editing;
     }
 
     /// The highlighted stretches of each line of `lines`, as offsets into the line, worked out again only when the text was parsed again or the lines fall outside the ones worked out last.

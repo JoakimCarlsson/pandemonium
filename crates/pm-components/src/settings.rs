@@ -103,7 +103,7 @@ pub const SETTINGS_REMOVE_BASE: u64 = 20_000_200;
 pub const SETTINGS_INSTALL_BASE: u64 = 20_000_300;
 
 /// One past the last name the panel answers to.
-const SETTINGS_END: u64 = 20_000_700;
+const SETTINGS_END: u64 = 20_001_500;
 
 /// How far the panel keeps from every edge of the window, in logical pixels.
 const MARGIN: f32 = 14.0;
@@ -134,6 +134,18 @@ pub enum Section {
     /// How the window looks and behaves.
     #[default]
     General,
+    /// How files are written in, with the groups below it.
+    Editor,
+    /// How files look.
+    EditorAppearance,
+    /// How files are edited.
+    EditorEditing,
+    /// What saving does.
+    EditorSaving,
+    /// What the language server adds.
+    EditorIntelligence,
+    /// Finding and scrolling.
+    EditorSearch,
     /// What agents are started with, with the groups below it.
     Agents,
     /// The agents that can be started, and the ones added by hand.
@@ -144,8 +156,14 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 4] = [
+    pub const ALL: [Section; 10] = [
         Section::General,
+        Section::Editor,
+        Section::EditorAppearance,
+        Section::EditorEditing,
+        Section::EditorSaving,
+        Section::EditorIntelligence,
+        Section::EditorSearch,
         Section::Agents,
         Section::AgentServers,
         Section::McpServers,
@@ -155,6 +173,12 @@ impl Section {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Editor => "Editor",
+            Self::EditorAppearance => "Appearance",
+            Self::EditorEditing => "Editing",
+            Self::EditorSaving => "Saving",
+            Self::EditorIntelligence => "Code Intelligence",
+            Self::EditorSearch => "Search & Scrolling",
             Self::Agents => "Agents",
             Self::AgentServers => "Agent Servers",
             Self::McpServers => "MCP Servers",
@@ -165,6 +189,12 @@ impl Section {
     fn icon(self) -> IconName {
         match self {
             Self::General => IconName::Settings,
+            Self::Editor
+            | Self::EditorAppearance
+            | Self::EditorEditing
+            | Self::EditorSaving
+            | Self::EditorIntelligence
+            | Self::EditorSearch => IconName::FileCode,
             Self::Agents => IconName::Sparkles,
             Self::AgentServers => IconName::Folder,
             Self::McpServers => IconName::Plug,
@@ -175,7 +205,12 @@ impl Section {
     pub(crate) fn parent(self) -> Option<Section> {
         match self {
             Self::AgentServers | Self::McpServers => Some(Self::Agents),
-            Self::General | Self::Agents => None,
+            Self::EditorAppearance
+            | Self::EditorEditing
+            | Self::EditorSaving
+            | Self::EditorIntelligence
+            | Self::EditorSearch => Some(Self::Editor),
+            Self::General | Self::Agents | Self::Editor => None,
         }
     }
 
@@ -218,6 +253,7 @@ impl WorkspaceState {
                 self.settings_servers.form = None;
             }
             SETTINGS_SCRIM | SETTINGS_CLOSE => self.settings = None,
+            action if self.editor_setting_pressed(action) => {}
             action => {
                 if let Some(section) = Section::ALL
                     .into_iter()
@@ -276,7 +312,11 @@ fn navigation(showing: Section, folded: bool) -> Node {
         .children(
             Section::ALL
                 .into_iter()
-                .filter(|section| !(folded && section.parent().is_some()))
+                .filter(|section| match section.parent() {
+                    Some(Section::Agents) => !folded,
+                    Some(parent) => showing == parent || showing.parent() == Some(parent),
+                    None => true,
+                })
                 .map(|section| entry(section, section == showing, folded)),
         )
 }
@@ -289,7 +329,7 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
         .build()
         .styles([px(2)]);
     let row = match section {
-        Section::General => row.child(glyph(section.icon(), 4.0, tone)),
+        Section::General | Section::Editor => row.child(glyph(section.icon(), 4.0, tone)),
         Section::Agents => row.child(glyph(
             if folded {
                 IconName::ChevronRight
@@ -299,7 +339,7 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
             4.0,
             tone,
         )),
-        Section::AgentServers | Section::McpServers => row.styles([pl(8)]),
+        _ => row.styles([pl(8)]),
     };
     row.child(line(section.title(), 13, 1.4, tone))
 }

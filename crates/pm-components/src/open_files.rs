@@ -20,9 +20,6 @@ pub const FILE_TAB_BASE: u64 = 4_000_000;
 /// The first of the buttons that close a file's tab; the rest follow it.
 pub const FILE_CLOSE_BASE: u64 = 4_100_000;
 
-/// How tall a line of the file is, in logical pixels.
-pub const ROW: f32 = 20.0;
-
 /// How tall the strip above the lines is, in logical pixels.
 pub const STRIP: f32 = 40.0;
 
@@ -86,9 +83,9 @@ impl Left {
 }
 
 /// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top.
-pub(crate) fn jump(document: &mut Document, position: pm_protocol::Position) -> f32 {
+pub(crate) fn jump(document: &mut Document, position: pm_protocol::Position, row: f32) -> f32 {
     let line = document.jump(position);
-    (document.row_of_line(line) as f32 * ROW - ROW * 6.0).max(0.0)
+    (document.row_of_line(line) as f32 * row - row * 6.0).max(0.0)
 }
 
 impl Viewer {
@@ -233,6 +230,7 @@ impl WorkspaceState {
         head: bool,
         read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
+        let row = self.editor.row_height();
         let language = read
             .as_ref()
             .ok()
@@ -249,7 +247,7 @@ impl WorkspaceState {
                         left.put_back(&mut document);
                     }
                     if let Some(position) = viewer.jump.take() {
-                        viewer.scroll = jump(&mut document, position);
+                        viewer.scroll = jump(&mut document, position, row);
                     }
                     Contents::Text(Box::new(document))
                 }
@@ -287,6 +285,7 @@ impl WorkspaceState {
 
     /// The state with the file shown scrolled just far enough to show the caret, in a view `height` logical pixels tall.
     pub fn with_caret_shown(mut self, height: f32) -> Self {
+        let row = self.editor.row_height();
         let Some(index) = self.git.shown else {
             return self;
         };
@@ -297,12 +296,14 @@ impl WorkspaceState {
             return self;
         };
         let line = document.row_of_line(document.line_of(document.field.caret()));
-        let (top, bottom) = (line as f32 * ROW, (line + 1) as f32 * ROW);
-        let view = (height - STRIP).max(ROW);
-        if top < viewer.scroll {
-            viewer.scroll = top;
-        } else if bottom + ROW > viewer.scroll + view {
-            viewer.scroll = bottom + ROW - view;
+        let (top, bottom) = (line as f32 * row, (line + 1) as f32 * row);
+        let view = (height - STRIP).max(row);
+        let room = (view / row / 2.0).floor().max(0.0) as usize;
+        let margin = self.editor.vertical_scroll_margin.min(room) as f32 * row;
+        if top - margin < viewer.scroll {
+            viewer.scroll = (top - margin).max(0.0);
+        } else if bottom + margin > viewer.scroll + view {
+            viewer.scroll = bottom + margin - view;
         }
         self
     }
@@ -312,6 +313,17 @@ impl WorkspaceState {
         let Some(session) = self.review_index() else {
             return;
         };
+        let (trim, final_newline) = (
+            self.editor.remove_trailing_whitespace_on_save,
+            self.editor.ensure_final_newline_on_save,
+        );
+        let tidy = self
+            .shown_document()
+            .filter(|document| !document.field.is_read_only())
+            .and_then(|document| document.tidy_edit(trim, final_newline));
+        if let Some(edit) = tidy {
+            self.file_edited(edit);
+        }
         let Some(index) = self.git.shown else {
             return;
         };

@@ -7,6 +7,34 @@ use crate::document::Document;
 impl Document {
     /// The edits that break the line at the caret: the new line indented as the language says, and, when the caret sits between a block's opening and its closing, the closing put on a line of its own at the level of the line broken, the caret left on the line between.
     pub fn newline_edits(&self) -> Vec<Edit> {
+        self.newline_edits_with(true, false)
+    }
+
+    /// The edits that break the line at the caret: indented as the language says when `indent`, and starting with the line comment too when `comments` and the line broken is a comment that goes on after the caret.
+    pub fn newline_edits_with(&self, indent: bool, comments: bool) -> Vec<Edit> {
+        let caret = self.field.caret();
+        let text = self.field.text();
+        let base = self.indentation_at(caret);
+        if comments && let Some(prefix) = self.editing.line_comment.as_deref() {
+            let start = self.line(self.line_of(caret)).start;
+            let before = &text[start..caret];
+            let trimmed = before.trim_start();
+            if trimmed.starts_with(prefix) && trimmed.len() > prefix.len() {
+                let marker: String = trimmed
+                    .chars()
+                    .take_while(|character| prefix.contains(*character))
+                    .collect();
+                return vec![Edit::Paste(format!("\n{base}{marker} "))];
+            }
+        }
+        if !indent {
+            return vec![Edit::Insert('\n')];
+        }
+        self.indented_newline()
+    }
+
+    /// The edits that break the line at the caret, indented as the language says.
+    fn indented_newline(&self) -> Vec<Edit> {
         let caret = self.field.caret();
         let text = self.field.text();
         let base = self.indentation_at(caret);

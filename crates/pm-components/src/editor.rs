@@ -102,6 +102,7 @@ impl WorkspaceState {
                 text,
             });
         }
+        self.apply_indentation();
     }
 
     /// The state after the server of `host` said how its languages stand: an open file of a project on that machine that was read before the language it is written in was installed there takes that language now.
@@ -172,6 +173,7 @@ impl WorkspaceState {
                 document.with_syntax(syntax);
             }
         }
+        self.apply_indentation();
         self
     }
 
@@ -285,10 +287,11 @@ impl WorkspaceState {
 
     /// Applies `edit` to the file shown, keeping its syntax tree and its language server in step, and the completions open at the caret with it; changing its text keeps its tab open.
     pub(crate) fn file_edited(&mut self, edit: Edit) {
+        let settings = self.editor.clone();
         let Some((session, viewer)) = self.shown_mut() else {
             return;
         };
-        let told = edit_viewer(session, viewer, edit);
+        let told = edit_viewer(session, viewer, edit, &settings);
         self.outbox.extend(told);
     }
 
@@ -299,6 +302,7 @@ impl WorkspaceState {
         path: &str,
         changes: Vec<pm_protocol::TextChange>,
     ) {
+        let settings = self.editor.clone();
         let mut told = Vec::new();
         if let Some((_, viewer)) = self
             .every_viewer()
@@ -309,7 +313,7 @@ impl WorkspaceState {
                 .map(|document| document.change_edits(changes))
                 .unwrap_or_default();
             for edit in edits {
-                told.extend(edit_viewer(session, viewer, edit));
+                told.extend(edit_viewer(session, viewer, edit, &settings));
             }
         }
         self.outbox.extend(told);
@@ -324,13 +328,17 @@ impl WorkspaceState {
 
     /// Breaks the line at the caret of the file shown, indenting the new line as the language says: one level deeper inside a block opened on the line, and the closing of that block put on a line of its own.
     pub fn editor_newline(mut self) -> Self {
+        let (indent, comments) = (
+            self.editor.auto_indent,
+            self.editor.extend_comment_on_newline,
+        );
         let edits = self
             .shown_document()
             .map(|document| {
                 if document.field.has_others() {
                     vec![Edit::Insert('\n')]
                 } else {
-                    document.newline_edits()
+                    document.newline_edits_with(indent, comments)
                 }
             })
             .unwrap_or_default();
@@ -359,9 +367,10 @@ impl WorkspaceState {
             self.file_edited(Edit::Insert(character));
             return self;
         }
+        let (close, surround) = (self.editor.auto_close, self.editor.auto_surround);
         if let Some(edit) = self
             .shown_document()
-            .and_then(|document| document.typed_edit(character))
+            .and_then(|document| document.typed_edit_with(character, close, surround))
         {
             self.file_edited(edit);
             return self;
@@ -539,7 +548,7 @@ impl WorkspaceState {
         let asking = document_of(viewer)
             .filter(|document| document.synced && !document.field.is_read_only())
             .map(|document| document.version);
-        match asking {
+        match asking.filter(|_| !save || self.editor.format_on_save) {
             Some(version) => self.outbox.push(Outgoing::Format {
                 session,
                 path,
@@ -600,6 +609,7 @@ impl WorkspaceState {
         session: usize,
         location: pm_protocol::Location,
     ) -> Self {
+        let row = self.editor.row_height();
         if self.review_index() != Some(session) {
             return self;
         }
@@ -615,7 +625,7 @@ impl WorkspaceState {
             if let Some(viewer) = self.git.viewers.get_mut(index) {
                 match document_of(viewer) {
                     Some(document) => {
-                        let scroll = crate::open_files::jump(document, location.span.start);
+                        let scroll = crate::open_files::jump(document, location.span.start, row);
                         viewer.scroll = scroll;
                     }
                     None => viewer.jump = Some(location.span.start),
@@ -638,7 +648,7 @@ impl WorkspaceState {
             return self;
         };
         let mut document = Document::new(&text, true, false);
-        let scroll = crate::open_files::jump(&mut document, location.span.start);
+        let scroll = crate::open_files::jump(&mut document, location.span.start, row);
         let viewer = crate::open_files::Viewer {
             path: location.path.clone(),
             head: false,
@@ -684,7 +694,12 @@ impl WorkspaceState {
 }
 
 /// Applies `edit` to the text of `viewer`, the file at its path of the session at `session`, keeping its syntax tree and the completions open at its caret in step; returns what its language server is to be told and asked. Changing its text keeps its tab open.
-fn edit_viewer(session: usize, viewer: &mut Viewer, edit: Edit) -> Vec<Outgoing> {
+fn edit_viewer(
+    session: usize,
+    viewer: &mut Viewer,
+    edit: Edit,
+    settings: &pm_editor::EditorSettings,
+) -> Vec<Outgoing> {
     let path = viewer.path.clone();
     let Contents::Text(document) = &mut viewer.contents else {
         return Vec::new();
@@ -704,7 +719,10 @@ fn edit_viewer(session: usize, viewer: &mut Viewer, edit: Edit) -> Vec<Outgoing>
             changes: vec![change],
         });
     }
-    if edited.signature {
+    if !settings.completions_on_input && edited.ask.is_some() {
+        document.completion = None;
+    }
+    if edited.signature && settings.signature_help {
         told.push(Outgoing::Signature {
             session,
             path: path.clone(),
@@ -712,7 +730,7 @@ fn edit_viewer(session: usize, viewer: &mut Viewer, edit: Edit) -> Vec<Outgoing>
             position,
         });
     }
-    if let Some(trigger) = edited.ask {
+    if let Some(trigger) = edited.ask.filter(|_| settings.completions_on_input) {
         told.push(Outgoing::Completion {
             session,
             path,

@@ -381,4 +381,37 @@ impl Document {
         let target = if caret == first { start } else { first };
         Edit::Place(target, extend)
     }
+
+    /// The edit that tidies the text before it is saved: spaces and tabs at the ends of lines taken off when `trim`, and a line break put at the end when `final_newline` and there is none; nothing when there is nothing to tidy.
+    pub fn tidy_edit(&self, trim: bool, final_newline: bool) -> Option<Edit> {
+        let text = self.field.text();
+        let mut tidied: String = if trim {
+            text.split('\n')
+                .map(|line| line.trim_end_matches([' ', '\t']))
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            text.to_owned()
+        };
+        if final_newline && !tidied.is_empty() && !tidied.ends_with('\n') {
+            tidied.push('\n');
+        }
+        if tidied == text {
+            return None;
+        }
+        let caret = self.field.caret();
+        let line = self.line_of(caret);
+        let column = caret - self.line(line).start;
+        let start: usize = tidied
+            .split('\n')
+            .take(line)
+            .map(|held| held.len() + 1)
+            .sum();
+        let length = tidied[start.min(tidied.len())..]
+            .split('\n')
+            .next()
+            .map_or(0, str::len);
+        let at = (start + column.min(length)).min(tidied.len());
+        Some(Edit::Replace(0..text.len(), tidied, (at, at)))
+    }
 }

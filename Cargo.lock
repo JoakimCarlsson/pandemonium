@@ -2156,6 +2156,7 @@ dependencies = [
  "pm-client",
  "pm-color",
  "pm-components",
+ "pm-editor",
  "pm-git",
  "pm-input",
  "pm-lsp",
@@ -2345,6 +2346,8 @@ dependencies = [
  "pm-text",
  "pm-treesitter",
  "regex",
+ "serde",
+ "serde_json",
  "similar",
 ]
 
@@ -2407,6 +2410,7 @@ version = "0.13.0-rc.1"
 dependencies = [
  "pm-acp",
  "pm-components",
+ "pm-editor",
  "pm-git",
  "pm-icon",
  "pm-input",

@@ -195,9 +195,13 @@ const DOCS_LINES: usize = 40;
 /// The documentation of the completion picked in `completion`, beside the list, when the language server sent any: its detail as code, then what it says.
 fn completion_docs(
     completion: &Completions,
+    shown: bool,
     language: Option<&str>,
     shaper: &mut Shaper,
 ) -> Option<Node> {
+    if !shown {
+        return None;
+    }
     let item = completion
         .shown
         .get(completion.picked)
@@ -359,6 +363,7 @@ fn rule() -> Node {
 
 /// The card `card`, of what the language server finds wrong at the place and what it says about it, its code coloured as the file's language `language` when no fence names another, in a window `height` logical pixels tall, laid out with `shaper`: below the place's line, or above it when there is more room there, and scrolling when it is taller than that room.
 fn hover_card(
+    row: f32,
     card: &HoverCard,
     language: Option<&str>,
     height: f32,
@@ -414,7 +419,7 @@ fn hover_card(
             });
         }
     }
-    let line_bottom = card.at.1 + crate::open_files::ROW;
+    let line_bottom = card.at.1 + row;
     let below = (height - line_bottom - CARD_GAP * 2.0).max(0.0);
     let above = (card.at.1 - CARD_GAP * 2.0).max(0.0);
     let downward = below >= CARD_HEIGHT.min(above) || below >= above;
@@ -469,6 +474,7 @@ pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<N
     let mut floating = Vec::new();
     if let Some(card) = &document.hover {
         floating.extend(hover_card(
+            state.editor.row_height(),
             card,
             document.language.as_deref(),
             height,
@@ -479,6 +485,7 @@ pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<N
         floating.extend(completion_list(completion));
         floating.extend(completion_docs(
             completion,
+            state.editor.completion_documentation,
             document.language.as_deref(),
             shaper,
         ));
