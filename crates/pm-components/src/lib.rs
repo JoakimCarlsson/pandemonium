@@ -54,6 +54,7 @@ pub mod modal;
 pub mod navigate;
 pub mod open_files;
 pub mod overview;
+pub mod panes;
 pub mod parts;
 pub mod plan;
 pub mod popover;

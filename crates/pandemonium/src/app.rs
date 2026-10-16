@@ -15,7 +15,7 @@ use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
-use pm_components::open_files::EDITOR_FIELD;
+use pm_components::open_files::{EDITOR_FIELD, STRIP};
 use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
@@ -44,6 +44,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
 mod code;
+mod panes;
 mod paste;
 mod select;
 mod settings_window;
@@ -164,6 +165,10 @@ pub struct App {
     project_press: Option<(usize, (f32, f32))>,
     /// Whether the pointer moved far enough from `project_press` for it to be a drag.
     project_dragging: bool,
+    /// The tab of a pane a press began on, and where the pointer was.
+    pane_press: Option<(pm_components::panes::Item, (f32, f32))>,
+    /// Whether the pointer moved far enough from `pane_press` for it to be a drag.
+    pane_dragging: bool,
     /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
     autofocused: bool,
     /// Whether the tree was asking for a name when the last frame was drawn.
@@ -326,6 +331,8 @@ impl Default for App {
             saved_view,
             project_press: None,
             project_dragging: false,
+            pane_press: None,
+            pane_dragging: false,
             saved_choices: choices,
             saved_editor: editor,
             autosave_wait: None,
@@ -908,7 +915,10 @@ impl App {
                 HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
-                _ => std::mem::take(state).scrolled_chat(pixels, room),
+                id => match pm_components::panes::peek_of(id) {
+                    Some(index) => std::mem::take(state).scrolled_peek(index, pixels, room),
+                    None => std::mem::take(state).scrolled_chat(pixels, room),
+                },
             };
         });
     }
@@ -1039,6 +1049,7 @@ impl App {
                     .and_then(|id| screen.header_of(id))
                     .zip(self.pointer.position);
                 self.project_dragging = false;
+                self.pane_press(on);
                 if screen.list_menu_open()
                     && !on.is_some_and(|id| {
                         is_project_menu_item(id)
@@ -1086,6 +1097,7 @@ impl App {
                 self.drag_sash((x, y));
                 self.drag_comment((x, y));
                 self.drag_project((x, y));
+                self.drag_pane((x, y));
                 self.terminal_drag((x, y));
                 self.reach_terminal_link();
                 self.text_drag((x, y));
@@ -1104,7 +1116,7 @@ impl App {
                     self.copy_terminal_selection();
                 }
                 self.text_release();
-                if self.drop_project() {
+                if self.drop_project() || self.drop_pane() {
                     self.pressed_on = None;
                     return;
                 }
@@ -1454,9 +1466,19 @@ impl App {
 
     /// Scrolls the file shown just far enough to show its caret.
     fn show_editor_caret(&mut self) {
-        if let Some(height) = self.renderer.as_ref().map(|renderer| renderer.size().1) {
+        let drawn = self
+            .output
+            .regions
+            .iter()
+            .find(|region| region.id == VIEWER_SCROLL)
+            .map(|region| region.rect.height + STRIP);
+        let window = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.size().1 - TABS);
+        if let Some(height) = drawn.or(window) {
             self.model
-                .update(|state| *state = std::mem::take(state).with_caret_shown(height - TABS));
+                .update(|state| *state = std::mem::take(state).with_caret_shown(height));
         }
     }
 

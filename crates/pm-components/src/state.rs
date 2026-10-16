@@ -1152,6 +1152,12 @@ pub struct WorkspaceState {
         std::collections::HashMap<usize, (Vec<crate::open_files::Viewer>, Option<usize>)>,
     /// The view each session was left on, by its position, so that coming back to it shows the same view.
     pub tab_stash: std::collections::HashMap<usize, Tab>,
+    /// The panes of the main area of the page whose files are open now.
+    pub panes: crate::panes::Panes,
+    /// The panes of each session other than the one whose files are open now, by its position.
+    pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
+    /// The tab being dragged to another pane, if one is.
+    pub pane_drag: Option<crate::panes::PaneDrag>,
     /// How far the conversation is scrolled back from its end, in logical pixels.
     pub chat_back: f32,
     /// The menu open over the prompt box, if one is.
@@ -1315,6 +1321,9 @@ impl WorkspaceState {
             files_owner: None,
             file_stash: std::collections::HashMap::new(),
             tab_stash: std::collections::HashMap::new(),
+            panes: crate::panes::Panes::default(),
+            pane_stash: std::collections::HashMap::new(),
+            pane_drag: None,
             chat_back: 0.0,
             picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
@@ -1514,6 +1523,11 @@ impl WorkspaceState {
             if pm_acp::is_web_address(&address) {
                 self.outbox.push(Outgoing::Open { address });
             }
+            return self;
+        }
+        self.settle_panes();
+        if let Some(pane) = crate::panes::pane_of(action) {
+            self.focus_pane(pane);
             return self;
         }
         let restoring = self.restoring.take();

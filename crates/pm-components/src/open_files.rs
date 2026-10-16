@@ -5,6 +5,7 @@ use pm_input::FocusId;
 use pm_text::Edit;
 
 use crate::git_prompts::Prompt;
+use crate::panes::Item;
 use crate::preview::{PREVIEW_LINK_BASE, PREVIEW_LINKS, PREVIEW_SHOW, Rendering, SOURCE_SHOW};
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
 use pm_editor::Document;
@@ -172,6 +173,7 @@ impl WorkspaceState {
         let Some(session) = self.review_index() else {
             return;
         };
+        self.settle_panes();
         let held = self
             .git
             .viewers
@@ -208,6 +210,16 @@ impl WorkspaceState {
                     Some(index) => {
                         let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
                         self.close_document(session, &replaced);
+                        self.replace_pane_item(
+                            Item::File {
+                                path: replaced.path.clone(),
+                                head: replaced.head,
+                            },
+                            Item::File {
+                                path: self.git.viewers[index].path.clone(),
+                                head,
+                            },
+                        );
                         index
                     }
                     None => {
@@ -241,6 +253,8 @@ impl WorkspaceState {
             if !tabs.0.is_empty() {
                 self.file_stash.insert(before, tabs);
             }
+            self.pane_stash
+                .insert(before, std::mem::take(&mut self.panes));
         } else {
             self.files_owner = now;
             return;
@@ -248,6 +262,9 @@ impl WorkspaceState {
         if let Some((viewers, shown)) = now.and_then(|now| self.file_stash.remove(&now)) {
             self.git.viewers = viewers;
             self.git.shown = shown;
+        }
+        if let Some(panes) = now.and_then(|now| self.pane_stash.remove(&now)) {
+            self.panes = panes;
         }
         self.files_owner = now;
         if let (Page::Session(session), Some(tab)) =

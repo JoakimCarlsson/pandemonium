@@ -13,13 +13,14 @@ use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
 use pm_components::open_files::EDITOR_FIELD;
+use pm_components::panes::{Item, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
 use pm_components::state::SETTINGS;
 use pm_components::state::{
     AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
-    RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP,
+    RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
 };
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_input::{FocusId, PointerState};
@@ -133,6 +134,10 @@ pub enum Shot {
     Welcome,
     /// The page for starting work in this repository with the terminal open under it.
     WelcomeTerminal,
+    /// A session cut into three panes: the conversation above the diff, beside a file.
+    Panes,
+    /// A session with the tab of a file being dragged to the right edge of its pane.
+    PanesDragging,
     /// The page for starting work with a long prompt that wraps and has a line break.
     Wrapped,
     /// The page for starting work after a command was picked from the list behind a slash.
@@ -294,6 +299,14 @@ fn load_installed_grammar(id: &str) {
 
 /// The path of the Rust file the code snapshots write in.
 const CODE_PATH: &str = "crates/pandemonium/src/session.rs";
+
+/// The tab of the file the workspace with a file open shows.
+fn code_item() -> Item {
+    Item::File {
+        path: CODE_PATH.to_owned(),
+        head: false,
+    }
+}
 
 /// A Rust file of the first session open for writing, its grammar loaded when Rust is installed on this machine, with the caret after the brace that opens `new` and what the language server finds wrong in it.
 fn code() -> WorkspaceState {
@@ -1168,6 +1181,19 @@ impl Shot {
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Welcome => Screen::Workspace(welcome()),
             Self::WelcomeTerminal => Screen::Workspace(with_shell(welcome())),
+            Self::Panes => Screen::Workspace(
+                code()
+                    .pane_dragged(code_item(), Some((0, Side::Right)), (0.0, 0.0))
+                    .pane_dropped()
+                    .pane_dragged(Item::Diff, Some((0, Side::Bottom)), (0.0, 0.0))
+                    .pane_dropped()
+                    .after(TAB_CHAT),
+            ),
+            Self::PanesDragging => Screen::Workspace(code().pane_dragged(
+                code_item(),
+                Some((0, Side::Right)),
+                (900.0, 420.0),
+            )),
             Self::Wrapped => Screen::Workspace(welcome().edited(
                 PROMPT,
                 Edit::Paste(

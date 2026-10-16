@@ -108,6 +108,8 @@ fn main() {
             Some("dragging") => Shot::Dragging,
             Some("welcome") => Shot::Welcome,
             Some("welcometerminal") => Shot::WelcomeTerminal,
+            Some("panes") => Shot::Panes,
+            Some("panes-dragging") => Shot::PanesDragging,
             Some("wrapped") => Shot::Wrapped,
             Some("slashed") => Shot::Slashed,
             Some("dollar") => Shot::Dollar,

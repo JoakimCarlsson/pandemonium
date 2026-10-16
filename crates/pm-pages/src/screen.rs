@@ -241,6 +241,43 @@ impl Screen {
         }
     }
 
+    /// The tab of a pane `id` is, while the workspace is showing.
+    pub fn pane_tab_of(&self, id: FocusId) -> Option<pm_components::panes::Item> {
+        match self {
+            Self::Workspace(state) => state.pane_tab_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the tab `item` being dragged, over the `over` pane and edge, if any, with the pointer at `at`.
+    pub fn pane_dragged(
+        self,
+        item: pm_components::panes::Item,
+        over: Option<(usize, pm_components::panes::Side)>,
+        at: (f32, f32),
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.pane_dragged(item, over, at)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen after a dragged tab was let go.
+    pub fn pane_dropped(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.pane_dropped()),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen after the file at `index` in a pane other than the focused one is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_peek(self, index: usize, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_peek(index, delta, room)),
+            onboarding => onboarding,
+        }
+    }
+
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some())
