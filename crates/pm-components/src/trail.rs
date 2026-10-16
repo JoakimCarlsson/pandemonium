@@ -63,7 +63,7 @@ impl WorkspaceState {
     fn exists(&self, place: &Place) -> bool {
         match place.0 {
             Page::Session(index) => index < self.sessions.len(),
-            Page::New(project) => project < self.projects.len(),
+            Page::New(project) | Page::Project(project) => project < self.projects.len(),
             Page::History | Page::Extensions => true,
         }
     }

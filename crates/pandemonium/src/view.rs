@@ -24,6 +24,8 @@ enum Saved {
     New(String),
     /// Every session.
     History,
+    /// The overview of the project at this path.
+    Project(String),
     /// The extensions there are to install.
     Extensions,
     /// The page for starting work in the first project.
@@ -175,11 +177,15 @@ impl View {
                 )),
             },
             Page::New(project) => Saved::New(path(project)),
+            Page::Project(project) => Saved::Project(path(project)),
             Page::History => Saved::History,
             Page::Extensions => Saved::Extensions,
         };
         let with_files = matches!(page, Saved::Session { .. })
-            || matches!((&page, state.page), (Saved::New(_), Page::New(_)));
+            || matches!(
+                (&page, state.page),
+                (Saved::New(_), Page::New(_)) | (Saved::Project(_), Page::Project(_))
+            );
         let files = if with_files {
             state
                 .git
@@ -274,6 +280,7 @@ impl View {
         let project_at = |path: &String| state.projects.iter().position(|held| held.path == *path);
         match &self.page {
             Saved::New(path) => state.page = Page::New(project_at(path).unwrap_or(0)),
+            Saved::Project(path) => state.page = Page::Project(project_at(path).unwrap_or(0)),
             Saved::History => state.page = Page::History,
             Saved::Extensions => state.page = Page::Extensions,
             Saved::Session { .. } | Saved::First => {}
@@ -309,7 +316,9 @@ impl View {
                 opened.sync_context();
                 self.reopen_files(opened)
             }
-            (None, Page::New(_)) if matches!(self.page, Saved::New(_)) => {
+            (None, Page::New(_) | Page::Project(_))
+                if matches!(self.page, Saved::New(_) | Saved::Project(_)) =>
+            {
                 let mut opened = state;
                 opened.sync_context();
                 self.reopen_files(opened)

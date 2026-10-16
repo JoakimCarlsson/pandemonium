@@ -487,8 +487,13 @@ impl WorkspaceState {
         self
     }
 
-    /// Reads the branches of the project being started in when it is not the one they were read for.
+    /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches, when they are not the ones read already.
     pub fn sync_context(&mut self) {
+        if let Page::Project(project) = self.page {
+            self.read_home(project);
+            self.sync_files_owner();
+            return;
+        }
         let Page::New(project) = self.page else {
             self.sync_files_owner();
             self.homed = None;

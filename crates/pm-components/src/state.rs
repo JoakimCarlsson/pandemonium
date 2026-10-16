@@ -950,6 +950,8 @@ pub enum Page {
     Session(usize),
     /// A prompt to start work in one project, by position.
     New(usize),
+    /// The overview of one project, by position: its sessions and its repository.
+    Project(usize),
     /// Every session.
     History,
     /// The extensions there are to install.
@@ -1034,6 +1036,8 @@ pub struct WorkspaceState {
     pub plan_open: bool,
     /// How far down the plan panel is scrolled, in logical pixels.
     pub plan_scroll: f32,
+    /// How far down a project's overview is scrolled, in logical pixels.
+    pub overview_scroll: f32,
     /// Whether the terminal is open.
     pub terminal: bool,
     /// Whether the terminal is taller than usual.
@@ -1226,6 +1230,7 @@ impl WorkspaceState {
             homed: None,
             plan_open: false,
             plan_scroll: 0.0,
+            overview_scroll: 0.0,
             terminal: false,
             terminal_maximized: false,
             terminal_height: crate::terminal::HEIGHT,
@@ -1375,7 +1380,7 @@ impl WorkspaceState {
     /// The project the next new work goes to: the open session's, or the one being started in.
     pub fn current_project(&self) -> usize {
         match self.page {
-            Page::New(project) => project,
+            Page::New(project) | Page::Project(project) => project,
             _ => self.open().map_or(0, |session| session.project),
         }
     }
@@ -1804,7 +1809,8 @@ impl WorkspaceState {
         if let Some(index) = position(ADDER_ROW_BASE, rows) {
             self.adder_chosen(index);
         } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
-            self.page = Page::New(index);
+            self.page = Page::Project(index);
+            self.overview_scroll = 0.0;
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
             self.page = Page::New(index);
         } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
@@ -2136,7 +2142,7 @@ impl WorkspaceState {
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
             }
-            Page::History | Page::Extensions => return,
+            Page::Project(_) | Page::History | Page::Extensions => return,
         };
         let files = self.take_prompt();
         let held = &mut self.sessions[session];

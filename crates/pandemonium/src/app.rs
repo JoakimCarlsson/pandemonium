@@ -16,6 +16,7 @@ use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCR
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::open_files::EDITOR_FIELD;
+use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
@@ -890,6 +891,7 @@ impl App {
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
                 SETTINGS_NAV_SCROLL => std::mem::take(state).scrolled_settings_nav(pixels, room),
                 EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
+                OVERVIEW_SCROLL => std::mem::take(state).scrolled_overview(pixels, room),
                 HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),

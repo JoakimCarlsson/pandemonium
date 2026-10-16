@@ -101,7 +101,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .collect();
     let dragged = state.project_drag.is_some_and(|drag| drag.from == index);
     let mut header = Tile::new(FocusId(PROJECT_BASE + index as u64))
-        .selected(false)
+        .selected(state.page == Page::Project(index))
         .build()
         .styles([px(2)])
         .child(Avatar::of(project).build())
