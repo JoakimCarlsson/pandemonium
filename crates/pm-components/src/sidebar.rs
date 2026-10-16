@@ -16,8 +16,7 @@ use crate::arrange::PROJECT_MORE_BASE;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
 use crate::state::{
-    ADD_PROJECT, HISTORY, NEW_IN_BASE, PROJECT_BASE, Page, SEARCH, SESSION_BASE, SETTINGS,
-    WorkspaceState,
+    ADD_PROJECT, HISTORY, NEW_IN_BASE, PROJECT_BASE, Page, SESSION_BASE, SETTINGS, WorkspaceState,
 };
 
 /// How wide the sidebar is until it is dragged wider or narrower, in logical pixels.
@@ -166,7 +165,6 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
                         HISTORY,
                         state.page == Page::History,
                     ),
-                    entry(IconName::Search, "Search", SEARCH, false),
                     entry(
                         IconName::FileCode,
                         "Extensions",

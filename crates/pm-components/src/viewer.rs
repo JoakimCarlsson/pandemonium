@@ -17,7 +17,8 @@ use crate::Button;
 use crate::button::{Size, Variant};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
-use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, STRIP, Viewer};
+use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
+use crate::panes::PEEK_SCROLL_BASE;
 use crate::parts::{line, spacer};
 use crate::state::WorkspaceState;
 use pm_editor::{Document, EditorSettings, LineChange};
@@ -234,7 +235,7 @@ fn marks_in(marks: &[Mark], segment: &Range<usize>, first: bool, last: bool) -> 
         .collect()
 }
 
-/// One numbered line of the file, broken into the rows `segments` of it hold, with the caret and selection placed in it, coloured by `marks`.
+/// One numbered line of the file, broken into the rows `segments` of it hold, with the caret and selection placed in it for the field `owner`, coloured by `marks`.
 fn file_line(
     document: &Document,
     index: usize,
@@ -242,6 +243,7 @@ fn file_line(
     segments: Vec<Range<usize>>,
     blamed: Option<String>,
     settings: &EditorSettings,
+    owner: FocusId,
 ) -> Node {
     let line = document.line(index);
     let text_of = &document.field.text()[line.clone()];
@@ -271,19 +273,19 @@ fn file_line(
                 text_color(Role::Text),
                 flex_none(),
             ])
-            .field_line(EDITOR_FIELD, absolute.start)
+            .field_line(owner, absolute.start)
             .marks(marks_in(&marks, segment, place == 0, place == last))
             .caret_look(caret_look(settings));
         let holds_caret = (absolute.start..absolute.end).contains(&caret)
             || (place == last && caret == absolute.end);
         if holds_caret {
-            content = content.caret(caret - absolute.start, EDITOR_FIELD);
+            content = content.caret(caret - absolute.start, owner);
         }
         if let Some(range) = clipped(&document.field.selection(), &absolute) {
-            content = content.selection(range, EDITOR_FIELD);
+            content = content.selection(range, owner);
         }
         if let Some(range) = clipped(&document.field.marked(), &absolute) {
-            content = content.marked(range, EDITOR_FIELD);
+            content = content.marked(range, owner);
         }
         let held = node()
             .styles([
@@ -426,16 +428,29 @@ fn guides(document: &Document, rows: Range<usize>) -> Vec<Vec<usize>> {
     .collect()
 }
 
-/// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, broken into rows of `columns` characters when lines wrap, with a blank for those above and below.
-fn visible(
-    document: &Document,
-    scroll: f32,
-    height: f32,
-    found: &(Vec<Range<usize>>, Option<usize>),
-    blamed: &dyn Fn(usize) -> Option<String>,
-    settings: &EditorSettings,
+/// How the lines of a file are drawn.
+struct Look<'a> {
+    /// The places find found, and the one chosen.
+    found: &'a (Vec<Range<usize>>, Option<usize>),
+    /// Who last changed a line, by its index.
+    blamed: &'a dyn Fn(usize) -> Option<String>,
+    /// How the editor draws.
+    settings: &'a EditorSettings,
+    /// How many characters a row holds when lines wrap.
     columns: Option<usize>,
-) -> Vec<Node> {
+    /// The field whose caret and selection the lines hold.
+    owner: FocusId,
+}
+
+/// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, drawn as `look` says, with a blank for those above and below.
+fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<Node> {
+    let Look {
+        found,
+        blamed,
+        settings,
+        columns,
+        owner,
+    } = *look;
     let row = settings.row_height();
     let total = document.wrapped_rows(columns);
     let first = (((scroll - OVERSCAN) / row).floor().max(0.0) as usize).min(total);
@@ -473,7 +488,15 @@ fn visible(
                     }));
                     let segments = document.line_segments(index, columns);
                     drawn += segments.len();
-                    file_line(document, index, marks, segments, blamed(index), settings)
+                    file_line(
+                        document,
+                        index,
+                        marks,
+                        segments,
+                        blamed(index),
+                        settings,
+                        owner,
+                    )
                 }),
         );
     }
@@ -543,8 +566,8 @@ fn tallies(document: &Document) -> Vec<Node> {
         .collect()
 }
 
-/// The strip above the file: its icon and name, and the button that writes it when it has changes to write.
-fn strip(viewer: &Viewer) -> Node {
+/// The strip above the file: its icon and name, and, while it is the file shown, `live`, the switch between its source and its rendering and the button that writes it when it has changes to write.
+fn strip(viewer: &Viewer, live: bool) -> Node {
     let mut strip = node()
         .styles([
             flex(),
@@ -588,6 +611,9 @@ fn strip(viewer: &Viewer) -> Node {
                 .child(line(short, 11, 1.4, Role::Subtle).styles([min_w_px(0), overflow_hidden()]));
         }
     }
+    if !live {
+        return strip;
+    }
     strip = strip.children(crate::preview::switch(viewer));
     if viewer.is_dirty() {
         strip = strip.child(
@@ -602,8 +628,38 @@ fn strip(viewer: &Viewer) -> Node {
 
 /// The file shown, in a view `width` by `height` logical pixels: a strip naming it, then the file rendered when it is shown so, or else its lines, which are edited in place unless the file is read only.
 pub fn viewer(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
-    let Some(viewer) = state.shown_viewer() else {
+    match state.git.shown.filter(|_| state.shown_viewer().is_some()) {
+        Some(index) => file_view(state, index, width, height, shaper),
+        None => node(),
+    }
+}
+
+/// The open file at `index`, in a view `width` by `height` logical pixels: the file shown, edited in place, or one shown in a pane other than the one being worked in, which a press on makes the file shown.
+pub fn file_view(
+    state: &WorkspaceState,
+    index: usize,
+    width: f32,
+    height: f32,
+    shaper: &mut Shaper,
+) -> Node {
+    let Some(viewer) = state.git.viewers.get(index) else {
         return node();
+    };
+    let live = state.shown_viewer().is_some() && state.git.shown == Some(index);
+    let owner = if live {
+        EDITOR_FIELD
+    } else {
+        FocusId(FILE_TAB_BASE + index as u64)
+    };
+    let scroller = if live {
+        VIEWER_SCROLL
+    } else {
+        FocusId(PEEK_SCROLL_BASE + index as u64)
+    };
+    let found = if live {
+        state.find_marks()
+    } else {
+        (Vec::new(), None)
     };
     let lines_height = (height - STRIP).max(0.0);
     let rendered = crate::preview::rendered(viewer, &state.figures, (width, height), shaper);
@@ -631,18 +687,21 @@ pub fn viewer(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shap
                     min_h(lines_height / 4.0),
                     cursor_text(),
                 ])
-                .focusable(EDITOR_FIELD)
+                .focusable(owner)
                 .children(visible(
                     document,
                     viewer.scroll,
                     lines_height,
-                    &state.find_marks(),
-                    &|index| state.blame_of_line(index),
-                    &pm_editor::EditorSettings {
-                        git_gutter: state.shows_gutter(),
-                        ..state.editor.clone()
+                    &Look {
+                        found: &found,
+                        blamed: &|line| state.blame_of_line(line).filter(|_| live),
+                        settings: &pm_editor::EditorSettings {
+                            git_gutter: state.shows_gutter(),
+                            ..state.editor.clone()
+                        },
+                        columns: state.wrap_columns(),
+                        owner,
                     },
-                    state.wrap_columns(),
                 ));
             if document.truncated {
                 rows = rows.child(node().styles([px(4), py(2)]).child(line(
@@ -664,7 +723,7 @@ pub fn viewer(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shap
             min_h(0),
             bg(Role::Background),
         ])
-        .child(strip(viewer))
+        .child(strip(viewer, live))
         .child(
             node()
                 .styles([flex(), flex_1(), min_h(0), overflow_hidden(), relative()])
@@ -678,29 +737,24 @@ pub fn viewer(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shap
                             min_h(0),
                             overflow_hidden(),
                         ])
-                        .scroll_from_start(VIEWER_SCROLL, viewer.scroll)
+                        .scroll_from_start(scroller, viewer.scroll)
                         .child(body),
                 )
                 .children(match &viewer.contents {
-                    Contents::Text(document) if source => crate::scroll_marks::scroll_marks(
-                        document,
-                        &state.find_marks().0,
-                        &state.editor,
-                    ),
+                    Contents::Text(document) if source => {
+                        crate::scroll_marks::scroll_marks(document, &found.0, &state.editor)
+                    }
                     _ => None,
                 })
-                .children(
-                    state
-                        .finding
-                        .as_ref()
-                        .and_then(|finding| match &viewer.contents {
-                            Contents::Text(document) if source => Some(crate::find::find_bar(
-                                finding,
-                                document,
-                                state.editor.smartcase,
-                            )),
-                            _ => None,
-                        }),
-                ),
+                .children(state.finding.as_ref().filter(|_| live).and_then(|finding| {
+                    match &viewer.contents {
+                        Contents::Text(document) if source => Some(crate::find::find_bar(
+                            finding,
+                            document,
+                            state.editor.smartcase,
+                        )),
+                        _ => None,
+                    }
+                })),
         )
 }

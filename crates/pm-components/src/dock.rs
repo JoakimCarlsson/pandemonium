@@ -6,6 +6,8 @@ use std::rc::Rc;
 use pm_input::FocusId;
 use pm_terminal::{Emulator, Link};
 
+use crate::sample::Session;
+
 use crate::state::{
     MAXIMIZE_TERMINAL, NEW_TERMINAL, Outgoing, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE,
     WorkspaceState,
@@ -129,9 +131,9 @@ impl WorkspaceState {
         }
     }
 
-    /// Starts a shell in the open session and shows the dock.
+    /// Starts a shell in the session the dock is about and shows the dock.
     fn open_terminal(&mut self) {
-        if let Some(session) = self.open_position() {
+        if let Some(session) = self.docked_position() {
             self.open_terminal_in(session, String::new());
         }
     }
@@ -151,14 +153,16 @@ impl WorkspaceState {
         }
     }
 
-    /// The position of the session on screen.
-    fn open_position(&self) -> Option<usize> {
-        match self.page {
-            crate::state::Page::Session(position) if position < self.sessions.len() => {
-                Some(position)
-            }
-            _ => None,
-        }
+    /// The position of the session the dock is about: the open one, or, on the page for starting work or a project's overview, the stand-in for the project's own folder.
+    fn docked_position(&self) -> Option<usize> {
+        self.review_index()
+            .filter(|position| *position < self.sessions.len())
+    }
+
+    /// The session the dock is about, if there is one.
+    pub fn docked(&self) -> Option<&Session> {
+        self.docked_position()
+            .and_then(|position| self.sessions.get(position))
     }
 
     /// Shows or hides the dock, starting a first shell when it is shown for a session with none.
@@ -177,9 +181,9 @@ impl WorkspaceState {
         }
     }
 
-    /// Ends the shell at `index` of the open session, hiding the dock when it was the last.
+    /// Ends the shell at `index` of the session the dock is about, hiding the dock when it was the last.
     pub(crate) fn close_terminal_tab(&mut self, index: usize) {
-        let Some(position) = self.open_position() else {
+        let Some(position) = self.docked_position() else {
             return;
         };
         let session = &mut self.sessions[position];
@@ -204,7 +208,7 @@ impl WorkspaceState {
             NEW_TERMINAL => self.open_terminal(),
             MAXIMIZE_TERMINAL => self.terminal_maximized = !self.terminal_maximized,
             FocusId(number) => {
-                let count = self.open().map_or(0, |session| session.terminals.len());
+                let count = self.docked().map_or(0, |session| session.terminals.len());
                 let offset = |base: u64| {
                     number
                         .checked_sub(base)
@@ -212,7 +216,7 @@ impl WorkspaceState {
                         .filter(|offset| *offset < count)
                 };
                 if let Some(index) = offset(TERMINAL_TAB_BASE) {
-                    if let Some(position) = self.open_position() {
+                    if let Some(position) = self.docked_position() {
                         self.sessions[position].terminal_active = index;
                     }
                 } else if let Some(index) = offset(TERMINAL_CLOSE_BASE) {
@@ -225,15 +229,15 @@ impl WorkspaceState {
         true
     }
 
-    /// The shell showing in the open session.
+    /// The shell showing for the session the dock is about.
     pub fn active_terminal(&self) -> Option<&TerminalTab> {
-        let session = self.open()?;
+        let session = self.docked()?;
         session.terminals.get(session.terminal_active)
     }
 
-    /// The shell showing in the open session, to change.
+    /// The shell showing for the session the dock is about, to change.
     pub(crate) fn active_terminal_mut(&mut self) -> Option<&mut TerminalTab> {
-        let position = self.open_position()?;
+        let position = self.docked_position()?;
         let session = &mut self.sessions[position];
         session.terminals.get_mut(session.terminal_active)
     }
@@ -310,9 +314,9 @@ impl WorkspaceState {
         }
     }
 
-    /// Takes the shell `tab` out of its session because it ended, hiding the dock when it was the last of the open session.
+    /// Takes the shell `tab` out of its session because it ended, hiding the dock when it was the last of the session the dock is about.
     pub fn terminal_exited(&mut self, tab: u64) {
-        let open = self.open_position();
+        let open = self.docked_position();
         for (position, session) in self.sessions.iter_mut().enumerate() {
             let Some(index) = session.terminals.iter().position(|held| held.id == tab) else {
                 continue;
@@ -432,9 +436,9 @@ impl WorkspaceState {
             .map(|(position, _)| position)
     }
 
-    /// Starts a shell in the open session when it is on the machine `host` and the dock shows none, as when the shells it showed ended with an earlier server.
+    /// Starts a shell in the session the dock is about when it is on the machine `host` and the dock shows none, as when the shells it showed ended with an earlier server.
     pub fn revive_terminal(&mut self, host: &Option<String>) {
-        let Some(session) = self.open() else {
+        let Some(session) = self.docked() else {
             return;
         };
         let on_host = self

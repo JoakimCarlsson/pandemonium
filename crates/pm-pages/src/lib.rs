@@ -2,6 +2,7 @@
 
 mod editing;
 mod onboarding;
+mod panes;
 mod screen;
 mod workspace;
 

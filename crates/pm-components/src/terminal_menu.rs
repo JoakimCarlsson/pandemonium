@@ -137,7 +137,7 @@ impl WorkspaceState {
                 }
             }
             TerminalCommand::Kill => {
-                if let Some(index) = self.open().map(|session| session.terminal_active) {
+                if let Some(index) = self.docked().map(|session| session.terminal_active) {
                     self.close_terminal_tab(index);
                 }
             }

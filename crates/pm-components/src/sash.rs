@@ -36,6 +36,8 @@ pub enum Grows {
     Left,
     /// The panel grows as the handle moves up.
     Up,
+    /// The panel grows as the handle moves down.
+    Down,
 }
 
 impl Grows {
@@ -45,6 +47,7 @@ impl Grows {
             Self::Right => to.0 - from.0,
             Self::Left => from.0 - to.0,
             Self::Up => from.1 - to.1,
+            Self::Down => to.1 - from.1,
         }
     }
 }
@@ -160,7 +163,7 @@ impl WorkspaceState {
             )),
             TERMINAL_SASH => Some((terminal::height(self, window.1), Grows::Up)),
             GRAPH_SASH => Some((self.git.graph_height, Grows::Up)),
-            _ => None,
+            _ => crate::panes::split_sash_of(id).and_then(|index| self.split_sash(index, window)),
         }
     }
 
@@ -175,7 +178,11 @@ impl WorkspaceState {
                 self.terminal_height = size.clamp(terminal::HEIGHTS.0, terminal::tallest(window.1));
             }
             GRAPH_SASH => self.git.graph_height = size.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1),
-            _ => {}
+            _ => {
+                if let Some(index) = crate::panes::split_sash_of(id) {
+                    self.resize_split(index, size, window);
+                }
+            }
         }
         self
     }
