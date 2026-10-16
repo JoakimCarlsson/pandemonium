@@ -393,6 +393,15 @@ impl Screen {
         }
     }
 
+    /// The screen after the list of sections of the settings window is scrolled by `delta`
+    /// logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_settings_nav(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_settings_nav(delta, room)),
+            other => other,
+        }
+    }
+
     /// The screen after the page showing in the settings panel is scrolled by `delta`
     /// logical pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_settings(self, delta: f32, room: f32) -> Self {

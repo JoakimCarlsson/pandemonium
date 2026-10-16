@@ -358,7 +358,7 @@ impl Preset {
     ];
 
     /// What it is called.
-    pub fn title(self) -> &'static str {
+    pub const fn title(self) -> &'static str {
         match self {
             Self::Pandemonium => "Pandemonium",
             Self::VsCode => "VS Code",

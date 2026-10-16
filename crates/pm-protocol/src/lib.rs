@@ -5,14 +5,19 @@ mod agents;
 mod bytes;
 mod credential;
 mod extensions;
+mod machine;
 mod message;
 mod request;
 mod response;
 
-pub use address::{SSH_SCHEME, host_of, is_destination};
+pub use address::{DIRECT_SCHEME, SSH_SCHEME, direct_address, host_of, is_destination};
 pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use extensions::{ExtensionInfo, GrammarBundle};
+pub use machine::{
+    AgentPreferences, FETCH_MINUTES, GitPreferences, LanguagePreferences, MachineSettings,
+    ShellPreferences,
+};
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_buffer::{Position, Span};
 pub use pm_lsp::{

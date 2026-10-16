@@ -1,27 +1,20 @@
 //! The keymap page of the settings panel: the preset the keys start from, every action with its keys, and the reader's own keys recorded over the preset's.
 
-use pm_editor::{Action, Preset, shown};
+use pm_editor::{Action, shown};
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, bg, border, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
-    font_mono, gap, h, items_center, justify_between, justify_center, min_w_px, px, rounded, w_px,
+    font_mono, gap, h, items_center, justify_between, min_w_px, px, rounded, w_px,
 };
 use pm_ui::{Node, node};
 
-use crate::parts::{clipped, line, wrap};
+use crate::parts::{clipped, line};
+use crate::settings::SETTINGS_KEYMAP_FIND;
+use crate::settings_catalog::Setting;
 use crate::state::WorkspaceState;
-
-/// The first of the choices of preset; the rest follow it.
-const PRESET_BASE: u64 = 20_001_900;
 
 /// The first of the controls of the actions; each action has four after its own base, its place among them times four.
 const ACTION_BASE: u64 = 20_002_000;
-
-/// How wide the choices of preset are drawn, in logical pixels, at most.
-const PRESETS_WIDTH: f32 = 350.0;
-
-/// The least room what the preset row says is given beside the choices, in logical pixels, before they go under it.
-const MIN_WORDS: f32 = 200.0;
 
 /// How many controls an action has room for.
 const PER_ACTION: u64 = 4;
@@ -64,20 +57,9 @@ fn control_of(id: FocusId) -> Option<(Action, Part)> {
     Some((action, part))
 }
 
-/// The preset the choice `id` picks.
-fn preset_of(id: FocusId) -> Option<Preset> {
-    let offset = id.0.checked_sub(PRESET_BASE)?;
-    Preset::ALL.get(offset as usize).copied()
-}
-
 impl WorkspaceState {
     /// Carries out pressing the control `id` of the keymap page, and says whether it was one.
     pub(crate) fn keymap_pressed(&mut self, id: FocusId) -> bool {
-        if let Some(preset) = preset_of(id) {
-            self.editor.keymap = preset;
-            self.recording = None;
-            return true;
-        }
         let Some((action, part)) = control_of(id) else {
             return false;
         };
@@ -118,73 +100,6 @@ impl WorkspaceState {
         }
         self
     }
-}
-
-/// The choices of preset, the one in use marked.
-fn presets(picked: Preset) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_none(),
-            gap(0.5),
-            px(0.5),
-            h(8),
-            rounded(Radius::Md),
-            border(),
-            border_color(Role::Border),
-        ])
-        .children(Preset::ALL.into_iter().enumerate().map(|(place, preset)| {
-            let on = preset == picked;
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    justify_center(),
-                    h(6.5),
-                    px(2.5),
-                    rounded(Radius::Sm),
-                    cursor_pointer(),
-                ])
-                .styles([if on {
-                    bg(Role::SurfaceSelected)
-                } else {
-                    bg(Role::SurfaceHover).hover()
-                }])
-                .focusable(FocusId(PRESET_BASE + place as u64))
-                .child(line(
-                    preset.title(),
-                    12,
-                    1.4,
-                    if on { Role::Text } else { Role::Muted },
-                ))
-        }))
-}
-
-/// The row choosing the preset the keys start from, `room` logical pixels across: what it is beside the choices, or above them where they leave too little room.
-fn base(picked: Preset, room: f32) -> Node {
-    let beside = room - PRESETS_WIDTH - 24.0;
-    let stacked = beside < MIN_WORDS;
-    let words = if stacked { room } else { beside };
-    let about = node()
-        .styles([flex(), flex_col(), gap(0.5), min_w_px(0)])
-        .child(line("Base keymap", 13, 1.4, Role::Text))
-        .children(
-            wrap(
-                "The keys start as another editor has them; your own keys go over them.",
-                12,
-                words,
-            )
-            .into_iter()
-            .map(|words| line(words, 12, 1.4, Role::Muted)),
-        );
-    let row = node().styles([flex(), gap(6), flex_none()]);
-    let row = if stacked {
-        row.styles([flex_col(), pm_style::items_start(), gap(2)])
-    } else {
-        row.styles([items_center(), justify_between()])
-    };
-    row.child(about).child(presets(picked))
 }
 
 /// A small button of a row saying `label`.
@@ -244,10 +159,32 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: FocusId) -> Node {
     held
 }
 
-/// The keymap page's body, `room` logical pixels across: the preset, then every action under its group with its keys.
+/// Whether `action`, bound to `keys`, is one `needle`, lowercased, finds: by its name, its group, or its keys as they are written or shown.
+fn found(action: Action, keys: &[String], needle: &str) -> bool {
+    needle.is_empty()
+        || action.title().to_lowercase().contains(needle)
+        || action.group().to_lowercase().contains(needle)
+        || keys.iter().any(|binding| {
+            binding.to_lowercase().contains(needle)
+                || shown(binding).to_lowercase().contains(needle)
+        })
+}
+
+/// The box the actions are searched with.
+fn search_box(state: &WorkspaceState) -> Node {
+    crate::search_box::SearchBox::new(&state.settings_page.keymap_find, SETTINGS_KEYMAP_FIND)
+        .placeholder("Search actions by name or keys")
+        .build()
+}
+
+/// The keymap page's body, `room` logical pixels across: the preset, the search box, then every action it finds under its group with its keys.
 pub(crate) fn rows(state: &WorkspaceState, room: f32) -> Vec<Node> {
     let keymap = state.editor.keymap();
-    let mut parts = vec![base(state.editor.keymap, room)];
+    let needle = state.settings_page.keymap_find.text().trim().to_lowercase();
+    let mut parts = vec![
+        crate::settings_pages::setting_row(state, Setting::BaseKeymap, room),
+        search_box(state),
+    ];
     let mut group = "";
     let mut rows: Vec<Node> = Vec::new();
     let groups = [
@@ -294,12 +231,17 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) -> Vec<Node> {
                 ),
         );
     };
+    let mut any = false;
     for action in ordered {
+        let keys = keymap.keys_of(action);
+        if !found(action, &keys, &needle) {
+            continue;
+        }
+        any = true;
         if action.group() != group {
             flush(group, &mut rows, &mut parts);
             group = action.group();
         }
-        let keys = keymap.keys_of(action);
         let own = state.editor.keys.contains_key(action.key());
         let clashes: Vec<&str> = keys
             .iter()
@@ -343,6 +285,9 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) -> Vec<Node> {
         );
     }
     flush(group, &mut rows, &mut parts);
+    if !any {
+        parts.push(line("No action matches.", 13, 1.5, Role::Muted));
+    }
     parts.push(node().styles([w_px(1.0), h(2), flex_none()]));
     parts
 }

@@ -2156,6 +2156,7 @@ dependencies = [
  "pm-client",
  "pm-color",
  "pm-components",
+ "pm-config",
  "pm-editor",
  "pm-git",
  "pm-input",
@@ -2167,6 +2168,7 @@ dependencies = [
  "pm-ssh",
  "pm-state",
  "pm-store",
+ "pm-style",
  "pm-text",
  "pm-theme",
  "pm-treesitter",
@@ -2310,6 +2312,7 @@ version = "0.13.0-rc.1"
 dependencies = [
  "chrono",
  "pm-acp",
+ "pm-config",
  "pm-editor",
  "pm-git",
  "pm-icon",
@@ -2319,6 +2322,7 @@ dependencies = [
  "pm-style",
  "pm-terminal",
  "pm-text",
+ "pm-theme",
  "pm-treesitter",
  "pm-ui",
  "serde_json",
@@ -2327,6 +2331,11 @@ dependencies = [
 [[package]]
 name = "pm-config"
 version = "0.13.0-rc.1"
+dependencies = [
+ "pm-protocol",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pm-decoration"
@@ -2410,6 +2419,7 @@ version = "0.13.0-rc.1"
 dependencies = [
  "pm-acp",
  "pm-components",
+ "pm-config",
  "pm-editor",
  "pm-git",
  "pm-icon",
@@ -2480,6 +2490,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+ "ureq",
 ]
 
 [[package]]

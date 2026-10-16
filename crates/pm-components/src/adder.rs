@@ -139,6 +139,8 @@ pub struct Adder {
     pub working: Option<String>,
     /// Why the last thing asked of the server did not work.
     pub trouble: Option<String>,
+    /// The server on another machine the project is added on, or this machine's when nothing.
+    pub machine: Option<pm_config::KnownServer>,
 }
 
 /// What the list says when it has no rows to say it.
@@ -175,8 +177,8 @@ fn matches(found: &Found, needle: &str) -> bool {
 }
 
 impl Adder {
-    /// The panel open on its first choices.
-    fn new() -> Self {
+    /// The panel open on its first choices, adding the project on `machine`, or this machine when nothing.
+    fn new(machine: Option<pm_config::KnownServer>) -> Self {
         Self {
             step: Step::Choices,
             field: Field::default(),
@@ -191,6 +193,20 @@ impl Adder {
             selected: 0,
             working: None,
             trouble: None,
+            machine,
+        }
+    }
+
+    /// The machine the project is added on, as a project's address names it, or nothing for this one.
+    fn host(&self) -> Option<String> {
+        self.machine.as_ref().map(pm_config::KnownServer::host)
+    }
+
+    /// The address of the project in the folder `path` of the machine it is added on.
+    fn address(&self, path: &str) -> String {
+        match &self.machine {
+            Some(machine) => machine.project(path),
+            None => path.to_owned(),
         }
     }
 
@@ -202,6 +218,7 @@ impl Adder {
         self.selected = usize::MAX;
         Outgoing::Folders {
             path: path.to_owned(),
+            host: self.host(),
         }
     }
 
@@ -303,18 +320,18 @@ impl Adder {
         }
     }
 
-    /// The rows of the first choices.
-    fn choices() -> [(IconName, &'static str, &'static str); 2] {
+    /// The rows of the first choices, on the machine the project is added on.
+    fn choices(&self) -> [(IconName, &'static str, String); 2] {
+        let browse = match &self.machine {
+            Some(machine) => format!("Choose a directory on {}", machine.name),
+            None => "Choose a directory from your home folder".to_owned(),
+        };
         [
-            (
-                IconName::FolderOpen,
-                "Browse",
-                "Choose a directory from your home folder",
-            ),
+            (IconName::FolderOpen, "Browse", browse),
             (
                 IconName::GitFork,
                 "Clone from GitHub",
-                "Search projects available to your GitHub account",
+                "Search projects available to your GitHub account".to_owned(),
             ),
         ]
     }
@@ -322,12 +339,13 @@ impl Adder {
     /// The rows as they are drawn.
     fn rows(&self) -> Vec<Row> {
         match self.step {
-            Step::Choices => Self::choices()
+            Step::Choices => self
+                .choices()
                 .into_iter()
                 .map(|(icon, name, detail)| Row {
                     icon,
                     name: name.to_owned(),
-                    detail: detail.to_owned(),
+                    detail,
                 })
                 .collect(),
             _ => self
@@ -637,12 +655,14 @@ impl WorkspaceState {
                 self.outbox.push(Outgoing::Clone {
                     url: repository.value,
                     under: path.to_owned(),
+                    host: open.host(),
                 });
             }
             None => {
+                let address = open.address(path);
                 self.adder = None;
                 self.menu_scroll = 0.0;
-                *self = self.clone().with_project_opened(path);
+                *self = self.clone().with_project_opened(&address);
                 self.outbox.push(Outgoing::Relist);
             }
         }
@@ -689,7 +709,7 @@ impl WorkspaceState {
         self.menu = None;
         self.picker = None;
         self.menu_scroll = 0.0;
-        self.adder = Some(Adder::new());
+        self.adder = Some(Adder::new(self.window.servers.default_target().cloned()));
         self
     }
 
@@ -735,7 +755,11 @@ impl WorkspaceState {
 
     /// The state after the server cloned the repository into `path`, which is added as a project and opened.
     pub fn adder_landed(self, path: &str) -> Self {
-        self.without_adder().with_project_opened(path)
+        let address = self
+            .adder
+            .as_ref()
+            .map_or_else(|| path.to_owned(), |open| open.address(path));
+        self.without_adder().with_project_opened(&address)
     }
 
     /// The state after the server could not do what the panel asked, for this reason.

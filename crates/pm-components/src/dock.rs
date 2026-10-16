@@ -98,10 +98,15 @@ impl WorkspaceState {
             .max()
             .unwrap_or(0)
             + 1;
+        let emulator = Shared::new(columns, rows);
+        emulator
+            .write()
+            .set_scrollback(self.window.terminal.scrollback);
+        let held = self.sessions.get_mut(session)?;
         held.terminals.push(TerminalTab {
             id,
             label,
-            emulator: Shared::new(columns, rows),
+            emulator,
             back: 0,
             exited: false,
             composing: String::new(),
@@ -109,6 +114,16 @@ impl WorkspaceState {
         held.terminal_active = held.terminals.len() - 1;
         self.next_terminal += 1;
         Some(id)
+    }
+
+    /// Has every shell keep as many lines to scroll back to as the settings say.
+    pub(crate) fn apply_scrollback(&mut self) {
+        let lines = self.window.terminal.scrollback;
+        for session in &self.sessions {
+            for tab in &session.terminals {
+                tab.emulator.write().set_scrollback(lines);
+            }
+        }
     }
 
     /// Starts a shell in the open session and shows the dock.

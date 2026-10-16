@@ -11,7 +11,7 @@ use pm_style::layout::{Placed, solve};
 use pm_text::{Run, Shaper};
 use pm_theme::Theme;
 
-use crate::node::{Anchor, Mark, Node, Paint};
+use crate::node::{Anchor, CaretShape, Mark, Node, Paint};
 use crate::retain;
 use crate::select::{DrawnPiece, TextPiece, TextSelection};
 use crate::tooltip::{self, Showing};
@@ -805,32 +805,35 @@ impl Frame<'_> {
                 color,
             ));
         }
-        if let Some((byte, owner)) = node.caret
-            && self.input.focused == Some(owner)
-        {
-            self.output.animating = true;
-            if ((self.input.elapsed_ms / CARET_BLINK_MS) as u32).is_multiple_of(2) {
-                let at = x + run.caret_x(byte);
-                self.list.push(Quad::filled(
-                    Rect::new(at, y, CARET_WIDTH, run.height),
-                    color,
-                ));
-            }
-        }
-        let carets: Vec<usize> = node
+        let mut carets: Vec<usize> = node
             .marks
             .iter()
             .filter(|mark| mark.paint == Paint::Caret)
             .map(|mark| mark.range.start)
             .collect();
+        if let Some((byte, owner)) = node.caret
+            && self.input.focused == Some(owner)
+        {
+            carets.push(byte);
+        }
         if !carets.is_empty() {
-            self.output.animating = true;
-            if ((self.input.elapsed_ms / CARET_BLINK_MS) as u32).is_multiple_of(2) {
+            let look = node.caret_look;
+            let lit =
+                look.steady || ((self.input.elapsed_ms / CARET_BLINK_MS) as u32).is_multiple_of(2);
+            if !look.steady {
+                self.output.animating = true;
+            }
+            if lit {
+                let size = computed.typography.size;
                 for byte in carets {
-                    let at = x + run.caret_x(byte);
+                    let rect = caret_rect(content, &run, byte, look.shape, size);
+                    let tone = match look.shape {
+                        CaretShape::Block => color.alpha(0.45 * opacity.max(0.0)),
+                        CaretShape::Bar | CaretShape::Underline => color,
+                    };
                     self.list.push(Quad::filled(
-                        Rect::new(at, y, CARET_WIDTH, run.height),
-                        color,
+                        Rect::new(x + rect.x, y + rect.y, rect.width, rect.height),
+                        tone,
                     ));
                 }
             }
@@ -1077,5 +1080,23 @@ fn strip(side: Side, rect: Rect, thickness: f32) -> Rect {
             thickness,
         ),
         Side::Left => Rect::new(rect.x, rect.y, thickness, rect.height),
+    }
+}
+
+/// Where the caret at byte `byte` of `content`, shaped as `run`, is drawn in `shape`, from the start of the line, for type `size` logical pixels tall: a bar before the character, the character's cell filled, or a line under it.
+fn caret_rect(content: &str, run: &Run, byte: usize, shape: CaretShape, size: f32) -> Rect {
+    let at = run.caret_x(byte);
+    let next = content
+        .get(byte..)
+        .and_then(|rest| rest.chars().next())
+        .map(|character| byte + character.len_utf8());
+    let cell = next
+        .map(|next| run.caret_x(next) - at)
+        .filter(|width| *width > 0.5)
+        .unwrap_or(size * 0.6);
+    match shape {
+        CaretShape::Bar => Rect::new(at, 0.0, CARET_WIDTH, run.height),
+        CaretShape::Block => Rect::new(at, 0.0, cell, run.height),
+        CaretShape::Underline => Rect::new(at, run.height - 2.0, cell, 2.0),
     }
 }

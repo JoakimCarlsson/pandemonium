@@ -10,9 +10,9 @@ pub trait Number: Copy {
     /// The number itself, in whatever unit the receiving function takes.
     fn value(self) -> f32;
 
-    /// The number counted in steps of the spacing scale, in logical pixels.
+    /// The number counted in steps of the spacing scale, in logical pixels, at the density the frame is built at.
     fn step_pixels(self) -> f32 {
-        self.value() * STEP_PX
+        self.value() * STEP_PX * crate::step_scale()
     }
 }
 

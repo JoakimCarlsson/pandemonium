@@ -13,7 +13,9 @@ use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
 use pm_components::open_files::EDITOR_FIELD;
-use pm_components::settings::{SETTINGS_ADD, Section};
+use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
+use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
+use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
 use pm_components::state::SETTINGS;
 use pm_components::state::{
     AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
@@ -47,6 +49,29 @@ const SETTINGS_HEIGHT: u32 = 720;
 /// Logical width of a snapshot of the settings window at its narrowest.
 const NARROW_WIDTH: u32 = 640;
 
+/// Logical height of a snapshot of the settings window at its smallest.
+const NARROW_HEIGHT: u32 = 420;
+
+/// The name of the shot of each section of the settings window, after `settings-`.
+pub const SETTINGS_SHOTS: [(&str, Section); 16] = [
+    ("general", Section::General),
+    ("appearance", Section::Appearance),
+    ("editor", Section::Editor),
+    ("editor-appearance", Section::EditorAppearance),
+    ("editor-editing", Section::EditorEditing),
+    ("editor-saving", Section::EditorSaving),
+    ("editor-intelligence", Section::EditorIntelligence),
+    ("editor-search", Section::EditorSearch),
+    ("languages", Section::Languages),
+    ("keymap", Section::Keymap),
+    ("terminal", Section::Terminal),
+    ("git", Section::Git),
+    ("agents", Section::Agents),
+    ("agent-servers", Section::AgentServers),
+    ("mcp-servers", Section::McpServers),
+    ("servers", Section::Servers),
+];
+
 /// Which screen a snapshot shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shot {
@@ -54,6 +79,8 @@ pub enum Shot {
     Onboarding(Step),
     /// The workspace on its first session.
     Workspace,
+    /// The workspace asking whether to close the window while agents are working.
+    Quitting,
     /// The workspace on the diff of its first session.
     Diff,
     /// The workspace on the diff of its first session with a comment kept and another being written.
@@ -148,18 +175,18 @@ pub enum Shot {
     MessageMenu,
     /// The page for starting work with the panel for adding a project open on its choices.
     Adding,
-    /// The workspace with the settings panel open.
-    Settings,
-    /// The settings panel on Agents, which opens the sections inside it.
-    SettingsAgents,
-    /// The settings panel on the Editor, which opens the pages inside it.
-    SettingsEditor,
-    /// The settings panel on the keymap.
-    SettingsKeymap,
-    /// The settings window at its narrowest, on what the language server adds.
-    SettingsNarrow,
-    /// The settings panel on how files look.
-    SettingsAppearance,
+    /// A file with its long lines wrapped at a line length of 36 and a block caret that does not blink.
+    SoftWrap,
+    /// The settings window on a section, at its narrowest when the flag is set.
+    SettingsPage(Section, bool),
+    /// The settings window showing what a search for fonts found, at its narrowest when the flag is set.
+    SettingsSearch(bool),
+    /// The settings window on Appearance with the list of code fonts open, at its narrowest when the flag is set.
+    SettingsPicker(bool),
+    /// The settings window on Servers with the form for adding one open, at its narrowest when the flag is set.
+    SettingsMachine(bool),
+    /// The settings window on Appearance set compact with interface text at 15 pixels, at its narrowest when the flag is set.
+    SettingsCompact(bool),
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
@@ -850,15 +877,49 @@ impl Shot {
     fn in_settings_window(self) -> bool {
         matches!(
             self,
-            Self::Settings
-                | Self::SettingsAgents
-                | Self::SettingsEditor
-                | Self::SettingsKeymap
-                | Self::SettingsAppearance
+            Self::SettingsPage(..)
+                | Self::SettingsSearch(_)
+                | Self::SettingsPicker(_)
+                | Self::SettingsMachine(_)
+                | Self::SettingsCompact(_)
                 | Self::SettingsMcp
                 | Self::SettingsForm
-                | Self::SettingsNarrow
         )
+    }
+
+    /// Whether this snapshot shows the settings window at its smallest.
+    fn narrow(self) -> bool {
+        matches!(
+            self,
+            Self::SettingsPage(_, true)
+                | Self::SettingsSearch(true)
+                | Self::SettingsPicker(true)
+                | Self::SettingsMachine(true)
+                | Self::SettingsCompact(true)
+        )
+    }
+
+    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine` or `settings-compact`, each with `-narrow` after it for the window at its smallest.
+    pub fn settings_named(name: &str) -> Option<Self> {
+        let rest = name.strip_prefix("settings")?;
+        let (rest, narrow) = match rest.strip_suffix("-narrow") {
+            Some(rest) => (rest, true),
+            None => (rest, false),
+        };
+        let rest = rest.strip_prefix('-').unwrap_or(rest);
+        match rest {
+            "" => Some(Self::SettingsPage(Section::General, narrow)),
+            "search" => Some(Self::SettingsSearch(narrow)),
+            "picker" => Some(Self::SettingsPicker(narrow)),
+            "machine" => Some(Self::SettingsMachine(narrow)),
+            "compact" => Some(Self::SettingsCompact(narrow)),
+            "form" => Some(Self::SettingsForm),
+            "mcp" => Some(Self::SettingsMcp),
+            slug => SETTINGS_SHOTS
+                .iter()
+                .find(|(held, _)| *held == slug)
+                .map(|(_, section)| Self::SettingsPage(*section, narrow)),
+        }
     }
 
     /// The stretch of selectable text this snapshot shows selected, if any.
@@ -881,6 +942,22 @@ impl Shot {
                 ..OnboardingState::default()
             }),
             Self::Code => Screen::Workspace(code()),
+            Self::SoftWrap => {
+                let editor = pm_editor::EditorSettings {
+                    soft_wrap: pm_editor::SoftWrap::LineLength,
+                    preferred_line_length: 36,
+                    wrap_guide: true,
+                    cursor_shape: pm_editor::CursorShape::Block,
+                    cursor_blink: false,
+                    ..pm_editor::EditorSettings::default()
+                };
+                Screen::Workspace(
+                    code()
+                        .with_editor_settings(editor)
+                        .with_code_view(560.0, 7.2)
+                        .edited(EDITOR_FIELD, Edit::Place(600, false)),
+                )
+            }
             Self::Completing => Screen::Workspace(completing()),
             Self::Hovering => Screen::Workspace(hovering()),
             Self::EditorMenu => Screen::Workspace(code().with_menu(EDITOR_FIELD, (420.0, 200.0))),
@@ -960,6 +1037,7 @@ impl Shot {
                 ..OnboardingState::default()
             }),
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
+            Self::Quitting => Screen::Workspace(workspace().close_asked()),
             Self::MessageMenu => {
                 Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
             }
@@ -1087,32 +1165,36 @@ impl Shot {
             Self::Missing => {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
-            Self::Settings => Screen::Workspace(welcome().after(SETTINGS)),
-            Self::SettingsKeymap => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::Keymap.id()),
+            Self::SettingsPage(section, _) => {
+                Screen::Workspace(settings_sample().after(section.id()))
+            }
+            Self::SettingsSearch(_) => Screen::Workspace(
+                settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
             ),
-            Self::SettingsEditor => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::Editor.id()),
+            Self::SettingsPicker(narrow) => Screen::Workspace(
+                settings_sample()
+                    .after(Section::Appearance.id())
+                    .after(SettingsCatalogue::CodeFont.id(OPEN_LIST))
+                    .scrolled_settings(if narrow { 560.0 } else { 0.0 }, 2000.0),
             ),
-            Self::SettingsNarrow => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::Editor.id())
-                    .after(Section::EditorIntelligence.id()),
-            ),
-            Self::SettingsAppearance => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::EditorAppearance.id()),
-            ),
-            Self::SettingsAgents => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::Agents.id()),
+            Self::SettingsCompact(_) => {
+                let state = settings_sample();
+                let mut window = state.window.clone();
+                window.appearance.density = pm_config::Density::Compact;
+                window.appearance.interface_size = 15;
+                Screen::Workspace(
+                    state
+                        .with_window_settings(window)
+                        .after(Section::Appearance.id()),
+                )
+            }
+            Self::SettingsMachine(narrow) => Screen::Workspace(
+                settings_sample()
+                    .after(Section::Servers.id())
+                    .after(MACHINE_ADD)
+                    .edited(MACHINE_NAME, Edit::Paste("Lab".to_owned()))
+                    .edited(MACHINE_ADDRESS, Edit::Paste("100.64.0.9:6868".to_owned()))
+                    .scrolled_settings(if narrow { 300.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
@@ -1212,6 +1294,72 @@ fn repositories() -> Vec<Found> {
 }
 
 /// The page for starting work in this repository, once Claude Code has said what it offers.
+/// The workspace with the settings window open, knowing the languages, fonts and servers a machine has, and with some settings changed from how they come.
+fn settings_sample() -> WorkspaceState {
+    let mut machine = pm_protocol::MachineSettings::default();
+    machine.git.branch_template = "pm/{title}".to_owned();
+    machine.set_language(
+        "go",
+        pm_protocol::LanguagePreferences {
+            tab_size: Some(4),
+            ..pm_protocol::LanguagePreferences::default()
+        },
+    );
+    let mut window = pm_config::WindowSettings::default();
+    window.appearance.theme_mode = pm_config::ThemeMode::Dark;
+    window.servers.known = vec![
+        pm_config::KnownServer {
+            name: "Studio".to_owned(),
+            reach: pm_config::Reach::Ssh,
+            address: "me@studio.local".to_owned(),
+            token: String::new(),
+        },
+        pm_config::KnownServer {
+            name: "Build box".to_owned(),
+            reach: pm_config::Reach::Direct,
+            address: "100.64.0.7:6868".to_owned(),
+            token: "secret".to_owned(),
+        },
+    ];
+    let fonts = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+    welcome()
+        .with_extensions(sample_languages())
+        .with_fonts(
+            fonts(&[
+                "DejaVu Sans",
+                "DejaVu Sans Mono",
+                "Fira Code",
+                "Inter",
+                "JetBrains Mono",
+                "Noto Sans",
+                "Noto Sans Mono",
+                "Source Code Pro",
+                "Ubuntu",
+                "Ubuntu Mono",
+                "Hack",
+                "IBM Plex Mono",
+                "Iosevka",
+                "Cascadia Code",
+            ]),
+            fonts(&[
+                "DejaVu Sans Mono",
+                "Fira Code",
+                "JetBrains Mono",
+                "Noto Sans Mono",
+                "Source Code Pro",
+                "Ubuntu Mono",
+                "Hack",
+                "IBM Plex Mono",
+                "Iosevka",
+                "Cascadia Code",
+            ]),
+        )
+        .with_window_settings(window)
+        .with_machine_settings(machine)
+        .with_release(Some("0.14.0".to_owned()), "https://github.com".to_owned())
+        .after(SETTINGS)
+}
+
 fn welcome() -> WorkspaceState {
     let here = std::env::current_dir().unwrap_or_default();
     let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
@@ -1547,8 +1695,8 @@ pub fn write(
     appearance: Appearance,
     shot: Shot,
 ) -> Result<(), String> {
-    let (width, height) = if shot == Shot::SettingsNarrow {
-        (NARROW_WIDTH, SETTINGS_HEIGHT)
+    let (width, height) = if shot.narrow() {
+        (NARROW_WIDTH, NARROW_HEIGHT)
     } else if shot.in_settings_window() {
         (SETTINGS_WIDTH, SETTINGS_HEIGHT)
     } else {

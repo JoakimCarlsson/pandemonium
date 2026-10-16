@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::cell::Cell;
 
-/// How many lines scrolled off the top are kept.
+/// How many lines scrolled off the top are kept, until the grid is told otherwise.
 const HISTORY: usize = 5_000;
 
 /// Where the next character goes.
@@ -39,6 +39,8 @@ pub(crate) struct Grid {
     pub(crate) history: VecDeque<Vec<Cell>>,
     /// Whether lines scrolled off the top are kept.
     keeps_history: bool,
+    /// How many of them are kept at most.
+    most_history: usize,
 }
 
 impl Grid {
@@ -54,6 +56,15 @@ impl Grid {
             bottom: rows - 1,
             history: VecDeque::new(),
             keeps_history,
+            most_history: HISTORY,
+        }
+    }
+
+    /// Keeps at most `lines` of what scrolled off the top, the oldest going first.
+    pub(crate) fn set_history(&mut self, lines: usize) {
+        self.most_history = lines;
+        while self.history.len() > lines {
+            self.history.pop_front();
         }
     }
 
@@ -105,7 +116,7 @@ impl Grid {
             let line = self.lines.remove(self.top);
             if self.keeps_history && self.top == 0 {
                 self.history.push_back(line);
-                if self.history.len() > HISTORY {
+                if self.history.len() > self.most_history {
                     self.history.pop_front();
                 }
             }

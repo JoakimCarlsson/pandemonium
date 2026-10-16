@@ -19,7 +19,7 @@ mod select;
 mod tooltip;
 mod wrap;
 
-pub use node::{Mark, Node, Paint, node, text};
+pub use node::{CaretLook, CaretShape, Mark, Node, Paint, node, text};
 pub use paint::{FieldBox, Input, Output, Region, Scroller, draw};
 pub use pm_renderer::Picture;
 pub use pm_style::Cursor;

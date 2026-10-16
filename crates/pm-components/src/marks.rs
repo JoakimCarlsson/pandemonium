@@ -121,9 +121,19 @@ impl WorkspaceState {
         self
     }
 
+    /// Whether the caret's line says who last changed it: as the editor's setting says, unless git's settings turn it off.
+    pub(crate) fn shows_blame(&self) -> bool {
+        self.window.git.blame.shows(self.editor.inline_blame)
+    }
+
+    /// Whether lines changed since the last commit are marked: as the editor's setting says, unless git's settings turn it off.
+    pub(crate) fn shows_gutter(&self) -> bool {
+        self.window.git.gutter.shows(self.editor.git_gutter)
+    }
+
     /// Asks who last changed the line of the caret of the file shown, when the file is as the folder holds it.
     pub fn blame_requested(mut self) -> Self {
-        if !self.editor.inline_blame {
+        if !self.shows_blame() {
             return self;
         }
         let Some(session) = self.review_index() else {
@@ -171,7 +181,7 @@ impl WorkspaceState {
 
     /// What is said after the line at `index` of the file shown about who last changed it: for the line of the caret, when the file is as the folder holds it and the answer is about it.
     pub fn blame_of_line(&self, index: usize) -> Option<String> {
-        if !self.editor.inline_blame {
+        if !self.shows_blame() {
             return None;
         }
         let session = self.review_index()?;

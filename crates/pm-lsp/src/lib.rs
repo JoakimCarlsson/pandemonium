@@ -15,6 +15,7 @@
 //! project, and asks it for completions and hovers. What a server says is
 //! wrong with a file comes back through the sink the hub was made with.
 
+mod choice;
 mod fetch;
 mod hub;
 mod index;
@@ -28,6 +29,7 @@ mod snippet;
 mod types;
 mod uri;
 
+pub use choice::ServerChoice;
 pub use hub::{Hub, Published, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
 pub use install::{add_extension, install, installed, installed_manifest, language_of, remove};

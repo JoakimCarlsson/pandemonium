@@ -4,11 +4,11 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Role, bg, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_full,
-    items_center, min_h, min_w_px, p, pb, pl, pr, pt, px, w_full, w_px,
+    items_center, min_h, min_w_px, overflow_hidden, p, pb, pl, pr, pt, px, w_full, w_px,
 };
 use pm_ui::{Node, node};
 
-use crate::parts::{glyph, line};
+use crate::parts::{clipped, glyph, line};
 use crate::settings_servers;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
@@ -55,6 +55,9 @@ pub const SETTINGS_SEARCH_GO: FocusId = FocusId(20_000_031);
 /// The scrolling page of the section showing.
 pub const SETTINGS_SCROLL: FocusId = FocusId(20_000_040);
 
+/// The scrolling list of sections down the left side.
+pub const SETTINGS_NAV_SCROLL: FocusId = FocusId(20_000_041);
+
 /// Folds the list of what is installed away, or shows it again.
 pub const SETTINGS_TOGGLE_INSTALLED: FocusId = FocusId(20_000_032);
 
@@ -97,8 +100,23 @@ pub const SETTINGS_REMOVE_BASE: u64 = 20_000_200;
 /// The first of the buttons installing what a registry offers; the rest follow it.
 pub const SETTINGS_INSTALL_BASE: u64 = 20_000_300;
 
+/// The box every setting is searched with.
+pub const SETTINGS_FIND: FocusId = FocusId(20_000_060);
+
+/// The box the open list of choices is narrowed with.
+pub const SETTINGS_PICK_FILTER: FocusId = FocusId(20_000_061);
+
+/// The box the keymap's actions are searched with.
+pub const SETTINGS_KEYMAP_FIND: FocusId = FocusId(20_000_062);
+
+/// Empties the box every setting is searched with.
+pub const SETTINGS_FIND_CLEAR: FocusId = FocusId(20_000_063);
+
+/// Opens the page of the newest release.
+pub const SETTINGS_RELEASE: FocusId = FocusId(20_000_064);
+
 /// One past the last name the window answers to.
-const SETTINGS_END: u64 = 20_002_400;
+const SETTINGS_END: u64 = 20_010_000;
 
 /// How far the settings stand in from either side of the right of the window, in logical pixels.
 const PAGE_INSET: f32 = 32.0;
@@ -106,12 +124,20 @@ const PAGE_INSET: f32 = 32.0;
 /// How wide the list of sections is, in logical pixels.
 const NAVIGATION_WIDTH: f32 = 220.0;
 
+/// How wide the list of sections is when the window is narrow, in logical pixels.
+const NARROW_NAVIGATION: f32 = 184.0;
+
+/// How wide the window is at most for the list of sections to be narrow, in logical pixels.
+const NARROW_WINDOW: f32 = 760.0;
+
 /// A group of settings, named down the left side of the window; some sit inside another.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Section {
-    /// How the window looks and behaves.
+    /// How the window opens, closes and keeps itself up to date.
     #[default]
     General,
+    /// How the window looks: its theme, its fonts and how closely it sets things.
+    Appearance,
     /// How files are written in, with the groups below it.
     Editor,
     /// How files look.
@@ -124,36 +150,57 @@ pub enum Section {
     EditorIntelligence,
     /// Finding and scrolling.
     EditorSearch,
+    /// How each language is edited, and the languages installed and offered.
+    Languages,
     /// The keys that work the editor.
     Keymap,
+    /// The shell the terminal starts and how it is drawn.
+    Terminal,
+    /// How git is run and what it marks.
+    Git,
     /// What agents are started with, with the groups below it.
     Agents,
     /// The agents that can be started, and the ones added by hand.
     AgentServers,
     /// The tool servers every agent is started with.
     McpServers,
+    /// The servers the window knows and where new projects go.
+    Servers,
+    /// The settings a search found, on whatever page they are.
+    Results,
 }
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 11] = [
+    pub const ALL: [Section; 16] = [
         Section::General,
+        Section::Appearance,
         Section::Editor,
         Section::EditorAppearance,
         Section::EditorEditing,
         Section::EditorSaving,
         Section::EditorIntelligence,
         Section::EditorSearch,
+        Section::Languages,
         Section::Keymap,
+        Section::Terminal,
+        Section::Git,
         Section::Agents,
         Section::AgentServers,
         Section::McpServers,
+        Section::Servers,
     ];
 
     /// What the list and the heading call it.
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Appearance => "Appearance",
+            Self::Languages => "Languages",
+            Self::Terminal => "Terminal",
+            Self::Git => "Git",
+            Self::Servers => "Servers",
+            Self::Results => "Search Results",
             Self::Editor => "Editor",
             Self::EditorAppearance => "Appearance",
             Self::EditorEditing => "Editing",
@@ -170,7 +217,12 @@ impl Section {
     /// The glyph before its name in the list.
     fn icon(self) -> IconName {
         match self {
-            Self::General => IconName::Settings,
+            Self::General | Self::Results => IconName::Settings,
+            Self::Appearance => IconName::Pencil,
+            Self::Languages => IconName::File,
+            Self::Terminal => IconName::Terminal,
+            Self::Git => IconName::Git,
+            Self::Servers => IconName::Plug,
             Self::Editor
             | Self::EditorAppearance
             | Self::EditorEditing
@@ -193,7 +245,16 @@ impl Section {
             | Self::EditorSaving
             | Self::EditorIntelligence
             | Self::EditorSearch => Some(Self::Editor),
-            Self::General | Self::Agents | Self::Editor | Self::Keymap => None,
+            Self::General
+            | Self::Appearance
+            | Self::Languages
+            | Self::Terminal
+            | Self::Git
+            | Self::Servers
+            | Self::Results
+            | Self::Agents
+            | Self::Editor
+            | Self::Keymap => None,
         }
     }
 
@@ -225,7 +286,16 @@ impl WorkspaceState {
             std::mem::take(&mut self.settings_servers.agents),
             std::mem::take(&mut self.settings_servers.retired),
         );
+        self.settings_page.picker = None;
+        self.settings_page.fields.clear();
+        self.fill_fields();
         self.outbox.push(crate::state::Outgoing::LoadServers);
+        self.outbox.push(crate::state::Outgoing::Extensions);
+        if self.window.general.check_updates && self.settings_page.release.is_none() {
+            self.outbox.push(crate::state::Outgoing::LatestRelease {
+                channel: self.window.general.channel,
+            });
+        }
         self
     }
 
@@ -233,6 +303,8 @@ impl WorkspaceState {
     pub fn without_settings(mut self) -> Self {
         self.settings = None;
         self.settings_servers.form = None;
+        self.settings_page.server_form = None;
+        self.settings_page.picker = None;
         self.recording = None;
         self
     }
@@ -240,12 +312,31 @@ impl WorkspaceState {
     /// The state after something of the settings window was pressed: `action` is the name of what.
     pub(crate) fn settings_pressed(mut self, action: FocusId) -> Self {
         match action {
+            SETTINGS_CLOSE if self.settings_page.picker.is_some() => {
+                self.settings_page.picker = None;
+            }
             SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
                 self.settings_servers.form = None;
             }
+            SETTINGS_CLOSE if self.settings_page.server_form.is_some() => {
+                self.settings_page.server_form = None;
+            }
             SETTINGS_CLOSE => return self.without_settings(),
-            action if self.editor_setting_pressed(action) => {}
+            SETTINGS_RELEASE => {
+                if let Some((_, url)) = &self.settings_page.release {
+                    self.outbox.push(crate::state::Outgoing::Open {
+                        address: url.clone(),
+                    });
+                }
+            }
+            SETTINGS_FIND_CLEAR => {
+                self.settings_page.find = pm_text::Field::default();
+                self.settings_servers.scroll = 0.0;
+            }
+            action if self.setting_pressed(action) => {}
             action if self.keymap_pressed(action) => {}
+            action if self.machines_pressed(action) => {}
+            action if self.languages_pressed(action) => {}
             action => {
                 if let Some(section) = Section::ALL
                     .into_iter()
@@ -256,6 +347,8 @@ impl WorkspaceState {
                         self.settings_servers.folded = showing && !self.settings_servers.folded;
                     }
                     self.settings = Some(section);
+                    self.settings_page.find = pm_text::Field::default();
+                    self.settings_page.picker = None;
                     self.recording = None;
                     self.section_changed();
                 } else {
@@ -265,26 +358,78 @@ impl WorkspaceState {
         }
         self
     }
+
+    /// The state after the list of sections is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_settings_nav(mut self, delta: f32, room: f32) -> Self {
+        self.settings_page.nav_scroll = (self.settings_page.nav_scroll + delta).clamp(0.0, room);
+        self
+    }
+
+    /// Whether settings are being searched, which shows what was found in place of the section picked.
+    pub(crate) fn settings_searching(&self) -> bool {
+        !self.settings_page.find.text().trim().is_empty()
+    }
+}
+
+/// How wide the list of sections is in a window `width` logical pixels across.
+fn navigation_width(width: f32) -> f32 {
+    if width <= NARROW_WINDOW {
+        NARROW_NAVIGATION
+    } else {
+        NAVIGATION_WIDTH
+    }
 }
 
 /// The node that fills the settings window, `width` logical pixels across, when settings are open.
 pub fn settings(state: &WorkspaceState, width: f32) -> Option<Node> {
     let section = state.settings?;
     let folded = state.settings_servers.folded;
+    let navigation_width = navigation_width(width);
+    let showing = if state.settings_searching() {
+        Section::Results
+    } else {
+        section
+    };
     Some(
         node()
             .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Surface)])
-            .child(navigation(section, folded))
+            .child(navigation(state, section, folded, navigation_width))
             .child(content(
                 state,
-                section,
-                width - NAVIGATION_WIDTH - 2.0 * PAGE_INSET,
+                showing,
+                width - navigation_width - 2.0 * PAGE_INSET,
             )),
     )
 }
 
-/// The list of sections, with the one showing marked.
-fn navigation(showing: Section, folded: bool) -> Node {
+/// The search box over the list of sections, and the list, with the one showing marked, `width` logical pixels across.
+fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) -> Node {
+    let searching = state.settings_searching();
+    let find = node()
+        .styles([flex(), items_center(), gap(1), flex_none(), pb(2)])
+        .child(
+            node().styles([flex_1(), min_w_px(0)]).child(
+                crate::search_box::SearchBox::new(&state.settings_page.find, SETTINGS_FIND)
+                    .size(crate::search_box::Size::Sm)
+                    .placeholder("Search settings")
+                    .build(),
+            ),
+        )
+        .children(searching.then(|| {
+            node()
+                .styles([
+                    flex(),
+                    items_center(),
+                    pm_style::justify_center(),
+                    flex_none(),
+                    pm_style::size(6),
+                    pm_style::rounded(pm_style::Radius::Sm),
+                    pm_style::cursor_pointer(),
+                    bg(Role::SurfaceHover).hover(),
+                ])
+                .focusable(SETTINGS_FIND_CLEAR)
+                .child(glyph(IconName::Close, 3.5, Role::Muted))
+        }));
     node()
         .styles([
             flex(),
@@ -292,7 +437,8 @@ fn navigation(showing: Section, folded: bool) -> Node {
             flex_none(),
             gap(1),
             p(3),
-            w_px(NAVIGATION_WIDTH),
+            w_px(width),
+            min_h(0),
             border_r(),
             border_color(Role::Border),
         ])
@@ -301,19 +447,33 @@ fn navigation(showing: Section, folded: bool) -> Node {
                 .styles([flex(), items_center(), h(9), px(2)])
                 .child(line("Settings", 13, 1.4, Role::Subtle)),
         )
-        .children(
-            Section::ALL
-                .into_iter()
-                .filter(|section| match section.parent() {
-                    Some(Section::Agents) => !folded,
-                    Some(parent) => showing == parent || showing.parent() == Some(parent),
-                    None => true,
-                })
-                .map(|section| entry(section, section == showing, folded)),
+        .child(find)
+        .child(
+            node()
+                .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
+                .scroll_from_start(SETTINGS_NAV_SCROLL, state.settings_page.nav_scroll)
+                .child(
+                    node()
+                        .styles([flex(), flex_col(), flex_none(), gap(1)])
+                        .children(
+                            Section::ALL
+                                .into_iter()
+                                .filter(|section| match section.parent() {
+                                    Some(Section::Agents) => !folded,
+                                    Some(parent) => {
+                                        showing == parent || showing.parent() == Some(parent)
+                                    }
+                                    None => true,
+                                })
+                                .map(|section| {
+                                    entry(section, !searching && section == showing, folded)
+                                }),
+                        ),
+                ),
         )
 }
 
-/// One row of the list of sections: General has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside it only their name, set in under it.
+/// One row of the list of sections: a section of its own has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside another only their name, set in under it.
 fn entry(section: Section, showing: bool, folded: bool) -> Node {
     let tone = if showing { Role::Text } else { Role::Muted };
     let row = Tile::new(section.id())
@@ -321,9 +481,6 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
         .build()
         .styles([px(2)]);
     let row = match section {
-        Section::General | Section::Editor | Section::Keymap => {
-            row.child(glyph(section.icon(), 4.0, tone))
-        }
         Section::Agents => row.child(glyph(
             if folded {
                 IconName::ChevronRight
@@ -333,9 +490,10 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
             4.0,
             tone,
         )),
-        _ => row.styles([pl(8)]),
+        _ if section.parent().is_some() => row.styles([pl(8)]),
+        _ => row.child(glyph(section.icon(), 4.0, tone)),
     };
-    row.child(line(section.title(), 13, 1.4, tone))
+    row.child(clipped(section.title(), 13, tone))
 }
 
 /// The settings of `section` under its title, with `room` logical pixels across for them.

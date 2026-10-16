@@ -526,6 +526,22 @@ pub enum Outgoing {
     SaveAgentServers(Vec<pm_protocol::AgentServer>),
     /// Has the server keep these as the tool servers every agent is started with.
     SaveMcpServers(Vec<pm_protocol::McpServer>),
+    /// Has every server the window reaches keep these as what the reader set up for the work it does on its machine.
+    SaveMachineSettings(pm_protocol::MachineSettings),
+    /// Tells the reader something happened while they may be looking elsewhere, in the way they chose.
+    Notify {
+        /// What happened, in a few words.
+        title: String,
+        /// More about it.
+        body: String,
+        /// How they are told.
+        how: pm_config::Notification,
+    },
+    /// Asks the server on this machine for the newest release on `channel`.
+    LatestRelease {
+        /// The channel the window follows.
+        channel: pm_config::Channel,
+    },
     /// Starts a shell for the tab, in the folder of the session at this position.
     OpenTerminal {
         /// The session, by position.
@@ -860,19 +876,23 @@ pub enum Outgoing {
         /// Whether it is an organization.
         organization: bool,
     },
-    /// Lists the folders inside the folder `path` on this machine, for the panel for adding a project.
+    /// Lists the folders inside the folder `path` on the machine a project is being added on, for the panel for adding a project.
     Folders {
         /// The folder; `~` is the home folder.
         path: String,
+        /// The machine whose folders they are, or this one when nothing.
+        host: Option<String>,
     },
     /// Asks the servers which sessions they hold again, so that those of a project just added come back.
     Relist,
-    /// Clones the repository at `url` into the folder `under` on this machine, for the panel for adding a project.
+    /// Clones the repository at `url` into the folder `under` on the machine a project is being added on, for the panel for adding a project.
     Clone {
         /// Where to fetch it from.
         url: String,
         /// The folder to put it in.
         under: String,
+        /// The machine to clone it on, or this one when nothing.
+        host: Option<String>,
     },
     /// Puts text on the clipboard.
     Copy {
@@ -1134,6 +1154,20 @@ pub struct WorkspaceState {
     pub recorded: Vec<String>,
     /// Whether the editor's settings kept between runs were put in, so that what is shown is not mistaken for them before.
     pub editor_loaded: bool,
+    /// How wide the view of the file shown was last drawn and how wide a character of code is in it, in logical pixels, which soft wrap breaks lines by; nothing until it was drawn.
+    pub code_view: Option<(f32, f32)>,
+    /// Whether the reader asked to close the window and nothing is left to ask first.
+    pub quitting: bool,
+    /// What the window keeps of its own.
+    pub window: pm_config::WindowSettings,
+    /// Whether the window's own settings kept between runs were put in, so that what is shown is not mistaken for them before.
+    pub window_loaded: bool,
+    /// What the server of each machine keeps, as the server on this machine sent it.
+    pub machine: pm_protocol::MachineSettings,
+    /// Whether the server on this machine sent what it keeps, so that what is shown is not sent to the servers before.
+    pub machine_loaded: bool,
+    /// What the settings window keeps beside the settings.
+    pub settings_page: crate::settings_state::SettingsPage,
     /// The menu on the tab of an open file, when open.
     pub tab_menu: Option<crate::tab_menu::TabMenu>,
     /// Who last changed the line of the caret of a file, once asked: the session, the file, the line counted from 1, and the answer.
@@ -1242,6 +1276,13 @@ impl WorkspaceState {
             tab_menu: None,
             editor: pm_editor::EditorSettings::default(),
             editor_loaded: false,
+            code_view: None,
+            quitting: false,
+            window: pm_config::WindowSettings::default(),
+            window_loaded: false,
+            machine: pm_protocol::MachineSettings::default(),
+            machine_loaded: false,
+            settings_page: crate::settings_state::SettingsPage::default(),
             recording: None,
             recorded: Vec::new(),
             trail: crate::trail::Trail::default(),
@@ -1486,6 +1527,14 @@ impl WorkspaceState {
             HISTORY_SEARCH => self.history_search.apply(edit),
             crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
+            id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
+            id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
+            crate::settings::SETTINGS_FIND => {
+                self.settings_page.find.apply(edit);
+                self.settings_servers.scroll = 0.0;
+                self.settings_page.picker = None;
+            }
+            crate::settings::SETTINGS_KEYMAP_FIND => self.settings_page.keymap_find.apply(edit),
             OTHER => {
                 if let Page::Session(open) = self.page
                     && let Some(draft) =
@@ -1522,6 +1571,10 @@ impl WorkspaceState {
             crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
+            id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
+            id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
+            crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
+            crate::settings::SETTINGS_KEYMAP_FIND => Some(&self.settings_page.keymap_find),
             OTHER => self.other_field(),
             _ => None,
         }
@@ -1547,6 +1600,10 @@ impl WorkspaceState {
             || id == OTHER
             || id == ADDER_FIELD
             || crate::settings_servers::is_form_field(id)
+            || crate::settings_pages::is_setting_field(id)
+            || crate::settings_machines::is_machine_field(id)
+            || id == crate::settings::SETTINGS_FIND
+            || id == crate::settings::SETTINGS_KEYMAP_FIND
     }
 
     /// What pressing the field `id` hands in when Enter is pressed in it.
@@ -1567,6 +1624,15 @@ impl WorkspaceState {
             ADDER_FIELD => ADDER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
             id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
+            id if crate::settings_machines::is_machine_field(id) => {
+                crate::settings_machines::MACHINE_SAVE
+            }
+            id if crate::settings_pages::is_setting_field(id)
+                || id == crate::settings::SETTINGS_FIND
+                || id == crate::settings::SETTINGS_KEYMAP_FIND =>
+            {
+                id
+            }
             OTHER => NEXT,
             _ => SEND,
         }
@@ -1626,6 +1692,34 @@ impl WorkspaceState {
         }
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
+        }
+        self
+    }
+
+    /// The state after the agent of the session at `position` finished a turn while the window watched: the reader is told, or the session opens on what it changed, as the settings say.
+    pub fn agent_finished(mut self, position: usize) -> Self {
+        let Some(session) = self.sessions.get(position) else {
+            return self;
+        };
+        let changed = session.changes.len();
+        let title = session.title.clone();
+        match self.window.agents.on_finish {
+            pm_config::Finish::Nothing => {}
+            pm_config::Finish::OpenReview if changed > 0 => {
+                self = self.after(FocusId(SESSION_BASE + position as u64));
+                self.tab = Tab::Diff;
+            }
+            pm_config::Finish::Notify | pm_config::Finish::OpenReview => {
+                let how = self.window.agents.notification;
+                if how != pm_config::Notification::None {
+                    let body = match changed {
+                        0 => "The agent finished its turn.".to_owned(),
+                        1 => "The agent finished its turn with 1 file changed.".to_owned(),
+                        many => format!("The agent finished its turn with {many} files changed."),
+                    };
+                    self.outbox.push(Outgoing::Notify { title, body, how });
+                }
+            }
         }
         self
     }

@@ -183,6 +183,12 @@ impl Emulator {
         self.version += 1;
     }
 
+    /// Keeps at most `lines` of what scrolled off the top of the window to scroll back to.
+    pub fn set_scrollback(&mut self, lines: usize) {
+        self.screen.primary.set_history(lines);
+        self.version += 1;
+    }
+
     /// How many times the contents changed, so a drawing of them can be kept while it stays the same.
     pub fn version(&self) -> u64 {
         self.version

@@ -19,8 +19,13 @@ pub fn text_size(size: TextSize) -> Utility {
     TypographyRule::Size(size).into()
 }
 
-/// A font size in raw logical pixels.
+/// A font size of interface text, in the logical pixels it was drawn for, made as much bigger as the interface's text is set to be.
 pub fn text_px(pixels: impl Number) -> Utility {
+    TypographyRule::SizePx(pixels.value() * pm_primitives::text_scale()).into()
+}
+
+/// A font size of code, in raw logical pixels, which the size of interface text leaves alone.
+pub fn code_px(pixels: impl Number) -> Utility {
     TypographyRule::SizePx(pixels.value()).into()
 }
 

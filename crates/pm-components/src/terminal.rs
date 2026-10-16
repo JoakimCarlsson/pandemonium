@@ -2,13 +2,14 @@
 
 use std::hash::{Hash, Hasher};
 
+use pm_config::TerminalCursor;
 use pm_icon::IconName;
 use pm_style::typography::{FontFamily, LineHeight, TypographyStyle};
 use pm_style::{
-    Color, Radius, Role, bg, border_b, border_color, border_t, cursor_pointer, cursor_text, flex,
-    flex_1, flex_col, flex_none, font_bold, font_mono, gap, h, h_px, italic, items_center,
-    leading_ratio, line_through, min_h, overflow_hidden, pr, px, py, rounded, text_color, text_px,
-    underline, w_full,
+    Color, Radius, Role, Sides, bg, border_b, border_color, border_t, border_width, code_px,
+    cursor_pointer, cursor_text, flex, flex_1, flex_col, flex_none, font_bold, font_mono, gap, h,
+    h_px, italic, items_center, leading_ratio, line_through, min_h, overflow_hidden, pr, px,
+    rounded, text_color, underline, w_full,
 };
 use pm_terminal::{Cell, Color as Paint, Emulator, Flags};
 use pm_text::Shaper;
@@ -35,20 +36,40 @@ pub const PADDING_X: f32 = 16.0;
 /// How far the window of the shell is from the top and bottom of the dock, in logical pixels.
 pub const PADDING_Y: f32 = 12.0;
 
-/// How tall the type of the shell is, in logical pixels.
-const FONT: f32 = 13.0;
-
 /// How tall a line is, as a share of the type.
 const LEADING: f32 = 1.5;
 
 /// How many characters are measured to find how wide one is.
 const SAMPLE: usize = 64;
 
-/// How wide and how tall one cell of the shell's window is, in logical pixels.
-pub fn cell_size(shaper: &mut Shaper) -> (f32, f32) {
+/// How a shell is drawn: how tall its type is, in logical pixels, and how its cursor looks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    /// How tall the type is.
+    pub font: f32,
+    /// How the cursor looks.
+    pub cursor: TerminalCursor,
+}
+
+impl Look {
+    /// How the shells of `state` are drawn: in the terminal's own size or the code font's, with the cursor its settings say.
+    pub fn of(state: &WorkspaceState) -> Self {
+        Self {
+            font: state
+                .window
+                .terminal
+                .font_size
+                .unwrap_or(state.editor.font_size) as f32,
+            cursor: state.window.terminal.cursor,
+        }
+    }
+}
+
+/// How wide and how tall one cell of the shell's window is, in logical pixels, with type `font` tall.
+pub fn cell_size(shaper: &mut Shaper, font: f32) -> (f32, f32) {
     let style = TypographyStyle {
         family: FontFamily::Mono,
-        size: FONT,
+        size: font,
         line_height: LineHeight::Ratio(LEADING),
         ..TypographyStyle::BASE
     };
@@ -121,7 +142,12 @@ pub fn terminal(
         ])
         .child(strip);
     if let Some(tab) = session.terminals.get(session.terminal_active) {
-        dock = dock.child(window(tab, width - 2.0 * PADDING_X, shaper));
+        dock = dock.child(window(
+            tab,
+            width - 2.0 * PADDING_X,
+            Look::of(state),
+            shaper,
+        ));
     }
     dock
 }
@@ -164,15 +190,23 @@ fn tab_button(index: usize, tab: &TerminalTab, shown: bool) -> Node {
     )
 }
 
-/// The window of the shell `tab`, `width` logical pixels wide inside its padding, which takes the keyboard when pressed.
-fn window(tab: &TerminalTab, width: f32, shaper: &mut Shaper) -> Node {
+/// The window of the shell `tab`, `width` logical pixels wide inside its padding and drawn as `look` says, which takes the keyboard when pressed.
+fn window(tab: &TerminalTab, width: f32, look: Look, shaper: &mut Shaper) -> Node {
     let emulator = tab.emulator.clone();
     let back = tab.back;
     let composing = tab.composing.clone();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (tab.id, emulator.read().version(), back, &composing).hash(&mut hasher);
+    (
+        tab.id,
+        emulator.read().version(),
+        back,
+        &composing,
+        look.font.to_bits(),
+        look.cursor as u8,
+    )
+        .hash(&mut hasher);
     let grid = retained(hasher.finish(), width, shaper, move |_| {
-        lines(&emulator.read(), back, &composing)
+        lines(&emulator.read(), back, &composing, look)
     });
     node()
         .styles([
@@ -181,8 +215,8 @@ fn window(tab: &TerminalTab, width: f32, shaper: &mut Shaper) -> Node {
             flex_1(),
             min_h(0),
             overflow_hidden(),
-            px(4),
-            py(3),
+            pm_style::padding(Sides::Horizontal, PADDING_X),
+            pm_style::padding(Sides::Vertical, PADDING_Y),
             bg(Role::Background),
             cursor_text(),
         ])
@@ -192,7 +226,7 @@ fn window(tab: &TerminalTab, width: f32, shaper: &mut Shaper) -> Node {
 
 /// What the cells of a run share, which is what makes them one run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Look {
+struct Run {
     /// The foreground the cell asks for.
     fg: Paint,
     /// The background the cell asks for.
@@ -205,8 +239,8 @@ struct Look {
     cursor: bool,
 }
 
-/// The lines of the window of `emulator` scrolled `back` lines up, with `composing` shown at the cursor.
-fn lines(emulator: &Emulator, back: usize, composing: &str) -> Node {
+/// The lines of the window of `emulator` scrolled `back` lines up, with `composing` shown at the cursor, drawn as `look` says.
+fn lines(emulator: &Emulator, back: usize, composing: &str, look: Look) -> Node {
     let first = emulator.first_line(back);
     let cursor = emulator.cursor(back);
     let selection = emulator.selection().map(|marked| marked.ordered());
@@ -217,7 +251,7 @@ fn lines(emulator: &Emulator, back: usize, composing: &str) -> Node {
                 .filter(|(line, _)| *line == row)
                 .map(|(_, column)| column);
             let marked = selection.and_then(|range| marked_columns(range, first + row));
-            line_of(emulator.line(row, back), at_cursor, marked, composing)
+            line_of(emulator.line(row, back), at_cursor, marked, composing, look)
         }))
 }
 
@@ -234,12 +268,13 @@ fn marked_columns(
     Some((from, to))
 }
 
-/// One line of the window: its cells grouped into runs of the same look, with `composing` drawn just before the cursor.
+/// One line of the window: its cells grouped into runs of the same look, with `composing` drawn just before the cursor, drawn as `look` says.
 fn line_of(
     cells: &[Cell],
     cursor: Option<usize>,
     marked: Option<(usize, usize)>,
     composing: &str,
+    look: Look,
 ) -> Node {
     let used = cells
         .iter()
@@ -251,10 +286,10 @@ fn line_of(
         })
         .max(cursor.map_or(0, |column| column + 1))
         .min(cells.len());
-    let mut row = node().styles([flex(), flex_none(), h_px(FONT * LEADING)]);
-    let mut run: Option<(Look, String)> = None;
+    let mut row = node().styles([flex(), flex_none(), h_px(look.font * LEADING)]);
+    let mut run: Option<(Run, String)> = None;
     for (column, cell) in cells[..end].iter().enumerate() {
-        let look = Look {
+        let shared = Run {
             fg: cell.fg,
             bg: cell.bg,
             flags: cell.flags,
@@ -267,29 +302,29 @@ fn line_of(
             cell.ch
         };
         match &mut run {
-            Some((held, content)) if *held == look && !look.cursor => content.push(character),
+            Some((held, content)) if *held == shared && !shared.cursor => content.push(character),
             _ => {
                 if let Some((held, content)) = run.take() {
-                    row = row.child(run_node(held, content));
+                    row = row.child(run_node(held, content, look));
                 }
-                if look.cursor && !composing.is_empty() {
-                    row = row.child(composing_node(composing));
+                if shared.cursor && !composing.is_empty() {
+                    row = row.child(composing_node(composing, look.font));
                 }
-                run = Some((look, character.to_string()));
+                run = Some((shared, character.to_string()));
             }
         }
     }
     if let Some((held, content)) = run {
-        row = row.child(run_node(held, content));
+        row = row.child(run_node(held, content, look));
     }
     row
 }
 
-/// The node drawing `composing`, text an input method has not committed yet, underlined in the default colours.
-fn composing_node(composing: &str) -> Node {
+/// The node drawing `composing`, text an input method has not committed yet, underlined in the default colours, `font` logical pixels tall.
+fn composing_node(composing: &str, font: f32) -> Node {
     text(composing).styles([
         flex_none(),
-        text_px(FONT as u32),
+        code_px(font),
         leading_ratio(LEADING),
         font_mono(),
         text_color(Role::Text),
@@ -309,8 +344,8 @@ fn shown(paint: Paint, role: Role) -> Color {
     }
 }
 
-/// The node drawing `content` in `look`.
-fn run_node(look: Look, content: String) -> Node {
+/// The node drawing `content` as the cells of `run` share, with type and cursor as `drawn` says.
+fn run_node(look: Run, content: String, drawn: Look) -> Node {
     let inverse = look.flags.has(Flags::INVERSE);
     let (mut ink, mut ground) = if inverse {
         (
@@ -331,7 +366,7 @@ fn run_node(look: Look, content: String) -> Node {
     }
     let mut styles = vec![
         flex_none(),
-        text_px(FONT as u32),
+        code_px(drawn.font),
         leading_ratio(LEADING),
         font_mono(),
         text_color(ink),
@@ -352,11 +387,23 @@ fn run_node(look: Look, content: String) -> Node {
         styles.push(line_through());
     }
     if look.cursor {
-        styles.extend([
-            bg(Role::Subtle),
-            text_color(Role::Background),
-            bg(Role::Text).focus(),
-        ]);
+        match drawn.cursor {
+            TerminalCursor::Block => styles.extend([
+                bg(Role::Subtle),
+                text_color(Role::Background),
+                bg(Role::Text).focus(),
+            ]),
+            TerminalCursor::Bar => styles.extend([
+                border_width(Sides::Left, 2.0),
+                border_color(Role::Subtle),
+                border_color(Role::Text).focus(),
+            ]),
+            TerminalCursor::Underline => styles.extend([
+                border_width(Sides::Bottom, 2.0),
+                border_color(Role::Subtle),
+                border_color(Role::Text).focus(),
+            ]),
+        }
         return text(content).styles(styles).focused_with(TERMINAL_BODY);
     }
     text(content).styles(styles)

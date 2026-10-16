@@ -16,7 +16,7 @@ use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::open_files::EDITOR_FIELD;
-use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL, is_settings};
+use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
@@ -32,7 +32,7 @@ use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
 
 use pm_text::{Edit, Shaper};
-use pm_theme::{Appearance, ThemeFamily, default_family};
+use pm_theme::{Appearance, ThemeFamily};
 use pm_ui::{Cursor, Input, Output, TextPoint, TextSelection, Unit};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -80,6 +80,9 @@ const DRAG_DISTANCE: f32 = 6.0;
 /// The file the editor's settings are kept in.
 const EDITOR_SETTINGS: &str = "editor-settings.json";
 
+/// The file the window's own settings are kept in.
+const WINDOW_SETTINGS: &str = "window-settings.json";
+
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
     /// The window, once it is open.
@@ -88,10 +91,16 @@ pub struct App {
     renderer: Option<Renderer>,
     /// Shapes the text on screen.
     shaper: Shaper,
-    /// The themes the app ships.
+    /// The light and the dark theme the window is drawn in.
     family: ThemeFamily,
-    /// Whether the desktop asks for light or dark.
+    /// Whether the window is drawn light or dark.
     appearance: Appearance,
+    /// Whether the desktop asks for light or dark.
+    system_appearance: Appearance,
+    /// The interface and code fonts the shaper was last set in, by family name.
+    fonts_applied: (String, String),
+    /// The window's own settings as they were last written to disk.
+    saved_window: pm_config::WindowSettings,
     /// The primitives of the frame being drawn, kept to reuse its allocation.
     list: DrawList,
     /// What the user can change on the screen.
@@ -237,7 +246,11 @@ impl Default for App {
                     None => screen,
                 },
             );
-        let saved_view = View::load();
+        let window_settings = pm_store::load_text(WINDOW_SETTINGS)
+            .map(|text| pm_config::WindowSettings::read(&text))
+            .unwrap_or_default();
+        let saved_view =
+            View::load().filter(|_| window_settings.general.launch == pm_config::Launch::Restore);
         let screen = match (&saved_view, screen) {
             (Some(view), Screen::Workspace(state)) => Screen::Workspace(view.apply(state)),
             (_, screen) => screen,
@@ -251,7 +264,26 @@ impl Default for App {
         let editor = pm_store::load_text(EDITOR_SETTINGS)
             .map(|text| pm_editor::EditorSettings::read(&text))
             .unwrap_or_default();
-        let model = State::new(screen.with_editor_settings(editor.clone()));
+        work.set_servers(&window_settings.servers);
+        if !connected {
+            work.ask_machine_settings();
+        }
+        if window_settings.general.check_updates {
+            work.ask_release(window_settings.general.channel);
+        }
+        let mut shaper = scene::shaper();
+        let (all_fonts, mono_fonts) = shaper.families();
+        scene::set_fonts(
+            &mut shaper,
+            &window_settings.appearance.interface_font,
+            &window_settings.appearance.code_font,
+        );
+        let model = State::new(
+            screen
+                .with_editor_settings(editor.clone())
+                .with_window_settings(window_settings.clone())
+                .with_fonts(all_fonts, mono_fonts),
+        );
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
@@ -259,9 +291,15 @@ impl Default for App {
         Self {
             window: None,
             renderer: None,
-            shaper: scene::shaper(),
-            family: default_family(),
+            fonts_applied: (
+                window_settings.appearance.interface_font.clone(),
+                window_settings.appearance.code_font.clone(),
+            ),
+            family: chosen_family(&window_settings.appearance),
+            saved_window: window_settings,
+            shaper,
             appearance: Appearance::Dark,
+            system_appearance: Appearance::Dark,
             list: DrawList::new(),
             model,
             dirty,
@@ -470,6 +508,41 @@ impl App {
         }
         self.place_completion();
         self.place_signature();
+        self.note_code_view();
+    }
+
+    /// Tells the screen how wide the view of the file shown was drawn and how wide a character of code is, when that changed, so long lines wrap at its edge.
+    fn note_code_view(&mut self) {
+        let Some(width) = self
+            .output
+            .regions
+            .iter()
+            .find(|region| region.id == VIEWER_SCROLL)
+            .map(|region| region.rect.width)
+        else {
+            return;
+        };
+        let Some(font) = self.model.read(|screen| {
+            screen
+                .editor_settings()
+                .map(|settings| settings.font_size as f32)
+        }) else {
+            return;
+        };
+        let style = pm_style::typography::TypographyStyle {
+            family: pm_style::typography::FontFamily::Mono,
+            size: font,
+            ..pm_style::typography::TypographyStyle::BASE
+        };
+        let cell = self.shaper.measure(&"M".repeat(64), &style).width / 64.0;
+        let known = self.model.read(Screen::code_view);
+        let differs = known.is_none_or(|(held_width, held_cell)| {
+            (held_width - width).abs() > 0.5 || (held_cell - cell).abs() > 0.01
+        });
+        if differs {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_code_view(width, cell));
+        }
     }
 
     /// Carries out what pressing the element `id` means.
@@ -564,6 +637,41 @@ impl App {
         };
         let _ = pm_store::save_text(EDITOR_SETTINGS, &settings.write());
         self.saved_editor = settings;
+    }
+
+    /// Writes the window's own settings to disk when they differ from what was last written, and puts what changed of them to work.
+    fn persist_window(&mut self) {
+        let Some(settings) = self
+            .model
+            .read(Screen::window_settings)
+            .filter(|settings| *settings != self.saved_window)
+        else {
+            return;
+        };
+        let _ = pm_store::save_text(WINDOW_SETTINGS, &settings.write());
+        self.work.set_servers(&settings.servers);
+        self.saved_window = settings;
+        self.apply_appearance();
+    }
+
+    /// Draws the window light or dark, in the themes and fonts, as its own settings and the desktop say.
+    fn apply_appearance(&mut self) {
+        let settings = &self.saved_window.appearance;
+        self.appearance = match settings.theme_mode {
+            pm_config::ThemeMode::System => self.system_appearance,
+            pm_config::ThemeMode::Light => Appearance::Light,
+            pm_config::ThemeMode::Dark => Appearance::Dark,
+        };
+        self.family = chosen_family(settings);
+        let fonts = (settings.interface_font.clone(), settings.code_font.clone());
+        if fonts != self.fonts_applied {
+            scene::set_fonts(&mut self.shaper, &fonts.0, &fonts.1);
+            self.fonts_applied = fonts;
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+        self.redraw_settings_window();
     }
 
     /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
@@ -780,6 +888,7 @@ impl App {
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
+                SETTINGS_NAV_SCROLL => std::mem::take(state).scrolled_settings_nav(pixels, room),
                 EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
                 HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
@@ -968,7 +1077,9 @@ impl App {
                 self.sash_drag = None;
                 self.end_comment_drag();
                 self.dragging = None;
-                self.terminal_anchor = None;
+                if self.terminal_anchor.take().is_some() {
+                    self.copy_terminal_selection();
+                }
                 self.text_release();
                 if self.drop_project() {
                     self.pressed_on = None;
@@ -1546,6 +1657,16 @@ fn field_text_offset(field: &pm_text::Field, shown: usize) -> usize {
         .unwrap_or(field.text().len())
 }
 
+/// The themes `settings` pick: the light one for the window drawn light, the dark one for it drawn dark.
+fn chosen_family(settings: &pm_config::AppearanceSettings) -> ThemeFamily {
+    let dark = pm_theme::family_named(&settings.dark_theme);
+    ThemeFamily {
+        name: dark.name,
+        dark: dark.dark,
+        light: pm_theme::family_named(&settings.light_theme).light,
+    }
+}
+
 /// The appearance the desktop asks for; dark when it does not say.
 fn appearance(theme: Option<winit::window::Theme>) -> Appearance {
     match theme {
@@ -1577,7 +1698,7 @@ impl ApplicationHandler for App {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
-        self.appearance = appearance(window.theme());
+        self.system_appearance = appearance(window.theme());
         if self
             .model
             .read(|screen| matches!(screen, Screen::Onboarding(_)))
@@ -1585,8 +1706,8 @@ impl ApplicationHandler for App {
             self.check_agents();
         }
         window.set_ime_allowed(true);
-        window.request_redraw();
         self.window = Some(window);
+        self.apply_appearance();
     }
 
     /// Draws again when the model changed while no event asked for it.
@@ -1599,6 +1720,15 @@ impl ApplicationHandler for App {
             let settings = self.saved_editor.clone();
             self.model
                 .update(|screen| *screen = std::mem::take(screen).with_editor_settings(settings));
+        }
+        if self.model.read(Screen::window_settings_wanted) {
+            let settings = self.saved_window.clone();
+            let (all, mono) = self.shaper.families();
+            self.model.update(|screen| {
+                *screen = std::mem::take(screen)
+                    .with_window_settings(settings)
+                    .with_fonts(all, mono);
+            });
         }
         if self.model.read(Screen::has_outbox) {
             self.deliver();
@@ -1627,6 +1757,11 @@ impl ApplicationHandler for App {
         }
         if self.dirty.get() {
             self.persist_view();
+            self.persist_window();
+            self.persist_editor();
+        }
+        if self.model.read(Screen::quitting) {
+            event_loop.exit();
         }
         self.sync_settings_window(event_loop);
         if self.dirty.replace(false)
@@ -1663,8 +1798,20 @@ impl App {
         };
         let scale = window.scale_factor() as f32;
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::ThemeChanged(theme) => self.appearance = appearance(Some(theme)),
+            WindowEvent::CloseRequested => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).close_asked());
+                let onboarding = self
+                    .model
+                    .read(|screen| matches!(screen, Screen::Onboarding(_)));
+                if onboarding || self.model.read(Screen::quitting) {
+                    event_loop.exit();
+                }
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                self.system_appearance = appearance(Some(theme));
+                self.apply_appearance();
+            }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height, scale);

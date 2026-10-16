@@ -30,12 +30,48 @@ impl DiagnosticsShown {
     }
 }
 
+/// Where long lines of a file break onto the next row.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftWrap {
+    /// Nowhere: a long line runs on past the edge.
+    #[default]
+    Off,
+    /// At the edge of the view.
+    Edge,
+    /// At the preferred line length, or the edge of the view when that comes first.
+    LineLength,
+}
+
+/// How the caret of a file is drawn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorShape {
+    /// A thin upright bar between two characters.
+    #[default]
+    Bar,
+    /// The character after it filled.
+    Block,
+    /// A line under the character after it.
+    Underline,
+}
+
 /// How the editor looks and behaves.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EditorSettings {
     /// How big the text of a file is, in logical pixels.
     pub font_size: u32,
+    /// How tall a line of a file is, in hundredths of its text's size.
+    pub line_height: u32,
+    /// Where long lines break onto the next row.
+    pub soft_wrap: SoftWrap,
+    /// How the caret is drawn.
+    pub cursor_shape: CursorShape,
+    /// Whether the caret blinks.
+    pub cursor_blink: bool,
+    /// Whether the scrollbar marks where the problems, the changes and the matches of a search are.
+    pub scrollbar_marks: bool,
     /// Whether each line has its number beside it.
     pub line_numbers: bool,
     /// Whether the numbers count from the line of the caret.
@@ -107,6 +143,11 @@ impl Default for EditorSettings {
     fn default() -> Self {
         Self {
             font_size: 12,
+            line_height: 167,
+            soft_wrap: SoftWrap::Off,
+            cursor_shape: CursorShape::Bar,
+            cursor_blink: true,
+            scrollbar_marks: true,
             line_numbers: true,
             relative_line_numbers: false,
             current_line_highlight: true,
@@ -161,6 +202,6 @@ impl EditorSettings {
 
     /// How tall a line of a file is, in logical pixels.
     pub fn row_height(&self) -> f32 {
-        (self.font_size as f32 * 5.0 / 3.0).round()
+        (self.font_size as f32 * self.line_height as f32 / 100.0).round()
     }
 }

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use pm_buffer::{Buffer, Lines, Position, Span};
 use serde_json::Value;
 
+use crate::choice::ServerChoice;
 use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
 use crate::server::{DiagnosticsSink, Found, LanguageServer, action_of, file_changes};
@@ -62,6 +63,8 @@ type Slot = Arc<OnceLock<Result<Arc<LanguageServer>, String>>>;
 
 /// A file open in a project.
 struct Document {
+    /// The installed language it is written in.
+    language: String,
     /// Its text and version.
     buffer: Buffer,
     /// Its language's server, when the language has one.
@@ -88,6 +91,8 @@ pub struct Hub {
     waiting: Mutex<HashMap<(PathBuf, String), Edits>>,
     /// The changes last offered for each open file, as its server wrote them, with that server, by project and path.
     actions: Mutex<HashMap<(PathBuf, String), Offered>>,
+    /// The language servers the reader chose other than the ones languages come with, by language.
+    choices: Mutex<HashMap<String, ServerChoice>>,
     /// Where diagnostics of open files go.
     sink: Sink,
 }
@@ -173,8 +178,90 @@ impl Hub {
             addresses: Mutex::new(HashMap::new()),
             waiting: Mutex::new(HashMap::new()),
             actions: Mutex::new(HashMap::new()),
+            choices: Mutex::new(HashMap::new()),
             sink,
         })
+    }
+
+    /// The server the files of `language`, whose own is `own`, are read by, as the reader chose.
+    fn chosen(&self, language: &str, own: Option<ServerSpec>) -> Option<ServerSpec> {
+        let choice = self
+            .choices
+            .lock()
+            .ok()
+            .and_then(|choices| choices.get(language).cloned());
+        match choice {
+            Some(choice) => choice.applied(language, own),
+            None => own,
+        }
+    }
+
+    /// Reads the files of each language by the server `choices` names for it, or by the one it comes with when it names none, moving the open files whose server that changes onto the new one at once.
+    pub fn choose_servers(self: &Arc<Self>, choices: HashMap<String, ServerChoice>) {
+        let before = match self.choices.lock() {
+            Ok(mut held) => std::mem::replace(&mut *held, choices.clone()),
+            Err(_) => return,
+        };
+        let moved: Vec<(PathBuf, String)> = self
+            .documents
+            .lock()
+            .map(|documents| {
+                documents
+                    .iter()
+                    .filter(|(_, document)| {
+                        before.get(&document.language) != choices.get(&document.language)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for key in moved {
+            self.move_server(key);
+        }
+    }
+
+    /// Takes the open file `key` off the server it is on and onto the one its language is read by now.
+    fn move_server(self: &Arc<Self>, key: (PathBuf, String)) {
+        let uri = file_uri(&key.0.join(&key.1));
+        let (old, spec) = {
+            let Ok(mut documents) = self.documents.lock() else {
+                return;
+            };
+            let Some(document) = documents.get_mut(&key) else {
+                return;
+            };
+            let own = installed_manifest(&document.language).and_then(|manifest| manifest.server);
+            let spec = self.chosen(&document.language, own);
+            let old = document.server.take().zip(document.spec.take());
+            document.spec = spec.clone();
+            (old, spec)
+        };
+        if let Some((server, old_spec)) = old {
+            let _ = server.close(&uri);
+            self.stop_unused(&key.0, &old_spec, server);
+        }
+        if let Some(spec) = spec {
+            let hub = self.clone();
+            std::thread::spawn(move || {
+                let _ = hub.attach(&key, &spec);
+            });
+        }
+    }
+
+    /// Stops `server`, the one of `spec` for the project at `root`, when no open file of the project is on it any more.
+    fn stop_unused(&self, root: &Path, spec: &ServerSpec, server: Arc<LanguageServer>) {
+        let still_used = self.documents.lock().is_ok_and(|documents| {
+            documents.iter().any(|((held_root, _), held)| {
+                held_root == root && held.spec.as_ref().is_some_and(|other| other.id == spec.id)
+            })
+        });
+        if still_used {
+            return;
+        }
+        if let Ok(mut servers) = self.servers.lock() {
+            servers.remove(&(root.to_path_buf(), spec.id.clone()));
+        }
+        std::thread::spawn(move || server.stop());
     }
 
     /// What is done with the diagnostics the servers publish: kept, and handed on for a file that is open.
@@ -266,8 +353,9 @@ impl Hub {
                 .unwrap_or_default();
             early.retain(|made, _| *made > version);
             let mut document = Document {
+                language: language.to_owned(),
                 buffer: Buffer::new(text, version),
-                spec: manifest.server.clone(),
+                spec: self.chosen(language, manifest.server.clone()),
                 early,
                 server: None,
             };
@@ -280,7 +368,7 @@ impl Hub {
         if let Ok(mut addresses) = self.addresses.lock() {
             addresses.insert(uri.clone(), key.clone());
         }
-        let Some(spec) = manifest.server else {
+        let Some(spec) = self.chosen(language, manifest.server) else {
             return Ok(Triggers::default());
         };
         self.attach(&key, &spec)
@@ -398,18 +486,7 @@ impl Hub {
             return;
         };
         let _ = server.close(&uri);
-        let still_used = self.documents.lock().is_ok_and(|documents| {
-            documents.iter().any(|((held_root, _), held)| {
-                held_root == root && held.spec.as_ref().is_some_and(|other| other.id == spec.id)
-            })
-        });
-        if still_used {
-            return;
-        }
-        if let Ok(mut servers) = self.servers.lock() {
-            servers.remove(&(root.to_path_buf(), spec.id));
-        }
-        std::thread::spawn(move || server.stop());
+        self.stop_unused(root, &spec, server);
     }
 
     /// Waits until the open file at `key` reaches `version`, then returns its server, its address and what `look` makes of its buffer.

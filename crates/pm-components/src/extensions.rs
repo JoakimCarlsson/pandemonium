@@ -13,7 +13,6 @@ use pm_ui::{Node, node};
 
 use crate::Button;
 use crate::button::{Size, Variant};
-use crate::input::{self, Input};
 use crate::parts::{glyph, line};
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -104,7 +103,7 @@ impl WorkspaceState {
     }
 
     /// The extensions the page lists, as the search narrows them: those installed first, then those available, each by name.
-    fn listed_extensions(&self) -> Vec<&ExtensionInfo> {
+    pub(crate) fn listed_extensions(&self) -> Vec<&ExtensionInfo> {
         let needle = self.extensions_page.search.text().trim().to_lowercase();
         let mut listed: Vec<&ExtensionInfo> = pickable(&self.extensions)
             .filter(|extension| {
@@ -152,16 +151,23 @@ impl WorkspaceState {
         let Some(extension) = self.listed_extensions().get(place).copied().cloned() else {
             return self;
         };
+        self.install_or_remove(&extension);
+        self
+    }
+
+    /// Installs `extension`, or uninstalls it when it is installed, unless it is busy being installed.
+    pub(crate) fn install_or_remove(&mut self, extension: &ExtensionInfo) {
         if extension.busy.is_none() {
             self.outbox.push(if extension.installed {
-                Outgoing::RemoveExtension { id: extension.id }
+                Outgoing::RemoveExtension {
+                    id: extension.id.clone(),
+                }
             } else {
                 Outgoing::InstallExtensions {
-                    ids: vec![extension.id],
+                    ids: vec![extension.id.clone()],
                 }
             });
         }
-        self
     }
 }
 
@@ -189,28 +195,10 @@ fn heading() -> Node {
 
 /// The box the reader types into to narrow the list.
 fn search(state: &WorkspaceState) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            w_full(),
-            h(10),
-            px(3),
-            flex_none(),
-            rounded(Radius::Lg),
-            bg(Role::Surface),
-            border(),
-            border_color(Role::Border),
-        ])
-        .child(glyph(IconName::Search, 4.0, Role::Muted))
-        .child(
-            Input::new(&state.extensions_page.search, EXTENSIONS_SEARCH)
-                .variant(input::Variant::Ghost)
-                .size(input::Size::Sm)
-                .placeholder("Search extensions")
-                .build(),
-        )
+    crate::search_box::SearchBox::new(&state.extensions_page.search, EXTENSIONS_SEARCH)
+        .size(crate::search_box::Size::Lg)
+        .placeholder("Search extensions")
+        .build()
 }
 
 /// The icon an extension's files are shown with, once it is installed and has one; a plain code file otherwise.
@@ -234,9 +222,8 @@ fn mark(extension: &ExtensionInfo) -> Node {
     }
 }
 
-/// The row of `extension`, the `place`-th the page lists: its icon, then its name and version over what it is for and how it stands, and the button that installs or uninstalls it.
-fn row(extension: &ExtensionInfo, place: usize) -> Node {
-    let action = FocusId(ROW_BASE + place as u64);
+/// The row of `extension`: its icon, then its name and version over what it is for and how it stands, and the button, answering to `action`, that installs or uninstalls it.
+pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) -> Node {
     let button = match (extension.busy.is_some(), extension.installed) {
         (true, _) => Button::new("Installing", action)
             .variant(Variant::Ghost)
@@ -282,7 +269,7 @@ fn row(extension: &ExtensionInfo, place: usize) -> Node {
 }
 
 /// A titled group of rows in one outlined box, or nothing when it has none.
-fn group(title: &str, rows: Vec<Node>) -> Option<Node> {
+pub(crate) fn group(title: &str, rows: Vec<Node>) -> Option<Node> {
     if rows.is_empty() {
         return None;
     }
@@ -320,7 +307,7 @@ pub fn extensions(state: &WorkspaceState) -> Node {
     let mut installed = Vec::new();
     let mut available = Vec::new();
     for (place, extension) in listed.iter().enumerate() {
-        let built = row(extension, place);
+        let built = row(extension, FocusId(ROW_BASE + place as u64));
         if extension.installed {
             installed.push(built);
         } else {

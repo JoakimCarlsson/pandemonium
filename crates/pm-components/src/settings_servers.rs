@@ -5,8 +5,8 @@ use pm_input::FocusId;
 use pm_protocol::{AgentServer, McpServer, RegistryAgent, ToolListing};
 use pm_style::{
     Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, gap, h, items_center, items_start, justify_between, justify_end, min_h, min_w_px,
-    overflow_hidden, p, px, rounded, rounded_full, self_start, size, w_full, w_px,
+    flex_none, gap, h, items_center, items_start, justify_between, min_h, min_w_px,
+    overflow_hidden, p, px, rounded, rounded_full, self_start, w_full,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
@@ -20,10 +20,11 @@ use crate::settings::{
     SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_EDIT_BASE, SETTINGS_ENV, SETTINGS_HOME,
     SETTINGS_INSTALL_BASE, SETTINGS_INSTALLER, SETTINGS_MENU_COPY, SETTINGS_MENU_EDIT,
     SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE, SETTINGS_MORE_BASE,
-    SETTINGS_NAME, SETTINGS_PACKAGE, SETTINGS_REMOVE_BASE, SETTINGS_SAVE, SETTINGS_SCROLL,
-    SETTINGS_SEARCH, SETTINGS_SEARCH_GO, SETTINGS_SWITCH_BASE, SETTINGS_TARGET,
+    SETTINGS_NAME, SETTINGS_PACKAGE, SETTINGS_RELEASE, SETTINGS_REMOVE_BASE, SETTINGS_SAVE,
+    SETTINGS_SCROLL, SETTINGS_SEARCH, SETTINGS_SEARCH_GO, SETTINGS_SWITCH_BASE, SETTINGS_TARGET,
     SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
 };
+use crate::settings_row::switch;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tile::Tile;
 
@@ -667,9 +668,21 @@ pub(crate) fn is_form_field(id: FocusId) -> bool {
 /// What a section says about itself under its heading.
 fn summary(section: Section) -> &'static str {
     match section {
-        Section::General => "",
+        Section::General => "How the window opens, closes and keeps itself up to date.",
+        Section::Appearance => {
+            "The theme, the fonts of the interface and of code, and how closely things are set."
+        }
+        Section::Languages => {
+            "How each language is indented, formatted and read by its language server, and the languages installed on this machine."
+        }
         Section::Keymap => {
             "Pick the editor your hands know, or press a binding to give an action keys of your own."
+        }
+        Section::Terminal => {
+            "The shell the terminal starts, and how its text and cursor are drawn."
+        }
+        Section::Git => {
+            "How the server fetches, names the branches of sessions and places their worktrees, and what git marks in files."
         }
         Section::Editor
         | Section::EditorAppearance
@@ -678,7 +691,7 @@ fn summary(section: Section) -> &'static str {
         | Section::EditorIntelligence
         | Section::EditorSearch => crate::settings_editor::summary(section),
         Section::Agents => {
-            "Tailor how agents work in your projects: the agents that can be started, and the tools they are given."
+            "Tailor how agents work in your projects: what new sessions start with, what happens when an agent finishes, the agents that can be started and the tools they are given."
         }
         Section::AgentServers => {
             "Agents that speak the Agent Client Protocol. The editor starts them in a worktree and talks to them over it."
@@ -686,6 +699,10 @@ fn summary(section: Section) -> &'static str {
         Section::McpServers => {
             "An open standard that lets AI use external tools and services. MCP servers provide tools for file operations, databases, APIs, and more."
         }
+        Section::Servers => {
+            "The servers the window works with: the one on this machine, ones reached straight at their address and ones reached over ssh."
+        }
+        Section::Results => "",
     }
 }
 
@@ -723,46 +740,116 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
         pm_style::pb(6),
     ]);
     let inner = node().styles([flex(), flex_col(), gap(4), flex_none(), w_full()]);
-    match section {
-        Section::General => page.child(inner),
-        Section::Editor => page
-            .child(
-                inner
-                    .child(paragraph(crate::settings_editor::summary(section), room))
-                    .children(crate::settings_editor::groups(state, room)),
-            )
-            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
-        Section::Keymap => page
-            .child(
-                inner
-                    .child(paragraph(summary(section), room))
-                    .children(crate::settings_keymap::rows(state, room)),
-            )
-            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
+    let about = paragraph(summary(section), room);
+    let filled = match section {
+        Section::Results => inner.children(crate::settings_pages::results(state, room)),
+        Section::General => inner
+            .child(about)
+            .child(crate::settings_pages::page_rows(state, section, room))
+            .children(release_note(state, room)),
+        Section::Appearance | Section::Terminal | Section::Git => inner
+            .child(about)
+            .child(crate::settings_pages::page_rows(state, section, room)),
+        Section::Editor => {
+            inner
+                .child(about)
+                .children(crate::settings_editor::PAGES.into_iter().map(|page| {
+                    crate::settings_pages::group(
+                        page.title(),
+                        crate::settings_pages::page_rows(state, page, room),
+                    )
+                }))
+        }
         Section::EditorAppearance
         | Section::EditorEditing
         | Section::EditorSaving
         | Section::EditorIntelligence
-        | Section::EditorSearch => page
-            .child(
-                inner
-                    .child(paragraph(crate::settings_editor::summary(section), room))
-                    .child(crate::settings_editor::rows(state, section, room)),
-            )
-            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
-        Section::Agents => page.child(
-            inner
-                .child(paragraph(summary(section), room))
-                .child(line("Explore", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .children(
-                    [Section::AgentServers, Section::McpServers]
-                        .map(|part| card(part, count_of(state, part))),
-                ),
+        | Section::EditorSearch => inner
+            .child(about)
+            .child(crate::settings_pages::page_rows(state, section, room)),
+        Section::Languages => inner
+            .child(about)
+            .children(crate::settings_languages::body(state, room)),
+        Section::Keymap => inner
+            .child(about)
+            .children(crate::settings_keymap::rows(state, room)),
+        Section::Agents => inner
+            .child(about)
+            .child(crate::settings_pages::page_rows(state, section, room))
+            .child(line("Explore", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
+            .children(
+                [Section::AgentServers, Section::McpServers]
+                    .map(|part| card(part, count_of(state, part))),
+            ),
+        Section::Servers => inner
+            .child(about)
+            .children(crate::settings_machines::body(state, room)),
+        Section::AgentServers | Section::McpServers => list(state, section, inner, room),
+    };
+    page.child(filled)
+        .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll)
+}
+
+/// The numbers of a version written `0.14.0` or `v0.14.0-rc.1`, and whether it is a release before the one those numbers name.
+fn version_numbers(version: &str) -> (Vec<u64>, bool) {
+    let version = version.trim().trim_start_matches('v');
+    let (numbers, before) = match version.split_once('-') {
+        Some((numbers, _)) => (numbers, true),
+        None => (version, false),
+    };
+    (
+        numbers
+            .split('.')
+            .map(|part| part.parse().unwrap_or(0))
+            .collect(),
+        before,
+    )
+}
+
+/// Whether the release `newest` comes after the version `running`.
+fn is_newer(newest: &str, running: &str) -> bool {
+    let (newest, newest_before) = version_numbers(newest);
+    let (running, running_before) = version_numbers(running);
+    newest > running || (newest == running && running_before && !newest_before)
+}
+
+/// What the newest release on the channel followed is, beside the version running, once it was asked; with the button that opens its page when it is newer.
+fn release_note(state: &WorkspaceState, room: f32) -> Option<Node> {
+    let (version, url) = state.settings_page.release.as_ref()?;
+    let running = env!("CARGO_PKG_VERSION");
+    let nightly = state.window.general.channel == pm_config::Channel::Nightly;
+    let (said, newer) = match version {
+        Some(made) if nightly => (
+            format!("The newest nightly build was made on {made}; this is {running}."),
+            !url.is_empty(),
         ),
-        Section::AgentServers | Section::McpServers => page
-            .child(list(state, section, inner, room))
-            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
-    }
+        Some(version) if is_newer(version, running) => (
+            format!("Pandemonium {version} is available; this is {running}."),
+            !url.is_empty(),
+        ),
+        Some(_) => (format!("Pandemonium {running} is up to date."), false),
+        None => (
+            "No release could be found on this channel.".to_owned(),
+            false,
+        ),
+    };
+    Some(
+        node()
+            .styles([
+                flex(),
+                items_center(),
+                justify_between(),
+                gap(3),
+                flex_none(),
+            ])
+            .child(wrapped_note(&said, (room - 160.0).max(120.0)))
+            .children(newer.then(|| {
+                Button::new("Open Release Page", SETTINGS_RELEASE)
+                    .variant(Variant::Outline)
+                    .size(Size::Sm)
+                    .build()
+            })),
+    )
 }
 
 /// How many servers `section` lists, in words.
@@ -775,7 +862,7 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
 }
 
 /// A box with an outline around rows that have a hairline between each and the next.
-fn boxed(rows: Vec<Node>) -> Node {
+pub(crate) fn boxed(rows: Vec<Node>) -> Node {
     let last = rows.len().saturating_sub(1);
     node()
         .styles([
@@ -931,12 +1018,12 @@ fn list(state: &WorkspaceState, section: Section, page: Node, room: f32) -> Node
 fn search_box(state: &WorkspaceState, section: Section) -> Node {
     let placeholder = match section {
         Section::AgentServers => "Search agents",
-        _ => "Search MCP servers, then press Enter to search the registry",
+        _ => "Search MCP servers; Enter searches the registry",
     };
-    Input::new(&state.settings_servers.search, SETTINGS_SEARCH)
+    crate::search_box::SearchBox::new(&state.settings_servers.search, SETTINGS_SEARCH)
+        .size(crate::search_box::Size::Lg)
         .placeholder(placeholder)
         .build()
-        .styles([flex_none()])
 }
 
 /// The name of a list that opens and folds it, with how many rows it holds.
@@ -957,6 +1044,18 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) -> Node {
         ])
         .focusable(toggle)
         .child(glyph(chevron, 4.0, Role::Muted))
+        .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
+        .child(
+            node()
+                .styles([flex(), px(2), rounded_full(), bg(Role::SurfaceSelected)])
+                .child(line(count.to_string(), 12, 1.4, Role::Muted)),
+        )
+}
+
+/// The name of a list that does not fold, with how many rows it holds.
+pub(crate) fn heading_only(title: &str, count: usize) -> Node {
+    node()
+        .styles([flex(), items_center(), gap(2), flex_none(), h(9)])
         .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
         .child(
             node()
@@ -1205,29 +1304,6 @@ fn badge(label: &str, tone: Role) -> Node {
             bg(Role::SurfaceSelected),
         ])
         .child(line(label, 11, 1.5, tone))
-}
-
-/// A switch that is on while `on` is true, answering to `id`.
-pub(crate) fn switch(on: bool, id: FocusId) -> Node {
-    let knob = node().styles([size(4), rounded_full(), bg(Role::Text)]);
-    let track = node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_none(),
-            w_px(36),
-            h(5),
-            p(0.5),
-            rounded_full(),
-            cursor_pointer(),
-            bg(if on { Role::Success } else { Role::Border }),
-        ])
-        .focusable(id);
-    if on {
-        track.styles([justify_end()]).child(knob)
-    } else {
-        track.child(knob)
-    }
 }
 
 /// One row of a list: a name with its labels over what it is for and what runs it, and, for a server that can be changed, its switch and menu.

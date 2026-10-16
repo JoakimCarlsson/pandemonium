@@ -10,6 +10,27 @@ use pm_text::Shaper;
 
 use crate::retain::Retained;
 
+/// How a caret is drawn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CaretShape {
+    /// A thin upright bar before the character it is at.
+    #[default]
+    Bar,
+    /// The character it is at, filled.
+    Block,
+    /// A line under the character it is at.
+    Underline,
+}
+
+/// How the carets of a node are drawn: their shape, and whether they stay lit rather than blink.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CaretLook {
+    /// The shape.
+    pub shape: CaretShape,
+    /// Whether they stay lit.
+    pub steady: bool,
+}
+
 /// One box of the tree: how it is styled and what it holds.
 #[derive(Clone, Debug, Default)]
 pub struct Node {
@@ -31,6 +52,8 @@ pub struct Node {
     /// A blinking caret at this byte offset of the text, shown while the
     /// named box holds focus.
     pub(crate) caret: Option<(usize, FocusId)>,
+    /// How its carets are drawn.
+    pub(crate) caret_look: CaretLook,
     /// A highlighted byte range of this node's text, shown while the named
     /// box holds focus.
     pub(crate) selection: Option<(std::ops::Range<usize>, FocusId)>,
@@ -226,6 +249,12 @@ impl Node {
     /// the box named `owner` holds focus.
     pub fn caret(mut self, byte: usize, owner: FocusId) -> Self {
         self.caret = Some((byte, owner));
+        self
+    }
+
+    /// Draws the carets of this node's text as `look` says.
+    pub fn caret_look(mut self, look: CaretLook) -> Self {
+        self.caret_look = look;
         self
     }
 

@@ -61,7 +61,7 @@ pub(crate) fn agent_named(id: &str) -> Option<Agent> {
 }
 
 /// The folder `path` names on this machine, with a leading `~` taken to be the reader's home folder.
-fn place(path: &str) -> PathBuf {
+pub(crate) fn place(path: &str) -> PathBuf {
     match (path.strip_prefix("~/"), std::env::home_dir()) {
         (Some(rest), Some(home)) => home.join(rest),
         _ => PathBuf::from(path),
@@ -69,7 +69,7 @@ fn place(path: &str) -> PathBuf {
 }
 
 /// A response saying the request failed, for `message`.
-fn failed(message: impl Into<String>) -> Response {
+pub(crate) fn failed(message: impl Into<String>) -> Response {
     Response::Failed {
         message: message.into(),
     }
@@ -181,8 +181,13 @@ fn start_session(
                 "{repository} is not a git repository, so it has no worktrees"
             ));
         }
-        Some(base) => match pm_git::add_worktree(&place(repository), title, base) {
-            Ok(made) => (made.path, Some(made.head)),
+        Some(base) => match pm_git::add_worktree(
+            &place(repository),
+            title,
+            base,
+            &crate::machine::placement(),
+        ) {
+            Ok(made) => (made.path, Some((made.head, made.branch))),
             Err(reason) => return failed(format!("could not make a worktree: {reason}")),
         },
         None => {
@@ -193,11 +198,12 @@ fn start_session(
             (folder, None)
         }
     };
+    let (head, branch) = head.map_or((None, None), |(head, branch)| (Some(head), branch));
     let meta = Meta {
         agent: agent.id.to_owned(),
         repository: repository.to_owned(),
         directory: folder.to_string_lossy().into_owned(),
-        branch: None,
+        branch: branch.clone(),
         head: head.clone(),
         base: base.map(str::to_owned),
         title: title.to_owned(),
@@ -205,7 +211,7 @@ fn start_session(
         updated: now(),
     };
     let mut session = Session::new(agent, folder.clone(), Vec::new(), meta);
-    session.start_agent(settings);
+    session.start_agent(&crate::machine::with_mode(settings));
     let number = hold_session(core, connection, session);
     let first = prompt(number, text, attachments);
     telling(core, number, |held| held.submit(number, first, false));
@@ -213,7 +219,7 @@ fn start_session(
     Response::Started {
         session: number,
         directory: folder.to_string_lossy().into_owned(),
-        branch: None,
+        branch,
         head,
     }
 }
@@ -497,6 +503,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Err(reason) => failed(reason),
         },
         Request::SaveMcpServers { servers } => saved_list("mcp-servers", &servers),
+        Request::MachineSettings => Response::MachineSettings {
+            settings: crate::machine::settings(),
+        },
+        Request::SaveMachineSettings { settings } => {
+            let answer = crate::machine::save(&settings);
+            core.documents.settings_changed(&settings);
+            answer
+        }
+        Request::LatestRelease { channel } => crate::releases::latest(&channel),
         Request::Sessions => Response::Sessions {
             sessions: core.infos(),
         },

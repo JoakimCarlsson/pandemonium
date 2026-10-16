@@ -14,6 +14,31 @@ pub fn shaper() -> Shaper {
     shaper
 }
 
+/// Sets `shaper` in the interface font `sans` and the code font `mono`, each by family name, falling back to the fonts the app ships; an empty name is the one the app ships.
+pub fn set_fonts(shaper: &mut Shaper, sans: &str, mono: &str) {
+    let stack = |chosen: &str, shipped: &[&'static str]| -> Vec<String> {
+        std::iter::once(chosen)
+            .filter(|name| !name.is_empty())
+            .chain(shipped.iter().copied())
+            .map(str::to_owned)
+            .collect()
+    };
+    let sans = stack(sans, Fonts::DEFAULT.sans);
+    let mono = stack(mono, Fonts::DEFAULT.mono);
+    let sans: Vec<&str> = sans.iter().map(String::as_str).collect();
+    let mono: Vec<&str> = mono.iter().map(String::as_str).collect();
+    shaper.set_stacks(&sans, &mono);
+}
+
+/// Builds what follows on this thread as closely and with interface text as big as the window's settings in `state` say.
+fn scale_for(state: &Screen) {
+    let appearance = match state {
+        Screen::Workspace(held) => held.window.appearance.clone(),
+        Screen::Onboarding(_) => pm_config::AppearanceSettings::default(),
+    };
+    pm_style::set_scales(appearance.density.scale(), appearance.text_scale());
+}
+
 /// The colour the window is cleared to before anything is drawn.
 pub fn ground(theme: &Theme) -> Srgba {
     theme.role(Role::Background)
@@ -31,6 +56,7 @@ pub fn paint(
     list: &mut DrawList,
 ) -> Output {
     list.clear();
+    scale_for(state);
     let root = screen(state, width, height, shaper);
     pm_ui::draw(&root, width, height, input, theme, shaper, list)
 }
@@ -48,6 +74,7 @@ pub fn paint_settings(
     list: &mut DrawList,
 ) -> Output {
     list.clear();
+    scale_for(state);
     match settings_screen(state, width) {
         Some(root) => pm_ui::draw(&root, width, height, input, theme, shaper, list),
         None => Output::default(),
