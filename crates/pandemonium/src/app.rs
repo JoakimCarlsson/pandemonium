@@ -41,6 +41,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
 mod code;
+mod paste;
 mod select;
 mod settings_window;
 mod terminal;
@@ -849,10 +850,7 @@ impl App {
             .iter()
             .map(|file| file.to_string_lossy().into_owned())
             .collect();
-        self.model
-            .update(|state| *state = std::mem::take(state).with_attachments(&paths));
-        self.work.preview(paths);
-        self.focus.focus(PROMPT);
+        self.attach_paths(paths);
     }
 
     /// Scrolls what is under the pointer by `pixels` logical pixels, downwards when positive.
@@ -1478,6 +1476,9 @@ impl App {
                 }
             }
             Clip::Paste => {
+                if id == PROMPT && self.paste_attachments() {
+                    return;
+                }
                 let pasted = self
                     .clipboard()
                     .and_then(|clipboard| clipboard.get_text().ok());
