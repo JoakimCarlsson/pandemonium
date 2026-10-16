@@ -338,20 +338,10 @@ fn code_lines(
         .into_iter()
         .map(|piece| {
             let range = piece.start..piece.end;
-            let marks = highlights.iter().filter_map(|highlight| {
-                let low = highlight.range.start.max(range.start);
-                let high = highlight.range.end.min(range.end);
-                let role = crate::viewer::kind_role(highlight.kind)?;
-                (low < high).then(|| Mark {
-                    range: low - range.start..high - range.start,
-                    color: role.into(),
-                    paint: Paint::Ink,
-                })
-            });
             text(&body[range.clone()])
                 .styles(setting)
                 .styles([text_color(Role::Text)])
-                .marks(marks.collect::<Vec<_>>())
+                .marks(crate::viewer::highlight_marks(&highlights, range))
         })
         .collect()
 }

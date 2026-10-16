@@ -1,4 +1,4 @@
-//! File and folder icons: a file is shown with the icon of the installed language it is written in, and as a plain file otherwise; nothing language-specific ships with the app.
+//! File and folder icons, and which installed language a file is written in: a file is shown with the icon of that language, and as a plain file otherwise; nothing language-specific ships with the app.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -10,10 +10,18 @@ use pm_ui::{Node, node};
 
 use crate::parts::glyph;
 
-/// The icons the installed languages of each machine show their files with: by machine, then by the ending of a file name.
-type Learned = HashMap<Option<String>, HashMap<String, (Svg, Color)>>;
+/// What an installed language says of the files whose names end as it reads.
+struct Known {
+    /// The language, by its folder's name.
+    language: String,
+    /// The icon and colour its files are shown with, when it has one.
+    icon: Option<(Svg, Color)>,
+}
 
-/// The icons learned from the languages installed on the machines reached.
+/// What the installed languages of each machine say of their files: by machine, then by the ending of a file name.
+type Learned = HashMap<Option<String>, HashMap<String, Known>>;
+
+/// What was learned from the languages installed on the machines reached.
 static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
 
 /// The colour `hex`, written `#rrggbb`, names.
@@ -29,21 +37,27 @@ fn colour_of(hex: &str) -> Option<Color> {
     ))
 }
 
-/// Takes in the icons of the languages installed on `host`, as `extensions` lists them, in place of those it had before.
-pub fn learn_icons(host: &Option<String>, extensions: &[ExtensionInfo]) {
+/// Takes in the languages installed on `host` and their icons, as `extensions` lists them, in place of those it had before.
+pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
     let mut endings = HashMap::new();
     for extension in extensions.iter().filter(|extension| extension.installed) {
-        let Some(source) = &extension.icon else {
-            continue;
-        };
-        let svg = Svg::arrived(&format!("extension-{}", extension.id), source);
-        let tone = extension
-            .color
-            .as_deref()
-            .and_then(colour_of)
-            .unwrap_or_else(|| Color::from(Role::Muted));
+        let icon = extension.icon.as_ref().map(|source| {
+            let svg = Svg::arrived(&format!("extension-{}", extension.id), source);
+            let tone = extension
+                .color
+                .as_deref()
+                .and_then(colour_of)
+                .unwrap_or_else(|| Color::from(Role::Muted));
+            (svg, tone)
+        });
         for suffix in &extension.suffixes {
-            endings.insert(suffix.to_lowercase(), (svg, tone));
+            endings.insert(
+                suffix.to_lowercase(),
+                Known {
+                    language: extension.id.clone(),
+                    icon,
+                },
+            );
         }
     }
     if let Ok(mut learned) = LEARNED.lock() {
@@ -51,22 +65,29 @@ pub fn learn_icons(host: &Option<String>, extensions: &[ExtensionInfo]) {
     }
 }
 
-/// The icon and colour of the file `path` names: its installed language's, or a plain muted file.
-pub fn file_kind(path: &str) -> (Svg, Color) {
+/// What `read` finds in what the installed language of the file `path` names says of it, on the first machine where it finds something.
+fn learned_of<T>(path: &str, read: impl Fn(&Known) -> Option<T>) -> Option<T> {
     let suffix = path
         .rsplit(['/', '\\'])
         .next()
         .and_then(|name| name.rsplit_once('.'))
         .map(|(_, suffix)| suffix.to_lowercase())
         .unwrap_or_default();
-    LEARNED
-        .lock()
-        .ok()
-        .and_then(|learned| {
-            learned
-                .values()
-                .find_map(|endings| endings.get(&suffix).copied())
-        })
+    LEARNED.lock().ok().and_then(|learned| {
+        learned
+            .values()
+            .find_map(|endings| endings.get(&suffix).and_then(&read))
+    })
+}
+
+/// The installed language the file `path` names is written in, by its folder's name, when there is one.
+pub fn file_language(path: &str) -> Option<String> {
+    learned_of(path, |known| Some(known.language.clone()))
+}
+
+/// The icon and colour of the file `path` names: its installed language's, or a plain muted file.
+pub fn file_kind(path: &str) -> (Svg, Color) {
+    learned_of(path, |known| known.icon)
         .unwrap_or_else(|| (IconName::File.svg(), Color::from(Role::Muted)))
 }
 
