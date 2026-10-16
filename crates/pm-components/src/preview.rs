@@ -15,10 +15,10 @@ use crate::open_files::{Contents, STRIP, Viewer};
 use crate::parts::line;
 
 /// Shows the file shown rendered.
-pub const PREVIEW_SHOW: FocusId = FocusId(7090);
+pub const PREVIEW_SHOW: FocusId = FocusId(7094);
 
 /// Shows the source of the file shown.
-pub const SOURCE_SHOW: FocusId = FocusId(7091);
+pub const SOURCE_SHOW: FocusId = FocusId(7095);
 
 /// The first link of a markdown file shown rendered; the rest follow it.
 pub const PREVIEW_LINK_BASE: u64 = 4_200_000;
