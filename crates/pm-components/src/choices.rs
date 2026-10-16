@@ -489,12 +489,13 @@ impl WorkspaceState {
 
     /// Reads the branches of the project being started in when it is not the one they were read for.
     pub fn sync_context(&mut self) {
-        self.sync_files_owner();
         let Page::New(project) = self.page else {
+            self.sync_files_owner();
             self.homed = None;
             return;
         };
         self.read_home(project);
+        self.sync_files_owner();
         if let Some(held) = self.projects.get(project) {
             self.sync_discovery(held.host());
         }

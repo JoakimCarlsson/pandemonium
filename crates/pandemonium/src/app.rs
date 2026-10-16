@@ -135,6 +135,8 @@ pub struct App {
     work: Work,
     /// What was last written as the view, which is what the window opened with until it changes.
     saved_view: Option<View>,
+    /// The field the reader was typing in when the window last closed, which takes the keyboard once it is drawn.
+    refocus: Option<FocusId>,
     /// The project header a press began on, by position, and where the pointer was.
     project_press: Option<(usize, (f32, f32))>,
     /// Whether the pointer moved far enough from `project_press` for it to be a drag.
@@ -253,6 +255,7 @@ impl Default for App {
             last_press: None,
             composing_in: None,
             saved,
+            refocus: saved_view.as_ref().and_then(View::typing),
             saved_view,
             project_press: None,
             project_dragging: false,
@@ -354,6 +357,13 @@ impl App {
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus.focus(TERMINAL_BODY);
             }
+            let drawn = |id| self.output.regions.iter().any(|region| region.id == id);
+            Self::give_back_focus(
+                &mut self.refocus,
+                &mut self.focus,
+                self.work.resuming(),
+                drawn,
+            );
             let starting = state.is_starting();
             if starting && !self.autofocused {
                 self.focus.focus(PROMPT);
@@ -513,8 +523,9 @@ impl App {
             return;
         }
         let work = &self.work;
+        let focused = self.focus.current();
         let Some(view) = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => Some(View::capture(state, |position| {
+            Screen::Workspace(state) => Some(View::capture(state, focused, |position| {
                 work.server_number(position)
             })),
             Screen::Onboarding(_) => None,
@@ -526,6 +537,23 @@ impl App {
         }
         view.save();
         self.saved_view = Some(view);
+    }
+
+    /// Gives `focus` to the field in `refocus`, the one the reader was typing in when the window last closed, once the view is no longer `resuming` and the field is `drawn`.
+    fn give_back_focus(
+        refocus: &mut Option<FocusId>,
+        focus: &mut Focus,
+        resuming: bool,
+        drawn: impl Fn(FocusId) -> bool,
+    ) {
+        let Some(field) = *refocus else {
+            return;
+        };
+        if resuming || !drawn(field) {
+            return;
+        }
+        focus.focus(field);
+        *refocus = None;
     }
 
     /// Writes the project list to disk when the workspace's differs from what was last written.
@@ -1478,6 +1506,7 @@ impl ApplicationHandler for App {
                 self.scroll(pixels);
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                self.refocus = None;
                 let button = match button {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,
@@ -1509,6 +1538,7 @@ impl ApplicationHandler for App {
                 self.modifiers = keys::modifiers(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                self.refocus = None;
                 if let Some(event) = keys::key_event(&event, self.modifiers) {
                     self.key(event);
                 }

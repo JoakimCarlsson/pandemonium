@@ -2,6 +2,8 @@
 
 use pm_input::FocusId;
 
+use pm_text::Edit;
+
 use crate::document::Document;
 use crate::git_prompts::Prompt;
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
@@ -48,6 +50,35 @@ pub struct Viewer {
     pub scroll: f32,
     /// Whether it is only being looked at: its tab is given up to the next file looked at, until the file is changed.
     pub preview: bool,
+    /// Where the file was left when the window last closed, put back once its text arrives.
+    pub left: Option<Left>,
+}
+
+/// Where a file was left when the window closed: what it held that was not saved, and the caret.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Left {
+    /// The text that was not written to the folder, when the file had changes.
+    pub unsaved: Option<String>,
+    /// The caret, as a byte offset into the text.
+    pub caret: usize,
+}
+
+impl Left {
+    /// Puts the unsaved text and the caret back into `document`, which was just read from the folder.
+    fn put_back(self, document: &mut Document) {
+        if let Some(text) = self.unsaved.filter(|_| !document.field.is_read_only()) {
+            let before = document.field.text().to_owned();
+            let before_lines = document.line_index().clone();
+            document.field.apply(Edit::Place(0, false));
+            document.field.apply(Edit::Place(before.len(), true));
+            document.field.apply(Edit::Paste(text));
+            document.refresh(&before, &before_lines);
+        }
+        let caret = self.caret.min(document.field.text().len());
+        if document.field.text().is_char_boundary(caret) {
+            document.field.apply(Edit::Place(caret, false));
+        }
+    }
 }
 
 impl Viewer {
@@ -93,6 +124,7 @@ impl WorkspaceState {
                     contents: Contents::Loading,
                     scroll: 0.0,
                     preview: true,
+                    left: None,
                 };
                 self.outbox.push(Outgoing::ReadFile {
                     session,
@@ -200,7 +232,11 @@ impl WorkspaceState {
         }) {
             viewer.contents = match read {
                 Ok((Some(text), truncated, _)) => {
-                    Contents::Text(Box::new(Document::new(&text, head, truncated)))
+                    let mut document = Document::new(&text, head, truncated);
+                    if let Some(left) = viewer.left.take() {
+                        left.put_back(&mut document);
+                    }
+                    Contents::Text(Box::new(document))
                 }
                 Ok((None, _, _)) => Contents::Message("This file is not text.".to_owned()),
                 Err(reason) => Contents::Message(reason),
