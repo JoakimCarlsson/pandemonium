@@ -575,6 +575,22 @@ impl Screen {
         }
     }
 
+    /// The screen after the diagram kept under `key` was drawn, or could not be.
+    pub fn with_diagram(self, key: u64, drawn: Result<pm_ui::Picture, String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_diagram(key, drawn)),
+            other => other,
+        }
+    }
+
+    /// The screen with every drawn diagram let go and those of the file shown asked for again, as when the colours change.
+    pub fn without_diagrams(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.without_diagrams()),
+            other => other,
+        }
+    }
+
     /// Which menu the button `id` opens, if it is one.
     pub fn menu_button_of(id: FocusId) -> Option<MenuKind> {
         WorkspaceState::menu_button_of(id)

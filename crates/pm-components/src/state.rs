@@ -805,6 +805,13 @@ pub enum Outgoing {
         /// Whether to read it from the last commit.
         head: bool,
     },
+    /// Draws a diagram written in markdown into pixels.
+    DrawDiagram {
+        /// The key it is kept under.
+        key: u64,
+        /// What it is written as.
+        source: String,
+    },
     /// Draws the text of a vector picture open in a session into pixels.
     DrawVector {
         /// The session, by position.
@@ -1082,6 +1089,10 @@ pub struct WorkspaceState {
     pub discovered_elsewhere: std::collections::HashMap<Option<String>, Discovered>,
     /// What the attached pictures look like, by path, once they are decoded.
     pub previews: std::collections::HashMap<String, pm_ui::Picture>,
+    /// The diagrams of markdown files drawn so far.
+    pub diagrams: crate::diagram::Diagrams,
+    /// The diagrams asked to be drawn, by their key, so none is asked for twice.
+    pub diagrams_asked: std::collections::HashSet<u64>,
     /// The commit message being written.
     pub message: Field,
     /// What the history page is narrowed to.
@@ -1297,6 +1308,8 @@ impl WorkspaceState {
             skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
             previews: std::collections::HashMap::new(),
+            diagrams: crate::diagram::Diagrams::new(),
+            diagrams_asked: std::collections::HashSet::new(),
             discovery_host: None,
             discovered_elsewhere: std::collections::HashMap::new(),
             files: Vec::new(),

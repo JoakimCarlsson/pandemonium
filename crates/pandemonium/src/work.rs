@@ -87,6 +87,8 @@ enum Job {
     Pictured(usize, String, bool, Result<Picture, String>),
     /// The text of the vector picture of the session at this position, at this path, and whether it was read from the last commit, was drawn, or could not be.
     Drawn(usize, String, bool, Result<Picture, String>),
+    /// The diagram kept under this key was drawn, or could not be.
+    Diagram(u64, Result<Picture, String>),
     /// The server on this machine was found or reached, or could not be.
     Server(Host, Result<Target, String>),
     /// The grammar of the language with this folder name was compiled, or could not be.
@@ -305,6 +307,8 @@ pub struct Work {
     pending: Cell<usize>,
     /// The grammars asked for of each machine, by the name they were asked by, so each is asked for once.
     grammars: HashSet<(Host, String)>,
+    /// The colours diagrams are drawn in.
+    palette: picture::Palette,
 }
 
 impl Work {
@@ -336,6 +340,7 @@ impl Work {
             resume: None,
             pending: Cell::new(0),
             grammars: HashSet::new(),
+            palette: picture::Palette::default(),
         }
     }
 
@@ -949,6 +954,13 @@ impl Work {
                     let drawn = picture::draw(&path, &text);
                     let _ = reporter.send(Job::Drawn(session, path, head, drawn));
                 }),
+                Outgoing::DrawDiagram { key, source } => {
+                    let palette = self.palette.clone();
+                    self.spawn(move |reporter| {
+                        let drawn = picture::diagram(&source, &palette);
+                        let _ = reporter.send(Job::Diagram(key, drawn));
+                    });
+                }
                 Outgoing::Accounts { logins, in_use } => self.set_accounts(&logins, &in_use),
                 Outgoing::SignIn { agent } => {
                     if let Some(id) = self.agent_id(agent) {
@@ -1202,6 +1214,13 @@ impl Work {
                 .any(|link| link.client.is_none() || !link.waiting.is_empty())
     }
 
+    /// Draws diagrams in the colours of `palette` from now on, and says whether they changed.
+    pub fn set_palette(&mut self, palette: picture::Palette) -> bool {
+        let changed = palette != self.palette;
+        self.palette = palette;
+        changed
+    }
+
     /// Runs `work` on a thread of its own, which reports what it found through the sender it is given.
     fn spawn(&self, work: impl FnOnce(Sender<Job>) + Send + 'static) {
         self.pending.set(self.pending.get() + 1);
@@ -1236,6 +1255,9 @@ impl Work {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_drawn(session, &path, head, drawn);
                 });
+            }
+            Job::Diagram(key, drawn) => {
+                model.update(|screen| *screen = std::mem::take(screen).with_diagram(key, drawn));
             }
             Job::Server(host, Ok(target)) => {
                 if !self.links.contains_key(&host) {

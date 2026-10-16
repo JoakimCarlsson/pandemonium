@@ -1792,7 +1792,7 @@ pub fn write(
 }
 
 /// What a markdown file shown rendered in a snapshot says.
-const PREVIEW_MARKDOWN: &str = "# pandemonium\n\nA GPU-native editor for conducting agents. Several **projects** live in one window; a *session* is an agent working in its own git worktree of one of them.\n\n## Commands\n\n```sh\nmake run     # cargo run -p pandemonium\nmake lint    # cargo clippy --workspace\n```\n\n- Read [the protocol](docs/protocol.md) before changing `pm-protocol`.\n- Layers point one way.\n- An agent outlives its client.\n\n> A session is a worktree you review, not a terminal you supervise.\n\n| Crate | Job |\n| --- | --- |\n| `pm-ui` | the element tree |\n| `pm-renderer` | talks to wgpu |\n";
+const PREVIEW_MARKDOWN: &str = "# pandemonium\n\nA GPU-native editor for conducting agents. Several **projects** live in one window; a *session* is an agent working in its own git worktree of one of them.\n\n## Commands\n\n```sh\nmake run     # cargo run -p pandemonium\nmake lint    # cargo clippy --workspace\n```\n\n```mermaid\nflowchart LR\n    Window -->|requests| Server\n    Server --> Agents\n    Server --> Git\n```\n\n- Read [the protocol](docs/protocol.md) before changing `pm-protocol`.\n- Layers point one way.\n- An agent outlives its client.\n\n> A session is a worktree you review, not a terminal you supervise.\n\n| Crate | Job |\n| --- | --- |\n| `pm-ui` | the element tree |\n| `pm-renderer` | talks to wgpu |\n";
 
 /// What a vector picture shown drawn in a snapshot holds.
 const PREVIEW_VECTOR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160"><rect width="240" height="160" rx="24" fill="#1f2937"/><circle cx="80" cy="80" r="44" fill="#f97316"/><path d="M140 40 L204 120 L140 120 Z" fill="#38bdf8"/></svg>"##;
@@ -1819,16 +1819,32 @@ fn previewed(path: &str) -> WorkspaceState {
                 false,
                 crate::work::picture::draw(path, PREVIEW_VECTOR),
             ),
-        _ => state.with_file(
-            0,
-            path,
-            false,
-            Ok((
-                Some(PREVIEW_MARKDOWN.to_owned()),
-                false,
-                Some("markdown".to_owned()),
-            )),
-        ),
+        _ => {
+            let palette = crate::work::picture::Palette::of(
+                pm_theme::default_family().variant(pm_theme::Appearance::Dark),
+                true,
+            );
+            pm_components::diagram::diagram_sources(PREVIEW_MARKDOWN)
+                .iter()
+                .fold(
+                    state.with_file(
+                        0,
+                        path,
+                        false,
+                        Ok((
+                            Some(PREVIEW_MARKDOWN.to_owned()),
+                            false,
+                            Some("markdown".to_owned()),
+                        )),
+                    ),
+                    |state, source| {
+                        state.with_diagram(
+                            pm_components::diagram::diagram_key(source),
+                            crate::work::picture::diagram(source, &palette),
+                        )
+                    },
+                )
+        }
     }
 }
 

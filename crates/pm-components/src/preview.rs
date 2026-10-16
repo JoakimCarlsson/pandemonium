@@ -9,6 +9,7 @@ use pm_text::Shaper;
 use pm_ui::{Node, Picture, node};
 
 use crate::chip::{Chip, Size, Variant};
+use crate::diagram::Diagrams;
 use crate::markdown::Markdown;
 use crate::open_files::{Contents, STRIP, Viewer};
 use crate::parts::line;
@@ -130,12 +131,17 @@ pub fn dimensions(viewer: &Viewer) -> Option<Node> {
     ))
 }
 
-/// The file shown rendered, in a view `width` by `height` logical pixels, strip included, or nothing when it is shown as its source.
-pub fn rendered(viewer: &Viewer, width: f32, height: f32, shaper: &mut Shaper) -> Option<Node> {
+/// The file shown rendered, its diagrams drawn as `diagrams` holds them, in a view `width` by `height` logical pixels, strip included, or nothing when it is shown as its source.
+pub fn rendered(
+    viewer: &Viewer,
+    diagrams: &Diagrams,
+    (width, height): (f32, f32),
+    shaper: &mut Shaper,
+) -> Option<Node> {
     let room = (width, (height - STRIP).max(0.0));
     match (viewer.rendering()?, &viewer.contents) {
         (Rendering::Markdown, Contents::Text(document)) => {
-            Some(page(document.field.text(), width, shaper))
+            Some(page(document.field.text(), diagrams, width, shaper))
         }
         (Rendering::Vector, Contents::Text(_)) => Some(match &viewer.drawn {
             Some(Ok(picture)) => framed(picture, VECTOR_DENSITY, room),
@@ -154,8 +160,8 @@ fn note(message: &str) -> Node {
         .child(line(message, 13, 1.4, Role::Subtle))
 }
 
-/// The markdown `source` laid out as a page in the middle of a view `width` logical pixels wide, its links pressable.
-fn page(source: &str, width: f32, shaper: &mut Shaper) -> Node {
+/// The markdown `source` laid out as a page in the middle of a view `width` logical pixels wide, its links pressable and its diagrams drawn as `diagrams` holds them.
+fn page(source: &str, diagrams: &Diagrams, width: f32, shaper: &mut Shaper) -> Node {
     let column = (width - 2.0 * MARGIN).clamp(120.0, PAGE_WIDTH);
     node()
         .styles([flex(), justify_center(), flex_none(), py(8)])
@@ -163,6 +169,7 @@ fn page(source: &str, width: f32, shaper: &mut Shaper) -> Node {
             node().styles([w_px(column), flex_none()]).child(
                 Markdown::new(source, column)
                     .links(PREVIEW_LINK_BASE)
+                    .diagrams(diagrams)
                     .build(shaper),
             ),
         )
