@@ -247,7 +247,7 @@ pub enum Shot {
     Extensions,
 }
 
-/// Loads the grammar of the language `id` installed on this machine, if it is, so a snapshot can highlight with it.
+/// Loads the grammar of the language `id` installed on this machine, if it is, and learns the endings of the files written in it, so a snapshot can highlight with it.
 fn load_installed_grammar(id: &str) {
     let Some(manifest) = pm_lsp::installed_manifest(id) else {
         return;
@@ -278,6 +278,15 @@ fn load_installed_grammar(id: &str) {
         let mut aliases = manifest.aliases.clone();
         aliases.push(manifest.grammar.clone());
         pm_treesitter::registry::add(loaded, &aliases);
+        pm_components::file_icon::learn_languages(
+            &None,
+            &[pm_protocol::ExtensionInfo {
+                id: id.to_owned(),
+                suffixes: manifest.suffixes.clone(),
+                installed: true,
+                ..Default::default()
+            }],
+        );
     }
 }
 
@@ -1077,7 +1086,10 @@ impl Shot {
                 Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
             }
             Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
-            Self::Diff => Screen::Workspace(workspace().after(TAB_DIFF)),
+            Self::Diff => {
+                load_installed_grammar("rust");
+                Screen::Workspace(workspace().after(TAB_DIFF))
+            }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
             Self::Source => Screen::Workspace(source()),
@@ -1209,11 +1221,14 @@ impl Shot {
             Self::Kept => Screen::Workspace(kept()),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
-            Self::Expanded => Screen::Workspace(
-                [201_000, 201_004, 201_005]
-                    .into_iter()
-                    .fold(live(Turn::Finished), |state, id| state.after(FocusId(id))),
-            ),
+            Self::Expanded => {
+                load_installed_grammar("rust");
+                Screen::Workspace(
+                    [201_000, 201_004, 201_005]
+                        .into_iter()
+                        .fold(live(Turn::Finished), |state, id| state.after(FocusId(id))),
+                )
+            }
             Self::Attached => Screen::Workspace(
                 welcome()
                     .with_attachments(&["/home/me/shot.png".to_owned(), "/home/me/notes.md".to_owned()])
@@ -1733,8 +1748,9 @@ fn live(turn: Turn) -> WorkspaceState {
             Event::Finished(None),
         ]);
     }
+    let asked = state.sessions.len() - 1;
     for event in events {
-        state = state.heard(0, event);
+        state = state.heard(asked, event);
     }
     state
 }

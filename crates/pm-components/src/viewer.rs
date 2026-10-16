@@ -10,7 +10,7 @@ use pm_style::{
     min_w_px, ml, overflow_hidden, pr, px, py, relative, rounded, text_color, w, w_px,
 };
 use pm_text::Shaper;
-use pm_treesitter::Kind;
+use pm_treesitter::{Highlight, Kind};
 use pm_ui::{Mark, Node, Paint, node, text};
 
 use crate::Button;
@@ -50,6 +50,24 @@ pub(crate) fn kind_role(kind: Kind) -> Option<Role> {
         Kind::Operator | Kind::Punctuation => Some(Role::SyntaxPunctuation),
         Kind::Variable => None,
     }
+}
+
+/// The marks of the stretches of `highlights` that fall in `range` of the text they were found in, as offsets into `range`, in their colours; `highlights` are in order, so none past the end of `range` is looked at.
+pub(crate) fn highlight_marks(highlights: &[Highlight], range: Range<usize>) -> Vec<Mark> {
+    highlights
+        .iter()
+        .take_while(|highlight| highlight.range.start < range.end)
+        .filter_map(|highlight| {
+            let low = highlight.range.start.max(range.start);
+            let high = highlight.range.end.min(range.end);
+            let role = kind_role(highlight.kind)?;
+            (low < high).then(|| Mark {
+                range: low - range.start..high - range.start,
+                color: role.into(),
+                paint: Paint::Ink,
+            })
+        })
+        .collect()
 }
 
 /// The colour a diagnostic of `severity` is drawn in.

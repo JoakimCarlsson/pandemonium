@@ -8,10 +8,11 @@ use pm_style::{
     justify_end, leading_ratio, min_h, min_w_px, mt, mx, overflow_hidden, p, pb, pr, px, py,
     rounded, rounded_full, size, text_color, text_px, truncate, w, w_full,
 };
-use pm_ui::{Node, node, text};
+use pm_ui::{Mark, Node, node, text};
 
 use crate::button::{Size, Variant};
-use crate::file_icon::file_icon;
+use crate::diff_syntax::{DiffColours, shown};
+use crate::file_icon::{file_icon, file_language};
 use crate::parts::{glyph, line, spacer, wrap};
 use crate::sample::{Change, Comment, DiffLine, Kind, Range, Session};
 use crate::state::{
@@ -76,6 +77,8 @@ pub fn gutter_of(id: FocusId) -> Option<(usize, bool, usize)> {
 struct Numbered<'a> {
     /// The line.
     line: &'a DiffLine,
+    /// Where it is in the diff.
+    at: usize,
     /// Its number in the old file, if it is in it.
     old: Option<usize>,
     /// Its number in the new file, if it is in it.
@@ -93,11 +96,13 @@ fn starts(header: &str) -> Option<(usize, usize)> {
 fn numbered(diff: &[DiffLine]) -> Vec<Numbered<'_>> {
     let (mut old, mut new) = (1, 1);
     diff.iter()
-        .map(|line| match line.kind {
+        .enumerate()
+        .map(|(at, line)| match line.kind {
             Kind::Hunk => {
                 (old, new) = starts(&line.text).unwrap_or((old, new));
                 Numbered {
                     line,
+                    at,
                     old: None,
                     new: None,
                 }
@@ -106,6 +111,7 @@ fn numbered(diff: &[DiffLine]) -> Vec<Numbered<'_>> {
                 new += 1;
                 Numbered {
                     line,
+                    at,
                     old: None,
                     new: Some(new - 1),
                 }
@@ -114,6 +120,7 @@ fn numbered(diff: &[DiffLine]) -> Vec<Numbered<'_>> {
                 old += 1;
                 Numbered {
                     line,
+                    at,
                     old: Some(old - 1),
                     new: None,
                 }
@@ -123,6 +130,7 @@ fn numbered(diff: &[DiffLine]) -> Vec<Numbered<'_>> {
                 new += 1;
                 Numbered {
                     line,
+                    at,
                     old: Some(old - 1),
                     new: Some(new - 1),
                 }
@@ -230,8 +238,8 @@ pub fn offset_of(state: &WorkspaceState, session: &Session, index: usize, width:
         .sum::<f32>()
 }
 
-/// One line of a diff: tinted by what it does, written in the code font.
-pub fn diff_line(kind: Kind, content: &str) -> Node {
+/// One line of a diff: tinted by what it does, written in the code font, its code coloured by `marks`.
+pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) -> Node {
     let (marker, fill, tone) = match kind {
         Kind::Hunk => (" ", Some(Color::from(Role::Surface)), Role::Subtle),
         Kind::Context => (" ", None, Role::Muted),
@@ -247,13 +255,23 @@ pub fn diff_line(kind: Kind, content: &str) -> Node {
     if let Some(fill) = fill {
         row = row.styles([bg(fill)]);
     }
+    let shift = marker.len();
+    let marks = marks
+        .into_iter()
+        .map(|mark| Mark {
+            range: mark.range.start + shift..mark.range.end + shift,
+            ..mark
+        })
+        .collect::<Vec<_>>();
     row.child(
-        text(format!("{marker}{}", content.replace('\t', "    "))).styles([
-            text_px(12),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(tone),
-        ]),
+        text(format!("{marker}{}", shown(content)))
+            .styles([
+                text_px(12),
+                leading_ratio(1.4),
+                font_mono(),
+                text_color(tone),
+            ])
+            .marks(marks),
     )
 }
 
@@ -308,28 +326,39 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) -> Nod
     )
 }
 
-/// The cell that holds the text of a line, cut short at its edge.
-fn code(content: &str) -> Node {
+/// The cell that holds the text of a line, coloured by `marks` and cut short at its edge.
+fn code(content: &str, marks: Vec<Mark>) -> Node {
     node()
         .styles([flex_1(), min_w_px(0), overflow_hidden(), px(3)])
-        .child(text(content.replace('\t', "    ")).styles([
-            text_px(12),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(Role::Text),
-            truncate(),
-        ]))
+        .child(
+            text(shown(content))
+                .styles([
+                    text_px(12),
+                    leading_ratio(1.4),
+                    font_mono(),
+                    text_color(Role::Text),
+                    truncate(),
+                ])
+                .marks(marks),
+        )
 }
 
-/// One half of a row: the line that is on that side, or a blank where there is none, lit while it is among the lines being commented on.
-fn half(entry: Option<&Numbered>, change: usize, new: bool, selected: Option<Range>) -> Node {
-    let (number, kind, content) = match entry {
+/// One half of a row: the line that is on that side, coloured as `colours` says, or a blank where there is none, lit while it is among the lines being commented on.
+fn half(
+    entry: Option<&Numbered>,
+    colours: &DiffColours,
+    change: usize,
+    new: bool,
+    selected: Option<Range>,
+) -> Node {
+    let (number, kind, content, marks) = match entry {
         Some(entry) => (
             if new { entry.new } else { entry.old },
             Some(entry.line.kind),
             entry.line.text.as_str(),
+            colours.line(entry.at),
         ),
-        None => (None, None, ""),
+        None => (None, None, "", Vec::new()),
     };
     let lit = selected.is_some_and(|range| {
         range.new == new && number.is_some_and(|n| (range.start..=range.end).contains(&n))
@@ -351,7 +380,7 @@ fn half(entry: Option<&Numbered>, change: usize, new: bool, selected: Option<Ran
     if new {
         side = side.styles([border_l(), border_color(Role::Border)]);
     }
-    side.child(code(content))
+    side.child(code(content, marks))
 }
 
 /// The row of a hunk header.
@@ -375,14 +404,14 @@ fn hunk_row(header: &str) -> Node {
         ]))
 }
 
-/// A diff row of the change at `change` as a node.
-fn row_node(row: &Row, change: usize, selected: Option<Range>) -> Node {
+/// A diff row of the change at `change` as a node, its code coloured as `colours` says.
+fn row_node(row: &Row, colours: &DiffColours, change: usize, selected: Option<Range>) -> Node {
     match row {
         Row::Hunk(header) => hunk_row(header),
         Row::Pair(old, new) => node()
             .styles([flex(), w_full(), h(5), flex_none()])
-            .child(half(old.as_ref(), change, false, selected))
-            .child(half(new.as_ref(), change, true, selected)),
+            .child(half(old.as_ref(), colours, change, false, selected))
+            .child(half(new.as_ref(), colours, change, true, selected)),
     }
 }
 
@@ -622,6 +651,7 @@ fn file(
         section = section.child(comment_card(*at, comment, width));
     }
     let selected = target.and_then(|target| target.range);
+    let colours = DiffColours::of(&change.diff, file_language(&change.path).as_deref());
     let mut at = top + SECTION_CHROME + HEADER;
     let mut skipped = 0;
     for row in rows(change) {
@@ -657,7 +687,7 @@ fn file(
             continue;
         }
         section = skip(section, &mut skipped);
-        section = section.child(row_node(&row, index, selected));
+        section = section.child(row_node(&row, &colours, index, selected));
         at += ROW;
         for (block, tall) in blocks {
             section = section.child(block);

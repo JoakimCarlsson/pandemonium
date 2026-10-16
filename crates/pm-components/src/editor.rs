@@ -111,7 +111,7 @@ impl WorkspaceState {
         host: &Option<String>,
         languages: &[pm_protocol::ExtensionInfo],
     ) -> Self {
-        crate::file_icon::learn_icons(host, languages);
+        crate::file_icon::learn_languages(host, languages);
         let owners: Vec<usize> = self
             .sessions
             .iter()

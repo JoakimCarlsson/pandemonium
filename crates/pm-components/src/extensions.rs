@@ -97,7 +97,7 @@ pub fn endings(extension: &ExtensionInfo) -> String {
 impl WorkspaceState {
     /// The state after the server on this machine said which extensions there are.
     pub fn with_extensions(mut self, extensions: Vec<ExtensionInfo>) -> Self {
-        crate::file_icon::learn_icons(&None, &extensions);
+        crate::file_icon::learn_languages(&None, &extensions);
         self.extensions = extensions;
         self
     }

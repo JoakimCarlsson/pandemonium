@@ -24,6 +24,7 @@ pub mod code_box;
 pub mod composer;
 pub mod context_menu;
 pub mod diff;
+pub mod diff_syntax;
 pub mod dock;
 pub mod draft;
 pub mod editor;

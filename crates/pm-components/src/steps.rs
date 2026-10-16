@@ -14,7 +14,8 @@ use pm_ui::{Node, node, text};
 use crate::Button;
 use crate::button::{Size, Variant};
 use crate::diff::diff_line;
-use crate::file_icon::file_icon;
+use crate::diff_syntax::DiffColours;
+use crate::file_icon::{file_icon, file_language};
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
 use crate::state::{CHOICE_BASE, STEP_BASE};
@@ -155,11 +156,14 @@ fn tool_mark(tool: &ToolUse) -> Node {
 /// The detail under a tool's line, when it has some and it is open.
 fn tool_detail(tool: &ToolUse) -> Option<Node> {
     if let Some(diff) = &tool.diff {
+        let lines = changed_lines(diff);
+        let colours = DiffColours::of(&lines, file_language(&diff.path).as_deref());
         return Some(
             CodeBox::new(
-                changed_lines(diff)
+                lines
                     .iter()
-                    .map(|line| diff_line(line.kind, &line.text)),
+                    .enumerate()
+                    .map(|(at, line)| diff_line(line.kind, &line.text, colours.line(at))),
             )
             .max_height(DETAIL_HEIGHT)
             .build(),
