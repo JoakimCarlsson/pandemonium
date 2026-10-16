@@ -5,14 +5,14 @@
 use pm_git::{Commit, Edge, Half, Lanes};
 use pm_icon::IconName;
 use pm_style::{
-    Color, Role, absolute, bg, border_color, border_t, cursor_row_resize, flex, flex_1, flex_col,
-    flex_none, font_mono, gap, h, h_px, items_center, leading_ratio, left, min_h, min_w_px,
-    overflow_hidden, px, relative, rounded, rounded_full, text_color, text_px, top, truncate,
-    w_full, w_px,
+    Color, Role, absolute, bg, border_color, border_t, flex, flex_1, flex_col, flex_none,
+    font_mono, gap, h, h_px, items_center, leading_ratio, left, min_h, min_w_px, overflow_hidden,
+    px, relative, rounded, rounded_full, text_color, text_px, top, truncate, w_px,
 };
 use pm_ui::{Node, node, text};
 
 use crate::Button;
+use crate::Sash;
 use crate::button::Size;
 use crate::git_controls::{
     CHANGES_REFRESH, GRAPH_FETCH, GRAPH_PULL, GRAPH_PUSH, GRAPH_REFS, GRAPH_SASH, GRAPH_SCROLL,
@@ -354,17 +354,7 @@ pub fn graph(state: &WorkspaceState) -> Node {
     }
     let mut column = node().styles([flex(), flex_col(), flex_none()]);
     if open {
-        column = column.child(
-            node()
-                .styles([
-                    h_px(4.0),
-                    w_full(),
-                    flex_none(),
-                    cursor_row_resize(),
-                    bg(Color::from(Role::Accent).alpha(0.4)).hover(),
-                ])
-                .focusable(GRAPH_SASH),
-        );
+        column = column.child(Sash::row(GRAPH_SASH).build());
     }
     column.child(panel)
 }

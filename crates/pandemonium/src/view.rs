@@ -108,6 +108,18 @@ pub struct View {
     /// Whether the terminal was taller than usual.
     #[serde(default)]
     terminal_maximized: bool,
+    /// How tall the terminal was while it was not maximized, in logical pixels.
+    #[serde(default)]
+    terminal_height: f32,
+    /// How wide the sidebar was, in logical pixels.
+    #[serde(default)]
+    sidebar_width: f32,
+    /// How wide the review panel was, in logical pixels.
+    #[serde(default)]
+    review_width: f32,
+    /// How wide the plan panel was dragged to be, in logical pixels, or zero while it took the width it would by itself.
+    #[serde(default)]
+    plan_width: f32,
     /// Whether the terminal was open.
     terminal: bool,
     /// How far the sidebar's list was scrolled, in logical pixels.
@@ -215,6 +227,10 @@ impl View {
             graph_all: state.git.graph_all,
             graph_height: state.git.graph_height,
             terminal_maximized: state.terminal_maximized,
+            terminal_height: state.terminal_height,
+            sidebar_width: state.sidebar_width,
+            review_width: state.review_width,
+            plan_width: state.plan_width,
             terminal: state.terminal,
             scroll: state.sidebar_scroll,
             agent: state.agent,
@@ -268,6 +284,16 @@ impl View {
         state.closed_folders = self.closed_folders.iter().cloned().collect();
         state.terminal = self.terminal;
         state.terminal_maximized = self.terminal_maximized;
+        if self.terminal_height > 0.0 {
+            state.terminal_height = self.terminal_height;
+        }
+        if self.sidebar_width > 0.0 {
+            state.sidebar_width = self.sidebar_width;
+        }
+        if self.review_width > 0.0 {
+            state.review_width = self.review_width;
+        }
+        state.plan_width = self.plan_width;
         state.agent = self.agent.min(state.agent_slots().saturating_sub(1));
         state.prompt = prompt_field(&self.prompt);
         state

@@ -20,8 +20,11 @@ use crate::state::{
     WorkspaceState,
 };
 
-/// How wide the sidebar is, in logical pixels.
+/// How wide the sidebar is until it is dragged wider or narrower, in logical pixels.
 pub const WIDTH: f32 = 280.0;
+
+/// How narrow and how wide the sidebar can be dragged, in logical pixels.
+pub const WIDTHS: (f32, f32) = (200.0, 520.0);
 
 /// How tall a row of the sidebar is, in logical pixels.
 const ROW: f32 = 36.0;
@@ -146,7 +149,7 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
             flex(),
             flex_col(),
             flex_none(),
-            w_px(WIDTH),
+            w_px(state.sidebar_width),
             h_full(),
             bg(Role::Sidebar),
             border_r(),
@@ -225,7 +228,7 @@ pub fn drag_ghost(state: &WorkspaceState) -> Option<Node> {
                 items_center(),
                 gap(3),
                 h(9),
-                w_px(WIDTH - 16.0),
+                w_px(state.sidebar_width - 16.0),
                 px(2),
                 rounded(Radius::Md),
                 bg(Role::Surface),

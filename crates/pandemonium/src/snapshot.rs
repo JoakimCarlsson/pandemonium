@@ -111,6 +111,8 @@ pub enum Shot {
     NewFile,
     /// The workspace with the terminal open.
     Terminal,
+    /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
+    Resized,
     /// The workspace of the projects onboarding added, with no sessions.
     New,
     /// The workspace with no project at all.
@@ -1073,6 +1075,13 @@ impl Shot {
             Self::Editing => Screen::Workspace(editing()),
             Self::NewFile => Screen::Workspace(new_file()),
             Self::Terminal => Screen::Workspace(terminal()),
+            Self::Resized => {
+                let mut state = terminal();
+                state.sidebar_width = 360.0;
+                state.review_width = 300.0;
+                state.terminal_height = 400.0;
+                Screen::Workspace(state)
+            }
             Self::TerminalComposing => {
                 let mut state = terminal();
                 state.compose_in_terminal("¨");

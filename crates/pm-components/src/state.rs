@@ -1038,6 +1038,8 @@ pub struct WorkspaceState {
     pub terminal: bool,
     /// Whether the terminal is taller than usual.
     pub terminal_maximized: bool,
+    /// How tall the terminal dock is while it is not maximized, in logical pixels.
+    pub terminal_height: f32,
     /// How many columns and lines the dock's window last held.
     pub terminal_size: (u16, u16),
     /// The name the next shell gets in this window.
@@ -1062,6 +1064,12 @@ pub struct WorkspaceState {
     pub history_search: Field,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
+    /// How wide the sidebar is, in logical pixels.
+    pub sidebar_width: f32,
+    /// How wide the review panel is, in logical pixels.
+    pub review_width: f32,
+    /// How wide the plan panel was dragged to be, in logical pixels, or zero while it takes the width it would by itself.
+    pub plan_width: f32,
     /// The panel for adding a project, if it is open.
     pub adder: Option<Adder>,
     /// The section showing in the settings panel, if it is open.
@@ -1220,6 +1228,7 @@ impl WorkspaceState {
             plan_scroll: 0.0,
             terminal: false,
             terminal_maximized: false,
+            terminal_height: crate::terminal::HEIGHT,
             terminal_size: crate::dock::FIRST_SIZE,
             next_terminal: 1,
             agent: 0,
@@ -1228,6 +1237,9 @@ impl WorkspaceState {
             message: commit_field(),
             history_search: Field::default(),
             sidebar_scroll: 0.0,
+            sidebar_width: crate::sidebar::WIDTH,
+            review_width: crate::review::WIDTH,
+            plan_width: 0.0,
             adder: None,
             settings: None,
             settings_servers: crate::settings_servers::ServerSettings {

@@ -15,9 +15,16 @@ use crate::parts::{line, spacer};
 use crate::state::{CHOICE_BASE, CLOSE_PLAN, OPEN_PLAN, PLAN_SCROLL, REVISE, WorkspaceState};
 use crate::{Button, Markdown};
 
-/// How wide the plan panel is when `room` logical pixels are left beside the sidebar and the review panel: nearly half of it, kept within what a plan reads well in.
-pub fn width_in(room: f32) -> f32 {
-    (room * 0.45).clamp(300.0, 520.0)
+/// How narrow and how wide the plan panel can be dragged, in logical pixels.
+pub const WIDTHS: (f32, f32) = (300.0, 960.0);
+
+/// How wide the plan panel is when `room` logical pixels are left beside the sidebar and the review panel: as wide as it was dragged, or else nearly half of the room, kept within what a plan reads well in.
+pub fn width_in(state: &WorkspaceState, room: f32) -> f32 {
+    if state.plan_width > 0.0 {
+        state.plan_width.clamp(WIDTHS.0, WIDTHS.1)
+    } else {
+        (room * 0.45).clamp(300.0, 520.0)
+    }
 }
 
 /// The panel `width` logical pixels wide that reads `source`, the plan the agent proposed, as markdown beside the conversation.

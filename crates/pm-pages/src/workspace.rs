@@ -27,13 +27,13 @@ use pm_components::{
     welcome,
 };
 
-pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
     ADD_PROJECT, ATTACH, CHAT_SCROLL, DIFF_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL,
     PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, TREE_SCROLL, WorkspaceState,
 };
 
 use pm_components::sample::Session;
+use pm_components::sash::{PLAN_SASH, REVIEW_SASH, SIDEBAR_SASH, Sash, TERMINAL_SASH};
 use pm_components::state::{Page, TAB_CHAT, Tab};
 
 /// How much of a window's height the conversation page keeps for something other than the room above the prompt box, in logical pixels.
@@ -250,13 +250,14 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     let open = state.open();
     let planning = state.plan_shown().is_some();
     let reviewing = state.review_session().is_some() && state.review;
-    let review_width = if reviewing { review::WIDTH } else { 0.0 };
+    let sidebar_width = state.sidebar_width;
+    let review_width = if reviewing { state.review_width } else { 0.0 };
     let plan_width = if planning {
-        plan::width_in(width - sidebar::WIDTH - review_width)
+        plan::width_in(state, width - sidebar_width - review_width)
     } else {
         0.0
     };
-    let main_width = width - sidebar::WIDTH - review_width - plan_width;
+    let main_width = width - sidebar_width - review_width - plan_width;
     let main = match (state.page, open) {
         _ if state.projects.is_empty() => welcome::no_project(),
         (Page::Session(_), Some(session)) => session_page(
@@ -288,6 +289,38 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     }
     if let Some(session) = state.review_session().filter(|_| reviewing) {
         root = root.child(review::review(state, session, shaper));
+    }
+    root = root.child(
+        Sash::column(SIDEBAR_SASH)
+            .at((sidebar_width, 0.0), height)
+            .build(),
+    );
+    if planning {
+        root = root.child(
+            Sash::column(PLAN_SASH)
+                .at((sidebar_width + main_width, 0.0), height)
+                .build(),
+        );
+    }
+    if reviewing {
+        root = root.child(
+            Sash::column(REVIEW_SASH)
+                .at((width - review_width, 0.0), height)
+                .build(),
+        );
+    }
+    if state.terminal
+        && !state.projects.is_empty()
+        && matches!((state.page, open), (Page::Session(_), Some(_)))
+    {
+        root = root.child(
+            Sash::row(TERMINAL_SASH)
+                .at(
+                    (sidebar_width, height - terminal::height(state, height)),
+                    main_width,
+                )
+                .build(),
+        );
     }
     root.children(state.menu.and_then(|menu| {
         if settings::is_settings(menu.field) {

@@ -94,6 +94,7 @@ fn main() {
             Some("editing") => Shot::Editing,
             Some("newfile") => Shot::NewFile,
             Some("terminal") => Shot::Terminal,
+            Some("resized") => Shot::Resized,
             Some("new") => Shot::New,
             Some("empty") => Shot::Empty,
             Some("history") => Shot::History,

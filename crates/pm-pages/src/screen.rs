@@ -6,12 +6,12 @@ use pm_text::{Edit, Field, Shaper};
 use pm_ui::Node;
 
 use crate::onboarding::{ADD, AgentStatus, OnboardingState, PATH, onboarding};
-use crate::workspace::{Outgoing, SIDEBAR_WIDTH, WorkspaceState, workspace};
+use crate::workspace::{Outgoing, WorkspaceState, workspace};
 use pm_components::context_menu::ContextMenu;
 use pm_components::git_controls::Pick;
 use pm_components::git_menus::MenuKind;
-use pm_components::graph;
 use pm_components::project::Project;
+use pm_components::sash::Grows;
 use pm_components::tree_actions::TreeTarget;
 
 /// Which screen is showing, with what it remembers.
@@ -350,7 +350,7 @@ impl Screen {
     /// window `height` logical pixels tall.
     pub fn scrolled(self, x: f32, delta: f32, height: f32) -> Self {
         match self {
-            Self::Workspace(state) if x < SIDEBAR_WIDTH => {
+            Self::Workspace(state) if x < state.sidebar_width => {
                 Self::Workspace(state.scrolled(delta, height))
             }
             other => other,
@@ -579,21 +579,18 @@ impl Screen {
         }
     }
 
-    /// How tall the graph is when it is open, in logical pixels.
-    pub fn graph_height(&self) -> f32 {
+    /// How big the panel the handle `id` resizes is now, in a window `window` logical pixels wide and tall, and which way the handle is pulled to grow it.
+    pub fn sash(&self, id: FocusId, window: (f32, f32)) -> Option<(f32, Grows)> {
         match self {
-            Self::Workspace(state) => state.git.graph_height,
-            Self::Onboarding(_) => 0.0,
+            Self::Workspace(state) => state.sash(id, window),
+            Self::Onboarding(_) => None,
         }
     }
 
-    /// The screen with the graph `height` tall when it is open.
-    pub fn with_graph_height(self, height: f32) -> Self {
+    /// The screen with the panel the handle `id` resizes made `size` logical pixels big, within what that panel allows in a window `window` logical pixels wide and tall.
+    pub fn with_sash_size(self, id: FocusId, size: f32, window: (f32, f32)) -> Self {
         match self {
-            Self::Workspace(mut state) => {
-                state.git.graph_height = height.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1);
-                Self::Workspace(state)
-            }
+            Self::Workspace(state) => Self::Workspace(state.with_sash_size(id, size, window)),
             other => other,
         }
     }
