@@ -9,6 +9,7 @@ use pm_style::{
     flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_end, leading_ratio, min_h,
     min_w_px, ml, overflow_hidden, pr, px, py, relative, rounded, text_color, w, w_px,
 };
+use pm_text::Shaper;
 use pm_treesitter::Kind;
 use pm_ui::{Mark, Node, Paint, node, text};
 
@@ -558,7 +559,10 @@ fn strip(viewer: &Viewer) -> Node {
         ]));
     }
     strip = strip.child(spacer());
-    if let Contents::Text(document) = &viewer.contents {
+    strip = strip.children(crate::preview::dimensions(viewer));
+    if let Contents::Text(document) = &viewer.contents
+        && viewer.rendering().is_none()
+    {
         strip = strip.children(tallies(document));
         if let Some(problem) = &document.server_problem {
             let short: String = problem.chars().take(60).collect();
@@ -566,6 +570,7 @@ fn strip(viewer: &Viewer) -> Node {
                 .child(line(short, 11, 1.4, Role::Subtle).styles([min_w_px(0), overflow_hidden()]));
         }
     }
+    strip = strip.children(crate::preview::switch(viewer));
     if viewer.is_dirty() {
         strip = strip.child(
             Button::new("Save", EDITOR_SAVE)
@@ -577,24 +582,28 @@ fn strip(viewer: &Viewer) -> Node {
     strip
 }
 
-/// The file shown, in a view `height` logical pixels tall: a strip naming it, then its lines, which are edited in place unless the file is read only.
-pub fn viewer(state: &WorkspaceState, height: f32) -> Node {
+/// The file shown, in a view `width` by `height` logical pixels: a strip naming it, then the file rendered when it is shown so, or else its lines, which are edited in place unless the file is read only.
+pub fn viewer(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
     let Some(viewer) = state.shown_viewer() else {
         return node();
     };
     let lines_height = (height - STRIP).max(0.0);
-    let body = match &viewer.contents {
-        Contents::Loading => {
+    let rendered = crate::preview::rendered(viewer, width, height, shaper);
+    let source = rendered.is_none();
+    let body = match (rendered, &viewer.contents) {
+        (Some(rendered), _) => rendered,
+        (None, Contents::Loading) => {
             node()
                 .styles([px(4), py(4)])
                 .child(line("Reading the file.", 13, 1.4, Role::Subtle))
         }
-        Contents::Message(message) => {
+        (None, Contents::Message(message)) => {
             node()
                 .styles([px(4), py(4)])
                 .child(line(message, 13, 1.4, Role::Subtle))
         }
-        Contents::Text(document) => {
+        (None, Contents::Picture(_)) => node(),
+        (None, Contents::Text(document)) => {
             let mut rows = node()
                 .styles([
                     flex(),
@@ -655,7 +664,7 @@ pub fn viewer(state: &WorkspaceState, height: f32) -> Node {
                         .child(body),
                 )
                 .children(match &viewer.contents {
-                    Contents::Text(document) => crate::scroll_marks::scroll_marks(
+                    Contents::Text(document) if source => crate::scroll_marks::scroll_marks(
                         document,
                         &state.find_marks().0,
                         &state.editor,
@@ -667,7 +676,7 @@ pub fn viewer(state: &WorkspaceState, height: f32) -> Node {
                         .finding
                         .as_ref()
                         .and_then(|finding| match &viewer.contents {
-                            Contents::Text(document) => Some(crate::find::find_bar(
+                            Contents::Text(document) if source => Some(crate::find::find_bar(
                                 finding,
                                 document,
                                 state.editor.smartcase,

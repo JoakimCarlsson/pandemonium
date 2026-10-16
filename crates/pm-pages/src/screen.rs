@@ -545,6 +545,36 @@ impl Screen {
         }
     }
 
+    /// The screen after the server answered for the picture file at `path` of the session at `session`, decoded, or why it could not be.
+    pub fn with_picture(
+        self,
+        session: usize,
+        path: &str,
+        head: bool,
+        read: Result<pm_ui::Picture, String>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_picture(session, path, head, read))
+            }
+            other => other,
+        }
+    }
+
+    /// The screen after the text of the vector picture at `path` of the session at `session` was drawn, or could not be.
+    pub fn with_drawn(
+        self,
+        session: usize,
+        path: &str,
+        head: bool,
+        drawn: Result<pm_ui::Picture, String>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_drawn(session, path, head, drawn)),
+            other => other,
+        }
+    }
+
     /// Which menu the button `id` opens, if it is one.
     pub fn menu_button_of(id: FocusId) -> Option<MenuKind> {
         WorkspaceState::menu_button_of(id)

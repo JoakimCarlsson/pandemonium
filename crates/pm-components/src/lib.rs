@@ -54,6 +54,7 @@ pub mod open_files;
 pub mod parts;
 pub mod plan;
 pub mod popover;
+pub mod preview;
 pub mod progress;
 pub mod project;
 pub mod queued;

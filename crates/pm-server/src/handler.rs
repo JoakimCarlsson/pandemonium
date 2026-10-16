@@ -738,6 +738,14 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             },
             Err(reason) => failed(reason),
         },
+        Request::ReadBytes {
+            directory,
+            path,
+            head,
+        } => match pm_git::read_bytes(&place(&directory), &path, head) {
+            Ok((bytes, truncated)) => Response::Bytes { bytes, truncated },
+            Err(reason) => failed(reason),
+        },
         Request::WriteFile {
             directory,
             path,

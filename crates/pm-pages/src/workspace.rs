@@ -209,7 +209,7 @@ fn home_page(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shape
         .child(strip)
         .child(
             if state.tab == Tab::File && state.shown_viewer().is_some() {
-                viewer::viewer(state, height)
+                viewer::viewer(state, width, height, shaper)
             } else {
                 welcome::welcome(
                     state,
@@ -232,7 +232,7 @@ fn session_page(
 ) -> Node {
     let view = match state.tab {
         Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width, height),
-        Tab::File if state.shown_viewer().is_some() => viewer::viewer(state, height),
+        Tab::File if state.shown_viewer().is_some() => viewer::viewer(state, width, height, shaper),
         _ => chat::chat(state, session, width, above, shaper),
     };
     let mut page = node()

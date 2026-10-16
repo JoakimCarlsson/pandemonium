@@ -201,6 +201,12 @@ pub enum Shot {
     Folders,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
+    /// A markdown file shown rendered as a page, with the switch to its source.
+    MarkdownPreview,
+    /// A vector picture shown drawn, with the switch to its source.
+    VectorPreview,
+    /// A picture file shown whole, with how many pixels it has.
+    PicturePreview,
     /// The same file with the list of completions open at the caret.
     Completing,
     /// The same file with the card about a place that has something wrong with it.
@@ -942,6 +948,9 @@ impl Shot {
                 ..OnboardingState::default()
             }),
             Self::Code => Screen::Workspace(code()),
+            Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
+            Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),
+            Self::PicturePreview => Screen::Workspace(previewed("assets/screenshot.png")),
             Self::SoftWrap => {
                 let editor = pm_editor::EditorSettings {
                     soft_wrap: pm_editor::SoftWrap::LineLength,
@@ -1749,6 +1758,47 @@ pub fn write(
         .ok_or("the renderer could not read its frame back")?;
     image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
         .map_err(|error| error.to_string())
+}
+
+/// What a markdown file shown rendered in a snapshot says.
+const PREVIEW_MARKDOWN: &str = "# pandemonium\n\nA GPU-native editor for conducting agents. Several **projects** live in one window; a *session* is an agent working in its own git worktree of one of them.\n\n## Commands\n\n```sh\nmake run     # cargo run -p pandemonium\nmake lint    # cargo clippy --workspace\n```\n\n- Read [the protocol](docs/protocol.md) before changing `pm-protocol`.\n- Layers point one way.\n- An agent outlives its client.\n\n> A session is a worktree you review, not a terminal you supervise.\n\n| Crate | Job |\n| --- | --- |\n| `pm-ui` | the element tree |\n| `pm-renderer` | talks to wgpu |\n";
+
+/// What a vector picture shown drawn in a snapshot holds.
+const PREVIEW_VECTOR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160"><rect width="240" height="160" rx="24" fill="#1f2937"/><circle cx="80" cy="80" r="44" fill="#f97316"/><path d="M140 40 L204 120 L140 120 Z" fill="#38bdf8"/></svg>"##;
+
+/// The workspace with the file at `path` open and shown rendered, as what it ends in says it is.
+fn previewed(path: &str) -> WorkspaceState {
+    load_installed_grammar("markdown");
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer(path.to_owned(), false);
+    match pm_components::preview::Rendering::of(path) {
+        Some(pm_components::preview::Rendering::Picture) => {
+            state.with_picture(0, path, false, Ok(gradient()))
+        }
+        Some(pm_components::preview::Rendering::Vector) => state
+            .with_file(
+                0,
+                path,
+                false,
+                Ok((Some(PREVIEW_VECTOR.to_owned()), false, None)),
+            )
+            .with_drawn(
+                0,
+                path,
+                false,
+                crate::work::picture::draw(path, PREVIEW_VECTOR),
+            ),
+        _ => state.with_file(
+            0,
+            path,
+            false,
+            Ok((
+                Some(PREVIEW_MARKDOWN.to_owned()),
+                false,
+                Some("markdown".to_owned()),
+            )),
+        ),
+    }
 }
 
 /// A picture that fades from red to blue, for a snapshot of a preview.

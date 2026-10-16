@@ -796,6 +796,26 @@ pub enum Outgoing {
         /// Whether to read it from the last commit.
         head: bool,
     },
+    /// Reads a picture file of the folder of a session as bytes, to be decoded.
+    ReadPicture {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the repository.
+        path: String,
+        /// Whether to read it from the last commit.
+        head: bool,
+    },
+    /// Draws the text of a vector picture open in a session into pixels.
+    DrawVector {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the repository.
+        path: String,
+        /// Whether it was read from the last commit.
+        head: bool,
+        /// The text it holds now.
+        text: String,
+    },
     /// Commits what is staged in the folder of a session.
     Commit {
         /// The session, by position.

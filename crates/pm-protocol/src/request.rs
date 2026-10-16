@@ -361,6 +361,15 @@ pub enum Request {
         #[serde(default)]
         revision: Option<String>,
     },
+    /// Reads a file of a folder whole, as bytes, as it is in the working folder or in the last commit, such as a picture to be shown.
+    ReadBytes {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the repository.
+        path: String,
+        /// Whether to read it from the last commit rather than from the working folder.
+        head: bool,
+    },
     /// The commits that changed a file of a folder, newest first.
     FileHistory {
         /// The folder.

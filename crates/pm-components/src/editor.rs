@@ -291,6 +291,9 @@ impl WorkspaceState {
         let Some((session, viewer)) = self.shown_mut() else {
             return;
         };
+        if viewer.rendering().is_some() {
+            return;
+        }
         let told = edit_viewer(session, viewer, edit, &settings);
         self.outbox.extend(told);
     }
@@ -665,6 +668,8 @@ impl WorkspaceState {
             left: None,
             jump: None,
             pinned: false,
+            source: false,
+            drawn: None,
         };
         let index = match self.git.viewers.iter().position(|held| held.preview) {
             Some(index) => {

@@ -20,6 +20,7 @@ use crate::view::View;
 
 mod code;
 mod machine;
+pub(crate) mod picture;
 mod watch;
 
 /// The most files listed for the list behind an `@`.
@@ -82,6 +83,10 @@ type Host = Option<String>;
 enum Job {
     /// The picture at this path was decoded, when it is one.
     Previewed(String, Option<Picture>),
+    /// The picture file of the session at this position, at this path, and whether it was read from the last commit, was decoded, or could not be.
+    Pictured(usize, String, bool, Result<Picture, String>),
+    /// The text of the vector picture of the session at this position, at this path, and whether it was read from the last commit, was drawn, or could not be.
+    Drawn(usize, String, bool, Result<Picture, String>),
     /// The server on this machine was found or reached, or could not be.
     Server(Host, Result<Target, String>),
     /// The grammar of the language with this folder name was compiled, or could not be.
@@ -143,6 +148,8 @@ enum Pending {
     SessionBranches(usize),
     /// The file of the session at this position, at this path, and whether it was read from the last commit.
     ReadFile(usize, String, bool),
+    /// The bytes of the picture file of the session at this position, at this path, and whether they were read from the last commit.
+    ReadPicture(usize, String, bool),
     /// A session was branched off the session at this position.
     Fork(usize),
     /// The session at this position went back, with what its failing is called.
@@ -916,6 +923,32 @@ impl Work {
                         Pending::ReadFile(session, path, head),
                     );
                 }
+                Outgoing::ReadPicture {
+                    session,
+                    path,
+                    head,
+                } => {
+                    let wanted = path.clone();
+                    self.ask_in_folder(
+                        model,
+                        session,
+                        |directory| Request::ReadBytes {
+                            directory,
+                            path: wanted,
+                            head,
+                        },
+                        Pending::ReadPicture(session, path, head),
+                    );
+                }
+                Outgoing::DrawVector {
+                    session,
+                    path,
+                    head,
+                    text,
+                } => self.spawn(move |reporter| {
+                    let drawn = picture::draw(&path, &text);
+                    let _ = reporter.send(Job::Drawn(session, path, head, drawn));
+                }),
                 Outgoing::Accounts { logins, in_use } => self.set_accounts(&logins, &in_use),
                 Outgoing::SignIn { agent } => {
                     if let Some(id) = self.agent_id(agent) {
@@ -1193,6 +1226,16 @@ impl Work {
                 if let Some(picture) = picture {
                     model.update(|screen| *screen = screen.clone().with_preview(&path, picture));
                 }
+            }
+            Job::Pictured(session, path, head, read) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_picture(session, &path, head, read);
+                });
+            }
+            Job::Drawn(session, path, head, drawn) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_drawn(session, &path, head, drawn);
+                });
             }
             Job::Server(host, Ok(target)) => {
                 if !self.links.contains_key(&host) {
@@ -1588,6 +1631,22 @@ impl Work {
                     *screen = std::mem::take(screen).with_file(session, &path, head, read);
                 });
             }
+            Pending::ReadPicture(session, path, head) => match response {
+                Response::Bytes { bytes, truncated } => self.spawn(move |reporter| {
+                    let read = picture::decode(&path, &bytes, truncated);
+                    let _ = reporter.send(Job::Pictured(session, path, head, read));
+                }),
+                other => {
+                    let reason = match other {
+                        Response::Failed { message } => message,
+                        _ => "the server answered with something else".to_owned(),
+                    };
+                    model.update(|screen| {
+                        *screen =
+                            std::mem::take(screen).with_picture(session, &path, head, Err(reason));
+                    });
+                }
+            },
             Pending::Commit(session, push) => {
                 let failed = failure.is_some();
                 if let Some(message) = failure {

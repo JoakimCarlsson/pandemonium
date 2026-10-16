@@ -101,6 +101,14 @@ pub enum Response {
         #[serde(default)]
         language: Option<String>,
     },
+    /// The bytes a file holds.
+    Bytes {
+        /// What it holds, cut short when it was longer than can be carried.
+        #[serde(with = "crate::bytes")]
+        bytes: Vec<u8>,
+        /// Whether the bytes were cut short.
+        truncated: bool,
+    },
     /// Who an agent is signed in as.
     Identity {
         /// Who it is signed in as in its own folder.
