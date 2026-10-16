@@ -19,6 +19,8 @@ use pm_state::State;
 use crate::view::View;
 
 mod code;
+mod machine;
+mod watch;
 
 /// The most files listed for the list behind an `@`.
 const FILE_LIMIT: usize = 20_000;
@@ -91,6 +93,10 @@ enum Job {
 enum Pending {
     /// Nothing: the answer only matters if it says the request failed.
     Nothing,
+    /// What the server on this machine keeps for the work the servers do.
+    MachineSettings,
+    /// The newest release on a channel.
+    LatestRelease,
     /// The agents the reader added by hand.
     AgentServers,
     /// The tool servers every agent is started with.
@@ -252,14 +258,24 @@ struct Link {
 pub struct Work {
     /// The link to the server of each machine that has been asked something.
     links: HashMap<Host, Link>,
+    /// What every server is to work by, once the server on this machine said.
+    machine: Option<pm_protocol::MachineSettings>,
+    /// The tokens of the servers reached straight at their address, by address.
+    tokens: HashMap<String, String>,
+    /// The number of the last event each session had when the window first listed it, by machine and number; the events up to it are history, not news.
+    history: HashMap<(Host, u64), u64>,
+    /// The folder each server was last asked to watch, by machine.
+    watched: HashMap<Host, Option<String>>,
+    /// The sessions, by position, whose folders were asked to be read while a read of them was on its way, so they are read once more when it lands.
+    read_again: HashSet<usize>,
     /// The machine and the server's number of each session, by the session's position.
     numbers: HashMap<usize, (Host, u64)>,
     /// The session's position, by the machine and the server's number.
     positions: HashMap<(Host, u64), usize>,
     /// The sessions the window let go of with their project, whose events are not wanted until the project is added again.
     forgotten: HashSet<(Host, u64)>,
-    /// What agents did before their session was known by position.
-    early: HashMap<(Host, u64), Vec<Event>>,
+    /// What agents did before their session was known by position, each with its number.
+    early: HashMap<(Host, u64), Vec<(u64, Event)>>,
     /// What the threads report.
     jobs: Receiver<Job>,
     /// Handed to each thread.
@@ -290,6 +306,11 @@ impl Work {
         let (reporter, jobs) = mpsc::channel();
         Self {
             links: HashMap::new(),
+            machine: None,
+            tokens: HashMap::new(),
+            history: HashMap::new(),
+            watched: HashMap::new(),
+            read_again: HashSet::new(),
             numbers: HashMap::new(),
             positions: HashMap::new(),
             forgotten: HashSet::new(),
@@ -365,6 +386,7 @@ impl Work {
         );
         self.ask(&None, Request::Sessions, Pending::Sessions(None));
         self.ask(&None, Request::Extensions, Pending::Extensions);
+        self.ask_machine_settings();
         Some(Bootstrap {
             projects,
             choices,
@@ -407,10 +429,18 @@ impl Work {
         if !self.links.contains_key(host) {
             self.links.insert(host.clone(), Link::default());
             let host = host.clone();
+            let direct = host
+                .as_deref()
+                .and_then(pm_protocol::direct_address)
+                .map(|address| Target {
+                    address: address.to_owned(),
+                    token: self.tokens.get(address).cloned().unwrap_or_default(),
+                });
             self.spawn(move |reporter| {
-                let target = match &host {
-                    None => pm_client::local(),
-                    Some(destination) => pm_ssh::remote(destination),
+                let target = match (&host, direct) {
+                    (_, Some(direct)) => Ok(direct),
+                    (None, None) => pm_client::local(),
+                    (Some(destination), None) => pm_ssh::remote(destination),
                 };
                 let _ = reporter.send(Job::Server(host, target));
             });
@@ -995,14 +1025,14 @@ impl Work {
                     },
                     Pending::Repositories(login),
                 ),
-                Outgoing::Folders { path } => self.ask(
-                    &None,
+                Outgoing::Folders { path, host } => self.ask(
+                    &host,
                     Request::Folders { path: path.clone() },
                     Pending::Folders(path),
                 ),
                 Outgoing::Relist => self.relist(),
-                Outgoing::Clone { url, under } => self.ask(
-                    &None,
+                Outgoing::Clone { url, under, host } => self.ask(
+                    &host,
                     Request::Clone {
                         url,
                         under: Some(under),
@@ -1010,16 +1040,21 @@ impl Work {
                     Pending::Added,
                 ),
                 Outgoing::Copy { text } => copies.push(text),
+                Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(settings),
+                Outgoing::LatestRelease { channel } => self.ask_release(channel),
+                Outgoing::Notify { title, body, how } => crate::notify::tell(how, &title, &body),
                 code => self.deliver_code(model, code),
             }
         }
         self.publish_working(model);
+        self.watch_shown(model);
         copies
     }
 
     /// Takes in what the servers and the threads have reported since the last look.
     pub fn poll(&mut self, model: &State<Screen>) {
         self.ask_wanted_grammars(model);
+        self.watch_shown(model);
         while let Ok(job) = self.jobs.try_recv() {
             self.pending.set(self.pending.get().saturating_sub(1));
             self.finish(model, job);
@@ -1033,6 +1068,7 @@ impl Work {
             for item in items {
                 match item {
                     Incoming::Connected => {
+                        self.watched.remove(&host);
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
                         self.share_extensions(model, &host);
                         model.update(|screen| {
@@ -1055,8 +1091,12 @@ impl Work {
                             self.publish_working(model);
                         }
                     }
-                    Incoming::Event { session, event, .. } => {
-                        self.heard(model, &host, session, event);
+                    Incoming::Event {
+                        session,
+                        seq,
+                        event,
+                    } => {
+                        self.heard(model, &host, session, seq, event);
                     }
                     Incoming::TerminalOutput { terminal, data } => {
                         let key = (host.clone(), terminal);
@@ -1101,6 +1141,9 @@ impl Work {
                             diagnostics,
                         );
                     }),
+                    Incoming::FolderChanged(directory) => {
+                        self.folder_changed(model, &host, &directory);
+                    }
                     Incoming::ExtensionsChanged(extensions) => {
                         model.update(|screen| {
                             *screen =
@@ -1152,10 +1195,17 @@ impl Work {
                 }
             }
             Job::Server(host, Ok(target)) => {
+                if !self.links.contains_key(&host) {
+                    return;
+                }
+                let client = Client::connect(target);
+                let first = self.settings_for(&host);
                 let Some(link) = self.links.get_mut(&host) else {
                     return;
                 };
-                let client = Client::connect(target);
+                if let Some(request) = first {
+                    client.request(request);
+                }
                 for (request, pending) in std::mem::take(&mut link.backlog) {
                     let id = client.request(request);
                     link.waiting.insert(id, pending);
@@ -1184,6 +1234,10 @@ impl Work {
     fn reindex(&mut self, moved: &[Option<usize>]) {
         let before = std::mem::take(&mut self.numbers);
         self.positions.clear();
+        self.read_again = std::mem::take(&mut self.read_again)
+            .into_iter()
+            .filter_map(|old| moved.get(old).copied().flatten())
+            .collect();
         for (old, key) in before {
             match moved.get(old).copied().flatten() {
                 Some(new) => {
@@ -1207,22 +1261,27 @@ impl Work {
     }
 
     /// Passes what the agent of the session numbered `number` on `host` did on to the screen.
-    fn heard(&mut self, model: &State<Screen>, host: &Host, number: u64, event: Event) {
+    fn heard(&mut self, model: &State<Screen>, host: &Host, number: u64, seq: u64, event: Event) {
         let key = (host.clone(), number);
+        let live = seq > self.history.get(&key).copied().unwrap_or(0);
         if self.forgotten.contains(&key) {
             return;
         }
         let Some(session) = self.positions.get(&key).copied() else {
-            self.early.entry(key).or_default().push(event);
+            self.early.entry(key).or_default().push((seq, event));
             return;
         };
         let files_moved = matches!(
             event,
             Event::Finished(_) | Event::Failed(_) | Event::Restored { .. }
         );
+        let finished = live && matches!(event, Event::Finished(_));
         model.update(|screen| *screen = screen.clone().heard(session, event));
         if files_moved {
             self.refresh(model, session);
+        }
+        if finished {
+            model.update(|screen| *screen = std::mem::take(screen).agent_finished(session));
         }
     }
 
@@ -1438,12 +1497,12 @@ impl Work {
                             head.as_deref(),
                         );
                     });
-                    for event in self
+                    for (seq, event) in self
                         .early
                         .remove(&(host.clone(), number))
                         .unwrap_or_default()
                     {
-                        self.heard(model, host, number, event);
+                        self.heard(model, host, number, seq, event);
                     }
                 }
                 Response::Failed { message } => model.update(|screen| {
@@ -1467,6 +1526,9 @@ impl Work {
                             .checked_out(session, branch.as_deref(), head.as_deref())
                             .tracked(session, branch.as_deref(), tracking, operation);
                     });
+                }
+                if self.read_again.remove(&session) {
+                    self.refresh(model, session);
                 }
             }
             Pending::Stage(session) => {
@@ -1606,6 +1668,9 @@ impl Work {
             | Pending::Revision(..)
             | Pending::Formatted(..)
             | Pending::Extensions => self.answered_code(model, host, pending, response),
+            Pending::MachineSettings | Pending::LatestRelease => {
+                self.answered_machine(model, pending, response)
+            }
             Pending::Back(session, failing) => {
                 if let Some(message) = failure {
                     let reason = format!("{failing}: {message}");
@@ -1700,6 +1765,10 @@ impl Work {
             .into_iter()
             .filter(|info| !self.positions.contains_key(&(origin.clone(), info.session)))
             .collect();
+        for info in &fresh {
+            self.history
+                .insert((origin.clone(), info.session), info.last_seq);
+        }
         let mut added = Vec::new();
         model.update(|screen| {
             let (next, mapping) = screen.clone().restored(origin, &fresh);
@@ -1810,6 +1879,7 @@ impl Work {
                 .any(|pending| matches!(pending, Pending::Inspect(held) if *held == session))
         });
         if inspecting {
+            self.read_again.insert(session);
             return;
         }
         let log = model.read(|screen| screen.graph_wanted());

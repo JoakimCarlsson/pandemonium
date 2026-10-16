@@ -30,6 +30,7 @@ impl WorkspaceState {
     /// Shows the file of `spot` with the caret at its place: the file open already, or the file of the project opened again; says whether it could.
     fn go_to(&mut self, spot: &Spot) -> bool {
         let row = self.editor.row_height();
+        let columns = self.wrap_columns();
         if self.review_index() != Some(spot.session) {
             return false;
         }
@@ -43,7 +44,9 @@ impl WorkspaceState {
             self.tab = Tab::File;
             if let Some(viewer) = self.git.viewers.get_mut(index) {
                 match &mut viewer.contents {
-                    Contents::Text(document) => viewer.scroll = jump(document, spot.position, row),
+                    Contents::Text(document) => {
+                        viewer.scroll = jump(document, spot.position, row, columns)
+                    }
                     _ => viewer.jump = Some(spot.position),
                 }
             }

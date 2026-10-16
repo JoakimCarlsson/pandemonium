@@ -422,6 +422,23 @@ pub enum Request {
         /// Every server, in the order they are kept.
         servers: Vec<McpServer>,
     },
+    /// Has the server tell this connection whenever the files of one of `directories`, or what git keeps about them, change, in place of the folders it watched before.
+    WatchFolders {
+        /// The folders, as their sessions name them; none to watch nothing.
+        directories: Vec<String>,
+    },
+    /// What the reader set up for the work the server does on its machine.
+    MachineSettings,
+    /// Replaces what the reader set up for the work the server does on its machine, and puts it to work.
+    SaveMachineSettings {
+        /// The settings, whole.
+        settings: crate::MachineSettings,
+    },
+    /// The newest release of the app on `channel`, as its project publishes them.
+    LatestRelease {
+        /// `stable` for the releases made for everyone, `nightly` for the build made every night.
+        channel: String,
+    },
     /// The named logins and the one in use for each agent.
     Accounts,
     /// Every session the server holds, running or not.

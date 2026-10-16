@@ -42,7 +42,7 @@ pub use pm_decoration::{
 pub use pm_layout as layout;
 pub use pm_layout::{Breakpoint, Container};
 pub use pm_primitives as primitives;
-pub use pm_primitives::{Axis, Length, Number, Sides};
+pub use pm_primitives::{Axis, Length, Number, Sides, set_scales, step_scale, text_scale};
 pub use pm_typography as typography;
 pub use pm_typography::{FontWeight, Leading, TextSize, Tracking};
 pub use style::Style;

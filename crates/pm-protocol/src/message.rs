@@ -98,6 +98,11 @@ pub enum ServerMessage {
         /// What is wrong.
         diagnostics: Vec<pm_lsp::Diagnostic>,
     },
+    /// The files of a folder the connection watches, or what git keeps about them, changed. Changes coming close together are told once.
+    FolderChanged {
+        /// The folder, as the connection named it.
+        directory: String,
+    },
     /// The extensions changed: one was installed or removed, or installing one moved on. Sent to every client.
     ExtensionsChanged {
         /// Every extension, as `extensions` lists them.

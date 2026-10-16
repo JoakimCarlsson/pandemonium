@@ -21,6 +21,11 @@ is the same in each.
 | Direct | Connects to `ws://<host>:<port>/` with a token it was given. The server must be started with `--listen <address> --token <token>`. The connection is not encrypted: use a trusted network such as Tailscale.    |
 | ssh    | Reads the remote `server.json` with `ssh <host> cat …`, opens a local port, and for each connection runs `ssh -W 127.0.0.1:<port> <host>` and pipes the bytes through. The server must already be running.      |
 
+A project on another machine is addressed `ssh://<destination>/<folder>` for
+a server reached over ssh, and `tcp://<host>:<port>/<folder>` for one reached
+directly; the window keeps the token of each direct server in its own
+settings.
+
 A relay for phones, end-to-end encrypted, is planned and is not built.
 
 The WebSocket path is not checked; use `/`.
@@ -116,6 +121,10 @@ request with exactly one `response` carrying the same `id`.
 | `save_agent_servers`| `servers`: `[{id, name, command, env, package, installer, home}]`, `env`: `[[name, value]]`                                | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
 | `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled}]`, `env`: `[[name, value]]`                                     | `done`          |
+| `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
+| `machine_settings`| none                                                                                          | `machine_settings` |
+| `save_machine_settings`| `settings`: `{git, agents, shell, languages}`                                            | `done`          |
+| `latest_release`| `channel`: `stable` or `nightly`                                                                 | `latest_release` |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
@@ -182,9 +191,15 @@ request with exactly one `response` carrying the same `id`.
   gone, and otherwise makes a git worktree under
   `<repository>/.pandemonium/worktrees` with that commit checked out on a
   detached head, so no branch is made. The agent works there. Without `base`
-  the agent works in `directory` itself.
+  the agent works in `directory` itself. The machine settings change where and
+  how: with `git.worktree_root` the worktree goes in
+  `<worktree_root>/<repository name>` instead, and with `git.branch_template`
+  it is checked out on a new branch named by the template, `{title}` standing
+  for the title made into a name (a template without it gets `/<title>` after
+  it), numbered on when that branch is taken; `started` then gives the branch.
   `settings` is a list of `[setting, value]` pairs applied before the first
-  prompt. The response gives the session number, the folder the agent works in
+  prompt; when it names no `mode` and `agents.permission_mode` is set, that mode
+  is asked for too. The response gives the session number, the folder the agent works in
   and, for a worktree, the abbreviated commit it has checked out (`head`). The connection is attached to the session already.
 - **`close_session`:** stops the session's agent, drops its queued prompts and marks it `closed`. The
   log is kept, so the session still shows in `sessions` (with `closed: true`)
@@ -235,7 +250,10 @@ request with exactly one `response` carrying the same `id`.
   `session_added`. Fails while the agent is still writing that reply.
 - **`cancel`:** stops the running turn and drops the prompts queued behind it,
   each with an `Unqueued` event. A question the agent was waiting on is
-  declined.
+  declined. When the agent is no longer running but its log leaves a turn open,
+  the turn is ended with `Halted` and a `Finished` that says why.
+- A turn the server was working on when it stopped is ended the same way the
+  next time it loads its sessions, so no session stays working after a restart.
 - **`choose`:** answers an `ask` event. `ticket` is the ticket of the question
   and `option` is the `id` of one of its choices.
 - **`answer`:** answers an `Inquire` event. `ticket` is the ticket of the form
@@ -269,6 +287,34 @@ request with exactly one `response` carrying the same `id`.
 - **`sessions`:** every session the server holds, running or not, with enough
   to list it. To open one, send `attach` with `after: 0`: the log replays the
   whole conversation.
+- **`watch_folders`:** the server tells this connection with `folder_changed`
+  whenever a file in one of `directories` changes, or what git keeps about it
+  (the index, `HEAD`, the references, also where a worktree keeps them outside
+  its folder). It replaces the folders the connection watched before; an empty
+  list watches nothing, and the watches end with the connection. Changes inside
+  `.pandemonium`, `node_modules`, `target`, `.git/objects` and `.git/logs` are
+  left out, and changes coming close together are told once, at most every
+  1.5 seconds while the folder keeps changing.
+- **`machine_settings`, `save_machine_settings`:** what the reader set up for
+  the work the server does on its machine, kept by the server, replaced whole by
+  the save and put to work at once. `git` is `{auto_fetch, fetch_minutes,
+  branch_template, worktree_root}`: while `auto_fetch` is set the server runs
+  `git fetch --all --prune` every `fetch_minutes` in the repositories of its
+  open sessions and of the projects saved on its machine. `agents` is
+  `{default_agent, permission_mode}`, each optional: the agent a client offers
+  first for new work, by id, and the mode new sessions start in. `shell` is
+  `{program, arguments}`, the shell `open_terminal` starts when `program` is not
+  empty. `languages` maps a language's id to `{tab_size, hard_tabs,
+  format_on_save, server_off, server_command}`: the first three are for clients
+  to edit with and are optional; `server_off` keeps the language server from
+  reading the language, and a `server_command` is started in place of the one
+  the language comes with. Files already open move to the new server at once.
+  The window sends the settings the server on its own machine keeps to every
+  other server it reaches, as it reaches it and whenever they change, so a
+  project on another machine works by the same settings.
+- **`latest_release`:** the newest release of the app on `channel`, looked up
+  on the project's releases: the latest made for everyone for `stable`, the
+  build made every night for `nightly`.
 - **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
@@ -455,6 +501,8 @@ embedded context, and anything else as a link to the stored file.
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled}]`                     |
+| `machine_settings` | `settings`: `{git, agents, shell, languages}`, as `save_machine_settings` takes them |
+| `latest_release` | `version`: the version, or for `nightly` the day it was made, or null when none was found; `url`: its page |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |
@@ -607,7 +655,12 @@ keeps its own emulator for them.
 ```json
 { "type": "diagnostics", "directory": "~/code/app", "path": "src/main.rs", "version": 4, "diagnostics": [{ "span": { "start": { "line": 3, "character": 8 }, "end": { "line": 3, "character": 12 } }, "severity": "error", "message": "…", "source": "rustc" }] }
 { "type": "extensions_changed", "extensions": [{ "id": "rust", "name": "Rust", "kind": "language", "installed": true, … }] }
+{ "type": "folder_changed", "directory": "~/code/app" }
 ```
+
+- `folder_changed`: a folder the connection watches with `watch_folders`
+  changed, named as the connection named it. The window reads the git panel of
+  the session shown again when it gets one.
 
 - `diagnostics`: what a language server finds wrong with a file the connection
   opened, replacing what it found before. `severity` is `error`, `warning`,

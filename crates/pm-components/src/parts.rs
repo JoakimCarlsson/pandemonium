@@ -34,7 +34,8 @@ pub fn spacer() -> Node {
 /// The lines `content` breaks into when each may hold as many characters of
 /// `pixels` tall type as fit in `width` logical pixels, since text does not wrap.
 pub fn wrap(content: &str, pixels: u32, width: f32) -> Vec<String> {
-    let columns = ((width / (pixels as f32 * CHARACTER_WIDTH)) as usize).max(8);
+    let character = pixels as f32 * pm_style::text_scale() * CHARACTER_WIDTH;
+    let columns = ((width / character) as usize).max(8);
     let mut lines: Vec<String> = Vec::new();
     for word in content.split_whitespace() {
         match lines.last_mut() {

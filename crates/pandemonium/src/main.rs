@@ -4,6 +4,7 @@
 
 mod app;
 mod keys;
+mod notify;
 mod scene;
 mod snapshot;
 mod view;
@@ -58,6 +59,7 @@ fn main() {
             Some("agents") => Shot::Onboarding(pm_pages::Step::Agents),
             Some("languages") => Shot::Onboarding(pm_pages::Step::Languages),
             Some("code") => Shot::Code,
+            Some("softwrap") => Shot::SoftWrap,
             Some("completing") => Shot::Completing,
             Some("hovering") => Shot::Hovering,
             Some("editormenu") => Shot::EditorMenu,
@@ -74,6 +76,7 @@ fn main() {
             Some("tabmenu") => Shot::TabMenu,
             Some("extensions") => Shot::Extensions,
             Some("workspace") => Shot::Workspace,
+            Some("quitting") => Shot::Quitting,
             Some("diff") => Shot::Diff,
             Some("commenting") => Shot::Commenting,
             Some("files") => Shot::Files,
@@ -123,17 +126,13 @@ fn main() {
             Some("selecting") => Shot::Selecting,
             Some("messagemenu") => Shot::MessageMenu,
             Some("adding") => Shot::Adding,
-            Some("settings") => Shot::Settings,
-            Some("settings-agents") => Shot::SettingsAgents,
-            Some("settings-editor") => Shot::SettingsEditor,
-            Some("settings-keymap") => Shot::SettingsKeymap,
-            Some("settings-appearance") => Shot::SettingsAppearance,
-            Some("settings-form") => Shot::SettingsForm,
-            Some("settings-mcp") => Shot::SettingsMcp,
             Some("loading") => Shot::Loading,
             Some("owning") => Shot::Owning,
             Some("cloning") => Shot::Cloning,
             Some("folders") => Shot::Folders,
+            Some(name) if Shot::settings_named(name).is_some() => {
+                Shot::settings_named(name).unwrap_or(Shot::Onboarding(pm_pages::Step::Welcome))
+            }
             _ => Shot::Onboarding(pm_pages::Step::Welcome),
         };
         if let Err(error) = snapshot::write(

@@ -61,6 +61,59 @@ pub struct Worktree {
     pub path: PathBuf,
     /// The abbreviated commit it has checked out.
     pub head: String,
+    /// The branch it was given, when it was given one rather than a detached head.
+    pub branch: Option<String>,
+}
+
+/// Where a new worktree is made and what branch it is on.
+#[derive(Clone, Debug, Default)]
+pub struct Placement {
+    /// The folder worktrees are made in, one folder per repository inside it, or a folder inside the repository when nothing.
+    pub root: Option<PathBuf>,
+    /// What the worktree's branch is called, with `{title}` standing for the title made into a name, or a detached head when nothing.
+    pub branch_template: Option<String>,
+}
+
+impl Placement {
+    /// The folder the worktrees of `repository` are made in.
+    fn folder_for(&self, repository: &Path) -> PathBuf {
+        match &self.root {
+            Some(root) => root.join(
+                repository
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "repository".to_owned()),
+            ),
+            None => repository.join(WORKTREES),
+        }
+    }
+
+    /// The branch a worktree whose folder is called `name` is on, or nothing for a detached head.
+    fn branch_for(&self, name: &str) -> Option<String> {
+        let template = self.branch_template.as_deref()?.trim();
+        if template.is_empty() {
+            return None;
+        }
+        Some(if template.contains("{title}") {
+            template.replace("{title}", name)
+        } else {
+            format!("{}/{name}", template.trim_end_matches('/'))
+        })
+    }
+}
+
+/// Whether `repository` has a branch called `branch`.
+fn has_branch(repository: &Path, branch: &str) -> bool {
+    run(
+        repository,
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok()
 }
 
 /// Runs `git` with `arguments` in `directory` and returns what it wrote, or what it complained of.
@@ -92,6 +145,22 @@ fn run_indexed(
         let complaint = String::from_utf8_lossy(&output.stderr);
         Err(complaint.trim().to_owned())
     }
+}
+
+/// The folder git keeps the state of the worktree at `directory` in, and the one it shares with every worktree of the repository, as full paths; the same folder twice for a repository's own worktree.
+pub fn git_folders(directory: &Path) -> Option<(PathBuf, PathBuf)> {
+    let said = run(
+        directory,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+    )
+    .ok()?;
+    let mut lines = said.lines().map(|line| PathBuf::from(line.trim()));
+    Some((lines.next()?, lines.next()?))
 }
 
 /// Whether `directory` is inside a Git repository.
@@ -251,31 +320,48 @@ fn exclude_worktrees(repository: &Path) -> Result<(), String> {
     writeln!(file, "{separator}.pandemonium/").map_err(|error| error.to_string())
 }
 
-/// Makes a worktree of its own under `repository`, named from `title`, with `base` checked out on a detached head.
+/// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head.
 ///
 /// `base` is looked up in the repository now, so a branch deleted a moment ago is refused rather than assumed.
-pub fn add_worktree(repository: &Path, title: &str, base: &str) -> Result<Worktree, String> {
+pub fn add_worktree(
+    repository: &Path,
+    title: &str,
+    base: &str,
+    placement: &Placement,
+) -> Result<Worktree, String> {
     let head = resolve(repository, base).ok_or_else(|| format!("{base} does not exist"))?;
-    exclude_worktrees(repository)?;
+    if placement.root.is_none() {
+        exclude_worktrees(repository)?;
+    }
     let slug = slug(title);
-    let root = repository.join(WORKTREES);
+    let root = placement.folder_for(repository);
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let mut attempt = 0;
-    let path = loop {
+    let (path, branch) = loop {
         let name = if attempt == 0 {
             slug.clone()
         } else {
             format!("{slug}-{}", attempt + 1)
         };
-        let path = root.join(name);
-        if !path.exists() {
-            break path;
+        let path = root.join(&name);
+        let branch = placement.branch_for(&name);
+        let taken = branch
+            .as_deref()
+            .is_some_and(|branch| has_branch(repository, branch));
+        if !path.exists() && !taken {
+            break (path, branch);
         }
         attempt += 1;
     };
     let place = path.to_string_lossy().into_owned();
-    run(repository, &["worktree", "add", "--detach", &place, &head])?;
-    Ok(Worktree { path, head })
+    match &branch {
+        Some(branch) => run(
+            repository,
+            &["worktree", "add", "-b", branch, &place, &head],
+        )?,
+        None => run(repository, &["worktree", "add", "--detach", &place, &head])?,
+    };
+    Ok(Worktree { path, head, branch })
 }
 
 /// Removes the worktree at `path` of `repository` with every file in it, and forgets it.

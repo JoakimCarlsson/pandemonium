@@ -11,7 +11,7 @@ mod family;
 mod fonts;
 mod theme;
 
-pub use builtin::default_family;
+pub use builtin::{default_family, families, family_named};
 pub use family::{Appearance, ThemeFamily};
 pub use fonts::Fonts;
 pub use theme::Theme;

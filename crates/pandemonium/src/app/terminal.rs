@@ -10,6 +10,24 @@ use super::App;
 use crate::keys::{self, Clip};
 
 impl App {
+    /// How tall the type of the shells is, in logical pixels, as the settings say.
+    fn terminal_font(&self) -> f32 {
+        self.model
+            .read(|screen| match screen {
+                pm_pages::Screen::Workspace(state) => {
+                    Some(pm_components::terminal::Look::of(state).font)
+                }
+                pm_pages::Screen::Onboarding(_) => None,
+            })
+            .unwrap_or(13.0)
+    }
+
+    /// How wide and how tall one cell of a shell's window is, in logical pixels.
+    fn terminal_cell_size(&mut self) -> (f32, f32) {
+        let font = self.terminal_font();
+        cell_size(&mut self.shaper, font)
+    }
+
     /// Where the window of the shell showing was drawn, if it was.
     fn terminal_region(&self) -> Option<Rect> {
         self.output
@@ -23,7 +41,7 @@ impl App {
     fn terminal_cell(&mut self, at: (f32, f32)) -> Option<(usize, usize)> {
         let body = self.terminal_region()?;
         let (columns, rows, _) = self.model.read(|screen| screen.terminal_window())?;
-        let cell = cell_size(&mut self.shaper);
+        let cell = self.terminal_cell_size();
         Some(cell_at(
             (at.0 - body.x, at.1 - body.y),
             cell,
@@ -36,7 +54,7 @@ impl App {
         let Some(body) = self.terminal_region() else {
             return;
         };
-        let cell = cell_size(&mut self.shaper);
+        let cell = self.terminal_cell_size();
         let (columns, rows) = fitting(body.width, body.height, cell);
         let differs = self
             .model
@@ -93,6 +111,19 @@ impl App {
             self.type_into_terminal(data);
         }
         true
+    }
+
+    /// Copies what is marked in the shell showing, when the settings say to copy as soon as text is selected.
+    pub(super) fn copy_terminal_selection(&mut self) {
+        if !self.saved_window.terminal.copy_on_select {
+            return;
+        }
+        if let Some(text) = self.model.read(|screen| screen.terminal_selection())
+            && !text.is_empty()
+            && let Some(clipboard) = self.clipboard()
+        {
+            let _ = clipboard.set_text(text);
+        }
     }
 
     /// Copies the text marked in the shell, or pastes the clipboard into it.
@@ -156,7 +187,7 @@ impl App {
         {
             return false;
         }
-        let height = cell_size(&mut self.shaper).1;
+        let height = self.terminal_cell_size().1;
         self.terminal_scroll_rest -= pixels / height;
         let lines = self.terminal_scroll_rest.trunc();
         self.terminal_scroll_rest -= lines;

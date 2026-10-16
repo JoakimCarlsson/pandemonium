@@ -65,6 +65,21 @@ impl Shaper {
         self.shaped_count = 0;
     }
 
+    /// The families of the fonts installed on the system, each once and in the order of their names, and those among them whose letters are all as wide as each other.
+    pub fn families(&self) -> (Vec<String>, Vec<String>) {
+        let mut all = std::collections::BTreeSet::new();
+        let mut mono = std::collections::BTreeSet::new();
+        for face in self.fonts.db().faces() {
+            for (name, _) in &face.families {
+                all.insert(name.clone());
+                if face.monospaced {
+                    mono.insert(name.clone());
+                }
+            }
+        }
+        (all.into_iter().collect(), mono.into_iter().collect())
+    }
+
     /// The first of `stack` the system has a font for.
     fn installed(&self, stack: &[&str]) -> Option<String> {
         stack.iter().find_map(|wanted| {

@@ -152,6 +152,18 @@ pub enum Response {
         /// Every server, in the order they are kept.
         servers: Vec<crate::McpServer>,
     },
+    /// What the reader set up for the work the server does on its machine.
+    MachineSettings {
+        /// The settings, whole.
+        settings: crate::MachineSettings,
+    },
+    /// The newest release on a channel.
+    LatestRelease {
+        /// Its version, as `0.14.0` or, for the nightly build, the date it was made; nothing when none could be found.
+        version: Option<String>,
+        /// The page it is published on.
+        url: String,
+    },
     /// The named logins and the one in use for each agent.
     Accounts {
         /// The logins there are.

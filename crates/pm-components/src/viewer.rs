@@ -5,9 +5,9 @@ use std::ops::Range;
 use pm_input::FocusId;
 use pm_protocol::Severity;
 use pm_style::{
-    Radius, Role, bg, border_b, border_color, cursor_pointer, cursor_text, flex, flex_1, flex_col,
-    flex_none, font_mono, gap, h, h_px, items_center, justify_end, leading_ratio, min_h, min_w_px,
-    ml, overflow_hidden, pr, px, py, relative, rounded, text_color, text_px, w, w_px,
+    Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex, flex_1,
+    flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_end, leading_ratio, min_h,
+    min_w_px, ml, overflow_hidden, pr, px, py, relative, rounded, text_color, w, w_px,
 };
 use pm_treesitter::Kind;
 use pm_ui::{Mark, Node, Paint, node, text};
@@ -174,11 +174,53 @@ fn change_bar(change: Option<LineChange>, height: f32) -> Node {
     }
 }
 
-/// One numbered line of the file, with the caret and selection placed in it, coloured by `marks`.
+/// How the carets of a file are drawn, as `settings` say.
+fn caret_look(settings: &EditorSettings) -> pm_ui::CaretLook {
+    pm_ui::CaretLook {
+        shape: match settings.cursor_shape {
+            pm_editor::CursorShape::Bar => pm_ui::CaretShape::Bar,
+            pm_editor::CursorShape::Block => pm_ui::CaretShape::Block,
+            pm_editor::CursorShape::Underline => pm_ui::CaretShape::Underline,
+        },
+        steady: !settings.cursor_blink,
+    }
+}
+
+/// `marks` of a line that fall in the stretch `segment` of it, moved to count from the segment's start; the guides stand in the `first` row alone, and a mark at the very end of the line in the `last`.
+fn marks_in(marks: &[Mark], segment: &Range<usize>, first: bool, last: bool) -> Vec<Mark> {
+    marks
+        .iter()
+        .filter_map(|mark| {
+            if mark.paint == Paint::Guide {
+                return first.then(|| mark.clone());
+            }
+            let range = &mark.range;
+            let kept = if range.is_empty() {
+                (segment.start..segment.end).contains(&range.start)
+                    || (last && range.start == segment.end)
+            } else {
+                range.start < segment.end && range.end > segment.start
+            };
+            kept.then(|| Mark {
+                range: range.start.max(segment.start) - segment.start
+                    ..range
+                        .end
+                        .min(segment.end)
+                        .max(range.start.max(segment.start))
+                        - segment.start,
+                color: mark.color,
+                paint: mark.paint,
+            })
+        })
+        .collect()
+}
+
+/// One numbered line of the file, broken into the rows `segments` of it hold, with the caret and selection placed in it, coloured by `marks`.
 fn file_line(
     document: &Document,
     index: usize,
     marks: Vec<Mark>,
+    segments: Vec<Range<usize>>,
     blamed: Option<String>,
     settings: &EditorSettings,
 ) -> Node {
@@ -193,40 +235,66 @@ fn file_line(
         .filter(|severity| settings.diagnostics.shows(*severity))
         .min();
     let font = settings.font_size;
+    let height = settings.row_height();
     let number = if settings.relative_line_numbers && index != caret_line {
         index.abs_diff(caret_line)
     } else {
         index + 1
     };
-    let mut content = text(text_of)
-        .styles([
-            text_px(font),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(Role::Text),
-            flex_none(),
-        ])
-        .field_line(EDITOR_FIELD, line.start)
-        .marks(marks);
-    if (line.start..=line.end).contains(&caret) {
-        content = content.caret(caret - line.start, EDITOR_FIELD);
-    }
-    if let Some(range) = clipped(&document.field.selection(), &line) {
-        content = content.selection(range, EDITOR_FIELD);
-    }
-    if let Some(range) = clipped(&document.field.marked(), &line) {
-        content = content.marked(range, EDITOR_FIELD);
-    }
+    let last = segments.len().saturating_sub(1);
+    let rows = segments.iter().enumerate().map(|(place, segment)| {
+        let absolute = line.start + segment.start..line.start + segment.end;
+        let mut content = text(&text_of[segment.clone()])
+            .styles([
+                code_px(font),
+                leading_ratio(1.4),
+                font_mono(),
+                text_color(Role::Text),
+                flex_none(),
+            ])
+            .field_line(EDITOR_FIELD, absolute.start)
+            .marks(marks_in(&marks, segment, place == 0, place == last))
+            .caret_look(caret_look(settings));
+        let holds_caret = (absolute.start..absolute.end).contains(&caret)
+            || (place == last && caret == absolute.end);
+        if holds_caret {
+            content = content.caret(caret - absolute.start, EDITOR_FIELD);
+        }
+        if let Some(range) = clipped(&document.field.selection(), &absolute) {
+            content = content.selection(range, EDITOR_FIELD);
+        }
+        if let Some(range) = clipped(&document.field.marked(), &absolute) {
+            content = content.marked(range, EDITOR_FIELD);
+        }
+        let held = node()
+            .styles([
+                flex(),
+                items_center(),
+                h_px(height),
+                flex_none(),
+                min_w_px(0),
+            ])
+            .child(content);
+        if place < last {
+            return held;
+        }
+        held.children(document.is_folded_at(index).then(|| fold_chip(index)))
+            .children(blamed.clone().map(|said| {
+                node()
+                    .styles([flex_none(), ml(8), min_w_px(0), overflow_hidden()])
+                    .child(crate::parts::line(said, font, 1.4, Role::Subtle))
+            }))
+    });
     let mut row = node()
         .styles([
             flex(),
-            h_px(settings.row_height()),
+            h_px(height * segments.len().max(1) as f32),
             flex_none(),
             overflow_hidden(),
         ])
         .child(change_bar(
             document.line_change(index).filter(|_| settings.git_gutter),
-            settings.row_height(),
+            height * segments.len().max(1) as f32,
         ));
     if settings.current_line_highlight
         && index == caret_line
@@ -241,34 +309,32 @@ fn file_line(
     };
     row.child(
         node()
-            .styles([flex(), items_center(), justify_end(), flex_none(), pr(3)])
+            .styles([flex(), flex_col(), flex_none(), pr(3)])
             .styles([if settings.line_numbers { w(13) } else { w(2) }])
-            .children(settings.line_numbers.then(|| {
-                text(number.to_string()).styles([
-                    text_px(font),
-                    leading_ratio(1.4),
-                    font_mono(),
-                    text_color(worst.map_or(number_tone, severity_role)),
-                ])
-            })),
+            .child(
+                node()
+                    .styles([flex(), items_center(), justify_end(), h_px(height)])
+                    .children(settings.line_numbers.then(|| {
+                        text(number.to_string()).styles([
+                            code_px(font),
+                            leading_ratio(1.4),
+                            font_mono(),
+                            text_color(worst.map_or(number_tone, severity_role)),
+                        ])
+                    })),
+            ),
     )
     .child(
         node()
             .styles([
                 flex(),
-                items_center(),
+                flex_col(),
                 flex_1(),
                 min_w_px(0),
                 overflow_hidden(),
                 px(2),
             ])
-            .child(content)
-            .children(document.is_folded_at(index).then(|| fold_chip(index)))
-            .children(blamed.map(|said| {
-                node()
-                    .styles([flex_none(), ml(8), min_w_px(0), overflow_hidden()])
-                    .child(crate::parts::line(said, font, 1.4, Role::Subtle))
-            })),
+            .children(rows),
     )
 }
 
@@ -341,7 +407,7 @@ fn guides(document: &Document, rows: Range<usize>) -> Vec<Vec<usize>> {
     .collect()
 }
 
-/// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, with a blank for those above and below.
+/// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, broken into rows of `columns` characters when lines wrap, with a blank for those above and below.
 fn visible(
     document: &Document,
     scroll: f32,
@@ -349,19 +415,21 @@ fn visible(
     found: &(Vec<Range<usize>>, Option<usize>),
     blamed: &dyn Fn(usize) -> Option<String>,
     settings: &EditorSettings,
+    columns: Option<usize>,
 ) -> Vec<Node> {
     let row = settings.row_height();
-    let total = document.rows();
+    let total = document.wrapped_rows(columns);
     let first = (((scroll - OVERSCAN) / row).floor().max(0.0) as usize).min(total);
     let last = ((((scroll + height + OVERSCAN) / row).ceil()) as usize).min(total);
-    let shown = document.shown_lines(first, last - first);
+    let (shown, starts) = document.wrapped_lines(first, last - first, columns);
     let pair: Vec<Range<usize>> = document
         .syntax
         .as_ref()
         .and_then(|syntax| syntax.bracket_pair(document.field.text(), document.field.caret()))
         .map(|(open, close)| vec![open, close])
         .unwrap_or_default();
-    let mut rows = vec![blank(first, row)];
+    let mut rows = vec![blank(starts, row)];
+    let mut drawn = starts;
     for run in runs(&shown) {
         let painted = document.highlights(run.clone());
         let mut standing = if settings.indent_guides {
@@ -377,18 +445,20 @@ fn visible(
         rows.extend(
             run.zip(painted)
                 .zip(standing)
-                .map(|((index, spans), columns)| {
+                .map(|((index, spans), guides_at)| {
                     let mut marks = line_marks(document, index, spans, &pair, found, settings);
-                    marks.extend(columns.into_iter().map(|column| Mark {
+                    marks.extend(guides_at.into_iter().map(|column| Mark {
                         range: column..column,
                         color: Role::Border.into(),
                         paint: Paint::Guide,
                     }));
-                    file_line(document, index, marks, blamed(index), settings)
+                    let segments = document.line_segments(index, columns);
+                    drawn += segments.len();
+                    file_line(document, index, marks, segments, blamed(index), settings)
                 }),
         );
     }
-    rows.push(blank(total - last, row));
+    rows.push(blank(total.saturating_sub(drawn), row));
     if settings.scroll_beyond_last_line {
         rows.push(node().styles([h_px((height - row * 2.0).max(0.0)), flex_none()]));
     }
@@ -541,7 +611,11 @@ pub fn viewer(state: &WorkspaceState, height: f32) -> Node {
                     lines_height,
                     &state.find_marks(),
                     &|index| state.blame_of_line(index),
-                    &state.editor,
+                    &pm_editor::EditorSettings {
+                        git_gutter: state.shows_gutter(),
+                        ..state.editor.clone()
+                    },
+                    state.wrap_columns(),
                 ));
             if document.truncated {
                 rows = rows.child(node().styles([px(4), py(2)]).child(line(
@@ -580,6 +654,14 @@ pub fn viewer(state: &WorkspaceState, height: f32) -> Node {
                         .scroll_from_start(VIEWER_SCROLL, viewer.scroll)
                         .child(body),
                 )
+                .children(match &viewer.contents {
+                    Contents::Text(document) => crate::scroll_marks::scroll_marks(
+                        document,
+                        &state.find_marks().0,
+                        &state.editor,
+                    ),
+                    _ => None,
+                })
                 .children(
                     state
                         .finding

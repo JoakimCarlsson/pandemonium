@@ -26,6 +26,8 @@ make languages      # write languages/languages.json after a language folder cha
 frame to a PNG without a window; add a `Shot` in `crates/pandemonium/src/snapshot.rs`
 for a state that has none. A change to rendering is verified on screen, never
 by reasoning about the draw list. Build output goes in the git-ignored `build/`.
+Every section of the settings window has a shot, `settings-<section>`, and
+`settings-<section>-narrow` draws it at the window's smallest size, 640 by 420.
 
 ## Architecture
 
@@ -95,10 +97,15 @@ One crate per layer, each depending only on the layers below it.
 - **Domain:** `pm-acp` (agents over the Agent Client Protocol), `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.
+- **Settings:** `pm-config`: what the window keeps of its own (how it opens,
+  looks and draws shells and git marks, what it does when an agent finishes and
+  the servers it knows), read from and written to one file. What a server acts
+  on is `pm_protocol::MachineSettings`, kept by each server; the settings window
+  edits both, every setting a row of `pm-components`' catalogue.
 - **Binary:** `pandemonium`: the event loop, the window and the threads that
   talk to the servers. It wires the layers and implements none of them.
 - **Not built yet** (one doc comment each): `pm-session`, `pm-review`,
-  `pm-config`, `pm-mcp`, `pm-policy`, `pm-plugin`, `pm-plugin-api`, `pm-wasm`,
+  `pm-mcp`, `pm-policy`, `pm-plugin`, `pm-plugin-api`, `pm-wasm`,
   `pm-agent-library`.
 
 ## Hard rules

@@ -547,8 +547,13 @@ impl WorkspaceState {
         let path = viewer.path.clone();
         let asking = document_of(viewer)
             .filter(|document| document.synced && !document.field.is_read_only())
-            .map(|document| document.version);
-        match asking.filter(|_| !save || self.editor.format_on_save) {
+            .map(|document| (document.version, document.language.clone()));
+        let formats =
+            |language: &Option<String>| !save || self.formats_on_save(language.as_deref());
+        match asking
+            .filter(|(_, language)| formats(language))
+            .map(|(version, _)| version)
+        {
             Some(version) => self.outbox.push(Outgoing::Format {
                 session,
                 path,
@@ -610,6 +615,7 @@ impl WorkspaceState {
         location: pm_protocol::Location,
     ) -> Self {
         let row = self.editor.row_height();
+        let columns = self.wrap_columns();
         if self.review_index() != Some(session) {
             return self;
         }
@@ -625,7 +631,8 @@ impl WorkspaceState {
             if let Some(viewer) = self.git.viewers.get_mut(index) {
                 match document_of(viewer) {
                     Some(document) => {
-                        let scroll = crate::open_files::jump(document, location.span.start, row);
+                        let scroll =
+                            crate::open_files::jump(document, location.span.start, row, columns);
                         viewer.scroll = scroll;
                     }
                     None => viewer.jump = Some(location.span.start),
@@ -648,7 +655,7 @@ impl WorkspaceState {
             return self;
         };
         let mut document = Document::new(&text, true, false);
-        let scroll = crate::open_files::jump(&mut document, location.span.start, row);
+        let scroll = crate::open_files::jump(&mut document, location.span.start, row, columns);
         let viewer = crate::open_files::Viewer {
             path: location.path.clone(),
             head: false,

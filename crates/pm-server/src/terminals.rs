@@ -52,13 +52,25 @@ fn size_of(columns: u16, rows: u16) -> PtySize {
     }
 }
 
+/// The shell the settings name, started with their arguments, or the reader's own login shell when they name none.
+fn shell_command() -> CommandBuilder {
+    let shell = crate::machine::settings().shell;
+    let program = shell.program.trim();
+    if program.is_empty() {
+        return CommandBuilder::new_default_prog();
+    }
+    let mut command = CommandBuilder::new(program);
+    command.args(pm_acp::command_words(&shell.arguments));
+    command
+}
+
 impl Terminal {
     /// Starts the reader's shell in `directory`, called `label` to clients, `columns` wide and `rows` tall.
     fn start(directory: &Path, label: &str, columns: u16, rows: u16) -> Result<Self, String> {
         let pair = native_pty_system()
             .openpty(size_of(columns, rows))
             .map_err(|error| error.to_string())?;
-        let mut command = CommandBuilder::new_default_prog();
+        let mut command = shell_command();
         command.cwd(directory);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");

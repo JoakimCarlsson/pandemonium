@@ -156,9 +156,17 @@ impl Screen {
         }
     }
 
-    /// Whether the settings panel is open.
+    /// Whether settings are open.
     pub fn settings_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.settings_open())
+    }
+
+    /// The screen with settings closed, which is what closing their window does.
+    pub fn without_settings(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.without_settings()),
+            other => other,
+        }
     }
 
     /// What pressing Enter presses while the panel for adding a project is open.
@@ -381,6 +389,15 @@ impl Screen {
     pub fn scrolled_diff(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_diff(delta, room)),
+            other => other,
+        }
+    }
+
+    /// The screen after the list of sections of the settings window is scrolled by `delta`
+    /// logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_settings_nav(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_settings_nav(delta, room)),
             other => other,
         }
     }
@@ -1103,5 +1120,13 @@ pub fn screen(state: &Screen, width: f32, height: f32, shaper: &mut Shaper) -> N
     match state {
         Screen::Onboarding(state) => onboarding(state),
         Screen::Workspace(state) => workspace(state, width, height, shaper),
+    }
+}
+
+/// What the settings window, `width` logical pixels across, shows for `state` while settings are open.
+pub fn settings_screen(state: &Screen, width: f32) -> Option<Node> {
+    match state {
+        Screen::Workspace(state) => crate::workspace::settings_window(state, width),
+        Screen::Onboarding(_) => None,
     }
 }

@@ -307,6 +307,57 @@ impl Screen {
         }
     }
 
+    /// The screen knowing the view of the file shown is `width` logical pixels wide, with a character of code `cell` wide.
+    pub fn with_code_view(self, width: f32, cell: f32) -> Self {
+        self.in_workspace(|state| state.with_code_view(width, cell))
+    }
+
+    /// How wide the view of the file shown was last drawn and how wide a character of code is in it, while the workspace is showing and it was drawn.
+    pub fn code_view(&self) -> Option<(f32, f32)> {
+        match self {
+            Self::Workspace(state) => state.code_view,
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen after the agent of the session at `position` finished a turn while the window watched.
+    pub fn agent_finished(self, position: usize) -> Self {
+        self.in_workspace(|state| state.agent_finished(position))
+    }
+
+    /// The screen after the reader asked to close the window, which asks first while agents are working.
+    pub fn close_asked(self) -> Self {
+        self.in_workspace(WorkspaceState::close_asked)
+    }
+
+    /// Whether the window is to close: the reader asked to and nothing is left to ask first.
+    pub fn quitting(&self) -> bool {
+        self.workspace_is(|state| state.quitting)
+    }
+
+    /// The screen with the window's own settings `settings` put to work.
+    pub fn with_window_settings(self, settings: pm_config::WindowSettings) -> Self {
+        self.in_workspace(|state| state.with_window_settings(settings))
+    }
+
+    /// What the window keeps of its own, while the workspace is showing and those kept between runs are in.
+    pub fn window_settings(&self) -> Option<pm_config::WindowSettings> {
+        match self {
+            Self::Workspace(state) if state.window_loaded => Some(state.window.clone()),
+            _ => None,
+        }
+    }
+
+    /// Whether the workspace is showing without the window's own settings kept between runs put in yet.
+    pub fn window_settings_wanted(&self) -> bool {
+        matches!(self, Self::Workspace(state) if !state.window_loaded)
+    }
+
+    /// The screen knowing the font families installed on this machine: `all` of them, and the `mono` ones among them.
+    pub fn with_fonts(self, all: Vec<String>, mono: Vec<String>) -> Self {
+        self.in_workspace(|state| state.with_fonts(all, mono))
+    }
+
     /// Whether the workspace is showing without the editor's settings kept between runs put in yet.
     pub fn editor_settings_wanted(&self) -> bool {
         matches!(self, Self::Workspace(state) if !state.editor_loaded)

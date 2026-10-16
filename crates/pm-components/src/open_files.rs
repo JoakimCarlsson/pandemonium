@@ -82,10 +82,15 @@ impl Left {
     }
 }
 
-/// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top.
-pub(crate) fn jump(document: &mut Document, position: pm_protocol::Position, row: f32) -> f32 {
+/// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top, rows `row` logical pixels tall holding `columns` characters when lines wrap.
+pub(crate) fn jump(
+    document: &mut Document,
+    position: pm_protocol::Position,
+    row: f32,
+    columns: Option<usize>,
+) -> f32 {
     let line = document.jump(position);
-    (document.row_of_line(line) as f32 * row - row * 6.0).max(0.0)
+    (document.wrapped_row_of_line(line, columns) as f32 * row - row * 6.0).max(0.0)
 }
 
 impl Viewer {
@@ -96,6 +101,31 @@ impl Viewer {
 }
 
 impl WorkspaceState {
+    /// How many characters a row of the file shown holds when long lines wrap, as soft wrap and the view's width say, or nothing when they do not.
+    pub fn wrap_columns(&self) -> Option<usize> {
+        let fitting = self.code_view.map(|(width, cell)| {
+            let scale = pm_style::step_scale();
+            let numbers = if self.editor.line_numbers { 13.0 } else { 2.0 };
+            let gutter = 3.0 + (numbers + 4.0) * 4.0 * scale + 12.0;
+            (((width - gutter) / cell.max(1.0)).floor() as usize).max(10)
+        });
+        match self.editor.soft_wrap {
+            pm_editor::SoftWrap::Off => None,
+            pm_editor::SoftWrap::Edge => fitting,
+            pm_editor::SoftWrap::LineLength => Some(
+                fitting.map_or(self.editor.preferred_line_length, |fitting| {
+                    fitting.min(self.editor.preferred_line_length)
+                }),
+            ),
+        }
+    }
+
+    /// The state knowing the view of the file shown is `width` logical pixels wide, with a character of code `cell` wide.
+    pub fn with_code_view(mut self, width: f32, cell: f32) -> Self {
+        self.code_view = Some((width, cell));
+        self
+    }
+
     /// The file whose tab is showing, if one is.
     pub fn shown_viewer(&self) -> Option<&Viewer> {
         self.git
@@ -231,6 +261,7 @@ impl WorkspaceState {
         read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
         let row = self.editor.row_height();
+        let columns = self.wrap_columns();
         let language = read
             .as_ref()
             .ok()
@@ -247,7 +278,7 @@ impl WorkspaceState {
                         left.put_back(&mut document);
                     }
                     if let Some(position) = viewer.jump.take() {
-                        viewer.scroll = jump(&mut document, position, row);
+                        viewer.scroll = jump(&mut document, position, row, columns);
                     }
                     Contents::Text(Box::new(document))
                 }
@@ -286,6 +317,7 @@ impl WorkspaceState {
     /// The state with the file shown scrolled just far enough to show the caret, in a view `height` logical pixels tall.
     pub fn with_caret_shown(mut self, height: f32) -> Self {
         let row = self.editor.row_height();
+        let columns = self.wrap_columns();
         let Some(index) = self.git.shown else {
             return self;
         };
@@ -295,7 +327,7 @@ impl WorkspaceState {
         let Contents::Text(document) = &viewer.contents else {
             return self;
         };
-        let line = document.row_of_line(document.line_of(document.field.caret()));
+        let line = document.caret_row(columns);
         let (top, bottom) = (line as f32 * row, (line + 1) as f32 * row);
         let view = (height - STRIP).max(row);
         let room = (view / row / 2.0).floor().max(0.0) as usize;

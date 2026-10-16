@@ -92,9 +92,21 @@ pub enum Prompt {
     Close(usize),
     /// What to call the session at this position now.
     Rename(usize),
+    /// Whether to close the window while agents are working.
+    Quit,
 }
 
 impl WorkspaceState {
+    /// The state after the reader asked to close the window: it asks first while agents are working and the settings say to, and is otherwise ready to close.
+    pub fn close_asked(mut self) -> Self {
+        if self.window.general.confirm_close && self.waiting() && !self.quitting {
+            self.ask(Prompt::Quit);
+        } else {
+            self.quitting = true;
+        }
+        self
+    }
+
     /// The state with `prompt` put to the reader.
     pub fn asked(mut self, prompt: Prompt) -> Self {
         self.ask(prompt);
@@ -141,6 +153,10 @@ impl WorkspaceState {
             self.close_session(position, true, true);
             return;
         }
+        if prompt == Prompt::Quit {
+            self.quitting = true;
+            return;
+        }
         if let Prompt::Rename(position) = prompt {
             let title = self.git.rename.text().trim().to_owned();
             if let Some(held) = self
@@ -179,7 +195,7 @@ impl WorkspaceState {
                     message: Some(message).filter(|message| !message.is_empty()),
                 });
             }
-            Prompt::Stashes(_) | Prompt::Close(_) | Prompt::Rename(_) => {}
+            Prompt::Stashes(_) | Prompt::Close(_) | Prompt::Rename(_) | Prompt::Quit => {}
             Prompt::Unsaved(index) => self.discard_file(index),
             Prompt::Remove(target) => {
                 self.drop_viewer_of(&target.path);
@@ -436,5 +452,11 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
             question(title, words, "Delete", Variant::Destructive)
         }
         Prompt::Stashes(action) => stash_list(state, *action),
+        Prompt::Quit => question(
+            "Close the window while agents are working?".to_owned(),
+            "The agents keep working on the server; open the window again to see what they did.",
+            "Close Window",
+            Variant::Default,
+        ),
     }
 }

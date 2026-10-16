@@ -42,7 +42,29 @@ impl Documents {
                 let _ = connection.outbox.send(message.clone());
             }
         }));
-        Self { hub, openers }
+        let documents = Self { hub, openers };
+        documents.settings_changed(&crate::machine::settings());
+        documents
+    }
+
+    /// Has each language read by the language server `settings` choose for it.
+    pub(crate) fn settings_changed(&self, settings: &pm_protocol::MachineSettings) {
+        let choices = settings
+            .languages
+            .iter()
+            .filter_map(|(language, preferences)| {
+                let command = preferences.server_command.trim();
+                let choice = if preferences.server_off {
+                    pm_lsp::ServerChoice::Off
+                } else if !command.is_empty() {
+                    pm_lsp::ServerChoice::Command(command.to_owned())
+                } else {
+                    return None;
+                };
+                Some((language.clone(), choice))
+            })
+            .collect();
+        self.hub.choose_servers(choices);
     }
 
     /// Notes that `connection` has the file at `path` of the project at `root`, which it calls `directory`, open.

@@ -290,6 +290,9 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         root = root.child(review::review(state, session, shaper));
     }
     root.children(state.menu.and_then(|menu| {
+        if settings::is_settings(menu.field) {
+            return None;
+        }
         let field = state.field(menu.field)?;
         Some(if menu.field == EDITOR_FIELD {
             editor_menu(
@@ -308,8 +311,6 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(state.session_menu.map(|open| session_menu(state, open)))
     .children(state.message_menu.map(message_menu))
     .children(adder::adder(state))
-    .children(settings::settings(state, width, height))
-    .children(pm_components::settings_servers::server_menu(state))
     .children(state.git_menu_node().filter(|_| reviewing))
     .children(state.tab_menu.and_then(|open| {
         state.git.viewers.get(open.index).map(|viewer| {
@@ -363,4 +364,18 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
         )
         .item("Archive", None, SESSION_MENU_CLOSE, false)
         .build()
+}
+
+/// What the settings window, `width` logical pixels across, shows while settings are open: the sections and the one chosen, the menu of a server and the menu of a field of the window.
+pub(crate) fn settings_window(state: &WorkspaceState, width: f32) -> Option<Node> {
+    Some(
+        settings::settings(state, width)?
+            .children(pm_components::settings_servers::server_menu(state))
+            .children(
+                state
+                    .menu
+                    .filter(|menu| settings::is_settings(menu.field))
+                    .and_then(|menu| Some(field_menu(state.field(menu.field)?, menu))),
+            ),
+    )
 }

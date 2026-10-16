@@ -24,6 +24,7 @@ mod lines;
 mod marks;
 mod pairs;
 mod settings;
+mod wrap;
 
 pub use document::{Completions, Document, HoverCard};
 pub use edit::Edited;
@@ -32,4 +33,5 @@ pub use fold::Fold;
 pub use gutter::LineChange;
 pub use jumps::{Jumps, Spot};
 pub use keymap::{Action, Chord, Keymap, Preset, Pressed, shown};
-pub use settings::{DiagnosticsShown, EditorSettings};
+pub use settings::{CursorShape, DiagnosticsShown, EditorSettings, SoftWrap};
+pub use wrap::segments;
