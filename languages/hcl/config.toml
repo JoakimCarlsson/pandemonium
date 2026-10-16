@@ -1,0 +1,20 @@
+# HCL: how files are told to be HCL and how they are edited. Terraform has a
+# language of its own; this is HCL as other tools write it, such as Nomad,
+# Packer, Vault and the lock and test files of Terraform. It has no language
+# server.
+
+name = "HCL"
+version = "0.1.0"
+description = "HashiCorp Configuration Language."
+icon = "icon.svg"
+color = "#c0c860"
+grammar = "hcl"
+suffixes = ["hcl", "nomad"]
+names = [".terraformrc", "terraform.rc"]
+line_comment = "#"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\""]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-hcl/releases/download/v1.2.0/tree-sitter-hcl.wasm"
+sha256 = "2f9acf63e7c263215f283e2cf0f4ebbb9bfa77f58e18fa42b91094be201372a7"

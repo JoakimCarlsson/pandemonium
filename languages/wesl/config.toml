@@ -1,0 +1,51 @@
+# WESL: how files are told to be WESL, how they are edited and the language
+# server that reads them, which is the one WGSL uses. grammar.wasm is built
+# from wgsl-tooling-wg/tree-sitter-wesl v0.1.0.
+
+name = "WESL"
+version = "0.1.0"
+description = "WGSL extended with imports and conditional compilation, with wgsl-analyzer."
+icon = "icon.svg"
+color = "#9b8be0"
+grammar = "wesl"
+suffixes = ["wesl"]
+line_comment = "//"
+indent = 4
+pairs = ["()", "[]", "{}"]
+
+[server]
+id = "wgsl-analyzer"
+language_id = "wesl"
+command = "wgsl-analyzer"
+check = ["--version"]
+
+[server.install]
+kind = "download"
+version = "2026-09-30"
+
+[server.install.downloads.linux-x86_64]
+url = "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/2026-09-30/wgsl-analyzer-x86_64-unknown-linux-gnu.gz"
+sha256 = "4635d9d804c9609dc7639632c14d9b6cf888b21f3c95d41c1dc55a33dc76f98e"
+archive = "gz"
+
+[server.install.downloads.linux-aarch64]
+url = "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/2026-09-30/wgsl-analyzer-aarch64-unknown-linux-gnu.gz"
+sha256 = "e5cb5b27f4b754a945e0b4c34a75f09690edda8fe99eeaa671550afeee671b07"
+archive = "gz"
+
+[server.install.downloads.macos-aarch64]
+url = "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/2026-09-30/wgsl-analyzer-aarch64-apple-darwin.gz"
+sha256 = "82b3703d885a82e91dcaf950974590a0b9b9202080a60fd7cc5ad7872bad8053"
+archive = "gz"
+
+[server.install.downloads.windows-x86_64]
+url = "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/2026-09-30/wgsl-analyzer-x86_64-pc-windows-msvc.zip"
+sha256 = "f9b9c0621149fcf989907787daeab9212035a42af45d4511b6ec50834a7e6b05"
+archive = "zip"
+member = "wgsl-analyzer.exe"
+
+[server.install.downloads.windows-aarch64]
+url = "https://github.com/wgsl-analyzer/wgsl-analyzer/releases/download/2026-09-30/wgsl-analyzer-aarch64-pc-windows-msvc.zip"
+sha256 = "eb5d5dc97329315dd6dbe63ea1093fb068f938a312a9ccaa834bf416e916d004"
+archive = "zip"
+member = "wgsl-analyzer.exe"

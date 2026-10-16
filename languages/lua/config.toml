@@ -1,0 +1,26 @@
+# Lua: how files are told to be Lua, how they are edited and the language
+# server that reads them. lua-language-server is released as a whole folder
+# rather than one program, so it is not installed here: the one on the
+# machine's path is used.
+
+name = "Lua"
+version = "0.1.0"
+description = "Lua with lua-language-server."
+icon = "icon.svg"
+color = "#6c8cf0"
+grammar = "lua"
+suffixes = ["lua"]
+names = [".luacheckrc", ".busted"]
+line_comment = "--"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-lua/releases/download/v0.5.0/tree-sitter-lua.wasm"
+sha256 = "df08a1704e504c70b8dba4a3e6f8e0c99a4fb94e1b1693d2969f53141d09f0d4"
+
+[server]
+id = "lua-language-server"
+language_id = "lua"
+command = "lua-language-server"
+check = ["--version"]

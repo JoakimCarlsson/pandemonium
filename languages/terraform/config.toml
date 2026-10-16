@@ -1,0 +1,66 @@
+# Terraform: how files are told to be Terraform, how they are edited and the
+# language server that reads them. OpenTofu files are Terraform too; other HCL,
+# with the lock and test files of Terraform, is HCL.
+
+name = "Terraform"
+version = "0.1.0"
+description = "Terraform and OpenTofu with terraform-ls."
+icon = "icon.svg"
+color = "#9f6bf0"
+grammar = "terraform"
+suffixes = ["tf", "tfvars", "tofu"]
+aliases = ["tf", "tfvars", "opentofu", "tofu"]
+line_comment = "#"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\""]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-hcl/releases/download/v1.2.0/tree-sitter-terraform.wasm"
+sha256 = "59dbcbb0f08eb78b78f37510834559a48ce5c9d4866c978d62c6390796461cb5"
+
+[server]
+id = "terraform-ls"
+language_id = "terraform"
+command = "terraform-ls"
+args = ["serve"]
+check = ["version"]
+
+[server.install]
+kind = "download"
+version = "0.39.0"
+
+[server.install.downloads.linux-x86_64]
+url = "https://releases.hashicorp.com/terraform-ls/0.39.0/terraform-ls_0.39.0_linux_amd64.zip"
+sha256 = "7750edc736845fd8c04ff0fc6332423c12d8275b358668c8c17e8aedc43ef971"
+archive = "zip"
+member = "terraform-ls"
+
+[server.install.downloads.linux-aarch64]
+url = "https://releases.hashicorp.com/terraform-ls/0.39.0/terraform-ls_0.39.0_linux_arm64.zip"
+sha256 = "62f32ea22cb78e5e5667ed638ad6e0fbde30ab59228d073c3c9bb249f89c7f5a"
+archive = "zip"
+member = "terraform-ls"
+
+[server.install.downloads.macos-x86_64]
+url = "https://releases.hashicorp.com/terraform-ls/0.39.0/terraform-ls_0.39.0_darwin_amd64.zip"
+sha256 = "cc5bbc5b5a39d12d455c0d2b1e4b3a2c1f237d02d2cf819cf5252358f2d674de"
+archive = "zip"
+member = "terraform-ls"
+
+[server.install.downloads.macos-aarch64]
+url = "https://releases.hashicorp.com/terraform-ls/0.39.0/terraform-ls_0.39.0_darwin_arm64.zip"
+sha256 = "6f80fe0b34af184175508f3d9135d8159f5dce4000d9b39540553eb1c267c54b"
+archive = "zip"
+member = "terraform-ls"
+
+[server.install.downloads.windows-x86_64]
+url = "https://releases.hashicorp.com/terraform-ls/0.39.0/terraform-ls_0.39.0_windows_amd64.zip"
+sha256 = "6edc885fe113f6a7fd049622ed0bd255141e68c84acc2fce1bb6a54c1f47bfe1"
+archive = "zip"
+member = "terraform-ls.exe"
+
+[server.install.downloads.windows-aarch64]
+url = "https://releases.hashicorp.com/terraform-ls/0.39.0/terraform-ls_0.39.0_windows_arm64.zip"
+sha256 = "4701a880e6cf441a7b24bb9a0bd5f156fdbcd35aee5fa6663c3f08e85f2234fd"
+archive = "zip"
+member = "terraform-ls.exe"

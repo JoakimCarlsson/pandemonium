@@ -1,0 +1,29 @@
+# SCSS: how files are told to be SCSS, how they are edited and the language
+# server that reads them, the CSS one, which reads SCSS as well. No grammar is
+# released built, so grammar.wasm in this folder was built with tree-sitter CLI
+# 0.27.1 from tree-sitter-grammars/tree-sitter-scss v1.0.0.
+
+name = "SCSS"
+version = "0.1.0"
+description = "SCSS with the VS Code CSS language server."
+icon = "icon.svg"
+color = "#cd6799"
+grammar = "scss"
+suffixes = ["scss"]
+line_comment = "//"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[server]
+id = "vscode-css-language-server"
+language_id = "scss"
+command = "vscode-css-language-server"
+args = ["--stdio"]
+
+[server.init]
+provideFormatter = true
+
+[server.install]
+kind = "npm"
+version = "4.10.0"
+packages = ["vscode-langservers-extracted@4.10.0"]

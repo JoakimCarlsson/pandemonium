@@ -1,0 +1,24 @@
+# Zig: how files are told to be Zig, how they are edited and the language
+# server that reads them. zls is released for Linux and macOS only as tar.xz
+# archives, so it is not installed here: the one on the machine's path is used.
+
+name = "Zig"
+version = "0.1.0"
+description = "Zig with zls."
+icon = "icon.svg"
+color = "#f2a33a"
+grammar = "zig"
+suffixes = ["zig", "zon"]
+line_comment = "//"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-zig/releases/download/v1.1.2/tree-sitter-zig.wasm"
+sha256 = "54b3b83dd9c62da5815f06132bc3fc914d9dcc780370b32416446a0b7969e8c6"
+
+[server]
+id = "zls"
+language_id = "zig"
+command = "zls"
+check = ["--version"]
