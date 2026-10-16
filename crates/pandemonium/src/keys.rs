@@ -146,11 +146,10 @@ pub fn clip(event: &KeyEvent) -> Option<Clip> {
     }
 }
 
-/// The clipboard action a key event asks for in a terminal, where control alone belongs to the shell: Command, or Control with Shift.
+/// The clipboard action Command with C or V asks for in a terminal, the keys a Mac copies and pastes with; Control belongs to the shell, and its keys for the clipboard are the keymap's.
 pub fn terminal_clip(event: &KeyEvent) -> Option<Clip> {
     let modifiers = event.modifiers;
-    let chord = modifiers.logo || (modifiers.control && modifiers.shift);
-    if !event.pressed || modifiers.alt || !chord {
+    if !event.pressed || modifiers.alt || modifiers.shift || !modifiers.logo {
         return None;
     }
     match event.key {

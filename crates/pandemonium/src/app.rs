@@ -20,6 +20,7 @@ use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
+use pm_components::terminal_menu::TerminalCommand;
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
     EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
@@ -564,6 +565,12 @@ impl App {
             self.message_menu_action(id);
             return;
         }
+        if let Some(command) = TerminalCommand::of(id)
+            && self.model.read(|screen| screen.is_menu_row(id))
+        {
+            self.terminal_command(command);
+            return;
+        }
         if let Some(index) = Screen::agent_of(id) {
             self.agent_action(index);
             return;
@@ -1003,6 +1010,7 @@ impl App {
                         let row = screen.history_row_of(id).unwrap_or_default();
                         self.open_git_menu(MenuKind::History(row));
                     }
+                    Some(TERMINAL_BODY) => self.open_terminal_menu(),
                     _ => self.open_message_menu(),
                 }
             }

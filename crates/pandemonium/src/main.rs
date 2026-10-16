@@ -95,6 +95,7 @@ fn main() {
             Some("newfile") => Shot::NewFile,
             Some("terminal") => Shot::Terminal,
             Some("terminallink") => Shot::TerminalLink,
+            Some("terminalmenu") => Shot::TerminalMenu,
             Some("overview") => Shot::Overview,
             Some("resized") => Shot::Resized,
             Some("new") => Shot::New,

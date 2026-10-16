@@ -178,7 +178,7 @@ impl WorkspaceState {
     }
 
     /// Ends the shell at `index` of the open session, hiding the dock when it was the last.
-    fn close_terminal_tab(&mut self, index: usize) {
+    pub(crate) fn close_terminal_tab(&mut self, index: usize) {
         let Some(position) = self.open_position() else {
             return;
         };
@@ -232,7 +232,7 @@ impl WorkspaceState {
     }
 
     /// The shell showing in the open session, to change.
-    fn active_terminal_mut(&mut self) -> Option<&mut TerminalTab> {
+    pub(crate) fn active_terminal_mut(&mut self) -> Option<&mut TerminalTab> {
         let position = self.open_position()?;
         let session = &mut self.sessions[position];
         session.terminals.get_mut(session.terminal_active)

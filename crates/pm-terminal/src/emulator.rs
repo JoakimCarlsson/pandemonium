@@ -373,6 +373,19 @@ impl Emulator {
         self.version += 1;
     }
 
+    /// Marks every line kept, from the oldest to the last of the window.
+    pub fn select_all(&mut self) {
+        let last = self.history() + self.rows() - 1;
+        self.select((0, 0), (last, self.columns() - 1));
+    }
+
+    /// Clears the window and the lines kept above it, leaving the line the cursor is on at the top.
+    pub fn clear(&mut self) {
+        self.screen.grid().clear_above_cursor();
+        self.selection = None;
+        self.version += 1;
+    }
+
     /// Unmarks the text.
     pub fn clear_selection(&mut self) {
         if self.selection.take().is_some() {

@@ -194,6 +194,7 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) -> Vec<Node> {
         "Selection",
         "Search",
         "File",
+        "Terminal",
     ];
     let ordered = groups.iter().flat_map(|wanted| {
         Action::ALL

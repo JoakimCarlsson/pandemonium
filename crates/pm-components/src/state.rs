@@ -1088,6 +1088,8 @@ pub struct WorkspaceState {
     pub session_menu: Option<SessionMenu>,
     /// The menu open over a message of the open session, and where, if one is.
     pub message_menu: Option<MessageMenu>,
+    /// The menu open over the window of the shell showing, and where, if one is.
+    pub terminal_menu: Option<crate::terminal_menu::TerminalMenu>,
     /// The project being dragged to another place, if one is.
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
@@ -1256,6 +1258,7 @@ impl WorkspaceState {
             project_menu: None,
             session_menu: None,
             message_menu: None,
+            terminal_menu: None,
             project_drag: None,
             outbox: Vec::new(),
             files_owner: None,
@@ -1685,6 +1688,7 @@ impl WorkspaceState {
         self.project_menu = None;
         self.session_menu = None;
         self.message_menu = None;
+        self.terminal_menu = None;
         self.git.menu = None;
         self.settings_servers.menu = None;
         self.tab_menu = None;

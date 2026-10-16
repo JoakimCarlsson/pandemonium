@@ -113,6 +113,8 @@ pub enum Shot {
     Terminal,
     /// The workspace with the terminal open and a web address in it underlined as what a press opens.
     TerminalLink,
+    /// The workspace with text of the terminal marked and the menu over it open.
+    TerminalMenu,
     /// The overview of a project.
     Overview,
     /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
@@ -1113,6 +1115,11 @@ impl Shot {
                 state.review_width = 300.0;
                 state.terminal_height = 400.0;
                 Screen::Workspace(state)
+            }
+            Self::TerminalMenu => {
+                let mut state = terminal();
+                state.select_in_terminal((1, 0), (2, 20));
+                Screen::Workspace(state.with_terminal_menu((420.0, 560.0)))
             }
             Self::TerminalComposing => {
                 let mut state = terminal();

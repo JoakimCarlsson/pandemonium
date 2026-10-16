@@ -111,11 +111,23 @@ pub enum Action {
     RevealInFileManager,
     /// Saves the file.
     Save,
+    /// Puts the text marked in the shell into the prompt of the chat.
+    TerminalAddToChat,
+    /// Copies the text marked in the shell.
+    TerminalCopy,
+    /// Pastes the clipboard into the shell.
+    TerminalPaste,
+    /// Marks every line of the shell.
+    TerminalSelectAll,
+    /// Clears the shell's window and its history, keeping the line the cursor is on.
+    TerminalClear,
+    /// Ends the shell.
+    KillTerminal,
 }
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 55] = [
         Self::GoToDefinition,
         Self::GoToDeclaration,
         Self::GoToTypeDefinition,
@@ -165,6 +177,12 @@ impl Action {
         Self::Problems,
         Self::RevealInFileManager,
         Self::Save,
+        Self::TerminalAddToChat,
+        Self::TerminalCopy,
+        Self::TerminalPaste,
+        Self::TerminalSelectAll,
+        Self::TerminalClear,
+        Self::KillTerminal,
     ];
 
     /// The name it is kept under in the settings.
@@ -219,6 +237,12 @@ impl Action {
             Self::Problems => "problems",
             Self::RevealInFileManager => "reveal_in_file_manager",
             Self::Save => "save",
+            Self::TerminalAddToChat => "terminal_add_to_chat",
+            Self::TerminalCopy => "terminal_copy",
+            Self::TerminalPaste => "terminal_paste",
+            Self::TerminalSelectAll => "terminal_select_all",
+            Self::TerminalClear => "terminal_clear",
+            Self::KillTerminal => "kill_terminal",
         }
     }
 
@@ -274,6 +298,12 @@ impl Action {
             Self::Problems => "Show Problems",
             Self::RevealInFileManager => "Reveal in File Manager",
             Self::Save => "Save",
+            Self::TerminalAddToChat => "Add Terminal Selection to Chat",
+            Self::TerminalCopy => "Copy",
+            Self::TerminalPaste => "Paste",
+            Self::TerminalSelectAll => "Select All",
+            Self::TerminalClear => "Clear",
+            Self::KillTerminal => "Kill Terminal",
         }
     }
 
@@ -315,6 +345,7 @@ impl Action {
             | Self::FindPrevious
             | Self::SearchProject => "Search",
             Self::RevealInFileManager | Self::Save => "File",
+            action if action.in_terminal() => "Terminal",
             _ => "Editing",
         }
     }
@@ -324,6 +355,19 @@ impl Action {
         matches!(
             self,
             Self::FileFinder | Self::SearchProject | Self::Problems
+        )
+    }
+
+    /// Whether its keys work while a shell has the keyboard, and only then.
+    pub fn in_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::TerminalAddToChat
+                | Self::TerminalCopy
+                | Self::TerminalPaste
+                | Self::TerminalSelectAll
+                | Self::TerminalClear
+                | Self::KillTerminal
         )
     }
 
@@ -490,6 +534,12 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (Problems, &["ctrl+shift+m"]),
         (RevealInFileManager, &["ctrl+k r"]),
         (Save, &["ctrl+s"]),
+        (TerminalAddToChat, &[]),
+        (TerminalCopy, &["ctrl+shift+c"]),
+        (TerminalPaste, &["ctrl+shift+v"]),
+        (TerminalSelectAll, &["ctrl+shift+a"]),
+        (TerminalClear, &[]),
+        (KillTerminal, &[]),
     ]
 }
 
@@ -701,14 +751,23 @@ impl Keymap {
 
     /// What pressing `chord` after `before` comes to.
     pub fn press(&self, before: &[Chord], chord: &Chord) -> Pressed {
+        self.press_among(before, chord, |_| true)
+    }
+
+    /// What pressing `chord` after `before` comes to among the bindings of the actions `among` lets through.
+    pub fn press_among(
+        &self,
+        before: &[Chord],
+        chord: &Chord,
+        among: impl Fn(Action) -> bool,
+    ) -> Pressed {
         let mut sequence = before.to_vec();
         sequence.push(chord.clone());
-        if let Some((_, action)) = self.bindings.iter().find(|(chords, _)| *chords == sequence) {
+        let mut bindings = self.bindings.iter().filter(|(_, action)| among(*action));
+        if let Some((_, action)) = bindings.clone().find(|(chords, _)| *chords == sequence) {
             return Pressed::Action(*action);
         }
-        let waiting = self
-            .bindings
-            .iter()
+        let waiting = bindings
             .any(|(chords, _)| chords.len() > sequence.len() && chords.starts_with(&sequence));
         if waiting {
             Pressed::Waiting
@@ -717,7 +776,7 @@ impl Keymap {
         }
     }
 
-    /// The actions other than `action` bound to `binding` too.
+    /// The actions other than `action` bound to `binding` too that work where it does, in a shell or out of one.
     pub fn clashes(&self, action: Action, binding: &str) -> Vec<Action> {
         let chords: Vec<Chord> = binding
             .split_whitespace()
@@ -725,7 +784,9 @@ impl Keymap {
             .collect();
         self.bindings
             .iter()
-            .filter(|(held, other)| *held == chords && *other != action)
+            .filter(|(held, other)| {
+                *held == chords && *other != action && other.in_terminal() == action.in_terminal()
+            })
             .map(|(_, other)| *other)
             .collect()
     }
