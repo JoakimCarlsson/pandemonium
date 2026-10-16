@@ -193,6 +193,7 @@ impl App {
             focused: self.focus.current(),
             elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
             selection: self.text_selection,
+            held_bar: self.bar_drag.map(|(id, _)| id),
         };
         let (width, height) = renderer.size();
         let theme = self.family.variant(self.appearance);

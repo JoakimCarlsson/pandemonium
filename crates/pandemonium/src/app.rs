@@ -34,7 +34,7 @@ use pm_state::State;
 
 use pm_text::{Edit, Shaper};
 use pm_theme::{Appearance, ThemeFamily};
-use pm_ui::{Cursor, Input, Output, TextPoint, TextSelection, Unit};
+use pm_ui::{Cursor, Input, Output, SCROLLBAR_GRIP, TextPoint, TextSelection, Unit};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -65,9 +65,6 @@ const WINDOW_SIZE_FILE: &str = "window-size";
 
 /// The least logical width or height of a size worth keeping, which leaves out a window that is minimized.
 const MIN_SAVED: f32 = 320.0;
-
-/// How wide, in logical pixels, the strip along the right edge of a scrolling box is where pressing takes hold of its bar.
-const BAR_GRIP: f32 = 14.0;
 
 /// How far one notch of a mouse wheel scrolls, in logical pixels.
 const WHEEL_LINE: f32 = 48.0;
@@ -417,6 +414,7 @@ impl App {
             focused: self.focus.current(),
             elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
             selection: self.text_selection,
+            held_bar: self.bar_drag.map(|(id, _)| id),
         };
         let (width, height) = renderer.size();
         let model = self.model.clone();
@@ -939,7 +937,7 @@ impl App {
         let grabbed = self.output.scrollers.iter().rev().find(|scroller| {
             scroller.room > 0.0
                 && scroller.rect.contains(x, y)
-                && x >= scroller.rect.x + scroller.rect.width - BAR_GRIP
+                && x >= scroller.rect.x + scroller.rect.width - SCROLLBAR_GRIP
         });
         self.bar_drag = grabbed.map(|scroller| (scroller.id, y));
         self.bar_drag.is_some()

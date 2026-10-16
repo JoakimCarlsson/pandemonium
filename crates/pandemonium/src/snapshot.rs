@@ -1727,6 +1727,7 @@ pub fn write(
         focused,
         elapsed_ms,
         selection: shot.selection(),
+        held_bar: None,
     };
     let family = default_family();
     let theme = family.variant(appearance);

@@ -37,6 +37,12 @@ const SCROLLBAR_INSET: f32 = 3.0;
 /// How short the bar of a scrolling box is at least, in logical pixels.
 const SCROLLBAR_MINIMUM: f32 = 24.0;
 
+/// How wide the bar of a scrolling box grows while the pointer is on it or holds it, in logical pixels.
+const SCROLLBAR_WIDE: f32 = 7.0;
+
+/// How wide the strip along the right edge of a scrolling box is where the pointer takes hold of its bar, in logical pixels.
+pub const SCROLLBAR_GRIP: f32 = 14.0;
+
 /// What the screen is being drawn for: the pointer, the focus and the clock.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Input {
@@ -48,6 +54,8 @@ pub struct Input {
     pub elapsed_ms: f32,
     /// The stretch of selectable text that is selected, if any.
     pub selection: Option<TextSelection>,
+    /// The scrolling box whose bar the pointer holds, if any.
+    pub held_bar: Option<FocusId>,
 }
 
 /// One box that answers to the user, where it ended up.
@@ -322,6 +330,7 @@ impl Frame<'_> {
             ),
             None => (node.scroll_y, 0.0),
         };
+        let bar = node.scroll_anchor.map(|(id, ..)| id);
         let content = if node.scroll_x == 0.0 && scroll_y == 0.0 {
             world
         } else {
@@ -376,8 +385,8 @@ impl Frame<'_> {
             );
             self.origin = outer;
         }
-        if room > 0.0 {
-            self.scrollbar(rect, scroll_y, room, world);
+        if let Some(id) = bar.filter(|_| room > 0.0) {
+            self.scrollbar(id, (rect, seen), scroll_y, room, world);
         }
         if self.clip != outer {
             self.clip = outer;
@@ -553,18 +562,41 @@ impl Frame<'_> {
         }
     }
 
-    /// Draws a thin bar down the right edge of the box at `rect` that shows
-    /// where its contents, scrolled `scrolled` pixels of `room`, are.
-    fn scrollbar(&mut self, rect: Rect, scrolled: f32, room: f32, world: Affine) {
+    /// Draws a thin bar down the right edge of the scrolling box `id` at
+    /// `rect`, shown at `seen`, that shows where its contents, scrolled
+    /// `scrolled` pixels of `room`, are: wider and brighter while the pointer
+    /// is on the strip that takes hold of it, and brighter still while held.
+    fn scrollbar(
+        &mut self,
+        id: FocusId,
+        (rect, seen): (Rect, Rect),
+        scrolled: f32,
+        room: f32,
+        world: Affine,
+    ) {
         let track = (rect.height - 2.0 * SCROLLBAR_INSET).max(0.0);
         let thumb = (track * rect.height / (rect.height + room)).max(SCROLLBAR_MINIMUM);
         let thumb = thumb.min(track);
         let top = rect.y + SCROLLBAR_INSET + (track - thumb) * (scrolled / room).clamp(0.0, 1.0);
-        let left = rect.x + rect.width - SCROLLBAR_INSET - SCROLLBAR_WIDTH;
-        let color = Color::from(Role::Muted).resolve(self.theme).alpha(0.55);
+        let grip = Rect::new(
+            seen.x + seen.width - SCROLLBAR_GRIP,
+            seen.y,
+            SCROLLBAR_GRIP.min(seen.width),
+            seen.height,
+        );
+        let held = self.input.held_bar == Some(id);
+        let (width, role, alpha) = if held {
+            (SCROLLBAR_WIDE, Role::Text, 0.6)
+        } else if self.input.held_bar.is_none() && self.pointer_in(grip) {
+            (SCROLLBAR_WIDE, Role::Muted, 0.85)
+        } else {
+            (SCROLLBAR_WIDTH, Role::Muted, 0.55)
+        };
+        let left = rect.x + rect.width - SCROLLBAR_INSET - width;
+        let color = Color::from(role).resolve(self.theme).alpha(alpha);
         self.list.push(
-            Quad::filled(Rect::new(left, top, SCROLLBAR_WIDTH, thumb), color)
-                .radii([SCROLLBAR_WIDTH / 2.0; 4])
+            Quad::filled(Rect::new(left, top, width, thumb), color)
+                .radii([width / 2.0; 4])
                 .transformed(world),
         );
     }

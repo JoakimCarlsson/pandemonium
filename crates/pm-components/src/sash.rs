@@ -2,8 +2,9 @@
 
 use pm_input::FocusId;
 use pm_style::{
-    Color, Length, Role, Sides, absolute, bg, cursor_col_resize, cursor_row_resize, flex_none,
-    h_px, inset_length, w_full, w_px, z,
+    Length, Role, Sides, absolute, bg, bottom, cursor_col_resize, cursor_row_resize, flex,
+    flex_none, h_full, h_px, inset_length, items_center, justify_center, left, relative, right,
+    top, w_full, w_px, z,
 };
 use pm_ui::{Node, node};
 
@@ -57,7 +58,7 @@ pub enum Variant {
     Row,
 }
 
-/// A handle on the edge between two panels, either floating over the edge at a place in the window or taking a strip of its own in the flow.
+/// A handle on the edge between two panels, either floating over the edge at a place in the window or lying over the top edge of what follows it in the flow.
 pub struct Sash {
     /// The element the handle is.
     id: FocusId,
@@ -92,34 +93,58 @@ impl Sash {
         self
     }
 
-    /// The handle, clear until the pointer is on it.
+    /// The handle: a strip the pointer takes hold of, clear until the pointer is on it, when a line as thin as a border lights up along the edge.
     pub fn build(self) -> Node {
+        let (cursor, line) = match self.variant {
+            Variant::Column => (cursor_col_resize(), [w_px(1.0), h_full()]),
+            Variant::Row => (cursor_row_resize(), [h_px(1.0), w_full()]),
+        };
         let mut styles = vec![
+            flex(),
+            items_center(),
+            justify_center(),
             flex_none(),
-            bg(Color::from(Role::Accent).alpha(0.4)).hover(),
+            absolute(),
+            z(10),
+            cursor,
         ];
         match (self.variant, self.placed) {
             (Variant::Column, Some(((x, y), length))) => styles.extend([
-                cursor_col_resize(),
                 w_px(THICKNESS),
                 h_px(length),
                 inset_length(Sides::Left, Length::Px(x - THICKNESS / 2.0)),
                 inset_length(Sides::Top, Length::Px(y)),
             ]),
             (Variant::Row, Some(((x, y), length))) => styles.extend([
-                cursor_row_resize(),
                 w_px(length),
                 h_px(THICKNESS),
                 inset_length(Sides::Left, Length::Px(x)),
                 inset_length(Sides::Top, Length::Px(y - THICKNESS / 2.0)),
             ]),
-            (Variant::Column, None) => styles.extend([cursor_col_resize(), w_px(4.0)]),
-            (Variant::Row, None) => styles.extend([cursor_row_resize(), h_px(4.0), w_full()]),
+            (Variant::Column, None) => styles.extend([
+                w_px(THICKNESS),
+                top(0),
+                bottom(0),
+                inset_length(Sides::Left, Length::Px(-THICKNESS / 2.0)),
+            ]),
+            (Variant::Row, None) => styles.extend([
+                h_px(THICKNESS),
+                left(0),
+                right(0),
+                inset_length(Sides::Top, Length::Px(-THICKNESS / 2.0)),
+            ]),
         }
-        if self.placed.is_some() {
-            styles.extend([absolute(), z(10)]);
+        let handle = node()
+            .styles(styles)
+            .group()
+            .child(node().styles(line).styles([bg(Role::Accent).group_hover()]))
+            .focusable(self.id);
+        match self.placed {
+            Some(_) => handle,
+            None => node()
+                .styles([relative(), flex_none(), w_full(), h_px(0.0)])
+                .child(handle),
         }
-        node().styles(styles).focusable(self.id)
     }
 }
 
