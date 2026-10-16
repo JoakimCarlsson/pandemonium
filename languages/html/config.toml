@@ -1,0 +1,36 @@
+# HTML: how files are told to be HTML, how they are edited and the language
+# server that reads them. The styles and scripts written inside a page are read
+# by the same server.
+
+name = "HTML"
+version = "0.1.0"
+description = "HTML with the VS Code HTML language server."
+icon = "icon.svg"
+color = "#e4704a"
+grammar = "html"
+suffixes = ["html", "htm", "xhtml"]
+aliases = ["htm", "xhtml"]
+indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-html/releases/download/v0.23.2/tree-sitter-html.wasm"
+sha256 = "c48fcd82c7ea8bf943180088ba7f28c48b2bb5287874179168bf9d31e394cf85"
+
+[server]
+id = "vscode-html-language-server"
+language_id = "html"
+command = "vscode-html-language-server"
+args = ["--stdio"]
+
+[server.init]
+provideFormatter = true
+
+[server.init.embeddedLanguages]
+css = true
+javascript = true
+
+[server.install]
+kind = "npm"
+version = "4.10.0"
+packages = ["vscode-langservers-extracted@4.10.0"]

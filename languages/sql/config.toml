@@ -1,0 +1,27 @@
+# SQL: how files are told to be SQL, how they are edited and the language
+# server that reads them. No grammar is released built, so grammar.wasm in this
+# folder was built with tree-sitter CLI 0.27.1 from DerekStride/tree-sitter-sql
+# v0.3.11.
+
+name = "SQL"
+version = "0.1.0"
+description = "SQL with sqls."
+icon = "icon.svg"
+color = "#74c79a"
+grammar = "sql"
+suffixes = ["sql"]
+aliases = ["postgresql", "postgres", "psql", "mysql", "sqlite", "plsql"]
+line_comment = "--"
+indent = 2
+pairs = ["()", "[]", "\"\"", "''", "``"]
+
+[server]
+id = "sqls"
+language_id = "sql"
+command = "sqls"
+check = ["--version"]
+
+[server.install]
+kind = "go"
+version = "v0.2.48"
+package = "github.com/sqls-server/sqls@v0.2.48"

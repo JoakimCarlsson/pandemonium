@@ -1,0 +1,24 @@
+# C: how files are told to be C, how they are edited and the language server
+# that reads them. clangd needs the folder of headers it ships with beside it,
+# so it is not installed here: the one on the machine's path is used.
+
+name = "C"
+version = "0.1.0"
+description = "C with clangd."
+icon = "icon.svg"
+color = "#8aa4c8"
+grammar = "c"
+suffixes = ["c", "h"]
+line_comment = "//"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-c/releases/download/v0.24.2/tree-sitter-c.wasm"
+sha256 = "83e8d7902b9d7f8c7c5cd4bd9acb5c7eb5faf42c09f85546b183964d3b5f48f9"
+
+[server]
+id = "clangd"
+language_id = "c"
+command = "clangd"
+check = ["--version"]

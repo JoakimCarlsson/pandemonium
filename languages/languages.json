@@ -2,6 +2,186 @@
   "version": 1,
   "languages": [
     {
+      "id": "bash",
+      "name": "Bash",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Bash and other shell scripts with the Bash language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "sh",
+        "bash",
+        "zsh",
+        "ksh",
+        "bats",
+        "ebuild",
+        "eclass"
+      ],
+      "server": "bash-language-server",
+      "files": {
+        "brackets.scm": "a258c9e63984a0409969aed98317c1483645d0876951e6958c1e692e69400835",
+        "config.toml": "97fd3a4077f8a7f0e068ab290225bfdbe8a283152c01d67a2fdf744e8c6912da",
+        "highlights.scm": "1e8cf94003d3d9b253eabd8881299fb32db9f78cdedf2d11d8a48d9693cf5995",
+        "icon.svg": "8a0dde64ea454970cf35f63669fe6a762351f543099a91215c5614c371c4122f",
+        "indents.scm": "678d3eecefa89b4b3262f0565cdb5e3b713cbeb5bfd07ebb2f8698b04c15c71e",
+        "injections.scm": "b7e78747e155d9bad8f641098f021e22173c1998bda05f0482d4e2dec6445bbd",
+        "outline.scm": "e1e279c1cc1a821b4d3722031d92896a63004e3160202d5738c4db024c006c62",
+        "package-lock.json": "fcefa426f64866d24b984eac10cb684bad6a9ec43f242de73882603083f91f87",
+        "package.json": "7472039d169442a61aa8fc86778754b08bae8a3eaa3645707723182391adcf43"
+      },
+      "local": false
+    },
+    {
+      "id": "c",
+      "name": "C",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "C with clangd.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "c",
+        "h"
+      ],
+      "server": "clangd",
+      "files": {
+        "brackets.scm": "7b7a54bd5e81a35953566c1a3d48fcd88e79f321e95eec371f20883da77de757",
+        "config.toml": "54f1d919b730e0807efd0733d35ac8e2f4f9cfe7a3daacc296a4aeb06a2e797f",
+        "highlights.scm": "4612a6ff7e61385b23e2f7fb58e292fa55ee1740142730f67bd449bb5370a85c",
+        "icon.svg": "12b1be7fac56e11259756eb541ee9d6d26958cf17b7b92b47c1ec9d95be50ed7",
+        "indents.scm": "5146f3f64470fa916b504663cc7e9704d274bafabac3acd141510b064ca19188",
+        "injections.scm": "cf56fd392a8766bef9dd6a5ca3ec20bc824a26644e5014347bb42b5833944e72",
+        "outline.scm": "8e1407ed6d774adc55cd5489dc41ba8e2201eb8b4f6ee8f1b394c9c45af7a928"
+      },
+      "local": false
+    },
+    {
+      "id": "cpp",
+      "name": "C++",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "C++ with clangd.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "cpp",
+        "cc",
+        "cxx",
+        "c++",
+        "hpp",
+        "hh",
+        "hxx",
+        "h++",
+        "ipp",
+        "tpp",
+        "inl",
+        "cppm",
+        "ixx"
+      ],
+      "server": "clangd",
+      "files": {
+        "brackets.scm": "270e1ba449ced4fe104dc1e3e31ed7ed0c71b40ba34b2a13bf313311ec1359d1",
+        "config.toml": "0df4d0639b84cf0312bd3365b604a3eab262cc7a1006280fcd82e157688f27ba",
+        "highlights.scm": "447b5c39fa88bf4e1bf13173c8a92ccee44baa679e40396cd296bb8fac9363c9",
+        "icon.svg": "8522c55044bb581068daac309c85a2e51d579023e0f538a9bbbe78db736d1d13",
+        "indents.scm": "e29c41a339ada86a5f9b4df2e30c8e18425d4a054b062d39cbdf69b25d4b33ae",
+        "injections.scm": "375bde9d355721abfdd7491d5c2e253723abcfe7402f7a24a4342c0bfa2510b0",
+        "outline.scm": "edc8e1a737e1889c2336e17907492496c35c9ca56a86c49f7ddc9ab7ebea9bc8"
+      },
+      "local": false
+    },
+    {
+      "id": "css",
+      "name": "CSS",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "CSS with the VS Code CSS language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "css"
+      ],
+      "server": "vscode-css-language-server",
+      "files": {
+        "brackets.scm": "d10cdedd33cd9902cd04bed29257edc4b8cbbf26bf3b3086c163bee8a59fa832",
+        "config.toml": "0ead99a3226425ed996d5cfe1e7bbc1c8b6c3c7811e1e13f43713e0ce7d2892c",
+        "highlights.scm": "f7c74ce493683c6de23017bf9af506ea4d8a4f0205281b98d63f249d1fb9b0c5",
+        "icon.svg": "176382bf3cd6f4065d064afecb1668702b8aa0412ba977cdf67eac2cbb29c8a9",
+        "indents.scm": "424fbba80dcbef6d52b0db9331cfb8c04512e2bd35c5ad4b02b6b8597ff46207",
+        "injections.scm": "64f7110bbd544b0d33cdfd34ac124503fd8b56c688b6e10844e0099fe89d87f3",
+        "outline.scm": "a10253f8873258af2f0ad3b096f88782e1e6ad4cedfd98e08ba0cf4c4df66350",
+        "package-lock.json": "184cf57ad65dd7d217ea02a303d4c9431cd84f3550330911ba50a31a81ff34c3",
+        "package.json": "6f361a86fcae3a6917884ebda9eb4ed15119b78d90d4b171a56da20ecfe0785b"
+      },
+      "local": false
+    },
+    {
+      "id": "dockerfile",
+      "name": "Dockerfile",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Dockerfiles and Containerfiles with the Docker language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "dockerfile",
+        "containerfile"
+      ],
+      "server": "docker-langserver",
+      "files": {
+        "brackets.scm": "36d8696012a74b1994a84a481fd10e76ca030cc7b164fe5cac6de3cceb3e218f",
+        "config.toml": "834ba23c7237f9dc97452425f9c09b0a019ca9a7637a4f01d1c3bf41ee6d3c8e",
+        "grammar.wasm": "295dbbe840e80ad2582d07d9266cf6b7210d702cd9c6878a1fb8650e8c1385a0",
+        "highlights.scm": "b0f8d65584dc1e65b7c9dff288de83ee9702478f84d953da3e684b5e34cb0338",
+        "icon.svg": "410ce23bdffce1cd383cb5112e0c7e0c43127c926ab3dfbd185482a3e64ce790",
+        "indents.scm": "8fd4c3431980bbf7a6b4de42fb7ea9256bf03b82cd3b44660bcf4e8b46a3f301",
+        "injections.scm": "a77ef474f544f54780f12846e090b015983aa2eaf1d602f1570c52d8caaa7ee9",
+        "outline.scm": "dc19152c22191440ac66802fcff6697ff8dc6782e12d1c5305e9cd617f1f6d01",
+        "package-lock.json": "7c3d1bee93d00edb34f009f56ad718908ed4df977358221bf2a3098ed15c5995",
+        "package.json": "897db1fccc5288d8b0f1946c8256e1ee7465da63d03da84195710fe7cfab35b6"
+      },
+      "local": false
+    },
+    {
+      "id": "glsl",
+      "name": "GLSL",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "OpenGL and Vulkan shaders with glsl_analyzer.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "glsl",
+        "vert",
+        "frag",
+        "geom",
+        "comp",
+        "tesc",
+        "tese",
+        "mesh",
+        "task",
+        "rgen",
+        "rint",
+        "rahit",
+        "rchit",
+        "rmiss",
+        "rcall"
+      ],
+      "server": "glsl_analyzer",
+      "files": {
+        "brackets.scm": "66ba3f2803a135291c6ec6e0d424c92e0cc19fad928fcd10533c8e6ed61e5398",
+        "config.toml": "b319bc2c79baeae5aa29352e6d04394103da3bb74bdd6fef23f94560978a4c5d",
+        "grammar.wasm": "8cf2e0d4da99f91b29f7c55458ec108d4b828f60da83ae8aeab70d3357723072",
+        "highlights.scm": "0f88fb127d156c0bf2ff6e3e1a97517f9a3b0ec9afc2b1c751f335472f9a4685",
+        "icon.svg": "1e2e3689e191ecbe28e6386261df2e9c7d04cb2d51a07981ea2cafb5b31372b5",
+        "indents.scm": "9143980014df0dd50cb6c352ee72fa882322cda172c99bd387919ae3e0cec9c5",
+        "injections.scm": "431ed41d430a2b9f25efbb9ee62ec0da3d8bfa62a1558a7520291053bfe4db89",
+        "outline.scm": "6c455aa9020bef319ea5d4a0b9aed79c37ed261b76de441b340829419c802d6c"
+      },
+      "local": false
+    },
+    {
       "id": "go",
       "name": "Go",
       "kind": "language",
@@ -21,6 +201,62 @@
         "indents.scm": "a748e02c783a8758db59509a5d80db5c3ca3ea664699436444b7280b60ae8f18",
         "injections.scm": "84aafde3ba3b8da8c13e67e149aa41faa3938b46b09ec96394040492bf711325",
         "outline.scm": "ccfac5aaf8a1d295a958424274a9baa5d0eed9d64fe7a10f16788c5ac908377a"
+      },
+      "local": false
+    },
+    {
+      "id": "hlsl",
+      "name": "HLSL",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "DirectX shaders with shader-language-server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "hlsl",
+        "hlsli",
+        "fx",
+        "fxh",
+        "vsh",
+        "psh"
+      ],
+      "server": "shader-language-server",
+      "files": {
+        "brackets.scm": "c75af484d525c98470f2c9ded63a6c6395af5421da0b7769b25e7d1c6eea1d9e",
+        "config.toml": "98537f9d2e083c7c285f7e53c1f9c77792d3e5747f3fe71daf947e7eb6e93c46",
+        "grammar.wasm": "b248e973bec1f11b5034410a4a882aec38238818bed9b23c5752a60ff458d419",
+        "highlights.scm": "57cff7db73553a264d165a026f4a94b2e1c4ace2cf6fbce270def0b71f893784",
+        "icon.svg": "808a0ecfae8e675fac0319ce7f85ebbfb180103ed8f392092fb168a8a1f1015b",
+        "indents.scm": "5c5df28836c40bda2120d05aac04d6527673fe5339011ee784a349d37a34efdb",
+        "injections.scm": "312080e877f7c2dcb7e975bdd77114df956d2c83b249268971929bc8323efcd6",
+        "outline.scm": "c7ae30ac7b95ab66ea6450680f71d466f76013318e6b7ef908513c439254296e"
+      },
+      "local": false
+    },
+    {
+      "id": "html",
+      "name": "HTML",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "HTML with the VS Code HTML language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "html",
+        "htm",
+        "xhtml"
+      ],
+      "server": "vscode-html-language-server",
+      "files": {
+        "brackets.scm": "44892505b21a08f4eb83cb646e6a150de6466c86e57505b4228f5f7a039f148c",
+        "config.toml": "f7b8a5ff5cfdc2772dded5043981f77506ee845ed8907af686130dbc5a9281db",
+        "highlights.scm": "ee0c83f83af8129bc12d279aadc68c8b8b112871f238583b428633c8fe8e1895",
+        "icon.svg": "e88c73d6a408483c6ea905180467f7ca141ed9d88b51e60fd34b190d429de0cf",
+        "indents.scm": "d25b65145936d25d8c55ff67c84ff0b3093f61eb59118f9776896e80afd68923",
+        "injections.scm": "65dbf39ebe9542c51d7e910bfa69a62dade801aa6bbaff50fd6e1e2ff9b8b840",
+        "outline.scm": "ef6f45d173d05b7274195ab33e1c4a0e311c6b4a570d5e87ea2399272d284ddf",
+        "package-lock.json": "b17601471757ec4d464bd72f6ea6a4cce6224e06b81cb188703e2be0bbcb001b",
+        "package.json": "64351c88dcd260f3ce6719abb14904e82130d5b1b2db13d41ba65fa7bcff01c6"
       },
       "local": false
     },
@@ -76,6 +312,29 @@
         "outline.scm": "0dddd12b8c6b67923ce700ff0c65adef827a7ae40a6aec1d855f9aa88c9c4783",
         "package-lock.json": "114277b435719d7f6c5410f85076b2eed8b7dc8190663a085651f0b99aa1d1fe",
         "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329"
+      },
+      "local": false
+    },
+    {
+      "id": "lua",
+      "name": "Lua",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Lua with lua-language-server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "lua"
+      ],
+      "server": "lua-language-server",
+      "files": {
+        "brackets.scm": "fee46493d8cea9166cc93de72d87671a48219629a46fff70c8dba8527f865316",
+        "config.toml": "622748132fa40f03357388434d75d9fd4496e578d2c84c462af899698d4f71b3",
+        "highlights.scm": "5bd0b163e06c245c4d6da57bb4f58b41af31e273d916bf70b296e54a292095fc",
+        "icon.svg": "612bf42be15432ac870d92455332e16d682d66f5ff20080694283d6bf2fe482d",
+        "indents.scm": "8aef0a6a9ebfc5148ff596eef3a61c69db499ea63e7cb658b5eabc99e5c41e02",
+        "injections.scm": "c489e9e0c0185d2d5dc2537ed6b6ee4ffd158b4a7e85cac2121be0e7d47835f5",
+        "outline.scm": "09ca730d835abd89b1c9e3039a03d5ce96e45b3383b986ae050ecda791f0a245"
       },
       "local": false
     },
@@ -176,6 +435,30 @@
       "local": false
     },
     {
+      "id": "sql",
+      "name": "SQL",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "SQL with sqls.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "sql"
+      ],
+      "server": "sqls",
+      "files": {
+        "brackets.scm": "9528eba98e7be0b61d8e573afd30e2c64bc09866dea8afc55c6b8020bb590d5a",
+        "config.toml": "5125e8bfa85e0f4acac17c1b98528e4d2f9eaea474e9f1b05ec3635aa2e78d15",
+        "grammar.wasm": "836e4d429bbb35a4153535cf101b2bb69f72b9454a6cc7262d3818fbf532d64c",
+        "highlights.scm": "2accacc534273af4c8a5368c39aa4e18c1249e12941af229360087a1c9548e36",
+        "icon.svg": "faccb1f75e924012fe94e5f78d4c7c89bd6f3ea1a57bd9688805b2f630b889ca",
+        "indents.scm": "aed47621c259d29281f145d771ac08bcdb3c40467c378af4b6d999330f0a0a7c",
+        "injections.scm": "0dbcc498a3caa770e7c086701aff8ef1cf3140bfbc877a0f294d69d8a14b6eb5",
+        "outline.scm": "814c263ce9b4d4f79a979808a860623f59830a0031ff26530f55fd040aab4e99"
+      },
+      "local": false
+    },
+    {
       "id": "toml",
       "name": "TOML",
       "kind": "language",
@@ -249,6 +532,80 @@
         "outline.scm": "77ac576398b2b5170d7fa02e8d8b1bf30c365a00a6a536c05c8e5a2206895d52",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
         "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
+      },
+      "local": false
+    },
+    {
+      "id": "wesl",
+      "name": "WESL",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "WGSL extended with imports and conditional compilation, with wgsl-analyzer.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "wesl"
+      ],
+      "server": "wgsl-analyzer",
+      "files": {
+        "brackets.scm": "c68e9e0c6167338ca2f63b211224977736a190e7045622f727000beb129babd8",
+        "config.toml": "f202c9be609f8254a2e400b6c427162111b03ffc222eba868b33103f987e0844",
+        "grammar.wasm": "30622b9a73ed5097993139793033ab50e63ff50d5f73fee98577892b09ea5821",
+        "highlights.scm": "4a83c729fda7cfefabfd04fff11f2d760ed8c78cbcc38240df7e8be731b71d30",
+        "icon.svg": "f3ae2424837fd27b3beb65f18e4557b7a8d766c436682cd17be8a7240a19994e",
+        "indents.scm": "a16ef1d38e63afe7d95633ccd5701b91534b24132371567443a161d49bc6934d",
+        "injections.scm": "96de7d67655111e00e6e9349da79a75100edab76578c657e6fa89bec56ff9b5c",
+        "outline.scm": "b0bea08e35b8b81d4b0b6a7732e5f616433ba52d91ae6a3be33f40969b56a045"
+      },
+      "local": false
+    },
+    {
+      "id": "wgsl",
+      "name": "WGSL",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "WebGPU shaders with wgsl-analyzer.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "wgsl"
+      ],
+      "server": "wgsl-analyzer",
+      "files": {
+        "brackets.scm": "477b09f1a179a35abc285c95f75dd4e97c93769a50a3242aa6c4501c3f4d7c43",
+        "config.toml": "e3992a462b8127f64015017714fc46d92659671bda7d819e295404808ebde251",
+        "grammar.wasm": "30622b9a73ed5097993139793033ab50e63ff50d5f73fee98577892b09ea5821",
+        "highlights.scm": "aa1c4945ef0e22be7eab245a5a95c8e824260270b480d4bd4c18991397d777ba",
+        "icon.svg": "cd90dbf30cdf2ff6f5ba9020de06faa8ebe997d038c6ec0c4ba25fbc990fc232",
+        "indents.scm": "9830753882c9bf3a96a8075822b61d8919b2e6b622a1a5c1e360a4d3ebf76bf1",
+        "injections.scm": "d9c320fabcec53d969ca1f860c2e76de7d63ec7d58bee1b8ea885641c139b5dc",
+        "outline.scm": "c570293c89b07aa091bffa258db205018d5390d73346337c3eeede4d265d7688"
+      },
+      "local": false
+    },
+    {
+      "id": "yaml",
+      "name": "YAML",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "YAML with yaml-language-server and the schema store.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "yaml",
+        "yml"
+      ],
+      "server": "yaml-language-server",
+      "files": {
+        "brackets.scm": "8961d89bbb61e3890c556510daecc24cd4002ebac72010cafa46171e4d0b4df0",
+        "config.toml": "abdb8d5185411f87af2137a572d52bd65f705c3b6198452debc1708dc998d253",
+        "highlights.scm": "0077c042836f8ffed7d13505316f4d3c9ce0f107c4078fb37b937ffc339f8c49",
+        "icon.svg": "b51bb293106d643a9a0510030f308bcc0ace3d4db39fe8324c110b4ed79e75a3",
+        "indents.scm": "b49dab22c3ef077815fb0907550da600cdb760b4ac400765d31bec5659f36658",
+        "injections.scm": "41e7282e0b6f4fe7cd6ea45535af3c69d9a8cd2dfa2da46bbba830fd05689707",
+        "outline.scm": "477701c984e32a81d7add82ac11650d26885a1beb669ce0158e28122a3038bcb",
+        "package-lock.json": "2d9d2cfd20eb1cf0330a8e31ba6950f425d64b64623dc72da8f25901abfc8241",
+        "package.json": "3391e2928948b3f2b3a172535c2c5701503cae3fa916184609406b413d743f95"
       },
       "local": false
     }
