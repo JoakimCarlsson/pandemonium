@@ -95,10 +95,10 @@ impl View {
         serde_json::from_str(&pm_store::load_text(FILE)?).ok()
     }
 
-    /// Keeps the view for the next launch.
+    /// Keeps the view for the next launch, readable by the reader alone since it holds the text of files that were not saved.
     pub fn save(&self) {
         if let Ok(text) = serde_json::to_string(self) {
-            let _ = pm_store::save_text(FILE, &text);
+            let _ = pm_store::save_private(FILE, &text);
         }
     }
 
