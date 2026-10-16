@@ -15,6 +15,10 @@ use pm_text::Shaper;
 use pm_ui::{Node, node, retained, text};
 
 use crate::CodeBox;
+use crate::figures::{
+    Figures, diagram_key, diagram_node, figure_marks, formula_key, image_key, images_node,
+    is_diagram,
+};
 use crate::parts::{glyph, line};
 
 /// The line height of running text, as a share of its size.
@@ -55,6 +59,10 @@ pub struct Markdown<'a> {
     unfolded: Vec<usize>,
     /// The name of the first link, the rest following it in the order [`pm_markdown::links`] gives their addresses, when they can be pressed.
     links: Option<u64>,
+    /// The figures drawn or fetched so far, when diagrams and images are shown as pictures.
+    figures: Option<&'a Figures>,
+    /// The markdown file the source is, from the root of its repository, which the paths of its images start from; nothing for text in no file.
+    place: Option<&'a str>,
 }
 
 impl<'a> Markdown<'a> {
@@ -68,6 +76,8 @@ impl<'a> Markdown<'a> {
             details: None,
             unfolded: Vec::new(),
             links: None,
+            figures: None,
+            place: None,
         }
     }
 
@@ -89,6 +99,13 @@ impl<'a> Markdown<'a> {
         self
     }
 
+    /// Diagrams and images shown as the drawings `figures` holds for them, a diagram as its code and an image as its words until one arrives; the paths of images start from the markdown file at `place`, or are not followed for text in no file.
+    pub fn figures(mut self, figures: &'a Figures, place: Option<&'a str>) -> Self {
+        self.figures = Some(figures);
+        self.place = place;
+        self
+    }
+
     /// Fold-outs whose summaries are named from `base` up, in the order the
     /// source has them, closed but for those placed in `unfolded`.
     pub fn details(mut self, base: u64, unfolded: Vec<usize>) -> Self {
@@ -103,6 +120,10 @@ impl<'a> Markdown<'a> {
     /// same, so a reply that grows only lays out its last block again.
     pub fn build(self, shaper: &mut Shaper) -> Node {
         let width = self.width;
+        let drawn = self
+            .figures
+            .map(|figures| figure_marks(self.source, self.place, figures))
+            .unwrap_or_default();
         let whole = hash((
             self.source,
             self.pixels,
@@ -110,6 +131,8 @@ impl<'a> Markdown<'a> {
             self.details,
             &self.unfolded,
             self.links,
+            &drawn,
+            self.place,
         ));
         retained(whole, width, shaper, |shaper| {
             let blocks = pm_markdown::parse(self.source);
@@ -133,6 +156,7 @@ impl<'a> Markdown<'a> {
                         first,
                         &unfolded,
                         self.links,
+                        &drawn,
                     ));
                     retained(key, width, shaper, |shaper| {
                         Layout {
@@ -142,6 +166,8 @@ impl<'a> Markdown<'a> {
                             unfolded,
                             seen: first,
                             links: self.links,
+                            figures: self.figures,
+                            place: self.place,
                         }
                         .block(block, self.tone, width)
                     })
@@ -171,6 +197,10 @@ struct Layout<'s> {
     seen: usize,
     /// The name of the first link, when links can be pressed.
     links: Option<u64>,
+    /// The figures drawn or fetched so far, when diagrams and images are shown as pictures.
+    figures: Option<&'s Figures>,
+    /// The markdown file the source is, which the paths of its images start from.
+    place: Option<&'s str>,
 }
 
 impl Layout<'_> {
@@ -200,6 +230,12 @@ impl Layout<'_> {
                 self.text(spans, pixels, true, tone, width)
             }
             Block::List { start, items } => self.list(*start, items, tone, width),
+            Block::Code { language, text } if is_diagram(language) => self.figure(
+                text,
+                diagram_key(text),
+                "This diagram could not be drawn.",
+                width,
+            ),
             Block::Code { text, .. } => self.code(text, width),
             Block::Quote(blocks) => node()
                 .styles([
@@ -212,6 +248,19 @@ impl Layout<'_> {
             Block::Details { summary, blocks } => self.fold_out(summary, blocks, tone, width),
             Block::Rule => node().styles([h_px(1), w_full(), my(1), bg(Role::Border)]),
             Block::Table { head, rows } => self.table(head, rows, tone, width),
+            Block::Math(text) => self.figure(
+                text,
+                formula_key(text),
+                "This formula could not be set.",
+                width,
+            ),
+            Block::Images { images, centered } => images_node(
+                images,
+                *centered,
+                self.figures,
+                |image| image_key(self.place, &image.source),
+                (self.links, self.pixels, width),
+            ),
         }
     }
 
@@ -331,6 +380,18 @@ impl Layout<'_> {
             .max_height(UNCUT)
             .build()
             .styles([py(2), my(0)])
+    }
+
+    /// The figure written as `source` and kept under `key`, drawn when its drawing has arrived, and otherwise its source as code, with `failed` under it when it could not be drawn.
+    fn figure(&mut self, source: &str, key: u64, failed: &str, width: f32) -> Node {
+        match self.figures.and_then(|figures| figures.get(&key)) {
+            Some(Ok(drawing)) => diagram_node(drawing, width),
+            Some(Err(_)) => node()
+                .styles([flex(), flex_col(), gap(1.5)])
+                .child(self.code(source, width))
+                .child(line(failed, self.pixels - 2, 1.4, Role::Subtle)),
+            None => self.code(source, width),
+        }
     }
 
     /// A table: a shaded heading row over its rows, the columns sharing `width` evenly.

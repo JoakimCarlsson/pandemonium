@@ -672,6 +672,14 @@ impl App {
             pm_config::ThemeMode::Dark => Appearance::Dark,
         };
         self.family = chosen_family(settings);
+        let palette = crate::work::picture::Palette::of(
+            self.family.variant(self.appearance),
+            self.appearance == Appearance::Dark,
+        );
+        if self.work.set_palette(palette) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).without_figures());
+        }
         let fonts = (settings.interface_font.clone(), settings.code_font.clone());
         if fonts != self.fonts_applied {
             scene::set_fonts(&mut self.shaper, &fonts.0, &fonts.1);

@@ -26,6 +26,21 @@ pub struct Span {
     pub inline: Inline,
 }
 
+/// A picture a source shows, as `![alt](source)` or an HTML `<img>` writes it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Image {
+    /// Where the picture is: a web address, or a path from the file the source is in.
+    pub source: String,
+    /// The words that stand for the picture where it cannot be shown.
+    pub alt: String,
+    /// Which link of the source the picture is the face of, counted from one as [`Inline::target`] counts; nought for none.
+    pub target: u16,
+    /// How wide the source asks the picture to be drawn, in logical pixels.
+    pub width: Option<u32>,
+    /// How tall the source asks the picture to be drawn, in logical pixels.
+    pub height: Option<u32>,
+}
+
 /// One block of a markdown source.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Block {
@@ -63,6 +78,15 @@ pub enum Block {
     },
     /// A line across.
     Rule,
+    /// A formula set apart on its own lines, written in TeX, as `$$…$$` or a `math` fence writes it.
+    Math(String),
+    /// Pictures standing alone in a paragraph of their own, side by side.
+    Images {
+        /// The pictures, in the order the source has them.
+        images: Vec<Image>,
+        /// Whether the source sets them in the middle, as `<p align="center">` does.
+        centered: bool,
+    },
     /// A table: its heading cells and its rows of cells.
     Table {
         /// The cells of the heading row.

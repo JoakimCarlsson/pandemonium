@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 arboard = { version = "3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
-image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 pm-acp.workspace = true
 pm-color.workspace = true
 pm-components.workspace = true
@@ -32,3 +32,6 @@ pm-lsp.workspace = true
 pm-editor.workspace = true
 pm-config.workspace = true
 pm-style.workspace = true
+resvg = "0.48.1"
+mermaid-svg = "0.7.0"
+latex-rust = "2.1.1"

@@ -147,6 +147,8 @@ request with exactly one `response` carrying the same `id`.
 | `remove_entry` | `directory`, `path`                                                                              | `done`          |
 | `write_file`   | `directory`, `path`, `text`                                                                      | `done`          |
 | `read_file`    | `directory`, `path`, `head`, `revision` (optional)                                               | `file`          |
+| `read_bytes`   | `directory`, `path`, `head`                                                                      | `bytes`         |
+| `fetch_bytes`  | `url`: an `http` or `https` address                                                              | `bytes`         |
 | `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
 | `resize_terminal`| `terminal`, `columns`, `rows`                                                                  | `done`          |
@@ -494,6 +496,7 @@ embedded context, and anything else as a link to the stored file.
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
 | `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short, `language` (optional): the installed language it is written in |
+| `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
 | `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |

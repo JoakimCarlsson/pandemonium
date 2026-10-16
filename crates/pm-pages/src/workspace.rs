@@ -181,8 +181,14 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
     )
 }
 
-/// What fills the main area on a page of a project while a file of the project is open: the tabs, the first of them, `first`, showing `page`, and the file under the others.
-fn home_page(state: &WorkspaceState, first: (IconName, &str), page: Node, height: f32) -> Node {
+/// What fills the main area, `width` by `height` logical pixels, on a page of a project while a file of the project is open: the tabs, the first of them, `first`, showing `page`, and the file under the others.
+fn home_page(
+    state: &WorkspaceState,
+    first: (IconName, &str),
+    page: Node,
+    (width, height): (f32, f32),
+    shaper: &mut Shaper,
+) -> Node {
     let mut strip = node()
         .styles([
             flex(),
@@ -204,7 +210,7 @@ fn home_page(state: &WorkspaceState, first: (IconName, &str), page: Node, height
         .child(strip)
         .child(
             if state.tab == Tab::File && state.shown_viewer().is_some() {
-                viewer::viewer(state, height)
+                viewer::viewer(state, width, height, shaper)
             } else {
                 page
             },
@@ -232,7 +238,7 @@ fn session_page(
 ) -> Node {
     let view = match state.tab {
         Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width, height),
-        Tab::File if state.shown_viewer().is_some() => viewer::viewer(state, height),
+        Tab::File if state.shown_viewer().is_some() => viewer::viewer(state, width, height, shaper),
         _ => chat::chat(state, session, width, above, shaper),
     };
     let mut page = node()
@@ -272,13 +278,15 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             state,
             (IconName::Plus, "New Session"),
             starting_page(state, main_width, height, shaper),
-            height,
+            (main_width, height),
+            shaper,
         ),
         (Page::Project(project), _) if !state.git.viewers.is_empty() => home_page(
             state,
             (IconName::Folder, "Overview"),
             overview::overview(state, project),
-            height,
+            (main_width, height),
+            shaper,
         ),
         (Page::Project(project), _) => overview::overview(state, project),
         (Page::History, _) => history::history(state),
