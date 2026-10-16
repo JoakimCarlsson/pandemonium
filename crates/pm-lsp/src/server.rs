@@ -428,6 +428,69 @@ impl LanguageServer {
         }))
     }
 
+    /// The edits that format the whole file at `uri`, indented by `indent` columns a level, with tabs when `tabs`, each a stretch of the text as it is now and what replaces it.
+    pub(crate) fn formatting(
+        &self,
+        uri: &str,
+        indent: usize,
+        tabs: bool,
+    ) -> Result<Vec<TextChange>, String> {
+        let answer = self.rpc.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": indent, "insertSpaces": !tabs, "trimTrailingWhitespace": true, "insertFinalNewline": true},
+            }),
+            ANSWERING,
+        )?;
+        Ok(answer
+            .as_array()
+            .map(|edits| {
+                edits
+                    .iter()
+                    .filter_map(|edit| {
+                        Some(TextChange {
+                            span: Some(span_of(edit.get("range")?)?),
+                            text: edit.get("newText")?.as_str()?.to_owned(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Where the thing at `position` of the file at `uri` is defined, as the addresses and stretches the server gives.
+    pub(crate) fn definition(
+        &self,
+        uri: &str,
+        position: Position,
+    ) -> Result<Vec<(String, Span)>, String> {
+        let answer = self.rpc.request(
+            "textDocument/definition",
+            json!({"textDocument": {"uri": uri}, "position": position_value(position)}),
+            ANSWERING,
+        )?;
+        let items = match answer {
+            Value::Array(items) => items,
+            Value::Null => Vec::new(),
+            single => vec![single],
+        };
+        Ok(items
+            .iter()
+            .filter_map(|item| {
+                let address = item
+                    .get("targetUri")
+                    .or_else(|| item.get("uri"))
+                    .and_then(Value::as_str)?;
+                let range = item
+                    .get("targetSelectionRange")
+                    .or_else(|| item.get("range"))
+                    .and_then(span_of)?;
+                Some((address.to_owned(), range))
+            })
+            .collect())
+    }
+
     /// Asks the server to stop, and ends it if it does not.
     pub(crate) fn stop(&self) {
         self.rpc.stop(STOPPING);

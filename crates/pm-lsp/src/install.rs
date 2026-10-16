@@ -18,6 +18,14 @@ pub fn installed_manifest(id: &str) -> Option<Manifest> {
     Manifest::read(&folder).ok()
 }
 
+/// The installed language a file at `path` is written in, by folder name.
+pub fn language_of(path: &str) -> Option<String> {
+    installed()
+        .into_iter()
+        .find(|(_, manifest)| manifest.matches(path))
+        .map(|(id, _)| id)
+}
+
 /// The languages installed on this machine, by folder name, each with its manifest.
 pub fn installed() -> Vec<(String, Manifest)> {
     let Ok(root) = languages_root() else {

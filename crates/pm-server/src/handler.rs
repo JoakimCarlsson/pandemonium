@@ -686,7 +686,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(pm_git::Contents::Text { text, truncated }) => Response::File {
                 text: Some(text),
                 truncated,
-                language: languages::language_of(&path),
+                language: pm_lsp::language_of(&path),
             },
             Ok(pm_git::Contents::Binary) => Response::File {
                 text: None,
@@ -766,6 +766,31 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             trigger.as_deref(),
         ) {
             Ok(items) => Response::Completions { items },
+            Err(reason) => failed(reason),
+        },
+        Request::Format {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .format(&place(&directory), &path, version)
+        {
+            Ok(edits) => Response::Formatted { edits },
+            Err(reason) => failed(reason),
+        },
+        Request::Definition {
+            directory,
+            path,
+            version,
+            position,
+        } => match core
+            .documents
+            .hub
+            .definition(&place(&directory), &path, version, position)
+        {
+            Ok(locations) => Response::Definitions { locations },
             Err(reason) => failed(reason),
         },
         Request::Hover {

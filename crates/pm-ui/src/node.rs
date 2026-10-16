@@ -73,6 +73,8 @@ pub enum Paint {
     Fill,
     /// A wavy line under it.
     Wave,
+    /// A straight line under it.
+    Underline,
 }
 
 /// A stretch of a line of text painted apart from the rest.

@@ -4,9 +4,9 @@ use pm_input::FocusId;
 
 use pm_text::Edit;
 
-use crate::document::Document;
 use crate::git_prompts::Prompt;
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
+use pm_editor::Document;
 
 /// The text of the file being edited.
 pub const EDITOR_FIELD: FocusId = FocusId(7083);
@@ -52,6 +52,8 @@ pub struct Viewer {
     pub preview: bool,
     /// Where the file was left when the window last closed, put back once its text arrives.
     pub left: Option<Left>,
+    /// The place the caret goes to once the text arrives, as when the file was opened to show where something is defined.
+    pub jump: Option<pm_protocol::Position>,
 }
 
 /// Where a file was left when the window closed: what it held that was not saved, and the caret.
@@ -79,6 +81,11 @@ impl Left {
             document.field.apply(Edit::Place(caret, false));
         }
     }
+}
+
+/// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top.
+pub(crate) fn jump(document: &mut Document, position: pm_protocol::Position) -> f32 {
+    (document.jump(position) as f32 * ROW - ROW * 6.0).max(0.0)
 }
 
 impl Viewer {
@@ -125,6 +132,7 @@ impl WorkspaceState {
                     scroll: 0.0,
                     preview: true,
                     left: None,
+                    jump: None,
                 };
                 self.outbox.push(Outgoing::ReadFile {
                     session,
@@ -236,6 +244,9 @@ impl WorkspaceState {
                     if let Some(left) = viewer.left.take() {
                         left.put_back(&mut document);
                     }
+                    if let Some(position) = viewer.jump.take() {
+                        viewer.scroll = jump(&mut document, position);
+                    }
                     Contents::Text(Box::new(document))
                 }
                 Ok((None, _, _)) => Contents::Message("This file is not text.".to_owned()),
@@ -279,7 +290,7 @@ impl WorkspaceState {
     }
 
     /// Writes the file shown to the folder.
-    fn save_file(&mut self) {
+    pub(crate) fn save_file(&mut self) {
         let Some(session) = self.review_index() else {
             return;
         };
@@ -394,7 +405,7 @@ impl WorkspaceState {
             return true;
         }
         match action {
-            EDITOR_SAVE => self.save_file(),
+            EDITOR_SAVE => self.format_then_save(true),
             EDITOR_FIELD => {}
             _ => return false,
         }

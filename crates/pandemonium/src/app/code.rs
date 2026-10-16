@@ -174,6 +174,32 @@ impl App {
             self.complete_at_caret();
             return true;
         }
+        if command && matches!(event.key, Key::Character('-' | '_')) {
+            self.model.update(|screen| {
+                let taken = std::mem::take(screen);
+                *screen = if modifiers.shift {
+                    taken.jumped_forward()
+                } else {
+                    taken.jumped_back()
+                };
+            });
+            return true;
+        }
+        if command && modifiers.shift && matches!(event.key, Key::Character('i' | 'I')) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).formatted_by_hand());
+            return true;
+        }
+        if event.key == Key::Function(12) {
+            if let Some(caret) = self
+                .model
+                .read(|screen| screen.field(EDITOR_FIELD).map(pm_text::Field::caret))
+            {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).definition_requested(caret));
+            }
+            return true;
+        }
         if command && matches!(event.key, Key::Character('k' | 'K')) {
             self.hover_at_caret();
             return true;
@@ -211,19 +237,9 @@ impl App {
             self.hover_entered |= on_card;
             return;
         }
-        let word = (over == Some(EDITOR_FIELD))
-            .then(|| self.editor_byte_at(x, y))
-            .flatten()
-            .and_then(|byte| {
-                self.model.read(|screen| {
-                    let text = screen.field(EDITOR_FIELD)?.text();
-                    let word = pm_text::word_at(text, byte);
-                    text[word.clone()]
-                        .chars()
-                        .any(|character| character.is_alphanumeric() || character == '_')
-                        .then_some(word.start)
-                })
-            });
+        let stretch = self.word_under(over, x, y);
+        self.reach(stretch.clone().filter(|_| self.modifiers.control));
+        let word = stretch.map(|stretch| stretch.start);
         let shown = self.model.read(|screen| match screen {
             Screen::Workspace(state) => state
                 .shown_document()
@@ -248,6 +264,80 @@ impl App {
             (Some(start), _) => Some((start, Instant::now())),
             (None, _) => None,
         };
+    }
+
+    /// The word of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one.
+    fn word_under(
+        &self,
+        over: Option<pm_input::FocusId>,
+        x: f32,
+        y: f32,
+    ) -> Option<std::ops::Range<usize>> {
+        let byte = (over == Some(EDITOR_FIELD))
+            .then(|| self.editor_byte_at(x, y))
+            .flatten()?;
+        self.model.read(|screen| {
+            let text = screen.field(EDITOR_FIELD)?.text();
+            let word = pm_text::word_at(text, byte);
+            text[word.clone()]
+                .chars()
+                .any(|character| character.is_alphanumeric() || character == '_')
+                .then_some(word)
+        })
+    }
+
+    /// Underlines `stretch` of the file shown as what a press takes to its definition, or nothing, when that differs from what is underlined.
+    fn reach(&mut self, stretch: Option<std::ops::Range<usize>>) {
+        let held = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state
+                .shown_document()
+                .and_then(|document| document.reach.clone()),
+            Screen::Onboarding(_) => None,
+        });
+        if held != stretch {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_reach(stretch));
+        }
+    }
+
+    /// Whether a word of the file shown is underlined as what a press takes to its definition.
+    pub(super) fn reaching(&self) -> bool {
+        self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state
+                .shown_document()
+                .is_some_and(|document| document.reach.is_some()),
+            Screen::Onboarding(_) => false,
+        })
+    }
+
+    /// Underlines the word under the pointer while Ctrl is held, and takes the underline away when it is let go.
+    pub(super) fn editor_modifiers_changed(&mut self) {
+        let stretch = self
+            .pointer
+            .position
+            .filter(|_| self.modifiers.control)
+            .and_then(|(x, y)| self.word_under(self.output.hit((x, y)), x, y));
+        self.reach(stretch);
+    }
+
+    /// Takes the reader to where the word under the pointer is defined, when Ctrl is held as the file shown is pressed, and says whether it did.
+    pub(super) fn editor_reach_pressed(&mut self) -> bool {
+        if !self.modifiers.control {
+            return false;
+        }
+        let Some((x, y)) = self.pointer.position else {
+            return false;
+        };
+        let Some(stretch) = self.word_under(self.output.hit((x, y)), x, y) else {
+            return false;
+        };
+        self.model.update(|screen| {
+            *screen = std::mem::take(screen)
+                .with_reach(None)
+                .definition_requested(stretch.start)
+        });
+        self.deliver();
+        true
     }
 
     /// Takes away a card the pointer left long enough ago, asks about the word the pointer has rested on long enough, and says when to look again while either has yet to happen.

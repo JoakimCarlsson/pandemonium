@@ -7,14 +7,17 @@ use std::time::{Duration, Instant};
 
 use pm_buffer::{Buffer, Position};
 
-use crate::install::installed_manifest;
+use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
 use crate::server::{DiagnosticsSink, LanguageServer};
-use crate::types::{Completion, Diagnostic, Hover, TextChange};
-use crate::uri::file_uri;
+use crate::types::{Completion, Diagnostic, Hover, Location, TextChange};
+use crate::uri::{file_uri, path_of};
 
 /// How long a question about a file waits for the edits it was asked after to arrive.
 const CATCHING_UP: Duration = Duration::from_secs(2);
+
+/// The most bytes of a file outside a project that are sent to be shown read only.
+const MOST_SHOWN: u64 = 2 * 1024 * 1024;
 
 /// The most completions handed back for one question.
 const MOST_COMPLETIONS: usize = 200;
@@ -454,5 +457,65 @@ impl Hub {
             return Ok(None);
         };
         server.hover(&file_uri(&root.join(path)), position)
+    }
+
+    /// The edits that format the open file at `path` of the project at `root` as its language says, once it reaches `version`, each a stretch of the text at that version and what replaces it; none when its language server cannot format.
+    pub fn format(&self, root: &Path, path: &str, version: i32) -> Result<Vec<TextChange>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        let manifest = language_of(path).and_then(|id| installed_manifest(&id));
+        let (indent, tabs) =
+            manifest.map_or((4, false), |manifest| (manifest.indent, manifest.tabs));
+        server.formatting(&file_uri(&root.join(path)), indent, tabs)
+    }
+
+    /// Where the thing at `position` of the open file at `path` of the project at `root` is defined, once the file reaches `version`: files inside the project by their path from its root, and files outside it with what they hold, to be shown read only.
+    pub fn definition(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+    ) -> Result<Vec<Location>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        let found = server.definition(&file_uri(&root.join(path)), position)?;
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        Ok(found
+            .into_iter()
+            .filter_map(|(address, span)| {
+                let file = path_of(&address)?;
+                match file
+                    .strip_prefix(root)
+                    .or_else(|_| file.strip_prefix(&canonical))
+                {
+                    Ok(relative) => Some(Location {
+                        path: relative.to_string_lossy().replace('\\', "/"),
+                        span,
+                        inside: true,
+                        text: None,
+                        language: None,
+                    }),
+                    Err(_) => {
+                        let shown = file.to_string_lossy().into_owned();
+                        let text = std::fs::metadata(&file)
+                            .ok()
+                            .filter(|data| data.is_file() && data.len() <= MOST_SHOWN)
+                            .and_then(|_| std::fs::read_to_string(&file).ok())?;
+                        Some(Location {
+                            language: language_of(&shown),
+                            path: shown,
+                            span,
+                            inside: false,
+                            text: Some(text),
+                        })
+                    }
+                }
+            })
+            .collect())
     }
 }

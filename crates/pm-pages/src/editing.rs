@@ -117,6 +117,48 @@ impl Screen {
         self.in_workspace(|state| state.scrolled_hover(delta, room))
     }
 
+    /// The screen gone back to where the caret was before the last jump.
+    pub fn jumped_back(self) -> Self {
+        self.in_workspace(WorkspaceState::jumped_back)
+    }
+
+    /// The screen gone forward again to where the caret was before the last step back.
+    pub fn jumped_forward(self) -> Self {
+        self.in_workspace(WorkspaceState::jumped_forward)
+    }
+
+    /// The screen with the file shown formatted as its language says, without writing it.
+    pub fn formatted_by_hand(self) -> Self {
+        self.in_workspace(WorkspaceState::formatted_by_hand)
+    }
+
+    /// The screen after the language server gave the edits that format a file.
+    pub fn with_formatted(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        edits: Vec<pm_protocol::TextChange>,
+        save: bool,
+    ) -> Self {
+        self.in_workspace(|state| state.with_formatted(session, path, version, edits, save))
+    }
+
+    /// The screen noting the word of the file shown the pointer is on while Ctrl is held.
+    pub fn with_reach(self, reach: Option<std::ops::Range<usize>>) -> Self {
+        self.in_workspace(|state| state.with_reach(reach))
+    }
+
+    /// The screen asking where the thing at the byte `offset` of the file shown is defined.
+    pub fn definition_requested(self, offset: usize) -> Self {
+        self.in_workspace(|state| state.definition_requested(offset))
+    }
+
+    /// The screen after the language server said where something in a file of the session at `session` is defined.
+    pub fn with_definitions(self, session: usize, locations: Vec<pm_protocol::Location>) -> Self {
+        self.in_workspace(|state| state.with_definitions(session, locations))
+    }
+
     /// The screen with the card about a place taken away.
     pub fn hover_closed(self) -> Self {
         self.in_workspace(WorkspaceState::hover_closed)

@@ -117,6 +117,24 @@ pub struct Hover {
     pub span: Option<Span>,
 }
 
+/// Where something is defined, as a client is told it.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Location {
+    /// The file: from the root of the project when it is inside it, and absolute otherwise.
+    pub path: String,
+    /// The stretch of the file it names.
+    pub span: Span,
+    /// Whether the file is inside the project, so that it is read and edited like any other of its files.
+    #[serde(default)]
+    pub inside: bool,
+    /// What a file outside the project holds, which the client cannot read through the project, to be shown read only.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// The installed language a file outside the project is written in, when one is.
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
 /// One stretch of an open file replaced, as a client tells it.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TextChange {

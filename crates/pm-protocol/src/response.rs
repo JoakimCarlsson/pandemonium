@@ -227,6 +227,16 @@ pub enum Response {
         /// The best match for the word typed there first.
         items: Vec<pm_lsp::Completion>,
     },
+    /// The edits that format a file, each a stretch of its text at the version asked for and what replaces it; none when its language server cannot format.
+    Formatted {
+        /// The edits, in any order; they do not overlap.
+        edits: Vec<pm_lsp::TextChange>,
+    },
+    /// Where the thing at a place is defined.
+    Definitions {
+        /// Each place, the one the server names first first.
+        locations: Vec<pm_lsp::Location>,
+    },
     /// What the language server says about the thing at a place.
     Hovered {
         /// What it says, or nothing when it says nothing.

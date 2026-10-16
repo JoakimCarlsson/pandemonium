@@ -800,6 +800,23 @@ impl Frame<'_> {
         for mark in node.marks.iter().filter(|mark| mark.paint == Paint::Wave) {
             self.wave(&run, mark, (x, y), opacity);
         }
+        for mark in node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Underline)
+        {
+            let left = run.caret_x(mark.range.start);
+            let right = run.caret_x(mark.range.end);
+            self.list.push(Quad::filled(
+                Rect::new(
+                    x + left,
+                    y + run.baseline + computed.typography.size * 0.12,
+                    (right - left).max(0.0),
+                    (computed.typography.size / 14.0).max(1.0),
+                ),
+                mark.color.resolve(self.theme).alpha(opacity),
+            ));
+        }
         let mut inked: Vec<&Mark> = node
             .marks
             .iter()

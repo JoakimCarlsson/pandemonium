@@ -163,6 +163,10 @@ enum Pending {
     Hovered(usize, String, pm_protocol::Position),
     /// The extensions the server on this machine can install.
     Extensions,
+    /// Where something in a file of the session at this position is defined.
+    Definitions(usize),
+    /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
+    Formatted(usize, String, i32, bool),
 }
 
 impl Pending {
@@ -1556,6 +1560,8 @@ impl Work {
             | Pending::Opened(..)
             | Pending::Completions(..)
             | Pending::Hovered(..)
+            | Pending::Definitions(_)
+            | Pending::Formatted(..)
             | Pending::Extensions => self.answered_code(model, host, pending, response),
             Pending::Back(session, failing) => {
                 if let Some(message) = failure {

@@ -589,6 +589,26 @@ pub enum Request {
         #[serde(default)]
         trigger: Option<String>,
     },
+    /// The edits that format an open file as its language says, once the file reaches `version`.
+    Format {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the edits are made to.
+        version: i32,
+    },
+    /// Where the thing at a place of an open file is defined, once the file reaches `version`.
+    Definition {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+    },
     /// What the language server says about the thing at a place of an open file, once the file reaches `version`.
     Hover {
         /// The folder.

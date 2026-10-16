@@ -32,14 +32,6 @@ pub(crate) fn installed_named(name: &str) -> Option<(String, Manifest)> {
     })
 }
 
-/// The installed language a file at `path` is written in, by folder name.
-pub(crate) fn language_of(path: &str) -> Option<String> {
-    pm_lsp::installed()
-        .into_iter()
-        .find(|(_, manifest)| manifest.matches(path))
-        .map(|(id, _)| id)
-}
-
 /// The grammar and queries of the installed language `name`, found by folder name or another name.
 pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
     let (id, manifest) =

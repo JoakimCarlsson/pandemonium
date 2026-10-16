@@ -7,11 +7,10 @@ license.workspace = true
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 pm-acp.workspace = true
-pm-buffer.workspace = true
+pm-editor.workspace = true
 pm-git.workspace = true
 pm-icon.workspace = true
 pm-input.workspace = true
-pm-lsp.workspace = true
 pm-markdown.workspace = true
 pm-protocol.workspace = true
 pm-style.workspace = true

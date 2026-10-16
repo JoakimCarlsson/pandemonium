@@ -1,0 +1,12 @@
+[package]
+name = "pm-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-buffer.workspace = true
+pm-lsp.workspace = true
+pm-protocol.workspace = true
+pm-text.workspace = true
+pm-treesitter.workspace = true

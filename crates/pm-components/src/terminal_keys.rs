@@ -75,6 +75,8 @@ pub fn bytes(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
         Key::Space => b" ".to_vec(),
         Key::Character(character) if control => vec![control_byte(character)?],
         Key::Character(character) => character.to_string().into_bytes(),
+        Key::Function(number @ 1..=4) => vec![0x1b, b'O', b'P' + number - 1],
+        Key::Function(number) => tilded(event, function_code(number)?),
     };
     let alt_prefixed = alt && matches!(event.key, Key::Character(_) | Key::Space | Key::Backspace);
     Some(if alt_prefixed {
@@ -82,6 +84,16 @@ pub fn bytes(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
     } else {
         sent
     })
+}
+
+/// The number xterm sends in the escape sequence of the function key F`number`, from F5 up.
+fn function_code(number: u8) -> Option<u8> {
+    match number {
+        5 => Some(15),
+        6..=10 => Some(number + 11),
+        11 | 12 => Some(number + 12),
+        _ => None,
+    }
 }
 
 /// The bytes that paste `text` with its control characters other than tab and line breaks dropped, so it cannot end the paste early, wrapped in the markers a program that asked for them expects.

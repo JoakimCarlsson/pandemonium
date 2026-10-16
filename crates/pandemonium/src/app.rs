@@ -330,6 +330,7 @@ impl App {
     /// the frame could not be presented.
     fn redraw(&mut self) {
         self.fit_terminal();
+        let reaching = self.reaching();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -413,8 +414,13 @@ impl App {
             self.model
                 .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
         }
-        if self.output.cursor != self.cursor {
-            self.cursor = self.output.cursor;
+        let cursor = if reaching {
+            Cursor::Pointer
+        } else {
+            self.output.cursor
+        };
+        if cursor != self.cursor {
+            self.cursor = cursor;
             window.set_cursor(cursor_icon(self.cursor));
         }
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
@@ -874,6 +880,9 @@ impl App {
                     && Screen::is_field(id)
                 {
                     self.press_in_field(id);
+                }
+                if self.pressed_on == Some(EDITOR_FIELD) && self.editor_reach_pressed() {
+                    self.dragging = None;
                 }
             }
             PointerEvent::Moved(x, y) => {
@@ -1536,6 +1545,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = keys::modifiers(modifiers.state());
+                self.editor_modifiers_changed();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.refocus = None;

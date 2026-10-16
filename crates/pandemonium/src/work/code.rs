@@ -174,6 +174,40 @@ impl Work {
                     Pending::Hovered(session, asked, position),
                 );
             }
+            Outgoing::Format {
+                session,
+                path,
+                version,
+                save,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Format {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::Formatted(session, asked, version, save),
+                );
+            }
+            Outgoing::Definition {
+                session,
+                path,
+                version,
+                position,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::Definition {
+                    directory,
+                    path,
+                    version,
+                    position,
+                },
+                Pending::Definitions(session),
+            ),
             Outgoing::Extensions => self.ask(&None, Request::Extensions, Pending::Extensions),
             Outgoing::InstallExtensions { ids } => {
                 for host in self.hosts() {
@@ -262,6 +296,21 @@ impl Work {
             (Pending::Hovered(session, path, position), _) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_hover(session, &path, position, None);
+                });
+            }
+            (Pending::Formatted(session, path, version, save), response) => {
+                let edits = match response {
+                    Response::Formatted { edits } => edits,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_formatted(session, &path, version, edits, save);
+                });
+            }
+            (Pending::Definitions(session), Response::Definitions { locations }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_definitions(session, locations);
                 });
             }
             (Pending::Extensions, Response::Extensions { extensions }) => {

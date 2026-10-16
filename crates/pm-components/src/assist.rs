@@ -11,12 +11,12 @@ use pm_style::{
 use pm_text::Shaper;
 use pm_ui::{Mark, Node, Paint, node, text};
 
-use crate::document::{Completions, HoverCard};
 use crate::editor::COMPLETIONS_SHOWN;
 use crate::markdown::Markdown;
 use crate::parts::line;
 use crate::state::WorkspaceState;
 use crate::viewer::severity_role;
+use pm_editor::{Completions, HoverCard};
 
 /// The list of completions itself, which keeps a press on it from counting as outside.
 pub const COMPLETION_BODY: FocusId = FocusId(7_200_000);

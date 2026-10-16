@@ -57,6 +57,8 @@ pub enum Key {
     ArrowLeft,
     /// The right arrow.
     ArrowRight,
+    /// A function key, by its number: 12 for F12.
+    Function(u8),
 }
 
 /// Which modifier keys are held.

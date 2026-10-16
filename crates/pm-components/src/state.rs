@@ -330,6 +330,28 @@ pub enum Outgoing {
         /// The character typed that asked, when one did.
         trigger: Option<String>,
     },
+    /// Asks the language server for the edits that format a file of the session at this position.
+    Format {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the edits are for.
+        version: i32,
+        /// Whether the file is written to the folder once it is formatted.
+        save: bool,
+    },
+    /// Asks the language server where the thing at a place of a file of the session at this position is defined.
+    Definition {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+    },
     /// Asks the language server what it says about a place of a file of the session at this position.
     Hover {
         /// The session, by position.
@@ -960,6 +982,8 @@ pub struct WorkspaceState {
     pub extensions: Vec<pm_protocol::ExtensionInfo>,
     /// What the extensions page remembers.
     pub extensions_page: crate::extensions::ExtensionsPage,
+    /// Where the caret was before each jump to a definition, to go back to.
+    pub jumps: pm_editor::Jumps,
 }
 
 impl WorkspaceState {
@@ -1054,6 +1078,7 @@ impl WorkspaceState {
             unfolded: Vec::new(),
             extensions: Vec::new(),
             extensions_page: crate::extensions::ExtensionsPage::default(),
+            jumps: pm_editor::Jumps::default(),
             trail: crate::trail::Trail::default(),
         };
         state.sync_context();

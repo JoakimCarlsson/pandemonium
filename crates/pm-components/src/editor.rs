@@ -1,32 +1,15 @@
 //! Writing code in the file shown: edits kept in step with the syntax tree and the language server, new lines indented as the language says, completions at the caret and what the server says about a place.
 
-use pm_buffer::Lines;
 use pm_protocol::{Completion, Diagnostic, Hover, Position};
 use pm_text::Edit;
 use pm_treesitter::Syntax;
 
-use crate::document::{Completions, Document, HoverCard};
 use crate::open_files::{Contents, Viewer};
 use crate::state::{Outgoing, WorkspaceState};
+use pm_editor::{Document, HoverCard};
 
 /// How many completions the list shows at once.
 pub const COMPLETIONS_SHOWN: usize = 10;
-
-/// Whether `character` is part of a word a completion finishes.
-fn is_word(character: char) -> bool {
-    character.is_alphanumeric() || character == '_'
-}
-
-/// The positions in `items` of the completions that match `typed`, best first.
-fn matching(items: &[Completion], typed: &str) -> Vec<usize> {
-    let mut scored: Vec<(u8, usize)> = items
-        .iter()
-        .enumerate()
-        .filter_map(|(place, item)| pm_lsp::score(&item.filter, typed).map(|held| (held, place)))
-        .collect();
-    scored.sort();
-    scored.into_iter().map(|(_, place)| place).collect()
-}
 
 /// Whether `viewer` shows the file at `path` as it is in the folder.
 fn is_file(viewer: &Viewer, path: &str) -> bool {
@@ -308,105 +291,45 @@ impl WorkspaceState {
         let Contents::Text(document) = &mut viewer.contents else {
             return;
         };
-        let before = document.field.text().to_owned();
-        let before_lines: Lines = document.line_index().clone();
-        document.field.apply(edit);
-        let Some(change) = document.refresh(&before, &before_lines) else {
-            refilter(document, false);
+        let Some(edited) = document.edit(edit) else {
             return;
         };
+        let position = document.position_of(document.field.caret());
+        let version = document.version;
         viewer.preview = false;
-        let Contents::Text(document) = &mut viewer.contents else {
-            return;
-        };
-        document.hover = None;
-        let typed: Option<char> = (change.range.is_empty() && change.text.chars().count() == 1)
-            .then(|| change.text.chars().next())
-            .flatten();
-        let mut outgoing = Vec::new();
-        if document.synced {
-            document.version += 1;
-            outgoing.push(Outgoing::ChangeDocument {
+        if let Some((version, change)) = edited.change {
+            self.outbox.push(Outgoing::ChangeDocument {
                 session,
                 path: path.clone(),
-                version: document.version,
-                changes: vec![Document::text_change(&change, &before, &before_lines)],
+                version,
+                changes: vec![change],
             });
         }
-        let trigger = typed.filter(|character| {
-            document
-                .triggers
-                .iter()
-                .any(|held| held.ends_with(*character))
-        });
-        let reopen = refilter(document, trigger.is_some());
-        let asking = match (trigger, reopen) {
-            (Some(character), _) => Some(Some(character.to_string())),
-            (None, true) => Some(None),
-            (None, false) => None,
-        };
-        if let Some(trigger) = asking
-            && document.synced
-        {
-            let caret = document.field.caret();
-            let at = document
-                .completion
-                .as_ref()
-                .map_or((0.0, 0.0), |held| held.at);
-            document.completion = Some(Completions {
-                start: document.word_start(caret),
-                items: Vec::new(),
-                shown: Vec::new(),
-                picked: 0,
-                at,
-                asked: document.version,
-                loading: true,
-            });
-            outgoing.push(Outgoing::Completion {
+        if let Some(trigger) = edited.ask {
+            self.outbox.push(Outgoing::Completion {
                 session,
                 path,
-                version: document.version,
-                position: document.position_of(caret),
+                version,
+                position,
                 trigger,
             });
         }
-        self.outbox.extend(outgoing);
+    }
+
+    /// Makes `edits` to the file shown, one after another.
+    fn file_edits(&mut self, edits: Vec<Edit>) {
+        for edit in edits {
+            self.file_edited(edit);
+        }
     }
 
     /// Breaks the line at the caret of the file shown, indenting the new line as the language says: one level deeper inside a block opened on the line, and the closing of that block put on a line of its own.
     pub fn editor_newline(mut self) -> Self {
-        let Some(document) = self.shown_document() else {
-            return self;
-        };
-        let caret = document.field.caret();
-        let text = document.field.text();
-        let base = document.indentation_at(caret);
-        let unit = document.editing.unit(1);
-        let indent = document
-            .syntax
-            .as_ref()
-            .map(|syntax| syntax.indent_at(text, document.line_index(), caret))
+        let edits = self
+            .shown_document()
+            .map(Document::newline_edits)
             .unwrap_or_default();
-        let before = text[document.line(document.line_of(caret)).start..caret].trim_end();
-        let opens = before.ends_with(['{', '(', '[', ':']);
-        let deeper = indent.deeper || opens;
-        let closing = deeper
-            && text[caret..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(['}', ')', ']']);
-        let inner = if deeper {
-            format!("{base}{unit}")
-        } else {
-            base.clone()
-        };
-        self.file_edited(Edit::Paste(format!("\n{inner}")));
-        if closing {
-            let at = self
-                .shown_document()
-                .map_or(0, |document| document.field.caret());
-            self.file_edited(Edit::Paste(format!("\n{base}")));
-            self.file_edited(Edit::Place(at, false));
-        }
+        self.file_edits(edits);
         self
     }
 
@@ -425,35 +348,11 @@ impl WorkspaceState {
     /// Types `character` into the file shown; a closing bracket typed where the line holds nothing else goes back a level of indentation.
     pub fn editor_typed(mut self, character: char) -> Self {
         self.file_edited(Edit::Insert(character));
-        let Some(document) = self.shown_document() else {
-            return self;
-        };
-        if !matches!(character, '}' | ')' | ']') {
-            return self;
-        }
-        let caret = document.field.caret();
-        let at = caret.saturating_sub(character.len_utf8());
-        let line = document.line(document.line_of(at));
-        let leading = &document.field.text()[line.start..at];
-        let closes = document
-            .syntax
-            .as_ref()
-            .is_some_and(|syntax| syntax.closes_at(document.field.text(), at));
-        if !closes || leading.is_empty() || !leading.chars().all(|c| c == ' ' || c == '\t') {
-            return self;
-        }
-        let unit = document.editing.unit(1);
-        let Some(shorter) = leading.strip_suffix(&unit) else {
-            return self;
-        };
-        let (start, end) = (line.start + shorter.len(), at);
-        self.file_edited(Edit::Place(start, false));
-        self.file_edited(Edit::Place(end, true));
-        self.file_edited(Edit::Backspace);
-        let caret = self
+        let edits = self
             .shown_document()
-            .map_or(0, |document| document.field.caret());
-        self.file_edited(Edit::Place(caret + character.len_utf8(), false));
+            .map(|document| document.outdent_edits(character))
+            .unwrap_or_default();
+        self.file_edits(edits);
         self
     }
 
@@ -466,24 +365,14 @@ impl WorkspaceState {
         let Some(document) = document_of(viewer).filter(|document| document.synced) else {
             return self;
         };
-        let caret = document.field.caret();
-        document.completion = Some(Completions {
-            start: document.word_start(caret),
-            items: Vec::new(),
-            shown: Vec::new(),
-            picked: 0,
-            at,
-            asked: document.version,
-            loading: true,
-        });
-        let request = Outgoing::Completion {
+        let (version, position) = document.open_completion(at);
+        self.outbox.push(Outgoing::Completion {
             session,
             path,
-            version: document.version,
-            position: document.position_of(caret),
+            version,
+            position,
             trigger: None,
-        };
-        self.outbox.push(request);
+        });
         self
     }
 
@@ -506,13 +395,8 @@ impl WorkspaceState {
         version: i32,
         items: Vec<Completion>,
     ) -> Self {
-        if let Some(document) = self.file_mut(session, path)
-            && let Some(completion) = &mut document.completion
-            && completion.asked == version
-        {
-            completion.items = items;
-            completion.loading = false;
-            refilter(document, false);
+        if let Some(document) = self.file_mut(session, path) {
+            document.take_completions(version, items);
         }
         self
     }
@@ -527,11 +411,8 @@ impl WorkspaceState {
     pub fn completion_moved(mut self, delta: isize) -> Self {
         if let Some((_, viewer)) = self.shown_mut()
             && let Some(document) = document_of(viewer)
-            && let Some(completion) = &mut document.completion
-            && !completion.shown.is_empty()
         {
-            let count = completion.shown.len() as isize;
-            completion.picked = (completion.picked as isize + delta).rem_euclid(count) as usize;
+            document.move_completion(delta);
         }
         self
     }
@@ -548,32 +429,11 @@ impl WorkspaceState {
 
     /// Writes the completion picked, or the one at `row` of the list when given, in place of the word it completes, and closes the list.
     pub fn completion_taken(mut self, row: Option<usize>) -> Self {
-        let Some(document) = self.shown_document() else {
-            return self;
-        };
-        let Some(completion) = &document.completion else {
-            return self;
-        };
-        let Some(item) = completion
-            .shown
-            .get(row.unwrap_or(completion.picked))
-            .and_then(|place| completion.items.get(*place))
-            .cloned()
-        else {
-            return self.completion_closed();
-        };
-        let caret = document.field.caret();
-        let (start, end) = match item.span {
-            Some(span) => {
-                let range = document.range_of(span);
-                (range.start.min(caret), range.end.max(caret))
-            }
-            None => (completion.start.min(caret), caret),
-        };
+        let edits = self
+            .shown_document()
+            .and_then(|document| document.completion_edits(row));
         self = self.completion_closed();
-        self.file_edited(Edit::Place(start, false));
-        self.file_edited(Edit::Place(end, true));
-        self.file_edited(Edit::Paste(item.text));
+        self.file_edits(edits.unwrap_or_default());
         self.completion_closed()
     }
 
@@ -651,6 +511,163 @@ impl WorkspaceState {
         self
     }
 
+    /// Asks the language server to format the file shown, and writes it to the folder afterwards when `save`; a file no language server reads is written as it is.
+    pub(crate) fn format_then_save(&mut self, save: bool) {
+        let Some((session, viewer)) = self.shown_mut() else {
+            return;
+        };
+        let path = viewer.path.clone();
+        let asking = document_of(viewer)
+            .filter(|document| document.synced && !document.field.is_read_only())
+            .map(|document| document.version);
+        match asking {
+            Some(version) => self.outbox.push(Outgoing::Format {
+                session,
+                path,
+                version,
+                save,
+            }),
+            None if save => self.save_file(),
+            None => {}
+        }
+    }
+
+    /// The state with the file shown formatted as its language says, without writing it.
+    pub fn formatted_by_hand(mut self) -> Self {
+        self.format_then_save(false);
+        self
+    }
+
+    /// The state after the language server gave `edits` that format the file at `path` of the session at `session` as it was at `version`: they are made when the file shown is still that file at that version, and the file is written to the folder when `save`.
+    pub fn with_formatted(
+        mut self,
+        session: usize,
+        path: &str,
+        version: i32,
+        edits: Vec<pm_protocol::TextChange>,
+        save: bool,
+    ) -> Self {
+        let current = self.review_index() == Some(session)
+            && self
+                .shown_viewer()
+                .is_some_and(|viewer| viewer.path == path && !viewer.head);
+        if !current {
+            return self;
+        }
+        let edits = self
+            .shown_document()
+            .map(|document| document.format_edits(version, edits))
+            .unwrap_or_default();
+        self.file_edits(edits);
+        if save {
+            self.save_file();
+        }
+        self
+    }
+
+    /// Notes the word of the file shown that the pointer is on while Ctrl is held, the stretch `reach`, or that there is none.
+    pub fn with_reach(mut self, reach: Option<std::ops::Range<usize>>) -> Self {
+        if let Some((_, viewer)) = self.shown_mut()
+            && let Some(document) = document_of(viewer)
+        {
+            document.reach = reach;
+        }
+        self
+    }
+
+    /// Asks the language server where the thing at the byte `offset` of the file shown is defined.
+    pub fn definition_requested(mut self, offset: usize) -> Self {
+        let Some((session, viewer)) = self.shown_mut() else {
+            return self;
+        };
+        let path = viewer.path.clone();
+        let Some(document) = document_of(viewer).filter(|document| document.synced) else {
+            return self;
+        };
+        let request = Outgoing::Definition {
+            session,
+            path,
+            version: document.version,
+            position: document.position_of(offset),
+        };
+        self.outbox.push(request);
+        self
+    }
+
+    /// The state after the language server said where something in a file of the session at `session` is defined: the first place it named is shown, in the file open already, in a tab of its own for another file of the project, or read only for a file outside it.
+    pub fn with_definitions(
+        mut self,
+        session: usize,
+        locations: Vec<pm_protocol::Location>,
+    ) -> Self {
+        let Some(location) = locations.into_iter().next() else {
+            return self;
+        };
+        if self.review_index() != Some(session) {
+            return self;
+        }
+        self.remember_spot();
+        if let Some(index) = self
+            .git
+            .viewers
+            .iter()
+            .position(|viewer| viewer.path == location.path && !viewer.head)
+        {
+            self.git.shown = Some(index);
+            self.tab = crate::state::Tab::File;
+            if let Some(viewer) = self.git.viewers.get_mut(index) {
+                match document_of(viewer) {
+                    Some(document) => {
+                        let scroll = crate::open_files::jump(document, location.span.start);
+                        viewer.scroll = scroll;
+                    }
+                    None => viewer.jump = Some(location.span.start),
+                }
+            }
+            return self;
+        }
+        if location.inside {
+            self.open_viewer(location.path.clone(), false);
+            if let Some(viewer) = self
+                .git
+                .shown
+                .and_then(|index| self.git.viewers.get_mut(index))
+            {
+                viewer.jump = Some(location.span.start);
+            }
+            return self;
+        }
+        let Some(text) = location.text else {
+            return self;
+        };
+        let mut document = Document::new(&text, true, false);
+        let scroll = crate::open_files::jump(&mut document, location.span.start);
+        let viewer = crate::open_files::Viewer {
+            path: location.path.clone(),
+            head: false,
+            contents: Contents::Text(Box::new(document)),
+            scroll,
+            preview: true,
+            left: None,
+            jump: None,
+        };
+        let index = match self.git.viewers.iter().position(|held| held.preview) {
+            Some(index) => {
+                let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
+                self.close_document(session, &replaced);
+                index
+            }
+            None => {
+                self.git.viewers.push(viewer);
+                self.git.viewers.len() - 1
+            }
+        };
+        self.git.shown = Some(index);
+        self.tab = crate::state::Tab::File;
+        self.took_language(session, &location.path, false, location.language);
+        self
+    }
+
     /// Takes away what is said about a place of the file shown.
     pub fn hover_closed(mut self) -> Self {
         if let Some((_, viewer)) = self.shown_mut()
@@ -666,37 +683,4 @@ impl WorkspaceState {
         self.shown_document()
             .is_some_and(|document| document.hover.is_some())
     }
-}
-
-/// Narrows the completions open over `document` to the word typed before its caret, and closes the list when the caret left the word or nothing matches; says whether a fresh list should be asked for in place of the one closed, as when the reader went on typing a word after the list emptied.
-fn refilter(document: &mut Document, triggered: bool) -> bool {
-    let caret = document.field.caret();
-    let text = document.field.text();
-    let Some(completion) = &mut document.completion else {
-        let typed_word = text[..caret].chars().next_back().is_some_and(is_word);
-        return !triggered
-            && typed_word
-            && caret - document.word_start(caret) == 1
-            && document.synced;
-    };
-    let in_word = caret >= completion.start
-        && text
-            .get(completion.start..caret)
-            .is_some_and(|typed| typed.chars().all(is_word));
-    if !in_word {
-        document.completion = None;
-        return false;
-    }
-    if completion.loading {
-        return false;
-    }
-    let typed = &text[completion.start..caret];
-    completion.shown = matching(&completion.items, typed);
-    completion.picked = completion
-        .picked
-        .min(completion.shown.len().saturating_sub(1));
-    if completion.shown.is_empty() {
-        document.completion = None;
-    }
-    false
 }

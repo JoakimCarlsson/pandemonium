@@ -13,12 +13,12 @@ use pm_ui::{Mark, Node, Paint, node, text};
 
 use crate::Button;
 use crate::button::{Size, Variant};
-use crate::document::Document;
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
 use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, ROW, STRIP, Viewer};
 use crate::parts::{line, spacer};
 use crate::state::WorkspaceState;
+use pm_editor::Document;
 
 /// How far beyond the view, above and below, lines are still built, in logical pixels.
 const OVERSCAN: f32 = 100.0;
@@ -83,6 +83,11 @@ fn line_marks(
             color: Role::SurfaceActive.into(),
             paint: Paint::Fill,
         })
+    }));
+    marks.extend(clipped(&document.reach, &line).map(|range| Mark {
+        range,
+        color: Role::SyntaxFunction.into(),
+        paint: Paint::Underline,
     }));
     marks.extend(
         document

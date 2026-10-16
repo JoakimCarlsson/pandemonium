@@ -186,7 +186,7 @@ implements none of them; it wires them together.
 | Protocol   | `pm-protocol`: the messages between clients and a server                                                |
 | Server     | `pm-server`: the `pandemonium-server` program                                                           |
 | Client     | `pm-client` (one reconnecting connection, and starting the local server), `pm-ssh` (ssh transport)      |
-| Code       | `pm-buffer` (text and places), `pm-treesitter` (grammars, highlighting), `pm-lsp` (languages, language servers) |
+| Code       | `pm-buffer` (text and places), `pm-treesitter` (grammars, highlighting), `pm-lsp` (languages, language servers), `pm-editor` (editing a file) |
 | Domain     | `pm-acp` (agents over ACP), `pm-git`, `pm-store` (persistence)                                          |
 | Binary     | `pandemonium`: the event loop, the window and the threads that talk to the servers                      |
 

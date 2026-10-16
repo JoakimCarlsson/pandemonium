@@ -112,6 +112,8 @@ pub struct Document {
     pub completion: Option<Completions>,
     /// What is said about a place, if anything is showing.
     pub hover: Option<HoverCard>,
+    /// The word the pointer is on while Ctrl is held, which pressing takes to where it is defined.
+    pub reach: Option<Range<usize>>,
     /// The highlights worked out last.
     painted: HighlightCache,
 }
@@ -153,6 +155,7 @@ impl Document {
             diagnostics: Vec::new(),
             completion: None,
             hover: None,
+            reach: None,
             painted: HighlightCache::default(),
         }
     }

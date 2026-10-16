@@ -2299,11 +2299,10 @@ version = "0.13.0-rc.1"
 dependencies = [
  "chrono",
  "pm-acp",
- "pm-buffer",
+ "pm-editor",
  "pm-git",
  "pm-icon",
  "pm-input",
- "pm-lsp",
  "pm-markdown",
  "pm-protocol",
  "pm-style",
@@ -2324,6 +2323,17 @@ version = "0.13.0-rc.1"
 dependencies = [
  "pm-color",
  "pm-primitives",
+]
+
+[[package]]
+name = "pm-editor"
+version = "0.13.0-rc.1"
+dependencies = [
+ "pm-buffer",
+ "pm-lsp",
+ "pm-protocol",
+ "pm-text",
+ "pm-treesitter",
 ]
 
 [[package]]
